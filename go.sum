@@ -9,6 +9,8 @@ cloud.google.com/go/auth v0.24.0 h1:UYMbF8otPZnLAkNJ5/LYQYOq0ARcJS1P4JqTeMKbCYU=
 cloud.google.com/go/auth v0.24.0/go.mod h1:IFG/AMA1VWfuTrdbieEsB2GcpJyJV/phGAvogkOoPR4=
 cloud.google.com/go/auth/oauth2adapt v0.3.0 h1:FY8oSZpCYoUNv6QxVODuMjQz4IlSOVeiQtZ08vLPz88=
 cloud.google.com/go/auth/oauth2adapt v0.3.0/go.mod h1:7+2uCm7++XFO+/lN06c2HXpDXb/NMNn2/UwyBPbTnkk=
+cloud.google.com/go/certificatemanager v1.16.0 h1:OhPF+3NXmES8QlwuiRXIl/DHsW9pnPzClmLNayee/Js=
+cloud.google.com/go/certificatemanager v1.16.0/go.mod h1:HNWY7mSZ1CQFCOPCFt1gEOxHEbcPpiSapAP8XZYZ/O8=
 cloud.google.com/go/cloudsqlconn v1.25.3 h1:j+zhqqO7nbAcgrH/1dooqiQ1+xXcIO9FdQZZCGVaFs4=
 cloud.google.com/go/cloudsqlconn v1.25.3/go.mod h1:N0Pqnfsv0mWlfGfyyOClmvSzhlXXfTArfEfabd+cJ8M=
 cloud.google.com/go/compute/metadata v0.10.0 h1:pyKMUQSwchgkIBBJGdILqQbs/BNJXqwSA7Ej6LAvvtY=
@@ -23,6 +25,8 @@ cloud.google.com/go/longrunning v1.2.0 h1:WjYH3YHBGCxGJP9M4dWGHBfXr/cFIjMkNgWcJj
 cloud.google.com/go/longrunning v1.2.0/go.mod h1:5KMQALFGOCtFoi2xSOA1u3H7WKlhmckgiyFw7+LGQp0=
 cloud.google.com/go/monitoring v1.30.0 h1:r/d+JUbyKmJ8b07iznuKfzVzrIXTWxHQ3lBRm3x2LlY=
 cloud.google.com/go/monitoring v1.30.0/go.mod h1:htlUR0QWVMrjFzZmN4LGnMAve9xB/eduwjmINxVZ8RM=
+cloud.google.com/go/networksecurity v0.20.0 h1:89TlCISilA1nOHufVz+9+h6upTIvwYQ9HKx2g7KLGPc=
+cloud.google.com/go/networksecurity v0.20.0/go.mod h1:+gZyaZn7oVuUALmlTVnF+YRcFsIymhuBFkL3M3zleYA=
 cloud.google.com/go/pubsub/v2 v2.7.0 h1:MFrBTZZa6PDWZzCi4NJRsHKMm2w0a4oAaYNqwjgbQTE=
 cloud.google.com/go/pubsub/v2 v2.7.0/go.mod h1:JaFvWNVRk3Knoil/4M1ECeLOaI9D8drbmJWypQlK5aM=
 cloud.google.com/go/sql v0.2.0 h1:ueC47wWBJ6xlcWQUpaLCFjAIvV1sQUPSpf8h4kCYDtE=

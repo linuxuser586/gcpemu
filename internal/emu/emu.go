@@ -20,6 +20,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -86,6 +87,9 @@ type Env struct {
 	Containers Containers
 	// CA is the instance's local certificate authority (Section 7.4).
 	CA *ca.CA
+	// RequestLog records data-plane requests in the instance's request log
+	// (FR-CORE-061); nil-safe for callers that check it.
+	RequestLog *reqlog.Log
 
 	mu       sync.RWMutex
 	services map[string]Service

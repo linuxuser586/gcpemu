@@ -3,7 +3,6 @@ package gke
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	mdns "github.com/miekg/dns"
-
 	"github.com/linuxuser586/gcpemu/internal/agent"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/trust"
 )
 
 // The gke-node agent is the entrypoint of every node container. It
@@ -33,6 +32,14 @@ import (
 //   - :5000 registry proxy to emulated Artifact Registry, adding the node
 //     service account's token (FR-INT-006); containerd mirrors every
 //     LOCATION-docker.pkg.dev host to it.
+//   - :443  TCP relay to the emulator's Google frontend (internal/frontend),
+//     which terminates TLS for real hostnames. The DNS relay answers the
+//     hostnames the emulator serves (storage.googleapis.com,
+//     pubsub.googleapis.com, LOCATION-docker.pkg.dev, ...) with
+//     169.254.169.254, so unmodified clients in pods reach emulated
+//     services by real hostname (FR-INT-007). Names the emulator does not
+//     serve (logging.googleapis.com, ...) are relayed to the emulated
+//     Cloud DNS and resolve as usual.
 
 const (
 	nodeAgentName  = "gke-node"
@@ -60,6 +67,17 @@ type nodeConfig struct {
 	// MirrorHosts are the registry hosts served by the registry proxy;
 	// they resolve to the proxy so that pulls never reach Google.
 	MirrorHosts []string `json:"mirrorHosts,omitempty"`
+	// Frontend is the emulator's Google frontend on the services network
+	// (TLS for real hostnames, FR-INT-007); the node relays
+	// 169.254.169.254:443 to it.
+	Frontend string `json:"frontend,omitempty"`
+	// FrontendHosts are the real hostnames the frontend serves (the
+	// gateway's mounted hosts); the DNS relay answers them, and every
+	// LOCATION-docker.pkg.dev, with 169.254.169.254.
+	FrontendHosts []string `json:"frontendHosts,omitempty"`
+	// CA is the emulator's root CA (PEM), added to the node's system
+	// trust store (Section 7.4: GKE nodes trust it automatically).
+	CA string `json:"ca,omitempty"`
 }
 
 func init() { agent.Register(nodeAgentName, runNodeAgent) }
@@ -85,6 +103,13 @@ func runNodeAgent(ctx context.Context, args []string) error {
 		return err
 	}
 	go func() { _ = http.Serve(regL, registryProxy(cfg)) }()
+	if cfg.Frontend != "" {
+		feL, err := net.Listen("tcp", metadataIP+":443")
+		if err != nil {
+			return err
+		}
+		go func() { _ = frontend.Relay(feL, cfg.Frontend) }()
+	}
 	stopDNS, err := serveNodeDNS(cfg)
 	if err != nil {
 		return err
@@ -172,7 +197,33 @@ func setupNodeNetwork(cfg nodeConfig) error {
 	if err := os.MkdirAll("/etc/gcpemu", 0o755); err != nil {
 		return err
 	}
+	if err := trustNodeCA(cfg.CA); err != nil {
+		return err
+	}
 	return os.WriteFile(nodeResolvConf, []byte("nameserver "+metadataIP+"\n"), 0o644)
+}
+
+// trustNodeCA adds the emulator CA to the node's system bundle (read by
+// k3s, containerd and kubelet) and to /usr/local/share/ca-certificates.
+func trustNodeCA(caPEM string) error {
+	if caPEM == "" {
+		return nil
+	}
+	const bundle = "/etc/ssl/certs/ca-certificates.crt"
+	cur, err := os.ReadFile(bundle)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll("/etc/ssl/certs", 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(bundle, trust.Append(cur, []byte(caPEM)), 0o644); err != nil {
+		return fmt.Errorf("trusting the emulator CA: %w", err)
+	}
+	if err := os.MkdirAll("/usr/local/share/ca-certificates", 0o755); err == nil {
+		_ = os.WriteFile("/usr/local/share/ca-certificates/gcpemu.crt", []byte(caPEM), 0o644)
+	}
+	return nil
 }
 
 // metadataProxy forwards metadata requests to the emulator, tagged with
@@ -250,65 +301,35 @@ func (t *nodeTokenSource) token() string {
 	return t.tok
 }
 
-// serveNodeDNS relays DNS to the emulator over UDP and TCP.
+// serveNodeDNS relays DNS to the emulator over UDP and TCP. It answers
+// metadata.google.internal and the frontend's hostnames itself.
 func serveNodeDNS(cfg nodeConfig) (func(), error) {
 	upstream := cfg.DNS
 	if upstream == "" {
 		upstream = "127.0.0.11:53" // Docker's embedded resolver
 	}
-	h := mdns.HandlerFunc(func(w mdns.ResponseWriter, req *mdns.Msg) {
-		if len(req.Question) == 1 {
-			q := req.Question[0]
-			if n := strings.ToLower(q.Name); n == "metadata.google.internal." || n == "metadata." {
-				m := new(mdns.Msg)
-				m.SetReply(req)
-				m.Authoritative = true
-				if q.Qtype == mdns.TypeA {
-					m.Answer = append(m.Answer, &mdns.A{
-						Hdr: mdns.RR_Header{Name: q.Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 300},
-						A:   net.ParseIP(metadataIP),
-					})
-				}
-				_ = w.WriteMsg(m)
-				return
-			}
-		}
-		proto := "udp"
-		if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
-			proto = "tcp"
-		}
-		c := &mdns.Client{Net: proto, Timeout: 10 * time.Second}
-		resp, _, err := c.Exchange(req, upstream)
-		if err == nil && resp.Truncated && proto == "udp" {
-			c.Net = "tcp"
-			resp, _, err = c.Exchange(req, upstream)
-		}
-		if err != nil {
-			m := new(mdns.Msg)
-			m.SetRcode(req, mdns.RcodeServerFailure)
-			_ = w.WriteMsg(m)
-			return
-		}
-		_ = w.WriteMsg(resp)
-	})
-	addr := metadataIP + ":53"
-	udp := &mdns.Server{Addr: addr, Net: "udp", Handler: h}
-	tcp := &mdns.Server{Addr: addr, Net: "tcp", Handler: h}
-	errc := make(chan error, 2)
-	var started sync.WaitGroup
-	started.Add(2)
-	udp.NotifyStartedFunc = started.Done
-	tcp.NotifyStartedFunc = started.Done
-	go func() { errc <- udp.ListenAndServe() }()
-	go func() { errc <- tcp.ListenAndServe() }()
-	ok := make(chan struct{})
-	go func() { started.Wait(); close(ok) }()
-	select {
-	case <-ok:
-	case err := <-errc:
-		return nil, fmt.Errorf("dns relay: %w", err)
-	case <-time.After(5 * time.Second):
-		return nil, errors.New("dns relay did not start")
+	md := net.ParseIP(metadataIP)
+	h := &frontend.DNS{
+		TTL:       300,
+		Answer:    nodeDNSAnswer(cfg, md),
+		Upstreams: func(string) []string { return []string{upstream} },
 	}
-	return func() { _ = udp.Shutdown(); _ = tcp.Shutdown() }, nil
+	return frontend.ListenDNS(metadataIP+":53", h)
+}
+
+// nodeDNSAnswer returns the names the node relay answers with addr.
+func nodeDNSAnswer(cfg nodeConfig, addr net.IP) func(string) net.IP {
+	hosts := map[string]bool{}
+	for _, h := range cfg.FrontendHosts {
+		hosts[frontend.Normalize(h)] = true
+	}
+	return func(name string) net.IP {
+		switch {
+		case name == "metadata.google.internal" || name == "metadata":
+			return addr
+		case cfg.Frontend != "" && (hosts[name] || frontend.IsRegistryHost(name)):
+			return addr
+		}
+		return nil
+	}
 }

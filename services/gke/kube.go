@@ -167,6 +167,7 @@ type objectMeta struct {
 	Name              string            `json:"name"`
 	Namespace         string            `json:"namespace,omitempty"`
 	UID               string            `json:"uid,omitempty"`
+	ResourceVersion   string            `json:"resourceVersion,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
 	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`

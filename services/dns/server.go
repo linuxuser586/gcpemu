@@ -89,9 +89,34 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	}
 }
 
-// answer resolves q against the zones, chasing CNAMEs across every zone
-// served and forwarding names outside them.
+// SetAddressMapper installs a function that rewrites A record addresses in
+// answers (UDP/TCP server and Resolve): the load balancer maps forwarding
+// rule IPs to the local listeners that serve them (FR-LB-002, FR-INT-004).
+// f returns nil to leave an address unchanged.
+func (s *Service) SetAddressMapper(f func(net.IP) net.IP) {
+	s.mapper.Store(&f)
+}
+
+// answer resolves q and applies the address mapper.
 func (s *Service) answer(ctx context.Context, q mdns.Question) *mdns.Msg {
+	m := s.answerZones(ctx, q)
+	fp := s.mapper.Load()
+	if fp == nil || *fp == nil {
+		return m
+	}
+	for i, rr := range m.Answer {
+		if a, ok := rr.(*mdns.A); ok {
+			if ip := (*fp)(a.A); ip != nil {
+				m.Answer[i] = &mdns.A{Hdr: a.Hdr, A: ip}
+			}
+		}
+	}
+	return m
+}
+
+// answerZones resolves q against the zones, chasing CNAMEs across every zone
+// served and forwarding names outside them.
+func (s *Service) answerZones(ctx context.Context, q mdns.Question) *mdns.Msg {
 	ix := s.currentIndex()
 	out := new(mdns.Msg)
 	name := strings.ToLower(mdns.Fqdn(q.Name))

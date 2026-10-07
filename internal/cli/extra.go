@@ -29,6 +29,8 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	{"service_networking_custom_endpoint", "compute", "/servicenetworking/v1/"},
 	{"container_custom_endpoint", "gke", "/container/v1/"},
 	{"sql_custom_endpoint", "sql", "/sql/v1beta4/"},
+	{"certificate_manager_custom_endpoint", "certs", "/certificatemanager/v1/"},
+	{"network_security_custom_endpoint", "certs", "/networksecurity/v1/"},
 }
 
 func (o *rootOpts) tofuProviderCmd() *cobra.Command {

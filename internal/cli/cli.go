@@ -45,6 +45,7 @@ var flagFields = map[string]string{
 	"wait-timeout":                  "WaitTimeout",
 	"dns-no-forward":                "DNSNoForward",
 	"offline":                       "Offline",
+	"host-mode":                     "HostMode",
 }
 
 type rootOpts struct {
@@ -70,7 +71,10 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 	pf.StringVar(&o.configFile, "config", "gcpemu.yaml", "config file")
 
 	root.AddCommand(o.startCmd(), o.stopCmd(), o.statusCmd(), o.resetCmd(), o.logsCmd(),
-		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.tofuProviderCmd(), o.doctorCmd())
+		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.tofuProviderCmd(), o.doctorCmd(),
+		o.cdnCmd())
+	root.AddCommand(o.hostsCmd())
+	root.AddCommand(o.caCmd())
 	return root
 }
 
@@ -139,6 +143,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.DurationVar(&o.flags.WaitTimeout, "wait-timeout", 120*time.Second, "readiness timeout for --detach and CI")
 	f.BoolVar(&o.flags.DNSNoForward, "dns-no-forward", false, "do not forward unknown DNS names to the host resolver")
 	f.BoolVar(&o.flags.Offline, "offline", false, "never reach the internet")
+	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via a frontend container and its DNS (see `gcpemu env`, `gcpemu hosts`)")
 	return cmd
 }
 

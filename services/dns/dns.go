@@ -34,6 +34,9 @@ type Service struct {
 
 	upstreams []string
 
+	// mapper rewrites A record addresses (SetAddressMapper).
+	mapper atomic.Pointer[func(net.IP) net.IP]
+
 	mu      sync.Mutex
 	udp     *mdns.Server
 	tcp     *mdns.Server

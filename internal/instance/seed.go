@@ -66,6 +66,7 @@ func (in *Instance) EnvVars() map[string]string {
 			}
 		}
 	}
+	in.hostNameEnvVars(out)
 	return out
 }
 

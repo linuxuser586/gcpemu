@@ -20,6 +20,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -203,6 +204,7 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	if err := s.startServer(ctx, d, key, sn, c.CurrentMasterVersion); err != nil {
 		return err
 	}
+	s.installCAInjector(ctx, d, key)
 	if err := s.startNodes(ctx, d, key, sn, ""); err != nil {
 		return err
 	}
@@ -536,6 +538,7 @@ func (s *Service) upgradeServer(ctx context.Context, key, version string) error 
 	if err := s.startServer(ctx, d, key, sn, version); err != nil {
 		return err
 	}
+	s.installCAInjector(ctx, d, key)
 	return s.waitNodes(ctx, key, "")
 }
 
@@ -717,6 +720,13 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 	}
 	if reg, err := d.np.Addr(ctx, "ar"); err == nil {
 		cfg.Registry = reg
+	}
+	if fe, err := d.np.Addr(ctx, frontend.Endpoint); err == nil && s.hosts != nil {
+		cfg.Frontend = fe
+		cfg.FrontendHosts = s.hosts()
+	}
+	if s.env.CA != nil {
+		cfg.CA = string(s.env.CA.PEM())
 	}
 	egw, err := d.vpc.EgressGateway(ctx, rec.Int.Subnetwork)
 	if err != nil {

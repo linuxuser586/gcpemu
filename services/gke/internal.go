@@ -17,6 +17,7 @@ import (
 //
 //	POST /_emu/hooks/{clusterId}/{secret}/authn   TokenReview webhook
 //	POST /_emu/hooks/{clusterId}/{secret}/authz   SubjectAccessReview webhook
+//	POST /_emu/hooks/{clusterId}/{secret}/admit   CA injection admission webhook (via the frontend, HTTPS)
 //	GET  /_emu/node/{clusterId}/{secret}/{node}/token        node SA token
 //	*    /_emu/node/{clusterId}/{secret}/{node}/md/{ip}/...  metadata server
 //	GET  /_emu/kubeconfig[?cluster=projects/P/locations/L/clusters/C]
@@ -41,6 +42,8 @@ func (s *Service) internalHandler() http.Handler {
 				s.serveTokenReview(w, r, key)
 			case "authz":
 				s.serveSubjectAccessReview(w, r, key)
+			case "admit":
+				s.servePodAdmission(w, r, key)
 			default:
 				http.NotFound(w, r)
 			}

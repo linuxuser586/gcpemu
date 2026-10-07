@@ -12,6 +12,7 @@ import (
 
 func (o *rootOpts) envCmd() *cobra.Command {
 	var shell string
+	var trustCA bool
 	cmd := &cobra.Command{
 		Use:   "env",
 		Short: "Print environment variables that point clients at the instance",
@@ -24,7 +25,11 @@ func (o *rootOpts) envCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			b, err := c.get("/_emu/v1/env")
+			path := "/_emu/v1/env"
+			if trustCA {
+				path += "?trust=true"
+			}
+			b, err := c.get(path)
 			if err != nil {
 				return err
 			}
@@ -43,10 +48,15 @@ func (o *rootOpts) envCmd() *cobra.Command {
 					out = f
 				}
 			}
-			return writeEnv(out, shell, vars)
+			if err := writeEnv(out, shell, vars); err != nil {
+				return err
+			}
+			hostModeHints(c, cmd.ErrOrStderr())
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&shell, "shell", "bash", "output format: bash, fish, github")
+	cmd.Flags().BoolVar(&trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
 	return cmd
 }
 

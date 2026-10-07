@@ -59,6 +59,12 @@ type Config struct {
 	// MetadataServiceAccount is the metadata server's default service
 	// account email; empty means the project's default compute SA.
 	MetadataServiceAccount string `yaml:"metadataServiceAccount" env:"METADATA_SERVICE_ACCOUNT"`
+	// HostMode serves real Google hostnames to host processes through a
+	// frontend container and its DNS (FR-CORE-043, internal/hostmode).
+	HostMode bool `yaml:"hostMode" env:"HOST_MODE"`
+	// CDNCacheSize is the Cloud CDN cache size limit (FR-CDN-008), e.g.
+	// "1GiB", "512MiB" or a byte count; empty means 1 GiB.
+	CDNCacheSize string `yaml:"cdnCacheSize" env:"CDN_CACHE_SIZE"`
 }
 
 // Default service ports (Section 3.2).

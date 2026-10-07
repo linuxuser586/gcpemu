@@ -52,9 +52,8 @@ func newAdmin(in *Instance) http.Handler {
 	mux.HandleFunc("GET /_emu/v1/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, in.Env.Endpoints.All())
 	})
-	mux.HandleFunc("GET /_emu/v1/env", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, in.EnvVars())
-	})
+	mux.HandleFunc("GET /_emu/v1/env", in.serveEnv)
+	mux.HandleFunc("GET /_emu/v1/hostmode", in.serveHostMode)
 	mux.HandleFunc("POST /_emu/v1/seed", func(w http.ResponseWriter, r *http.Request) {
 		if err := in.ApplySeed(r.Context(), r.URL.Query().Get("path")); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

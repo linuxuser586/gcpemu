@@ -29,6 +29,26 @@
 // (FR-INT-005), proxies Artifact Registry pulls with the node service
 // account's token (FR-INT-006) and then runs the k3s agent.
 //
+// # Real hostnames in pods (FR-INT-007)
+//
+// Unmodified client libraries in pods reach emulated services by their
+// real hostnames with no endpoint configuration:
+//
+//   - DNS: the node relay (CoreDNS's upstream) answers every hostname the
+//     gateway mounts (storage.googleapis.com, pubsub.googleapis.com,
+//     sqladmin.googleapis.com, ...) and LOCATION-docker.pkg.dev with
+//     169.254.169.254; other names resolve through the emulated Cloud DNS.
+//   - TLS: the node relays 169.254.169.254:443 to the emulator's Google
+//     frontend (internal/frontend), which terminates TLS with a
+//     certificate from the instance CA and passes HTTP/1.1, HTTP/2 and
+//     gRPC through to the gateway with Host / :authority intact.
+//   - Trust: nodes add the CA to their system bundle, and a mutating
+//     admission webhook served by the emulator (cainject.go) mounts a
+//     bundle of the host's system roots plus the emulator CA into every
+//     pod at /etc/ssl/certs/ca-certificates.crt and sets SSL_CERT_FILE,
+//     except in kube-system and in namespaces or pods labelled
+//     gcpemu.dev/inject=disabled.
+//
 // The API server authenticates bearer tokens through a TokenReview webhook
 // served by the emulator (emulator IAM tokens, FR-GKE-004) and authorizes
 // with Node,RBAC,Webhook where the webhook grants requests the caller's
@@ -82,6 +102,9 @@ type Service struct {
 	fallback *localVPC
 	// testVPC replaces compute's VPC in tests.
 	testVPC emu.VPC
+	// hosts lists the gateway's host-routed names (real hostnames the
+	// Google frontend serves, FR-INT-007); nil if the router has none.
+	hosts func() []string
 }
 
 // New returns the service.
@@ -102,6 +125,9 @@ func (s *Service) Name() string { return "gke" }
 
 // Register installs the container v1 gRPC service and its REST mapping.
 func (s *Service) Register(r emu.Router) error {
+	if hr, ok := r.(interface{ Hosts() []string }); ok {
+		s.hosts = hr.Hosts
+	}
 	containerpb.RegisterClusterManagerServer(r.GRPC(), s.api)
 	r.Mount("container", []string{apiHost}, s.restHandler())
 	r.Mount("serviceusage", []string{"serviceusage.googleapis.com"}, serviceUsageHandler())

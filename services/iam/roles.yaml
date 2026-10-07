@@ -129,9 +129,18 @@ permissions:
   networksecurity:
     - "serverTlsPolicies: create delete get list update use"
     - "clientTlsPolicies: create delete get list update use"
+    - "backendAuthenticationConfigs: create delete get list update use"
+    - "locations: get list"
+    - "operations: cancel delete get list"
   certificatemanager:
     - "certs: create delete get list update use"
     - "certmaps: create delete get list update use"
+    - "certmapentries: create delete get list update"
+    - "dnsauthorizations: create delete get list update use"
+    - "trustconfigs: create delete get list update use"
+    - "certissuanceconfigs: create delete get list use"
+    - "locations: get list"
+    - "operations: cancel delete get list"
 
 roles:
   # Basic roles.
@@ -417,3 +426,19 @@ roles:
     title: Compute Load Balancer Admin
     description: Permissions to create, modify, and delete load balancers and associate resources.
     permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.securityPolicies.get, compute.securityPolicies.list, compute.securityPolicies.use, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.get, compute.globalOperations.list, compute.regionOperations.get, compute.regionOperations.list, compute.zoneOperations.get, compute.zoneOperations.list, compute.networks.get, compute.networks.list, compute.networks.use, compute.subnetworks.get, compute.subnetworks.list, compute.subnetworks.use, compute.instanceGroups.get, compute.instanceGroups.list, compute.instanceGroups.use, compute.instances.get, compute.instances.list, compute.instances.use, compute.regions.*, compute.zones.*, compute.projects.get, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/certificatemanager.owner
+    title: Certificate Manager Owner
+    description: Full access to Certificate Manager resources.
+    permissions: [certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/certificatemanager.editor
+    title: Certificate Manager Editor
+    description: Create, update and use Certificate Manager resources.
+    permissions: ["certificatemanager.*.create", "certificatemanager.*.get", "certificatemanager.*.list", "certificatemanager.*.update", "certificatemanager.*.use", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/certificatemanager.viewer
+    title: Certificate Manager Viewer
+    description: Read-only access to Certificate Manager resources.
+    permissions: ["certificatemanager.*.get", "certificatemanager.*.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/networksecurity.admin
+    title: Network Security Admin
+    description: Full access to Network Security resources.
+    permissions: [networksecurity.*, resourcemanager.projects.get, resourcemanager.projects.list]

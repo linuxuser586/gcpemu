@@ -34,7 +34,7 @@ bin/gcpemu tofu-provider --project my-project   # provider "google" block with c
 bin/gcpemu stop
 ```
 
-Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`,
+Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
 `fault add|list|clear`, `doctor`, `version`.
 
 ### Endpoints
@@ -58,6 +58,46 @@ Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress
 instead of timing out; with `--offline`, NAT-allowed egress hits a sink that records the attempt
 and returns `natSinkResponse` (`GCPEMU_NAT_SINK_RESPONSE`, default `503:gcpemu offline: egress blocked`).
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
+
+### Real hostnames: GKE pods and host mode
+
+The emulator includes a "Google frontend" (endpoint `frontend`, a dynamic port unless you pass
+`--port frontend=N`). It terminates TLS for the real hostnames the gateway serves
+(`storage.googleapis.com`, `pubsub.googleapis.com`, `sqladmin.googleapis.com`,
+`iamcredentials.googleapis.com`, `oauth2.googleapis.com`, …) and for every
+`LOCATION-docker.pkg.dev`. Certificates come from the instance CA (`<data-dir>/ca.pem`). It then
+passes HTTP/1.1, HTTP/2 and gRPC through to the emulator unchanged. APIs the emulator doesn't
+serve (`logging.googleapis.com`, …) are never redirected.
+
+**GKE pods** use real hostnames automatically. Each node answers DNS for the served names with
+169.254.169.254 and relays port 443 there to the frontend. A mutating admission webhook mounts a
+bundle of the host's system roots plus the emulator CA at `/etc/ssl/certs/ca-certificates.crt`
+and `/etc/gcpemu/certs/`. It also sets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
+`NODE_EXTRA_CA_CERTS` and `GCE_METADATA_HOST`. Unmodified Go, Python, Java and Node clients get
+Workload Identity tokens from the metadata server and reach the emulated services without any
+endpoint configuration. To opt a namespace or a pod out, label it `gcpemu.dev/inject=disabled`;
+`kube-system` is always skipped. Nodes also trust the CA in their own system store.
+
+**Host mode** (`gcpemu start --host-mode`, Linux) does the same for host processes without
+root. It starts a labelled container (`gcpemu-<id>-hostmode`) that the host reaches at its
+container IP. The container serves HTTPS on :443, plain HTTP on :80 and DNS on :53, answering the
+served names with its own IP. It forwards other `googleapis.com`/`pkg.dev` names to your real
+upstream resolvers and everything else to the emulated Cloud DNS. `gcpemu env` prints the IP as
+`GCPEMU_HOST_MODE_IP` and writes setup steps to stderr. There are two ways to send the names
+there:
+
+```sh
+# per-domain DNS routing with systemd-resolved (lasts until the bridge restarts)
+sudo resolvectl dns <bridge-if> <ip> && sudo resolvectl domain <bridge-if> ~googleapis.com ~pkg.dev
+# or a static /etc/hosts block (remove it when done)
+gcpemu hosts | sudo tee -a /etc/hosts
+```
+
+Then trust the CA system-wide with `gcpemu ca install`, or per shell with
+`eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
+holds the system roots plus the emulator CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To
+test without changing the host, use `curl --resolve storage.googleapis.com:443:<ip> --cacert
+"$GCPEMU_CA_FILE" …`, or give Go clients a `net.Resolver` that dials `<ip>:53`.
 
 ### Configuration
 

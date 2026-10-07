@@ -43,6 +43,10 @@ type metadataHandlers interface {
 }
 
 func (s *Service) serveMetadata(w http.ResponseWriter, r *http.Request, key, node, ip, path string) {
+	// Every answer, errors included, carries the flavor header: client
+	// libraries probe GET / and treat a missing header as "not on GCE",
+	// caching the verdict for the life of the process.
+	w.Header().Set("Metadata-Flavor", "Google")
 	rec, err := s.loadKey(key)
 	if err != nil {
 		http.NotFound(w, r)
@@ -82,7 +86,7 @@ func (s *Service) serveMetadata(w http.ResponseWriter, r *http.Request, key, nod
 	// Rewrite the request onto the metadata handler's path space.
 	r2 := r.Clone(r.Context())
 	r2.URL = &url.URL{Path: path, RawQuery: r.URL.RawQuery}
-	if !wiEnabled(c, np) || !s.isPodIP(rec, ip) {
+	if !wiEnabled(c, np) || !s.isPodIP(rec, ip) || path == "/" {
 		mh.MetadataHandler(id).ServeHTTP(w, r2)
 		return
 	}

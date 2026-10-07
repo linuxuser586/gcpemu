@@ -22,7 +22,9 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -59,6 +61,8 @@ type Instance struct {
 	clock    *clock.Offset
 
 	containers   *containers
+	fe           *frontend.Frontend // Google frontend (FR-INT-007, FR-CORE-043)
+	hm           *hostmode.Manager  // nil unless --host-mode
 	shutdownOnce sync.Once
 	done         chan struct{}
 }
@@ -114,6 +118,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 		Auth:      emu.NewPolicyAuthorizer(cfg.IAMMode, logger.With("component", "iam")),
 		Endpoints: emu.NewEndpoints(),
 	}
+	env.RequestLog = in.Log
 	authority, err := ca.Load(dir, cfg.Instance)
 	if err != nil {
 		return nil, fmt.Errorf("certificate authority: %w", err)
@@ -125,6 +130,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	in.gw = gateway.New(env, in.Log)
 	env.Middleware = in.gw.Middleware
 	env.GRPCOptions = in.gw.GRPCOptions
+	in.fe = frontend.New(env, in.gw.Hosts)
 
 	explicit := map[string]bool{}
 	for _, s := range cfg.Services {
@@ -197,6 +203,9 @@ func (in *Instance) Start(ctx context.Context) error {
 			in.Env.Log.Error("gateway stopped", "err", err)
 		}
 	}()
+	if err := in.fe.Start(); err != nil {
+		return err
+	}
 
 	for _, s := range in.services {
 		if in.failure(s.Name()) != nil {
@@ -210,6 +219,7 @@ func (in *Instance) Start(ctx context.Context) error {
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
 	}
+	in.startHostNames()
 	in.Env.Log.Info("gcpemu started", "instance", in.Config.Instance, "id", in.ID, "gateway", in.Env.Endpoints.Get("gateway"), "dir", in.Dir)
 	return nil
 }
@@ -330,7 +340,9 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 				errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
 			}
 		}
+		in.hm.Stop()
 		errs = append(errs, in.containers.shutdown())
+		errs = append(errs, in.fe.Close())
 		errs = append(errs, in.gw.Shutdown(ctx))
 		errs = append(errs, in.Env.Store.Close())
 		_ = os.Remove(filepath.Join(in.Dir, PIDFile))

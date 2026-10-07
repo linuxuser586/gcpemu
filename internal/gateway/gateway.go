@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -240,8 +241,26 @@ func (r *router) Handle(pattern string, h http.Handler) {
 
 func (r *router) GRPC() *grpc.Server { return r.g.grpc }
 
+// Hosts lists every host-routed name (see Gateway.Hosts). Services reach
+// it by type-asserting their emu.Router to interface{ Hosts() []string }.
+func (r *router) Hosts() []string { return r.g.Hosts() }
+
 func (r *router) Fallback(h http.Handler) {
 	r.g.mux.Handle("/", r.g.Middleware(r.service, h))
+}
+
+// Hosts returns the sorted real hostnames mounted with host routing
+// (e.g. "storage.googleapis.com"); the Google frontend (FR-CORE-043,
+// FR-INT-007) serves exactly these names.
+func (g *Gateway) Hosts() []string {
+	g.mu.RLock()
+	out := make([]string, 0, len(g.hosts))
+	for h := range g.hosts {
+		out = append(out, h)
+	}
+	g.mu.RUnlock()
+	sort.Strings(out)
+	return out
 }
 
 // HandleAdmin mounts the admin API (unauthenticated, not request-logged).
