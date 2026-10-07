@@ -50,7 +50,7 @@ var flagFields = map[string]string{
 
 type rootOpts struct {
 	flags      config.Config
-	ports      map[string]string
+	ports      []string
 	lro        map[string]string
 	configFile string
 	factories  map[string]instance.Factory
@@ -94,14 +94,11 @@ func (o *rootOpts) load(fs *pflag.FlagSet) (*config.Config, error) {
 		}
 	})
 	if len(o.ports) > 0 {
-		o.flags.Ports = map[string]int{}
-		for k, v := range o.ports {
-			var n int
-			if _, err := fmt.Sscan(v, &n); err != nil {
-				return nil, fmt.Errorf("--port %s=%s: %w", k, v, err)
-			}
-			o.flags.Ports[k] = n
+		ports, err := config.ParsePorts(strings.Join(o.ports, ","))
+		if err != nil {
+			return nil, fmt.Errorf("--port: %w", err)
 		}
+		o.flags.Ports = ports
 	}
 	o.flags.LROLatency = o.lro
 	c.ApplyFlags(&o.flags, changed)
@@ -130,8 +127,8 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.StringSliceVar(&o.flags.Services, "services", nil, "services to run (default all): "+strings.Join(config.AllServices, ","))
 	f.StringVar(&o.flags.Bind, "bind", "127.0.0.1", "address to bind listeners to")
 	f.BoolVar(&o.flags.Insecure, "i-understand-this-is-insecure", false, "allow non-loopback bind with IAM off")
-	f.StringToStringVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443")
-	f.StringVar(&o.flags.PortRange, "port-range", "", "range for automatically allocated ports")
+	f.StringSliceVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443; a bare 0 makes every listener pick a free port")
+	f.StringVar(&o.flags.PortRange, "port-range", "", "LO-HI range that free ports are picked from, e.g. 20000-20999")
 	f.StringVar(&o.flags.IAMMode, "iam-mode", config.IAMAudit, "IAM enforcement: off, audit, enforce")
 	f.StringVar(&o.flags.DefaultPrincipal, "default-principal", "user:dev@example.com", "principal for unauthenticated requests")
 	f.StringVar(&o.flags.LogFormat, "log-format", "text", "log format: text or json")

@@ -95,9 +95,6 @@ func Defaults() Config {
 		Ports:            map[string]int{},
 		LROLatency:       map[string]string{},
 	}
-	for k, v := range DefaultPorts {
-		c.Ports[k] = v
-	}
 	if os.Getenv("CI") == "true" {
 		c.Ephemeral = true
 		c.LogFormat = "json"
@@ -125,12 +122,40 @@ func (c *Config) InstanceDir() string {
 	return filepath.Join(StateHome(), c.Instance)
 }
 
+// AllPorts is the Ports key that applies to every listener without its own
+// entry: `--port 0` makes them all pick free ports (FR-CORE-042).
+const AllPorts = "*"
+
 // Port returns the configured port for name (0 means "pick a free port").
 func (c *Config) Port(name string) int {
-	if p, ok := c.Ports[name]; ok {
+	if p, ok := c.PortSet(name); ok {
 		return p
 	}
 	return DefaultPorts[name]
+}
+
+// PortSet returns the port configured for name, directly or through
+// AllPorts, and whether one is.
+func (c *Config) PortSet(name string) (int, bool) {
+	if p, ok := c.Ports[name]; ok {
+		return p, true
+	}
+	p, ok := c.Ports[AllPorts]
+	return p, ok
+}
+
+// ParsePortRange parses PortRange ("LO-HI"); ok is false when it is empty.
+func (c *Config) ParsePortRange() (lo, hi int, ok bool, err error) {
+	if c.PortRange == "" {
+		return 0, 0, false, nil
+	}
+	a, b, found := strings.Cut(c.PortRange, "-")
+	lo, err1 := strconv.Atoi(strings.TrimSpace(a))
+	hi, err2 := strconv.Atoi(strings.TrimSpace(b))
+	if !found || err1 != nil || err2 != nil || lo < 1 || hi > 65535 || lo > hi {
+		return 0, 0, false, fmt.Errorf("invalid port range %q (want LO-HI within 1-65535)", c.PortRange)
+	}
+	return lo, hi, true, nil
 }
 
 // LRO returns the configured LRO latency for service (FR-CORE-023).
@@ -241,23 +266,28 @@ func setString(f reflect.Value, v string) error {
 	case reflect.Slice:
 		f.Set(reflect.ValueOf(SplitList(v)))
 	case reflect.Map:
-		m, err := ParseKV(v)
-		if err != nil {
-			return err
-		}
 		if f.IsNil() {
 			f.Set(reflect.MakeMap(f.Type()))
 		}
-		for k, s := range m {
-			if f.Type().Elem().Kind() == reflect.Int {
-				n, err := strconv.Atoi(s)
-				if err != nil {
-					return fmt.Errorf("%s: %w", k, err)
-				}
-				f.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(n))
-			} else {
-				f.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(s))
+		var m map[string]string
+		if f.Type().Elem().Kind() != reflect.Int {
+			var err error
+			if m, err = ParseKV(v); err != nil {
+				return err
 			}
+		}
+		if f.Type().Elem().Kind() == reflect.Int {
+			ports, err := ParsePorts(v)
+			if err != nil {
+				return err
+			}
+			for k, n := range ports {
+				f.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(n))
+			}
+			return nil
+		}
+		for k, s := range m {
+			f.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(s))
 		}
 	default:
 		return fmt.Errorf("unsupported kind %s", f.Kind())
@@ -289,6 +319,24 @@ func ParseKV(v string) (map[string]string, error) {
 	return m, nil
 }
 
+// ParsePorts parses port settings: comma-separated name=port pairs, and a
+// bare port (only 0 is valid) that applies to every listener (AllPorts).
+func ParsePorts(v string) (map[string]int, error) {
+	out := map[string]int{}
+	for _, kv := range SplitList(v) {
+		k, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			k, val = AllPorts, kv
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(val))
+		if err != nil {
+			return nil, fmt.Errorf("port %q: %w", kv, err)
+		}
+		out[strings.TrimSpace(k)] = n
+	}
+	return out, nil
+}
+
 // Validate checks the configuration for consistency (NFR-SEC-001).
 func (c *Config) Validate() error {
 	switch c.IAMMode {
@@ -300,6 +348,17 @@ func (c *Config) Validate() error {
 	case "json", "text":
 	default:
 		return fmt.Errorf("invalid log format %q", c.LogFormat)
+	}
+	if _, _, _, err := c.ParsePortRange(); err != nil {
+		return err
+	}
+	for name, p := range c.Ports {
+		if p < 0 || p > 65535 {
+			return fmt.Errorf("invalid port %d for %s", p, name)
+		}
+		if name == AllPorts && p != 0 {
+			return fmt.Errorf("--port %d: a port without a name must be 0 (every listener picks a free port)", p)
+		}
 	}
 	if !IsLoopback(c.Bind) && c.IAMMode == IAMOff && !c.Insecure {
 		return fmt.Errorf("refusing to bind %s with IAM off; pass --i-understand-this-is-insecure", c.Bind)

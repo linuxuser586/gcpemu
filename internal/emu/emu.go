@@ -4,7 +4,9 @@ package emu
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -119,13 +121,32 @@ func (e *Env) ServiceDir(name string) (string, error) {
 // Listen opens a TCP listener for a named port on the configured bind
 // address and records it in Endpoints.
 func (e *Env) Listen(name string) (net.Listener, error) {
-	addr := net.JoinHostPort(e.Config.Bind, strconv.Itoa(e.Config.Port(name)))
-	l, err := net.Listen("tcp", addr)
+	l, err := e.ListenTCP(e.Config.Bind, e.Config.Port(name))
 	if err != nil {
 		return nil, err
 	}
 	e.Endpoints.Set(name, l.Addr().String())
 	return l, nil
+}
+
+// ListenTCP listens on host:port. Port 0 picks a free port, from
+// --port-range when one is set (FR-CORE-042).
+func (e *Env) ListenTCP(host string, port int) (net.Listener, error) {
+	lo, hi, ok, err := e.Config.ParsePortRange()
+	if port != 0 || !ok || err != nil {
+		return net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	}
+	// Start at a random offset so that instances sharing a range rarely
+	// race for the same port.
+	n := hi - lo + 1
+	off := rand.IntN(n)
+	for i := range n {
+		p := lo + (off+i)%n
+		if l, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(p))); err == nil {
+			return l, nil
+		}
+	}
+	return nil, fmt.Errorf("no free port on %s in range %s", host, e.Config.PortRange)
 }
 
 // Endpoints is a concurrency-safe name → address map.

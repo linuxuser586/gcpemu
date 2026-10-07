@@ -12,6 +12,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
 // doctorCmd implements FR-CORE-007: check the host and print fixes.
@@ -53,9 +55,14 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if running == nil {
 				fmt.Fprintf(out, "[ok  ] instance %q is running; skipping port checks\n", cfg.Instance)
 			} else {
-				names := make([]string, 0, len(cfg.Ports))
-				for n := range cfg.Ports {
+				var names []string
+				for n := range config.DefaultPorts {
 					names = append(names, n)
+				}
+				for n := range cfg.Ports {
+					if _, dflt := config.DefaultPorts[n]; !dflt && n != config.AllPorts {
+						names = append(names, n)
+					}
 				}
 				sort.Strings(names)
 				for _, n := range names {

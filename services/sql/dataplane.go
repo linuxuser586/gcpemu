@@ -75,7 +75,7 @@ func (s *Service) hostIP() string {
 // a "sql" port is configured as 0, or when the gateway port is dynamic and
 // no "sql" base is configured (tests, --port-range).
 func (s *Service) dynamicPorts() (base int, dynamic bool) {
-	if p, ok := s.env.Config.Ports["sql"]; ok {
+	if p, ok := s.env.Config.PortSet("sql"); ok {
 		return p, p == 0
 	}
 	if s.env.Config.Port("gateway") == 0 {
@@ -94,7 +94,7 @@ func (s *Service) allocHostPort(project, name string, prev int) int {
 	if dynamic {
 		// A concrete free port (rather than letting the runtime pick) keeps
 		// the address stable across container restarts.
-		l, err := net.Listen("tcp", net.JoinHostPort(s.hostIP(), "0"))
+		l, err := s.env.ListenTCP(s.hostIP(), 0)
 		if err != nil {
 			return 0
 		}

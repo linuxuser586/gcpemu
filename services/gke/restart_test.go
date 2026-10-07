@@ -24,9 +24,7 @@ func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	cfg.Instance = "gke-restart"
 	cfg.Services = []string{"gke"}
 	cfg.LogLevel = "warn"
-	for k := range cfg.Ports {
-		cfg.Ports[k] = 0
-	}
+	cfg.Ports[config.AllPorts] = 0
 	var out io.Writer = io.Discard
 	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
 		out = os.Stderr

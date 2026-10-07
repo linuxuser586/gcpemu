@@ -47,8 +47,10 @@ All control-plane APIs are served by the gateway (default `127.0.0.1:4510`), und
 `/<api>/` (for example `/pubsub/v1/…`, `/iam/v1/…`) and at their native root paths where
 unambiguous (`/storage/v1/`, `/dns/v1/`, `/compute/v1/`, `/sql/v1beta4/`). Per-service ports:
 GCS 4443, Pub/Sub 8085, registry 5000, DNS 5353 (UDP+TCP), metadata 8988, Cloud SQL host ports
-54320+. `gcpemu env` also exports `KUBECONFIG` for GKE clusters. `--port name=0` picks a free port; the
-choices are written to `<data-dir>/endpoints.json` and printed by `gcpemu env`.
+54320+. `gcpemu env` also exports `KUBECONFIG` for GKE clusters. `--port name=0` picks a free port for one
+listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports included);
+`--port-range 20000-20999` draws those free ports from a range. The choices are written to
+`<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
 ### Container runtime
 

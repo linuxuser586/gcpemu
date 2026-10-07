@@ -118,10 +118,9 @@ func (f *Frontend) Serves(name string) bool { return Serves(f.Hosts(), name) }
 // Start opens the listener on the configured bind address and records the
 // "frontend" endpoint.
 func (f *Frontend) Start() error {
-	addr := net.JoinHostPort(f.env.Config.Bind, strconv.Itoa(f.env.Config.Port(Endpoint)))
-	l, err := net.Listen("tcp", addr)
+	l, err := f.env.ListenTCP(f.env.Config.Bind, f.env.Config.Port(Endpoint))
 	if err != nil {
-		return fmt.Errorf("frontend listen %s: %w", addr, err)
+		return fmt.Errorf("frontend listen %s: %w", net.JoinHostPort(f.env.Config.Bind, strconv.Itoa(f.env.Config.Port(Endpoint))), err)
 	}
 	f.mu.Lock()
 	f.ln = l

@@ -192,10 +192,9 @@ func (in *Instance) Start(ctx context.Context) error {
 	}
 	in.gw.HandleAdmin(newAdmin(in))
 
-	addr := net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway")))
-	l, err := net.Listen("tcp", addr)
+	l, err := in.Env.ListenTCP(in.Config.Bind, in.Config.Port("gateway"))
 	if err != nil {
-		return fmt.Errorf("gateway listen %s: %w", addr, err)
+		return fmt.Errorf("gateway listen %s: %w", net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway"))), err)
 	}
 	in.Env.Endpoints.Set("gateway", l.Addr().String())
 	go func() {

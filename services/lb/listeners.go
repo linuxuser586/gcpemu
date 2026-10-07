@@ -84,7 +84,7 @@ func (d *dataplane) loopIP(ip string) string {
 }
 
 func (d *dataplane) fallbackBase() int {
-	if v, ok := d.s.env.Config.Ports["lb"]; ok {
+	if v, ok := d.s.env.Config.PortSet("lb"); ok {
 		return v
 	}
 	return 18080
@@ -117,7 +117,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 				port = base + d.nextPort
 				d.nextPort++
 			}
-			if ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(port))); err == nil || base == 0 {
+			if ln, err = d.s.env.ListenTCP(lip, port); err == nil || base == 0 {
 				break
 			}
 		}
