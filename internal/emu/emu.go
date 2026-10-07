@@ -18,6 +18,8 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -79,6 +81,8 @@ type Env struct {
 	Middleware func(service string, h http.Handler) http.Handler
 	// GRPCOptions returns server options (interceptors) for per-service gRPC servers.
 	GRPCOptions func(service string) []grpc.ServerOption
+	// Containers provides the container runtime and networks (GKE, Cloud SQL, NAT).
+	Containers Containers
 
 	mu       sync.RWMutex
 	services map[string]Service
@@ -171,4 +175,14 @@ type Seeder interface {
 // endpoints the recorded listener addresses.
 type EnvVarer interface {
 	EnvVars(gateway string, endpoints map[string]string) map[string]string
+}
+
+// Containers gives services lazy access to the container runtime and the
+// instance's container networks (Section 3.3). It is nil-safe: services
+// that need a runtime call Netplane and report not-ready on error.
+type Containers interface {
+	// Runtime detects the runtime on first use and reclaims orphans.
+	Runtime(ctx context.Context) (*runtime.Manager, error)
+	// Netplane returns the instance's services/external network manager.
+	Netplane(ctx context.Context) (*netplane.Plane, error)
 }

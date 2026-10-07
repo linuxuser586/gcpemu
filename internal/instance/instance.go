@@ -57,6 +57,7 @@ type Instance struct {
 	tmpDir   string
 	clock    *clock.Offset
 
+	containers   *containers
 	shutdownOnce sync.Once
 	done         chan struct{}
 }
@@ -113,6 +114,8 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 		Endpoints: emu.NewEndpoints(),
 	}
 	in.Env = env
+	in.containers = &containers{in: in}
+	env.Containers = in.containers
 	in.gw = gateway.New(env, in.Log)
 	env.Middleware = in.gw.Middleware
 	env.GRPCOptions = in.gw.GRPCOptions
@@ -157,9 +160,8 @@ func instanceID(dir string, ephemeral bool) string {
 		return string(b)
 	}
 	id := emu.NewIDs(false).Hex(6)
-	if !ephemeral {
-		_ = os.WriteFile(p, []byte(id), 0o600)
-	}
+	_ = ephemeral // persisted in both modes so a crashed run's containers are reclaimed
+	_ = os.WriteFile(p, []byte(id), 0o600)
 	return id
 }
 
@@ -322,6 +324,7 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 				errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
 			}
 		}
+		errs = append(errs, in.containers.shutdown())
 		errs = append(errs, in.gw.Shutdown(ctx))
 		errs = append(errs, in.Env.Store.Close())
 		_ = os.Remove(filepath.Join(in.Dir, PIDFile))

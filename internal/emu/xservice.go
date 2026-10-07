@@ -117,3 +117,60 @@ func isNumeric(s string) bool {
 	}
 	return true
 }
+
+// SubnetNet is a VPC subnetwork realised as a container network.
+type SubnetNet struct {
+	// Name is the runtime network name.
+	Name string
+	// Subnet is the CIDR actually used by the container network. It equals
+	// the subnetwork's ipCidrRange unless that range overlapped another
+	// network on the host, in which case the runtime chose one.
+	Subnet string
+	// Gateway is the host-side address (the subnet's .1, like GCP's gateway).
+	Gateway string
+	// SubnetworkName is "projects/P/regions/R/subnetworks/S".
+	SubnetworkName string
+	// NetworkName is "projects/P/global/networks/N".
+	NetworkName string
+	Region      string
+	// SecondaryRanges maps rangeName to CIDR (GKE pods/services ranges).
+	SecondaryRanges map[string]string
+}
+
+// NEGEndpoint is a GCE_VM_IP_PORT network endpoint.
+type NEGEndpoint struct {
+	IP       string
+	Port     int
+	Instance string // node name
+}
+
+// VPC is provided by the "compute" service. It realises VPC subnetworks as
+// container networks (Section 3.3), runs the Cloud NAT egress gateway
+// (FR-NAT-002) and owns network endpoint groups (FR-GKE-008).
+type VPC interface {
+	// ResolveSubnetwork returns the canonical subnetwork name
+	// ("projects/P/regions/R/subnetworks/S") for a workload in region that
+	// names a network and/or subnetwork (short names, partial or full URLs).
+	// With neither, the project's "default" auto-mode network is used and
+	// created on first use, as in a new GCP project.
+	ResolveSubnetwork(ctx context.Context, project, region, network, subnetwork string) (string, error)
+	// SubnetNetwork realises a subnetwork as a container network on first use.
+	SubnetNetwork(ctx context.Context, subnetwork string) (SubnetNet, error)
+	// PrivateServicesNetwork realises a VPC's private services access range
+	// (allocated by a servicenetworking connection) for Cloud SQL private IP.
+	// It returns FAILED_PRECONDITION when the VPC has no such connection.
+	PrivateServicesNetwork(ctx context.Context, network string) (SubnetNet, error)
+	// AllocateIP reserves a free address in net for owner (idempotent per
+	// owner); ReleaseIP frees it.
+	AllocateIP(ctx context.Context, net SubnetNet, owner string) (string, error)
+	ReleaseIP(ctx context.Context, net SubnetNet, owner string) error
+	// EgressGateway returns the address workloads without external IPs on
+	// subnetwork must use as their default route. Traffic is forwarded to the
+	// internet only while a Cloud NAT covers the subnetwork (FR-NAT-002).
+	EgressGateway(ctx context.Context, subnetwork string) (string, error)
+	// UpsertNEG creates a zonal GCE_VM_IP_PORT NEG if absent; SetNEGEndpoints
+	// replaces its endpoints; DeleteNEG removes it. Used by GKE NEG sync.
+	UpsertNEG(ctx context.Context, project, zone, name, network, subnetwork string, defaultPort int, description string) error
+	SetNEGEndpoints(ctx context.Context, project, zone, name string, eps []NEGEndpoint) error
+	DeleteNEG(ctx context.Context, project, zone, name string) error
+}
