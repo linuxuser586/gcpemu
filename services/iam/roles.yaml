@@ -1,0 +1,419 @@
+# Embedded IAM catalogue (FR-IAM-002).
+#
+# permissions: the permission universe, grouped by service. Each entry is
+#   "<resourceType>: <verb> <verb> ..." and expands to
+#   "<service>.<resourceType>.<verb>".
+# roles: predefined roles. A permission entry is either an exact permission
+#   or a pattern ending in ".*" that matches every permission in the
+#   universe with that prefix. Basic roles (owner/editor/viewer) use
+#   "basic:" and are computed from the universe by rule (see roles.go).
+permissions:
+  resourcemanager:
+    - "projects: create delete get list update undelete move getIamPolicy setIamPolicy createBillingAssignment deleteBillingAssignment"
+    - "projectTags: list"
+  serviceusage:
+    - "services: enable disable get list use"
+    - "operations: get list"
+  iam:
+    - "serviceAccounts: actAs create delete disable enable get getAccessToken getIamPolicy getOpenIdToken implicitDelegation list setIamPolicy signBlob signJwt undelete update"
+    - "serviceAccountKeys: create delete disable enable get list"
+    - "roles: create delete get list undelete update"
+    - "workloadIdentityPools: create delete get list undelete update"
+    - "workloadIdentityPoolProviders: create delete get list undelete update"
+    - "googleapis: create"
+  storage:
+    - "buckets: create createTagBinding delete deleteTagBinding enableObjectRetention get getIamPolicy getObjectInsights list listEffectiveTags listTagBindings restore setIamPolicy update"
+    - "objects: create delete get getIamPolicy list overrideUnlockedRetention restore setIamPolicy setRetention update"
+    - "multipartUploads: abort create list listParts"
+    - "managedFolders: create delete get getIamPolicy list setIamPolicy"
+    - "folders: create delete get list rename"
+    - "hmacKeys: create delete get list update"
+    - "anywhereCaches: create disable get list pause resume update"
+  pubsub:
+    - "topics: attachSubscription create delete detachSubscriptions get getIamPolicy list publish setIamPolicy update updateTag"
+    - "subscriptions: consume create delete get getIamPolicy list setIamPolicy update"
+    - "snapshots: create delete get getIamPolicy list seek setIamPolicy update"
+    - "schemas: attach commit create delete get getIamPolicy list listRevisions rollback setIamPolicy validate"
+  dns:
+    - "changes: create get list"
+    - "dnsKeys: get list"
+    - "managedZoneOperations: get list"
+    - "managedZones: create delete get getIamPolicy list setIamPolicy update"
+    - "networks: bindDNSResponsePolicy bindPrivateDNSPolicy bindPrivateDNSZone targetWithPeeringZone"
+    - "gkeClusters: bindDNSResponsePolicy bindPrivateDNSZone"
+    - "policies: create delete get list update"
+    - "projects: get"
+    - "resourceRecordSets: create delete get list update"
+    - "responsePolicies: create delete get list update"
+    - "responsePolicyRules: create delete get list update"
+  artifactregistry:
+    - "repositories: create createOnPush createTagBinding delete deleteArtifacts deleteTagBinding downloadArtifacts get getIamPolicy list listEffectiveTags listTagBindings readViaVirtualRepository setIamPolicy update uploadArtifacts"
+    - "packages: delete get list update"
+    - "versions: delete get list update"
+    - "tags: create delete get list update"
+    - "files: delete download get list update upload"
+    - "dockerimages: get list"
+    - "attachments: create delete get list"
+    - "rules: create delete get list update"
+    - "locations: get list"
+    - "projectsettings: get update"
+    - "aptartifacts: create"
+    - "yumartifacts: create"
+  cloudsql:
+    - "backupRuns: create delete get list"
+    - "databases: create delete get list update"
+    - "flags: list"
+    - "instances: addServerCa clone connect create delete demoteMaster executeSql export failover get import list login promoteReplica resetSslConfig restart restoreBackup rotateServerCa startReplica stopReplica truncateLog update listServerCas"
+    - "sslCerts: create createEphemeral delete get list"
+    - "tiers: list"
+    - "users: create delete get list update"
+  container:
+    - "clusters: connect create createTagBinding delete get getCredentials impersonate list update"
+    - "operations: get list"
+    - "clusterRoleBindings: create delete get list update"
+    - "clusterRoles: bind create delete escalate get list update"
+    - "roleBindings: create delete get list update"
+    - "roles: bind create delete escalate get list update"
+    - "namespaces: create delete get list update"
+    - "pods: attach create delete exec get getLogs list portForward update"
+    - "deployments: create delete get list update"
+    - "statefulSets: create delete get list update"
+    - "daemonSets: create delete get list update"
+    - "replicaSets: create delete get list update"
+    - "services: create delete get list proxy update"
+    - "configMaps: create delete get list update"
+    - "secrets: create delete get list update"
+    - "serviceAccounts: create createToken delete get list update"
+    - "ingresses: create delete get list update"
+    - "jobs: create delete get list update"
+    - "cronJobs: create delete get list update"
+    - "nodes: get list update"
+    - "persistentVolumeClaims: create delete get list update"
+    - "persistentVolumes: create delete get list update"
+    - "events: get list"
+    - "customResourceDefinitions: create delete get list update"
+    - "thirdPartyObjects: create delete get list update"
+  compute:
+    - "addresses: create createInternal delete deleteInternal get list setLabels use useInternal"
+    - "globalAddresses: create createInternal delete deleteInternal get list setLabels use"
+    - "backendBuckets: addSignedUrlKey create delete deleteSignedUrlKey get list setSecurityPolicy update use"
+    - "backendServices: addSignedUrlKey create delete deleteSignedUrlKey get list setSecurityPolicy update use"
+    - "regionBackendServices: create delete get list update use"
+    - "firewalls: create delete get list update"
+    - "forwardingRules: create delete get list setLabels setTarget update use"
+    - "globalForwardingRules: create delete get list setLabels setTarget update"
+    - "healthChecks: create delete get list update use useReadOnly"
+    - "httpHealthChecks: create delete get list update use"
+    - "httpsHealthChecks: create delete get list update use"
+    - "instances: create delete get list setMetadata setServiceAccount start stop update use"
+    - "instanceGroups: create delete get list update use"
+    - "networkEndpointGroups: attachNetworkEndpoints create delete detachNetworkEndpoints get list use"
+    - "networks: create delete get list update updatePolicy use"
+    - "subnetworks: create delete expandIpCidrRange get list setPrivateIpGoogleAccess update use"
+    - "routers: create delete get list update use"
+    - "routes: create delete get list"
+    - "securityPolicies: create delete get list update use"
+    - "sslCertificates: create delete get list"
+    - "sslPolicies: create delete get list update use"
+    - "targetHttpProxies: create delete get list setUrlMap use"
+    - "targetHttpsProxies: create delete get list setCertificateMap setSslCertificates setSslPolicy setUrlMap use"
+    - "targetSslProxies: create delete get list use"
+    - "targetTcpProxies: create delete get list use"
+    - "urlMaps: create delete get invalidateCache list update use validate"
+    - "globalOperations: delete get list"
+    - "regionOperations: delete get list"
+    - "zoneOperations: delete get list"
+    - "regions: get list"
+    - "zones: get list"
+    - "projects: get"
+  networksecurity:
+    - "serverTlsPolicies: create delete get list update use"
+    - "clientTlsPolicies: create delete get list update use"
+  certificatemanager:
+    - "certs: create delete get list update use"
+    - "certmaps: create delete get list update use"
+
+roles:
+  # Basic roles.
+  - name: roles/owner
+    title: Owner
+    description: Full access to most Google Cloud resources. See the list of included permissions.
+    basic: owner
+  - name: roles/editor
+    title: Editor
+    description: View, create, update, and delete most Google Cloud resources. See the list of included permissions.
+    basic: editor
+  - name: roles/viewer
+    title: Viewer
+    description: View most Google Cloud resources. See the list of included permissions.
+    basic: viewer
+
+  # Resource Manager / Service Usage.
+  - name: roles/resourcemanager.projectIamAdmin
+    title: Project IAM Admin
+    description: Access and administer a project IAM policies.
+    permissions: [resourcemanager.projects.get, resourcemanager.projects.getIamPolicy, resourcemanager.projects.setIamPolicy, iam.roles.get, iam.roles.list]
+  - name: roles/browser
+    title: Browser
+    description: Read access to browse the hierarchy for a project, including the folder, organization, and allow policy.
+    permissions: [resourcemanager.projects.get, resourcemanager.projects.getIamPolicy, resourcemanager.projects.list]
+  - name: roles/serviceusage.serviceUsageAdmin
+    title: Service Usage Admin
+    description: Ability to enable, disable, and inspect service states, inspect operations, and consume quota and billing for a consumer project.
+    permissions: [serviceusage.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/serviceusage.serviceUsageConsumer
+    title: Service Usage Consumer
+    description: Ability to inspect service states and operations, and consume quota and billing for a consumer project.
+    permissions: [serviceusage.services.get, serviceusage.services.list, serviceusage.services.use, resourcemanager.projects.get, resourcemanager.projects.list]
+
+  # IAM.
+  - name: roles/iam.serviceAccountAdmin
+    title: Service Account Admin
+    description: Create and manage service accounts.
+    permissions: [iam.serviceAccounts.create, iam.serviceAccounts.delete, iam.serviceAccounts.disable, iam.serviceAccounts.enable, iam.serviceAccounts.get, iam.serviceAccounts.getIamPolicy, iam.serviceAccounts.list, iam.serviceAccounts.setIamPolicy, iam.serviceAccounts.undelete, iam.serviceAccounts.update, iam.serviceAccountKeys.get, iam.serviceAccountKeys.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.serviceAccountCreator
+    title: Create Service Accounts
+    description: Access to create service accounts.
+    permissions: [iam.serviceAccounts.create, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.serviceAccountDeleter
+    title: Delete Service Accounts
+    description: Access to delete service accounts.
+    permissions: [iam.serviceAccounts.delete, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.serviceAccountUser
+    title: Service Account User
+    description: Run operations as the service account.
+    permissions: [iam.serviceAccounts.actAs, iam.serviceAccounts.get, iam.serviceAccounts.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.serviceAccountTokenCreator
+    title: Service Account Token Creator
+    description: Impersonate service accounts (create OAuth2 access tokens, sign blobs or JWTs, etc).
+    permissions: [iam.serviceAccounts.get, iam.serviceAccounts.getAccessToken, iam.serviceAccounts.getOpenIdToken, iam.serviceAccounts.implicitDelegation, iam.serviceAccounts.list, iam.serviceAccounts.signBlob, iam.serviceAccounts.signJwt, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.serviceAccountOpenIdTokenCreator
+    title: Service Account OpenID Connect Identity Token Creator
+    description: Impersonate service accounts (create OIDC identity tokens).
+    permissions: [iam.serviceAccounts.getOpenIdToken]
+  - name: roles/iam.serviceAccountKeyAdmin
+    title: Service Account Key Admin
+    description: Create and manage (and rotate) service account keys.
+    permissions: [iam.serviceAccountKeys.*, iam.serviceAccounts.get, iam.serviceAccounts.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.serviceAccountViewer
+    title: View Service Accounts
+    description: Read access to service accounts, metadata, and keys.
+    permissions: [iam.serviceAccountKeys.get, iam.serviceAccountKeys.list, iam.serviceAccounts.get, iam.serviceAccounts.getIamPolicy, iam.serviceAccounts.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.workloadIdentityUser
+    title: Workload Identity User
+    description: Impersonate service accounts from GKE Workloads.
+    permissions: [iam.serviceAccounts.get, iam.serviceAccounts.getAccessToken, iam.serviceAccounts.getOpenIdToken, iam.serviceAccounts.list]
+  - name: roles/iam.roleAdmin
+    title: Role Administrator
+    description: Provides access to all custom roles in the project.
+    permissions: [iam.roles.*, resourcemanager.projects.get, resourcemanager.projects.getIamPolicy]
+  - name: roles/iam.roleViewer
+    title: Role Viewer
+    description: Provides read access to all custom roles in the project.
+    permissions: [iam.roles.get, iam.roles.list, resourcemanager.projects.get, resourcemanager.projects.getIamPolicy]
+  - name: roles/iam.securityAdmin
+    title: Security Admin
+    description: Security admin role, with permissions to get and set any IAM policy.
+    permissions: ["*.getIamPolicy", "*.setIamPolicy", iam.roles.*, iam.serviceAccountKeys.*, iam.serviceAccounts.get, iam.serviceAccounts.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.securityReviewer
+    title: Security Reviewer
+    description: Security reviewer role, with permissions to get any IAM policy.
+    permissions: ["*.getIamPolicy", iam.roles.get, iam.roles.list, iam.serviceAccountKeys.list, iam.serviceAccounts.list, resourcemanager.projects.get]
+  - name: roles/iam.workloadIdentityPoolAdmin
+    title: IAM Workload Identity Pool Admin
+    description: Full control over workload identity pools and providers.
+    permissions: [iam.workloadIdentityPools.*, iam.workloadIdentityPoolProviders.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.workloadIdentityPoolViewer
+    title: IAM Workload Identity Pool Viewer
+    description: Read only access to workload identity pools and providers.
+    permissions: [iam.workloadIdentityPools.get, iam.workloadIdentityPools.list, iam.workloadIdentityPoolProviders.get, iam.workloadIdentityPoolProviders.list]
+
+  # Cloud Storage.
+  - name: roles/storage.admin
+    title: Storage Admin
+    description: Grants full control of buckets and objects.
+    permissions: [storage.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/storage.objectAdmin
+    title: Storage Object Admin
+    description: Grants full control over objects, including listing, creating, viewing, and deleting objects.
+    permissions: [storage.objects.*, storage.multipartUploads.*, storage.managedFolders.*, storage.folders.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/storage.objectCreator
+    title: Storage Object Creator
+    description: Allows users to create objects. Does not give permission to view, delete, or overwrite objects.
+    permissions: [storage.objects.create, storage.multipartUploads.abort, storage.multipartUploads.create, storage.multipartUploads.listParts, storage.managedFolders.create, storage.folders.create, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/storage.objectViewer
+    title: Storage Object Viewer
+    description: Grants access to view objects and their metadata, excluding ACLs. Can also list the objects in a bucket.
+    permissions: [storage.objects.get, storage.objects.list, storage.managedFolders.get, storage.managedFolders.list, storage.folders.get, storage.folders.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/storage.objectUser
+    title: Storage Object User
+    description: Access to create, read, update and delete objects and multipart uploads in GCS.
+    permissions: [storage.objects.create, storage.objects.delete, storage.objects.get, storage.objects.list, storage.objects.restore, storage.objects.update, storage.multipartUploads.*, storage.managedFolders.create, storage.managedFolders.delete, storage.managedFolders.get, storage.managedFolders.list, storage.folders.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/storage.bucketViewer
+    title: Storage Bucket Viewer
+    description: Grants permission to view buckets and their metadata, excluding IAM policies.
+    permissions: [storage.buckets.get, storage.buckets.list, storage.buckets.listEffectiveTags, storage.buckets.listTagBindings]
+  - name: roles/storage.hmacKeyAdmin
+    title: Storage HMAC Key Admin
+    description: Full control over Cloud Storage HMAC keys.
+    permissions: [storage.hmacKeys.*]
+  - name: roles/storage.legacyBucketOwner
+    title: Storage Legacy Bucket Owner
+    description: Read and write access to existing buckets with object listing/creation/deletion.
+    permissions: [storage.buckets.get, storage.buckets.getIamPolicy, storage.buckets.setIamPolicy, storage.buckets.update, storage.multipartUploads.*, storage.objects.create, storage.objects.delete, storage.objects.list, storage.objects.restore, storage.managedFolders.*]
+  - name: roles/storage.legacyBucketWriter
+    title: Storage Legacy Bucket Writer
+    description: Read access to buckets with object listing/creation/deletion.
+    permissions: [storage.buckets.get, storage.multipartUploads.*, storage.objects.create, storage.objects.delete, storage.objects.list, storage.objects.restore, storage.managedFolders.create, storage.managedFolders.delete, storage.managedFolders.get, storage.managedFolders.list]
+  - name: roles/storage.legacyBucketReader
+    title: Storage Legacy Bucket Reader
+    description: Read access to buckets with object listing.
+    permissions: [storage.buckets.get, storage.objects.list, storage.multipartUploads.list, storage.managedFolders.get, storage.managedFolders.list]
+  - name: roles/storage.legacyObjectOwner
+    title: Storage Legacy Object Owner
+    description: Read/write access to existing objects without listing.
+    permissions: [storage.objects.get, storage.objects.getIamPolicy, storage.objects.setIamPolicy, storage.objects.update]
+  - name: roles/storage.legacyObjectReader
+    title: Storage Legacy Object Reader
+    description: Read access to objects without listing.
+    permissions: [storage.objects.get]
+
+  # Pub/Sub.
+  - name: roles/pubsub.admin
+    title: Pub/Sub Admin
+    description: Provides full access to topics and subscriptions.
+    permissions: [pubsub.*, resourcemanager.projects.get, resourcemanager.projects.list, serviceusage.services.use]
+  - name: roles/pubsub.editor
+    title: Pub/Sub Editor
+    description: Provides access to modify topics and subscriptions.
+    permissions: [pubsub.*, "-pubsub.topics.getIamPolicy", "-pubsub.topics.setIamPolicy", "-pubsub.subscriptions.getIamPolicy", "-pubsub.subscriptions.setIamPolicy", "-pubsub.snapshots.getIamPolicy", "-pubsub.snapshots.setIamPolicy", "-pubsub.schemas.getIamPolicy", "-pubsub.schemas.setIamPolicy", resourcemanager.projects.get, resourcemanager.projects.list, serviceusage.services.use]
+  - name: roles/pubsub.viewer
+    title: Pub/Sub Viewer
+    description: Provides access to view topics and subscriptions.
+    permissions: [pubsub.schemas.get, pubsub.schemas.list, pubsub.schemas.listRevisions, pubsub.snapshots.get, pubsub.snapshots.list, pubsub.subscriptions.get, pubsub.subscriptions.list, pubsub.topics.get, pubsub.topics.list, resourcemanager.projects.get, resourcemanager.projects.list, serviceusage.services.use]
+  - name: roles/pubsub.publisher
+    title: Pub/Sub Publisher
+    description: Provides access to publish messages to a topic.
+    permissions: [pubsub.topics.publish]
+  - name: roles/pubsub.subscriber
+    title: Pub/Sub Subscriber
+    description: Provides access to consume messages from a subscription and to attach subscriptions to a topic.
+    permissions: [pubsub.snapshots.seek, pubsub.subscriptions.consume, pubsub.topics.attachSubscription]
+  - name: roles/pubsub.schemaViewer
+    title: Pub/Sub Schema Viewer
+    description: Provides access to view schemas.
+    permissions: [pubsub.schemas.get, pubsub.schemas.list, pubsub.schemas.listRevisions, pubsub.schemas.validate]
+
+  # Cloud DNS.
+  - name: roles/dns.admin
+    title: DNS Administrator
+    description: Provides read-write access to all Cloud DNS resources.
+    permissions: [dns.*, "-dns.managedZones.getIamPolicy", "-dns.managedZones.setIamPolicy", compute.networks.get, compute.networks.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/dns.reader
+    title: DNS Reader
+    description: Provides read-only access to all Cloud DNS resources.
+    permissions: [dns.changes.get, dns.changes.list, dns.dnsKeys.get, dns.dnsKeys.list, dns.managedZoneOperations.get, dns.managedZoneOperations.list, dns.managedZones.get, dns.managedZones.list, dns.policies.get, dns.policies.list, dns.projects.get, dns.resourceRecordSets.get, dns.resourceRecordSets.list, dns.responsePolicies.get, dns.responsePolicies.list, dns.responsePolicyRules.get, dns.responsePolicyRules.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/dns.peer
+    title: DNS Peer
+    description: Access to target networks with DNS peering zones.
+    permissions: [dns.networks.targetWithPeeringZone]
+
+  # Artifact Registry.
+  - name: roles/artifactregistry.admin
+    title: Artifact Registry Administrator
+    description: Administrator access to create and manage repositories.
+    permissions: [artifactregistry.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/artifactregistry.repoAdmin
+    title: Artifact Registry Repository Administrator
+    description: Access to manage artifacts in repositories.
+    permissions: [artifactregistry.*, "-artifactregistry.repositories.create", "-artifactregistry.repositories.delete", "-artifactregistry.repositories.setIamPolicy", "-artifactregistry.repositories.update", "-artifactregistry.projectsettings.update", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/artifactregistry.writer
+    title: Artifact Registry Writer
+    description: Access to read and write repository items.
+    permissions: [artifactregistry.aptartifacts.create, artifactregistry.attachments.create, artifactregistry.attachments.get, artifactregistry.attachments.list, artifactregistry.dockerimages.get, artifactregistry.dockerimages.list, artifactregistry.files.download, artifactregistry.files.get, artifactregistry.files.list, artifactregistry.files.upload, artifactregistry.locations.get, artifactregistry.locations.list, artifactregistry.packages.get, artifactregistry.packages.list, artifactregistry.projectsettings.get, artifactregistry.repositories.downloadArtifacts, artifactregistry.repositories.get, artifactregistry.repositories.list, artifactregistry.repositories.listEffectiveTags, artifactregistry.repositories.listTagBindings, artifactregistry.repositories.readViaVirtualRepository, artifactregistry.repositories.uploadArtifacts, artifactregistry.rules.get, artifactregistry.rules.list, artifactregistry.tags.create, artifactregistry.tags.get, artifactregistry.tags.list, artifactregistry.tags.update, artifactregistry.versions.get, artifactregistry.versions.list, artifactregistry.yumartifacts.create, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/artifactregistry.createOnPushWriter
+    title: Artifact Registry Create-on-Push Writer
+    description: Access to read and write repository items, and to create new repositories on push.
+    permissions: [artifactregistry.repositories.createOnPush, artifactregistry.aptartifacts.create, artifactregistry.attachments.create, artifactregistry.attachments.get, artifactregistry.attachments.list, artifactregistry.dockerimages.get, artifactregistry.dockerimages.list, artifactregistry.files.download, artifactregistry.files.get, artifactregistry.files.list, artifactregistry.files.upload, artifactregistry.locations.get, artifactregistry.locations.list, artifactregistry.packages.get, artifactregistry.packages.list, artifactregistry.projectsettings.get, artifactregistry.repositories.downloadArtifacts, artifactregistry.repositories.get, artifactregistry.repositories.list, artifactregistry.repositories.readViaVirtualRepository, artifactregistry.repositories.uploadArtifacts, artifactregistry.tags.create, artifactregistry.tags.get, artifactregistry.tags.list, artifactregistry.tags.update, artifactregistry.versions.get, artifactregistry.versions.list, artifactregistry.yumartifacts.create, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/artifactregistry.reader
+    title: Artifact Registry Reader
+    description: Access to read repository items.
+    permissions: [artifactregistry.attachments.get, artifactregistry.attachments.list, artifactregistry.dockerimages.get, artifactregistry.dockerimages.list, artifactregistry.files.download, artifactregistry.files.get, artifactregistry.files.list, artifactregistry.locations.get, artifactregistry.locations.list, artifactregistry.packages.get, artifactregistry.packages.list, artifactregistry.projectsettings.get, artifactregistry.repositories.downloadArtifacts, artifactregistry.repositories.get, artifactregistry.repositories.list, artifactregistry.repositories.listEffectiveTags, artifactregistry.repositories.listTagBindings, artifactregistry.repositories.readViaVirtualRepository, artifactregistry.rules.get, artifactregistry.rules.list, artifactregistry.tags.get, artifactregistry.tags.list, artifactregistry.versions.get, artifactregistry.versions.list, resourcemanager.projects.get, resourcemanager.projects.list]
+
+  # Cloud SQL.
+  - name: roles/cloudsql.admin
+    title: Cloud SQL Admin
+    description: Full control of Cloud SQL resources.
+    permissions: [cloudsql.*, compute.networks.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudsql.editor
+    title: Cloud SQL Editor
+    description: Manage specific instances. Cannot see or modify permissions, nor modify users or sslCerts. Cannot import data or restore from a backup, nor clone, delete, or promote instances.
+    permissions: [cloudsql.*, "-cloudsql.instances.clone", "-cloudsql.instances.delete", "-cloudsql.instances.import", "-cloudsql.instances.promoteReplica", "-cloudsql.instances.restoreBackup", "-cloudsql.users.create", "-cloudsql.users.delete", "-cloudsql.users.update", "-cloudsql.sslCerts.create", "-cloudsql.sslCerts.delete", compute.networks.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudsql.viewer
+    title: Cloud SQL Viewer
+    description: Read-only access to Cloud SQL resources.
+    permissions: [cloudsql.backupRuns.get, cloudsql.backupRuns.list, cloudsql.databases.get, cloudsql.databases.list, cloudsql.flags.list, cloudsql.instances.export, cloudsql.instances.get, cloudsql.instances.list, cloudsql.instances.listServerCas, cloudsql.sslCerts.get, cloudsql.sslCerts.list, cloudsql.tiers.list, cloudsql.users.get, cloudsql.users.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudsql.client
+    title: Cloud SQL Client
+    description: Connectivity access to Cloud SQL instances.
+    permissions: [cloudsql.instances.connect, cloudsql.instances.get, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudsql.instanceUser
+    title: Cloud SQL Instance User
+    description: Role allowing access to a Cloud SQL instance.
+    permissions: [cloudsql.instances.get, cloudsql.instances.login]
+
+  # GKE.
+  - name: roles/container.admin
+    title: Kubernetes Engine Admin
+    description: Full management of Kubernetes Clusters and their Kubernetes API objects.
+    permissions: [container.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/container.clusterAdmin
+    title: Kubernetes Engine Cluster Admin
+    description: Management of Kubernetes Clusters.
+    permissions: [container.clusters.*, container.operations.*, compute.instanceGroups.get, compute.instanceGroups.list, compute.zones.list, compute.regions.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/container.clusterViewer
+    title: Kubernetes Engine Cluster Viewer
+    description: Get and list access to GKE Clusters.
+    permissions: [container.clusters.get, container.clusters.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/container.developer
+    title: Kubernetes Engine Developer
+    description: Full access to Kubernetes API objects inside Kubernetes Clusters.
+    permissions: [container.*, "-container.clusters.create", "-container.clusters.delete", "-container.clusters.update", "-container.clusters.impersonate", "-container.clusterRoles.bind", "-container.clusterRoles.escalate", "-container.roles.bind", "-container.roles.escalate", "-container.clusterRoleBindings.create", "-container.clusterRoleBindings.delete", "-container.clusterRoleBindings.update", "-container.clusterRoles.create", "-container.clusterRoles.delete", "-container.clusterRoles.update", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/container.viewer
+    title: Kubernetes Engine Viewer
+    description: Read-only access to Kubernetes Engine resources.
+    permissions: ["container.*.get", "container.*.list", container.clusters.getCredentials, "-container.secrets.get", "-container.secrets.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/container.defaultNodeServiceAccount
+    title: Kubernetes Engine Default Node Service Account
+    description: Least privilege role to use as the default service account for GKE Nodes.
+    permissions: [artifactregistry.repositories.downloadArtifacts, artifactregistry.dockerimages.get, artifactregistry.dockerimages.list]
+
+  # Compute (networking and load balancing).
+  - name: roles/compute.admin
+    title: Compute Admin
+    description: Full control of all Compute Engine resources.
+    permissions: [compute.*, resourcemanager.projects.get, resourcemanager.projects.list, serviceusage.services.use]
+  - name: roles/compute.viewer
+    title: Compute Viewer
+    description: Read-only access to get and list Compute Engine resources, without being able to read the data stored on them.
+    permissions: ["compute.*.get", "compute.*.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/compute.networkAdmin
+    title: Compute Network Admin
+    description: Full control of Compute Engine networking resources.
+    permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.networks.*, compute.subnetworks.*, compute.routers.*, compute.routes.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.*, compute.regionOperations.*, compute.zoneOperations.*, compute.regions.*, compute.zones.*, compute.projects.get, compute.firewalls.get, compute.firewalls.list, compute.instances.get, compute.instances.list, compute.instanceGroups.*, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/compute.networkUser
+    title: Compute Network User
+    description: Provides access to a shared VPC network.
+    permissions: [compute.addresses.createInternal, compute.addresses.deleteInternal, compute.addresses.get, compute.addresses.list, compute.addresses.useInternal, compute.firewalls.get, compute.firewalls.list, compute.networks.get, compute.networks.list, compute.networks.use, compute.subnetworks.get, compute.subnetworks.list, compute.subnetworks.use, compute.regions.get, compute.regions.list, compute.zones.get, compute.zones.list, compute.projects.get, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/compute.networkViewer
+    title: Compute Network Viewer
+    description: Read-only access to Compute Engine networking resources.
+    permissions: ["compute.*.get", "compute.*.list", "-compute.instances.get", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/compute.securityAdmin
+    title: Compute Security Admin
+    description: Permissions to create, modify, and delete firewall rules and SSL certificates, and also to configure Shielded VM settings.
+    permissions: [compute.firewalls.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.securityPolicies.*, compute.globalOperations.get, compute.globalOperations.list, compute.networks.get, compute.networks.list, compute.networks.updatePolicy, compute.projects.get, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/compute.loadBalancerAdmin
+    title: Compute Load Balancer Admin
+    description: Permissions to create, modify, and delete load balancers and associate resources.
+    permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.securityPolicies.get, compute.securityPolicies.list, compute.securityPolicies.use, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.get, compute.globalOperations.list, compute.regionOperations.get, compute.regionOperations.list, compute.zoneOperations.get, compute.zoneOperations.list, compute.networks.get, compute.networks.list, compute.networks.use, compute.subnetworks.get, compute.subnetworks.list, compute.subnetworks.use, compute.instanceGroups.get, compute.instanceGroups.list, compute.instanceGroups.use, compute.instances.get, compute.instances.list, compute.instances.use, compute.regions.*, compute.zones.*, compute.projects.get, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
