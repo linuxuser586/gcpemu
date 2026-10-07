@@ -199,7 +199,7 @@ func (s *Service) doPush(ctx context.Context, subName string, d pushDelivery) bo
 	}
 	req.Header = hdr
 	req.Header.Set("User-Agent", "APIs-Google; (+https://developers.google.com/webmasters/APIs-Google.html)")
-	resp, err := s.push.Do(req)
+	resp, err := s.pushClient().Do(req)
 	if err != nil {
 		s.env.Log.Debug("pubsub: push failed", "subscription", subName, "endpoint", endpoint, "err", err)
 		return false
@@ -220,4 +220,16 @@ func (s *Service) idToken(ctx context.Context, email, aud string) (string, error
 		return "", nil
 	}
 	return keys.IDToken(ctx, email, aud)
+}
+
+// pushClient returns the push HTTP client: through the load balancer's
+// DNS-aware transport when the lb service runs (FR-INT-011: push
+// endpoints served by an emulated load balancer), else the plain client.
+func (s *Service) pushClient() *http.Client {
+	if svc, ok := s.env.Lookup("lb"); ok {
+		if p, ok := svc.(interface{ PushTransport() http.RoundTripper }); ok {
+			return &http.Client{Transport: p.PushTransport(), Timeout: s.push.Timeout}
+		}
+	}
+	return s.push
 }
