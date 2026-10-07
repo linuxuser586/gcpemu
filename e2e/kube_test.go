@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,7 +35,7 @@ type kube struct {
 	t        *testing.T
 	endpoint string
 	hc       *http.Client
-	file     string // kubeconfig path (for istioctl)
+	file     string // kubeconfig path (for helm)
 }
 
 // newKube fetches the cluster's kubeconfig from the emulator, as
@@ -195,23 +196,65 @@ func (k *kube) logs(ns, selector string) string {
 
 // ---- Istio ----
 
-// istioVersion is the pinned Istio release (istioctl and images).
+// Istio is installed from its standard Helm charts (FR-GKE-009, IF-004)
+// with a pinned Helm. The charts come from the Istio release archive
+// (manifests/charts), which is checksum-verified; the release's charts are
+// not published to Istio's chart repositories.
+
+// istioVersion is the pinned Istio release (charts and images).
 const istioVersion = "1.31.1"
 
-// istioctl downloads the pinned istioctl for the host into the cache
-// directory (once), verifying the release checksum.
-func istioctl(t *testing.T) string {
+// helmVersion is the pinned Helm release; helmSHA256 its archive checksums.
+const helmVersion = "v3.21.0"
+
+var helmSHA256 = map[string]string{
+	"linux-amd64":  "0093eb572e3d2380f094df162ddb525e219249de88957afe24cfbb19632acd36",
+	"linux-arm64":  "8de5a0c9a47431e59fd560e91e0779c8cf9316c383da7efb84128a4c339ecb2d",
+	"darwin-amd64": "8bc0c1f85f8738cc3cda4a2cc73047145bcdcb1f4d9cdcc29073037bfb22fa2e",
+	"darwin-arm64": "68bfbdc022c543a2a022597b20298216877e98abe6e4a345d3ecf114d79cae5f",
+}
+
+// helm downloads the pinned helm for the host into the cache directory
+// (once), verifying its checksum.
+func helm(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(cacheDir(t), "istio-"+istioVersion)
-	bin := filepath.Join(dir, "istioctl")
+	dir := filepath.Join(cacheDir(t), "helm-"+helmVersion)
+	bin := filepath.Join(dir, "helm")
 	if _, err := os.Stat(bin); err == nil {
 		return bin
+	}
+	plat := goruntime.GOOS + "-" + goruntime.GOARCH
+	want, ok := helmSHA256[plat]
+	if !ok {
+		t.Skipf("no pinned helm for %s", plat)
+	}
+	asset := "helm-" + helmVersion + "-" + plat + ".tar.gz"
+	archive := fetch(t, "https://get.helm.sh/"+asset)
+	if got := sha256.Sum256(archive); hex.EncodeToString(got[:]) != want {
+		t.Fatalf("%s: checksum mismatch (got %x, want %s)", asset, got, want)
+	}
+	if err := untar(archive, dir, func(name string) (string, bool) {
+		return "helm", filepath.Base(name) == "helm"
+	}); err != nil {
+		t.Fatalf("%s: %v", asset, err)
+	}
+	return bin
+}
+
+// istioCharts downloads the pinned Istio release for the host into the
+// cache directory (once), verifying the release checksum, and returns its
+// manifests/charts directory.
+func istioCharts(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(cacheDir(t), "istio-"+istioVersion, "charts")
+	if _, err := os.Stat(filepath.Join(dir, "gateway", "Chart.yaml")); err == nil {
+		return dir
 	}
 	osName := goruntime.GOOS
 	if osName == "darwin" {
 		osName = "osx"
 	}
-	asset := fmt.Sprintf("istioctl-%s-%s-%s.tar.gz", istioVersion, osName, goruntime.GOARCH)
+	asset := fmt.Sprintf("istio-%s-%s-%s.tar.gz", istioVersion, osName, goruntime.GOARCH)
 	base := "https://github.com/istio/istio/releases/download/" + istioVersion + "/"
 	archive := fetch(t, base+asset)
 	sum := strings.Fields(string(fetch(t, base+asset+".sha256")))
@@ -219,32 +262,67 @@ func istioctl(t *testing.T) string {
 	if len(sum) == 0 || sum[0] != hex.EncodeToString(got[:]) {
 		t.Fatalf("%s: checksum mismatch (got %x, release says %v)", asset, got, sum)
 	}
-	zr, err := gzip.NewReader(bytes.NewReader(archive))
-	if err != nil {
+	prefix := "istio-" + istioVersion + "/manifests/charts/"
+	tmp := dir + ".tmp"
+	_ = os.RemoveAll(tmp)
+	if err := untar(archive, tmp, func(name string) (string, bool) {
+		rel, ok := strings.CutPrefix(name, prefix)
+		return rel, ok && rel != ""
+	}); err != nil {
+		t.Fatalf("%s: %v", asset, err)
+	}
+	_ = os.RemoveAll(dir)
+	if err := os.Rename(tmp, dir); err != nil {
 		t.Fatal(err)
 	}
+	return dir
+}
+
+// untar extracts the regular files of a .tar.gz that pick maps to a
+// relative path into dir.
+func untar(archive []byte, dir string, pick func(name string) (string, bool)) error {
+	zr, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return err
+	}
 	tr := tar.NewReader(zr)
+	n := 0
 	for {
 		h, err := tr.Next()
-		if err != nil {
-			t.Fatalf("%s: no istioctl in archive: %v", asset, err)
+		if err == io.EOF {
+			break
 		}
-		if filepath.Base(h.Name) != "istioctl" {
+		if err != nil {
+			return err
+		}
+		rel, ok := pick(h.Name)
+		if !ok || h.Typeflag != tar.TypeReg {
 			continue
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
+		rel = filepath.Clean(rel)
+		if filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("unsafe path %q", h.Name)
 		}
-		tmp := bin + ".tmp"
-		b, _ := io.ReadAll(tr)
-		if err := os.WriteFile(tmp, b, 0o755); err != nil {
-			t.Fatal(err)
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
 		}
-		if err := os.Rename(tmp, bin); err != nil {
-			t.Fatal(err)
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			return err
 		}
-		return bin
+		if err := os.WriteFile(p+".tmp", b, os.FileMode(h.Mode)&0o755|0o600); err != nil {
+			return err
+		}
+		if err := os.Rename(p+".tmp", p); err != nil {
+			return err
+		}
+		n++
 	}
+	if n == 0 {
+		return errors.New("nothing extracted")
+	}
+	return nil
 }
 
 func fetch(t *testing.T, u string) []byte {
@@ -265,44 +343,44 @@ func fetch(t *testing.T, u string) []byte {
 // gatewayNEG is the standalone NEG of the ingress gateway's HTTPS port.
 const gatewayNEG = "ref-istio-gateway"
 
-// istioOperator installs the minimal profile (istiod) plus an ingress
-// gateway whose Service exposes 443 → 8443 as a GKE standalone NEG for the
-// load balancer (container-native load balancing).
-const istioOperator = `apiVersion: install.istio.io/v1alpha1
-kind: IstioOperator
-spec:
-  profile: minimal
-  components:
-    ingressGateways:
-    - name: istio-ingressgateway
-      enabled: true
-      k8s:
-        service:
-          type: ClusterIP
-          ports:
-          - name: status-port
-            port: 15021
-            targetPort: 15021
-          - name: https
-            port: 443
-            targetPort: 8443
-        serviceAnnotations:
-          cloud.google.com/neg: '{"exposed_ports":{"443":{"name":"` + gatewayNEG + `"}}}'
+// gatewayValues configures the ingress gateway chart: its Service exposes
+// 443 → 8443 as a GKE standalone NEG for the load balancer
+// (container-native load balancing).
+const gatewayValues = `service:
+  type: ClusterIP
+  annotations:
+    cloud.google.com/neg: '{"exposed_ports":{"443":{"name":"` + gatewayNEG + `"}}}'
+  ports:
+  - name: status-port
+    port: 15021
+    protocol: TCP
+    targetPort: 15021
+  - name: https
+    port: 443
+    protocol: TCP
+    targetPort: 8443
 `
 
-// installIstio runs `istioctl install` against the cluster.
+// installIstio installs Istio's base, istiod and gateway Helm charts.
 func installIstio(t *testing.T, k *kube) {
 	t.Helper()
-	bin := istioctl(t)
-	f := filepath.Join(t.TempDir(), "istio.yaml")
-	if err := os.WriteFile(f, []byte(istioOperator), 0o644); err != nil {
+	bin, charts := helm(t), istioCharts(t)
+	values := filepath.Join(t.TempDir(), "gateway.yaml")
+	if err := os.WriteFile(values, []byte(gatewayValues), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "install", "-y", "-f", f, "--kubeconfig", k.file, "--readiness-timeout", "8m")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("istioctl install: %v\n%s\n%s", err, tail(string(out), 40), k.logs("istio-system", "app=istiod"))
+	for _, rel := range [][]string{
+		{"istio-base", "base"},
+		{"istiod", "istio-control/istio-discovery"},
+		{"istio-ingressgateway", "gateway", "-f", values},
+	} {
+		args := append([]string{"upgrade", "--install", rel[0], filepath.Join(charts, rel[1]), "-n", "istio-system", "--create-namespace",
+			"--kubeconfig", k.file, "--wait", "--timeout", "8m"}, rel[2:]...)
+		out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("helm install %s: %v\n%s\n%s", rel[0], err, tail(string(out), 40), k.logs("istio-system", "app=istiod"))
+		}
 	}
 }

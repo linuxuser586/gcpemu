@@ -33,7 +33,7 @@ import (
 //  1. tofu apply creates the whole stack (stack/), and a plan right after
 //     shows no changes;
 //  2. a multi-arch Go API image (app/) is built and pushed to Artifact
-//     Registry; Istio is installed with istioctl, its ingress gateway
+//     Registry; Istio is installed from its Helm charts, its ingress gateway
 //     requires mTLS from the LB, and the app is deployed; a second apply
 //     adds the NEG backend service;
 //  3. https://app.example.test/ serves the bucket's page, the second
@@ -50,7 +50,7 @@ import (
 //  9. urlMaps.invalidateCache on /* makes the next request a miss;
 //  10. tofu destroy leaves no containers.
 //
-// Steps 2 and 4–8 need internet access (istioctl, Istio images, step 7's
+// Steps 2 and 4–8 need internet access (Helm, Istio charts and images, step 7's
 // egress target) and run only with GCPEMU_NET_TESTS=1.
 func TestReferenceStack(t *testing.T) {
 	emutest.RequireRuntime(t)
@@ -87,7 +87,7 @@ func TestReferenceStack(t *testing.T) {
 		r.step("7 egress via nat", false, r.step7)
 		r.step("8 iam enforce", false, r.step8)
 	} else {
-		t.Log("GCPEMU_NET_TESTS != 1: skipping steps 2 and 4–8 (they download istioctl and Istio images and reach the internet)")
+		t.Log("GCPEMU_NET_TESTS != 1: skipping steps 2 and 4–8 (they download Helm, Istio charts and images and reach the internet)")
 	}
 	r.step("10 tofu destroy", true, r.step10)
 

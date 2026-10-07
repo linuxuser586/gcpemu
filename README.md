@@ -65,6 +65,8 @@ Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress
 instead of timing out; with `--offline`, NAT-allowed egress hits a sink that records the attempt
 and returns `natSinkResponse` (`GCPEMU_NAT_SINK_RESPONSE`, default `503:gcpemu offline: egress blocked`).
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
+`LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
+load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009).
 
 ### Real hostnames: GKE pods and host mode
 
@@ -137,8 +139,8 @@ in-process emulator with IAM in `enforce` mode:
    the `example.test.` zone and a global external ALB with Cloud CDN (backend bucket, NEG
    backend service with backend mTLS, managed certificate, HTTP→HTTPS redirect); a plan
    right after must be empty;
-2. the app is built for amd64 and arm64 FROM scratch and pushed to AR, Istio is installed with
-   `istioctl` (its ingress gateway requires the LB's client certificate), the app is deployed
+2. the app is built for amd64 and arm64 FROM scratch and pushed to AR, Istio is installed from
+   its Helm charts (its ingress gateway requires the LB's client certificate), the app is deployed
    and a second apply (`api_neg_name`) adds the gateway's GKE NEG to the load balancer;
 3. `https://app.example.test/` (emulated DNS, emulator CA; Go client and curl) serves the
    bucket's page and the second request reports `X-Cache-Status: hit`;
@@ -157,8 +159,8 @@ GCPEMU_NET_TESTS=0 make e2e       # offline-ish: steps 1, 3, 9 and 10 only
 ```
 
 It needs a container runtime and `tofu` on `PATH`; `tofu init` downloads the `google` and `tls`
-providers. Steps 2 and 4–8 download `istioctl` (pinned, checksum-verified) and the Istio
-images and reach `https://example.com/`, so they only run with `GCPEMU_NET_TESTS=1`.
+providers. Steps 2 and 4–8 download Helm and the Istio release for its charts (both pinned and
+checksum-verified) and the Istio images and reach `https://example.com/`, so they only run with `GCPEMU_NET_TESTS=1`.
 Downloads are cached in `$GCPEMU_E2E_CACHE` (default `<user cache dir>/gcpemu-e2e`). The run
 must finish within 10 minutes (`GCPEMU_E2E_BUDGET` overrides); it prints per-step timings.
 With `emulator_gateway` empty the module targets real GCP (set `project` and `domain`).
