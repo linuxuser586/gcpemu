@@ -94,6 +94,18 @@ func TestConnectivityAndIAM(t *testing.T) {
 		}
 		c.Close(ctx)
 	}
+	// Connections are in the request log (FR-CORE-061).
+	var admitted, refused bool
+	for _, e := range inst.Env.RequestLog.Entries("sql") {
+		if e.Protocol != "postgres" || e.Resource != "projects/"+testProject+"/instances/conn" || e.Principal != "postgres" {
+			continue
+		}
+		admitted = admitted || (e.Status == 0 && e.Code == "OK")
+		refused = refused || (e.Status == 1 && e.Code == "28000")
+	}
+	if !admitted || !refused {
+		t.Errorf("sql request log: %+v", inst.Env.RequestLog.Entries("sql"))
+	}
 
 	// IAM database users.
 	const sa = "app-sa@" + testProject + ".iam.gserviceaccount.com"

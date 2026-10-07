@@ -15,6 +15,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/sql/proxy"
 )
@@ -67,10 +68,16 @@ func (s *Service) agentLogin(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, apierr.InvalidArgument("%v", err))
 		return
 	}
+	start := time.Now()
 	resp := s.decideLogin(r.Context(), rec, &req)
+	e := reqlog.Entry{Time: start, Service: "sql", Protocol: "postgres", Method: "CONNECT " + req.Listener + " " + req.Remote,
+		Resource: "projects/" + project + "/instances/" + name, Principal: req.User, Code: "OK",
+		LatencyMS: float64(time.Since(start).Microseconds()) / 1000}
 	if resp.Action == proxy.ActionDeny {
 		s.env.Log.Info("sql: connection refused", "instance", project+":"+name, "user", req.User, "remote", req.Remote, "listener", req.Listener, "reason", resp.Message)
+		e.Status, e.Code = 1, resp.Code
 	}
+	s.env.RequestLog.Add(e)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

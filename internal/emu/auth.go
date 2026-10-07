@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"
@@ -33,6 +34,42 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 func PrincipalFrom(ctx context.Context) Principal {
 	p, _ := ctx.Value(principalKey{}).(Principal)
 	return p
+}
+
+// CallInfo collects what the request log reports about a call beyond its
+// method and status (FR-CORE-061): the resource whose permission was
+// checked first.
+type CallInfo struct {
+	mu       sync.Mutex
+	resource string
+}
+
+type callInfoKey struct{}
+
+// WithCallInfo returns ctx carrying a fresh CallInfo.
+func WithCallInfo(ctx context.Context) (context.Context, *CallInfo) {
+	ci := &CallInfo{}
+	return context.WithValue(ctx, callInfoKey{}, ci), ci
+}
+
+// NoteResource records the resource a call acts on (the first one wins).
+func NoteResource(ctx context.Context, resource string) {
+	ci, _ := ctx.Value(callInfoKey{}).(*CallInfo)
+	if ci == nil || resource == "" {
+		return
+	}
+	ci.mu.Lock()
+	if ci.resource == "" {
+		ci.resource = resource
+	}
+	ci.mu.Unlock()
+}
+
+// Resource returns the recorded resource.
+func (ci *CallInfo) Resource() string {
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+	return ci.resource
 }
 
 // Authenticator maps a bearer token to a principal (FR-CORE-051). It is
@@ -90,6 +127,7 @@ func (a *PolicyAuthorizer) Authenticate(ctx context.Context, token string) (Prin
 }
 
 func (a *PolicyAuthorizer) Check(ctx context.Context, permission, resource string) error {
+	NoteResource(ctx, resource)
 	if a.mode == config.IAMOff || a.eval == nil {
 		return nil
 	}

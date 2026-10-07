@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -162,4 +163,80 @@ func TestBindWarning(t *testing.T) {
 			t.Errorf("bind %s: warned=%v, want %v; log:\n%s", tc.bind, got, tc.warn, out.String())
 		}
 	}
+}
+
+// TestRequestLogEntries is FR-CORE-061: every API call is logged with
+// method, principal, resource, status and latency, in JSON and text.
+func TestRequestLogEntries(t *testing.T) {
+	for _, format := range []string{"json", "text"} {
+		cfg := config.Defaults()
+		cfg.Ephemeral = true
+		cfg.DataDir = t.TempDir()
+		cfg.Services = []string{"dns"}
+		cfg.Ports["gateway"] = 0
+		cfg.LogFormat = format
+		svc := emu.Service(&noteSvc{})
+		var out syncBuffer
+		in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return svc }}, &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := context.Background()
+		if err := in.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.Get("http://" + in.Env.Endpoints.Get("gateway") + "/dns/v1/projects/p/managedZones/z")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		_ = in.Shutdown(ctx)
+
+		es := in.Log.Entries("dns")
+		if len(es) != 1 {
+			t.Fatalf("%s: %d entries", format, len(es))
+		}
+		e := es[0]
+		if e.Method != "GET /v1/projects/p/managedZones/z" || e.Resource != "//dns.googleapis.com/projects/p/managedZones/z" ||
+			e.Principal != "user:dev@example.com" || e.Status != 200 || e.Protocol != "http" {
+			t.Errorf("%s: entry = %+v", format, e)
+		}
+		want := `"resource":"//dns.googleapis.com/projects/p/managedZones/z"`
+		if format == "text" {
+			want = "resource=//dns.googleapis.com/projects/p/managedZones/z"
+		}
+		if !strings.Contains(out.String(), want) || !strings.Contains(out.String(), "latencyMs") {
+			t.Errorf("%s log lacks %s:\n%s", format, want, out.String())
+		}
+	}
+}
+
+// noteSvc checks one permission per request, as service modules do.
+type noteSvc struct{ fakeSvc }
+
+func (n *noteSvc) Register(r emu.Router) error {
+	auth := emu.NewPolicyAuthorizer(config.IAMOff, nil)
+	r.Mount("dns", nil, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = auth.Check(req.Context(), "dns.managedZones.get", "//dns.googleapis.com"+strings.TrimPrefix(req.URL.Path, "/v1"))
+		_ = auth.Check(req.Context(), "dns.changes.list", "//dns.googleapis.com/other")
+	}))
+	return nil
+}
+
+// syncBuffer is a goroutine-safe log sink.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

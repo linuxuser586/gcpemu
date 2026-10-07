@@ -2,6 +2,7 @@ package compute_test
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -132,6 +133,7 @@ func TestEgressThroughNAT(t *testing.T) {
 	}
 	natRouter(t, c)
 	eventually(t, "egress with NAT", func() (bool, string) { out := fetch(t, rt, id); return connected(out), out })
+	natLogged(t, inst, "OK")
 
 	// Port reporting (FR-NAT-003).
 	m, err := c.Routers.GetNatMappingInfo(proj, "us-central1", "router").Do()
@@ -203,6 +205,23 @@ func TestOfflineSink(t *testing.T) {
 			return nil
 		})
 		return n > 0 && strings.Contains(last, "1.1.1.1:80") && strings.Contains(last, "vm-offline"), last
+	})
+	natLogged(t, inst, "OFFLINE_SINK")
+}
+
+// natLogged waits for an egress entry with code in the request log
+// (FR-CORE-061), attributed to the test's Cloud NAT gateway.
+func natLogged(t *testing.T, inst *emutest.Instance, code string) {
+	t.Helper()
+	eventually(t, "nat request log entry "+code, func() (bool, string) {
+		es := inst.Env.RequestLog.Entries("nat")
+		for _, e := range es {
+			if e.Code == code && e.Resource == "projects/"+proj+"/regions/us-central1/routers/router/nats/nat" &&
+				strings.HasPrefix(e.Method, "EGRESS ") && strings.Contains(e.Method, " -> ") {
+				return true, ""
+			}
+		}
+		return false, fmt.Sprint(es)
 	})
 }
 

@@ -10,6 +10,7 @@ import (
 	mdns "github.com/miekg/dns"
 
 	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 )
 
 // Authoritative data plane (FR-DNS-003/004). Public zones are served to
@@ -50,7 +51,9 @@ func (s *Service) Resolve(ctx context.Context, name string, qtype uint16) ([]mdn
 
 // serveDNS is the miekg/dns handler for UDP and TCP.
 func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
+	start := time.Now()
 	resp := new(mdns.Msg)
+	network := normalizeNetwork(frontend.Network(req))
 	switch {
 	case req.Opcode != mdns.OpcodeQuery:
 		resp.SetRcode(req, mdns.RcodeNotImplemented)
@@ -60,7 +63,7 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 		resp.SetRcode(req, mdns.RcodeRefused)
 	default:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		a := s.answer(ctx, normalizeNetwork(frontend.Network(req)), req.Question[0])
+		a := s.answer(ctx, network, req.Question[0])
 		cancel()
 		resp.SetReply(req)
 		resp.Rcode = a.Rcode
@@ -90,6 +93,31 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	if err := w.WriteMsg(resp); err != nil {
 		s.env.Log.Debug("dns write", "err", err)
 	}
+	s.logQuery(w, req, resp, network, start)
+}
+
+// logQuery adds a query to the request log (FR-CORE-061): the answering
+// zone as the resource and the client's VPC network, if any, as the
+// principal.
+func (s *Service) logQuery(w mdns.ResponseWriter, req, resp *mdns.Msg, network string, start time.Time) {
+	e := reqlog.Entry{Time: start, Service: "dns", Protocol: "dns", Principal: network,
+		Status: resp.Rcode, Code: mdns.RcodeToString[resp.Rcode],
+		LatencyMS: float64(time.Since(start).Microseconds()) / 1000}
+	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
+		e.Method = "TCP "
+	} else {
+		e.Method = "UDP "
+	}
+	if len(req.Question) == 1 {
+		q := req.Question[0]
+		e.Method += mdns.TypeToString[q.Qtype] + " " + q.Name
+		if z := s.currentIndex().findZone(strings.ToLower(mdns.Fqdn(q.Name)), network); z != nil {
+			e.Resource = "projects/" + z.project + "/managedZones/" + z.name
+		}
+	} else {
+		e.Method += mdns.OpcodeToString[req.Opcode]
+	}
+	s.env.RequestLog.Add(e)
 }
 
 // SetAddressMapper installs a function that rewrites A record addresses in

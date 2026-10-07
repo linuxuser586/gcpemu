@@ -631,4 +631,22 @@ func TestPrivateZoneVisibility(t *testing.T) {
 	if rrs, err := svc.(*dns.Service).Resolve(context.Background(), "db.corp.test", mdns.TypeA); err != nil || len(rrs) != 1 || rrs[0].(*mdns.A).A.String() != "192.0.2.1" {
 		t.Fatalf("Resolve: %v %v", rrs, err)
 	}
+
+	// Queries are in the request log (FR-CORE-061) with the answering zone
+	// and the client's network.
+	var onA, refused bool
+	for _, e := range inst.Env.RequestLog.Entries("dns") {
+		if e.Protocol != "dns" {
+			continue
+		}
+		if e.Method == "UDP A db.corp.test." && e.Principal == vpcA && e.Resource == "projects/"+proj+"/managedZones/priv" && e.Code == "NOERROR" {
+			onA = true
+		}
+		if e.Method == "TCP A db.svc.internal." && e.Principal == "" && e.Resource == "" && e.Code == "REFUSED" {
+			refused = true
+		}
+	}
+	if !onA || !refused {
+		t.Errorf("dns request log: %+v", inst.Env.RequestLog.Entries("dns"))
+	}
 }
