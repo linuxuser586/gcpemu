@@ -3,6 +3,7 @@ package dns_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -648,5 +649,34 @@ func TestPrivateZoneVisibility(t *testing.T) {
 	}
 	if !onA || !refused {
 		t.Errorf("dns request log: %+v", inst.Env.RequestLog.Entries("dns"))
+	}
+}
+
+// TestStandardParameters is Section 7.2 through the gateway: `fields`
+// selects a partial response and `prettyPrint=false` compacts it.
+func TestStandardParameters(t *testing.T) {
+	inst := emutest.Start(t, []string{"dns"})
+	c := newClient(t, inst.GatewayURL()+"/")
+	if _, err := c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "z1", DnsName: "z1.test.", Description: "d"}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	get := func(q string) string {
+		t.Helper()
+		resp, err := http.Get(inst.GatewayURL() + "/dns/v1/projects/" + proj + "/managedZones?" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	if got := get("fields=managedZones(name,dnsName)&prettyPrint=false"); got != `{"managedZones":[{"dnsName":"z1.test.","name":"z1"}]}`+"\n" {
+		t.Errorf("partial response = %q", got)
+	}
+	if got := get("fields=managedZones/name"); !strings.Contains(got, "\n  \"managedZones\": [") || strings.Contains(got, "dnsName") {
+		t.Errorf("pretty partial response = %q", got)
+	}
+	if got := get("fields=managedZones(name"); !strings.Contains(got, `"INVALID_ARGUMENT"`) {
+		t.Errorf("bad fields = %q", got)
 	}
 }

@@ -307,8 +307,16 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 			apierr.Write(sw, err)
 		} else if g.injectHTTP(sw, r, service) {
 			// fault injected; response already written or connection dropped
+		} else if f, ferr := formatFor(r); ferr != nil {
+			apierr.Write(sw, apierr.InvalidArgument("%v", ferr))
 		} else {
 			r = r.WithContext(emu.WithPrincipal(r.Context(), p))
+			var hw http.ResponseWriter = sw
+			var fw *formatWriter
+			if f != nil && r.Header.Get("Upgrade") == "" {
+				fw = newFormatWriter(sw, f)
+				hw = fw
+			}
 			func() {
 				defer func() {
 					if rec := recover(); rec != nil {
@@ -321,7 +329,10 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 						}
 					}
 				}()
-				h.ServeHTTP(sw, r)
+				h.ServeHTTP(hw, r)
+				if fw != nil {
+					fw.finish()
+				}
 			}()
 		}
 		g.log.Add(reqlog.Entry{
