@@ -130,6 +130,12 @@ func TestWorkloadIdentityPoolCRUD(t *testing.T) {
 	if p, _ := pools.Get(name).Do(); p.DisplayName != "b" {
 		t.Fatalf("patch: %+v", p)
 	}
+	if r, err := pools.ListAttestationRules(name).Do(); err != nil || len(r.AttestationRules) != 0 {
+		t.Fatalf("listAttestationRules: %v %+v", err, r)
+	}
+	if _, err := pools.ListAttestationRules(name + "-missing").Do(); httpCode(err) != 404 {
+		t.Fatalf("listAttestationRules of a missing pool: want 404, got %v", err)
+	}
 	if _, err := pools.Delete(name).Do(); err != nil {
 		t.Fatal(err)
 	}

@@ -174,6 +174,23 @@ the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. 
 `gke-gcloud-auth-plugin` component), kubectl, dig and Docker come from `PATH`; Helm, crane, ko
 and the Auth Proxy are downloaded at pinned, checksum-verified versions.
 
+### OpenTofu acceptance (SRS 11.1, IF-001)
+
+`make tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
+DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE, Artifact
+Registry), plans again expecting no changes, destroys it and checks the state is empty. It does
+this with the `google` and `google-beta` providers, each at the latest release of the current
+and the previous minor (looked up in the OpenTofu registry), against a detached instance whose
+provider block is `gcpemu tofu-provider` output. `GCPEMU_TOFU_PROVIDERS` narrows the matrix
+(`google-beta`, `google@8.6.0`, `google@8.6.0,google-beta@8.5.0`) and `GCPEMU_TOFU_MODULES`
+the modules (`lb,dns`). The resource types each module must declare are listed in
+`compat/tofu_test.go`; that list is the supported surface. It needs `tofu` on `PATH` and, for
+Cloud SQL and GKE, a container runtime.
+
+The `gcpemu tofu-provider` block works for `google-beta` as well: rename it to
+`provider "google-beta"` and keep the `/v1/` endpoints, since the emulator also serves the beta
+API versions the provider uses.
+
 Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus a token: for
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
 clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.

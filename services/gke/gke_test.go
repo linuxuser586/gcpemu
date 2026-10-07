@@ -267,6 +267,10 @@ func TestGKE(t *testing.T) {
 		if got["status"] != "RUNNING" || got["endpoint"] != c.Endpoint || got["selfLink"] != "https://container.googleapis.com/v1/projects/"+project+"/zones/"+zone+"/clusters/c1" {
 			t.Errorf("REST cluster = %v", got)
 		}
+		var beta map[string]any
+		if code := gw(t, inst, "GET", "/container/v1beta1/"+parent+"/clusters/c1", nil, &beta); code != 200 || beta["endpoint"] != c.Endpoint {
+			t.Errorf("v1beta1 GET: %d %v", code, beta)
+		}
 		var list struct{ Clusters []map[string]any }
 		gw(t, inst, "GET", "/container/v1/projects/"+project+"/locations/-/clusters", nil, &list)
 		if len(list.Clusters) != 2 {
