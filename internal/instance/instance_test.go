@@ -153,6 +153,7 @@ func TestBindWarning(t *testing.T) {
 		cfg.DataDir = t.TempDir()
 		cfg.Services = []string{"dns"}
 		cfg.Bind = tc.bind
+		cfg.LogFormat = "text" // CI=true defaults to JSON
 		var out strings.Builder
 		in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &out)
 		if err != nil {
