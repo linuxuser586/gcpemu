@@ -1,9 +1,12 @@
 package gke
 
 import (
+	"context"
+	"encoding/json"
 	"hash/fnv"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -11,6 +14,7 @@ import (
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/compute"
 )
@@ -38,6 +42,10 @@ func (s *Service) registerInstanceGroups() {
 	cmp.HandleFunc("GET "+z+"instanceGroupManagers/{name}", s.getIGM)
 	cmp.HandleFunc("GET "+z+"instanceGroups", s.listIGs)
 	cmp.HandleFunc("GET "+z+"instanceGroups/{name}", s.getIG)
+	cmp.HandleFunc("POST "+z+"instanceGroups/{name}/setNamedPorts", func(w http.ResponseWriter, r *http.Request) {
+		s.setNamedPorts(w, r, cmp)
+	})
+	cmp.AddInstanceGroupResolver(s.resolveIG)
 }
 
 // poolGroup is one node pool's instance group in one zone.
@@ -45,7 +53,8 @@ type poolGroup struct {
 	name, project, zone string
 	cluster             *containerpb.Cluster
 	pool                *containerpb.NodePool
-	size                int64
+	nodes               []nodeRecord
+	namedPorts          []*computev1.NamedPort
 }
 
 // poolGroups returns the instance groups of every node pool in a zone.
@@ -59,10 +68,11 @@ func (s *Service) poolGroups(projectID, zone string) []poolGroup {
 					if !strings.Contains(u, "/zones/"+zone+"/") {
 						continue
 					}
-					g := poolGroup{name: path.Base(u), project: projectID, zone: zone, cluster: c, pool: np}
+					g := poolGroup{name: path.Base(u), project: projectID, zone: zone, cluster: c, pool: np,
+						namedPorts: rec.Int.NamedPorts[path.Base(u)]}
 					for _, n := range rec.Int.Nodes {
 						if n.Pool == np.Name && n.Zone == zone {
-							g.size++
+							g.nodes = append(g.nodes, n)
 						}
 					}
 					out = append(out, g)
@@ -84,6 +94,16 @@ func (s *Service) findGroup(r *http.Request) (poolGroup, bool) {
 	return poolGroup{}, false
 }
 
+func (g poolGroup) size() int64 { return int64(len(g.nodes)) }
+
+// fingerprint changes with the pool and the group's named ports.
+func (g poolGroup) fingerprint() string {
+	if len(g.namedPorts) == 0 {
+		return g.pool.Etag
+	}
+	return compute.Fingerprint([]any{g.pool.Etag, g.namedPorts})
+}
+
 func (g poolGroup) zonePath() string { return "projects/" + g.project + "/zones/" + g.zone }
 
 func (g poolGroup) id() uint64 {
@@ -103,10 +123,10 @@ func (g poolGroup) igm() *computev1.InstanceGroupManager {
 		InstanceGroup:     compute.SelfLink(zp + "/instanceGroups/" + g.name),
 		InstanceTemplate:  compute.SelfLink("projects/" + g.project + "/global/instanceTemplates/" + strings.TrimSuffix(g.name, "-grp")),
 		BaseInstanceName:  strings.TrimSuffix(g.name, "-grp"),
-		TargetSize:        g.size,
+		TargetSize:        g.size(),
 		CreationTimestamp: g.cluster.CreateTime,
 		Fingerprint:       g.pool.Etag,
-		CurrentActions:    &computev1.InstanceGroupManagerActionsSummary{None: g.size, ForceSendFields: []string{"None"}},
+		CurrentActions:    &computev1.InstanceGroupManagerActionsSummary{None: g.size(), ForceSendFields: []string{"None"}},
 		Status:            &computev1.InstanceGroupManagerStatus{IsStable: true, ForceSendFields: []string{"IsStable"}},
 		ForceSendFields:   []string{"TargetSize"},
 	}
@@ -121,9 +141,10 @@ func (g poolGroup) ig() *computev1.InstanceGroup {
 		Zone:              compute.SelfLink(zp),
 		SelfLink:          compute.SelfLink(zp + "/instanceGroups/" + g.name),
 		Network:           compute.SelfLink("projects/" + g.project + "/global/networks/" + g.cluster.Network),
-		Size:              g.size,
+		Size:              g.size(),
+		NamedPorts:        g.namedPorts,
 		CreationTimestamp: g.cluster.CreateTime,
-		Fingerprint:       g.pool.Etag,
+		Fingerprint:       g.fingerprint(),
 		ForceSendFields:   []string{"Size"},
 	}
 }
@@ -186,4 +207,110 @@ func (s *Service) getIG(w http.ResponseWriter, r *http.Request) {
 func igNotFound(r *http.Request, coll string) error {
 	return apierr.NotFound("The resource 'projects/%s/zones/%s/%s/%s' was not found",
 		r.PathValue("project"), r.PathValue("zone"), coll, r.PathValue("name"))
+}
+
+var namedPortRE = regexp.MustCompile(`^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// setNamedPorts sets a node pool group's named ports, which instance
+// group backends of a load balancer resolve their portName against
+// (FR-LB-005). The group's fingerprint is optional; a stale one is a 412.
+func (s *Service) setNamedPorts(w http.ResponseWriter, r *http.Request, cmp *compute.Service) {
+	if !s.checkIG(w, r, "compute.instanceGroups.update") {
+		return
+	}
+	var req computev1.InstanceGroupsSetNamedPortsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apierr.Write(w, apierr.InvalidArgument("Invalid JSON payload received. %v", err))
+		return
+	}
+	for i, np := range req.NamedPorts {
+		if np == nil {
+			np = &computev1.NamedPort{}
+			req.NamedPorts[i] = np
+		}
+		if !namedPortRE.MatchString(np.Name) {
+			apierr.Write(w, apierr.InvalidArgument("Invalid value for field 'namedPorts[%d].name': %q. Must be a match of regex '[a-z]([-a-z0-9]{0,61}[a-z0-9])?'", i, np.Name))
+			return
+		}
+		if np.Port < 1 || np.Port > 65535 {
+			apierr.Write(w, apierr.InvalidArgument("Invalid value for field 'namedPorts[%d].port': '%d'. Must be greater than or equal to 1", i, np.Port))
+			return
+		}
+	}
+	g, ok := s.findGroup(r)
+	if !ok {
+		apierr.Write(w, igNotFound(r, "instanceGroups"))
+		return
+	}
+	if req.Fingerprint != "" && req.Fingerprint != g.fingerprint() {
+		apierr.Write(w, apierr.FailedPrecondition("Supplied fingerprint does not match current metadata fingerprint.").
+			WithLegacy("conditionNotMet").WithHTTP(http.StatusPreconditionFailed))
+		return
+	}
+	key := clusterKey(g.project, g.cluster.Location, g.cluster.Name)
+	op, err := cmp.StartOperation(r.Context(), g.project, "zones/"+g.zone, "setNamedPorts",
+		g.zonePath()+"/instanceGroups/"+g.name, g.id(), func(ctx context.Context) error {
+			return s.env.Store.Update(func(tx store.Tx) error {
+				rec, err := getCluster(tx, key)
+				if err != nil {
+					return err
+				}
+				rec.Int.setNamedPorts(rec.cluster(), g.name, req.NamedPorts)
+				return putCluster(tx, rec)
+			})
+		})
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	writeJSON(w, op)
+}
+
+// setNamedPorts records group's named ports and drops those of groups the
+// cluster no longer has.
+func (in *clusterInternal) setNamedPorts(c *containerpb.Cluster, group string, ports []*computev1.NamedPort) {
+	live := map[string]bool{}
+	for _, np := range c.NodePools {
+		for _, u := range np.InstanceGroupUrls {
+			live[path.Base(u)] = true
+		}
+	}
+	for k := range in.NamedPorts {
+		if !live[k] {
+			delete(in.NamedPorts, k)
+		}
+	}
+	if len(ports) == 0 {
+		delete(in.NamedPorts, group)
+		return
+	}
+	if in.NamedPorts == nil {
+		in.NamedPorts = map[string][]*computev1.NamedPort{}
+	}
+	in.NamedPorts[group] = ports
+}
+
+// resolveIG serves node pool groups to load balancer backends: the nodes'
+// internal addresses and the group's named ports.
+func (s *Service) resolveIG(_ context.Context, p string) (compute.InstanceGroup, bool) {
+	segs := strings.Split(p, "/")
+	if len(segs) != 6 || segs[0] != "projects" || segs[2] != "zones" || segs[4] != "instanceGroups" {
+		return compute.InstanceGroup{}, false
+	}
+	for _, g := range s.poolGroups(segs[1], segs[3]) {
+		if g.name != segs[5] {
+			continue
+		}
+		ig := compute.InstanceGroup{NamedPorts: map[string]int{}}
+		for _, n := range g.nodes {
+			ig.Instances = append(ig.Instances, emu.NEGEndpoint{IP: n.IP, Instance: n.Name})
+		}
+		for _, np := range g.namedPorts {
+			if _, dup := ig.NamedPorts[np.Name]; !dup {
+				ig.NamedPorts[np.Name] = int(np.Port)
+			}
+		}
+		return ig, true
+	}
+	return compute.InstanceGroup{}, false
 }

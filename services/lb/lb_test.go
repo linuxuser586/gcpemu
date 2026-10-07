@@ -29,6 +29,8 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/services/compute"
 	"github.com/linuxuser586/gcpemu/services/dns"
 	"github.com/linuxuser586/gcpemu/services/lb"
 )
@@ -827,5 +829,64 @@ func TestRetriesAndTimeouts(t *testing.T) {
 	}
 	if resp, _ := get(t, cl, base+"/slow"); resp.StatusCode != http.StatusGatewayTimeout {
 		t.Fatalf("timeout: %d", resp.StatusCode)
+	}
+}
+
+// TestInstanceGroupBackend is FR-LB-005: a backend service with an
+// instance group backend routes to the group's instances at the named
+// port its portName resolves to.
+func TestInstanceGroupBackend(t *testing.T) {
+	e := start(t)
+	c := e.c
+	origin := newBackend(t)
+	const group = "projects/" + proj + "/zones/us-central1-a/instanceGroups/pool-grp"
+
+	bs := &computev1.BackendService{Name: "ig", LoadBalancingScheme: "EXTERNAL_MANAGED", Protocol: "HTTP", PortName: "web",
+		Backends: []*computev1.Backend{{Group: "zones/us-central1-a/instanceGroups/pool-grp", BalancingMode: "UTILIZATION"}}}
+	if _, err := c.BackendServices.Insert(proj, bs).Do(); err == nil {
+		t.Fatal("backend service with an unknown instance group was accepted")
+	} else if code, _ := apiErr(err); code != 404 {
+		t.Fatalf("unknown instance group: %v", err)
+	}
+
+	var ports atomic.Pointer[map[string]int]
+	ports.Store(&map[string]int{"web": int(origin.port())})
+	svc, _ := e.inst.Env.Lookup("compute")
+	svc.(*compute.Service).AddInstanceGroupResolver(func(_ context.Context, p string) (compute.InstanceGroup, bool) {
+		if p != group {
+			return compute.InstanceGroup{}, false
+		}
+		return compute.InstanceGroup{
+			Instances:  []emu.NEGEndpoint{{IP: "127.0.0.1", Instance: "node-1"}},
+			NamedPorts: *ports.Load(),
+		}, true
+	})
+	e.do(c.BackendServices.Insert(proj, bs).Do())
+	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/ig"}).Do())
+	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
+	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
+	url := "http://" + e.inst.Endpoint("lb:fr") + "/hello"
+
+	poll := func(want func(int, string) bool) (int, string) {
+		t.Helper()
+		var code int
+		var body string
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			resp, b := get(t, &http.Client{Timeout: 5 * time.Second}, url)
+			code, body = resp.StatusCode, b
+			if want(code, body) {
+				break
+			}
+		}
+		return code, body
+	}
+	if code, body := poll(func(c int, _ string) bool { return c == 200 }); code != 200 || !strings.HasSuffix(body, "/hello") {
+		t.Fatalf("via instance group: %d %q", code, body)
+	}
+
+	// Without the named port the group has no endpoints.
+	ports.Store(&map[string]int{"http": 80})
+	if code, _ := poll(func(c int, _ string) bool { return c != 200 }); code == 200 {
+		t.Fatal("still routed after the named port was removed")
 	}
 }

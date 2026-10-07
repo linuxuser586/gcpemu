@@ -133,8 +133,14 @@ func prepareBackendService(ctx context.Context, s *Service, sc scope, path strin
 			(segs[4] != "networkEndpointGroups" && segs[4] != "instanceGroups") {
 			return errInvalid(f, be.Group, "The URL is malformed.")
 		}
-		if segs[4] == "networkEndpointGroups" && segs[2] == "zones" {
-			if _, err := s.cmp.NEGEndpoints(ctx, p); err != nil {
+		if segs[2] == "zones" {
+			var err error
+			if segs[4] == "networkEndpointGroups" {
+				_, err = s.cmp.NEGEndpoints(ctx, p)
+			} else {
+				_, err = s.cmp.InstanceGroup(ctx, p)
+			}
+			if err != nil {
 				return errNotFound(p)
 			}
 		}
