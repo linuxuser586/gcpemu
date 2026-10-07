@@ -23,6 +23,18 @@ import (
 //	      description: App images
 //	      labels: {team: web}
 //	      immutableTags: false
+//	    - project: my-project    # FR-AR-006 remote repository
+//	      location: us-central1
+//	      id: dockerhub
+//	      mode: REMOTE_REPOSITORY
+//	      remote: {publicRepository: DOCKER_HUB}   # or {uri: https://quay.io}
+//	    - project: my-project    # FR-AR-006 virtual repository
+//	      location: us-central1
+//	      id: all
+//	      mode: VIRTUAL_REPOSITORY
+//	      upstreams:
+//	        - {id: mine, repository: projects/my-project/locations/us-central1/repositories/images, priority: 100}
+//	        - {id: hub, repository: projects/my-project/locations/us-central1/repositories/dockerhub, priority: 10}
 type seedFile struct {
 	Repositories []seedRepo `yaml:"repositories"`
 }
@@ -37,6 +49,15 @@ type seedRepo struct {
 	Description   string            `yaml:"description"`
 	Labels        map[string]string `yaml:"labels"`
 	ImmutableTags bool              `yaml:"immutableTags"`
+	Remote        *struct {
+		PublicRepository string `yaml:"publicRepository"`
+		URI              string `yaml:"uri"`
+	} `yaml:"remote"`
+	Upstreams []struct {
+		ID         string `yaml:"id"`
+		Repository string `yaml:"repository"`
+		Priority   int32  `yaml:"priority"`
+	} `yaml:"upstreams"`
 }
 
 // ApplySeed creates (or updates the description and labels of) the seeded
@@ -89,7 +110,25 @@ func (s *Service) seedRepo(ref repoRef, sr seedRepo) error {
 	if sr.ImmutableTags {
 		in.FormatConfig = &artifactregistrypb.Repository_DockerConfig{DockerConfig: &artifactregistrypb.Repository_DockerRepositoryConfig{ImmutableTags: true}}
 	}
-	if err := checkSupported(in); err != nil {
+	if rc := sr.Remote; rc != nil {
+		dr := &artifactregistrypb.RemoteRepositoryConfig_DockerRepository{}
+		if strings.EqualFold(rc.PublicRepository, "DOCKER_HUB") {
+			dr.Upstream = &artifactregistrypb.RemoteRepositoryConfig_DockerRepository_PublicRepository_{PublicRepository: artifactregistrypb.RemoteRepositoryConfig_DockerRepository_DOCKER_HUB}
+		} else if rc.URI != "" {
+			dr.Upstream = &artifactregistrypb.RemoteRepositoryConfig_DockerRepository_CustomRepository_{CustomRepository: &artifactregistrypb.RemoteRepositoryConfig_DockerRepository_CustomRepository{Uri: rc.URI}}
+		}
+		in.ModeConfig = &artifactregistrypb.Repository_RemoteRepositoryConfig{RemoteRepositoryConfig: &artifactregistrypb.RemoteRepositoryConfig{
+			RemoteSource: &artifactregistrypb.RemoteRepositoryConfig_DockerRepository_{DockerRepository: dr},
+		}}
+	}
+	if in.Mode == artifactregistrypb.Repository_VIRTUAL_REPOSITORY {
+		vc := &artifactregistrypb.VirtualRepositoryConfig{}
+		for _, u := range sr.Upstreams {
+			vc.UpstreamPolicies = append(vc.UpstreamPolicies, &artifactregistrypb.UpstreamPolicy{Id: u.ID, Repository: u.Repository, Priority: u.Priority})
+		}
+		in.ModeConfig = &artifactregistrypb.Repository_VirtualRepositoryConfig{VirtualRepositoryConfig: vc}
+	}
+	if err := checkSupported(in, ref.Location); err != nil {
 		return err
 	}
 	return s.env.Store.Update(func(tx store.Tx) error {
@@ -98,11 +137,16 @@ func (s *Service) seedRepo(ref repoRef, sr seedRepo) error {
 		if err != nil {
 			repo = in
 			repo.Name = ref.name()
-			repo.Mode = artifactregistrypb.Repository_STANDARD_REPOSITORY
+			if repo.Mode == artifactregistrypb.Repository_MODE_UNSPECIFIED {
+				repo.Mode = artifactregistrypb.Repository_STANDARD_REPOSITORY
+			}
 			repo.CreateTime = now
 			repo.RegistryUri = strings.TrimSuffix(ref.imagePrefix(), "/")
 		} else {
 			repo.Description, repo.Labels, repo.FormatConfig = in.Description, in.Labels, in.FormatConfig
+			if repo.Mode == in.Mode && in.ModeConfig != nil {
+				repo.ModeConfig = in.ModeConfig
+			}
 		}
 		repo.UpdateTime = now
 		normalizeRepo(repo)

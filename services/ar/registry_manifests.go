@@ -158,24 +158,12 @@ func (s *Service) getManifest(w http.ResponseWriter, r *http.Request, t *target,
 		writeRegError(w, rerr)
 		return
 	}
-	if !accepts(r, m.MediaType) {
-		writeRegError(w, regErr(http.StatusNotFound, "MANIFEST_UNKNOWN", "manifest of type %s found, but the Accept header does not support it", m.MediaType))
-		return
-	}
 	body, err := s.blobs.read(m.Digest)
 	if err != nil {
 		writeRegError(w, regErr(http.StatusNotFound, "MANIFEST_UNKNOWN", "manifest unknown: %s", ref))
 		return
 	}
-	h := w.Header()
-	h.Set("Content-Type", m.MediaType)
-	h.Set("Docker-Content-Digest", m.Digest)
-	h.Set("Content-Length", strconv.Itoa(len(body)))
-	h.Set("Etag", `"`+m.Digest+`"`)
-	w.WriteHeader(http.StatusOK)
-	if r.Method != http.MethodHead {
-		_, _ = w.Write(body)
-	}
+	writeManifest(w, r, m, body)
 }
 
 // putManifest validates and stores a manifest (and tag).

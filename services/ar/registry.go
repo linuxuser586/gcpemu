@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
+
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -75,6 +77,10 @@ func hostLocation(host string) (string, bool) {
 func (s *Service) resolve(r *http.Request, name string) (*target, *regError) {
 	segs := strings.Split(name, "/")
 	loc, hostMode := hostLocation(r.Host)
+	if l, ok := hostLocation(r.URL.Query().Get("ns")); ok {
+		// containerd mirror request for an Artifact Registry host.
+		loc, hostMode = l, true
+	}
 	if len(segs) > 0 {
 		if l, ok := hostLocation(segs[0]); ok {
 			loc, hostMode = l, true
@@ -167,6 +173,14 @@ func (s *Service) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		writeRegError(w, regErr(http.StatusNotFound, "NOT_FOUND", "not found"))
 		return
 	}
+	if pt, ok, rerr := s.mirrorTarget(r, name); ok {
+		if rerr != nil {
+			writeRegError(w, rerr)
+			return
+		}
+		s.mirrorRoute(w, r, pt, kind, arg)
+		return
+	}
 	t, rerr := s.resolve(r, name)
 	if rerr != nil {
 		if !s.authenticated(r) && s.enforcing() {
@@ -176,6 +190,19 @@ func (s *Service) serveRegistry(w http.ResponseWriter, r *http.Request) {
 		writeRegError(w, rerr)
 		return
 	}
+	switch repo := s.targetRepo(t); repo.GetMode() {
+	case artifactregistrypb.Repository_REMOTE_REPOSITORY:
+		s.remoteRoute(w, r, t, repo, kind, arg)
+	case artifactregistrypb.Repository_VIRTUAL_REPOSITORY:
+		s.virtualRoute(w, r, t, repo, kind, arg)
+	default:
+		s.standardRoute(w, r, t, kind, arg)
+	}
+}
+
+// standardRoute serves a request to a standard repository (and the
+// cache-management requests of a remote one).
+func (s *Service) standardRoute(w http.ResponseWriter, r *http.Request, t *target, kind, arg string) {
 	switch kind {
 	case "manifests":
 		s.manifests(w, r, t, arg)

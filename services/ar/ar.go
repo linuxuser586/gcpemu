@@ -4,10 +4,13 @@
 //
 // # Control plane
 //
-// Repositories (FR-AR-001) of format DOCKER and mode STANDARD_REPOSITORY can
-// be created, read, listed, patched and deleted in every Artifact Registry
-// location; create and delete return google.longrunning operations
-// (internal/lro). Other formats and modes return UNIMPLEMENTED. Packages,
+// Repositories (FR-AR-001) of format DOCKER can be created, read, listed,
+// patched and deleted in every Artifact Registry location; create and
+// delete return google.longrunning operations (internal/lro). Besides
+// STANDARD_REPOSITORY, the REMOTE_REPOSITORY (Docker Hub or a custom
+// registry, pulled through a cache) and VIRTUAL_REPOSITORY (members by
+// upstream policy priority) modes are served (FR-AR-006, remote.go).
+// Other formats return UNIMPLEMENTED. Packages,
 // versions, tags and dockerImages (FR-AR-004) are views derived from the
 // registry contents. REST is served by transcoding the google.api.http
 // annotations of the generated descriptors onto the same gRPC
@@ -34,6 +37,15 @@
 // mounts and tags is PROJECT/REPO/IMAGE within the resolved repository, and
 // the AR API reports image URIs as LOCATION-docker.pkg.dev/PROJECT/REPO/IMAGE.
 //
+// # Public registry mirror (FR-GKE-006)
+//
+// The registry also mirrors public registries for GKE nodes: containerd
+// mirror requests (?ns=docker.io) and the path form
+// REGISTRY/docker.io/library/busybox are pulled through a persistent,
+// digest-verified cache that keeps working offline (mirror.go,
+// pullthrough.go, upstream.go). RegistriesYAML renders the k3s node
+// configuration (registries.go).
+//
 // # Registry auth (FR-AR-003)
 //
 // Clients are challenged with "WWW-Authenticate: Bearer realm=<host>/v2/token"
@@ -53,6 +65,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
 	"google.golang.org/genproto/googleapis/cloud/location"
@@ -75,11 +88,27 @@ type Service struct {
 	conns   connTracker
 	ready   bool
 	uploads map[string]*upload
+
+	// Pull-through cache (pullthrough.go): upstream client, base URL
+	// overrides, tag TTL, coalesced manifest fetches, in-flight blob
+	// downloads and the context they run under.
+	upstream     *upstreamClient
+	upstreamURLs map[string]string
+	tagTTL       time.Duration
+	flights      flightGroup
+	fetches      map[string]*blobFetch
+	bgCtx        context.Context
+	bgCancel     context.CancelFunc
 }
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {
-	s := &Service{env: env, ops: lro.NewManager(env, "ar"), uploads: map[string]*upload{}}
+	s := &Service{
+		env: env, ops: lro.NewManager(env, "ar"), uploads: map[string]*upload{},
+		upstreamURLs: map[string]string{}, tagTTL: defaultTagTTL, fetches: map[string]*blobFetch{},
+	}
+	s.upstream = newUpstreamClient(env.Clock.Now)
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	s.api = &api{s: s}
 	return s
 }
@@ -115,6 +144,9 @@ func (s *Service) Start(ctx context.Context) error {
 	srv := gateway.NewServer(s.withRegistryAuth(s.env.Middleware("ar", http.HandlerFunc(s.serveRegistry))), s.env.Log)
 	srv.ConnState = s.conns.track
 	s.mu.Lock()
+	if s.bgCtx.Err() != nil {
+		s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+	}
 	s.srv, s.ready = srv, true
 	s.mu.Unlock()
 	go func() {
@@ -131,6 +163,7 @@ func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	srv := s.srv
 	s.srv, s.ready = nil, false
+	s.bgCancel()
 	s.mu.Unlock()
 	if srv == nil {
 		return nil

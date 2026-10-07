@@ -45,6 +45,14 @@ type Config struct {
 	WaitTimeout      time.Duration     `yaml:"waitTimeout" env:"WAIT_TIMEOUT"`
 	DNSNoForward     bool              `yaml:"dnsNoForward" env:"DNS_NO_FORWARD"`
 	Offline          bool              `yaml:"offline" env:"OFFLINE"`
+	// NATReject makes Cloud NAT egress enforcement reject disallowed
+	// connections immediately (TCP reset / ICMP unreachable) instead of
+	// silently dropping them like GCP (FR-NAT-002), for fast tests.
+	NATReject bool `yaml:"natReject" env:"NAT_REJECT"`
+	// NATSinkResponse is the response the --offline NAT sink returns to
+	// HTTP requests (FR-NAT-005): "STATUS" or "STATUS:BODY"; default
+	// "503:gcpemu offline: egress blocked".
+	NATSinkResponse string `yaml:"natSinkResponse" env:"NAT_SINK_RESPONSE"`
 	// DefaultProject is the project ID the metadata server reports
 	// (FR-IAM-008); empty means "gcpemu-project".
 	DefaultProject string `yaml:"defaultProject" env:"DEFAULT_PROJECT"`

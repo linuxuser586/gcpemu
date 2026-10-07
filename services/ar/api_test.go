@@ -100,7 +100,7 @@ func TestRepositoryValidation(t *testing.T) {
 		{"bad id", "projects/proj-1/locations/us", "Bad_ID", &artifactregistrypb.Repository{Format: artifactregistrypb.Repository_DOCKER}, codes.InvalidArgument},
 		{"no format", "projects/proj-1/locations/us", "r", &artifactregistrypb.Repository{}, codes.InvalidArgument},
 		{"npm", "projects/proj-1/locations/us", "r", &artifactregistrypb.Repository{Format: artifactregistrypb.Repository_NPM}, codes.Unimplemented},
-		{"remote", "projects/proj-1/locations/europe", "r", &artifactregistrypb.Repository{Format: artifactregistrypb.Repository_DOCKER, Mode: artifactregistrypb.Repository_REMOTE_REPOSITORY}, codes.Unimplemented},
+		{"remote without config", "projects/proj-1/locations/europe", "r", &artifactregistrypb.Repository{Format: artifactregistrypb.Repository_DOCKER, Mode: artifactregistrypb.Repository_REMOTE_REPOSITORY}, codes.InvalidArgument},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

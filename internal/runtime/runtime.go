@@ -272,6 +272,8 @@ type NetworkSpec struct {
 	Labels   map[string]string
 	// MTU sets com.docker.network.driver.mtu when non-zero.
 	MTU int
+	// Options are extra driver options (e.g. com.docker.network.bridge.*).
+	Options map[string]string
 }
 
 // Network is an inspected network.
@@ -289,6 +291,9 @@ type Network struct {
 // CreateNetwork creates a bridge network and returns its ID.
 func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, error) {
 	opts := map[string]string{}
+	for k, v := range s.Options {
+		opts[k] = v
+	}
 	if s.MTU > 0 {
 		opts["com.docker.network.driver.mtu"] = strconv.Itoa(s.MTU)
 	}

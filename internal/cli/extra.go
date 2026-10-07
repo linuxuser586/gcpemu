@@ -26,6 +26,7 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	{"dns_custom_endpoint", "dns", "/dns/v1/"},
 	{"artifact_registry_custom_endpoint", "ar", "/artifactregistry/v1/"},
 	{"compute_custom_endpoint", "compute", "/compute/v1/"},
+	{"service_networking_custom_endpoint", "compute", "/servicenetworking/v1/"},
 	{"container_custom_endpoint", "gke", "/container/v1/"},
 	{"sql_custom_endpoint", "sql", "/sql/v1beta4/"},
 }

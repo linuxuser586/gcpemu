@@ -27,6 +27,7 @@ type api struct {
 var mutableRepoFields = []string{
 	"description", "labels", "docker_config", "cleanup_policies",
 	"cleanup_policy_dry_run", "vulnerability_scanning_config", "disallow_unspecified_mode",
+	"virtual_repository_config",
 }
 
 // CreateRepository implements FR-AR-001 (long-running).
@@ -50,14 +51,16 @@ func (a *api) CreateRepository(ctx context.Context, req *artifactregistrypb.Crea
 	if in == nil {
 		in = &artifactregistrypb.Repository{}
 	}
-	if err := checkSupported(in); err != nil {
+	if err := checkSupported(in, loc); err != nil {
 		return nil, err
 	}
 	ref := repoRef{p, loc, id}
 	now := timestamppb.New(s.env.Clock.Now())
 	repo := proto.Clone(in).(*artifactregistrypb.Repository)
 	repo.Name = ref.name()
-	repo.Mode = artifactregistrypb.Repository_STANDARD_REPOSITORY
+	if repo.Mode == artifactregistrypb.Repository_MODE_UNSPECIFIED {
+		repo.Mode = artifactregistrypb.Repository_STANDARD_REPOSITORY
+	}
 	repo.CreateTime, repo.UpdateTime = now, now
 	repo.SizeBytes = 0
 	repo.SatisfiesPzs, repo.SatisfiesPzi = false, false
@@ -83,8 +86,9 @@ func (a *api) CreateRepository(ctx context.Context, req *artifactregistrypb.Crea
 	})
 }
 
-// checkSupported rejects formats and modes outside the emulated subset.
-func checkSupported(r *artifactregistrypb.Repository) error {
+// checkSupported rejects formats outside the emulated subset and invalid
+// mode configurations for a repository in location loc.
+func checkSupported(r *artifactregistrypb.Repository, loc string) error {
 	switch r.GetFormat() {
 	case artifactregistrypb.Repository_FORMAT_UNSPECIFIED:
 		return apierr.InvalidArgument("Repository format must be specified.")
@@ -92,13 +96,8 @@ func checkSupported(r *artifactregistrypb.Repository) error {
 	default:
 		return apierr.Unimplemented("Repository format %s is not supported by the emulator (field repository.format).", r.GetFormat())
 	}
-	switch r.GetMode() {
-	case artifactregistrypb.Repository_MODE_UNSPECIFIED, artifactregistrypb.Repository_STANDARD_REPOSITORY:
-	default:
-		return apierr.Unimplemented("Repository mode %s is not supported by the emulator (field repository.mode).", r.GetMode())
-	}
-	if r.GetModeConfig() != nil {
-		return apierr.Unimplemented("Remote and virtual repository configs are not supported by the emulator (field repository.mode_config).")
+	if err := checkModeConfig(r, loc); err != nil {
+		return err
 	}
 	if r.GetMavenConfig() != nil {
 		return apierr.InvalidArgument("maven_config is only valid for MAVEN repositories.")
@@ -211,6 +210,15 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 		repo, err := getRepo(tx, ref)
 		if err != nil {
 			return err
+		}
+		if vc := in.GetVirtualRepositoryConfig(); contains(paths, "virtual_repository_config") {
+			if repo.GetMode() != artifactregistrypb.Repository_VIRTUAL_REPOSITORY {
+				if vc != nil {
+					return apierr.InvalidArgument("virtual_repository_config is only valid for VIRTUAL_REPOSITORY repositories.")
+				}
+			} else if err := checkUpstreamPolicies(vc, ref.Location); err != nil {
+				return err
+			}
 		}
 		src, dst := in.ProtoReflect(), repo.ProtoReflect()
 		fields := dst.Descriptor().Fields()
