@@ -6,12 +6,17 @@ import (
 	"os"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/admin"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 )
 
 // newAdmin returns the /_emu/v1/ admin API (FR-CORE-045, Section 7.3).
 func newAdmin(in *Instance) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_emu/v1/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = w.Write(admin.OpenAPI)
+	})
 	mux.HandleFunc("GET /_emu/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

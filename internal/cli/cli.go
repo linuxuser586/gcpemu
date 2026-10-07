@@ -75,6 +75,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 		o.cdnCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.caCmd())
+	root.AddCommand(o.adminCmd())
 	return root
 }
 

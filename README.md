@@ -39,7 +39,8 @@ bin/gcpemu stop
 ```
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
-`fault add|list|clear`, `doctor`, `version`.
+`fault add|list|clear`, `doctor`, `version`, and `admin openapi` (the OpenAPI document of the
+`/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`).
 
 ### Endpoints
 
