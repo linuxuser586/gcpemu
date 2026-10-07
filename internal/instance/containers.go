@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -76,4 +77,43 @@ func (c *containers) shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	return rt.Cleanup(ctx, c.in.Config.Ephemeral)
+}
+
+// ContainerInfo describes one container the instance owns (admin API,
+// `gcpemu status`).
+type ContainerInfo struct {
+	Name     string `json:"name"`
+	Service  string `json:"service,omitempty"`
+	Resource string `json:"resource,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Image    string `json:"image"`
+	State    string `json:"state"`
+}
+
+// list returns the instance's labelled containers, sorted by name. It does
+// not connect to the runtime if no service has used it yet (nothing can
+// be running then).
+func (c *containers) list(ctx context.Context) ([]ContainerInfo, error) {
+	c.mu.Lock()
+	rt := c.rt
+	c.mu.Unlock()
+	out := []ContainerInfo{}
+	if rt == nil {
+		return out, nil
+	}
+	cts, err := rt.ListContainers(ctx, map[string]string{runtime.LabelInstance: rt.InstanceID})
+	if err != nil {
+		return nil, err
+	}
+	for _, ct := range cts {
+		out = append(out, ContainerInfo{Name: ct.Name, Service: ct.Labels[runtime.LabelService],
+			Resource: ct.Labels[runtime.LabelResource], Role: ct.Labels[runtime.LabelRole], Image: ct.Image, State: ct.Status})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// Containers lists the instance's containers (see containers.list).
+func (in *Instance) Containers(ctx context.Context) ([]ContainerInfo, error) {
+	return in.containers.list(ctx)
 }

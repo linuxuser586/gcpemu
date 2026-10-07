@@ -6,9 +6,10 @@ except for endpoint configuration. See [the SRS](GCP%20Local%20Emulator%20Softwa
 
 ## Status
 
-Milestones **M1** (core, IAM, Cloud Storage, Pub/Sub, Cloud DNS, Artifact Registry) and
-**M2** (compute networking, Cloud SQL, GKE, Cloud NAT) are implemented. M3 (ALB, CDN,
-backend mTLS) is not started.
+Milestones **M1** (core, IAM, Cloud Storage, Pub/Sub, Cloud DNS, Artifact Registry),
+**M2** (compute networking, Cloud SQL, GKE, Cloud NAT) and **M3** (Application Load Balancer,
+Cloud CDN, backend mTLS, Certificate Manager, host mode) are implemented. The full SRS 11.2
+reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 
 | Service | Package | Highlights |
 | --- | --- | --- |
@@ -21,7 +22,10 @@ backend mTLS) is not started.
 | Compute networking | `services/compute` | Networks, subnetworks, firewalls, routes, addresses, routers, NEGs, operations; servicenetworking; subnetworks realised as container networks |
 | Cloud NAT | `services/compute`, `services/nat` | Router NAT configs drive an egress gateway container; drop/reject, logging, offline sink |
 | Cloud SQL | `services/sql` | sqladmin v1beta4/v1 over real PostgreSQL 14–17 containers; connector (3307), IAM DB auth, authorized networks, private IP, backups, import/export |
-| GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync |
+| GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, real-hostname Google APIs in pods |
+| Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs |
+| Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
+| Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
 ## Quick start
 
@@ -115,6 +119,45 @@ Top-level keys are `projects`, `faults` and service names (`iam`, `compute`, `gc
 inst := emutest.Start(t, []string{"gcs", "pubsub"})
 inst.Setenv(t) // client env vars for this test
 ```
+
+### Reference stack (SRS 11.2)
+
+`e2e/` is the acceptance test of the whole emulator: one OpenTofu root module
+(`e2e/stack/`), a Go API (`e2e/app/`) and `TestReferenceStack`, which drives them against an
+in-process emulator with IAM in `enforce` mode:
+
+1. `tofu apply` creates a VPC and subnet (pod/service ranges), Cloud Router + NAT, a private
+   GKE cluster with Workload Identity and a node pool, an Artifact Registry repo, buckets
+   (static assets, uploads with a Pub/Sub notification), a topic with an OIDC push
+   subscription, Cloud SQL Postgres 16 on a private IP with an IAM service account user,
+   the `example.test.` zone and a global external ALB with Cloud CDN (backend bucket, NEG
+   backend service with backend mTLS, managed certificate, HTTP→HTTPS redirect); a plan
+   right after must be empty;
+2. the app is built for amd64 and arm64 FROM scratch and pushed to AR, Istio is installed with
+   `istioctl` (its ingress gateway requires the LB's client certificate), the app is deployed
+   and a second apply (`api_neg_name`) adds the gateway's GKE NEG to the load balancer;
+3. `https://app.example.test/` (emulated DNS, emulator CA; Go client and curl) serves the
+   bucket's page and the second request reports `X-Cache-Status: hit`;
+4. `/api/health` goes LB → Istio → app; a client without the LB certificate is refused;
+5. `/api/work` writes to GCS, inserts into Cloud SQL (Go connector, IAM auth) and publishes,
+   using Workload Identity and no endpoint configuration;
+6. the bucket notification and the message arrive by push with a verified OIDC token;
+7. the pod reaches the internet through Cloud NAT, and not after `nat_enabled=false`;
+8. `app_storage_access=false` makes step 5 fail with `PERMISSION_DENIED`;
+9. `urlMaps.invalidateCache` on `/*` makes the next request a `miss`;
+10. `tofu destroy` leaves no containers (`gcpemu status` lists the instance's containers).
+
+```sh
+make e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run TestReferenceStack -timeout 30m -v
+GCPEMU_NET_TESTS=0 make e2e       # offline-ish: steps 1, 3, 9 and 10 only
+```
+
+It needs a container runtime and `tofu` on `PATH`; `tofu init` downloads the `google` and `tls`
+providers. Steps 2 and 4–8 download `istioctl` (pinned, checksum-verified) and the Istio
+images and reach `https://example.com/`, so they only run with `GCPEMU_NET_TESTS=1`.
+Downloads are cached in `$GCPEMU_E2E_CACHE` (default `<user cache dir>/gcpemu-e2e`). The run
+must finish within 10 minutes (`GCPEMU_E2E_BUDGET` overrides); it prints per-step timings.
+With `emulator_gateway` empty the module targets real GCP (set `project` and `domain`).
 
 ## Development
 

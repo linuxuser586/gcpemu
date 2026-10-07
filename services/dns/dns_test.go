@@ -524,3 +524,23 @@ zones:
 		t.Fatalf("after reset: %v", r)
 	}
 }
+
+// TestPublicZoneEmptyPrivateVisibility: the OpenTofu provider sends
+// privateVisibilityConfig {"networks": []} for public zones; GCP accepts
+// and drops it, while a public zone with networks is rejected.
+func TestPublicZoneEmptyPrivateVisibility(t *testing.T) {
+	inst := emutest.Start(t, []string{"dns"})
+	c := newClient(t, inst.GatewayURL()+"/")
+	z, err := c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "pub", DnsName: "pub.test.", Description: "x", Visibility: "public",
+		PrivateVisibilityConfig: &dnsv1.ManagedZonePrivateVisibilityConfig{ForceSendFields: []string{"Networks"}}}).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if z.PrivateVisibilityConfig != nil {
+		t.Fatalf("privateVisibilityConfig = %+v, want none", z.PrivateVisibilityConfig)
+	}
+	_, err = c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "pub2", DnsName: "pub2.test.", Description: "x",
+		PrivateVisibilityConfig: &dnsv1.ManagedZonePrivateVisibilityConfig{Networks: []*dnsv1.ManagedZonePrivateVisibilityConfigNetwork{
+			{NetworkUrl: "projects/" + proj + "/global/networks/default"}}}}).Do()
+	wantErr(t, err, 400, "invalid")
+}

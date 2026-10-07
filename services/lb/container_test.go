@@ -405,3 +405,37 @@ func mustPool(pemBytes []byte) *x509.CertPool {
 	p.AppendCertsFromPEM(pemBytes)
 	return p
 }
+
+// TestEdgeRetired: the lb-edge container started for a privileged port is
+// removed once its last forwarding rule is deleted, so tearing down a load
+// balancer leaves no containers (SRS 11.2 step 10).
+func TestEdgeRetired(t *testing.T) {
+	emutest.RequireRuntime(t)
+	e := start(t)
+	c := e.c
+	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "be", LoadBalancingScheme: "EXTERNAL_MANAGED"}).Do())
+	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/be"}).Do())
+	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
+	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "80", Target: "global/targetHttpProxies/p"}).Do())
+	if _, port, _ := net.SplitHostPort(e.inst.Endpoint("lb:fr")); port != "80" {
+		t.Fatalf("listener %s: want the edge on port 80", e.inst.Endpoint("lb:fr"))
+	}
+	edges := func() int {
+		cts, err := e.inst.Containers(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, ct := range cts {
+			if ct.Service == "lb" {
+				n++
+			}
+		}
+		return n
+	}
+	if edges() != 1 {
+		t.Fatalf("edge containers = %d, want 1", edges())
+	}
+	e.do(c.GlobalForwardingRules.Delete(proj, "fr").Do())
+	eventually(t, 30*time.Second, "edge container removed", func() bool { return edges() == 0 })
+}

@@ -86,6 +86,11 @@ func TestInstanceLifecycle(t *testing.T) {
 	if code, _ := get(base+"/_emu/v1/ready", ""); code != 200 {
 		t.Errorf("ready = %d", code)
 	}
+	// No service used the container runtime: no containers, and listing
+	// them does not connect to it.
+	if code, body := get(base+"/_emu/v1/containers", ""); code != 200 || strings.Join(strings.Fields(body), "") != `{"containers":[]}` {
+		t.Errorf("containers = %d %s", code, body)
+	}
 	if n := len(in.Log.Entries("dns")); n != 3 {
 		t.Errorf("request log has %d dns entries, want 3", n)
 	}

@@ -293,8 +293,12 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				return fmt.Errorf("instance %q is not running: %w", cfg.Instance, err)
 			}
 			_, ready, _ := c.do(http.MethodGet, "/_emu/v1/ready")
+			cts, err := c.get("/_emu/v1/containers")
+			if err != nil {
+				cts = []byte(`{"containers":[]}`)
+			}
 			if asJSON {
-				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s}\n", info, ready)
+				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s}\n", info, ready, cts)
 				return nil
 			}
 			var i struct {
@@ -324,6 +328,12 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			fmt.Fprintln(out, "endpoints:")
 			for _, n := range sortedKeys(i.Endpoints) {
 				fmt.Fprintf(out, "  %-8s %s\n", n, i.Endpoints[n])
+			}
+			var ct struct{ Containers []instance.ContainerInfo }
+			_ = json.Unmarshal(cts, &ct)
+			fmt.Fprintf(out, "containers: %d\n", len(ct.Containers))
+			for _, x := range ct.Containers {
+				fmt.Fprintf(out, "  %-8s %-24s %-8s %s (%s)\n", x.Service, x.Resource, x.Role, x.Name, x.State)
 			}
 			return nil
 		},

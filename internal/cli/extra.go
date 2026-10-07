@@ -18,6 +18,9 @@ import (
 // setting to the gateway mount prefix and the provider's default base path.
 var providerEndpoints = []struct{ setting, service, path string }{
 	{"iam_custom_endpoint", "iam", "/iam/v1/"},
+	// google provider >= 7 manages service accounts through the "IAM beta"
+	// product (same base path, separate setting).
+	{"iam_beta_custom_endpoint", "iam", "/iam/v1/"},
 	{"iam_credentials_custom_endpoint", "iam", "/iamcredentials/v1/"},
 	{"resource_manager_custom_endpoint", "iam", "/cloudresourcemanager/v1/"},
 	{"resource_manager_v3_custom_endpoint", "iam", "/cloudresourcemanager/v3/"},

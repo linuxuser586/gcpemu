@@ -163,13 +163,28 @@ func (s *Service) validateRole(tx store.Tx, role string) error {
 // exist in a project the emulator manages.
 func (s *Service) validateMemberExists(tx store.Tx, member string) error {
 	email, ok := strings.CutPrefix(member, "serviceAccount:")
-	if !ok || projectOfEmail(email) == "" {
+	if !ok || projectOfEmail(email) == "" || isServiceAgent(email) {
 		return nil
 	}
 	if _, ok := s.getAccount(tx, email); ok {
 		return nil
 	}
 	return apierr.InvalidArgument("Service account %s does not exist.", email).WithReason(iamDomain, "SERVICE_ACCOUNT_NOT_FOUND")
+}
+
+// isServiceAgent reports whether email is a Google-managed service agent
+// (service-NUMBER@gs-project-accounts.iam.gserviceaccount.com,
+// service-NUMBER@gcp-sa-SERVICE.iam.gserviceaccount.com, ...). They live
+// in Google's projects, always exist and are bound in user policies, e.g.
+// the Cloud Storage agent publishing bucket notifications.
+func isServiceAgent(email string) bool {
+	local, dom, _ := strings.Cut(email, "@")
+	p := strings.TrimSuffix(dom, ".iam.gserviceaccount.com")
+	if p == "gs-project-accounts" || strings.HasPrefix(p, "gcp-sa-") {
+		return true
+	}
+	n, ok := strings.CutPrefix(local, "service-")
+	return ok && n != "" && strings.Trim(n, "0123456789") == "" && p != dom
 }
 
 // GetPolicyJSON implements emu.IAMPolicyStore.

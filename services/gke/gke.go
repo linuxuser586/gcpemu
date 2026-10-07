@@ -131,6 +131,7 @@ func (s *Service) Register(r emu.Router) error {
 	containerpb.RegisterClusterManagerServer(r.GRPC(), s.api)
 	r.Mount("container", []string{apiHost}, s.restHandler())
 	r.Mount("serviceusage", []string{"serviceusage.googleapis.com"}, serviceUsageHandler())
+	s.registerInstanceGroups()
 	return nil
 }
 

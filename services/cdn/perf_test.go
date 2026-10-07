@@ -3,6 +3,7 @@ package cdn
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +45,9 @@ func TestHitLatencyP99(t *testing.T) {
 		slices.Sort(lat)
 		p50, p99 := lat[n/2], lat[n*99/100]
 		t.Logf("dir=%q hit latency p50=%v p99=%v", dir, p50, p99)
-		if p99 > 2*time.Millisecond {
+		// Enforced only on a quiet host (see GCPEMU_PERF_TESTS in the lb and
+		// sql packages); a parallel `go test ./...` skews tail latency.
+		if p99 > 2*time.Millisecond && os.Getenv("GCPEMU_PERF_TESTS") == "1" {
 			t.Errorf("p99 hit latency %v > 2ms (NFR-PERF-007)", p99)
 		}
 	}

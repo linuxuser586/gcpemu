@@ -80,6 +80,12 @@ func (s *Service) normalizeZone(ctx context.Context, z *dnsv1.ManagedZone, check
 	default:
 		return errInvalid("entity.managedZone.visibility", z.Visibility)
 	}
+	if pvc := z.PrivateVisibilityConfig; pvc != nil && z.Visibility != visibilityPriv &&
+		len(pvc.Networks) == 0 && len(pvc.GkeClusters) == 0 {
+		// The OpenTofu provider always sends {"networks": []}; GCP accepts
+		// an empty config on public zones and drops it.
+		z.PrivateVisibilityConfig = nil
+	}
 	if z.PrivateVisibilityConfig != nil {
 		if z.Visibility != visibilityPriv {
 			return apierr.InvalidArgument("Invalid value for 'entity.managedZone.privateVisibilityConfig': a public zone cannot have private visibility config.")

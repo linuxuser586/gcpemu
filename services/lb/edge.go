@@ -61,7 +61,14 @@ type edge struct {
 	nets    map[string]bool
 	pushed  string
 	stopped bool
+	// idleSince is when the edge last became unused (no forwarding rule
+	// mapped, no pod endpoints); it is removed after edgeIdleGrace.
+	idleSince time.Time
 }
+
+// edgeIdleGrace is how long an unused edge container is kept (so that a
+// forwarding rule being replaced does not restart it).
+const edgeIdleGrace = 5 * time.Second
 
 func newEdge(d *dataplane) *edge {
 	e := &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}}
@@ -408,6 +415,7 @@ func (e *edge) routeLoop(ctx context.Context) {
 }
 
 func (e *edge) syncRoutes(ctx context.Context) {
+	e.retireIdle(ctx, time.Now())
 	if e.d.s.opts.DirectDial {
 		return
 	}
@@ -464,6 +472,42 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	if err := e.pushLocked(cctx); err != nil {
 		e.env().Log.Warn("lb: programming edge routes", "err", err)
 	}
+}
+
+// retireIdle removes the edge container and its network once no
+// forwarding rule is mapped to it and no backend has pod endpoints for
+// edgeIdleGrace, so deleting the last load balancer leaves no containers
+// behind (SRS 11.2 step 10). The next add or pod route starts it again.
+func (e *edge) retireIdle(ctx context.Context, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.id == "" || e.stopped || len(e.alias) > 0 || e.d.hasNEGEndpoints() {
+		e.idleSince = time.Time{}
+		return
+	}
+	if e.idleSince.IsZero() {
+		e.idleSince = now
+		return
+	}
+	if now.Sub(e.idleSince) < edgeIdleGrace {
+		return
+	}
+	rt, err := e.env().Containers.Runtime(ctx)
+	if err != nil {
+		return
+	}
+	if err := rt.RemoveContainer(ctx, e.id, true); err != nil {
+		e.env().Log.Warn("lb: removing idle edge container", "err", err)
+		return
+	}
+	if e.netName != "" {
+		_ = rt.RemoveNetwork(ctx, e.netName)
+	}
+	e.env().Log.Info("lb: idle edge container removed")
+	e.id, e.ip, e.pushed = "", "", ""
+	e.nets = map[string]bool{}
+	e.routes, e.pods = nil, nil
+	e.idleSince = time.Time{}
 }
 
 // needed reports whether any backend endpoint is a pod IP (callers hold e.mu).

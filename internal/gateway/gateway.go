@@ -249,12 +249,19 @@ func (r *router) Fallback(h http.Handler) {
 	r.g.mux.Handle("/", r.g.Middleware(r.service, h))
 }
 
+// PathHost is Google's legacy shared API host. Its URLs carry the API in
+// the path (www.googleapis.com/storage/v1/..., /oauth2/v3/certs, the
+// compute selfLink base), which is exactly the gateway's path routing, so
+// it is always served without a host mount.
+const PathHost = "www.googleapis.com"
+
 // Hosts returns the sorted real hostnames mounted with host routing
-// (e.g. "storage.googleapis.com"); the Google frontend (FR-CORE-043,
-// FR-INT-007) serves exactly these names.
+// (e.g. "storage.googleapis.com") plus PathHost; the Google frontend
+// (FR-CORE-043, FR-INT-007) serves exactly these names.
 func (g *Gateway) Hosts() []string {
 	g.mu.RLock()
-	out := make([]string, 0, len(g.hosts))
+	out := make([]string, 0, len(g.hosts)+1)
+	out = append(out, PathHost)
 	for h := range g.hosts {
 		out = append(out, h)
 	}

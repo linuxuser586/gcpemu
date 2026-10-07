@@ -270,7 +270,9 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 		rec.Int.Nodes = append(rec.Int.Nodes, s.planNodes(c, np, nil)...)
 	}
 	c.NodeConfig = proto.Clone(c.NodePools[0].Config).(*containerpb.NodeConfig)
-	c.InitialNodeCount = 0
+	// initialNodeCount keeps the requested value, like GKE (the OpenTofu
+	// provider would otherwise plan a replacement of clusters created with
+	// remove_default_node_pool).
 	c.CurrentNodeCount = int32(len(rec.Int.Nodes))
 	c.InstanceGroupUrls = nil
 	for _, np := range c.NodePools {
