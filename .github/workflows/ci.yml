@@ -18,3 +18,54 @@ jobs:
       - run: make vet
       - run: make race
       - run: make release
+
+  # SRS 11.2: v1.0 is accepted when the reference stack runs green on both
+  # architectures within 10 minutes (the test enforces the budget).
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      GCPEMU_NET_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/gcpemu-e2e
+          key: gcpemu-e2e-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
+          restore-keys: gcpemu-e2e-${{ runner.arch }}-
+      - name: Reference stack (SRS 11.2)
+        run: make e2e
+      - name: Tests that need the internet
+        run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
+
+  # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
+  # packages from competing for the CPU while they measure.
+  perf:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      GCPEMU_PERF_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Performance targets
+        run: >-
+          go test -p 1 -count=1 -timeout 25m -v
+          ./cmd/gcpemu ./services/gcs ./services/pubsub ./services/lb ./services/cdn ./services/sql ./services/gke
+          -run 'TestColdStartAndIdleRSS|TestControlPlaneP99|TestBinarySize|TestThroughputTarget|TestPublishPullTarget|TestPerformanceTargets|TestHitLatencyP99|TestInstanceLifecycle|TestGKE$'

@@ -2,6 +2,7 @@ package pubsub_test
 
 import (
 	"context"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,26 @@ import (
 // through the official client over PUBSUB_EMULATOR_HOST (NFR-PERF-006,
 // target ≥ 10,000 msg/s).
 func BenchmarkPublishPull(b *testing.B) {
+	rate := publishPull(b, b.N, b.ResetTimer)
+	b.StopTimer()
+	b.ReportMetric(rate, "msg/s")
+}
+
+// TestPublishPullTarget asserts NFR-PERF-006 when GCPEMU_PERF_TESTS=1.
+func TestPublishPullTarget(t *testing.T) {
+	if os.Getenv("GCPEMU_PERF_TESTS") != "1" {
+		t.Skip("set GCPEMU_PERF_TESTS=1 to check NFR-PERF-006")
+	}
+	rate := publishPull(t, 50000, func() {})
+	t.Logf("publish-to-pull %.0f msg/s", rate)
+	if rate < 10000 {
+		t.Errorf("NFR-PERF-006: %.0f msg/s, want >= 10,000", rate)
+	}
+}
+
+// publishPull publishes n 1 KB messages and returns the rate at which they
+// are received; reset is called when timing starts.
+func publishPull(b testing.TB, n int, reset func()) float64 {
 	inst := emutest.Start(b, []string{"pubsub"})
 	b.Setenv("PUBSUB_EMULATOR_HOST", inst.Endpoint("pubsub"))
 	ctx := context.Background()
@@ -31,7 +52,6 @@ func BenchmarkPublishPull(b *testing.B) {
 		b.Fatal(err)
 	}
 	payload := make([]byte, 1024)
-	n := b.N
 
 	rctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -49,7 +69,7 @@ func BenchmarkPublishPull(b *testing.B) {
 		})
 	}()
 
-	b.ResetTimer()
+	reset()
 	start := time.Now()
 	p := c.Publisher(topicName("bench"))
 	results := make([]*pubsub.PublishResult, n)
@@ -66,9 +86,8 @@ func BenchmarkPublishPull(b *testing.B) {
 		b.Fatal(err)
 	}
 	el := time.Since(start)
-	b.StopTimer()
 	if got := received.Load(); got < int64(n) {
 		b.Fatalf("received %d of %d", got, n)
 	}
-	b.ReportMetric(float64(n)/el.Seconds(), "msg/s")
+	return float64(n) / el.Seconds()
 }
