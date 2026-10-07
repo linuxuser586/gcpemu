@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -113,6 +114,11 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 		Auth:      emu.NewPolicyAuthorizer(cfg.IAMMode, logger.With("component", "iam")),
 		Endpoints: emu.NewEndpoints(),
 	}
+	authority, err := ca.Load(dir, cfg.Instance)
+	if err != nil {
+		return nil, fmt.Errorf("certificate authority: %w", err)
+	}
+	env.CA = authority
 	in.Env = env
 	in.containers = &containers{in: in}
 	env.Containers = in.containers

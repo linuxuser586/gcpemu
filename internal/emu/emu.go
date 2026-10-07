@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"gopkg.in/yaml.v3"
 
+	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
@@ -83,6 +84,8 @@ type Env struct {
 	GRPCOptions func(service string) []grpc.ServerOption
 	// Containers provides the container runtime and networks (GKE, Cloud SQL, NAT).
 	Containers Containers
+	// CA is the instance's local certificate authority (Section 7.4).
+	CA *ca.CA
 
 	mu       sync.RWMutex
 	services map[string]Service

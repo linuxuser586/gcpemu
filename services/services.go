@@ -4,11 +4,14 @@ package services
 import (
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/services/ar"
+	"github.com/linuxuser586/gcpemu/services/cdn"
+	"github.com/linuxuser586/gcpemu/services/certs"
 	"github.com/linuxuser586/gcpemu/services/compute"
 	"github.com/linuxuser586/gcpemu/services/dns"
 	"github.com/linuxuser586/gcpemu/services/gcs"
 	"github.com/linuxuser586/gcpemu/services/gke"
 	"github.com/linuxuser586/gcpemu/services/iam"
+	"github.com/linuxuser586/gcpemu/services/lb"
 	"github.com/linuxuser586/gcpemu/services/nat"
 	"github.com/linuxuser586/gcpemu/services/pubsub"
 	"github.com/linuxuser586/gcpemu/services/sql"
@@ -26,5 +29,8 @@ func Factories() map[string]instance.Factory {
 		"sql":     sql.New,
 		"gke":     gke.New,
 		"nat":     nat.New,
+		"certs":   certs.New,
+		"lb":      lb.New,
+		"cdn":     cdn.New,
 	}
 }

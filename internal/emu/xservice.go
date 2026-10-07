@@ -3,6 +3,8 @@ package emu
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/project"
@@ -173,4 +175,28 @@ type VPC interface {
 	UpsertNEG(ctx context.Context, project, zone, name, network, subnetwork string, defaultPort int, description string) error
 	SetNEGEndpoints(ctx context.Context, project, zone, name string, eps []NEGEndpoint) error
 	DeleteNEG(ctx context.Context, project, zone, name string) error
+}
+
+// CertManager is provided by the "certs" service: Certificate Manager
+// (certificates, certificate maps, trust configs, DNS authorizations) and
+// Network Security (backend authentication configs, server TLS policies)
+// as the load balancer data plane consumes them (FR-LB-004, FR-LB-006,
+// FR-LB-009). Names are full resource names
+// ("projects/P/locations/L/certificateMaps/M"); errors are *apierr.Error.
+type CertManager interface {
+	// MapCertificate selects the certificate for sni from a certificate map
+	// using Certificate Manager's matching rules (exact hostname, wildcard,
+	// then PRIMARY entry). It returns nil without error when no entry matches.
+	MapCertificate(ctx context.Context, certificateMap, sni string) (*tls.Certificate, error)
+	// Certificate returns an ACTIVE Certificate Manager certificate.
+	Certificate(ctx context.Context, name string) (*tls.Certificate, error)
+	// BackendAuthentication resolves a BackendAuthenticationConfig: the client
+	// certificate the LB presents to backends (nil if none) and the roots used
+	// to verify backend server certificates (nil means "public roots" per
+	// wellKnownRoots; an empty non-nil pool means none configured).
+	BackendAuthentication(ctx context.Context, name string) (client *tls.Certificate, roots *x509.CertPool, err error)
+	// ServerTLSPolicy resolves frontend mTLS settings: roots that validate
+	// client certificates and the clientValidationMode
+	// ("ALLOW_INVALID_OR_MISSING_CLIENT_CERT" or "REJECT_INVALID").
+	ServerTLSPolicy(ctx context.Context, name string) (clientRoots *x509.CertPool, mode string, err error)
 }

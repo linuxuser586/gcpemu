@@ -73,7 +73,7 @@ var DefaultPorts = map[string]int{
 
 // AllServices lists every service name in start order (also the seed
 // order: a peer a service depends on at seed time must come first).
-var AllServices = []string{"iam", "compute", "dns", "ar", "pubsub", "gcs", "sql", "gke", "lb", "cdn", "nat"}
+var AllServices = []string{"iam", "compute", "dns", "certs", "ar", "pubsub", "gcs", "sql", "gke", "lb", "cdn", "nat"}
 
 // Defaults returns the default configuration. CI=true switches on the CI
 // defaults of FR-CI-003.
@@ -324,7 +324,8 @@ func IsLoopback(bind string) bool {
 var Dependencies = map[string][]string{
 	"gke":     {"iam", "compute", "ar", "dns"},
 	"sql":     {"iam", "compute"},
-	"lb":      {"compute"},
+	"lb":      {"iam", "compute", "certs", "dns", "gcs"},
+	"certs":   {"iam", "dns"},
 	"cdn":     {"lb", "compute"},
 	"nat":     {"compute"},
 	"gcs":     {"iam"},
