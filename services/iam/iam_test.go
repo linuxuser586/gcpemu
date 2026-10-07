@@ -42,9 +42,7 @@ func startIAM(t *testing.T, opts ...func(*config.Config)) *testInstance {
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"iam"}
 	cfg.LogLevel = "warn"
-	for k := range cfg.Ports {
-		cfg.Ports[k] = 0
-	}
+	cfg.Ports[config.AllPorts] = 0
 	for _, o := range opts {
 		o(&cfg)
 	}

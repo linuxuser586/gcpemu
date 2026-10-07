@@ -53,10 +53,37 @@ func TestValidateFlags(t *testing.T) {
 }
 
 func TestFlagApplication(t *testing.T) {
-	got := pgSettings(map[string]string{"work_mem": "4096", "cloudsql.iam_authentication": "on", "cloudsql.logical_decoding": "on", "pg_stat_statements.track": "all"})
-	want := map[string]string{"work_mem": "4096", "wal_level": "logical"}
+	got := pgSettings(map[string]string{"work_mem": "4096", "cloudsql.iam_authentication": "on", "cloudsql.logical_decoding": "on",
+		"pg_stat_statements.track": "all", "auto_explain.log_analyze": "on", "pgaudit.log": "ddl", "anon.algorithm": "sha512"})
+	want := map[string]string{"work_mem": "4096", "wal_level": "logical", "pg_stat_statements.track": "all", "auto_explain.log_analyze": "on",
+		"shared_preload_libraries": "auto_explain,pg_stat_statements"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("pgSettings = %v, want %v", got, want)
+	}
+	// Turning on an extension's flag loads its library: a restart.
+	if !needsRestart(map[string]string{}, map[string]string{"pg_stat_statements.track": "all"}) {
+		t.Error("preloading pg_stat_statements must require a restart")
+	}
+	if needsRestart(map[string]string{"pg_stat_statements.track": "all"}, map[string]string{"pg_stat_statements.track": "top"}) {
+		t.Error("changing pg_stat_statements.track must not require a restart")
+	}
+	// Documented flags beyond the hand-written ones, bounded by version.
+	for _, c := range []struct {
+		name, value, version string
+		ok                   bool
+	}{
+		{"random_page_cost", "1.1", "POSTGRES_17", true},
+		{"geqo_effort", "11", "POSTGRES_17", false},
+		{"force_parallel_mode", "on", "POSTGRES_15", true},
+		{"force_parallel_mode", "on", "POSTGRES_16", false},
+		{"debug_parallel_query", "on", "POSTGRES_16", true},
+		{"anon.algorithm", "sha512", "POSTGRES_17", true},
+		{"not_a_flag", "1", "POSTGRES_17", false},
+	} {
+		_, err := validateFlags([]*sqladmin.DatabaseFlags{{Name: c.name, Value: c.value}}, c.version)
+		if (err == nil) != c.ok {
+			t.Errorf("%s=%s on %s: %v", c.name, c.value, c.version, err)
+		}
 	}
 	if !needsRestart(map[string]string{}, map[string]string{"max_connections": "50"}) {
 		t.Error("max_connections must require a restart")

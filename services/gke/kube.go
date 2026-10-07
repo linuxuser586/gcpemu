@@ -150,15 +150,22 @@ func (k *kubeClient) delete(ctx context.Context, path string) error {
 	return err
 }
 
-// ready reports whether /readyz answers ok.
+// ready reports whether /readyz answers ok and the controllers have
+// created the default namespace's service account, without which pods
+// can't be created (a GKE cluster takes workloads once it is RUNNING).
 func (k *kubeClient) ready(ctx context.Context) bool {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, k.base+"/readyz", nil)
-	resp, err := k.hc.Do(req)
-	if err != nil {
-		return false
+	for _, p := range []string{"/readyz", "/api/v1/namespaces/default/serviceaccounts/default"} {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, k.base+p, nil)
+		resp, err := k.hc.Do(req)
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
 	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return true
 }
 
 // ---- minimal API types ----

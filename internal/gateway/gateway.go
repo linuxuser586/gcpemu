@@ -71,6 +71,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
 			start := time.Now()
+			ctx, ci := emu.WithCallInfo(ctx)
 			ctx, err = g.authGRPC(ctx)
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
@@ -86,19 +87,20 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 					resp, err = h(ctx, req)
 				}()
 			}
-			g.logGRPC(ctx, owner(info.FullMethod), info.FullMethod, start, err)
+			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err)
 			return resp, toGRPC(err)
 		}),
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
 			start := time.Now()
-			ctx, err := g.authGRPC(ss.Context())
+			ctx, ci := emu.WithCallInfo(ss.Context())
+			ctx, err := g.authGRPC(ctx)
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
 			}
 			if err == nil {
 				err = h(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
 			}
-			g.logGRPC(ctx, owner(info.FullMethod), info.FullMethod, start, err)
+			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err)
 			return toGRPC(err)
 		}),
 	}
@@ -154,10 +156,10 @@ func (g *Gateway) grpcOwner(full string) string {
 	return g.grpcOwners[svc]
 }
 
-func (g *Gateway) logGRPC(ctx context.Context, service, method string, start time.Time, err error) {
+func (g *Gateway) logGRPC(ctx context.Context, ci *emu.CallInfo, service, method string, start time.Time, err error) {
 	code := status.Code(toGRPC(err))
 	g.log.Add(reqlog.Entry{
-		Time: start, Service: service, Protocol: "grpc", Method: method,
+		Time: start, Service: service, Protocol: "grpc", Method: method, Resource: ci.Resource(),
 		Principal: string(emu.PrincipalFrom(ctx)), Status: int(code),
 		Code: apierr.CodeName(code), LatencyMS: ms(time.Since(start)),
 	})
@@ -298,13 +300,23 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		ctx, ci := emu.WithCallInfo(r.Context())
+		r = r.WithContext(ctx)
 		p, err := g.principal(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
 			apierr.Write(sw, err)
 		} else if g.injectHTTP(sw, r, service) {
 			// fault injected; response already written or connection dropped
+		} else if f, ferr := formatFor(r); ferr != nil {
+			apierr.Write(sw, apierr.InvalidArgument("%v", ferr))
 		} else {
 			r = r.WithContext(emu.WithPrincipal(r.Context(), p))
+			var hw http.ResponseWriter = sw
+			var fw *formatWriter
+			if f != nil && r.Header.Get("Upgrade") == "" {
+				fw = newFormatWriter(sw, f)
+				hw = fw
+			}
 			func() {
 				defer func() {
 					if rec := recover(); rec != nil {
@@ -317,12 +329,15 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 						}
 					}
 				}()
-				h.ServeHTTP(sw, r)
+				h.ServeHTTP(hw, r)
+				if fw != nil {
+					fw.finish()
+				}
 			}()
 		}
 		g.log.Add(reqlog.Entry{
 			Time: start, Service: service, Protocol: "http",
-			Method: r.Method + " " + r.URL.Path, Principal: string(p),
+			Method: r.Method + " " + r.URL.Path, Resource: ci.Resource(), Principal: string(p),
 			Status: sw.status, LatencyMS: ms(time.Since(start)),
 		})
 	})

@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -104,6 +106,9 @@ func (s *Service) handleNatEvents(rep natReport) {
 			}
 		}
 		vm, subnet := s.ownerOfIP(nets, ev.Src)
+		if ev.Type != "translation" || !inNets(nets, ev.Dst) {
+			s.logEgress(rep.Network, ev, c)
+		}
 		switch ev.Type {
 		case "sink":
 			s.recordSink(rep.Network, ev, c, vm)
@@ -119,6 +124,30 @@ func (s *Service) handleNatEvents(rep natReport) {
 			s.logNatFlow(rep.Network, ev, c, vm, subnet, "DROPPED")
 		}
 	}
+}
+
+// logEgress adds an internet egress attempt to the request log
+// (FR-CORE-061): the NAT gateway that served it, or the network when no
+// NAT covers the source.
+func (s *Service) logEgress(network string, ev natEvent, c *coverage) {
+	if ev.Type == "translation" && c == nil {
+		return
+	}
+	e := reqlog.Entry{Service: "nat", Protocol: ev.Proto, Resource: network, Code: "OK",
+		Method: fmt.Sprintf("EGRESS %s:%d -> %s:%d", ev.Src, ev.SrcPort, ev.Dst, ev.DstPort)}
+	if t, err := time.Parse(time.RFC3339Nano, ev.Time); err == nil {
+		e.Time = t
+	}
+	if c != nil {
+		e.Resource = c.router + "/nats/" + c.nat
+	}
+	switch ev.Type {
+	case "sink":
+		e.Code = "OFFLINE_SINK"
+	case "dropped":
+		e.Status, e.Code = 1, "DROPPED"
+	}
+	s.env.RequestLog.Add(e)
 }
 
 // inNets reports whether ip is inside one of the VPC's container networks.

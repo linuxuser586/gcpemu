@@ -77,7 +77,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.blobs = &blobStore{dir: dir}
+	s.blobs = &blobStore{dir: dir, noSync: s.env.Config.Ephemeral}
 	if err := s.blobs.init(); err != nil {
 		return err
 	}

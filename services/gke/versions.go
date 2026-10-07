@@ -10,9 +10,8 @@ import (
 )
 
 // Kubernetes versions (FR-GKE-002). Each GKE version maps to the k3s image
-// that runs it. The table covers the three most recent minors; only the
-// default version's image is expected to be cached on CI hosts, the others
-// are pulled on first use. Digest pinning is a release task.
+// that runs it. The table covers the three most recent minors; images are
+// pulled on first use. Digest pinning is a release task.
 type k8sVersion struct {
 	GKE   string // "1.36.5-gke.100"
 	Image string // "rancher/k3s:v1.36.5-k3s1"
@@ -23,19 +22,28 @@ type k8sVersion struct {
 	Preload []string
 }
 
-// versions is ordered newest first.
+// versions is ordered newest first. Preload lists come from each k3s
+// release's k3s-images.txt, minus the components the emulator disables
+// (traefik, metrics-server and the helm controller that installs them).
 var versions = []k8sVersion{
-	{GKE: "1.37.1-gke.100", Image: "rancher/k3s:v1.37.1-k3s1"},
-	{GKE: "1.37.0-gke.100", Image: "rancher/k3s:v1.37.0-k3s1"},
-	{GKE: "1.36.5-gke.100", Image: "rancher/k3s:v1.36.5-k3s1", Preload: []string{
+	{GKE: "1.37.1-gke.100", Image: "rancher/k3s:v1.37.1-k3s1", Preload: systemImages("1.14.7")},
+	{GKE: "1.37.0-gke.100", Image: "rancher/k3s:v1.37.0-k3s1", Preload: systemImages("1.14.7")},
+	{GKE: "1.36.5-gke.100", Image: "rancher/k3s:v1.36.5-k3s1", Preload: systemImages("1.14.7")},
+	{GKE: "1.36.4-gke.100", Image: "rancher/k3s:v1.36.4-k3s1", Preload: systemImages("1.14.6")},
+	{GKE: "1.35.9-gke.100", Image: "rancher/k3s:v1.35.9-k3s1", Preload: systemImages("1.14.7")},
+	{GKE: "1.35.8-gke.100", Image: "rancher/k3s:v1.35.8-k3s1", Preload: systemImages("1.14.6")},
+}
+
+// systemImages lists the system images of a k3s release: pause, CoreDNS,
+// the local-path provisioner and its helper (busybox), and servicelb.
+func systemImages(coredns string) []string {
+	return []string{
 		"rancher/mirrored-pause:3.10.2",
-		"rancher/mirrored-coredns-coredns:1.14.7",
+		"rancher/mirrored-coredns-coredns:" + coredns,
 		"rancher/local-path-provisioner:v0.0.37",
+		"rancher/mirrored-library-busybox:1.37.0",
 		"rancher/klipper-lb:v0.4.17",
-	}},
-	{GKE: "1.36.4-gke.100", Image: "rancher/k3s:v1.36.4-k3s1"},
-	{GKE: "1.35.9-gke.100", Image: "rancher/k3s:v1.35.9-k3s1"},
-	{GKE: "1.35.8-gke.100", Image: "rancher/k3s:v1.35.8-k3s1"},
+	}
 }
 
 // defaultVersion is the REGULAR channel default and the version used when

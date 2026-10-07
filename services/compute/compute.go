@@ -44,8 +44,9 @@ type Service struct {
 	egMu   sync.Mutex
 	egress map[string]*gateway
 
-	chkMu    sync.RWMutex
-	checkers []UsageChecker
+	chkMu       sync.RWMutex
+	checkers    []UsageChecker
+	igResolvers []InstanceGroupResolver
 
 	sink *sinkServer
 }

@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -50,7 +51,7 @@ var flagFields = map[string]string{
 
 type rootOpts struct {
 	flags      config.Config
-	ports      map[string]string
+	ports      []string
 	lro        map[string]string
 	configFile string
 	factories  map[string]instance.Factory
@@ -75,6 +76,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 		o.cdnCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.caCmd())
+	root.AddCommand(o.adminCmd())
 	return root
 }
 
@@ -94,14 +96,11 @@ func (o *rootOpts) load(fs *pflag.FlagSet) (*config.Config, error) {
 		}
 	})
 	if len(o.ports) > 0 {
-		o.flags.Ports = map[string]int{}
-		for k, v := range o.ports {
-			var n int
-			if _, err := fmt.Sscan(v, &n); err != nil {
-				return nil, fmt.Errorf("--port %s=%s: %w", k, v, err)
-			}
-			o.flags.Ports[k] = n
+		ports, err := config.ParsePorts(strings.Join(o.ports, ","))
+		if err != nil {
+			return nil, fmt.Errorf("--port: %w", err)
 		}
+		o.flags.Ports = ports
 	}
 	o.flags.LROLatency = o.lro
 	c.ApplyFlags(&o.flags, changed)
@@ -130,8 +129,8 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.StringSliceVar(&o.flags.Services, "services", nil, "services to run (default all): "+strings.Join(config.AllServices, ","))
 	f.StringVar(&o.flags.Bind, "bind", "127.0.0.1", "address to bind listeners to")
 	f.BoolVar(&o.flags.Insecure, "i-understand-this-is-insecure", false, "allow non-loopback bind with IAM off")
-	f.StringToStringVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443")
-	f.StringVar(&o.flags.PortRange, "port-range", "", "range for automatically allocated ports")
+	f.StringSliceVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443; a bare 0 makes every listener pick a free port")
+	f.StringVar(&o.flags.PortRange, "port-range", "", "LO-HI range that free ports are picked from, e.g. 20000-20999")
 	f.StringVar(&o.flags.IAMMode, "iam-mode", config.IAMAudit, "IAM enforcement: off, audit, enforce")
 	f.StringVar(&o.flags.DefaultPrincipal, "default-principal", "user:dev@example.com", "principal for unauthenticated requests")
 	f.StringVar(&o.flags.LogFormat, "log-format", "text", "log format: text or json")
@@ -205,7 +204,11 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		return err
 	}
 	defer logf.Close()
-	exe, err := os.Executable()
+	var logStart int64
+	if fi, err := logf.Stat(); err == nil {
+		logStart = fi.Size()
+	}
+	exe, err := detachExe()
 	if err != nil {
 		return err
 	}
@@ -225,11 +228,14 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 	exited := make(chan error, 1)
 	go func() { exited <- child.Wait() }()
 
-	deadline := time.Now().Add(cfg.WaitTimeout)
+	logPath := filepath.Join(dir, instance.LogFile)
+	// The child gives up after the same wait timeout (and exits at once in
+	// CI, FR-CI-003); the grace lets its own reason reach the user.
+	deadline := time.Now().Add(cfg.WaitTimeout + 5*time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-exited:
-			return fmt.Errorf("emulator exited during startup (%v); see %s", err, filepath.Join(dir, instance.LogFile))
+			return fmt.Errorf("emulator exited during startup (%v):\n%s\nfull log: %s", err, logTail(logPath, logStart, 20), logPath)
 		case <-time.After(100 * time.Millisecond):
 		}
 		c, err := clientFor(cfg)
@@ -242,8 +248,67 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 			return nil
 		}
 	}
+	reasons := notReady(cfg)
 	_ = child.Process.Signal(syscall.SIGTERM)
-	return fmt.Errorf("emulator not ready after %s; see %s", cfg.WaitTimeout, filepath.Join(dir, instance.LogFile))
+	if reasons == "" {
+		reasons = logTail(logPath, logStart, 20)
+	}
+	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
+}
+
+// detachExe is the binary `start --detach` runs (a variable for tests).
+var detachExe = os.Executable
+
+// notReady returns the not-ready services and their reasons from a
+// starting instance's readiness endpoint, one per line, or "".
+func notReady(cfg *config.Config) string {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return ""
+	}
+	_, b, err := c.do(http.MethodGet, "/_emu/v1/ready")
+	if err != nil {
+		return ""
+	}
+	var r struct {
+		Services map[string]struct {
+			Ready  bool   `json:"ready"`
+			Reason string `json:"reason"`
+		} `json:"services"`
+	}
+	if json.Unmarshal(b, &r) != nil {
+		return ""
+	}
+	var lines []string
+	for name, st := range r.Services {
+		if !st.Ready {
+			lines = append(lines, "  "+name+": "+st.Reason)
+		}
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+// logTail returns the last n lines written to the log at path after
+// offset start.
+func logTail(path string, start int64, n int) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i := range lines {
+		lines[i] = "  " + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (o *rootOpts) stopCmd() *cobra.Command {
@@ -259,11 +324,19 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pidFile := filepath.Join(cfg.InstanceDir(), instance.PIDFile)
+			pid := 0
+			if b, err := os.ReadFile(pidFile); err == nil {
+				pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+			}
 			if _, _, err := c.do(http.MethodPost, "/_emu/v1/shutdown"); err != nil {
 				return err
 			}
-			for i := 0; i < 300; i++ {
-				if _, err := os.Stat(filepath.Join(cfg.InstanceDir(), instance.PIDFile)); os.IsNotExist(err) {
+			// Done once the PID file is gone and the process has exited, so
+			// that scripts can start a new instance right away.
+			for i := 0; i < 600; i++ {
+				_, err := os.Stat(pidFile)
+				if os.IsNotExist(err) && (pid <= 0 || !processAlive(pid)) {
 					fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q stopped\n", cfg.Instance)
 					return nil
 				}
@@ -457,4 +530,9 @@ func (o *rootOpts) timeCmd() *cobra.Command {
 		},
 	})
 	return t
+}
+
+// processAlive reports whether a process with pid exists.
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }

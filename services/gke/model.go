@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	computev1 "google.golang.org/api/compute/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -52,6 +53,9 @@ type clusterInternal struct {
 	PodCIDR     string       `json:"podCidr"`
 	ServiceCIDR string       `json:"serviceCidr"`
 	Nodes       []nodeRecord `json:"nodes,omitempty"`
+	// NamedPorts holds the named ports set on node pool instance groups,
+	// by group name.
+	NamedPorts map[string][]*computev1.NamedPort `json:"namedPorts,omitempty"`
 }
 
 // nodeRecord is one node container.

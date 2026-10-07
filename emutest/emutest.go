@@ -37,9 +37,7 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	cfg.DataDir = t.TempDir()
 	cfg.Services = svcs
 	cfg.LogLevel = "warn"
-	for k := range cfg.Ports {
-		cfg.Ports[k] = 0
-	}
+	cfg.Ports[config.AllPorts] = 0
 	for _, o := range opts {
 		o(&cfg)
 	}

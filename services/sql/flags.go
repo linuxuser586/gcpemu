@@ -12,12 +12,18 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 )
 
-// Database flags (FR-SQL-003): an embedded subset of Cloud SQL's
-// PostgreSQL allow-list with types, ranges and restart requirements.
-// Flags are validated on insert/patch/update and applied with ALTER SYSTEM
-// (reload, or a restart within the same operation for restart-required
-// flags). Flags in the cloudsql.* namespace and extension settings are
-// Recorded only, except cloudsql.logical_decoding (wal_level=logical).
+// Database flags (FR-SQL-003): Cloud SQL's PostgreSQL allow-list, generated
+// from Google's documentation into docFlags (flags_docs.go), with the
+// hand-written flagDefs below overriding entries whose semantics the
+// documentation can't express. Flags are validated on insert/patch/update
+// and applied with ALTER SYSTEM (reload, or a restart within the same
+// operation for restart-required flags, as Cloud SQL does). Settings of
+// pg_stat_statements and auto_explain, which the images ship, are applied
+// with their libraries preloaded; Cloud SQL's own cloudsql.* flags and the
+// settings of other extensions are recorded only, except
+// cloudsql.logical_decoding (wal_level=logical).
+
+//go:generate go run ./internal/genflags -out flags_docs.go
 
 type flagDef struct {
 	Type    string // BOOLEAN, INTEGER, FLOAT, STRING, REPEATED_STRING
@@ -26,6 +32,7 @@ type flagDef struct {
 	Values  []string
 	Restart bool
 	Since   int // first major version (0 = all)
+	Until   int // last major version (0 = all)
 	// Recorded flags are stored and reported but not applied.
 	Recorded bool
 }
@@ -169,14 +176,21 @@ var flagDefs = map[string]flagDef{
 	"track_io_timing":             boolFlag(false),
 	"track_commit_timestamp":      boolFlag(true),
 	"track_functions":             enumFlag("none", "pl", "all"),
-	// Extensions (Recorded: the libraries are not preloaded).
-	"pg_stat_statements.track":         recorded(enumFlag("none", "top", "all")),
-	"pg_stat_statements.max":           recorded(intFlag(100, maxInt, true)),
-	"pg_stat_statements.track_utility": recorded(boolFlag(false)),
+	// Extensions. pg_stat_statements and auto_explain are applied (their
+	// libraries are preloaded); pgaudit.log is a list of classes.
+	"pg_stat_statements.track":         enumFlag("none", "top", "all"),
+	"pg_stat_statements.max":           intFlag(100, maxInt, true),
+	"pg_stat_statements.track_utility": boolFlag(false),
 	"pgaudit.log":                      recorded(flagDef{Type: "REPEATED_STRING", Values: []string{"read", "write", "function", "role", "ddl", "misc", "misc_set", "all", "none", "-read", "-write", "-function", "-role", "-ddl", "-misc", "-misc_set"}}),
 	"pgaudit.log_relation":             recorded(boolFlag(false)),
-	"auto_explain.log_min_duration":    recorded(intFlag(-1, maxInt, false)),
-	"auto_explain.log_analyze":         recorded(boolFlag(false)),
+	"auto_explain.log_min_duration":    intFlag(-1, maxInt, false),
+	"auto_explain.log_analyze":         boolFlag(false),
+	// Documented flags that later majors renamed or removed.
+	"force_parallel_mode":     {Type: "STRING", Values: []string{"off", "on", "regress"}, Until: 15},
+	"debug_parallel_query":    {Type: "STRING", Values: []string{"off", "on", "regress"}, Since: 16},
+	"old_snapshot_threshold":  {Type: "INTEGER", Min: -1, Max: 86400, Restart: true, Until: 16},
+	"trace_recovery_messages": {Type: "STRING", Values: []string{"debug5", "debug4", "debug3", "debug2", "debug1", "log", "notice", "warning", "error"}, Until: 16},
+	"replacement_sort_tuples": {Type: "INTEGER", Min: 0, Max: maxInt, Until: 10},
 	// Cloud SQL flags.
 	"cloudsql.iam_authentication":                   recorded(boolFlag(false)),
 	"cloudsql.logical_decoding":                     boolFlag(true),
@@ -192,6 +206,44 @@ var flagDefs = map[string]flagDef{
 	"cloudsql.pg_shadow_select_role":                recorded(strFlag()),
 }
 
+// preloaded are the extensions whose settings are applied: the images ship
+// them, and setting any of their flags adds them to
+// shared_preload_libraries.
+var preloaded = []string{"auto_explain", "pg_stat_statements"}
+
+// lookupFlag returns a flag's definition: the hand-written override, else
+// the documented allow-list, where Cloud SQL's own flags and settings of
+// extensions the images don't ship are recorded only.
+func lookupFlag(name string) (flagDef, bool) {
+	if d, ok := flagDefs[name]; ok {
+		return d, true
+	}
+	d, ok := docFlags[name]
+	if !ok {
+		return flagDef{}, false
+	}
+	if prefix, _, dotted := strings.Cut(name, "."); dotted && !contains(preloaded, prefix) {
+		d.Recorded = true
+	}
+	return d, true
+}
+
+// flagNames lists every allowed flag.
+func flagNames() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range []map[string]flagDef{flagDefs, docFlags} {
+		for k := range m {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // validateFlags checks flags against the allow-list (FR-SQL-003) and
 // returns them as a name → value map.
 func validateFlags(flags []*sqladmin.DatabaseFlags, version string) (map[string]string, error) {
@@ -201,8 +253,8 @@ func validateFlags(flags []*sqladmin.DatabaseFlags, version string) (map[string]
 		if f == nil {
 			continue
 		}
-		def, ok := flagDefs[f.Name]
-		if !ok || (def.Since > 0 && major < def.Since) {
+		def, ok := lookupFlag(f.Name)
+		if !ok || (def.Since > 0 && major < def.Since) || (def.Until > 0 && major > def.Until) {
 			return nil, errInvalid("Invalid flag name: %s.", f.Name)
 		}
 		if _, dup := out[f.Name]; dup {
@@ -261,8 +313,12 @@ func contains(list []string, v string) bool {
 // pgSettings maps validated flags to the PostgreSQL settings to apply.
 func pgSettings(flags map[string]string) map[string]string {
 	out := map[string]string{}
+	var libs []string
 	for k, v := range flags {
-		def := flagDefs[k]
+		def, _ := lookupFlag(k)
+		if prefix, _, dotted := strings.Cut(k, "."); dotted && !def.Recorded && contains(preloaded, prefix) && !contains(libs, prefix) {
+			libs = append(libs, prefix)
+		}
 		switch {
 		case k == "cloudsql.logical_decoding":
 			if v == "on" {
@@ -273,14 +329,21 @@ func pgSettings(flags map[string]string) map[string]string {
 			out[k] = v
 		}
 	}
+	if len(libs) > 0 {
+		sort.Strings(libs)
+		out["shared_preload_libraries"] = strings.Join(libs, ",")
+	}
 	return out
 }
 
 // needsRestart reports whether changing from old to new flags requires a
 // server restart.
 func needsRestart(old, new map[string]string) bool {
+	if pgSettings(old)["shared_preload_libraries"] != pgSettings(new)["shared_preload_libraries"] {
+		return true
+	}
 	for _, k := range unionKeys(old, new) {
-		if old[k] != new[k] && flagDefs[k].Restart {
+		if d, _ := lookupFlag(k); old[k] != new[k] && d.Restart {
 			return true
 		}
 	}
@@ -329,12 +392,23 @@ func (s *Service) listFlags(w http.ResponseWriter, r *http.Request) {
 		versions = []string{want}
 	}
 	resp := &sqladmin.FlagsListResponse{Kind: "sql#flagsList"}
-	for _, name := range sortedKeys(flagDefs) {
-		d := flagDefs[name]
-		f := &sqladmin.Flag{Kind: "sql#flag", Name: name, Type: d.Type, RequiresRestart: d.Restart, AppliesTo: versions}
+	for _, name := range flagNames() {
+		d, _ := lookupFlag(name)
+		var applies []string
+		for _, v := range versions {
+			if m := pgVersions[v].Major; (d.Since == 0 || m >= d.Since) && (d.Until == 0 || m <= d.Until) {
+				applies = append(applies, v)
+			}
+		}
+		if len(applies) == 0 {
+			continue
+		}
+		f := &sqladmin.Flag{Kind: "sql#flag", Name: name, Type: d.Type, RequiresRestart: d.Restart, AppliesTo: applies}
 		switch d.Type {
 		case "INTEGER", "FLOAT":
-			f.MinValue = int64(d.Min)
+			if d.Min > math.MinInt64 {
+				f.MinValue = int64(d.Min)
+			}
 			if d.Max < math.MaxInt64 {
 				f.MaxValue = int64(d.Max)
 			}

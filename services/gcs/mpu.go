@@ -112,7 +112,7 @@ func (s *Service) mpuPutPart(w http.ResponseWriter, r *http.Request, m *mpuRec) 
 		xmlError(w, errInvalid("Failed to read part: %v", err))
 		return
 	}
-	if err := bw.f.Sync(); err != nil {
+	if err := s.blobs.sync(bw.f); err != nil {
 		bw.abort()
 		xmlError(w, err)
 		return

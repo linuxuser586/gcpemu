@@ -1,0 +1,403 @@
+openapi: 3.0.3
+info:
+  title: gcpemu admin API
+  version: v1
+  description: |
+    The emulator's own control interface (SRS 7.3, FR-CORE-045), served on
+    the gateway port under /_emu/v1/. It is the only interface not modelled
+    on a Google API. It is unauthenticated and not request-logged; bind the
+    gateway to loopback (the default) to keep it private.
+
+    Errors are `{"error": "message"}` unless noted; endpoints provided by a
+    service module (cdn, ca) return Google's JSON error envelope.
+servers:
+  - url: http://127.0.0.1:4510
+paths:
+  /_emu/v1/openapi.yaml:
+    get:
+      summary: This document (also printed by `gcpemu admin openapi`).
+      operationId: openapi
+      responses:
+        "200":
+          description: OpenAPI 3 document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /_emu/v1/health:
+    get:
+      summary: Liveness of the gateway.
+      operationId: health
+      responses:
+        "200":
+          description: The emulator is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+  /_emu/v1/ready:
+    get:
+      summary: Readiness per service (NFR-REL-003).
+      operationId: ready
+      responses:
+        "200":
+          description: Every enabled service is ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: At least one service is not ready; its reason is given.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+  /_emu/v1/info:
+    get:
+      summary: Instance identity, configuration summary and endpoints.
+      operationId: info
+      responses:
+        "200":
+          description: Instance information.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instance: { type: string }
+                  id: { type: string }
+                  pid: { type: integer }
+                  version: { type: string }
+                  dir: { type: string, description: Instance data directory. }
+                  ephemeral: { type: boolean }
+                  iamMode: { type: string, enum: [off, audit, enforce] }
+                  services:
+                    type: array
+                    items: { type: string }
+                  endpoints: { $ref: "#/components/schemas/Endpoints" }
+  /_emu/v1/endpoints:
+    get:
+      summary: Listener addresses by endpoint name (as in endpoints.json).
+      operationId: endpoints
+      responses:
+        "200":
+          description: Endpoints.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Endpoints" }
+  /_emu/v1/env:
+    get:
+      summary: Environment variables clients need (`gcpemu env`).
+      operationId: env
+      parameters:
+        - name: trust
+          in: query
+          description: >-
+            With true, write a bundle of the system roots plus the emulator CA
+            and point SSL_CERT_FILE at it.
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Variable name to value.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { type: string }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/hostmode:
+    get:
+      summary: Host mode state (FR-CORE-043).
+      operationId: hostMode
+      responses:
+        "200":
+          description: Host mode status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  state: { type: string }
+                  error: { type: string }
+                  ip: { type: string, description: "Frontend container address (HTTPS :443, HTTP :80, DNS :53)." }
+                  interface: { type: string, description: Host bridge interface the IP is reached through. }
+                  domains:
+                    type: array
+                    items: { type: string }
+                  hosts:
+                    type: array
+                    items: { type: string }
+                  caFile: { type: string }
+  /_emu/v1/containers:
+    get:
+      summary: Containers the instance created (GKE nodes, Cloud SQL, NAT, ...).
+      operationId: containers
+      responses:
+        "200":
+          description: Containers, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  containers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        service: { type: string }
+                        resource: { type: string }
+                        role: { type: string }
+                        image: { type: string }
+                        state: { type: string }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/seed:
+    post:
+      summary: Apply a seed file idempotently (FR-CORE-011).
+      operationId: seed
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: Seed file path on the emulator host.
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+  /_emu/v1/requests:
+    get:
+      summary: Recent request log entries, oldest first (FR-CORE-061).
+      operationId: requests
+      parameters:
+        - name: service
+          in: query
+          description: Only entries of this service.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Request log.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items: { $ref: "#/components/schemas/RequestEntry" }
+  /_emu/v1/resources:
+    get:
+      summary: Dump of the control-plane store.
+      operationId: resources
+      parameters:
+        - name: namespace
+          in: query
+          description: Only this store namespace (e.g. "compute/natsink").
+          schema: { type: string }
+      responses:
+        "200":
+          description: Namespace to key to stored value (JSON, or a string for non-JSON values).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties: {}
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/reset:
+    post:
+      summary: Wipe all state, keeping configuration (`gcpemu reset`).
+      operationId: reset
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/time/advance:
+    post:
+      summary: Advance the emulator clock (`gcpemu time advance`, FR-GCS-008).
+      operationId: advanceTime
+      parameters:
+        - name: by
+          in: query
+          required: true
+          description: Non-negative Go duration, e.g. "24h".
+          schema: { type: string }
+      responses:
+        "200":
+          description: The new emulator time.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/faults:
+    get:
+      summary: Active fault injection rules (FR-CORE-060).
+      operationId: listFaults
+      responses:
+        "200":
+          description: Rules.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  faults:
+                    type: array
+                    items: { $ref: "#/components/schemas/FaultRule" }
+    post:
+      summary: Add a fault injection rule.
+      operationId: addFault
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FaultRule" }
+      responses:
+        "200":
+          description: The added rule with its ID.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FaultRule" }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Remove every fault injection rule.
+      operationId: clearFaults
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+  /_emu/v1/faults/{id}:
+    delete:
+      summary: Remove one fault injection rule.
+      operationId: removeFault
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/shutdown:
+    post:
+      summary: Shut the instance down gracefully (`gcpemu stop`).
+      operationId: shutdown
+      responses:
+        "202": { $ref: "#/components/responses/Status" }
+  /_emu/v1/cdn:
+    get:
+      summary: Cloud CDN cache statistics (cdn service).
+      operationId: cdnStats
+      responses:
+        "200":
+          description: Cache usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: integer }
+                  bytes: { type: integer }
+                  limitBytes: { type: integer }
+  /_emu/v1/cdn/purge:
+    post:
+      summary: Clear the Cloud CDN cache (`gcpemu cdn purge`, FR-CDN-008).
+      operationId: cdnPurge
+      responses:
+        "200":
+          description: Number of entries removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purged: { type: integer }
+  /_emu/v1/ca/rotate:
+    post:
+      summary: Replace the instance CA and re-issue managed certificates (`gcpemu ca rotate`; certs service).
+      operationId: caRotate
+      responses:
+        "200":
+          description: The CA was rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [rotated] }
+                  path: { type: string, description: Path of the new ca.pem. }
+        "412":
+          description: The instance has no CA (Google JSON error envelope).
+        "500":
+          description: Rotation failed (Google JSON error envelope).
+components:
+  responses:
+    Status:
+      description: The operation succeeded.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status: { type: string }
+    Error:
+      description: The operation failed.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+  schemas:
+    Endpoints:
+      type: object
+      description: Endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port.
+      additionalProperties: { type: string }
+    Readiness:
+      type: object
+      properties:
+        ready: { type: boolean }
+        services:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ready: { type: boolean }
+              reason: { type: string }
+    RequestEntry:
+      type: object
+      properties:
+        time: { type: string, format: date-time }
+        service: { type: string }
+        protocol: { type: string, description: "http, grpc, dns, postgres, tcp, udp" }
+        method: { type: string }
+        resource: { type: string }
+        principal: { type: string }
+        status:
+          type: integer
+          description: >-
+            HTTP status, gRPC code or DNS rcode; for connections 0 when admitted and 1 when
+            refused.
+        code: { type: string }
+        latencyMs: { type: number }
+    FaultRule:
+      type: object
+      properties:
+        id: { type: string, readOnly: true }
+        service: { type: string, description: Emulator service name ("gcs", "pubsub", ...). }
+        method:
+          type: string
+          description: Regexp on the method ("GET /storage/v1/b", "/google.pubsub.v1.Publisher/Publish").
+        resource: { type: string, description: Regexp on the request path or resource. }
+        code: { type: string, description: Canonical error name to return, e.g. UNAVAILABLE. }
+        httpStatus: { type: integer, description: Overrides the HTTP status for code. }
+        latency: { type: string, description: Delay added before handling, e.g. "250ms". }
+        drop: { type: boolean, description: Close the connection without a response. }
+        probability: { type: number, description: "In (0,1]; 0 means always." }
+        count: { type: integer, description: How many times the rule fires; 0 means unlimited. }
+        fired: { type: integer, readOnly: true }

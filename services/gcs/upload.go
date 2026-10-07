@@ -475,7 +475,7 @@ func (s *Service) uploadChunk(w http.ResponseWriter, r *http.Request, id string)
 	}
 	_, cerr := io.CopyBuffer(writerOnly{dst}, limit, *bp)
 	copyBufPool.Put(bp)
-	serr := f.Sync()
+	serr := s.blobs.sync(f)
 	_ = f.Close()
 	if st, err := os.Stat(path); err == nil {
 		size = st.Size()

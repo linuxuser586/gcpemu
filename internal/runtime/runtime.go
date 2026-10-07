@@ -15,8 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path"
@@ -315,10 +317,88 @@ func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, erro
 	var out struct {
 		ID string `json:"Id"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/networks/create", nil, body, &out); err != nil {
+	err := c.do(ctx, http.MethodPost, "/networks/create", nil, body, &out)
+	if err != nil && s.Subnet == "" && poolsExhausted(err) {
+		return c.createInFallbackRange(ctx, s, err)
+	}
+	if err != nil {
 		return "", fmt.Errorf("create network %s: %w", s.Name, err)
 	}
 	return out.ID, nil
+}
+
+// poolsExhausted reports a runtime that has no default address pool left
+// for a network without an explicit subnet (Docker: "all predefined
+// address pools have been fully subnetted"; Podman: "could not find free
+// subnet").
+func poolsExhausted(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "address pools have been fully subnetted") || strings.Contains(m, "could not find free subnet") ||
+		strings.Contains(m, "no available network")
+}
+
+// fallbackRange holds the /24s used when the runtime's default pools are
+// used up: many instances side by side (FR-CORE-033) each need several
+// networks, more than Docker's ~31 default ones. It is carrier-grade NAT
+// space, which neither the runtimes' pools nor the emulator's VPC fallback
+// (10.240.0.0/12) use.
+var fallbackRange = netip.MustParsePrefix("100.64.0.0/10")
+
+// createInFallbackRange creates s on a /24 of fallbackRange that overlaps
+// no existing network, starting at a random /24 so that concurrent
+// instances rarely race for the same one.
+func (c *Client) createInFallbackRange(ctx context.Context, s NetworkSpec, cause error) (string, error) {
+	var nets []struct {
+		IPAM struct {
+			Config []struct{ Subnet string }
+		}
+	}
+	if err := c.do(ctx, http.MethodGet, "/networks", nil, nil, &nets); err != nil {
+		return "", fmt.Errorf("create network %s: %w", s.Name, cause)
+	}
+	var used []netip.Prefix
+	for _, n := range nets {
+		for _, cfg := range n.IPAM.Config {
+			if p, err := netip.ParsePrefix(cfg.Subnet); err == nil {
+				used = append(used, p.Masked())
+			}
+		}
+	}
+	const blocks = 1 << (24 - 10)
+	base := fallbackRange.Addr().As4()
+	off := rand.IntN(blocks)
+	for i := range blocks {
+		k := (off + i) % blocks
+		a := base
+		a[1] += byte(k >> 8)
+		a[2] = byte(k)
+		p := netip.PrefixFrom(netip.AddrFrom4(a), 24)
+		if overlapsAny(p, used) {
+			continue
+		}
+		t := s
+		t.Subnet = p.String()
+		a[3] = 1
+		t.Gateway = netip.AddrFrom4(a).String()
+		id, err := c.CreateNetwork(ctx, t)
+		if err == nil {
+			return id, nil
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "overlap") {
+			return "", err
+		}
+		used = append(used, p) // taken concurrently; try the next one
+	}
+	return "", fmt.Errorf("create network %s: %w (and no free /24 in %s)", s.Name, cause, fallbackRange)
+}
+
+func overlapsAny(p netip.Prefix, used []netip.Prefix) bool {
+	for _, u := range used {
+		if u.Overlaps(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // InspectNetwork returns a network by name or ID.

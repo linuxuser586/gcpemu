@@ -8,14 +8,18 @@ import (
 	"time"
 
 	mdns "github.com/miekg/dns"
+
+	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 )
 
-// Authoritative data plane (FR-DNS-003/004). Every zone in the store is
-// served, public and private alike: network-binding enforcement for private
-// zones arrives with GKE (FR-INT-005), so for now host queries see private
-// zones too (a private zone wins over a public one with the same name).
-// Names outside every zone are forwarded to the host resolver unless
-// --dns-no-forward is set, in which case the answer is REFUSED.
+// Authoritative data plane (FR-DNS-003/004). Public zones are served to
+// every client. A private zone is served only to queries from the VPC
+// networks it is bound to, which GKE node DNS relays name in an EDNS0
+// option (frontend.NetworkOption, FR-INT-005); there it wins over a public
+// zone with the same name. Host queries and Resolve see public zones only.
+// Names outside every visible zone are forwarded to the host resolver
+// unless --dns-no-forward is set, in which case the answer is REFUSED.
 
 // Errors returned by Resolve.
 var (
@@ -32,7 +36,7 @@ const maxCNAMEChain = 8
 // NODATA is an empty slice with a nil error. Other services (GKE CoreDNS,
 // LB) use it to resolve emulated names in-process.
 func (s *Service) Resolve(ctx context.Context, name string, qtype uint16) ([]mdns.RR, error) {
-	m := s.answer(ctx, mdns.Question{Name: mdns.Fqdn(name), Qtype: qtype, Qclass: mdns.ClassINET})
+	m := s.answer(ctx, "", mdns.Question{Name: mdns.Fqdn(name), Qtype: qtype, Qclass: mdns.ClassINET})
 	switch m.Rcode {
 	case mdns.RcodeSuccess:
 		return m.Answer, nil
@@ -47,7 +51,9 @@ func (s *Service) Resolve(ctx context.Context, name string, qtype uint16) ([]mdn
 
 // serveDNS is the miekg/dns handler for UDP and TCP.
 func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
+	start := time.Now()
 	resp := new(mdns.Msg)
+	network := normalizeNetwork(frontend.Network(req))
 	switch {
 	case req.Opcode != mdns.OpcodeQuery:
 		resp.SetRcode(req, mdns.RcodeNotImplemented)
@@ -57,7 +63,7 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 		resp.SetRcode(req, mdns.RcodeRefused)
 	default:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		a := s.answer(ctx, req.Question[0])
+		a := s.answer(ctx, network, req.Question[0])
 		cancel()
 		resp.SetReply(req)
 		resp.Rcode = a.Rcode
@@ -87,6 +93,31 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	if err := w.WriteMsg(resp); err != nil {
 		s.env.Log.Debug("dns write", "err", err)
 	}
+	s.logQuery(w, req, resp, network, start)
+}
+
+// logQuery adds a query to the request log (FR-CORE-061): the answering
+// zone as the resource and the client's VPC network, if any, as the
+// principal.
+func (s *Service) logQuery(w mdns.ResponseWriter, req, resp *mdns.Msg, network string, start time.Time) {
+	e := reqlog.Entry{Time: start, Service: "dns", Protocol: "dns", Principal: network,
+		Status: resp.Rcode, Code: mdns.RcodeToString[resp.Rcode],
+		LatencyMS: float64(time.Since(start).Microseconds()) / 1000}
+	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
+		e.Method = "TCP "
+	} else {
+		e.Method = "UDP "
+	}
+	if len(req.Question) == 1 {
+		q := req.Question[0]
+		e.Method += mdns.TypeToString[q.Qtype] + " " + q.Name
+		if z := s.currentIndex().findZone(strings.ToLower(mdns.Fqdn(q.Name)), network); z != nil {
+			e.Resource = "projects/" + z.project + "/managedZones/" + z.name
+		}
+	} else {
+		e.Method += mdns.OpcodeToString[req.Opcode]
+	}
+	s.env.RequestLog.Add(e)
 }
 
 // SetAddressMapper installs a function that rewrites A record addresses in
@@ -97,9 +128,10 @@ func (s *Service) SetAddressMapper(f func(net.IP) net.IP) {
 	s.mapper.Store(&f)
 }
 
-// answer resolves q and applies the address mapper.
-func (s *Service) answer(ctx context.Context, q mdns.Question) *mdns.Msg {
-	m := s.answerZones(ctx, q)
+// answer resolves q for a client on network ("projects/P/global/networks/N",
+// or "" outside every VPC) and applies the address mapper.
+func (s *Service) answer(ctx context.Context, network string, q mdns.Question) *mdns.Msg {
+	m := s.answerZones(ctx, network, q)
 	fp := s.mapper.Load()
 	if fp == nil || *fp == nil {
 		return m
@@ -114,13 +146,13 @@ func (s *Service) answer(ctx context.Context, q mdns.Question) *mdns.Msg {
 	return m
 }
 
-// answerZones resolves q against the zones, chasing CNAMEs across every zone
-// served and forwarding names outside them.
-func (s *Service) answerZones(ctx context.Context, q mdns.Question) *mdns.Msg {
+// answerZones resolves q against the zones visible on network, chasing
+// CNAMEs across them and forwarding names outside them.
+func (s *Service) answerZones(ctx context.Context, network string, q mdns.Question) *mdns.Msg {
 	ix := s.currentIndex()
 	out := new(mdns.Msg)
 	name := strings.ToLower(mdns.Fqdn(q.Name))
-	z := ix.findZone(name)
+	z := ix.findZone(name, network)
 	if z == nil {
 		return s.forward(ctx, mdns.Question{Name: q.Name, Qtype: q.Qtype, Qclass: mdns.ClassINET})
 	}
@@ -143,7 +175,7 @@ func (s *Service) answerZones(ctx context.Context, q mdns.Question) *mdns.Msg {
 			return out
 		}
 		name = target
-		if z = ix.findZone(name); z == nil {
+		if z = ix.findZone(name, network); z == nil {
 			// Out-of-zone target: complete the chain via the host resolver.
 			if f := s.forward(ctx, mdns.Question{Name: target, Qtype: q.Qtype, Qclass: mdns.ClassINET}); f.Rcode != mdns.RcodeRefused {
 				out.Answer = append(out.Answer, f.Answer...)

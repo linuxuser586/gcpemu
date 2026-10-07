@@ -21,6 +21,8 @@ import (
 	"time"
 
 	computev1 "google.golang.org/api/compute/v1"
+
+	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
 // Backend services: endpoints from NEGs (refreshed continuously so GKE
@@ -160,7 +162,8 @@ func (b *backendSvc) kickHealth() {
 	}
 }
 
-// refreshEndpoints re-reads the NEG endpoints of every backend group.
+// refreshEndpoints re-reads the endpoints of every backend group: NEG
+// endpoints, or an instance group's instances at the named port portName.
 // Removed endpoints drain for connectionDraining.drainingTimeoutSec.
 func (b *backendSvc) refreshEndpoints(ctx context.Context) {
 	b.refreshMu.Lock()
@@ -179,10 +182,16 @@ func (b *backendSvc) refreshEndpoints(ctx context.Context) {
 	seen := map[string]bool{}
 	for _, be := range c.Backends {
 		g := relPath(be.Group)
-		if !strings.Contains(g, "/networkEndpointGroups/") {
+		var eps []emu.NEGEndpoint
+		var err error
+		switch {
+		case strings.Contains(g, "/networkEndpointGroups/"):
+			eps, err = b.d.s.cmp.NEGEndpoints(ctx, g)
+		case strings.Contains(g, "/instanceGroups/"):
+			eps, err = b.d.s.cmp.InstanceGroupEndpoints(ctx, g, c.PortName)
+		default:
 			continue
 		}
-		eps, err := b.d.s.cmp.NEGEndpoints(ctx, g)
 		if err != nil {
 			continue
 		}

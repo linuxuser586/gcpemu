@@ -23,7 +23,7 @@ type zoneIdx struct {
 	project, name string
 	origin        string
 	private       bool
-	networks      []string
+	networks      map[string]bool // bound networks, "projects/P/global/networks/N"
 	soa           *mdns.SOA
 	// names maps a lower-case owner name to its rrsets by type.
 	names map[string]map[uint16]*rrsetIdx
@@ -76,8 +76,9 @@ func (s *Service) buildIndex() *index {
 				ents:    map[string]bool{},
 			}
 			if z.PrivateVisibilityConfig != nil {
+				zi.networks = map[string]bool{}
 				for _, n := range z.PrivateVisibilityConfig.Networks {
-					zi.networks = append(zi.networks, n.NetworkUrl)
+					zi.networks[normalizeNetwork(n.NetworkUrl)] = true
 				}
 			}
 			tx.Scan(nsRRSets, zoneKey(zr.Project, z.Name)+"/", func(_ string, b []byte) bool {
@@ -154,12 +155,28 @@ func parent(name string) string {
 	return name[i+1:]
 }
 
-// findZone returns the most specific zone containing name.
-func (ix *index) findZone(name string) *zoneIdx {
+// findZone returns the most specific zone containing name that is visible
+// on network: public zones everywhere, private zones on bound networks.
+func (ix *index) findZone(name, network string) *zoneIdx {
 	for n := name; n != ""; n = parent(n) {
-		if zs := ix.zones[n]; len(zs) > 0 {
-			return zs[0]
+		for _, z := range ix.zones[n] {
+			if !z.private || (network != "" && z.networks[network]) {
+				return z
+			}
 		}
 	}
 	return nil
+}
+
+// normalizeNetwork reduces a network URL or path to
+// "projects/P/global/networks/N" ("" if it isn't one).
+func normalizeNetwork(n string) string {
+	if i := strings.Index(n, "projects/"); i >= 0 {
+		n = n[i:]
+	}
+	segs := strings.Split(n, "/")
+	if len(segs) != 5 || segs[0] != "projects" || segs[2] != "global" || segs[3] != "networks" {
+		return ""
+	}
+	return n
 }

@@ -85,3 +85,65 @@ func TestLRO(t *testing.T) {
 		t.Errorf("LRO = %v %v", c.LRO("container"), c.LRO("sqladmin"))
 	}
 }
+
+// TestPorts is FR-CORE-042: a bare 0 makes every listener without its own
+// entry pick a free port; named entries still win; ranges are validated.
+func TestPorts(t *testing.T) {
+	p, err := ParsePorts("0, gcs=4443")
+	if err != nil || !reflect.DeepEqual(p, map[string]int{AllPorts: 0, "gcs": 4443}) {
+		t.Fatalf("ParsePorts = %v, %v", p, err)
+	}
+	if _, err := ParsePorts("gcs=x"); err == nil {
+		t.Error("ParsePorts accepted a non-numeric port")
+	}
+	c := Defaults()
+	if c.Port("gateway") != 4510 {
+		t.Fatalf("default gateway port = %d", c.Port("gateway"))
+	}
+	if _, ok := c.PortSet("lb"); ok {
+		t.Error("lb port set by default")
+	}
+	if err := c.LoadEnv(func(k string) string { return map[string]string{"GCPEMU_PORTS": "0,gcs=4443"}[k] }); err != nil {
+		t.Fatal(err)
+	}
+	if c.Port("gateway") != 0 || c.Port("gcs") != 4443 || c.Port("frontend") != 0 {
+		t.Errorf("ports with AllPorts = %v", c.Ports)
+	}
+	if v, ok := c.PortSet("lb"); !ok || v != 0 {
+		t.Errorf("PortSet(lb) = %d, %v", v, ok)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		rng    string
+		lo, hi int
+		bad    bool
+	}{
+		{"20000-20999", 20000, 20999, false},
+		{" 5 - 5 ", 5, 5, false},
+		{"20999-20000", 0, 0, true},
+		{"0-10", 0, 0, true},
+		{"1-70000", 0, 0, true},
+		{"20000", 0, 0, true},
+	} {
+		c := Defaults()
+		c.PortRange = tc.rng
+		lo, hi, ok, err := c.ParsePortRange()
+		if tc.bad {
+			if err == nil || c.Validate() == nil {
+				t.Errorf("range %q accepted", tc.rng)
+			}
+			continue
+		}
+		if err != nil || !ok || lo != tc.lo || hi != tc.hi {
+			t.Errorf("range %q = %d-%d %v %v", tc.rng, lo, hi, ok, err)
+		}
+	}
+	c = Defaults()
+	c.Ports[AllPorts] = 8000
+	if err := c.Validate(); err == nil {
+		t.Error("a bare non-zero port was accepted")
+	}
+}

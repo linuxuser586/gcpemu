@@ -54,6 +54,10 @@ type nodeConfig struct {
 	// DNS and Registry are emulator endpoints on the services network.
 	DNS      string `json:"dns,omitempty"`
 	Registry string `json:"registry,omitempty"`
+	// Network is the node's VPC network ("projects/P/global/networks/N");
+	// the DNS relay tags queries with it so that private zones bound to
+	// the network resolve (FR-DNS-004, FR-INT-005).
+	Network string `json:"network,omitempty"`
 	// DefaultVia replaces the default route (external gateway for public
 	// nodes, the VPC egress gateway for private ones); NoDefaultRoute
 	// removes it (private nodes without an egress gateway).
@@ -313,6 +317,7 @@ func serveNodeDNS(cfg nodeConfig) (func(), error) {
 		TTL:       300,
 		Answer:    nodeDNSAnswer(cfg, md),
 		Upstreams: func(string) []string { return []string{upstream} },
+		Network:   cfg.Network,
 	}
 	return frontend.ListenDNS(metadataIP+":53", h)
 }

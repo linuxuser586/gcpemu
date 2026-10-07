@@ -11,15 +11,21 @@ import (
 
 // Entry is one logged request.
 type Entry struct {
-	Time      time.Time `json:"time"`
-	Service   string    `json:"service"`
-	Protocol  string    `json:"protocol"` // http, grpc, dns, ...
-	Method    string    `json:"method"`
-	Resource  string    `json:"resource,omitempty"`
-	Principal string    `json:"principal,omitempty"`
-	Status    int       `json:"status"`
-	Code      string    `json:"code,omitempty"`
-	LatencyMS float64   `json:"latencyMs"`
+	Time     time.Time `json:"time"`
+	Service  string    `json:"service"`
+	Protocol string    `json:"protocol"` // http, grpc, dns, postgres, tcp, udp
+	Method   string    `json:"method"`
+	// Resource is the resource acted on: the one whose permission an API
+	// call checked first, the answering DNS zone, the Cloud SQL instance or
+	// the Cloud NAT gateway.
+	Resource  string `json:"resource,omitempty"`
+	Principal string `json:"principal,omitempty"`
+	// Status is protocol-specific: the HTTP status, gRPC code or DNS
+	// rcode; for connections (postgres, NAT) 0 when admitted and 1 when
+	// refused, with the reason in Code.
+	Status    int     `json:"status"`
+	Code      string  `json:"code,omitempty"`
+	LatencyMS float64 `json:"latencyMs"`
 }
 
 // Log is a bounded ring buffer of entries that also writes to a logger.
@@ -36,8 +42,11 @@ func New(size int, log *slog.Logger) *Log {
 	return &Log{entries: make([]Entry, size), log: log}
 }
 
-// Add records e.
+// Add records e. A nil Log discards it.
 func (l *Log) Add(e Entry) {
+	if l == nil {
+		return
+	}
 	l.mu.Lock()
 	l.entries[l.next] = e
 	l.next = (l.next + 1) % len(l.entries)

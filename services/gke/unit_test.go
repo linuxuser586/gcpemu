@@ -1,10 +1,18 @@
 package gke
 
 import (
+	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+
+	"github.com/linuxuser586/gcpemu/internal/clock"
+	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 func TestResolveVersion(t *testing.T) {
@@ -176,5 +184,44 @@ func TestPrivateFlags(t *testing.T) {
 	c.ControlPlaneEndpointsConfig = &containerpb.ControlPlaneEndpointsConfig{IpEndpointsConfig: &containerpb.ControlPlaneEndpointsConfig_IPEndpointsConfig{EnablePublicEndpoint: &f}}
 	if !privateEndpoint(c) {
 		t.Error("private endpoint")
+	}
+}
+
+// TestNonLinuxHost is FR-GKE-012 / NFR-PORT-003: on a non-Linux host the
+// service refuses to start with a clear message and reports not-ready.
+func TestNonLinuxHost(t *testing.T) {
+	old := hostOS
+	hostOS = "darwin"
+	defer func() { hostOS = old }()
+	cfg := config.Defaults()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
+		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()})
+	err := s.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "only supported on Linux") || !strings.Contains(err.Error(), "without the gke service on darwin") {
+		t.Fatalf("Start = %v", err)
+	}
+	if err := s.Ready(); err == nil || !strings.Contains(err.Error(), "Linux") {
+		t.Fatalf("Ready = %v", err)
+	}
+}
+
+// TestPreloadLists is FR-GKE-006/007: every supported version preloads its
+// system images, so private nodes (no egress) start offline.
+func TestPreloadLists(t *testing.T) {
+	for _, v := range versions {
+		want := map[string]bool{"rancher/mirrored-pause:": false, "rancher/mirrored-coredns-coredns:": false, "rancher/local-path-provisioner:": false, "rancher/klipper-lb:": false}
+		for _, img := range v.Preload {
+			for p := range want {
+				if strings.HasPrefix(img, p) {
+					want[p] = true
+				}
+			}
+		}
+		for p, ok := range want {
+			if !ok {
+				t.Errorf("%s preloads no %s image: %v", v.GKE, p, v.Preload)
+			}
+		}
 	}
 }

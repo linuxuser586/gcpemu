@@ -322,6 +322,7 @@ func TestGKE(t *testing.T) {
 	})
 
 	t.Run("WorkloadIdentity", func(t *testing.T) { testWorkloadIdentity(t, e) })
+	t.Run("PrivateDNS", func(t *testing.T) { testPrivateDNS(t, e) })
 	t.Run("NEG", func(t *testing.T) { testNEG(t, e) })
 
 	t.Run("PrivateCluster", func(t *testing.T) {
@@ -450,6 +451,43 @@ sleep 1; done`
 		if !strings.Contains(string(b), gsa) {
 			t.Errorf("tokeninfo = %s", b)
 		}
+	}
+}
+
+// testPrivateDNS is FR-DNS-004 / FR-INT-005: pods resolve Cloud DNS
+// private zones bound to the cluster's network (CoreDNS → node relay →
+// Cloud DNS), not those bound to other networks, and cluster names stay
+// local.
+func testPrivateDNS(t *testing.T, e *env) {
+	network := e.c.GetNetworkConfig().GetNetwork()
+	if network == "" {
+		t.Fatal("cluster has no networkConfig.network")
+	}
+	mkZone := func(name, dnsName, net, ip string) {
+		body := map[string]any{"name": name, "dnsName": dnsName, "description": "", "visibility": "private",
+			"privateVisibilityConfig": map[string]any{"networks": []map[string]any{{"networkUrl": net}}}}
+		if code := gw(t, e.inst, "POST", "/dns/v1/projects/"+project+"/managedZones", body, nil); code != 200 {
+			t.Fatalf("create zone %s: %d", name, code)
+		}
+		rr := map[string]any{"name": "db." + dnsName, "type": "A", "ttl": 30, "rrdatas": []string{ip}}
+		if code := gw(t, e.inst, "POST", "/dns/v1/projects/"+project+"/managedZones/"+name+"/rrsets", rr, nil); code != 200 {
+			t.Fatalf("create record in %s: %d", name, code)
+		}
+	}
+	mkZone("corp", "corp.internal.", network, "10.9.9.9")
+	mkZone("other", "other.internal.", "projects/"+project+"/global/networks/elsewhere", "10.8.8.8")
+	e.runPod("default", "dns", "default", `while true; do
+a=N; nslookup db.corp.internal 2>&1 | grep -q 10.9.9.9 && a=Y
+b=N; nslookup db.other.internal 2>&1 | grep -q 10.8.8.8 && b=Y
+k=N; nslookup kubernetes.default.svc.cluster.local 2>&1 | grep -q 'Address.*[0-9]' && k=Y
+echo "R corp=$a other=$b kube=$k"; sleep 1; done`)
+	var line string
+	eventually(t, 60*time.Second, "private zone resolution from a pod", func() bool {
+		line = e.podLogs("default", "dns")
+		return strings.Contains(line, "R corp=Y")
+	})
+	if !strings.Contains(line, "other=N") || !strings.Contains(line, "kube=Y") {
+		t.Fatalf("pod DNS: %s", line)
 	}
 }
 

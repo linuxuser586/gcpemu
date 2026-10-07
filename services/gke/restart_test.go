@@ -2,8 +2,10 @@ package gke_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,12 +23,11 @@ func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.DataDir = dir
+	cfg.Ephemeral = false // CI=true defaults to ephemeral
 	cfg.Instance = "gke-restart"
 	cfg.Services = []string{"gke"}
 	cfg.LogLevel = "warn"
-	for k := range cfg.Ports {
-		cfg.Ports[k] = 0
-	}
+	cfg.Ports[config.AllPorts] = 0
 	var out io.Writer = io.Discard
 	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
 		out = os.Stderr
@@ -98,10 +99,15 @@ func TestRestart(t *testing.T) {
 		t.Fatalf("instance ID changed: %s → %s", id, inst.ID)
 	}
 	cm = newClient(t, inst)
-	eventually(t, 2*time.Minute, "cluster RUNNING after restart", func() bool {
+	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(500 * time.Millisecond) {
 		c, err = cm.GetCluster(context.Background(), &containerpb.GetClusterRequest{Name: name})
-		return err == nil && c.Status == containerpb.Cluster_RUNNING
-	})
+		if err == nil && c.Status == containerpb.Cluster_RUNNING {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cluster not RUNNING 3m after restart: %v %v %q\n%s", err, c.GetStatus(), c.GetStatusMessage(), containerDiagnostics(id))
+		}
+	}
 	adm, pool = adminClient(t, inst, name)
 	e = &env{t: t, inst: inst, c: c, ca: pool, adm: adm}
 	var cmap struct{ Data map[string]string }
@@ -125,4 +131,27 @@ func TestRestart(t *testing.T) {
 	if len(vols) != 0 {
 		t.Errorf("volumes left after delete: %v", vols)
 	}
+}
+
+// containerDiagnostics describes an instance's containers and the tails of
+// their logs, for failures that only happen on CI hosts.
+func containerDiagnostics(instanceID string) string {
+	cl, err := runtime.Detect()
+	if err != nil {
+		return err.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cs, err := cl.ListContainers(ctx, map[string]string{runtime.LabelInstance: instanceID})
+	if err != nil {
+		return err.Error()
+	}
+	var b strings.Builder
+	for _, c := range cs {
+		fmt.Fprintf(&b, "--- %s %s (%s, exit %d) %v\n", c.Name, c.Image, c.Status, c.ExitCode, c.IPs)
+		logs, _ := cl.Logs(ctx, c.ID, 30)
+		b.WriteString(logs)
+		b.WriteString("\n")
+	}
+	return b.String()
 }

@@ -2,7 +2,9 @@ package gke
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -714,6 +716,7 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 	cfg := nodeConfig{
 		Emu:         "http://" + gw + "/container/_emu/node/" + c.Id + "/" + rec.Int.Secret + "/" + node.Name,
 		MirrorHosts: arRegistryHosts(),
+		Network:     c.GetNetworkConfig().GetNetwork(),
 	}
 	if dns, err := d.np.Addr(ctx, "dns"); err == nil {
 		cfg.DNS = dns
@@ -1141,7 +1144,9 @@ func (s *Service) preloadTar(ctx context.Context, d *deps, v k8sVersion) (string
 	if err != nil {
 		return "", err
 	}
-	tag := strings.NewReplacer("/", "_", ":", "_").Replace(v.Image)
+	// Keyed by the image list too, so a changed list is re-exported.
+	sum := sha256.Sum256([]byte(strings.Join(v.Preload, "\n")))
+	tag := strings.NewReplacer("/", "_", ":", "_").Replace(v.Image) + "-" + hex.EncodeToString(sum[:4])
 	p := filepath.Join(dir, "images", tag+".tar")
 	preloadMu.Lock()
 	defer preloadMu.Unlock()

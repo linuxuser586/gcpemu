@@ -77,6 +77,10 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 		return nil, err
 	}
 	logger := newLogger(cfg, logOut)
+	if !config.IsLoopback(cfg.Bind) {
+		logger.Warn("listeners are reachable beyond this host; every emulated API, credential and data plane is exposed (FR-CORE-044)",
+			"bind", cfg.Bind, "iamMode", cfg.IAMMode)
+	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, done: make(chan struct{})}
 	in.ID = instanceID(dir, cfg.Ephemeral)
@@ -192,10 +196,9 @@ func (in *Instance) Start(ctx context.Context) error {
 	}
 	in.gw.HandleAdmin(newAdmin(in))
 
-	addr := net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway")))
-	l, err := net.Listen("tcp", addr)
+	l, err := in.Env.ListenTCP(in.Config.Bind, in.Config.Port("gateway"))
 	if err != nil {
-		return fmt.Errorf("gateway listen %s: %w", addr, err)
+		return fmt.Errorf("gateway listen %s: %w", net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway"))), err)
 	}
 	in.Env.Endpoints.Set("gateway", l.Addr().String())
 	go func() {

@@ -15,7 +15,7 @@ vet:
 	gofmt -l . | (! grep .) && go vet ./... && go vet -tags e2e ./e2e/...
 
 # SRS 11.2 reference stack (container runtime + tofu; steps 2 and 4-8
-# download istioctl and Istio images: set GCPEMU_NET_TESTS=0 to skip them).
+# download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them).
 e2e:
 	GCPEMU_NET_TESTS=$${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -run TestReferenceStack -count=1 -timeout 30m -v
 
