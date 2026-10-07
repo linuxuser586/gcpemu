@@ -227,15 +227,29 @@ func providerMatrix(t *testing.T) []provider {
 // OpenTofu registry, oldest first.
 func registryVersions(t *testing.T, name string) [][3]int {
 	t.Helper()
-	cl := &http.Client{Timeout: time.Minute}
-	resp, err := cl.Get("https://registry.opentofu.org/v1/providers/hashicorp/" + name + "/versions")
-	if err != nil {
-		t.Fatalf("provider versions (pin versions in GCPEMU_TOFU_PROVIDERS to skip the lookup): %v", err)
-	}
-	defer resp.Body.Close()
+	cl := &http.Client{Timeout: 30 * time.Second}
 	var body struct{ Versions []struct{ Version string } }
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("provider versions of %s: %d %v", name, resp.StatusCode, err)
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 5 * time.Second)
+		}
+		var resp *http.Response
+		resp, err = cl.Get("https://registry.opentofu.org/v1/providers/hashicorp/" + name + "/versions")
+		if err != nil {
+			continue
+		}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		if err == nil && resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatalf("provider versions of %s (pin versions in GCPEMU_TOFU_PROVIDERS to skip the lookup): %v", name, err)
 	}
 	var vs [][3]int
 	for _, v := range body.Versions {
