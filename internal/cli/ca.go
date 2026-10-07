@@ -18,6 +18,8 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/hostmode"
 )
 
 // `gcpemu ca` manages the instance's local root CA (Section 7.4,
@@ -61,37 +63,37 @@ func (o *rootOpts) caCmd() *cobra.Command {
 	var yes, dryRun bool
 	install := &cobra.Command{
 		Use:   "install",
-		Short: "Add the CA to the OS trust store (asks for confirmation; uses sudo)",
+		Short: "Add the CA to the OS, Docker and containerd trust stores (asks for confirmation; uses sudo)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, c, err := loadCA(cmd)
 			if err != nil {
 				return err
 			}
-			plan, err := trustPlan(hostTrust(), cfg.Instance, c, true)
+			h := hostTrust()
+			plan, err := trustPlan(h, cfg.Instance, c, true)
 			if err != nil {
 				return err
 			}
-			if err := runPlan(cmd, plan, yes, dryRun); err != nil {
-				return err
-			}
-			printContainerTrust(cmd.OutOrStdout(), cfg, c)
-			return nil
+			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, true)...)
+			return runPlan(cmd, plan, yes, dryRun)
 		},
 	}
 	install.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password)")
 	install.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
 	uninstall := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the CA from the OS trust store (asks for confirmation; uses sudo)",
+		Short: "Remove the CA from the OS, Docker and containerd trust stores (asks for confirmation; uses sudo)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, c, err := loadCA(cmd)
 			if err != nil {
 				return err
 			}
-			plan, err := trustPlan(hostTrust(), cfg.Instance, c, false)
+			h := hostTrust()
+			plan, err := trustPlan(h, cfg.Instance, c, false)
 			if err != nil {
 				return err
 			}
+			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
 			return runPlan(cmd, plan, yes, dryRun)
 		},
 	}
@@ -142,6 +144,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 type trustHost struct {
 	goos     string
 	root     bool
+	etc      string // "/etc" unless set (tests)
 	lookPath func(string) bool
 	isDir    func(string) bool
 }
@@ -161,6 +164,8 @@ type trustStep struct {
 	// stdin is fed to the command (used to write the certificate with
 	// `sudo tee` so no temp file is needed).
 	stdin []byte
+	// script is shown below the command when stdin is a shell script.
+	script bool
 }
 
 func (s trustStep) String() string { return strings.Join(s.args, " ") }
@@ -216,6 +221,11 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 	fmt.Fprintln(out, "The following commands will be run:")
 	for _, s := range plan {
 		fmt.Fprintf(out, "  %s\n", s)
+		if s.script {
+			for _, l := range strings.Split(strings.TrimRight(string(s.stdin), "\n"), "\n") {
+				fmt.Fprintf(out, "      | %s\n", l)
+			}
+		}
 	}
 	if dryRun {
 		return nil
@@ -246,26 +256,66 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 	return nil
 }
 
-// printContainerTrust prints how to make Docker and containerd trust the
-// CA for the emulated registry (these are not changed automatically).
-func printContainerTrust(w io.Writer, cfg *config.Config, c *ca.CA) {
-	reg := "<registry-host:port>"
-	if eps, err := readEndpoints(cfg); err == nil && eps["ar"] != "" {
-		reg = eps["ar"]
+// containerTrustPlan returns the step that makes Docker and containerd
+// trust the CA for the registry hosts the emulator serves over TLS
+// (LOCATION-docker.pkg.dev in host mode; Section 7.4). They keep their
+// own per-registry trust, read on every pull, so no daemon restart is
+// needed. Docker reads every *.crt in certs.d/HOST, so the CA goes in as
+// gcpemu-INSTANCE.crt next to the user's files; containerd's hosts.toml
+// is written only where none exists or gcpemu wrote it (config_path must
+// point at /etc/containerd/certs.d, as on GKE and k3s). Linux only: Docker
+// Desktop on macOS uses the system keychain.
+func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []trustStep {
+	if h.goos != "linux" {
+		return nil
 	}
-	fmt.Fprintf(w, `
-Docker and containerd keep their own registry trust. To pull from the
-emulated Artifact Registry over TLS (and, with --host-mode, from
-REGION-docker.pkg.dev), trust the CA per registry host:
-
-  # Docker (no daemon restart needed)
-  sudo mkdir -p /etc/docker/certs.d/%[1]s
-  sudo cp %[2]s /etc/docker/certs.d/%[1]s/ca.crt
-
-  # containerd (config_path = "/etc/containerd/certs.d" in the CRI registry config)
-  sudo mkdir -p /etc/containerd/certs.d/%[1]s
-  printf 'server = "https://%[1]s"\n[host."https://%[1]s"]\n  ca = "%[2]s"\n' | sudo tee /etc/containerd/certs.d/%[1]s/hosts.toml
-
-GKE nodes created by the emulator trust the CA automatically.
-`, reg, c.Path())
+	etc := h.etc
+	if etc == "" {
+		etc = "/etc"
+	}
+	docker, containerd := h.isDir(etc+"/docker"), h.isDir(etc+"/containerd")
+	if !docker && !containerd {
+		return nil
+	}
+	var hosts []string
+	for _, n := range hostmode.HostsBlockNames(nil) {
+		if frontend.IsRegistryHost(n) {
+			hosts = append(hosts, n)
+		}
+	}
+	file := "gcpemu-" + instance + ".crt"
+	shared := etc + "/gcpemu/" + file
+	marker := "# written by gcpemu (" + instance + ")"
+	var b strings.Builder
+	b.WriteString("set -e\nhosts='" + strings.Join(hosts, " ") + "'\n")
+	if install {
+		b.WriteString("mkdir -p " + etc + "/gcpemu\ncat > " + shared + " <<'GCPEMU_CA'\n" + strings.TrimSpace(string(c.PEM())) + "\nGCPEMU_CA\n")
+		b.WriteString("for h in $hosts; do\n")
+		if docker {
+			b.WriteString("  mkdir -p " + etc + "/docker/certs.d/$h && cp " + shared + " " + etc + "/docker/certs.d/$h/" + file + "\n")
+		}
+		if containerd {
+			b.WriteString("  f=" + etc + "/containerd/certs.d/$h/hosts.toml\n")
+			b.WriteString("  if [ ! -e $f ] || grep -q '^# written by gcpemu' $f; then\n")
+			b.WriteString("    mkdir -p " + etc + "/containerd/certs.d/$h\n")
+			b.WriteString("    printf '%s\\nserver = \"https://%s\"\\n\\n[host.\"https://%s\"]\\n  ca = \"%s\"\\n' '" + marker + "' $h $h " + shared + " > $f\n")
+			b.WriteString("  fi\n")
+		}
+		b.WriteString("done\n")
+	} else {
+		b.WriteString("for h in $hosts; do\n")
+		if docker {
+			b.WriteString("  rm -f " + etc + "/docker/certs.d/$h/" + file + "\n  rmdir " + etc + "/docker/certs.d/$h 2>/dev/null || true\n")
+		}
+		if containerd {
+			b.WriteString("  f=" + etc + "/containerd/certs.d/$h/hosts.toml\n")
+			b.WriteString("  if [ -e $f ] && grep -qF '" + marker + "' $f; then rm -f $f; rmdir " + etc + "/containerd/certs.d/$h 2>/dev/null || true; fi\n")
+		}
+		b.WriteString("done\nrm -f " + shared + "\n")
+	}
+	args := []string{"sh", "-s"}
+	if !h.root {
+		args = append([]string{"sudo"}, args...)
+	}
+	return []trustStep{{args: args, stdin: []byte(b.String()), script: true}}
 }

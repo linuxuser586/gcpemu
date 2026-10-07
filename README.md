@@ -100,7 +100,8 @@ sudo resolvectl dns <bridge-if> <ip> && sudo resolvectl domain <bridge-if> ~goog
 gcpemu hosts | sudo tee -a /etc/hosts
 ```
 
-Then trust the CA system-wide with `gcpemu ca install`, or per shell with
+Then trust the CA system-wide with `gcpemu ca install` (on Linux it also adds the CA to Docker's
+and containerd's per-registry trust for every `LOCATION-docker.pkg.dev`), or per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
 holds the system roots plus the emulator CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To
 test without changing the host, use `curl --resolve storage.googleapis.com:443:<ip> --cacert
