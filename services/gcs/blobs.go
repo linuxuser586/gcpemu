@@ -30,6 +30,18 @@ var copyBufPool = sync.Pool{New: func() any { b := make([]byte, 1<<20); return &
 // blobStore manages blob files.
 type blobStore struct {
 	dir string // <service dir>
+	// noSync skips fsync for ephemeral instances, whose data is deleted on
+	// exit anyway; --data-dir instances sync every acknowledged write
+	// (NFR-REL-001).
+	noSync bool
+}
+
+// sync flushes f to disk unless the instance is ephemeral.
+func (b *blobStore) sync(f *os.File) error {
+	if b.noSync {
+		return nil
+	}
+	return f.Sync()
 }
 
 func (b *blobStore) blobsDir() string   { return filepath.Join(b.dir, "blobs") }
@@ -169,7 +181,7 @@ type writerOnly struct{ io.Writer }
 
 // commit fsyncs and renames the temp file into the blob directory.
 func (w *blobWriter) commit() (*blobInfo, error) {
-	if err := w.f.Sync(); err != nil {
+	if err := w.bs.sync(w.f); err != nil {
 		w.abort()
 		return nil, err
 	}
@@ -220,7 +232,7 @@ func (b *blobStore) adoptFile(path string, sums *blobInfo) (*blobInfo, error) {
 		}
 		info = &blobInfo{Size: n, MD5: h.Sum(nil), CRC: crc}
 	}
-	if err := f.Sync(); err != nil {
+	if err := b.sync(f); err != nil {
 		f.Close()
 		return nil, err
 	}
