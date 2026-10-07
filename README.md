@@ -165,6 +165,19 @@ Downloads are cached in `$GCPEMU_E2E_CACHE` (default `<user cache dir>/gcpemu-e2
 must finish within 10 minutes (`GCPEMU_E2E_BUDGET` overrides); it prints per-step timings.
 With `emulator_gateway` empty the module targets real GCP (set `project` and `domain`).
 
+### Client compatibility (SRS 7.1)
+
+`make compat` runs the real clients against a detached instance with only endpoint
+configuration: `gcloud` (storage, pubsub, iam, dns, compute load balancing and NAT, artifacts,
+sql, container), `kubectl` through `gke-gcloud-auth-plugin`, Helm, Docker, `crane`, `ko`, `psql`,
+the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. gcloud (with the
+`gke-gcloud-auth-plugin` component), kubectl, dig and Docker come from `PATH`; Helm, crane, ko
+and the Auth Proxy are downloaded at pinned, checksum-verified versions.
+
+Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus a token: for
+example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
+clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.
+
 ## Development
 
 ```sh

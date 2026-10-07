@@ -48,6 +48,29 @@ jobs:
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
 
+  # SRS 7.1: real clients against a detached instance.
+  compat:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin,kubectl
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/gcpemu-compat
+          key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
+      - name: Client compatibility (SRS 7.1)
+        run: make compat
+
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
   perf:
