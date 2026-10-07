@@ -35,7 +35,9 @@ func (g *IDs) Numeric() string { return fmt.Sprintf("%d", g.Uint64()) }
 func (g *IDs) Hex(n int) string {
 	b := make([]byte, n)
 	if g.deterministic {
-		binary.BigEndian.PutUint64(b[max(0, n-8):], g.n.Add(1))
+		var c [8]byte
+		binary.BigEndian.PutUint64(c[:], g.n.Add(1))
+		copy(b[max(0, n-8):], c[max(0, 8-n):])
 	} else {
 		_, _ = rand.Read(b)
 	}
