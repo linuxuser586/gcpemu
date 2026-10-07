@@ -23,6 +23,9 @@ type DNS struct {
 	Upstreams func(name string) []string
 	// TTL of synthesized answers (default 60 s).
 	TTL uint32
+	// Network, when set, tags relayed queries with the VPC network they
+	// come from (NetworkOption).
+	Network string
 }
 
 // ServeDNS implements mdns.Handler.
@@ -46,12 +49,16 @@ func (d *DNS) ServeDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
 		proto = "tcp"
 	}
+	out := req
+	if d.Network != "" {
+		out = SetNetwork(req, d.Network)
+	}
 	for _, up := range ups {
 		c := &mdns.Client{Net: proto, Timeout: 5 * time.Second}
-		resp, _, err := c.Exchange(req, up)
+		resp, _, err := c.Exchange(out, up)
 		if err == nil && resp.Truncated && proto == "udp" {
 			c.Net = "tcp"
-			resp, _, err = c.Exchange(req, up)
+			resp, _, err = c.Exchange(out, up)
 		}
 		if err == nil {
 			_ = w.WriteMsg(resp)

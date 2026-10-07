@@ -714,6 +714,7 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 	cfg := nodeConfig{
 		Emu:         "http://" + gw + "/container/_emu/node/" + c.Id + "/" + rec.Int.Secret + "/" + node.Name,
 		MirrorHosts: arRegistryHosts(),
+		Network:     c.GetNetworkConfig().GetNetwork(),
 	}
 	if dns, err := d.np.Addr(ctx, "dns"); err == nil {
 		cfg.DNS = dns

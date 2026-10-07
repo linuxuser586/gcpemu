@@ -17,6 +17,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/services/dns"
 )
 
@@ -339,6 +340,19 @@ func query(t *testing.T, addr, network, name string, qtype uint16) *mdns.Msg {
 	return r
 }
 
+// queryNet queries as a DNS relay on a VPC network does.
+func queryNet(t *testing.T, addr, proto, network, name string, qtype uint16) *mdns.Msg {
+	t.Helper()
+	m := new(mdns.Msg)
+	m.SetQuestion(name, qtype)
+	cl := &mdns.Client{Net: proto, Timeout: 3 * time.Second}
+	r, _, err := cl.Exchange(frontend.SetNetwork(m, network), addr)
+	if err != nil {
+		t.Fatalf("%s %s %s on %s: %v", proto, name, mdns.TypeToString[qtype], network, err)
+	}
+	return r
+}
+
 func answers(r *mdns.Msg) []string {
 	var out []string
 	for _, rr := range r.Answer {
@@ -508,9 +522,12 @@ zones:
 	if r := query(t, addr, "udp", "www.seeded.test.", mdns.TypeA); len(r.Answer) != 1 || r.Answer[0].Header().Ttl != 300 {
 		t.Fatalf("seeded A: %v", r)
 	}
-	// Private zones are answered on the host for now.
-	if r := query(t, addr, "tcp", "db.priv.test.", mdns.TypeA); len(r.Answer) != 1 {
-		t.Fatalf("private A: %v", r)
+	// Private zones answer only on their bound network.
+	if r := query(t, addr, "tcp", "db.priv.test.", mdns.TypeA); r.Rcode != mdns.RcodeRefused {
+		t.Fatalf("private A from the host: %v", r)
+	}
+	if r := queryNet(t, addr, "tcp", "projects/seed-proj/global/networks/default", "db.priv.test.", mdns.TypeA); len(r.Answer) != 1 {
+		t.Fatalf("private A on the network: %v", r)
 	}
 	c := newClient(t, inst.GatewayURL()+"/")
 	cl, err := c.Changes.List("seed-proj", "seeded").Do()
@@ -543,4 +560,75 @@ func TestPublicZoneEmptyPrivateVisibility(t *testing.T) {
 		PrivateVisibilityConfig: &dnsv1.ManagedZonePrivateVisibilityConfig{Networks: []*dnsv1.ManagedZonePrivateVisibilityConfigNetwork{
 			{NetworkUrl: "projects/" + proj + "/global/networks/default"}}}}).Do()
 	wantErr(t, err, 400, "invalid")
+}
+
+// TestPrivateZoneVisibility is FR-DNS-004: a private zone answers only on
+// the networks it is bound to, and there it shadows a public zone of the
+// same name; elsewhere the public zone answers.
+func TestPrivateZoneVisibility(t *testing.T) {
+	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	c := newClient(t, inst.GatewayURL()+"/")
+	mk := func(z *dnsv1.ManagedZone, ip string) {
+		t.Helper()
+		if _, err := c.ManagedZones.Create(proj, z).Do(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.ResourceRecordSets.Create(proj, z.Name, &dnsv1.ResourceRecordSet{Name: "db." + z.DnsName, Type: "A", Ttl: 60, Rrdatas: []string{ip}}).Do(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bind := func(nets ...string) *dnsv1.ManagedZonePrivateVisibilityConfig {
+		pv := &dnsv1.ManagedZonePrivateVisibilityConfig{}
+		for _, n := range nets {
+			pv.Networks = append(pv.Networks, &dnsv1.ManagedZonePrivateVisibilityConfigNetwork{NetworkUrl: n})
+		}
+		return pv
+	}
+	mk(&dnsv1.ManagedZone{Name: "pub", DnsName: "corp.test.", Description: "public"}, "192.0.2.1")
+	mk(&dnsv1.ManagedZone{Name: "priv", DnsName: "corp.test.", Description: "private", Visibility: "private",
+		PrivateVisibilityConfig: bind("projects/" + proj + "/global/networks/vpc-a")}, "10.0.0.1")
+	mk(&dnsv1.ManagedZone{Name: "only", DnsName: "svc.internal.", Description: "private", Visibility: "private",
+		PrivateVisibilityConfig: bind("https://www.googleapis.com/compute/v1/projects/"+proj+"/global/networks/vpc-a",
+			"projects/"+proj+"/global/networks/vpc-b")}, "10.0.0.2")
+
+	addr := inst.Endpoint("dns")
+	vpcA, vpcB, vpcC := "projects/"+proj+"/global/networks/vpc-a", "projects/"+proj+"/global/networks/vpc-b", "projects/"+proj+"/global/networks/vpc-c"
+	for _, tc := range []struct {
+		network, name, want string
+		rcode               int
+	}{
+		{"", "db.corp.test.", "192.0.2.1", mdns.RcodeSuccess},
+		{vpcA, "db.corp.test.", "10.0.0.1", mdns.RcodeSuccess},
+		{vpcB, "db.corp.test.", "192.0.2.1", mdns.RcodeSuccess},
+		{"", "db.svc.internal.", "", mdns.RcodeRefused},
+		{vpcA, "db.svc.internal.", "10.0.0.2", mdns.RcodeSuccess},
+		{vpcB, "db.svc.internal.", "10.0.0.2", mdns.RcodeSuccess},
+		{vpcC, "db.svc.internal.", "", mdns.RcodeRefused},
+		// The private zone is authoritative on its network: no fallback to
+		// the public zone for names it lacks.
+		{vpcA, "www.corp.test.", "", mdns.RcodeNameError},
+	} {
+		for _, proto := range []string{"udp", "tcp"} {
+			var r *mdns.Msg
+			if tc.network == "" {
+				r = query(t, addr, proto, tc.name, mdns.TypeA)
+			} else {
+				r = queryNet(t, addr, proto, tc.network, tc.name, mdns.TypeA)
+			}
+			got := ""
+			if len(r.Answer) == 1 {
+				got = r.Answer[0].(*mdns.A).A.String()
+			}
+			if r.Rcode != tc.rcode || got != tc.want {
+				t.Errorf("%s %s on %q: rcode %s answer %q, want %s %q", proto, tc.name, tc.network,
+					mdns.RcodeToString[r.Rcode], got, mdns.RcodeToString[tc.rcode], tc.want)
+			}
+		}
+	}
+	// In-process resolution (load balancer, Certificate Manager) sees the
+	// public view.
+	svc, _ := inst.Env.Lookup("dns")
+	if rrs, err := svc.(*dns.Service).Resolve(context.Background(), "db.corp.test", mdns.TypeA); err != nil || len(rrs) != 1 || rrs[0].(*mdns.A).A.String() != "192.0.2.1" {
+		t.Fatalf("Resolve: %v %v", rrs, err)
+	}
 }
