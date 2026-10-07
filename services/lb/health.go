@@ -13,6 +13,10 @@ import (
 	"time"
 
 	computev1 "google.golang.org/api/compute/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/linuxuser586/gcpemu/services/compute"
 )
@@ -123,12 +127,33 @@ func (b *backendSvc) probe(ctx context.Context, hc *computev1.HealthCheck, e *en
 		return b.probeTCP(ctx, e, portOf(c.Port, c.PortSpecification), true, c.Request, c.Response)
 	case hc.GrpcHealthCheck != nil:
 		c := hc.GrpcHealthCheck
-		return b.probeTCP(ctx, e, portOf(c.Port, c.PortSpecification), false, "", "")
+		return b.probeGRPC(ctx, e, portOf(c.Port, c.PortSpecification), false, c.GrpcServiceName)
 	case hc.GrpcTlsHealthCheck != nil:
 		c := hc.GrpcTlsHealthCheck
-		return b.probeTCP(ctx, e, portOf(c.Port, c.PortSpecification), true, "", "")
+		return b.probeGRPC(ctx, e, portOf(c.Port, c.PortSpecification), true, c.GrpcServiceName)
 	}
 	return false
+}
+
+// probeGRPC calls grpc.health.v1.Health/Check for service; only SERVING
+// passes, as on GCP.
+func (b *backendSvc) probeGRPC(ctx context.Context, e *endpoint, port int, useTLS bool, service string) bool {
+	creds := insecure.NewCredentials()
+	if useTLS {
+		creds = credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})
+	}
+	conn, err := grpc.NewClient("passthrough:///"+net.JoinHostPort(e.ip, strconv.Itoa(port)),
+		grpc.WithTransportCredentials(creds),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			return b.d.dialContext(ctx, "tcp", addr)
+		}),
+		grpc.WithUserAgent("GoogleHC/1.0"))
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	resp, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{Service: service})
+	return err == nil && resp.GetStatus() == healthpb.HealthCheckResponse_SERVING
 }
 
 func (b *backendSvc) probeHTTP(ctx context.Context, e *endpoint, port int, mode, host, path, want, proxyHdr string) bool {

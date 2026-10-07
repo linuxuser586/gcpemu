@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +28,9 @@ import (
 	dnsv1 "google.golang.org/api/dns/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/ca"
@@ -888,5 +893,174 @@ func TestInstanceGroupBackend(t *testing.T) {
 	ports.Store(&map[string]int{"http": 80})
 	if code, _ := poll(func(c int, _ string) bool { return c != 200 }); code == 200 {
 		t.Fatal("still routed after the named port was removed")
+	}
+}
+
+// TestHealthCheckTransitions is FR-LB-007 for every probe type: an
+// endpoint that starts failing its health check goes UNHEALTHY in
+// getHealth and stops receiving traffic, then recovers.
+func TestHealthCheckTransitions(t *testing.T) {
+	for _, kind := range []string{"HTTP", "HTTP2", "TCP", "GRPC"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			testHealthTransitions(t, kind)
+		})
+	}
+}
+
+// toggled is an endpoint whose health a test flips.
+type toggled struct {
+	port      int64
+	setHealth func(bool)
+}
+
+// healthOrigin starts an origin for a health check kind answering
+// requests with name. For TCP, unhealthy means the port is closed.
+func healthOrigin(t *testing.T, kind, name string) toggled {
+	t.Helper()
+	var healthy atomic.Bool
+	healthy.Store(true)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, name)
+	})
+	portOf := func(addr net.Addr) int64 { return int64(addr.(*net.TCPAddr).Port) }
+	switch kind {
+	case "HTTP":
+		s := httptest.NewServer(h)
+		t.Cleanup(s.Close)
+		return toggled{portOf(s.Listener.Addr()), healthy.Store}
+	case "HTTP2":
+		s := httptest.NewUnstartedServer(h)
+		s.EnableHTTP2 = true
+		s.StartTLS()
+		t.Cleanup(s.Close)
+		return toggled{portOf(s.Listener.Addr()), healthy.Store}
+	case "TCP":
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := ln.Addr().String()
+		var mu sync.Mutex
+		srv := &http.Server{Handler: h}
+		go srv.Serve(ln)
+		t.Cleanup(func() { mu.Lock(); srv.Close(); mu.Unlock() })
+		return toggled{portOf(ln.Addr()), func(up bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			srv.Close()
+			if up {
+				ln, err := net.Listen("tcp", addr)
+				if err != nil {
+					t.Errorf("relisten %s: %v", addr, err)
+					return
+				}
+				srv = &http.Server{Handler: h}
+				go srv.Serve(ln)
+			}
+		}}
+	default: // GRPC
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		gs := grpc.NewServer()
+		hs := health.NewServer()
+		healthpb.RegisterHealthServer(gs, hs)
+		hs.SetServingStatus("app", healthpb.HealthCheckResponse_SERVING)
+		go gs.Serve(ln)
+		t.Cleanup(gs.Stop)
+		return toggled{portOf(ln.Addr()), func(up bool) {
+			st := healthpb.HealthCheckResponse_NOT_SERVING
+			if up {
+				st = healthpb.HealthCheckResponse_SERVING
+			}
+			hs.SetServingStatus("app", st)
+		}}
+	}
+}
+
+func testHealthTransitions(t *testing.T, kind string) {
+	e := start(t)
+	c := e.c
+	a := healthOrigin(t, kind, "A")
+	eps := []*computev1.NetworkEndpoint{{IpAddress: "127.0.0.1", Port: a.port}}
+	traffic := kind != "GRPC"
+	if traffic {
+		b := healthOrigin(t, kind, "B")
+		eps = append(eps, &computev1.NetworkEndpoint{IpAddress: "127.0.0.1", Port: b.port})
+	}
+	hc := &computev1.HealthCheck{Name: "hc", Type: kind, CheckIntervalSec: 1, TimeoutSec: 1, HealthyThreshold: 2, UnhealthyThreshold: 2}
+	switch kind {
+	case "HTTP":
+		hc.HttpHealthCheck = &computev1.HTTPHealthCheck{PortSpecification: "USE_SERVING_PORT", RequestPath: "/healthz"}
+	case "HTTP2":
+		hc.Http2HealthCheck = &computev1.HTTP2HealthCheck{PortSpecification: "USE_SERVING_PORT", RequestPath: "/healthz"}
+	case "TCP":
+		hc.TcpHealthCheck = &computev1.TCPHealthCheck{PortSpecification: "USE_SERVING_PORT"}
+	case "GRPC":
+		hc.GrpcHealthCheck = &computev1.GRPCHealthCheck{PortSpecification: "USE_SERVING_PORT", GrpcServiceName: "app"}
+	}
+	protocol := map[string]string{"HTTP": "HTTP", "HTTP2": "HTTP2", "TCP": "HTTP", "GRPC": "GRPC"}[kind]
+	e.do(c.Networks.Insert(proj, &computev1.Network{Name: "vpc", AutoCreateSubnetworks: false, ForceSendFields: []string{"AutoCreateSubnetworks"}}).Do())
+	e.do(c.NetworkEndpointGroups.Insert(proj, "us-central1-a", &computev1.NetworkEndpointGroup{Name: "neg", Network: "global/networks/vpc"}).Do())
+	e.do(c.NetworkEndpointGroups.AttachNetworkEndpoints(proj, "us-central1-a", "neg", &computev1.NetworkEndpointGroupsAttachEndpointsRequest{NetworkEndpoints: eps}).Do())
+	e.do(c.HealthChecks.Insert(proj, hc).Do())
+	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "svc", LoadBalancingScheme: "EXTERNAL_MANAGED", Protocol: protocol,
+		HealthChecks: []string{"global/healthChecks/hc"}, Backends: []*computev1.Backend{{Group: "zones/us-central1-a/networkEndpointGroups/neg"}}}).Do())
+	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/svc"}).Do())
+	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
+	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
+	url := "http://" + e.inst.Endpoint("lb:fr") + "/"
+
+	stateOfA := func() string {
+		h, err := c.BackendServices.GetHealth(proj, "svc", &computev1.ResourceGroupReference{Group: "zones/us-central1-a/networkEndpointGroups/neg"}).Do()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range h.HealthStatus {
+			if s.Port == a.port {
+				return s.HealthState
+			}
+		}
+		return ""
+	}
+	waitState := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		for stateOfA() != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("endpoint A is %s, want %s", stateOfA(), want)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	served := func() map[string]int {
+		got := map[string]int{}
+		for range 12 {
+			resp, body := get(t, &http.Client{Timeout: 5 * time.Second}, url)
+			got[fmt.Sprintf("%d %s", resp.StatusCode, body)]++
+		}
+		return got
+	}
+
+	waitState("HEALTHY")
+	a.setHealth(false)
+	waitState("UNHEALTHY")
+	if traffic {
+		if got := served(); got["200 B"] != 12 {
+			t.Errorf("traffic with A unhealthy = %v, want only B", got)
+		}
+	}
+	a.setHealth(true)
+	waitState("HEALTHY")
+	if traffic {
+		if got := served(); got["200 A"] == 0 || got["200 B"] == 0 {
+			t.Errorf("traffic after A recovered = %v, want both", got)
+		}
 	}
 }
