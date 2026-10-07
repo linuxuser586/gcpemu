@@ -203,7 +203,11 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		return err
 	}
 	defer logf.Close()
-	exe, err := os.Executable()
+	var logStart int64
+	if fi, err := logf.Stat(); err == nil {
+		logStart = fi.Size()
+	}
+	exe, err := detachExe()
 	if err != nil {
 		return err
 	}
@@ -223,11 +227,14 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 	exited := make(chan error, 1)
 	go func() { exited <- child.Wait() }()
 
-	deadline := time.Now().Add(cfg.WaitTimeout)
+	logPath := filepath.Join(dir, instance.LogFile)
+	// The child gives up after the same wait timeout (and exits at once in
+	// CI, FR-CI-003); the grace lets its own reason reach the user.
+	deadline := time.Now().Add(cfg.WaitTimeout + 5*time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-exited:
-			return fmt.Errorf("emulator exited during startup (%v); see %s", err, filepath.Join(dir, instance.LogFile))
+			return fmt.Errorf("emulator exited during startup (%v):\n%s\nfull log: %s", err, logTail(logPath, logStart, 20), logPath)
 		case <-time.After(100 * time.Millisecond):
 		}
 		c, err := clientFor(cfg)
@@ -240,8 +247,67 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 			return nil
 		}
 	}
+	reasons := notReady(cfg)
 	_ = child.Process.Signal(syscall.SIGTERM)
-	return fmt.Errorf("emulator not ready after %s; see %s", cfg.WaitTimeout, filepath.Join(dir, instance.LogFile))
+	if reasons == "" {
+		reasons = logTail(logPath, logStart, 20)
+	}
+	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
+}
+
+// detachExe is the binary `start --detach` runs (a variable for tests).
+var detachExe = os.Executable
+
+// notReady returns the not-ready services and their reasons from a
+// starting instance's readiness endpoint, one per line, or "".
+func notReady(cfg *config.Config) string {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return ""
+	}
+	_, b, err := c.do(http.MethodGet, "/_emu/v1/ready")
+	if err != nil {
+		return ""
+	}
+	var r struct {
+		Services map[string]struct {
+			Ready  bool   `json:"ready"`
+			Reason string `json:"reason"`
+		} `json:"services"`
+	}
+	if json.Unmarshal(b, &r) != nil {
+		return ""
+	}
+	var lines []string
+	for name, st := range r.Services {
+		if !st.Ready {
+			lines = append(lines, "  "+name+": "+st.Reason)
+		}
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+// logTail returns the last n lines written to the log at path after
+// offset start.
+func logTail(path string, start int64, n int) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return ""
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i := range lines {
+		lines[i] = "  " + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (o *rootOpts) stopCmd() *cobra.Command {
