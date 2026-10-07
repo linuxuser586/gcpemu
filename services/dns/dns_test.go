@@ -680,3 +680,27 @@ func TestStandardParameters(t *testing.T) {
 		t.Errorf("bad fields = %q", got)
 	}
 }
+
+// TestReverseZone is FR-DNS-002/003 for PTR records: a reverse zone
+// answers PTR queries over UDP and TCP.
+func TestReverseZone(t *testing.T) {
+	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	c := newClient(t, inst.GatewayURL()+"/")
+	if _, err := c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "rev", DnsName: "2.0.192.in-addr.arpa.", Description: "reverse"}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ResourceRecordSets.Create(proj, "rev", &dnsv1.ResourceRecordSet{Name: "5.2.0.192.in-addr.arpa.", Type: "PTR", Ttl: 120,
+		Rrdatas: []string{"host.example.test."}}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	rev, _ := mdns.ReverseAddr("192.0.2.5")
+	for _, proto := range []string{"udp", "tcp"} {
+		r := query(t, inst.Endpoint("dns"), proto, rev, mdns.TypePTR)
+		if len(r.Answer) != 1 || r.Answer[0].(*mdns.PTR).Ptr != "host.example.test." || r.Answer[0].Header().Ttl != 120 || !r.Authoritative {
+			t.Errorf("%s PTR: %v", proto, r)
+		}
+		if r := query(t, inst.Endpoint("dns"), proto, "6.2.0.192.in-addr.arpa.", mdns.TypePTR); r.Rcode != mdns.RcodeNameError {
+			t.Errorf("%s missing PTR: %v", proto, r)
+		}
+	}
+}

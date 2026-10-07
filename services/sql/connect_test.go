@@ -166,6 +166,62 @@ func TestConnectivityAndIAM(t *testing.T) {
 	if got := queryVia(t, di, in.ConnectionName, saUser, "", "postgres"); got != saUser {
 		t.Fatalf("connector IAM current_user = %q", got)
 	}
+
+	// CLOUD_IAM_USER: a user's access token (user ADC) is the password.
+	aliceTok := accessToken(t, inst, "user:alice@example.com")
+	if _, err := connect(ctx, ip, 5432, "alice@example.com", aliceTok.AccessToken, "postgres"); err == nil || !strings.Contains(err.Error(), "cloudsql.instances.login") {
+		t.Fatalf("user IAM login without roles/cloudsql.instanceUser: %v", err)
+	}
+	iam, _ := inst.Env.Lookup("iam")
+	both := `{"bindings":[{"role":"roles/cloudsql.instanceUser","members":["serviceAccount:` + sa + `","user:alice@example.com"]}]}`
+	if _, err := iam.(emu.IAMPolicyStore).SetPolicyJSON(ctx, "//cloudresourcemanager.googleapis.com/projects/"+testProject, []byte(both)); err != nil {
+		t.Fatal(err)
+	}
+	c, err = connect(ctx, ip, 5432, "alice@example.com", aliceTok.AccessToken, "postgres")
+	if err != nil {
+		t.Fatalf("user IAM login: %v", err)
+	}
+	_ = c.QueryRow(ctx, "SELECT current_user").Scan(&who)
+	c.Close(ctx)
+	if who != "alice@example.com" {
+		t.Fatalf("current_user = %q", who)
+	}
+	if _, err := connect(ctx, ip, 5432, "alice@example.com", saTok.AccessToken, "postgres"); err == nil {
+		t.Fatal("a service account's token accepted for a user")
+	}
+}
+
+// TestMajorVersions is FR-SQL-001: every supported major version runs its
+// own PostgreSQL server.
+func TestMajorVersions(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	inst := emutest.Start(t, []string{"sql"})
+	svc := adminClient(t, inst)
+	ctx := context.Background()
+	for _, v := range []string{"14", "15", "16", "17"} {
+		t.Run("POSTGRES_"+v, func(t *testing.T) {
+			t.Parallel()
+			in := createInstance(t, svc, &sqladmin.DatabaseInstance{Name: "pg" + v, DatabaseVersion: "POSTGRES_" + v, RootPassword: "rootpw",
+				Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true,
+					AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}}}}})
+			if !strings.HasPrefix(in.DatabaseInstalledVersion, "POSTGRES_"+v+"_") {
+				t.Errorf("databaseInstalledVersion %s", in.DatabaseInstalledVersion)
+			}
+			c, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close(ctx)
+			var num string
+			if err := c.QueryRow(ctx, "SHOW server_version_num").Scan(&num); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(num, v) {
+				t.Errorf("server_version_num %s for POSTGRES_%s", num, v)
+			}
+		})
+	}
 }
 
 // queryVia connects through a cloudsqlconn dialer and returns current_user.

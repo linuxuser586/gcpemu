@@ -135,11 +135,14 @@ func (s *Service) Register(r emu.Router) error {
 	return nil
 }
 
+// hostOS is the host operating system (a variable for tests).
+var hostOS = goruntime.GOOS
+
 // Start rejects non-Linux hosts and brings persisted clusters back up in
 // the background (FR-CORE-031).
 func (s *Service) Start(ctx context.Context) error {
-	if goruntime.GOOS != "linux" {
-		return errors.New("GKE is only supported on Linux hosts in this release (NFR-PORT-003); run gcpemu without the gke service on " + goruntime.GOOS)
+	if hostOS != "linux" {
+		return errors.New("GKE is only supported on Linux hosts in this release (NFR-PORT-003); run gcpemu without the gke service on " + hostOS)
 	}
 	s.mu.Lock()
 	s.started = true
@@ -189,7 +192,7 @@ func (s *Service) Stop(ctx context.Context) error {
 
 // Ready reports readiness of the API; clusters report their own status.
 func (s *Service) Ready() error {
-	if goruntime.GOOS != "linux" {
+	if hostOS != "linux" {
 		return fmt.Errorf("GKE requires Linux (NFR-PORT-003)")
 	}
 	return nil
