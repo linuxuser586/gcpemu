@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -323,11 +324,19 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			pidFile := filepath.Join(cfg.InstanceDir(), instance.PIDFile)
+			pid := 0
+			if b, err := os.ReadFile(pidFile); err == nil {
+				pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+			}
 			if _, _, err := c.do(http.MethodPost, "/_emu/v1/shutdown"); err != nil {
 				return err
 			}
-			for i := 0; i < 300; i++ {
-				if _, err := os.Stat(filepath.Join(cfg.InstanceDir(), instance.PIDFile)); os.IsNotExist(err) {
+			// Done once the PID file is gone and the process has exited, so
+			// that scripts can start a new instance right away.
+			for i := 0; i < 600; i++ {
+				_, err := os.Stat(pidFile)
+				if os.IsNotExist(err) && (pid <= 0 || !processAlive(pid)) {
 					fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q stopped\n", cfg.Instance)
 					return nil
 				}
@@ -521,4 +530,9 @@ func (o *rootOpts) timeCmd() *cobra.Command {
 		},
 	})
 	return t
+}
+
+// processAlive reports whether a process with pid exists.
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }

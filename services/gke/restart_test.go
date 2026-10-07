@@ -23,6 +23,7 @@ func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.DataDir = dir
+	cfg.Ephemeral = false // CI=true defaults to ephemeral
 	cfg.Instance = "gke-restart"
 	cfg.Services = []string{"gke"}
 	cfg.LogLevel = "warn"

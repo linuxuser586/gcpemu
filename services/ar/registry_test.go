@@ -99,7 +99,9 @@ func TestRegistryIndexAndMount(t *testing.T) {
 	// Re-push a pulled image to another image path: layers are mounted
 	// from the source repository rather than re-uploaded.
 	dst := e.ref(testProject + "/images/copy:v1")
-	if err := remote.Write(dst, child); err != nil {
+	// One upload worker: go-containerregistry's scope update on mount races
+	// with its parallel blob checks (a data race in the client, not here).
+	if err := remote.Write(dst, child, remote.WithJobs(1)); err != nil {
 		t.Fatalf("push with mount: %v", err)
 	}
 	if _, err := remote.Image(dst); err != nil {
