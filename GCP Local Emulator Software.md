@@ -25,7 +25,7 @@ In scope are the control-plane APIs and a working data plane for these services:
 | Cloud CDN | Cache settings on backend services and buckets; `urlMaps.invalidateCache` | HTTP cache in the L7 proxy |
 | Cloud NAT | `compute.googleapis.com` v1 routers and NAT configs | Egress gateway for cluster workloads |
 
-Supporting resources those services depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, long-running operations) are emulated to the degree the ten services need them.
+Supporting resources those services depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, long-running operations) are emulated to the degree the ten services need them. A React web console embedded in the binary lets users inspect and operate all ten services from a browser.
 
 Out of scope: production use, performance or SLA parity with GCP, billing, real global anycast, and every service not listed. Section 10 gives the full exclusions list.
 
@@ -78,7 +78,7 @@ Today a GCP stack of GKE, a global external Application Load Balancer with Cloud
 
 ### 2.4 Design and implementation constraints
 
-1. Distributed as one statically linked Go binary per OS/arch; no installer, no runtime other than the container runtime above.
+1. Distributed as one statically linked Go binary per OS/arch; no installer, no runtime other than the container runtime above. The React web console is compiled into the binary, so Node.js is needed only to build it.
 2. Implemented in Go; third-party dependencies limited to permissive, foundation- or community-governed licenses (Apache-2.0, MIT, BSD, MPL-2.0).
 3. Container images the binary launches (Kubernetes node, PostgreSQL) are multi-arch (amd64 + arm64) and pinned by digest in the release.
 4. API resource shapes, field names, error codes and LRO semantics follow the public GCP API definitions; no invented fields in public APIs.
@@ -108,6 +108,7 @@ Service modules create and manage the GKE and Cloud SQL containers; the data pla
 | Data planes | L7 proxy with CDN cache (one listener per forwarding rule), DNS server, OCI registry, Pub/Sub broker, metadata server, NAT egress gateway, Cloud SQL connector endpoint |
 | Runtime driver | Talks to Docker, Podman or containerd to create, label, start, stop and reclaim node and Postgres containers |
 | State store | Embedded pure-Go KV for resources; files under the data dir for objects, blobs, caches and volumes |
+| Web console | React SPA embedded in the binary, served by the gateway at /console; uses the public APIs and the admin API's event stream |
 
 ### 3.2 Default ports
 
@@ -122,7 +123,7 @@ Service modules create and manage the GKE and Cloud SQL containers; the data pla
 | 54320+ | Cloud SQL instance public IPs, one per instance |
 | 127.0.0.x:80/443 or 18080+ | LB forwarding rules |
 
-Every port is configurable and can be set to 0 (FR-CORE-042).
+Every port is configurable and can be set to 0 (FR-CORE-042). The web console has no port of its own; it lives at /console on the gateway port.
 
 ### 3.3 Networking model
 
@@ -181,7 +182,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | FR-CORE-042 | `--port 0` and `--port-range` allocate free ports; chosen ports are written to `<data-dir>/endpoints.json` and printed by `gcpemu env`. | M |
 | FR-CORE-043 | Host mode (`--host-mode`) serves real hostnames (`storage.googleapis.com`, `REGION-docker.pkg.dev`, …) via the emulator's DNS and a local CA, so unmodified clients work once the CA is trusted. | S |
 | FR-CORE-044 | Listeners bind to 127.0.0.1 by default; `--bind` widens it with a warning. | M |
-| FR-CORE-045 | An admin API (`/_emu/…`) exposes health, readiness per service, resource dumps, request log, fault injection and reset. | M |
+| FR-CORE-045 | An admin API (`/_emu/…`) exposes health, readiness per service, resource dumps, request log, fault injection, reset, and a server-sent events stream of resource, LRO and request-log changes for the web console. | M |
 
 ### 4.6 Authentication of API callers
 
@@ -195,10 +196,66 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| FR-CORE-060 | Rules can inject an error code, latency or dropped connection by service, method, resource name pattern and probability or count, via admin API, CLI and seed file. | S |
+| FR-CORE-060 | Rules can inject an error code, latency or dropped connection by service, method, resource name pattern and probability or count, via admin API, CLI, web console and seed file. | S |
 | FR-CORE-061 | Every API call and data-plane request is logged as structured JSON (method, principal, resource, status, latency); `--log-format text` for humans. | M |
 | FR-CORE-062 | Prometheus metrics endpoint for request counts and latencies per service. | C |
-| FR-CORE-063 | A read-only web console lists resources per service. | C |
+| FR-CORE-063 | A React web console embedded in the binary inspects and operates every service; requirements in 4.8. | M |
+
+### 4.8 Web console
+
+The web console is a React single-page app compiled into the binary and served at `http://localhost:4510/console`. It talks only to the same public GCP APIs and `/_emu/v1` admin API that every other client uses, so anything done in the console can also be done, and tested, from code.
+
+#### 4.8.1 Platform and shell
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-UI-001 | Built with React and TypeScript (Vite build), embedded with `go:embed`; Node.js is needed only at build time. All assets, fonts and icons are bundled, so the console works fully offline. | M |
+| FR-UI-002 | Served on the gateway port under `/console`; `gcpemu console` opens it in the default browser; `--console=false` disables it. | M |
+| FR-UI-003 | Calls only public GCP API endpoints and the admin API through the gateway; no console-private backend endpoints. | M |
+| FR-UI-004 | Acts as the default principal; a principal switcher lets the user act as any user or service account to see what IAM allows. | M |
+| FR-UI-005 | Global project switcher, location filter and search across resource names; every view has a shareable deep link. | M |
+| FR-UI-006 | Live updates without manual refresh, via a server-sent events stream on the admin API (`/_emu/v1/events`) carrying resource changes, LRO progress and request-log entries. | M |
+| FR-UI-007 | Light and dark themes following the OS; keyboard navigation; WCAG 2.1 AA contrast and labels. | S |
+| FR-UI-008 | Supports the latest two versions of Chrome, Firefox, Safari and Edge. | M |
+| FR-UI-009 | When `--bind` exposes the gateway beyond loopback, the console requires a session token printed at startup. | M |
+
+#### 4.8.2 Cross-service views
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-UI-010 | Dashboard: per-service readiness with failure reason, endpoint and port map, container runtime status, resource counts, and a copy button for `gcpemu env` output. | M |
+| FR-UI-011 | Every resource type at **M** priority in Section 5 can be listed, viewed, created, edited and deleted. Forms mirror API fields with the API's validation messages; a raw JSON editor covers any field the form omits. | M |
+| FR-UI-012 | Operations view: all LROs with live status, duration and the resulting resource or error. | M |
+| FR-UI-013 | Request log: live tail with filters for service, method, principal, status and resource; expandable request and response bodies. | M |
+| FR-UI-014 | IAM audit view: every call audit mode would have denied, with the missing permission, the smallest predefined role that grants it, and a one-click grant. | M |
+| FR-UI-015 | Any resource can be copied as a `gcloud` command, `curl` request or OpenTofu resource block. | S |
+| FR-UI-016 | Fault injection rules: create, enable, disable and see hit counts. | S |
+| FR-UI-017 | Snapshots, reset and seed import/export. | S |
+
+#### 4.8.3 Service views
+
+| Service | Shows | Actions | Pri |
+| --- | --- | --- | --- |
+| IAM | Service accounts, keys, custom and predefined roles, policies on any resource, enforcement mode | Create SA, create and download key, edit bindings, switch mode, policy simulator (`testIamPermissions` as any principal) | M |
+| Cloud DNS | Zones, record sets, network bindings | CRUD records through `changes`; built-in query box that resolves a name against the emulator's DNS server | M |
+| Artifact Registry | Repositories, images, tags, digests, per-arch manifests, sizes | Delete tag or digest; copy pull command | M |
+| Cloud Storage | Bucket browser by prefix, object metadata, generations, notifications | Drag-and-drop upload, download, delete, restore a generation, generate a V4 signed URL | M |
+| Pub/Sub | Topics, subscriptions, backlog, oldest unacked age, dead-letter counts | Publish with attributes and ordering key, pull and ack, peek without ack, seek, purge | M |
+| Cloud SQL | Instances, databases, users, flags, connection names and strings | Start, stop, restart; SQL query runner with read-only default; backups and restore | M |
+| GKE | Clusters, node pools, nodes, namespaces, workloads and pod status, NEGs | Download kubeconfig, resize node pool, view pod logs | M |
+| Load Balancer | Forwarding rules with local listener addresses, proxies, URL maps rendered as a route tree, backend health per endpoint, cert status | Edit URL map; "test a URL" shows which route and backend would serve a given host, path and headers | M |
+| Cloud CDN | Cache settings per backend, hit ratio, cached entries and sizes | Invalidate a path, purge all | M |
+| Cloud NAT | Routers, NAT configs, covered subnets, port usage, translation log | Toggle offline sink | S |
+| Load Balancer traffic | Live per-request trace: forwarding rule, matched route, backend, cache status, latency | Filter by host or path | S |
+
+#### 4.8.4 Console quality
+
+| ID | Requirement | Target | Pri |
+| --- | --- | --- | --- |
+| FR-UI-020 | Compressed bundle size added to the binary | ≤ 3 MB | S |
+| FR-UI-021 | First load to interactive on localhost | ≤ 1 s | S |
+| FR-UI-022 | Large lists (objects, records, log lines) stay responsive by virtualizing rows | 100,000 rows | S |
+| FR-UI-023 | Playwright end-to-end tests cover every **M** console requirement on Chromium, Firefox and WebKit | 100% of M | M |
 
 ## 5. Functional requirements: services
 
@@ -469,7 +526,7 @@ In CI the emulator must start in one step, need no cloud credentials, and leave 
 | --- | --- | --- |
 | FR-CI-001 | A first-party GitHub Action (`gcpemu/setup-gcpemu`) downloads and verifies the binary for the runner's OS/arch, caches it and container images (keyed by release), starts the emulator detached with given `services`, `seed` and `config`, waits for readiness and exports env vars to `$GITHUB_ENV`. | M |
 | FR-CI-002 | The action's post step collects `gcpemu logs`, the request log, resource dump and kubeconfig into a workflow artifact on failure. | M |
-| FR-CI-003 | `CI=true` defaults to `--ephemeral`, `--log-format json`, `--lro-latency instant`, and fails fast (non-zero exit within the wait timeout) if any requested service cannot start, with the reason on stderr. | M |
+| FR-CI-003 | `CI=true` defaults to `--ephemeral`, `--log-format json`, `--lro-latency instant`, disables the web console unless --console is passed, and fails fast (non-zero exit within the wait timeout) if any requested service cannot start, with the reason on stderr. | M |
 | FR-CI-004 | Runs on GitHub-hosted `ubuntu-24.04` and `ubuntu-24.04-arm` with the preinstalled Docker; no `sudo` needed for non-GKE services. | M |
 | FR-CI-005 | Parallel jobs on one self-hosted runner don't collide (FR-CORE-033, port 0). | M |
 | FR-CI-006 | Works inside a CI job container when the Docker socket is mounted (Docker-outside-of-Docker) and directly in GitLab CI, Buildkite and plain Docker. | S |
@@ -579,3 +636,4 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | M3 | ALB, CDN, backend mTLS, NEGs | Reference stack steps 1–4 and 9 green |
 | v1.0 | All | Full reference stack on both arches; all **M** requirements tested |
 
+The web console ships with each milestone: the shell, dashboard, request log and IAM views in M1, then each service's view in the milestone that delivers the service.
