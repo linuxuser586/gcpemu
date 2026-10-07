@@ -470,6 +470,9 @@ func (s *Service) issuerKey(oidc *iamv1.Oidc, kid string) (*rsa.PublicKey, error
 	if s.env.Config.Offline {
 		return nil, errors.New("cannot fetch issuer keys in offline mode; set oidc.jwksJson on the provider")
 	}
+	if u, err := url.Parse(oidc.IssuerUri); err == nil && emu.IsGoogleHost(u.Host) {
+		return nil, fmt.Errorf("the emulator never contacts Google (NFR-SEC-002), so it can't fetch the keys of issuer %s; set oidc.jwksJson on the provider", oidc.IssuerUri)
+	}
 	keys, err := fetchJWKS(oidc.IssuerUri)
 	if err != nil {
 		return nil, err
