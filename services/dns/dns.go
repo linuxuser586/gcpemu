@@ -75,7 +75,7 @@ func (s *Service) Start(ctx context.Context) error {
 			return fmt.Errorf("dns tcp listen: %w", err)
 		}
 		_, port, _ := net.SplitHostPort(tl.Addr().String())
-		pc, err = net.ListenPacket("udp", net.JoinHostPort(s.env.Config.Bind, port))
+		pc, err = listenUDP(ctx, s.env.Config.Bind, port)
 		if err == nil {
 			break
 		}
