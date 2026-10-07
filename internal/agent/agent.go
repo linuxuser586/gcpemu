@@ -6,6 +6,7 @@ package agent
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"os"
 	"os/exec"
@@ -93,8 +94,27 @@ func Binary() (string, error) {
 			return
 		}
 		binPath, binErr = os.Executable()
+		if binErr == nil && dynamic(binPath) {
+			binErr = fmt.Errorf("%s is dynamically linked, so it can't run as an agent in containers; build gcpemu with CGO_ENABLED=0 (as `make build` does) or set %s to a static build", binPath, BinaryEnv)
+		}
 	})
 	return binPath, binErr
+}
+
+// dynamic reports whether the ELF executable at path needs a dynamic
+// loader (it has a PT_INTERP program header).
+func dynamic(path string) bool {
+	f, err := elf.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_INTERP {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildForTests compiles ./cmd/gcpemu with CGO_ENABLED=0 into dir (once per

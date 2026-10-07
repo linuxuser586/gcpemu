@@ -125,3 +125,18 @@ func TestApplyPatch(t *testing.T) {
 		t.Errorf("patched = %+v", out)
 	}
 }
+
+// TestParseMediaType: gcloud and gsutil (Python's email package) quote the
+// multipart boundary with single quotes.
+func TestParseMediaType(t *testing.T) {
+	for in, want := range map[string]string{
+		`multipart/related; boundary='===============8015013346991038613=='`: "===============8015013346991038613==",
+		`multipart/related; boundary="abc"`:                                  "abc",
+		`multipart/related; boundary=abc`:                                    "abc",
+	} {
+		mt, params, err := parseMediaType(in)
+		if err != nil || mt != "multipart/related" || params["boundary"] != want {
+			t.Errorf("parseMediaType(%q) = %q %v %v", in, mt, params, err)
+		}
+	}
+}

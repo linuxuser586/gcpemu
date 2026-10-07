@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -46,7 +45,7 @@ func (s *Service) serveBatch(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, r)
 		return
 	}
-	mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	mt, params, err := parseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.HasPrefix(mt, "multipart/") {
 		apierr.Write(w, errInvalid("Batch requests must be multipart/mixed."))
 		return
