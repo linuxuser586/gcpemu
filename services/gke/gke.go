@@ -65,6 +65,7 @@ import (
 	"os"
 	goruntime "runtime"
 	"strconv"
+	"strings"
 	"sync"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
@@ -259,7 +260,9 @@ func (s *Service) keyOf(id string) (string, bool) {
 }
 
 // restHandler serves container v1 REST plus the emulator-internal
-// endpoints under /_emu/.
+// endpoints under /_emu/. v1beta1 (the google-beta OpenTofu provider) has
+// the same paths and a superset of the messages, so it is served as v1;
+// beta-only fields are ignored.
 func (s *Service) restHandler() http.Handler {
 	t := newTranscoder(s.api)
 	internal := s.internalHandler()
@@ -267,6 +270,10 @@ func (s *Service) restHandler() http.Handler {
 		if len(r.URL.Path) >= 6 && r.URL.Path[:6] == "/_emu/" {
 			internal.ServeHTTP(w, r)
 			return
+		}
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/v1beta1/"); ok {
+			r = r.Clone(r.Context())
+			r.URL.Path, r.URL.RawPath = "/v1/"+rest, ""
 		}
 		t.ServeHTTP(w, r)
 	})

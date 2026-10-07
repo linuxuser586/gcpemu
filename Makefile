@@ -1,7 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version=$(VERSION)
 
-.PHONY: build test race vet lint release e2e compat
+.PHONY: build test race vet lint release e2e compat tofu
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu ./cmd/gcpemu
 
@@ -22,7 +22,13 @@ e2e:
 # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
 # psql, the Cloud SQL Auth Proxy and dig against a detached instance.
 compat:
-	go test -tags compat ./compat -count=1 -timeout 30m -v
+	go test -tags compat ./compat -skip TestOpenTofu -count=1 -timeout 30m -v
+
+# SRS 11.1 / IF-001 OpenTofu acceptance: every module in compat/tofu with
+# google and google-beta at the current and previous minor
+# (GCPEMU_TOFU_PROVIDERS narrows it, e.g. google-beta or google@8.6.0).
+tofu:
+	go test -tags compat ./compat -run TestOpenTofu -count=1 -timeout 60m -v
 
 # NFR-PORT-001: static builds for every supported OS/arch.
 release:

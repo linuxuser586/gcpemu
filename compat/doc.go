@@ -12,4 +12,9 @@
 // and psql runs from the PostgreSQL image. Cloud SQL and GKE need a
 // container runtime; some steps (crane copy from Docker Hub, ko's base
 // image) need the internet.
+//
+// TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
+// in tofu/ is applied, planned with no changes expected and destroyed with
+// the google and google-beta providers at their current and previous
+// minor versions. It needs tofu on PATH (`make tofu`; `make compat` skips it).
 package compat

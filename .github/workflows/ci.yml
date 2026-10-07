@@ -71,6 +71,34 @@ jobs:
       - name: Client compatibility (SRS 7.1)
         run: make compat
 
+  # SRS 11.1 / IF-001: apply → plan (no diff) → destroy of every supported
+  # resource type, with each provider at its current and previous minor.
+  tofu:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        provider: [google, google-beta]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      GCPEMU_TOFU_PROVIDERS: ${{ matrix.provider }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/gcpemu-compat/tofu-plugins
+          key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**') }}
+          restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
+      - name: OpenTofu acceptance (SRS 11.1)
+        run: make tofu
+
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
   perf:

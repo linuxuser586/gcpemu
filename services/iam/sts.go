@@ -196,6 +196,10 @@ func (s *Service) wifItem(w http.ResponseWriter, r *http.Request, ctx context.Co
 		perm = "delete"
 	case verb == "undelete" && r.Method == http.MethodPost:
 		perm = "undelete"
+	case verb == "listAttestationRules" && r.Method == http.MethodGet && ns == nsPools:
+		// Pools have no attestation rules (managed workload identities are
+		// not emulated); google provider >= 7 reads them after every get.
+		perm = "get"
 	default:
 		notFoundRoute(w, r)
 		return nil
@@ -211,6 +215,10 @@ func (s *Service) wifItem(w http.ResponseWriter, r *http.Request, ctx context.Co
 	}
 	if err := json.Unmarshal(raw, v); err != nil {
 		return err
+	}
+	if verb == "listAttestationRules" {
+		writeJSON(w, &iamv1.ListAttestationRulesResponse{})
+		return nil
 	}
 	if perm == "get" {
 		writeJSON(w, v)
