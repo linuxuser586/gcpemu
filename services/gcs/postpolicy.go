@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -34,7 +33,7 @@ func policyErr(details string) *sigError {
 }
 
 func (s *Service) postPolicyUpload(w http.ResponseWriter, r *http.Request, bucket string) {
-	mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	mt, params, err := parseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mt != "multipart/form-data" {
 		xmlError(w, errInvalid("POST object requires multipart/form-data."))
 		return

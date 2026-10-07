@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -159,7 +160,7 @@ func (s *Service) simpleUpload(w http.ResponseWriter, r *http.Request, bucket st
 }
 
 func (s *Service) multipartUpload(w http.ResponseWriter, r *http.Request, bucket string) {
-	mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	mt, params, err := parseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || !strings.HasPrefix(mt, "multipart/") || params["boundary"] == "" {
 		apierr.Write(w, errInvalid("Multipart upload requires a multipart/related body."))
 		return
@@ -549,4 +550,19 @@ func (s *Service) cancelUpload(w http.ResponseWriter, r *http.Request, id string
 	s.dropSession(id)
 	w.Header().Set("Content-Length", "0")
 	w.WriteHeader(499)
+}
+
+// singleQuotedParam matches a media type parameter whose value is in single
+// quotes, as Python's email package (gcloud, gsutil) writes multipart
+// boundaries: boundary='===...=='.
+var singleQuotedParam = regexp.MustCompile(`=\s*'([^']*)'`)
+
+// parseMediaType is mime.ParseMediaType that also accepts single-quoted
+// parameter values, which GCS accepts and Go's parser rejects.
+func parseMediaType(v string) (string, map[string]string, error) {
+	mt, params, err := mime.ParseMediaType(v)
+	if err != nil && strings.Contains(v, "'") {
+		return mime.ParseMediaType(singleQuotedParam.ReplaceAllString(v, `="$1"`))
+	}
+	return mt, params, err
 }
