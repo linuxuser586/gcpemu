@@ -490,10 +490,34 @@ func alterSystemSQL(old, new map[string]string) string {
 		case !ok:
 			b.WriteString("ALTER SYSTEM RESET " + quoteIdent(k) + ";\n")
 		case old[k] != v || old == nil:
-			b.WriteString("ALTER SYSTEM SET " + quoteIdent(k) + " = " + quoteLiteral(v) + ";\n")
+			b.WriteString("ALTER SYSTEM SET " + quoteIdent(k) + " = " + settingValue(k, v) + ";\n")
 		}
 	}
 	return b.String()
+}
+
+// listSettings take a list: ALTER SYSTEM needs one literal per element, or
+// the whole string becomes a single element (one library named "a,b").
+var listSettings = map[string]bool{
+	"shared_preload_libraries": true, "local_preload_libraries": true, "session_preload_libraries": true,
+	"search_path": true, "temp_tablespaces": true,
+}
+
+// settingValue renders a setting's value for ALTER SYSTEM SET.
+func settingValue(name, v string) string {
+	if !listSettings[name] {
+		return quoteLiteral(v)
+	}
+	var parts []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			parts = append(parts, quoteLiteral(p))
+		}
+	}
+	if len(parts) == 0 {
+		return "''"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // quoteIdent quotes a PostgreSQL identifier.

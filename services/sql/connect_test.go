@@ -2,14 +2,17 @@ package sql_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/cloudsqlconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/oauth2"
 	iamv1 "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
@@ -17,6 +20,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
 // accessToken mints an emulator access token for principal.
@@ -220,6 +224,35 @@ func TestMajorVersions(t *testing.T) {
 			if !strings.HasPrefix(num, v) {
 				t.Errorf("server_version_num %s for POSTGRES_%s", num, v)
 			}
+			// Every flag applied with ALTER SYSTEM is a setting this
+			// server knows (FR-SQL-003).
+			rows, err := c.Query(ctx, "SELECT name FROM pg_settings")
+			if err != nil {
+				t.Fatal(err)
+			}
+			known := map[string]bool{}
+			for rows.Next() {
+				var n string
+				_ = rows.Scan(&n)
+				known[strings.ToLower(n)] = true
+			}
+			rows.Close()
+			major, _ := strconv.Atoi(v)
+			var unknown []string
+			for _, f := range sql.AppliedFlags(major) {
+				if known[strings.ToLower(f)] || strings.Contains(f, ".") {
+					continue
+				}
+				// Settings hidden from non-superusers exist too.
+				var pe *pgconn.PgError
+				if _, err := c.Exec(ctx, "SHOW "+f); errors.As(err, &pe) && pe.Code == "42501" {
+					continue
+				}
+				unknown = append(unknown, f)
+			}
+			if len(unknown) > 0 {
+				t.Errorf("POSTGRES_%s does not know allowed flags %v", v, unknown)
+			}
 		})
 	}
 }
@@ -245,4 +278,68 @@ func queryVia(t testing.TB, d *cloudsqlconn.Dialer, icn, user, password, db stri
 		t.Fatal(err)
 	}
 	return who
+}
+
+// TestExtensionFlags is FR-SQL-003 for extension settings: setting
+// pg_stat_statements and auto_explain flags preloads their libraries and
+// applies the values; removing them unloads the libraries.
+func TestExtensionFlags(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	inst := emutest.Start(t, []string{"sql"})
+	svc := adminClient(t, inst)
+	ctx := context.Background()
+	in := createInstance(t, svc, &sqladmin.DatabaseInstance{Name: "ext", DatabaseVersion: "POSTGRES_17", RootPassword: "rootpw",
+		Settings: &sqladmin.Settings{
+			IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true, AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}}},
+			DatabaseFlags: []*sqladmin.DatabaseFlags{
+				{Name: "pg_stat_statements.track", Value: "all"},
+				{Name: "auto_explain.log_min_duration", Value: "250"},
+				{Name: "random_page_cost", Value: "1.5"},
+			},
+		}})
+	show := func(name string) string {
+		t.Helper()
+		c, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		var v string
+		if err := c.QueryRow(ctx, "SHOW "+name).Scan(&v); err != nil {
+			t.Fatalf("SHOW %s: %v", name, err)
+		}
+		return v
+	}
+	// Loaded libraries define their settings (auto_explain's carries a
+	// unit; a placeholder would read "250") and list them in pg_settings.
+	loaded := func() string {
+		t.Helper()
+		c, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		var n int
+		if err := c.QueryRow(ctx, "SELECT count(*) FROM pg_settings WHERE name LIKE 'pg_stat_statements.%' OR name LIKE 'auto_explain.%'").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return strconv.Itoa(n)
+	}
+	if n := loaded(); n == "0" {
+		t.Error("pg_stat_statements and auto_explain are not loaded")
+	}
+	for name, want := range map[string]string{"pg_stat_statements.track": "all", "auto_explain.log_min_duration": "250ms", "random_page_cost": "1.5"} {
+		if got := show(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	waitOp(t, svc, must(svc.Instances.Patch(testProject, "ext", &sqladmin.DatabaseInstance{Settings: &sqladmin.Settings{
+		DatabaseFlags: []*sqladmin.DatabaseFlags{{Name: "random_page_cost", Value: "2"}}, ForceSendFields: []string{"DatabaseFlags"}}}).Do()))
+	if n := loaded(); n != "0" {
+		t.Errorf("after removing the extension flags %s of their settings are still defined", n)
+	}
+	if got := show("random_page_cost"); got != "2" {
+		t.Errorf("random_page_cost = %q", got)
+	}
 }
