@@ -205,3 +205,23 @@ func TestNonLinuxHost(t *testing.T) {
 		t.Fatalf("Ready = %v", err)
 	}
 }
+
+// TestPreloadLists is FR-GKE-006/007: every supported version preloads its
+// system images, so private nodes (no egress) start offline.
+func TestPreloadLists(t *testing.T) {
+	for _, v := range versions {
+		want := map[string]bool{"rancher/mirrored-pause:": false, "rancher/mirrored-coredns-coredns:": false, "rancher/local-path-provisioner:": false, "rancher/klipper-lb:": false}
+		for _, img := range v.Preload {
+			for p := range want {
+				if strings.HasPrefix(img, p) {
+					want[p] = true
+				}
+			}
+		}
+		for p, ok := range want {
+			if !ok {
+				t.Errorf("%s preloads no %s image: %v", v.GKE, p, v.Preload)
+			}
+		}
+	}
+}
