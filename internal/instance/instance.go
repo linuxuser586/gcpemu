@@ -77,6 +77,10 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 		return nil, err
 	}
 	logger := newLogger(cfg, logOut)
+	if !config.IsLoopback(cfg.Bind) {
+		logger.Warn("listeners are reachable beyond this host; every emulated API, credential and data plane is exposed (FR-CORE-044)",
+			"bind", cfg.Bind, "iamMode", cfg.IAMMode)
+	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, done: make(chan struct{})}
 	in.ID = instanceID(dir, cfg.Ephemeral)

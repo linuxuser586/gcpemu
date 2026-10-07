@@ -138,3 +138,28 @@ func TestFaultInjection(t *testing.T) {
 		t.Error("expected dropped connection")
 	}
 }
+
+// TestBindWarning is FR-CORE-044: widening --bind beyond loopback logs a
+// warning; the loopback default does not.
+func TestBindWarning(t *testing.T) {
+	for _, tc := range []struct {
+		bind string
+		warn bool
+	}{{"127.0.0.1", false}, {"0.0.0.0", true}, {"192.0.2.10", true}} {
+		cfg := config.Defaults()
+		cfg.Ephemeral = true
+		cfg.DataDir = t.TempDir()
+		cfg.Services = []string{"dns"}
+		cfg.Bind = tc.bind
+		var out strings.Builder
+		in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = in.Shutdown(context.Background())
+		got := strings.Contains(out.String(), "level=WARN") && strings.Contains(out.String(), "bind="+tc.bind)
+		if got != tc.warn {
+			t.Errorf("bind %s: warned=%v, want %v; log:\n%s", tc.bind, got, tc.warn, out.String())
+		}
+	}
+}
