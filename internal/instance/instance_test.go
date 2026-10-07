@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -239,4 +240,96 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+// namedSvc is a fake service; failing makes Start return an error.
+type namedSvc struct {
+	name    string
+	failing bool
+	started bool
+}
+
+func (n *namedSvc) Name() string { return n.name }
+func (n *namedSvc) Register(r emu.Router) error {
+	r.Mount(n.name, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, n.name) }))
+	return nil
+}
+func (n *namedSvc) Start(context.Context) error {
+	if n.failing {
+		return errors.New("no container runtime")
+	}
+	n.started = true
+	return nil
+}
+func (n *namedSvc) Stop(context.Context) error { return nil }
+func (n *namedSvc) Ready() error {
+	if !n.started {
+		return errors.New("not started")
+	}
+	return nil
+}
+
+// TestServiceIsolation is NFR-REL-003 and FR-CORE-003: a service that
+// fails to start reports not-ready with its reason while the others serve;
+// services that were not selected are never constructed.
+func TestServiceIsolation(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ephemeral = true
+	cfg.DataDir = t.TempDir()
+	cfg.Services = []string{"gcs", "sql"}
+	cfg.Ports[config.AllPorts] = 0
+	built := map[string]*namedSvc{}
+	factories := map[string]Factory{}
+	for _, name := range config.AllServices {
+		factories[name] = func(*emu.Env) emu.Service {
+			s := &namedSvc{name: name, failing: name == "sql"}
+			built[name] = s
+			return s
+		}
+	}
+	in, err := New(&cfg, factories, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := in.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer in.Shutdown(ctx)
+	want := config.ResolveServices([]string{"gcs", "sql"})
+	if len(built) != len(want) {
+		t.Errorf("built %d services, want %v", len(built), want)
+	}
+	for _, name := range []string{"pubsub", "gke", "lb", "dns", "ar"} {
+		if built[name] != nil {
+			t.Errorf("unselected service %s was constructed", name)
+		}
+	}
+	base := "http://" + in.Env.Endpoints.Get("gateway")
+	resp, err := http.Get(base + "/_emu/v1/ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r struct {
+		Ready    bool
+		Services map[string]struct {
+			Ready  bool
+			Reason string
+		}
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&r)
+	resp.Body.Close()
+	if resp.StatusCode != 503 || r.Ready || r.Services["sql"].Ready || !strings.Contains(r.Services["sql"].Reason, "no container runtime") ||
+		!r.Services["gcs"].Ready || !r.Services["iam"].Ready {
+		t.Fatalf("ready = %d %+v", resp.StatusCode, r)
+	}
+	resp, err = http.Get(base + "/gcs/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(b) != "gcs" {
+		t.Errorf("healthy service while another failed: %d %q", resp.StatusCode, b)
+	}
 }
