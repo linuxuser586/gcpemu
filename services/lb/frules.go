@@ -2,6 +2,7 @@ package lb
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/compute"
 )
 
@@ -194,14 +196,17 @@ func (s *Service) syncAddressUsers(ctx context.Context, now, before any) {
 		if !ok {
 			continue
 		}
-		var users []string
-		for _, other := range s.loadAll(kindForwardingRule, sc.coll("forwardingRules")+"/") {
-			o := other.(*computev1.ForwardingRule)
-			if o.IPAddress == f.IPAddress {
-				users = append(users, o.SelfLink)
-			}
-		}
-		_ = s.cmp.SetAddressUsers(ctx, ap, users)
+		_ = s.cmp.SetAddressUsers(ctx, ap, func(tx store.Tx) []string {
+			var users []string
+			tx.Scan(kindForwardingRule.ns(), sc.coll("forwardingRules")+"/", func(_ string, b []byte) bool {
+				var o computev1.ForwardingRule
+				if json.Unmarshal(b, &o) == nil && o.IPAddress == f.IPAddress {
+					users = append(users, o.SelfLink)
+				}
+				return true
+			})
+			return users
+		})
 	}
 }
 

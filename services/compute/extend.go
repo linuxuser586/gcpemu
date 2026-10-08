@@ -26,9 +26,11 @@ func (s *Service) StartOperation(ctx context.Context, project, scope, opType, ta
 }
 
 // SetAddressUsers records which resources use an address (status IN_USE
-// while users is non-empty). path is the address path or URL.
-func (s *Service) SetAddressUsers(ctx context.Context, path string, users []string) error {
-	return s.env.Store.Update(func(tx store.Tx) error { return setAddressUsers(tx, relPath(path), users) })
+// while there are any). path is the address path or URL. users computes
+// them inside the same store transaction, so that concurrent changes to
+// the users cannot leave a stale list behind.
+func (s *Service) SetAddressUsers(ctx context.Context, path string, users func(tx store.Tx) []string) error {
+	return s.env.Store.Update(func(tx store.Tx) error { return setAddressUsers(tx, relPath(path), users(tx)) })
 }
 
 // Address returns a regional or global address by path or URL.
