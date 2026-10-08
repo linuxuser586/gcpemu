@@ -158,7 +158,7 @@ func compilePattern(pattern string) func(string) bool {
 var (
 	viewerVerb       = regexp.MustCompile(`^(get|list)`)
 	viewerExcluded   = map[string]bool{"getAccessToken": true, "getOpenIdToken": true}
-	editorExcludedRe = regexp.MustCompile(`\.(setIamPolicy)$|^iam\.roles\.(create|delete|undelete|update)$|^iam\.serviceAccounts\.(getAccessToken|getOpenIdToken|implicitDelegation|signBlob|signJwt|setIamPolicy)$|^resourcemanager\.projects\.(delete|undelete|move|create)$|^container\.(clusterRoles|roles)\.(bind|escalate)$|^storage\.objects\.(overrideUnlockedRetention)$`)
+	editorExcludedRe = regexp.MustCompile(`\.(setIamPolicy)$|^iam\.roles\.(create|delete|undelete|update)$|^iam\.serviceAccounts\.(getAccessToken|getOpenIdToken|implicitDelegation|signBlob|signJwt|setIamPolicy)$|^resourcemanager\.projects\.(delete|undelete|move|create)$|^container\.(clusterRoles|roles)\.(bind|escalate)$|^storage\.objects\.(overrideUnlockedRetention)$|^secretmanager\.versions\.access$`)
 )
 
 // basicIncludes reports whether a basic role includes perm.

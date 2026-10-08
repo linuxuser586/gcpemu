@@ -38,7 +38,7 @@ func start(t *testing.T) *emulator {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	services := "iam,gcs,pubsub,dns,ar,compute,lb,certs,cdn"
+	services := "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn"
 	if exec.Command("docker", "info").Run() == nil {
 		e.runtime = true
 		services += ",sql,gke"
@@ -173,6 +173,25 @@ func TestClients(t *testing.T) {
 			out = e.run(t, g, "pubsub", "subscriptions", "pull", "compat-sub", "--auto-ack", "--format=value(message.data,message.attributes)")
 		}
 		contains(t, "pull", out, "hi from gcloud")
+	})
+
+	t.Run("gcloud/secrets", func(t *testing.T) {
+		g := gcloud(t)
+		data := filepath.Join(t.TempDir(), "secret.txt")
+		if err := os.WriteFile(data, []byte("from gcloud"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		e.run(t, g, "secrets", "create", "compat-secret", "--replication-policy=automatic", "--labels=env=compat", "--data-file="+data)
+		e.run(t, g, "secrets", "versions", "add", "compat-secret", "--data-file="+data)
+		contains(t, "versions access", e.run(t, g, "secrets", "versions", "access", "latest", "--secret=compat-secret"), "from gcloud")
+		e.run(t, g, "secrets", "versions", "disable", "1", "--secret=compat-secret")
+		contains(t, "versions list", e.run(t, g, "secrets", "versions", "list", "compat-secret", "--format=value(name,state)"), "disabled")
+		e.run(t, g, "secrets", "add-iam-policy-binding", "compat-secret", "--member=user:reader@example.com", "--role=roles/secretmanager.secretAccessor")
+		contains(t, "get-iam-policy", e.run(t, g, "secrets", "get-iam-policy", "compat-secret"), "secretAccessor")
+		e.run(t, g, "secrets", "create", "compat-regional", "--location=us-central1", "--data-file="+data)
+		contains(t, "regional access", e.run(t, g, "secrets", "versions", "access", "latest", "--secret=compat-regional", "--location=us-central1"), "from gcloud")
+		contains(t, "secrets list", e.run(t, g, "secrets", "list", "--format=value(name)"), "compat-secret")
+		e.run(t, g, "secrets", "delete", "compat-secret", "--quiet")
 	})
 
 	t.Run("gcloud/iam", func(t *testing.T) {

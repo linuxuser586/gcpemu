@@ -66,6 +66,16 @@ type Publisher interface {
 	TopicExists(ctx context.Context, topic string) bool
 }
 
+// SQLUsers is provided by the "sql" service for Secret Manager's managed
+// rotation of Cloud SQL credentials.
+type SQLUsers interface {
+	// InstanceRegion returns a Cloud SQL instance's region.
+	InstanceRegion(project, instance string) (string, error)
+	// SetUserPassword sets a built-in user's password on a running
+	// Cloud SQL instance.
+	SetUserPassword(ctx context.Context, project, instance, user, password string) error
+}
+
 const projectsNS = "core/projects"
 
 // EnsureProject implements FR-CORE-020: any valid project ID is
@@ -95,6 +105,27 @@ func (e *Env) EnsureProject(id string) error {
 			"createTime":    e.Clock.Now(),
 		})
 	})
+}
+
+// ProjectByNumber maps a project number to a known project ID.
+func (e *Env) ProjectByNumber(num string) (string, bool) {
+	for _, p := range e.Config.Projects {
+		if project.NumberString(p) == num {
+			return p, true
+		}
+	}
+	var id string
+	_ = e.Store.View(func(tx store.Tx) error {
+		tx.Scan(projectsNS, "", func(k string, _ []byte) bool {
+			if project.NumberString(k) == num {
+				id = k
+				return false
+			}
+			return true
+		})
+		return nil
+	})
+	return id, id != ""
 }
 
 // DeclareProject records a project explicitly (seed files, config).

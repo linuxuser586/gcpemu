@@ -91,7 +91,7 @@ var DefaultPorts = map[string]int{
 
 // AllServices lists every service name in start order (also the seed
 // order: a peer a service depends on at seed time must come first).
-var AllServices = []string{"iam", "compute", "dns", "certs", "ar", "pubsub", "gcs", "sql", "gke", "lb", "cdn", "nat"}
+var AllServices = []string{"iam", "compute", "dns", "certs", "ar", "pubsub", "secrets", "gcs", "sql", "gke", "lb", "cdn", "nat"}
 
 // Defaults returns the default configuration. CI=true switches on the CI
 // defaults of FR-CI-003.
@@ -414,6 +414,7 @@ var Dependencies = map[string][]string{
 	"gcs":     {"iam"},
 	"ar":      {"iam"},
 	"pubsub":  {"iam"},
+	"secrets": {"iam"},
 	"dns":     {"iam"},
 	"compute": {"iam"},
 }

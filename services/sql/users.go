@@ -196,29 +196,40 @@ func (s *Service) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	op := s.newOp(r.Context(), project, inst, "UPDATE_USER")
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
-		if ur.User.Type == "" && body.Password != "" {
-			q := "ALTER ROLE " + quoteIdent(name) + " WITH PASSWORD " + quoteLiteral(body.Password) + ";"
-			if _, err := s.execSQL(ctx, project, inst, "postgres", "", q); err != nil {
-				return err
-			}
-			ur.Password = body.Password
-		}
 		if body.PasswordPolicy != nil {
 			ur.User.PasswordPolicy = body.PasswordPolicy
 		}
-		ur.User.Etag = etagOf(ur.User)
-		return s.env.Store.Update(func(tx store.Tx) error {
-			if name == "postgres" {
-				if ir, ok := getInstance(tx, project, inst); ok {
-					ir.RootPassword = ur.Password
-					if err := store.PutJSON(tx, nsInstances, instKey(project, inst), ir); err != nil {
-						return err
-					}
+		password := ""
+		if ur.User.Type == "" {
+			password = body.Password
+		}
+		return s.saveUser(ctx, project, inst, ur, password)
+	}))
+}
+
+// saveUser stores ur, first setting a built-in user's password in
+// PostgreSQL when password is not empty.
+func (s *Service) saveUser(ctx context.Context, project, inst string, ur *userRecord, password string) error {
+	name := ur.User.Name
+	if password != "" {
+		q := "ALTER ROLE " + quoteIdent(name) + " WITH PASSWORD " + quoteLiteral(password) + ";"
+		if _, err := s.execSQL(ctx, project, inst, "postgres", "", q); err != nil {
+			return err
+		}
+		ur.Password = password
+	}
+	ur.User.Etag = etagOf(ur.User)
+	return s.env.Store.Update(func(tx store.Tx) error {
+		if name == "postgres" {
+			if ir, ok := getInstance(tx, project, inst); ok {
+				ir.RootPassword = ur.Password
+				if err := store.PutJSON(tx, nsInstances, instKey(project, inst), ir); err != nil {
+					return err
 				}
 			}
-			return store.PutJSON(tx, nsUsers, childKey(project, inst, name), ur)
-		})
-	}))
+		}
+		return store.PutJSON(tx, nsUsers, childKey(project, inst, name), ur)
+	})
 }
 
 func (s *Service) deleteUser(w http.ResponseWriter, r *http.Request) {

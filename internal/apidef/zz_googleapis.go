@@ -87,6 +87,25 @@ var protoServices = []*Service{
 		{Name: "UpdateAuthzPolicy", Input: "google.cloud.networksecurity.v1.UpdateAuthzPolicyRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"PATCH", "/v1/{authz_policy.name=projects/*/locations/*/authzPolicies/*}", "authz_policy"}}},
 		{Name: "DeleteAuthzPolicy", Input: "google.cloud.networksecurity.v1.DeleteAuthzPolicyRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"DELETE", "/v1/{name=projects/*/locations/*/authzPolicies/*}", ""}}},
 	}},
+	{Name: "google.cloud.secretmanager.v1.SecretManagerService", File: "google/cloud/secretmanager/v1/service.proto", Methods: []*Method{
+		{Name: "ListSecrets", Input: "google.cloud.secretmanager.v1.ListSecretsRequest", Output: "google.cloud.secretmanager.v1.ListSecretsResponse", HTTP: []Binding{{"GET", "/v1/{parent=projects/*}/secrets", ""}, {"GET", "/v1/{parent=projects/*/locations/*}/secrets", ""}}},
+		{Name: "CreateSecret", Input: "google.cloud.secretmanager.v1.CreateSecretRequest", Output: "google.cloud.secretmanager.v1.Secret", HTTP: []Binding{{"POST", "/v1/{parent=projects/*}/secrets", "secret"}, {"POST", "/v1/{parent=projects/*/locations/*}/secrets", "secret"}}},
+		{Name: "AddSecretVersion", Input: "google.cloud.secretmanager.v1.AddSecretVersionRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"POST", "/v1/{parent=projects/*/secrets/*}:addVersion", "*"}, {"POST", "/v1/{parent=projects/*/locations/*/secrets/*}:addVersion", "*"}}},
+		{Name: "GetSecret", Input: "google.cloud.secretmanager.v1.GetSecretRequest", Output: "google.cloud.secretmanager.v1.Secret", HTTP: []Binding{{"GET", "/v1/{name=projects/*/secrets/*}", ""}, {"GET", "/v1/{name=projects/*/locations/*/secrets/*}", ""}}},
+		{Name: "UpdateSecret", Input: "google.cloud.secretmanager.v1.UpdateSecretRequest", Output: "google.cloud.secretmanager.v1.Secret", HTTP: []Binding{{"PATCH", "/v1/{secret.name=projects/*/secrets/*}", "secret"}, {"PATCH", "/v1/{secret.name=projects/*/locations/*/secrets/*}", "secret"}}},
+		{Name: "DeleteSecret", Input: "google.cloud.secretmanager.v1.DeleteSecretRequest", Output: "google.protobuf.Empty", HTTP: []Binding{{"DELETE", "/v1/{name=projects/*/secrets/*}", ""}, {"DELETE", "/v1/{name=projects/*/locations/*/secrets/*}", ""}}},
+		{Name: "ListSecretVersions", Input: "google.cloud.secretmanager.v1.ListSecretVersionsRequest", Output: "google.cloud.secretmanager.v1.ListSecretVersionsResponse", HTTP: []Binding{{"GET", "/v1/{parent=projects/*/secrets/*}/versions", ""}, {"GET", "/v1/{parent=projects/*/locations/*/secrets/*}/versions", ""}}},
+		{Name: "GetSecretVersion", Input: "google.cloud.secretmanager.v1.GetSecretVersionRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"GET", "/v1/{name=projects/*/secrets/*/versions/*}", ""}, {"GET", "/v1/{name=projects/*/locations/*/secrets/*/versions/*}", ""}}},
+		{Name: "AccessSecretVersion", Input: "google.cloud.secretmanager.v1.AccessSecretVersionRequest", Output: "google.cloud.secretmanager.v1.AccessSecretVersionResponse", HTTP: []Binding{{"GET", "/v1/{name=projects/*/secrets/*/versions/*}:access", ""}, {"GET", "/v1/{name=projects/*/locations/*/secrets/*/versions/*}:access", ""}}},
+		{Name: "DisableSecretVersion", Input: "google.cloud.secretmanager.v1.DisableSecretVersionRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"POST", "/v1/{name=projects/*/secrets/*/versions/*}:disable", "*"}, {"POST", "/v1/{name=projects/*/locations/*/secrets/*/versions/*}:disable", "*"}}},
+		{Name: "EnableSecretVersion", Input: "google.cloud.secretmanager.v1.EnableSecretVersionRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"POST", "/v1/{name=projects/*/secrets/*/versions/*}:enable", "*"}, {"POST", "/v1/{name=projects/*/locations/*/secrets/*/versions/*}:enable", "*"}}},
+		{Name: "DestroySecretVersion", Input: "google.cloud.secretmanager.v1.DestroySecretVersionRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"POST", "/v1/{name=projects/*/secrets/*/versions/*}:destroy", "*"}, {"POST", "/v1/{name=projects/*/locations/*/secrets/*/versions/*}:destroy", "*"}}},
+		{Name: "SetIamPolicy", Input: "google.iam.v1.SetIamPolicyRequest", Output: "google.iam.v1.Policy", HTTP: []Binding{{"POST", "/v1/{resource=projects/*/secrets/*}:setIamPolicy", "*"}, {"POST", "/v1/{resource=projects/*/locations/*/secrets/*}:setIamPolicy", "*"}}},
+		{Name: "GetIamPolicy", Input: "google.iam.v1.GetIamPolicyRequest", Output: "google.iam.v1.Policy", HTTP: []Binding{{"GET", "/v1/{resource=projects/*/secrets/*}:getIamPolicy", ""}, {"GET", "/v1/{resource=projects/*/locations/*/secrets/*}:getIamPolicy", ""}}},
+		{Name: "TestIamPermissions", Input: "google.iam.v1.TestIamPermissionsRequest", Output: "google.iam.v1.TestIamPermissionsResponse", HTTP: []Binding{{"POST", "/v1/{resource=projects/*/secrets/*}:testIamPermissions", "*"}, {"POST", "/v1/{resource=projects/*/locations/*/secrets/*}:testIamPermissions", "*"}}},
+		{Name: "EnableManagedRotation", Input: "google.cloud.secretmanager.v1.EnableManagedRotationRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"POST", "/v1/{parent=projects/*/secrets/*}:enableManagedRotation", "*"}, {"POST", "/v1/{parent=projects/*/locations/*/secrets/*}:enableManagedRotation", "*"}}},
+		{Name: "RotateSecret", Input: "google.cloud.secretmanager.v1.RotateSecretRequest", Output: "google.cloud.secretmanager.v1.SecretVersion", HTTP: []Binding{{"POST", "/v1/{parent=projects/*/secrets/*}:rotateSecret", "*"}, {"POST", "/v1/{parent=projects/*/locations/*/secrets/*}:rotateSecret", "*"}}},
+	}},
 	{Name: "google.container.v1.ClusterManager", File: "google/container/v1/cluster_service.proto", Methods: []*Method{
 		{Name: "ListClusters", Input: "google.container.v1.ListClustersRequest", Output: "google.container.v1.ListClustersResponse", HTTP: []Binding{{"GET", "/v1/{parent=projects/*/locations/*}/clusters", ""}, {"GET", "/v1/projects/{project_id}/zones/{zone}/clusters", ""}}},
 		{Name: "GetCluster", Input: "google.container.v1.GetClusterRequest", Output: "google.container.v1.Cluster", HTTP: []Binding{{"GET", "/v1/{name=projects/*/locations/*/clusters/*}", ""}, {"GET", "/v1/projects/{project_id}/zones/{zone}/clusters/{cluster_id}", ""}}},
@@ -764,6 +783,111 @@ var protoFields = map[string]map[string]Behavior{
 		"description": Optional,
 		"values":      Required,
 	},
+	"google.cloud.secretmanager.v1.AccessSecretVersionRequest": {
+		"name": Required,
+	},
+	"google.cloud.secretmanager.v1.AddSecretVersionRequest": {
+		"parent":  Required,
+		"payload": Required,
+	},
+	"google.cloud.secretmanager.v1.CreateSecretRequest": {
+		"parent":    Required,
+		"secret_id": Required,
+		"secret":    Required,
+	},
+	"google.cloud.secretmanager.v1.CustomerManagedEncryption": {
+		"kms_key_name": Required,
+	},
+	"google.cloud.secretmanager.v1.DeleteSecretRequest": {
+		"name": Required,
+		"etag": Optional,
+	},
+	"google.cloud.secretmanager.v1.DestroySecretVersionRequest": {
+		"name": Required,
+		"etag": Optional,
+	},
+	"google.cloud.secretmanager.v1.DisableSecretVersionRequest": {
+		"name": Required,
+		"etag": Optional,
+	},
+	"google.cloud.secretmanager.v1.EnableManagedRotationRequest": {
+		"parent": Required,
+	},
+	"google.cloud.secretmanager.v1.EnableManagedRotationRequest.CloudSQLSingleUserCredentials": {
+		"instance_id": Required,
+		"username":    Required,
+		"password":    Optional,
+	},
+	"google.cloud.secretmanager.v1.EnableSecretVersionRequest": {
+		"name": Required,
+		"etag": Optional,
+	},
+	"google.cloud.secretmanager.v1.GetSecretRequest": {
+		"name": Required,
+	},
+	"google.cloud.secretmanager.v1.GetSecretVersionRequest": {
+		"name": Required,
+	},
+	"google.cloud.secretmanager.v1.ListSecretVersionsRequest": {
+		"parent":     Required,
+		"page_size":  Optional,
+		"page_token": Optional,
+		"filter":     Optional,
+	},
+	"google.cloud.secretmanager.v1.ListSecretsRequest": {
+		"parent":     Required,
+		"page_size":  Optional,
+		"page_token": Optional,
+		"filter":     Optional,
+	},
+	"google.cloud.secretmanager.v1.Replication.Automatic": {
+		"customer_managed_encryption": Optional,
+	},
+	"google.cloud.secretmanager.v1.Replication.UserManaged": {
+		"replicas": Required,
+	},
+	"google.cloud.secretmanager.v1.Replication.UserManaged.Replica": {
+		"customer_managed_encryption": Optional,
+	},
+	"google.cloud.secretmanager.v1.RotateSecretRequest": {
+		"parent": Required,
+	},
+	"google.cloud.secretmanager.v1.Rotation": {
+		"next_rotation_time":      Optional,
+		"rotation_period":         InputOnly,
+		"managed_rotation_status": OutputOnly,
+	},
+	"google.cloud.secretmanager.v1.Rotation.ManagedRotationStatus": {
+		"state": OutputOnly,
+		"error": OutputOnly,
+	},
+	"google.cloud.secretmanager.v1.Secret": {
+		"name":                        OutputOnly,
+		"replication":                 Immutable | Optional,
+		"create_time":                 OutputOnly,
+		"topics":                      Optional,
+		"expire_time":                 Optional,
+		"ttl":                         InputOnly,
+		"etag":                        Optional,
+		"rotation":                    Optional,
+		"version_aliases":             Optional,
+		"annotations":                 Optional,
+		"version_destroy_ttl":         Optional,
+		"customer_managed_encryption": Optional,
+		"tags":                        InputOnly | Immutable | Optional,
+		"secret_type":                 Immutable | Optional,
+		"policy_member":               OutputOnly,
+	},
+	"google.cloud.secretmanager.v1.SecretPayload": {
+		"data_crc32c": Optional,
+	},
+	"google.cloud.secretmanager.v1.Topic": {
+		"name": Identifier,
+	},
+	"google.cloud.secretmanager.v1.UpdateSecretRequest": {
+		"secret":      Required,
+		"update_mask": Required,
+	},
 	"google.container.v1.AdditionalPodRangesConfig": {
 		"pod_range_info": OutputOnly,
 	},
@@ -1290,6 +1414,10 @@ var protoFields = map[string]map[string]Behavior{
 	},
 	"google.iam.v1.GetIamPolicyRequest": {
 		"resource": Required,
+	},
+	"google.iam.v1.ResourcePolicyMember": {
+		"iam_policy_name_principal": OutputOnly,
+		"iam_policy_uid_principal":  OutputOnly,
 	},
 	"google.iam.v1.SetIamPolicyRequest": {
 		"resource": Required,

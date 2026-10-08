@@ -10,6 +10,7 @@ googleapis:
     - google/cloud/certificatemanager/v1/certificate_manager.proto
     - google/cloud/location/locations.proto
     - google/cloud/networksecurity/v1/network_security.proto
+    - google/cloud/secretmanager/v1/service.proto
     - google/container/v1/cluster_service.proto
     - google/devtools/artifactregistry/v1/service.proto
     - google/iam/credentials/v1/iamcredentials.proto

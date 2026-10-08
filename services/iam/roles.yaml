@@ -147,6 +147,10 @@ permissions:
     - "certissuanceconfigs: create delete get list use"
     - "locations: get list"
     - "operations: cancel delete get list"
+  secretmanager:
+    - "secrets: create delete get getIamPolicy list setIamPolicy update"
+    - "versions: access add destroy disable enable get list"
+    - "locations: get list"
 
 roles:
   # Basic roles.
@@ -452,6 +456,26 @@ roles:
     title: Certificate Manager Viewer
     description: Read-only access to Certificate Manager resources.
     permissions: ["certificatemanager.*.get", "certificatemanager.*.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/secretmanager.admin
+    title: Secret Manager Admin
+    description: Full access to administer Secret Manager resources.
+    permissions: [secretmanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/secretmanager.secretAccessor
+    title: Secret Manager Secret Accessor
+    description: Allows accessing the payload of secrets.
+    permissions: [secretmanager.versions.access]
+  - name: roles/secretmanager.secretVersionAdder
+    title: Secret Manager Secret Version Adder
+    description: Allows adding versions to existing secrets.
+    permissions: [secretmanager.versions.add]
+  - name: roles/secretmanager.secretVersionManager
+    title: Secret Manager Secret Version Manager
+    description: Allows creating and managing versions of existing secrets.
+    permissions: [secretmanager.versions.add, secretmanager.versions.destroy, secretmanager.versions.disable, secretmanager.versions.enable, secretmanager.versions.get, secretmanager.versions.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/secretmanager.viewer
+    title: Secret Manager Viewer
+    description: Allows viewing metadata of all Secret Manager resources.
+    permissions: [secretmanager.secrets.get, secretmanager.secrets.list, secretmanager.versions.get, secretmanager.versions.list, secretmanager.locations.get, secretmanager.locations.list, resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/networksecurity.admin
     title: Network Security Admin
     description: Full access to Network Security resources.

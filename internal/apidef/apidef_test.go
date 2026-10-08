@@ -18,6 +18,7 @@ import (
 	_ "cloud.google.com/go/longrunning/autogen/longrunningpb"
 	_ "cloud.google.com/go/networksecurity/apiv1/networksecuritypb"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	_ "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	_ "google.golang.org/genproto/googleapis/cloud/location"
 )
 

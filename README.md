@@ -17,6 +17,7 @@ reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 | IAM | `services/iam` | Service accounts and keys, roles, policies with conditions, audit/enforce, OAuth2 token endpoint, IAM Credentials, metadata server, STS/WIF |
 | Cloud Storage | `services/gcs` | JSON + XML APIs, resumable uploads, generations/preconditions, checksums, V4 signed URLs, notifications, lifecycle, HMAC |
 | Pub/Sub | `services/pubsub` | gRPC + REST, streaming pull, ordering, DLQ, filters, push with OIDC, exactly-once, snapshots/seek, schemas |
+| Secret Manager | `services/secrets` | gRPC + REST, global and regional secrets, versions and aliases, IAM, expiry and delayed destruction on the Emulator clock, Pub/Sub event notifications, managed rotation of Cloud SQL passwords |
 | Cloud DNS | `services/dns` | Zones, record sets, changes; authoritative UDP/TCP server with forwarding |
 | Artifact Registry | `services/ar` | Repositories API with LROs; OCI Distribution v1.1 registry with referrers; pull-through cache, remote and virtual repositories |
 | Compute networking | `services/compute` | Networks, subnetworks, firewalls, routes, addresses, routers, zonal/regional/global NEGs, operations; servicenetworking; subnetworks realised as container networks; VPC peering (recorded) |
@@ -169,7 +170,7 @@ The image binds `0.0.0.0` with IAM in audit mode, keeps state in `/data` (mount 
 keep it across containers, or set `GCPEMU_EPHEMERAL=true`), and reports healthy once every
 Service is ready (`gcpemu status --ready`). The Web console is not served, because the emulator
 is not bound to loopback. The image has no container runtime, so it starts every
-Service except Cloud SQL, GKE and Cloud NAT (`GCPEMU_SERVICES=iam,compute,dns,certs,ar,pubsub,gcs,lb,cdn`).
+Service except Cloud SQL, GKE and Cloud NAT (`GCPEMU_SERVICES=iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn`).
 Load balancer forwarding rules listen on their own ports, so publish those with extra `-p`
 flags. As a GitHub Actions service container (the job waits for the health check):
 
@@ -225,7 +226,7 @@ With `emulator_gateway` empty the module targets real GCP (set `project` and `do
 ### Client compatibility (SRS 7.1)
 
 `make compat` runs the real clients against a detached instance with only endpoint
-configuration: `gcloud` (storage, pubsub, iam, dns, compute load balancing and NAT, artifacts,
+configuration: `gcloud` (storage, pubsub, secrets, iam, dns, compute load balancing and NAT, artifacts,
 sql, container), `kubectl` through `gke-gcloud-auth-plugin`, Helm, Docker, `crane`, `ko`, `psql`,
 the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. gcloud (with the
 `gke-gcloud-auth-plugin` component), kubectl, dig and Docker come from `PATH`; Helm, crane, ko
