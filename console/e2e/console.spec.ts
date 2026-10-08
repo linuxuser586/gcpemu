@@ -194,3 +194,49 @@ test('a deep link to a disabled Service says how to enable it', async ({ page })
   ).toBeVisible()
   await expect(page.getByText(/gcpemu start --services .*sql/)).toBeVisible()
 })
+
+test('FR-UI-012 Operations: live status, duration and the resulting resource or error', async ({
+  page,
+  request,
+  browserName,
+}) => {
+  const id = projectId('e2e-ops', browserName)
+  await page.goto(`/console/operations?project=${id}`)
+  await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible()
+  await expect(page.getByText('No Operations yet.')).toBeVisible()
+
+  // Both inserts are accepted; the second fails once the first has
+  // created the network, as in GCP.
+  const insert = () =>
+    request.post(`/compute/v1/projects/${id}/global/networks`, {
+      data: { name: 'vpc', autoCreateSubnetworks: false },
+    })
+  expect((await insert()).ok()).toBe(true)
+  expect((await insert()).ok()).toBe(true)
+
+  const ops = page.getByRole('table', { name: 'Operations' }).getByTestId('operation')
+  await expect(ops).toHaveCount(2)
+  await expect(ops.filter({ hasText: 'Running' })).toHaveCount(2)
+
+  const done = ops.filter({ hasText: 'Done' })
+  const failed = ops.filter({ hasText: 'Failed' })
+  await expect(done).toHaveCount(1, { timeout: 10_000 })
+  await expect(failed).toHaveCount(1)
+  await expect(done).toContainText('VPC network')
+  await expect(done).toContainText('insert')
+  await expect(done).toContainText(`projects/${id}/global/networks/vpc`)
+  await expect(done.getByRole('cell').last()).toHaveText(/^[2-9]\.\d s$/)
+  await expect(failed).toContainText('already exists')
+
+  await failed.getByRole('button', { name: 'Show details' }).click()
+  const json = page.getByLabel('Operation JSON')
+  await expect(json).toContainText('"kind": "compute#operation"')
+  await expect(json).toContainText('"status": "DONE"')
+
+  await page.getByLabel('Status').selectOption('failed')
+  await expect(page).toHaveURL(/[?&]status=failed\b/)
+  await expect(ops).toHaveCount(1)
+  await page.reload()
+  await expect(ops).toHaveCount(1)
+  await expect(ops).toContainText('already exists')
+})

@@ -319,6 +319,32 @@ func (in *Instance) Readiness() map[string]error {
 	return out
 }
 
+// Operations returns the Operations of every service, or of service and
+// project when they are set, newest first.
+func (in *Instance) Operations(service, project string) []emu.OperationInfo {
+	out := []emu.OperationInfo{}
+	for _, s := range in.services {
+		l, ok := s.(emu.OperationLister)
+		if !ok || (service != "" && s.Name() != service) {
+			continue
+		}
+		for _, op := range l.Operations() {
+			if project != "" && op.Project != project {
+				continue
+			}
+			op.Service = s.Name()
+			out = append(out, op)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if a, b := out[i].StartTime, out[j].StartTime; !a.Equal(b) {
+			return a.After(b)
+		}
+		return out[i].Name > out[j].Name
+	})
+	return out
+}
+
 // Ready reports whether every service is ready.
 func (in *Instance) Ready() bool {
 	for _, err := range in.Readiness() {

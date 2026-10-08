@@ -115,6 +115,11 @@ func newAdmin(in *Instance) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
+	mux.HandleFunc("GET /_emu/v1/operations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"operations": in.Operations(r.URL.Query().Get("service"), r.URL.Query().Get("project")),
+		})
+	})
 	mux.HandleFunc("POST /_emu/v1/reset", func(w http.ResponseWriter, r *http.Request) {
 		if err := in.Reset(r.Context()); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

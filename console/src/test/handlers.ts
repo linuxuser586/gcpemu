@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw'
 
-import type { Container, Info, Readiness, ResourceCounts } from '@/api/admin'
+import type { Container, Info, Operation, Readiness, ResourceCounts } from '@/api/admin'
 import type { Project } from '@/api/queries'
 
 // A fake Instance for component tests: tests mutate `fake` to shape what
@@ -14,6 +14,7 @@ export interface Fake {
   counts: ResourceCounts
   env: Record<string, string>
   projects: Project[]
+  operations: Operation[]
 }
 
 export function defaultFake(): Fake {
@@ -52,6 +53,47 @@ export function defaultFake(): Fake {
       { projectId: 'alpha-project', name: 'projects/111111111111' },
       { projectId: 'beta-project', name: 'projects/222222222222' },
     ],
+    operations: [
+      {
+        service: 'compute',
+        name: 'projects/alpha-project/global/operations/operation-3',
+        project: 'alpha-project',
+        location: 'global',
+        type: 'insert',
+        target: 'projects/alpha-project/global/networks/vpc-b',
+        status: 'RUNNING',
+        done: false,
+        startTime: '2026-10-08T12:00:03Z',
+        operation: { kind: 'compute#operation', name: 'operation-3', status: 'RUNNING' },
+      },
+      {
+        service: 'compute',
+        name: 'projects/alpha-project/global/operations/operation-2',
+        project: 'alpha-project',
+        location: 'global',
+        type: 'insert',
+        target: 'projects/alpha-project/global/networks/vpc-a',
+        status: 'DONE',
+        done: true,
+        error: { code: 'RESOURCE_ALREADY_EXISTS', message: "The resource 'vpc-a' already exists" },
+        startTime: '2026-10-08T12:00:02Z',
+        endTime: '2026-10-08T12:00:03.500Z',
+        operation: { kind: 'compute#operation', name: 'operation-2', status: 'DONE' },
+      },
+      {
+        service: 'dns',
+        name: 'projects/beta-project/managedZones/z/changes/1',
+        project: 'beta-project',
+        location: 'global',
+        type: 'change',
+        target: 'projects/beta-project/managedZones/z',
+        status: 'done',
+        done: true,
+        startTime: '2026-10-08T12:00:00Z',
+        endTime: '2026-10-08T12:00:00.250Z',
+        operation: { kind: 'dns#change', id: '1', status: 'done' },
+      },
+    ],
   }
 }
 
@@ -74,6 +116,12 @@ export const handlers = [
   ),
   http.get('*/_emu/v1/resources/counts', () => HttpResponse.json(fake.counts)),
   http.get('*/_emu/v1/env', () => HttpResponse.json(fake.env)),
+  http.get('*/_emu/v1/operations', ({ request }) => {
+    const project = new URL(request.url).searchParams.get('project')
+    return HttpResponse.json({
+      operations: fake.operations.filter((op) => !project || op.project === project),
+    })
+  }),
   http.get('*/cloudresourcemanager/v3/projects\\:search', () =>
     HttpResponse.json({ projects: fake.projects }),
   ),

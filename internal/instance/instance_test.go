@@ -514,3 +514,80 @@ func TestEvents(t *testing.T) {
 		t.Error("event stream still open after Shutdown")
 	}
 }
+
+// opsSvc is a Service named name holding ops.
+type opsSvc struct {
+	fakeSvc
+	name string
+	ops  []emu.OperationInfo
+}
+
+func (s *opsSvc) Name() string                    { return s.name }
+func (s *opsSvc) Register(emu.Router) error       { return nil }
+func (s *opsSvc) Operations() []emu.OperationInfo { return s.ops }
+
+// TestOperations: /_emu/v1/operations lists every Service's Operations,
+// newest first, filtered by Service and Project (FR-UI-012).
+func TestOperations(t *testing.T) {
+	t0 := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	cfg := config.Defaults()
+	cfg.Ephemeral = true
+	cfg.DataDir = t.TempDir()
+	cfg.Services = []string{"dns", "compute", "gcs"}
+	cfg.Ports["gateway"] = 0
+	in, err := New(&cfg, map[string]Factory{
+		"dns": func(*emu.Env) emu.Service {
+			return &opsSvc{name: "dns", ops: []emu.OperationInfo{
+				{Name: "projects/p1/managedZones/z/changes/1", Project: "p1", Done: true, StartTime: t0, EndTime: t0.Add(time.Second)},
+			}}
+		},
+		"compute": func(*emu.Env) emu.Service {
+			return &opsSvc{name: "compute", ops: []emu.OperationInfo{
+				{Name: "projects/p2/global/operations/a", Project: "p2", StartTime: t0.Add(time.Minute)},
+				{Name: "projects/p1/global/operations/b", Project: "p1", StartTime: t0.Add(-time.Minute),
+					Done: true, Error: &emu.OperationError{Code: "RESOURCE_ALREADY_EXISTS", Message: "exists"}},
+			}}
+		},
+		"gcs": func(*emu.Env) emu.Service { return &opsSvc{name: "gcs"} },
+	}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := in.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer in.Shutdown(ctx)
+	base := "http://" + in.Env.Endpoints.Get("gateway")
+
+	names := func(query string) []string {
+		var got struct{ Operations []emu.OperationInfo }
+		getJSON(t, base+"/_emu/v1/operations"+query, &got)
+		out := []string{}
+		for _, op := range got.Operations {
+			out = append(out, op.Service+" "+op.Name)
+		}
+		return out
+	}
+	for query, want := range map[string][]string{
+		"": {
+			"compute projects/p2/global/operations/a",
+			"dns projects/p1/managedZones/z/changes/1",
+			"compute projects/p1/global/operations/b",
+		},
+		"?service=dns":                {"dns projects/p1/managedZones/z/changes/1"},
+		"?project=p1&service=compute": {"compute projects/p1/global/operations/b"},
+		"?service=gcs":                {},
+	} {
+		if got := names(query); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("operations%s = %q, want %q", query, got, want)
+		}
+	}
+
+	var raw struct{ Operations []map[string]any }
+	getJSON(t, base+"/_emu/v1/operations?service=compute&project=p1", &raw)
+	if op := raw.Operations[0]; op["done"] != true || op["endTime"] != nil ||
+		op["error"].(map[string]any)["code"] != "RESOURCE_ALREADY_EXISTS" {
+		t.Errorf("wire form = %v", op)
+	}
+}

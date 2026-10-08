@@ -10,13 +10,17 @@ import path from 'node:path'
 const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, '../../bin/gcpemu')
 const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // --console: CI=true turns the console off by default (FR-CI-003).
+// Compute Operations take 2 s, long enough to watch them
+// run (FR-UI-012); compute needs no container runtime either.
 const child = spawn(
   bin,
   [
     'start',
     '--ephemeral',
     '--services',
-    'gcs,pubsub',
+    'gcs,pubsub,compute',
+    '--lro-latency',
+    'compute=2s',
     '--port',
     '0',
     '--console',

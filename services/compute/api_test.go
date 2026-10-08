@@ -363,7 +363,7 @@ func TestAddressesRoutersAndNAT(t *testing.T) {
 
 func TestOperationsLatency(t *testing.T) {
 	const latency = 300 * time.Millisecond
-	_, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = latency.String() })
+	inst, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = latency.String() })
 	start := time.Now()
 	op, err := c.Networks.Insert(proj, &computev1.Network{Name: "slow", AutoCreateSubnetworks: true}).Do()
 	if err != nil {
@@ -421,6 +421,25 @@ func TestOperationsLatency(t *testing.T) {
 	del = waitOp(t, c, del)
 	if del.Error == nil || del.Error.Errors[0].Code != "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE" || del.HttpErrorStatusCode != 400 {
 		t.Fatalf("delete must fail in the operation: %+v", del)
+	}
+
+	// The admin API summarises them (FR-UI-012).
+	ops := map[string]emu.OperationInfo{}
+	for _, op := range inst.Operations("compute", "") {
+		ops[op.Type] = op
+	}
+	sum, sub := ops["delete"], ops["insert"]
+	if len(ops) != 2 {
+		t.Fatalf("operations = %+v", ops)
+	}
+	if sum.Name != "projects/"+proj+"/global/operations/"+del.Name || sum.Project != proj || sum.Location != "global" ||
+		sum.Type != "delete" || sum.Target != "projects/"+proj+"/global/networks/slow" || !sum.Done || sum.Status != "DONE" ||
+		sum.Error == nil || sum.Error.Code != "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE" ||
+		sum.StartTime.IsZero() || sum.EndTime.Sub(sum.StartTime) < latency {
+		t.Fatalf("delete summary = %+v %+v", sum, sum.Error)
+	}
+	if sub.Location != "us-east1" || sub.Target != "projects/"+proj+"/regions/us-east1/subnetworks/x" || sub.Error != nil {
+		t.Fatalf("insert summary = %+v", sub)
 	}
 }
 

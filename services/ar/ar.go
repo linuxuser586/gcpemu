@@ -212,6 +212,9 @@ func (s *Service) Ready() error {
 	return nil
 }
 
+// Operations implements emu.OperationLister.
+func (s *Service) Operations() []emu.OperationInfo { return s.ops.Operations() }
+
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, map[string]string{"repositories": nsRepos, "dockerImages": nsManifests, "tags": nsTags})

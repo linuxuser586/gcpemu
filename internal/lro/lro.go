@@ -43,6 +43,10 @@ const maxWait = 5 * time.Minute
 type record struct {
 	Service string          `json:"service"`
 	Op      json.RawMessage `json:"op"` // protojson google.longrunning.Operation
+	// Start and End are when the operation was created and completed;
+	// operations persisted before they were recorded have neither.
+	Start time.Time `json:"start,omitzero"`
+	End   time.Time `json:"end,omitzero"`
 }
 
 // RunFunc performs the operation's work and returns its response message
@@ -109,18 +113,19 @@ func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message
 		}
 		op.Metadata = a
 	}
+	start := m.env.Clock.Now()
 	d := m.Latency()
 	if d <= 0 {
 		resp, err := run(ctx)
 		if err := finish(op, resp, err); err != nil {
 			return nil, err
 		}
-		if err := m.put(op); err != nil {
+		if err := m.put(op, start, m.env.Clock.Now()); err != nil {
 			return nil, err
 		}
 		return op, nil
 	}
-	if err := m.put(op); err != nil {
+	if err := m.put(op, start, time.Time{}); err != nil {
 		return nil, err
 	}
 	bg := context.WithoutCancel(ctx)
@@ -166,41 +171,46 @@ func finish(op *longrunningpb.Operation, resp proto.Message, err error) error {
 	return nil
 }
 
-func (m *Manager) put(op *longrunningpb.Operation) error {
-	return m.env.Store.Update(func(tx store.Tx) error { return putOp(tx, m.service, op) })
+func (m *Manager) put(op *longrunningpb.Operation, start, end time.Time) error {
+	return m.env.Store.Update(func(tx store.Tx) error {
+		return putOp(tx, record{Service: m.service, Start: start, End: end}, op)
+	})
 }
 
-func putOp(tx store.Tx, service string, op *longrunningpb.Operation) error {
+// putOp stores op with the service and times of rec.
+func putOp(tx store.Tx, rec record, op *longrunningpb.Operation) error {
 	b, err := protojson.Marshal(op)
 	if err != nil {
 		return err
 	}
-	return store.PutJSON(tx, Namespace, op.Name, record{Service: service, Op: b})
+	rec.Op = b
+	return store.PutJSON(tx, Namespace, op.Name, rec)
 }
 
-func getOp(tx store.Tx, name string) (*longrunningpb.Operation, string, error) {
+func getOp(tx store.Tx, name string) (*longrunningpb.Operation, record, error) {
 	var rec record
 	if err := store.GetJSON(tx, Namespace, name, &rec); err != nil {
-		return nil, "", err
+		return nil, rec, err
 	}
 	op := &longrunningpb.Operation{}
 	if err := protojson.Unmarshal(rec.Op, op); err != nil {
-		return nil, "", err
+		return nil, rec, err
 	}
-	return op, rec.Service, nil
+	return op, rec, nil
 }
 
 // complete records the outcome of a pending operation.
 func (m *Manager) complete(name string, resp proto.Message, runErr error) {
 	err := m.env.Store.Update(func(tx store.Tx) error {
-		op, svc, err := getOp(tx, name)
+		op, rec, err := getOp(tx, name)
 		if err != nil || op.Done {
 			return err
 		}
 		if err := finish(op, resp, runErr); err != nil {
 			return err
 		}
-		return putOp(tx, svc, op)
+		rec.End = m.env.Clock.Now()
+		return putOp(tx, rec, op)
 	})
 	if err != nil && err != store.ErrNotFound {
 		m.env.Log.Error("lro: complete operation", "service", m.service, "operation", name, "err", err)
@@ -222,7 +232,11 @@ func (m *Manager) cancel(name string) {
 // pending.
 func (m *Manager) recover() {
 	_ = m.env.Store.Update(func(tx store.Tx) error {
-		var stale []*longrunningpb.Operation
+		type staleOp struct {
+			op  *longrunningpb.Operation
+			rec record
+		}
+		var stale []staleOp
 		tx.Scan(Namespace, "", func(_ string, b []byte) bool {
 			var rec record
 			if json.Unmarshal(b, &rec) != nil || rec.Service != m.service {
@@ -230,13 +244,14 @@ func (m *Manager) recover() {
 			}
 			op := &longrunningpb.Operation{}
 			if protojson.Unmarshal(rec.Op, op) == nil && !op.Done {
-				stale = append(stale, op)
+				stale = append(stale, staleOp{op, rec})
 			}
 			return true
 		})
-		for _, op := range stale {
-			_ = finish(op, nil, apierr.Aborted("Operation was interrupted by an emulator restart."))
-			if err := putOp(tx, m.service, op); err != nil {
+		for _, s := range stale {
+			_ = finish(s.op, nil, apierr.Aborted("Operation was interrupted by an emulator restart."))
+			s.rec.End = m.env.Clock.Now()
+			if err := putOp(tx, s.rec, s.op); err != nil {
 				return err
 			}
 		}
@@ -247,13 +262,13 @@ func (m *Manager) recover() {
 // Get returns an operation of this service.
 func (m *Manager) Get(name string) (*longrunningpb.Operation, error) {
 	var op *longrunningpb.Operation
-	var svc string
+	var rec record
 	err := m.env.Store.View(func(tx store.Tx) error {
 		var err error
-		op, svc, err = getOp(tx, name)
+		op, rec, err = getOp(tx, name)
 		return err
 	})
-	if err == store.ErrNotFound || (err == nil && svc != m.service) {
+	if err == store.ErrNotFound || (err == nil && rec.Service != m.service) {
 		return nil, notFound(name)
 	}
 	return op, err
@@ -327,16 +342,16 @@ func (s *Server) manager(service string) *Manager {
 
 func (s *Server) get(name string) (*longrunningpb.Operation, string, error) {
 	var op *longrunningpb.Operation
-	var svc string
+	var rec record
 	err := s.st.View(func(tx store.Tx) error {
 		var err error
-		op, svc, err = getOp(tx, name)
+		op, rec, err = getOp(tx, name)
 		return err
 	})
 	if err == store.ErrNotFound {
 		return nil, "", notFound(name)
 	}
-	return op, svc, err
+	return op, rec.Service, err
 }
 
 // GetOperation implements longrunningpb.OperationsServer.
@@ -451,8 +466,8 @@ func listOps(st store.Store, service string, req *longrunningpb.ListOperationsRe
 
 func deleteOp(st store.Store, service, name string) (*emptypb.Empty, error) {
 	err := st.Update(func(tx store.Tx) error {
-		_, svc, err := getOp(tx, name)
-		if err == store.ErrNotFound || (err == nil && service != "" && svc != service) {
+		_, rec, err := getOp(tx, name)
+		if err == store.ErrNotFound || (err == nil && service != "" && rec.Service != service) {
 			return notFound(name)
 		}
 		if err != nil {

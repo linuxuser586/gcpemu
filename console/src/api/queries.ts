@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap, type Readiness, type RequestEntry } from './admin'
+import { admin, unwrap, type Operation, type Readiness, type RequestEntry } from './admin'
 import { toApiError } from './errors'
 import { gcpFetch } from './fetch'
 
@@ -53,6 +53,24 @@ export const resourceCountsQuery = () =>
   queryOptions({
     queryKey: ['admin', 'resources', 'counts'],
     queryFn: () => unwrap(admin.GET('/_emu/v1/resources/counts')),
+  })
+
+/**
+ * operationsQuery lists every Service's Operations, newest first, or one
+ * Project's. Operation events keep it fresh; while an Operation is
+ * running it also polls, since a Cloud DNS change completes without a
+ * write to report.
+ */
+export const operationsQuery = (project = '') =>
+  queryOptions({
+    queryKey: ['admin', 'operations', project],
+    queryFn: async (): Promise<Operation[]> =>
+      (
+        await unwrap(
+          admin.GET('/_emu/v1/operations', { params: { query: project ? { project } : {} } }),
+        )
+      ).operations,
+    refetchInterval: (q) => (q.state.data?.some((op) => !op.done) ? POLL_MS : false),
   })
 
 /** requestsQuery is the Request log, oldest first; the bridge appends to it. */

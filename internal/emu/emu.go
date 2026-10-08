@@ -4,6 +4,7 @@ package emu
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"gopkg.in/yaml.v3"
@@ -73,6 +75,52 @@ type ClockObserver interface {
 // API's collections ("buckets", "subscriptions"), not store namespaces.
 type ResourceCounter interface {
 	ResourceCounts() map[string]int
+}
+
+// OperationLister is implemented by services whose mutations run as
+// Operations (admin API /_emu/v1/operations, the Web console Operations
+// view). Every Service's Operations are one concept whatever their wire
+// format (CONTEXT.md), so each one is summarised in the same shape.
+type OperationLister interface {
+	Operations() []OperationInfo
+}
+
+// OperationInfo summarises one Operation for the admin API.
+type OperationInfo struct {
+	// Service is the Service ID; the admin API fills it in.
+	Service string `json:"service"`
+	// Name is the Operation's resource name, e.g.
+	// "projects/p/global/operations/operation-1".
+	Name    string `json:"name"`
+	Project string `json:"project,omitempty"`
+	// Location is "global", a region, a zone or an API location.
+	Location string `json:"location,omitempty"`
+	// Type is what the Operation does, as its API names it ("insert",
+	// "CREATE_CLUSTER", "change").
+	Type string `json:"type,omitempty"`
+	// Target is the resource the Operation acts on or produced.
+	Target string `json:"target,omitempty"`
+	// Status is the API's own status ("RUNNING", "pending", ...).
+	Status    string          `json:"status,omitempty"`
+	Done      bool            `json:"done"`
+	Error     *OperationError `json:"error,omitempty"`
+	StartTime time.Time       `json:"startTime,omitzero"`
+	EndTime   time.Time       `json:"endTime,omitzero"`
+	// Operation is the Operation as the Service's API returns it.
+	Operation json.RawMessage `json:"operation,omitempty"`
+}
+
+// OperationError is why an Operation failed.
+type OperationError struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message"`
+}
+
+// ParseTime parses an API timestamp (RFC 3339), returning the zero time
+// for an empty or malformed one.
+func ParseTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
 }
 
 // Env is the shared environment passed to every service.

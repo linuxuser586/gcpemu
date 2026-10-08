@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	goruntime "runtime"
@@ -279,6 +280,21 @@ func TestChangeLatency(t *testing.T) {
 	if err != nil || ch.Status != "pending" {
 		t.Fatalf("change: %v %+v", err, ch)
 	}
+	// The admin API reports the change as a pending Operation on its zone
+	// (FR-UI-012); the zone's creation is change 0.
+	pending := map[string]bool{}
+	for _, op := range inst.Operations("dns", proj) {
+		if op.Type != "change" || op.Target != "projects/"+proj+"/managedZones/z" || op.StartTime.IsZero() {
+			t.Fatalf("operation = %+v", op)
+		}
+		pending[op.Name] = !op.Done && op.EndTime.IsZero()
+	}
+	if want := map[string]bool{
+		"projects/" + proj + "/managedZones/z/changes/0":        false,
+		"projects/" + proj + "/managedZones/z/changes/" + ch.Id: true,
+	}; !maps.Equal(pending, want) {
+		t.Fatalf("pending = %v, want %v", pending, want)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ch, err = c.Changes.Get(proj, "z", ch.Id).Do()
@@ -292,6 +308,11 @@ func TestChangeLatency(t *testing.T) {
 			t.Fatal("change never done")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	for _, op := range inst.Operations("dns", proj) {
+		if !op.Done || op.Status != "done" || op.EndTime.Before(op.StartTime) {
+			t.Fatalf("operation after completion = %+v", op)
+		}
 	}
 }
 

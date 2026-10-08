@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -216,4 +217,39 @@ func (s *Service) abortStaleOps() {
 	for _, o := range ops {
 		s.finishOp(o.project, o.name, apierr.Aborted("The operation was interrupted by an emulator restart."))
 	}
+}
+
+// Operations implements emu.OperationLister.
+func (s *Service) Operations() []emu.OperationInfo {
+	var out []emu.OperationInfo
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		tx.Scan(nsOperations, "", func(k string, b []byte) bool {
+			op := &containerpb.Operation{}
+			if protojson.Unmarshal(b, op) != nil {
+				return true
+			}
+			p, _, _ := strings.Cut(k, "/")
+			oi := emu.OperationInfo{
+				Name: "projects/" + p + "/locations/" + op.Location + "/operations/" + op.Name, Project: p,
+				Location: op.Location, Type: op.OperationType.String(), Target: resourcePath(op.TargetLink),
+				Status: op.Status.String(), Done: op.Status == containerpb.Operation_DONE,
+				StartTime: emu.ParseTime(op.StartTime), EndTime: emu.ParseTime(op.EndTime), Operation: b,
+			}
+			if e := op.GetError(); e != nil {
+				oi.Error = &emu.OperationError{Code: apierr.CodeName(codes.Code(e.GetCode())), Message: e.GetMessage()}
+			}
+			out = append(out, oi)
+			return true
+		})
+		return nil
+	})
+	return out
+}
+
+// resourcePath trims a container API link to its "projects/..." path.
+func resourcePath(link string) string {
+	if i := strings.Index(link, "projects/"); i >= 0 {
+		return link[i:]
+	}
+	return link
 }
