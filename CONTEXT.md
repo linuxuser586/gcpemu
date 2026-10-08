@@ -136,7 +136,7 @@ _Avoid_: LRO, job, task
 How long an Operation takes before it completes, configured per Service ID. Operations complete instantly unless it is set.
 
 **Project**:
-A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects.
+A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects. Only a request handled by a Service counts as a reference. Choosing a Project in the Web console only scopes what is shown and creates nothing.
 
 **Strict projects**:
 An Instance setting under which referencing a Project that does not exist is an error instead of creating it.
