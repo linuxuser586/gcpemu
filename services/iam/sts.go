@@ -279,12 +279,12 @@ func validateMapping(p *iamv1.WorkloadIdentityPoolProvider) error {
 		if !strings.HasPrefix(k, "google.") && !strings.HasPrefix(k, "attribute.") {
 			return apierr.InvalidArgument("Invalid attribute mapping key %q.", k)
 		}
-		if _, err := parseCond(expr); err != nil {
+		if _, err := compileMapping(expr); err != nil {
 			return apierr.InvalidArgument("Invalid attribute mapping %q: %v", expr, err)
 		}
 	}
 	if p.AttributeCondition != "" {
-		if _, err := parseCond(p.AttributeCondition); err != nil {
+		if _, err := compileMapping(p.AttributeCondition); err != nil {
 			return apierr.InvalidArgument("Invalid attribute condition: %v", err)
 		}
 	}
@@ -401,16 +401,12 @@ func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[st
 		return "", nil, "", fmt.Errorf("the audience in the subject token %v does not match the allowed audiences %v", auds, allowed)
 	}
 	assertion := map[string]any(claims)
-	env := condEnv{now: s.env.Clock.Now(), vars: map[string]any{"assertion": assertion}}
+	vars := map[string]any{"assertion": assertion}
 	attrs := map[string]string{}
 	google := map[string]any{}
 	attrVals := map[string]any{}
 	for k, expr := range prov.AttributeMapping {
-		n, err := parseCond(expr)
-		if err != nil {
-			return "", nil, "", err
-		}
-		v, err := n.eval(env)
+		v, err := evalMapping(expr, vars)
 		if err != nil {
 			return "", nil, "", fmt.Errorf("attribute mapping %s: %v", k, err)
 		}
@@ -429,9 +425,8 @@ func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[st
 		return "", nil, "", errors.New("the mapped google.subject must be 1 to 127 characters")
 	}
 	if prov.AttributeCondition != "" {
-		env.vars["attribute"], env.vars["google"] = attrVals, google
-		n, _ := parseCond(prov.AttributeCondition)
-		v, err := n.eval(env)
+		vars["attribute"], vars["google"] = attrVals, google
+		v, err := evalMapping(prov.AttributeCondition, vars)
 		if b, ok := v.(bool); err != nil || !ok || !b {
 			return "", nil, "", errors.New("the given credential is rejected by the attribute condition")
 		}
