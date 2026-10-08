@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/console"
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
@@ -27,6 +28,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/store"
+	"github.com/linuxuser586/gcpemu/internal/webconsole"
 )
 
 // Factory builds a service for an environment.
@@ -66,6 +68,9 @@ type Instance struct {
 	hm           *hostmode.Manager  // nil unless --host-mode
 	shutdownOnce sync.Once
 	done         chan struct{}
+
+	// consoleServed reports whether the gateway serves the Web console.
+	consoleServed bool
 }
 
 // New builds an instance from cfg using factories for available services.
@@ -196,6 +201,7 @@ func (in *Instance) Start(ctx context.Context) error {
 		}
 	}
 	in.gw.HandleAdmin(newAdmin(in))
+	in.mountConsole()
 
 	l, err := in.Env.ListenTCP(in.Config.Bind, in.Config.Port("gateway"))
 	if err != nil {
@@ -226,6 +232,25 @@ func (in *Instance) Start(ctx context.Context) error {
 	in.startHostNames()
 	in.Env.Log.Info("gcpemu started", "instance", in.Config.Instance, "id", in.ID, "gateway", in.Env.Endpoints.Get("gateway"), "dir", in.Dir)
 	return nil
+}
+
+// mountConsole serves the Web console on the gateway unless it is turned
+// off (--console=false, or CI=true without --console; FR-CI-003). It is
+// not served beyond loopback: it has no session token yet (FR-UI-009).
+func (in *Instance) mountConsole() {
+	switch {
+	case !in.Config.ConsoleEnabled():
+		return
+	case !config.IsLoopback(in.Config.Bind):
+		in.Env.Log.Warn("Web console not served: the gateway is bound beyond loopback and the console has no session token yet; bind to 127.0.0.1 to use it",
+			"bind", in.Config.Bind)
+		return
+	}
+	if !console.Built {
+		in.Env.Log.Warn("this binary was built without the Web console; /console shows a placeholder (build with `make build` and pnpm on PATH)")
+	}
+	in.gw.HandleConsole(webconsole.Handler(console.FS))
+	in.consoleServed = true
 }
 
 func (in *Instance) writeRuntimeFiles() error {

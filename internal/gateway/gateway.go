@@ -282,6 +282,13 @@ func (g *Gateway) Hosts() []string {
 // HandleAdmin mounts the admin API (unauthenticated, not request-logged).
 func (g *Gateway) HandleAdmin(h http.Handler) { g.mux.Handle("/_emu/", h) }
 
+// HandleConsole mounts the Web console at /console and /console/
+// (unauthenticated, not request-logged; FR-UI-002).
+func (g *Gateway) HandleConsole(h http.Handler) {
+	g.mux.Handle("/console", h)
+	g.mux.Handle("/console/", h)
+}
+
 // ServeHTTP dispatches gRPC, host-mode and path-routed requests.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {

@@ -66,6 +66,26 @@ func HasPrefix(tx Tx, ns, prefix string) bool {
 	return found
 }
 
+// Count returns the number of keys in ns that start with prefix.
+func Count(tx Tx, ns, prefix string) int {
+	n := 0
+	tx.Scan(ns, prefix, func(string, []byte) bool { n++; return true })
+	return n
+}
+
+// Counts returns, for each resource type in nss, the number of keys in
+// its namespace.
+func Counts(st Store, nss map[string]string) map[string]int {
+	out := make(map[string]int, len(nss))
+	_ = st.View(func(tx Tx) error {
+		for typ, ns := range nss {
+			out[typ] = Count(tx, ns, "")
+		}
+		return nil
+	})
+	return out
+}
+
 // ListJSON decodes every value under prefix into a slice of T.
 func ListJSON[T any](tx Tx, ns, prefix string) ([]T, error) {
 	var out []T

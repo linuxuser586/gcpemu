@@ -19,6 +19,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # FR-UI-001: `make release` embeds the Web console and fails if it
+      # is not built.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
       - name: Build
         run: |
           make release VERSION="$GITHUB_REF_NAME"

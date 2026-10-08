@@ -204,6 +204,13 @@ func (s *Service) Ready() error {
 	return nil
 }
 
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return map[string]int{"topics": len(s.topics), "subscriptions": len(s.subs), "snapshots": len(s.snaps), "schemas": len(s.schemas)}
+}
+
 // Reset drops all in-memory state (FR-CORE-002); the store is wiped by the caller.
 func (s *Service) Reset(ctx context.Context) error {
 	s.mu.Lock()

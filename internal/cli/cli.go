@@ -47,10 +47,12 @@ var flagFields = map[string]string{
 	"dns-no-forward":                "DNSNoForward",
 	"offline":                       "Offline",
 	"host-mode":                     "HostMode",
+	"console":                       "Console",
 }
 
 type rootOpts struct {
 	flags      config.Config
+	console    bool
 	ports      []string
 	lro        map[string]string
 	configFile string
@@ -73,7 +75,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 
 	root.AddCommand(o.startCmd(), o.stopCmd(), o.statusCmd(), o.resetCmd(), o.logsCmd(),
 		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.tofuProviderCmd(), o.doctorCmd(),
-		o.cdnCmd())
+		o.cdnCmd(), o.consoleCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.caCmd())
 	root.AddCommand(o.adminCmd())
@@ -103,6 +105,9 @@ func (o *rootOpts) load(fs *pflag.FlagSet) (*config.Config, error) {
 		o.flags.Ports = ports
 	}
 	o.flags.LROLatency = o.lro
+	if fs.Changed("console") {
+		o.flags.Console = &o.console
+	}
 	c.ApplyFlags(&o.flags, changed)
 	return &c, nil
 }
@@ -142,6 +147,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.DurationVar(&o.flags.WaitTimeout, "wait-timeout", 120*time.Second, "readiness timeout for --detach and CI")
 	f.BoolVar(&o.flags.DNSNoForward, "dns-no-forward", false, "do not forward unknown DNS names to the host resolver")
 	f.BoolVar(&o.flags.Offline, "offline", false, "never reach the internet")
+	f.BoolVar(&o.console, "console", true, "serve the Web console under /console on the gateway (default false when CI=true)")
 	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via a frontend container and its DNS (see `gcpemu env`, `gcpemu hosts`)")
 	return cmd
 }

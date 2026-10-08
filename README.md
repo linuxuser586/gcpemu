@@ -35,12 +35,21 @@ bin/gcpemu start --detach --services gcs,pubsub --seed seed.yaml
 eval "$(bin/gcpemu env)"       # STORAGE_EMULATOR_HOST, PUBSUB_EMULATOR_HOST, GCE_METADATA_HOST, …
 bin/gcpemu status
 bin/gcpemu tofu-provider --project my-project   # provider "google" block with custom endpoints
+bin/gcpemu console              # the Web console in the default browser
 bin/gcpemu stop
 ```
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
 `fault add|list|clear`, `doctor`, `version`, and `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`).
+
+### Web console
+
+The gateway serves a browser console at `http://127.0.0.1:4510/console/`; `gcpemu console`
+opens it. It calls only the public APIs and the admin API, as the default principal, and
+works offline. `--console=false` turns it off; under `CI=true` it is off unless `--console`
+is passed, and it is not served when `--bind` is beyond loopback. `make build` builds it when
+`pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
 
 ### Endpoints
 
@@ -111,8 +120,8 @@ test without changing the host, use `curl --resolve storage.googleapis.com:443:<
 
 ### Configuration
 
-Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. `CI=true` implies `--ephemeral`
-and JSON logs. IAM runs in `audit` mode by default (`--iam-mode off|audit|enforce`).
+Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. `CI=true` implies `--ephemeral`,
+JSON logs and no Web console. IAM runs in `audit` mode by default (`--iam-mode off|audit|enforce`).
 
 ### Seed files
 
@@ -214,7 +223,20 @@ clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth pr
 
 ```sh
 make vet race      # gofmt, vet, tests with -race
-make release       # static binaries for linux/darwin × amd64/arm64
+make release       # static binaries for linux/darwin × amd64/arm64, with the Web console
+make cross         # the same binaries without building the console (no Node.js)
+```
+
+The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` embeds its
+`dist/`. With Node.js 24 and pnpm:
+
+```sh
+bin/gcpemu start                       # in one terminal
+cd console && pnpm install && pnpm dev # /console/ with hot reload; other paths go to the gateway
+                                       # (GCPEMU_GATEWAY, default 127.0.0.1:4510)
+pnpm lint && pnpm typecheck && pnpm test
+pnpm gen:api                           # after editing internal/admin/openapi.yaml
+make console-e2e                       # Playwright on Chromium, Firefox and WebKit
 ```
 
 Each service is an isolated package implementing `emu.Service`

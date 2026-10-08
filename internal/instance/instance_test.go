@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -341,5 +342,99 @@ func TestServiceIsolation(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 || string(b) != "gcs" {
 		t.Errorf("healthy service while another failed: %d %q", resp.StatusCode, b)
+	}
+}
+
+type countingSvc struct{ fakeSvc }
+
+func (c *countingSvc) ResourceCounts() map[string]int { return map[string]int{"managedZones": 2} }
+
+// TestConsole is FR-UI-002 and FR-CI-003: the gateway serves the Web
+// console unless it is turned off, under CI=true by default, or the bind
+// is beyond loopback; and the admin API carries what its dashboard shows
+// (FR-UI-010).
+func TestConsole(t *testing.T) {
+	on, off := true, false
+	for _, tc := range []struct {
+		name    string
+		ci      string
+		console *bool
+		bind    string
+		served  bool
+	}{
+		{"default", "", nil, "127.0.0.1", true},
+		{"--console=false", "", &off, "127.0.0.1", false},
+		{"CI", "true", nil, "127.0.0.1", false},
+		{"CI --console", "true", &on, "127.0.0.1", true},
+		{"beyond loopback", "", nil, "0.0.0.0", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CI", tc.ci)
+			cfg := config.Defaults()
+			cfg.Ephemeral = true
+			cfg.DataDir = t.TempDir()
+			cfg.Services = []string{"dns"}
+			cfg.Ports["gateway"] = 0
+			cfg.Console = tc.console
+			cfg.Bind = tc.bind
+			cfg.LogFormat = "text"
+			var log syncBuffer
+			in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &countingSvc{} }}, &log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if err := in.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer in.Shutdown(ctx)
+			_, port, _ := net.SplitHostPort(in.Env.Endpoints.Get("gateway"))
+			base := "http://127.0.0.1:" + port
+			resp, err := http.Get(base + "/console/gcs/buckets?project=p1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if served := resp.StatusCode == 200 && strings.Contains(string(b), "<html"); served != tc.served {
+				t.Errorf("console served = %v (%d), want %v", served, resp.StatusCode, tc.served)
+			}
+			if tc.bind != "127.0.0.1" && !strings.Contains(log.String(), "Web console not served") {
+				t.Errorf("no warning for bind %s:\n%s", tc.bind, log.String())
+			}
+
+			var info struct {
+				Console bool
+				Runtime struct {
+					Kind      string
+					Reachable bool
+					Error     string
+				}
+			}
+			getJSON(t, base+"/_emu/v1/info", &info)
+			if info.Console != tc.served {
+				t.Errorf("info.console = %v, want %v", info.Console, tc.served)
+			}
+			if info.Runtime.Kind == "" || (info.Runtime.Kind == "none") != (info.Runtime.Error != "") {
+				t.Errorf("info.runtime = %+v", info.Runtime)
+			}
+			var counts map[string]map[string]int
+			getJSON(t, base+"/_emu/v1/resources/counts", &counts)
+			if counts["dns"]["managedZones"] != 2 {
+				t.Errorf("counts = %v", counts)
+			}
+		})
+	}
+}
+
+func getJSON(t *testing.T, url string, v any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatalf("%s: %v", url, err)
 	}
 }

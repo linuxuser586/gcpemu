@@ -16,6 +16,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // Service is the iam service module.
@@ -118,6 +119,16 @@ func (s *Service) Ready() error {
 		return errors.New("metadata server not started")
 	}
 	return nil
+}
+
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	out := store.Counts(s.env.Store, map[string]string{
+		"serviceAccounts": nsAccounts, "serviceAccountKeys": nsKeys, "roles": nsRoles,
+		"workloadIdentityPools": nsPools, "workloadIdentityPoolProviders": nsProviders,
+	})
+	out["projects"] = len(s.knownProjects())
+	return out
 }
 
 // Reset drops in-memory caches; persistent state lives in the store, which

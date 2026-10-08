@@ -144,3 +144,39 @@ func TestDeterministic(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", a)
 	}
 }
+
+// TestResourceCounts is FR-UI-010: /_emu/v1/resources/counts reports each
+// enabled service's resources by user-facing type.
+func TestResourceCounts(t *testing.T) {
+	inst := emutest.Start(t, []string{"gcs", "pubsub"})
+	gw := inst.GatewayURL()
+	for _, req := range []struct{ method, path, body string }{
+		{"POST", "/storage/v1/b?project=count-proj", `{"name":"count-bucket"}`},
+		{"PUT", "/pubsub/v1/projects/count-proj/topics/topic-1", `{}`},
+		{"PUT", "/pubsub/v1/projects/count-proj/topics/topic-2", `{}`},
+	} {
+		r, _ := http.NewRequest(req.method, gw+req.path, strings.NewReader(req.body))
+		r.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s %s: %d %s", req.method, req.path, resp.StatusCode, b)
+		}
+	}
+	resp, err := http.Get(gw + "/_emu/v1/resources/counts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var counts map[string]map[string]int
+	if err := json.NewDecoder(resp.Body).Decode(&counts); err != nil {
+		t.Fatal(err)
+	}
+	if counts["gcs"]["buckets"] != 1 || counts["gcs"]["objects"] != 0 || counts["pubsub"]["topics"] != 2 || counts["iam"]["projects"] < 1 {
+		t.Errorf("counts = %v", counts)
+	}
+}

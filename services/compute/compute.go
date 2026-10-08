@@ -26,6 +26,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/lro"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // Service is the compute service module. It implements emu.VPC.
@@ -127,6 +128,15 @@ func (s *Service) Stop(ctx context.Context) error {
 
 // Ready: the control plane needs nothing external.
 func (s *Service) Ready() error { return nil }
+
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	return store.Counts(s.env.Store, map[string]string{
+		"networks": nsNetworks, "subnetworks": nsSubnets, "firewalls": nsFirewalls, "routes": nsRoutes,
+		"routers": nsRouters, "addresses": nsAddresses, "globalAddresses": nsGlobalAddresses,
+		"networkEndpointGroups": nsNEGs,
+	})
+}
 
 // Reset removes the NAT egress gateways (their state is wiped with the
 // store); workload containers and networks belong to their owners and the core.

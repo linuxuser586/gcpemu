@@ -141,6 +141,18 @@ func TestCLILifecycle(t *testing.T) {
 		t.Error("empty version")
 	}
 
+	// FR-UI-002: the console is served on the gateway, at the URL that
+	// `gcpemu console` opens.
+	consoleURL := strings.TrimSpace(must(t, nil, "console", "--print", "--data-dir", dir))
+	if consoleURL != "http://"+sj.Info.Endpoints["gateway"]+"/console/" {
+		t.Errorf("console --print = %q", consoleURL)
+	}
+	if resp, err := http.Get(consoleURL); err != nil || resp.StatusCode != 200 {
+		t.Errorf("GET %s: %v %v", consoleURL, resp, err)
+	} else {
+		resp.Body.Close()
+	}
+
 	if out := must(t, nil, "stop", "--data-dir", dir); !strings.Contains(out, "stopped") {
 		t.Errorf("stop: %s", out)
 	}
@@ -149,6 +161,9 @@ func TestCLILifecycle(t *testing.T) {
 	}
 	if _, err := gcpemu(t, nil, "status", "--data-dir", dir); err == nil {
 		t.Error("status succeeded after stop")
+	}
+	if out, err := gcpemu(t, nil, "console", "--print", "--data-dir", dir); err == nil || !strings.Contains(out, "not running") {
+		t.Errorf("console after stop: %v %s", err, out)
 	}
 }
 
