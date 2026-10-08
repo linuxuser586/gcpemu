@@ -88,6 +88,15 @@ func TestInstanceLifecycle(t *testing.T) {
 	if code, _ := get(base+"/_emu/v1/ready", ""); code != 200 {
 		t.Errorf("ready = %d", code)
 	}
+	// A readiness hold (the startup seed) makes the instance not ready.
+	release := in.HoldReady("seed", "applying seed.yaml")
+	if code, body := get(base+"/_emu/v1/ready", ""); code != 503 || !strings.Contains(body, "applying seed.yaml") {
+		t.Errorf("ready while held = %d %s", code, body)
+	}
+	release()
+	if code, _ := get(base+"/_emu/v1/ready", ""); code != 200 || !in.Ready() {
+		t.Errorf("ready after release = %d", code)
+	}
 	// No service used the container runtime: no containers, and listing
 	// them does not connect to it.
 	if code, body := get(base+"/_emu/v1/containers", ""); code != 200 || strings.Join(strings.Fields(body), "") != `{"containers":[]}` {

@@ -1,0 +1,66 @@
+name: setup-gcpemu
+description: Install gcpemu (local Google Cloud emulator), start it detached and export the environment that points clients at it.
+author: linuxuser586
+branding:
+  icon: cloud
+  color: blue
+
+inputs:
+  version:
+    description: Release to install (e.g. v1.2.0) or "latest".
+    default: latest
+  services:
+    description: Comma-separated services to start (default all), e.g. "gcs,pubsub,sql".
+    default: ""
+  seed:
+    description: Seed file applied before the instance reports ready.
+    default: ""
+  config:
+    description: gcpemu.yaml config file.
+    default: ""
+  instance:
+    description: Instance name, for several instances in one job.
+    default: default
+  args:
+    description: Extra `gcpemu start` arguments, whitespace-separated (e.g. "--iam-mode enforce").
+    default: ""
+  wait-timeout:
+    description: How long to wait for readiness.
+    default: 120s
+  binary:
+    description: Path to a gcpemu binary to use instead of downloading a release.
+    default: ""
+  download-url:
+    description: Base URL of the releases (a mirror must serve <tag>/SHA256SUMS and <tag>/gcpemu-<os>-<arch>).
+    default: https://github.com/linuxuser586/gcpemu/releases/download
+  cache:
+    description: Cache the binary and, after a successful job, the container images it pulled (keyed by release).
+    default: "true"
+  diagnostics:
+    description: When to upload the diagnostics artifact (logs, request log, resource dump, kubeconfig) - failure, always or never.
+    default: failure
+  artifact-name:
+    description: Name of the diagnostics artifact (default gcpemu-<job>-<instance>-<os>-<arch>, made unique).
+    default: ""
+  retention-days:
+    description: Retention of the diagnostics artifact.
+    default: "7"
+  token:
+    description: Token for resolving "latest" and for reading the job's step results in the post step.
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The gcpemu version started.
+  gateway:
+    description: The gateway address (host:port).
+  data-dir:
+    description: The instance data directory.
+  bin:
+    description: Path of the gcpemu binary (its directory is also on PATH).
+
+runs:
+  using: node24
+  main: dist/main.js
+  post: dist/post.js
+  post-if: always()

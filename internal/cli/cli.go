@@ -157,6 +157,11 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Not ready until seeded: `start --detach` and CI poll /_emu/v1/ready.
+	seeded := func() {}
+	if cfg.Seed != "" {
+		seeded = in.HoldReady("seed", "applying "+cfg.Seed)
+	}
 	if err := in.Start(ctx); err != nil {
 		_ = in.Shutdown(context.Background())
 		return err
@@ -167,6 +172,7 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 			return fmt.Errorf("seed: %w", err)
 		}
 	}
+	seeded()
 	wctx, cancel := context.WithTimeout(ctx, cfg.WaitTimeout)
 	err = in.WaitReady(wctx)
 	cancel()

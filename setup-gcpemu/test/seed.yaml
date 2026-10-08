@@ -1,0 +1,25 @@
+# Self-test seed (.github/workflows/ci.yml, job "action").
+gcs:
+  buckets:
+    - name: selftest-bucket
+      project: selftest-proj
+      objects:
+        - name: hello.txt
+          content: "hello from the seed"
+pubsub:
+  project: selftest-proj
+  topics:
+    - name: events
+  subscriptions:
+    - name: events-pull
+      topic: events
+sql:
+  instances:
+    - name: db
+      project: selftest-proj
+      databaseVersion: POSTGRES_17
+      rootPassword: selftest-root
+      authorizedNetworks: [0.0.0.0/0]
+      databases: [app]
+      users:
+        - {name: app, password: selftest-app}

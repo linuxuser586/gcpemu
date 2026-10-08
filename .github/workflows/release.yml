@@ -1,0 +1,38 @@
+name: release
+# A vX.Y.Z tag publishes the static binaries and SHA256SUMS that
+# setup-gcpemu downloads and verifies (FR-CI-001), and moves the major tag
+# (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          make release VERSION="$GITHUB_REF_NAME"
+          cd dist && sha256sum gcpemu-* > SHA256SUMS && cat SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/gcpemu-* dist/SHA256SUMS --verify-tag --generate-notes $pre
+      - name: Move the major tag
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major" "$GITHUB_REF_NAME^{commit}"
+          git push -f origin "refs/tags/$major"
