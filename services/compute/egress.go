@@ -31,7 +31,9 @@ import (
 //     (GCP-like timeout) or rejecting it with natReject;
 //   - in --offline mode redirects NAT-allowed TCP egress to a sink in the
 //     gateway that records the attempt and answers with natSinkResponse;
-//   - streams conntrack events for NAT translation logs (FR-NAT-004).
+//   - streams conntrack events for NAT translation logs, and NFLOGs the
+//     first packet of every refused egress connection for drop logs
+//     (FR-NAT-004).
 //
 // The data plane is re-programmed after every router, NAT, subnetwork or
 // connection change.
@@ -388,17 +390,18 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	b.WriteString("iptables -C FORWARD -j GCPEMU-FWD 2>/dev/null || iptables -I FORWARD -j GCPEMU-FWD\n")
 	b.WriteString("iptables -t nat -C POSTROUTING -j GCPEMU-POST 2>/dev/null || iptables -t nat -I POSTROUTING -j GCPEMU-POST\n")
 	b.WriteString("iptables -t nat -C PREROUTING -j GCPEMU-PRE 2>/dev/null || iptables -t nat -I PREROUTING -j GCPEMU-PRE\n")
-	b.WriteString("iptables-restore --noflush <<EOF\n*filter\n:GCPEMU-FWD - [0:0]\n-F GCPEMU-FWD\n")
+	b.WriteString("iptables-restore --noflush <<EOF\n*filter\n:GCPEMU-FWD - [0:0]\n:GCPEMU-DROP - [0:0]\n-F GCPEMU-FWD\n-F GCPEMU-DROP\n")
 	b.WriteString("-A GCPEMU-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n")
 	b.WriteString("-A GCPEMU-FWD ! -o $EXT -j ACCEPT\n")
 	for _, c := range cov {
 		fmt.Fprintf(&b, "-A GCPEMU-FWD -s %s -o $EXT -j ACCEPT\n", c.cidr)
 	}
+	b.WriteString("-A GCPEMU-FWD -o $EXT -j GCPEMU-DROP\n")
 	if s.env.Config.NATReject {
-		b.WriteString("-A GCPEMU-FWD -o $EXT -p tcp -j REJECT --reject-with tcp-reset\n")
-		b.WriteString("-A GCPEMU-FWD -o $EXT -j REJECT --reject-with icmp-net-unreachable\n")
+		b.WriteString("-A GCPEMU-DROP -p tcp -j REJECT --reject-with tcp-reset\n")
+		b.WriteString("-A GCPEMU-DROP -j REJECT --reject-with icmp-net-unreachable\n")
 	} else {
-		b.WriteString("-A GCPEMU-FWD -o $EXT -j DROP\n")
+		b.WriteString("-A GCPEMU-DROP -j DROP\n")
 	}
 	b.WriteString("COMMIT\n*nat\n:GCPEMU-POST - [0:0]\n:GCPEMU-PRE - [0:0]\n-F GCPEMU-POST\n-F GCPEMU-PRE\n")
 	b.WriteString("-A GCPEMU-POST -o $EXT -j MASQUERADE\n")
@@ -420,5 +423,7 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 		}
 	}
 	b.WriteString("COMMIT\nEOF\n")
+	// Drop logging is best effort: a kernel without NFLOG still enforces.
+	fmt.Fprintf(&b, "iptables -I GCPEMU-DROP -m conntrack --ctstate NEW -j NFLOG --nflog-group %d 2>/dev/null || echo 'NFLOG unavailable: NAT drops are not logged' >&2\n", natDropGroup)
 	return b.String(), nil
 }

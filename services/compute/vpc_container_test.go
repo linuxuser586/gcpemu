@@ -131,6 +131,8 @@ func TestEgressThroughNAT(t *testing.T) {
 	if out := fetch(t, rt, id); connected(out) {
 		t.Fatalf("egress without NAT must fail: %s", out)
 	}
+	// The gateway reports the refused connection (FR-NAT-004 drop events).
+	egressLogged(t, inst, "DROPPED", "projects/"+proj+"/global/networks/vpc")
 	natRouter(t, c)
 	eventually(t, "egress with NAT", func() (bool, string) { out := fetch(t, rt, id); return connected(out), out })
 	natLogged(t, inst, "OK")
@@ -213,10 +215,16 @@ func TestOfflineSink(t *testing.T) {
 // (FR-CORE-061), attributed to the test's Cloud NAT gateway.
 func natLogged(t *testing.T, inst *emutest.Instance, code string) {
 	t.Helper()
+	egressLogged(t, inst, code, "projects/"+proj+"/regions/us-central1/routers/router/nats/nat")
+}
+
+// egressLogged waits for an egress entry with code attributed to resource.
+func egressLogged(t *testing.T, inst *emutest.Instance, code, resource string) {
+	t.Helper()
 	eventually(t, "nat request log entry "+code, func() (bool, string) {
 		es := inst.Env.RequestLog.Entries("nat")
 		for _, e := range es {
-			if e.Code == code && e.Resource == "projects/"+proj+"/regions/us-central1/routers/router/nats/nat" &&
+			if e.Code == code && e.Resource == resource &&
 				strings.HasPrefix(e.Method, "EGRESS ") && strings.Contains(e.Method, " -> ") {
 				return true, ""
 			}
