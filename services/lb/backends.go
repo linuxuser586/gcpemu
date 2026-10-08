@@ -26,7 +26,7 @@ var kindBackendService = &kind{
 		for _, be := range b.Backends {
 			out = append(out, be.Group)
 		}
-		return out
+		return append(out, b.SecurityPolicy, b.EdgeSecurityPolicy)
 	},
 	afterDelete: func(ctx context.Context, s *Service, path string, obj any) { s.deleteSignedKeys(path) },
 	keep:        []string{"securityPolicy", "edgeSecurityPolicy"},
@@ -36,6 +36,7 @@ var kindBackendBucket = &kind{
 	coll: "backendBuckets", typ: "compute#backendBucket", snake: "backend_bucket",
 	gperm:  "compute.backendBuckets",
 	newObj: func() any { return &computev1.BackendBucket{} },
+	refs:   func(obj any) []string { return []string{obj.(*computev1.BackendBucket).EdgeSecurityPolicy} },
 	afterDelete: func(ctx context.Context, s *Service, path string, obj any) {
 		s.deleteSignedKeys(path)
 	},
@@ -117,7 +118,15 @@ func prepareBackendService(ctx context.Context, s *Service, sc scope, path strin
 		}
 		b.HealthChecks[i] = l
 	}
-	// Backends: NEGs (zonal) or instance groups.
+	// Cloud Armor policies (recorded).
+	var err error
+	if b.SecurityPolicy, err = s.refSecurityPolicy(sc, b.SecurityPolicy, "resource.securityPolicy", "CLOUD_ARMOR"); err != nil {
+		return err
+	}
+	if b.EdgeSecurityPolicy, err = s.refSecurityPolicy(sc, b.EdgeSecurityPolicy, "resource.edgeSecurityPolicy", "CLOUD_ARMOR_EDGE"); err != nil {
+		return err
+	}
+	// Backends: NEGs (zonal, regional or global) or instance groups.
 	seen := map[string]bool{}
 	for i, be := range b.Backends {
 		f := "resource.backends[" + itoa(i) + "].group"
@@ -125,24 +134,23 @@ func prepareBackendService(ctx context.Context, s *Service, sc scope, path strin
 			return errRequired(f)
 		}
 		p := relPath(be.Group)
-		if strings.HasPrefix(p, "zones/") || strings.HasPrefix(p, "regions/") {
+		if strings.HasPrefix(p, "zones/") || strings.HasPrefix(p, "regions/") || strings.HasPrefix(p, "global/") {
 			p = "projects/" + sc.project + "/" + p
 		}
 		segs := strings.Split(p, "/")
-		if len(segs) != 6 || segs[0] != "projects" || (segs[2] != "zones" && segs[2] != "regions") ||
-			(segs[4] != "networkEndpointGroups" && segs[4] != "instanceGroups") {
+		global := len(segs) == 5 && segs[0] == "projects" && segs[2] == "global" && segs[3] == "networkEndpointGroups"
+		if !global && (len(segs) != 6 || segs[0] != "projects" || (segs[2] != "zones" && segs[2] != "regions") ||
+			(segs[4] != "networkEndpointGroups" && segs[4] != "instanceGroups")) {
 			return errInvalid(f, be.Group, "The URL is malformed.")
 		}
-		if segs[2] == "zones" {
-			var err error
-			if segs[4] == "networkEndpointGroups" {
-				_, err = s.cmp.NEGEndpoints(ctx, p)
-			} else {
-				_, err = s.cmp.InstanceGroup(ctx, p)
-			}
-			if err != nil {
-				return errNotFound(p)
-			}
+		switch {
+		case global || segs[4] == "networkEndpointGroups":
+			_, err = s.cmp.NEGEndpoints(ctx, p)
+		case segs[2] == "zones":
+			_, err = s.cmp.InstanceGroup(ctx, p)
+		}
+		if err != nil {
+			return errNotFound(p)
 		}
 		if seen[p] {
 			return errInvalid(f, be.Group, "Duplicate backend group.")
@@ -151,7 +159,7 @@ func prepareBackendService(ctx context.Context, s *Service, sc scope, path strin
 		be.Group = compute.SelfLink(p)
 		if be.BalancingMode == "" {
 			be.BalancingMode = "UTILIZATION"
-			if segs[4] == "networkEndpointGroups" {
+			if global || segs[4] == "networkEndpointGroups" {
 				be.BalancingMode = "RATE"
 			}
 		}
@@ -270,6 +278,10 @@ func prepareBackendBucket(ctx context.Context, s *Service, sc scope, path string
 	b := obj.(*computev1.BackendBucket)
 	if b.BucketName == "" {
 		return errRequired("resource.bucketName")
+	}
+	var err error
+	if b.EdgeSecurityPolicy, err = s.refSecurityPolicy(sc, b.EdgeSecurityPolicy, "resource.edgeSecurityPolicy", "CLOUD_ARMOR_EDGE"); err != nil {
+		return err
 	}
 	if b.EnableCdn {
 		b.CdnPolicy = defaultBucketCdnPolicy(b.CdnPolicy, old == nil)

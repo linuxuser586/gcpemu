@@ -16,7 +16,8 @@ import (
 // Forwarding rules (globalForwardingRules and regional forwardingRules) for
 // Application Load Balancers: EXTERNAL_MANAGED (global and regional
 // external), INTERNAL_MANAGED (regional internal) and the classic EXTERNAL
-// scheme, all served by the same proxy (FR-LB-001/002).
+// scheme, all served by the same proxy (FR-LB-001/002). Rules may also
+// target SSL, TCP and gRPC proxies, which are recorded without a listener.
 
 var kindForwardingRule = &kind{
 	coll: "forwardingRules", typ: "compute#forwardingRule", snake: "forwarding_rule",
@@ -41,7 +42,7 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 		f.IPProtocol = "TCP"
 	}
 	if f.IPProtocol != "TCP" {
-		return errInvalid("resource.IPProtocol", f.IPProtocol, "Application Load Balancer forwarding rules must use TCP.")
+		return errInvalid("resource.IPProtocol", f.IPProtocol, "Forwarding rules of proxy load balancers must use TCP.")
 	}
 	if f.LoadBalancingScheme == "" {
 		f.LoadBalancingScheme = "EXTERNAL"
@@ -55,7 +56,7 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 			return errInvalid("resource.loadBalancingScheme", f.LoadBalancingScheme, "INTERNAL_SELF_MANAGED is only supported for global forwarding rules.")
 		}
 	default:
-		return errInvalid("resource.loadBalancingScheme", f.LoadBalancingScheme, "Only Application Load Balancer schemes (EXTERNAL, EXTERNAL_MANAGED, INTERNAL_MANAGED, INTERNAL_SELF_MANAGED) are supported by the emulator.")
+		return errInvalid("resource.loadBalancingScheme", f.LoadBalancingScheme, "Only proxy load balancer schemes (EXTERNAL, EXTERNAL_MANAGED, INTERNAL_MANAGED, INTERNAL_SELF_MANAGED) are supported by the emulator.")
 	}
 	internal := strings.HasPrefix(f.LoadBalancingScheme, "INTERNAL")
 	if !internal && f.NetworkTier == "" {
@@ -65,13 +66,18 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 	if f.Target == "" {
 		return errRequired("resource.target")
 	}
-	tl, tk, err := s.refExisting(sc, f.Target, "resource.target", kindTargetHTTPSProxy, kindTargetHTTPProxy)
+	tl, tk, err := s.refExisting(sc, f.Target, "resource.target",
+		kindTargetHTTPSProxy, kindTargetHTTPProxy, kindTargetSSLProxy, kindTargetTCPProxy, kindTargetGRPCProxy)
 	if err != nil {
 		return err
 	}
 	f.Target = tl
+	if tk == kindTargetGRPCProxy && f.LoadBalancingScheme != "INTERNAL_SELF_MANAGED" {
+		return errInvalid("resource.loadBalancingScheme", f.LoadBalancingScheme, "Forwarding rules that target a gRPC proxy must use INTERNAL_SELF_MANAGED.")
+	}
+	l7 := tk == kindTargetHTTPSProxy || tk == kindTargetHTTPProxy
 	if f.BackendService != "" {
-		return errInvalid("resource.backendService", f.BackendService, "Application Load Balancer forwarding rules use a target proxy.")
+		return errInvalid("resource.backendService", f.BackendService, "Proxy load balancer forwarding rules use a target proxy.")
 	}
 	// Port range: a single port.
 	pr := strings.TrimSpace(f.PortRange)
@@ -81,7 +87,7 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 	}
 	if pr == "" {
 		pr = "80"
-		if tk == kindTargetHTTPSProxy {
+		if tk == kindTargetHTTPSProxy || tk == kindTargetSSLProxy {
 			pr = "443"
 		}
 	}
@@ -92,9 +98,9 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 	pl, err1 := strconv.Atoi(lo)
 	ph, err2 := strconv.Atoi(hi)
 	if err1 != nil || err2 != nil || pl < 1 || ph > 65535 || pl != ph {
-		return errInvalid("resource.portRange", f.PortRange, "Application Load Balancer forwarding rules must specify a single port.")
+		return errInvalid("resource.portRange", f.PortRange, "Proxy load balancer forwarding rules must specify a single port.")
 	}
-	if !internal && !allowedExternalPorts[pl] {
+	if l7 && !internal && !allowedExternalPorts[pl] {
 		return errInvalid("resource.portRange", f.PortRange, "Port range must be one of 80, 8080 or 443 for external Application Load Balancers.")
 	}
 	f.PortRange = strconv.Itoa(pl) + "-" + strconv.Itoa(pl)

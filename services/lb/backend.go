@@ -197,7 +197,7 @@ func (b *backendSvc) refreshEndpoints(ctx context.Context) {
 			continue
 		}
 		zone := ""
-		if segs := strings.Split(g, "/"); len(segs) > 3 {
+		if segs := strings.Split(g, "/"); len(segs) > 3 && segs[2] == "zones" {
 			zone = segs[3]
 		}
 		for _, ne := range eps {

@@ -2,6 +2,7 @@ package lb
 
 import (
 	"context"
+	"strings"
 
 	computev1 "google.golang.org/api/compute/v1"
 )
@@ -138,4 +139,65 @@ func prepareHealthCheck(ctx context.Context, s *Service, sc scope, path string, 
 		err = fixPort(&c.Port, &c.PortSpecification, nil, nil)
 	}
 	return err
+}
+
+// Legacy HTTP and HTTPS health checks (httpHealthChecks and
+// httpsHealthChecks, global only). Only target pools use them, which the
+// emulator does not have, so they are recorded and never probe.
+
+var kindHTTPHealthCheck = &kind{
+	coll: "httpHealthChecks", typ: "compute#httpHealthCheck", snake: "http_health_check",
+	gperm:  "compute.httpHealthChecks",
+	newObj: func() any { return &computev1.HttpHealthCheck{} },
+}
+
+var kindHTTPSHealthCheck = &kind{
+	coll: "httpsHealthChecks", typ: "compute#httpsHealthCheck", snake: "https_health_check",
+	gperm:  "compute.httpsHealthChecks",
+	newObj: func() any { return &computev1.HttpsHealthCheck{} },
+}
+
+// legacyHealthCheck holds the fields the two legacy kinds share.
+type legacyHealthCheck struct {
+	port, interval, timeout, healthy, unhealthy *int64
+	path                                        *string
+}
+
+func prepareLegacyHealthCheck(ctx context.Context, s *Service, sc scope, path string, obj, old any) error {
+	var h legacyHealthCheck
+	defPort := int64(80)
+	switch c := obj.(type) {
+	case *computev1.HttpHealthCheck:
+		h = legacyHealthCheck{&c.Port, &c.CheckIntervalSec, &c.TimeoutSec, &c.HealthyThreshold, &c.UnhealthyThreshold, &c.RequestPath}
+	case *computev1.HttpsHealthCheck:
+		h = legacyHealthCheck{&c.Port, &c.CheckIntervalSec, &c.TimeoutSec, &c.HealthyThreshold, &c.UnhealthyThreshold, &c.RequestPath}
+		defPort = 443
+	}
+	for _, d := range []struct {
+		v   *int64
+		def int64
+	}{{h.port, defPort}, {h.interval, 5}, {h.timeout, 5}, {h.healthy, 2}, {h.unhealthy, 2}} {
+		if *d.v == 0 {
+			*d.v = d.def
+		}
+	}
+	if *h.path == "" {
+		*h.path = "/"
+	}
+	if *h.port < 1 || *h.port > 65535 {
+		return errInvalid("resource.port", *h.port, "Must be between 1 and 65535.")
+	}
+	if *h.interval < 1 || *h.interval > 300 {
+		return errInvalid("resource.checkIntervalSec", *h.interval, "Must be between 1 and 300.")
+	}
+	if *h.timeout > *h.interval {
+		return errInvalid("resource.timeoutSec", *h.timeout, "Timeout sec must be less than or equal to check interval sec.")
+	}
+	if *h.healthy < 1 || *h.healthy > 10 || *h.unhealthy < 1 || *h.unhealthy > 10 {
+		return errInvalid("resource.healthyThreshold", *h.healthy, "Thresholds must be between 1 and 10.")
+	}
+	if !strings.HasPrefix(*h.path, "/") {
+		return errInvalid("resource.requestPath", *h.path, "Must start with '/'.")
+	}
+	return nil
 }

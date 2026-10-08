@@ -1,7 +1,9 @@
 # Cloud Load Balancing and Cloud CDN: a global external Application Load
 # Balancer (backend bucket with CDN and signed URL keys, backend service on
 # a NEG, HTTPS with a self-managed and a Google-managed certificate and an
-# SSL policy) and a regional internal one with the regional variants.
+# SSL policy) and a regional internal one with the regional variants, plus
+# the recorded resources: Cloud Armor policies, legacy health checks, TCP,
+# SSL and gRPC target proxies and an internet NEG backend.
 
 resource "tls_private_key" "k" {
   algorithm   = "ECDSA"
@@ -290,4 +292,192 @@ resource "google_compute_forwarding_rule" "http" {
   port_range            = "80"
   target                = google_compute_region_target_http_proxy.web.id
   depends_on            = [google_compute_subnetwork.proxy]
+}
+
+# ---- Cloud Armor (recorded) ----
+
+resource "google_compute_security_policy" "armor" {
+  name        = "tf-lb-armor"
+  description = "backend policy under test"
+  rule {
+    action      = "deny(403)"
+    priority    = 1000
+    description = "block TEST-NET-1"
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["192.0.2.0/24"]
+      }
+    }
+  }
+  rule {
+    action   = "allow"
+    priority = 2000
+    match {
+      expr {
+        expression = "request.path.matches('/api')"
+      }
+    }
+  }
+  rule {
+    action      = "allow"
+    priority    = 2147483647
+    description = "default rule"
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+  }
+}
+
+resource "google_compute_security_policy" "edge" {
+  name = "tf-lb-edge"
+  type = "CLOUD_ARMOR_EDGE"
+}
+
+resource "google_compute_backend_service" "armored" {
+  name                  = "tf-lb-armored"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTP"
+  health_checks         = [google_compute_health_check.http.id]
+  security_policy       = google_compute_security_policy.armor.id
+  edge_security_policy  = google_compute_security_policy.edge.id
+  backend {
+    group                 = google_compute_network_endpoint_group.neg.id
+    balancing_mode        = "RATE"
+    max_rate_per_endpoint = 100
+  }
+}
+
+# ---- Legacy health checks (recorded; target pools use them) ----
+
+resource "google_compute_http_health_check" "legacy" {
+  name         = "tf-lb-legacy-http"
+  request_path = "/healthz"
+  port         = 8080
+}
+
+resource "google_compute_https_health_check" "legacy" {
+  name               = "tf-lb-legacy-https"
+  check_interval_sec = 10
+  timeout_sec        = 5
+}
+
+# ---- Proxy Network Load Balancers and proxyless gRPC (recorded) ----
+
+resource "google_compute_network_endpoint_group" "l4" {
+  name                  = "tf-lb-neg-l4"
+  zone                  = var.zone
+  network               = google_compute_network.vpc.id
+  subnetwork            = google_compute_subnetwork.s.id
+  network_endpoint_type = "GCE_VM_IP_PORT"
+  default_port          = 5432
+}
+
+resource "google_compute_backend_service" "tcp" {
+  name                  = "tf-lb-tcp"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "TCP"
+  health_checks         = [google_compute_health_check.tcp.id]
+  backend {
+    group                        = google_compute_network_endpoint_group.l4.id
+    balancing_mode               = "CONNECTION"
+    max_connections_per_endpoint = 100
+  }
+}
+
+resource "google_compute_target_tcp_proxy" "tcp" {
+  name            = "tf-lb-tcp"
+  backend_service = google_compute_backend_service.tcp.id
+  proxy_header    = "PROXY_V1"
+}
+
+resource "google_compute_global_forwarding_rule" "tcp" {
+  name                  = "tf-lb-tcp"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  port_range            = "5432"
+  target                = google_compute_target_tcp_proxy.tcp.id
+}
+
+resource "google_compute_backend_service" "ssl" {
+  name                  = "tf-lb-ssl"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "SSL"
+  health_checks         = [google_compute_health_check.tcp.id]
+  backend {
+    group                        = google_compute_network_endpoint_group.l4.id
+    balancing_mode               = "CONNECTION"
+    max_connections_per_endpoint = 100
+  }
+}
+
+resource "google_compute_target_ssl_proxy" "ssl" {
+  name             = "tf-lb-ssl"
+  backend_service  = google_compute_backend_service.ssl.id
+  ssl_certificates = [google_compute_ssl_certificate.self.id]
+  ssl_policy       = google_compute_ssl_policy.modern.id
+}
+
+resource "google_compute_health_check" "grpc" {
+  name = "tf-lb-hc-grpc"
+  grpc_health_check {
+    port = 8443
+  }
+}
+
+resource "google_compute_backend_service" "grpc" {
+  name                  = "tf-lb-grpc"
+  load_balancing_scheme = "INTERNAL_SELF_MANAGED"
+  protocol              = "GRPC"
+  health_checks         = [google_compute_health_check.grpc.id]
+}
+
+resource "google_compute_url_map" "grpc" {
+  name            = "tf-lb-grpc"
+  default_service = google_compute_backend_service.grpc.id
+}
+
+resource "google_compute_target_grpc_proxy" "grpc" {
+  name                   = "tf-lb-grpc"
+  url_map                = google_compute_url_map.grpc.id
+  validate_for_proxyless = true
+}
+
+resource "google_compute_region_target_tcp_proxy" "regional" {
+  name            = "tf-lb-rtcp"
+  region          = var.region
+  backend_service = google_compute_region_backend_service.tcp.id
+}
+
+resource "google_compute_region_backend_service" "tcp" {
+  name                  = "tf-lb-rtcp"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  protocol              = "TCP"
+  health_checks         = [google_compute_region_health_check.http.id]
+}
+
+# ---- Internet NEG backend ----
+
+resource "google_compute_global_network_endpoint_group" "ext" {
+  name                  = "tf-lb-ext"
+  network_endpoint_type = "INTERNET_FQDN_PORT"
+  default_port          = 443
+}
+
+resource "google_compute_global_network_endpoint" "ext" {
+  global_network_endpoint_group = google_compute_global_network_endpoint_group.ext.name
+  fqdn                          = "origin.example.test"
+  port                          = 443
+}
+
+resource "google_compute_backend_service" "ext" {
+  name                  = "tf-lb-ext"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTPS"
+  backend {
+    group = google_compute_global_network_endpoint_group.ext.id
+  }
 }

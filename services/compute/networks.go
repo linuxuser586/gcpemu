@@ -164,6 +164,9 @@ func (s *Service) decorateNetwork(tx store.Tx, n *computev1.Network) {
 	if c, ok := get[psaConnection](tx, nsPSA, relPath(n.SelfLink)); ok {
 		n.Peerings = append(n.Peerings, c.peering(s))
 	}
+	for _, sp := range peeringsOf(tx, relPath(n.SelfLink)) {
+		n.Peerings = append(n.Peerings, renderPeering(tx, relPath(n.SelfLink), sp))
+	}
 }
 
 func (s *Service) loadNetwork(r *http.Request, perm string) (string, *computev1.Network, error) {
@@ -378,6 +381,10 @@ func (s *Service) networkInUse(ctx context.Context, path string, n *computev1.Ne
 				user = relPath(g.SelfLink)
 				return nil
 			}
+		}
+		if ps := peeringsOf(tx, path); len(ps) > 0 {
+			user = path + "/peerings/" + ps[0].Peering.Name
+			return nil
 		}
 		if store.Exists(tx, nsPSA, path) {
 			user = "projects/" + p + "/global/networks/" + lastSeg(path) + "/peerings/" + psaPeeringName

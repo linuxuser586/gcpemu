@@ -1,10 +1,11 @@
 // Package compute emulates the parts of compute.googleapis.com v1 the other
 // services build on (SRS 1.2 supporting resources, 3.3, 5.10): regions and
 // zones, projects.get, VPC networks, subnetworks, firewalls, routes,
-// addresses, Cloud Routers with Cloud NAT (FR-NAT-001), zonal network
-// endpoint groups (FR-GKE-008) and compute Operations (FR-CORE-023), plus
-// the minimal servicenetworking.googleapis.com API that binds private
-// services access ranges to a VPC.
+// addresses, Cloud Routers with Cloud NAT (FR-NAT-001), network endpoint
+// groups (zonal for FR-GKE-008, regional and global), VPC Network Peering
+// (recorded) and compute Operations (FR-CORE-023), plus the minimal
+// servicenetworking.googleapis.com API that binds private services access
+// ranges to a VPC.
 //
 // It also implements emu.VPC: subnetworks are realised as container
 // networks so workload addresses are real, and a per-VPC egress gateway

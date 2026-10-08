@@ -1087,7 +1087,6 @@ var discoveryAPIs = []*RESTAPI{
 			"NetworkAttachmentList":                                {Refs: map[string]Ref{"items": {"NetworkAttachment", RefList}}},
 			"NetworkAttachmentsScopedList":                         {Refs: map[string]Ref{"networkAttachments": {"NetworkAttachment", RefList}}},
 			"NetworkList":                                          {Refs: map[string]Ref{"items": {"Network", RefList}}},
-			"NetworksAddPeeringRequest":                            {Required: map[string][]string{"name": []string{"compute.networks.addPeering"}}},
 			"NetworksGetEffectiveFirewallsResponse":                {Refs: map[string]Ref{"firewalls": {"Firewall", RefList}}},
 			"PacketMirroring":                                      {Required: map[string][]string{"name": []string{"compute.packetMirrorings.insert"}, "network": []string{"compute.packetMirrorings.insert"}}},
 			"PacketMirroringAggregatedList":                        {Refs: map[string]Ref{"items": {"PacketMirroringsScopedList", RefMap}}},

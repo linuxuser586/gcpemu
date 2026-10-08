@@ -42,42 +42,8 @@ func prepareHTTPSProxy(ctx context.Context, s *Service, sc scope, path string, o
 		return err
 	}
 	p.UrlMap = l
-	if len(p.SslCertificates) > 15 {
-		return errInvalid("resource.sslCertificates", len(p.SslCertificates), "At most 15 SSL certificates can be specified.")
-	}
-	seen := map[string]bool{}
-	for i, c := range p.SslCertificates {
-		cl, _, err := s.refExisting(sc, c, "resource.sslCertificates["+itoa(i)+"]", kindSSLCertificate)
-		if err != nil {
-			return err
-		}
-		if seen[cl] {
-			return errInvalid("resource.sslCertificates", c, "Duplicate SSL certificate.")
-		}
-		seen[cl] = true
-		p.SslCertificates[i] = cl
-	}
-	if p.CertificateMap != "" {
-		if sc.region != "" {
-			return errInvalid("resource.certificateMap", p.CertificateMap, "Certificate maps are only supported by global target HTTPS proxies.")
-		}
-		cm := strings.TrimPrefix(p.CertificateMap, certManagerPrefix)
-		cm = relPath(cm)
-		segs := strings.Split(cm, "/")
-		if len(segs) != 6 || segs[0] != "projects" || segs[2] != "locations" || segs[4] != "certificateMaps" {
-			return errInvalid("resource.certificateMap", p.CertificateMap, "Must be of the form //certificatemanager.googleapis.com/projects/PROJECT/locations/global/certificateMaps/MAP.")
-		}
-		p.CertificateMap = certManagerPrefix + cm
-	}
-	if len(p.SslCertificates) == 0 && p.CertificateMap == "" {
-		return errInvalid("resource.sslCertificates", "", "At least one SSL certificate or a certificate map must be specified.")
-	}
-	if p.SslPolicy != "" {
-		l, _, err := s.refExisting(sc, p.SslPolicy, "resource.sslPolicy", kindSSLPolicy)
-		if err != nil {
-			return err
-		}
-		p.SslPolicy = l
+	if err := s.prepareTLSRefs(sc, p.SslCertificates, &p.CertificateMap, &p.SslPolicy); err != nil {
+		return err
 	}
 	if p.QuicOverride == "" {
 		p.QuicOverride = "NONE"
@@ -89,6 +55,49 @@ func prepareHTTPSProxy(ctx context.Context, s *Service, sc scope, path string, o
 	}
 	if p.ServerTlsPolicy != "" && !strings.HasPrefix(p.ServerTlsPolicy, "//") {
 		p.ServerTlsPolicy = relPath(p.ServerTlsPolicy)
+	}
+	return nil
+}
+
+// prepareTLSRefs canonicalises the certificates, certificate map and SSL
+// policy of a target HTTPS or SSL proxy.
+func (s *Service) prepareTLSRefs(sc scope, certs []string, certMap, policy *string) error {
+	if len(certs) > 15 {
+		return errInvalid("resource.sslCertificates", len(certs), "At most 15 SSL certificates can be specified.")
+	}
+	seen := map[string]bool{}
+	for i, c := range certs {
+		cl, _, err := s.refExisting(sc, c, "resource.sslCertificates["+itoa(i)+"]", kindSSLCertificate)
+		if err != nil {
+			return err
+		}
+		if seen[cl] {
+			return errInvalid("resource.sslCertificates", c, "Duplicate SSL certificate.")
+		}
+		seen[cl] = true
+		certs[i] = cl
+	}
+	if *certMap != "" {
+		if sc.region != "" {
+			return errInvalid("resource.certificateMap", *certMap, "Certificate maps are only supported by global target proxies.")
+		}
+		cm := strings.TrimPrefix(*certMap, certManagerPrefix)
+		cm = relPath(cm)
+		segs := strings.Split(cm, "/")
+		if len(segs) != 6 || segs[0] != "projects" || segs[2] != "locations" || segs[4] != "certificateMaps" {
+			return errInvalid("resource.certificateMap", *certMap, "Must be of the form //certificatemanager.googleapis.com/projects/PROJECT/locations/global/certificateMaps/MAP.")
+		}
+		*certMap = certManagerPrefix + cm
+	}
+	if len(certs) == 0 && *certMap == "" {
+		return errInvalid("resource.sslCertificates", "", "At least one SSL certificate or a certificate map must be specified.")
+	}
+	if *policy != "" {
+		l, _, err := s.refExisting(sc, *policy, "resource.sslPolicy", kindSSLPolicy)
+		if err != nil {
+			return err
+		}
+		*policy = l
 	}
 	return nil
 }
