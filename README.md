@@ -129,7 +129,7 @@ inst.Setenv(t) // client env vars for this test
 ### GitHub Actions
 
 ```yaml
-- uses: linuxuser586/gcpemu/setup-gcpemu@v1
+- uses: linuxuser586/gcpemu/setup-gcpemu@v0
   with:
     services: gcs,pubsub,sql
     seed: test/emu-seed.yaml
@@ -138,7 +138,8 @@ inst.Setenv(t) // client env vars for this test
 This installs the release binary after checking it against `SHA256SUMS`, and starts the
 instance once the seed has been applied. It exports `gcpemu env` to later steps. When the job
 fails, it uploads the logs, request log, resource dump and kubeconfig as an artifact. See
-[setup-gcpemu/README.md](setup-gcpemu/README.md). Releases are published from `vX.Y.Z` tags.
+[setup-gcpemu/README.md](setup-gcpemu/README.md). Releases are published from `vX.Y.Z` tags, and each one moves
+its major tag. Until v1.0.0 that tag is `@v0`; pin `@v0.1.0` for an exact release.
 
 ### Reference stack (SRS 11.2)
 
