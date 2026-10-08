@@ -76,7 +76,9 @@ async function walk(entry: Entry, dir: string, out: PendingFile[]) {
 
 /**
  * droppedFiles returns what was dropped, with the paths of files inside
- * dropped folders. Entries must be taken while the drop event runs.
+ * dropped folders. Entries and files must be taken while the drop event
+ * runs. A file not backed by one on disk (WebKit: "Path does not exist")
+ * has an entry that cannot be read, so then the plain files are used.
  */
 export async function droppedFiles(dt: DataTransfer): Promise<PendingFile[]> {
   const items = Array.from(dt.items ?? [])
@@ -84,7 +86,11 @@ export async function droppedFiles(dt: DataTransfer): Promise<PendingFile[]> {
   const files = Array.from(dt.files).map((file) => ({ path: file.name, file }))
   if (entries.length === 0 || entries.some((e) => e === null)) return files
   const out: PendingFile[] = []
-  for (const e of entries) await walk(e!, '', out)
+  try {
+    for (const e of entries) await walk(e!, '', out)
+  } catch {
+    return files
+  }
   return out
 }
 

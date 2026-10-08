@@ -8,6 +8,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { Bucket, Notification, StorageObject } from './api'
+import { droppedFiles } from './ObjectBrowser'
 
 const P = 'alpha-project'
 
@@ -501,4 +502,19 @@ it('says signed URLs need the iam Service', async () => {
   renderApp(`/gcs/b/photos/o/cat.png?project=${P}`)
   await user.click(await screen.findByRole('button', { name: 'Signed URL' }))
   expect(await screen.findByText(/enable the/)).toHaveTextContent('iam Service')
+})
+
+it('uploads dropped files whose entries cannot be read, as WebKit gives them', async () => {
+  const file = new File(['x'], 'unbacked.txt')
+  const entry = {
+    isFile: true,
+    isDirectory: false,
+    name: 'unbacked.txt',
+    file: (_ok: unknown, fail: (e: unknown) => void) => fail(new Error('Path does not exist')),
+  }
+  const pending = await droppedFiles({
+    items: [{ webkitGetAsEntry: () => entry }],
+    files: [file],
+  } as unknown as DataTransfer)
+  expect(pending).toEqual([{ path: 'unbacked.txt', file }])
 })

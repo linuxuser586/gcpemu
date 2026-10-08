@@ -125,4 +125,6 @@ export const handlers = [
   http.get('*/cloudresourcemanager/v3/projects\\:search', () =>
     HttpResponse.json({ projects: fake.projects }),
   ),
+  // The Cloud Storage view lists buckets on /gcs; tests of it add their own.
+  http.get('*/storage/v1/b', () => HttpResponse.json({})),
 ]

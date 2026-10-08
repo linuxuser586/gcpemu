@@ -5,7 +5,8 @@ import type { Page } from '@playwright/test'
 import { expect, projectId, test } from './fixtures'
 
 // The Cloud Storage view (SRS 4.8.3, FR-UI-011) against the Instance's
-// gcs, pubsub and iam Services.
+// gcs, pubsub and iam Services. Each attempt has its own Project, so a
+// retry does not meet the buckets and topics of the one before.
 
 // The console's paths: its bundle, the admin API, public GCP API paths
 // ("/<api>/v<n>/...") and the JSON API's upload and download paths.
@@ -17,8 +18,8 @@ test('Cloud Storage: a bucket’s lifecycle with the API’s validation messages
   page,
   browserName,
   requests,
-}) => {
-  const id = projectId('e2e-gcsb', browserName)
+}, testInfo) => {
+  const id = projectId(`e2e-gcsb${testInfo.retry}`, browserName)
   const name = `${id}-life`
   await page.goto(`/console/gcs?project=${id}`)
   await expect(page.getByText('No buckets in this Project yet.')).toBeVisible()
@@ -80,8 +81,8 @@ test('Cloud Storage: upload, browse, download, generations and a signed URL', as
   request,
   browserName,
   requests,
-}) => {
-  const id = projectId('e2e-gcso', browserName)
+}, testInfo) => {
+  const id = projectId(`e2e-gcso${testInfo.retry}`, browserName)
   const bucket = `${id}-objects`
   expect(
     (
@@ -212,8 +213,12 @@ test('Cloud Storage: upload, browse, download, generations and a signed URL', as
   }
 })
 
-test('Cloud Storage: notifications to a Pub/Sub topic', async ({ page, request, browserName }) => {
-  const id = projectId('e2e-gcsn', browserName)
+test('Cloud Storage: notifications to a Pub/Sub topic', async ({
+  page,
+  request,
+  browserName,
+}, testInfo) => {
+  const id = projectId(`e2e-gcsn${testInfo.retry}`, browserName)
   const bucket = `${id}-notify`
   expect((await request.put(`/pubsub/v1/projects/${id}/topics/uploads`, { data: {} })).ok()).toBe(
     true,
