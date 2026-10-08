@@ -1,6 +1,7 @@
-// One error shape for both APIs the console calls (FR-UI-003): Google's
-// {error:{code,message,status,details}} envelope from the public APIs and
-// the admin API's {error:"message"}.
+// One error shape for every API the console calls (FR-UI-003): Google's
+// {error:{code,message,status,details}} envelope from the public APIs, the
+// admin API's {error:"message"}, and the Kubernetes Status objects that
+// the Connect gateway passes through from a cluster's API server.
 
 export class ApiError extends Error {
   readonly httpStatus: number
@@ -53,6 +54,9 @@ export function toApiError(httpStatus: number, body: unknown): ApiError {
   }
   if (typeof err === 'string') {
     return new ApiError(httpStatus, statusFor(httpStatus), err)
+  }
+  if (isRecord(body) && body.kind === 'Status' && typeof body.message === 'string') {
+    return new ApiError(httpStatus, statusFor(httpStatus), body.message)
   }
   const text = typeof body === 'string' ? body.trim() : ''
   return new ApiError(httpStatus, statusFor(httpStatus), text || `HTTP ${httpStatus}`)

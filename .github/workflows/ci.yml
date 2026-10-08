@@ -50,7 +50,7 @@ jobs:
         run: pnpm check:size
 
   # FR-UI-023: Playwright on Chromium, Firefox and WebKit against a binary
-  # with the real console.
+  # with the real console. The runner's Docker backs the GKE view's clusters.
   console-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

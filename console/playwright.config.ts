@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
 // FR-UI-023: the console against a real Ephemeral Instance on Chromium,
-// Firefox and WebKit. The Instance needs no container runtime. Its
+// Firefox and WebKit. The GKE view tests create real clusters and skip
+// without a container runtime; nothing else needs one. Its
 // gateway URL reaches the workers through the environment.
 export default defineConfig({
   testDir: 'e2e',

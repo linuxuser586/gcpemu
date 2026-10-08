@@ -12,9 +12,11 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/project"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -309,5 +311,45 @@ func TestOperationsSummary(t *testing.T) {
 		got.Target != "projects/123/locations/us-central1/clusters/c" || got.EndTime.Sub(got.StartTime) != time.Minute ||
 		got.Error == nil || got.Error.Code != "RESOURCE_EXHAUSTED" || got.Error.Message != "no capacity" {
 		t.Fatalf("summary = %+v %+v", got, got.Error)
+	}
+}
+
+// Connect gateway memberships resolve by Project ID or number and by the
+// cluster's location, its region or "global" (ADR 0002).
+func TestConnectGatewayMembership(t *testing.T) {
+	cfg := config.Defaults()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
+		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()}).(*Service)
+	for _, k := range [][3]string{{"p1", "us-central1-a", "c"}, {"p1", "europe-west1", "c"}, {"p1", "us-central1-b", "d"}} {
+		rec := &clusterRecord{Int: clusterInternal{Project: k[0], Location: k[1], Name: k[2]}}
+		rec.setCluster(&containerpb.Cluster{Name: k[2], Location: k[1]})
+		if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		proj, loc, name string
+		want            string // cluster key, or the error code
+	}{
+		{"p1", "us-central1-a", "c", "p1/us-central1-a/c"},
+		{"p1", "us-central1", "c", "p1/us-central1-a/c"},
+		{project.NumberString("p1"), "europe-west1", "c", "p1/europe-west1/c"},
+		{"p1", "global", "d", "p1/us-central1-b/d"},
+		{"p1", "global", "c", "FailedPrecondition"},
+		{"p1", "us-east1", "c", "NotFound"},
+		{"p2", "global", "d", "NotFound"},
+	}
+	for _, tt := range tests {
+		rec, err := s.membership(tt.proj, tt.loc, tt.name)
+		got := ""
+		if err != nil {
+			got = apierr.From(err).Code.String()
+		} else {
+			got = rec.key()
+		}
+		if got != tt.want {
+			t.Errorf("membership(%s, %s, %s) = %s, want %s", tt.proj, tt.loc, tt.name, got, tt.want)
+		}
 	}
 }

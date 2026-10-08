@@ -1,11 +1,16 @@
-import type { ComponentProps } from 'react'
-import { NavLink as RouterNavLink, Link as RouterLink, useLocation, type To } from 'react-router'
+import { useCallback, type ComponentProps } from 'react'
+import {
+  NavLink as RouterNavLink,
+  Link as RouterLink,
+  useLocation,
+  useNavigate,
+  type To,
+} from 'react-router'
 
 import { viewParams } from '@/lib/viewState'
 
-/** useCarried adds the current ?project=, ?location= and ?q= to to. */
-function useCarried(to: To): To {
-  const { search } = useLocation()
+/** carry adds the view state in search (?project=, ?location=, ?q=) to to. */
+function carry(to: To, search: string): To {
   const carried = viewParams(new URLSearchParams(search))
   if (typeof to === 'string') {
     const [path = '', query] = to.split('?')
@@ -19,6 +24,11 @@ function useCarried(to: To): To {
   return { ...to, search: params.toString() }
 }
 
+/** useCarried adds the current ?project=, ?location= and ?q= to to. */
+function useCarried(to: To): To {
+  return carry(to, useLocation().search)
+}
+
 /** Link is react-router's Link that carries the view state along. */
 export function Link({ to, ...props }: ComponentProps<typeof RouterLink>) {
   return <RouterLink to={useCarried(to)} {...props} />
@@ -27,4 +37,11 @@ export function Link({ to, ...props }: ComponentProps<typeof RouterLink>) {
 /** NavLink is react-router's NavLink that carries the view state along. */
 export function NavLink({ to, ...props }: ComponentProps<typeof RouterNavLink>) {
   return <RouterNavLink to={useCarried(to)} {...props} />
+}
+
+/** useCarriedNavigate navigates like Link: carrying the view state along. */
+export function useCarriedNavigate() {
+  const navigate = useNavigate()
+  const { search } = useLocation()
+  return useCallback((to: To) => void navigate(carry(to, search)), [navigate, search])
 }

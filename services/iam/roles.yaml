@@ -93,6 +93,8 @@ permissions:
     - "events: get list"
     - "customResourceDefinitions: create delete get list update"
     - "thirdPartyObjects: create delete get list update"
+  gkehub:
+    - "gateway: delete get getIamPolicy patch post put"
   compute:
     - "addresses: create createInternal delete deleteInternal get list setLabels use useInternal"
     - "globalAddresses: create createInternal delete deleteInternal get list setLabels use"
@@ -396,6 +398,14 @@ roles:
     title: Kubernetes Engine Viewer
     description: Read-only access to Kubernetes Engine resources.
     permissions: ["container.*.get", "container.*.list", container.clusters.getCredentials, "-container.secrets.get", "-container.secrets.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/gkehub.gatewayReader
+    title: Connect Gateway Reader
+    description: Read-only access to clusters through the Connect gateway.
+    permissions: [gkehub.gateway.get, gkehub.gateway.getIamPolicy, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/gkehub.gatewayEditor
+    title: Connect Gateway Editor
+    description: Read and write access to clusters through the Connect gateway.
+    permissions: [gkehub.gateway.*, resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/container.defaultNodeServiceAccount
     title: Kubernetes Engine Default Node Service Account
     description: Least privilege role to use as the default service account for GKE Nodes.
