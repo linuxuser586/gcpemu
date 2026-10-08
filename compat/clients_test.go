@@ -301,7 +301,7 @@ func TestClients(t *testing.T) {
 		if !e.runtime {
 			t.Skip("Cloud SQL needs a container runtime")
 		}
-		e.run(t, g, "sql", "instances", "create", "compat-pg", "--database-version=POSTGRES_17", "--tier=db-custom-1-3840",
+		e.run(t, g, "sql", "instances", "create", "compat-pg", "--database-version=POSTGRES_18", "--tier=db-perf-optimized-N-2", "--edition=enterprise-plus",
 			"--region=us-central1", "--root-password=rootpw", "--authorized-networks=0.0.0.0/0")
 		ip := strings.TrimSpace(e.run(t, g, "sql", "instances", "describe", "compat-pg", "--format=value(ipAddresses[0].ipAddress)"))
 		e.run(t, g, "sql", "databases", "create", "appdb", "--instance=compat-pg")
@@ -319,7 +319,7 @@ func TestClients(t *testing.T) {
 		psql := func(conn, password, query string) string {
 			t.Helper()
 			return strings.TrimSpace(e.run(t, docker, "run", "--rm", "--network=host", "-e", "PGPASSWORD="+password,
-				"postgres:17.10-alpine", "psql", conn, "-tAc", query))
+				"postgres:18.6-alpine", "psql", conn, "-tAc", query))
 		}
 		if got := psql("host="+ip+" user=alice dbname=appdb sslmode=prefer", "alicepw", "select current_user||':'||current_setting('max_connections')"); got != "alice:50" {
 			t.Fatalf("psql on the public IP: %q", got)

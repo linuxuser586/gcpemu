@@ -3,12 +3,13 @@
 
 resource "google_sql_database_instance" "pg" {
   name                = "tf-sql-pg"
-  database_version    = "POSTGRES_16"
+  database_version    = "POSTGRES_18"
   region              = var.region
   deletion_protection = false
 
   settings {
-    tier              = "db-custom-1-3840"
+    tier              = "db-perf-optimized-N-2"
+    edition           = "ENTERPRISE_PLUS"
     availability_type = "ZONAL"
     disk_size         = 10
     disk_type         = "PD_SSD"

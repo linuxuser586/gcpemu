@@ -83,7 +83,7 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 			return nil, errInvalid("Zone (%s) is not in region (%s).", zone, in.Region)
 		}
 	}
-	applySettingsDefaults(in.Settings, rawSettings, zone, true)
+	applySettingsDefaults(in.Settings, rawSettings, zone, in.DatabaseVersion, true)
 	ipc := in.Settings.IpConfiguration
 	if ipc.PrivateNetwork != "" {
 		ipc.PrivateNetwork = normalizeNetwork(project, ipc.PrivateNetwork)
@@ -348,7 +348,7 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 	if next.Settings == nil {
 		next.Settings = &sqladmin.Settings{}
 	}
-	applySettingsDefaults(next.Settings, rs, cur.GceZone, false)
+	applySettingsDefaults(next.Settings, rs, cur.GceZone, next.DatabaseVersion, false)
 	if pn := next.Settings.IpConfiguration.PrivateNetwork; pn != "" {
 		next.Settings.IpConfiguration.PrivateNetwork = normalizeNetwork(project, pn)
 	}

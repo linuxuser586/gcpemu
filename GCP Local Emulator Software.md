@@ -336,7 +336,7 @@ Each instance is a real PostgreSQL server in a container, so SQL behaviour is ex
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| FR-SQL-001 | Instances: insert, get, list, patch, delete, restart, stop/start (`activationPolicy`) for `POSTGRES_14` to `POSTGRES_17`; the major version selects the container image. Tier, disk size and availability type are stored and reported, not enforced. | M |
+| FR-SQL-001 | Instances: insert, get, list, patch, delete, restart, stop/start (`activationPolicy`) for `POSTGRES_14` to `POSTGRES_18`; the major version selects the container image. Tier, disk size and availability type are stored and reported, not enforced, but tier and edition must agree as in GCP: an unset edition means Enterprise Plus from `POSTGRES_16`, which accepts only `db-perf-optimized-*` tiers. | M |
 | FR-SQL-002 | Databases and users: CRUD; built-in users get passwords; `postgres` superuser behaves like Cloud SQL's `cloudsqlsuperuser` membership model. | M |
 | FR-SQL-003 | Database flags: the Cloud SQL allow-list for PostgreSQL is validated and applied as server settings; restart-required flags trigger a restart LRO. | M |
 | FR-SQL-004 | Connectivity: public IP mapped to a host port (reported as `ipAddresses`); private IP reachable from GKE pods on the bound VPC; authorized networks enforced on the public path. | M |

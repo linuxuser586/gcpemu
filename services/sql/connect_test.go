@@ -63,7 +63,7 @@ func TestConnectivityAndIAM(t *testing.T) {
 
 	in := createInstance(t, svc, &sqladmin.DatabaseInstance{
 		Name:            "conn",
-		DatabaseVersion: "POSTGRES_17",
+		DatabaseVersion: "POSTGRES_18",
 		RootPassword:    "rootpw",
 		Settings: &sqladmin.Settings{
 			IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true},
@@ -203,7 +203,7 @@ func TestMajorVersions(t *testing.T) {
 	inst := emutest.Start(t, []string{"sql"})
 	svc := adminClient(t, inst)
 	ctx := context.Background()
-	for _, v := range []string{"14", "15", "16", "17"} {
+	for _, v := range []string{"14", "15", "16", "17", "18"} {
 		t.Run("POSTGRES_"+v, func(t *testing.T) {
 			t.Parallel()
 			in := createInstance(t, svc, &sqladmin.DatabaseInstance{Name: "pg" + v, DatabaseVersion: "POSTGRES_" + v, RootPassword: "rootpw",

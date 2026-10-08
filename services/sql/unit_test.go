@@ -108,20 +108,44 @@ func TestMergeAndDefaults(t *testing.T) {
 	}
 
 	s := &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{RequireSsl: true}}
-	applySettingsDefaults(s, map[string]any{"ipConfiguration": map[string]any{"requireSsl": true}}, "us-central1-b", true)
+	applySettingsDefaults(s, map[string]any{"ipConfiguration": map[string]any{"requireSsl": true}}, "us-central1-b", "POSTGRES_15", true)
 	if s.IpConfiguration.Ipv4Enabled != true || s.IpConfiguration.SslMode != "TRUSTED_CLIENT_CERTIFICATE_REQUIRED" ||
 		s.ActivationPolicy != "ALWAYS" || s.Tier != defaultTier || *s.StorageAutoResize != true || s.LocationPreference.Zone != "us-central1-b" {
 		t.Fatalf("defaults = %+v %+v", s, s.IpConfiguration)
 	}
 	s2 := &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{}}
-	applySettingsDefaults(s2, map[string]any{"ipConfiguration": map[string]any{"ipv4Enabled": false}}, "z", true)
+	applySettingsDefaults(s2, map[string]any{"ipConfiguration": map[string]any{"ipv4Enabled": false}}, "z", "POSTGRES_17", true)
 	if s2.IpConfiguration.Ipv4Enabled {
 		t.Error("explicit ipv4Enabled=false overridden")
 	}
 	s3 := &sqladmin.Settings{Tier: "db-perf-optimized-N-2", IpConfiguration: &sqladmin.IpConfiguration{SslMode: "ENCRYPTED_ONLY", RequireSsl: true}}
-	applySettingsDefaults(s3, nil, "z", false)
+	applySettingsDefaults(s3, nil, "z", "POSTGRES_17", false)
 	if s3.Edition != "ENTERPRISE_PLUS" || s3.IpConfiguration.RequireSsl {
 		t.Errorf("edition=%s requireSsl=%v", s3.Edition, s3.IpConfiguration.RequireSsl)
+	}
+}
+
+func TestEditionDefaults(t *testing.T) {
+	for _, c := range []struct {
+		version, tier, edition string
+		wantEdition, wantTier  string
+		valid                  bool
+	}{
+		{"POSTGRES_15", "", "", "ENTERPRISE", defaultTier, true},
+		{"POSTGRES_15", "db-perf-optimized-N-4", "", "ENTERPRISE_PLUS", "db-perf-optimized-N-4", true},
+		{"POSTGRES_16", "", "", "ENTERPRISE_PLUS", defaultPlusTier, true},
+		{"POSTGRES_18", "", "", "ENTERPRISE_PLUS", defaultPlusTier, true},
+		{"POSTGRES_18", "db-custom-1-3840", "", "ENTERPRISE_PLUS", "db-custom-1-3840", false},
+		{"POSTGRES_18", "db-custom-1-3840", "ENTERPRISE", "ENTERPRISE", "db-custom-1-3840", true},
+		{"POSTGRES_18", "", "ENTERPRISE", "ENTERPRISE", defaultTier, true},
+		{"POSTGRES_17", "db-perf-optimized-N-2", "ENTERPRISE", "ENTERPRISE", "db-perf-optimized-N-2", false},
+	} {
+		s := &sqladmin.Settings{Tier: c.tier, Edition: c.edition, IpConfiguration: &sqladmin.IpConfiguration{}}
+		applySettingsDefaults(s, nil, "z", c.version, true)
+		_, err := validateSettings(s, c.version)
+		if s.Edition != c.wantEdition || s.Tier != c.wantTier || (err == nil) != c.valid {
+			t.Errorf("%s tier=%q edition=%q: got %s %s err=%v", c.version, c.tier, c.edition, s.Edition, s.Tier, err)
+		}
 	}
 }
 

@@ -96,7 +96,8 @@ resource "google_sql_database_instance" "db" {
   depends_on          = [google_service_networking_connection.psa]
 
   settings {
-    tier = "db-custom-1-3840"
+    tier    = "db-custom-1-3840"
+    edition = "ENTERPRISE"
     ip_configuration {
       ipv4_enabled    = false
       private_network = google_compute_network.vpc.id

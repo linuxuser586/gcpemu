@@ -20,11 +20,13 @@ var pgVersions = map[string]pgVersion{
 	"POSTGRES_15": {Image: "postgres:15.18-alpine", Installed: "POSTGRES_15_18", Major: 15, DataMount: "/var/lib/postgresql/data"},
 	"POSTGRES_16": {Image: "postgres:16.14-alpine", Installed: "POSTGRES_16_14", Major: 16, DataMount: "/var/lib/postgresql/data"},
 	"POSTGRES_17": {Image: "postgres:17.10-alpine", Installed: "POSTGRES_17_10", Major: 17, DataMount: "/var/lib/postgresql/data"},
+	// From 18 the image keeps PGDATA in /var/lib/postgresql/18/docker.
+	"POSTGRES_18": {Image: "postgres:18.6-alpine", Installed: "POSTGRES_18_6", Major: 18, DataMount: "/var/lib/postgresql"},
 }
 
 // defaultDatabaseVersion is used when insert omits databaseVersion. GCP
 // requires the field for PostgreSQL; gcloud defaults to the newest version.
-const defaultDatabaseVersion = "POSTGRES_17"
+const defaultDatabaseVersion = "POSTGRES_18"
 
 // databaseVersions returns the supported versions in order.
 func databaseVersions() []string {
