@@ -1,0 +1,44 @@
+# API definitions the emulator's route tables and field-behaviour
+# validation are generated from (NFR-MNT-001). After changing this file,
+# or bumping google.golang.org/api in go.mod, run `make generate`;
+# `make generate GOOGLEAPIS=latest` first moves the googleapis pin to the
+# head of master.
+googleapis:
+  # googleapis/googleapis commit the .proto files are read from.
+  commit: 462426382d347da63e69da7b02d908df2c26ecbe
+  files:
+    - google/cloud/certificatemanager/v1/certificate_manager.proto
+    - google/cloud/location/locations.proto
+    - google/cloud/networksecurity/v1/network_security.proto
+    - google/container/v1/cluster_service.proto
+    - google/devtools/artifactregistry/v1/service.proto
+    - google/iam/credentials/v1/iamcredentials.proto
+    - google/iam/v1/iam_policy.proto
+    - google/longrunning/operations.proto
+    - google/pubsub/v1/pubsub.proto
+    - google/pubsub/v1/schema.proto
+  # Field behaviours the real APIs don't enforce, dropped from the generated
+  # tables (message.field: [behaviour, ...]); each entry says why.
+  relax:
+    # Clients update labels, taints or locations alone (the Go client,
+    # OpenTofu's node pool updates); GKE accepts that.
+    google.container.v1.UpdateNodePoolRequest.node_version: [REQUIRED]
+    google.container.v1.UpdateNodePoolRequest.image_type: [REQUIRED]
+
+# Discovery documents, read from the google.golang.org/api module version
+# pinned in go.mod (each revision is recorded in zz_discovery.go).
+discovery:
+  - api: compute
+    version: v1
+    # annotations.required entries the real API doesn't enforce
+    # (Schema.property: [method, ...]); each entry says why.
+    relax:
+      # A patch names the firewall in its path; clients send only the
+      # changed fields.
+      Firewall.name: [compute.firewalls.patch]
+      # Documented as defaulting to 1000 when omitted.
+      Route.priority: [compute.routes.insert]
+  - {api: dns, version: v1}
+  - {api: iam, version: v1}
+  - {api: sqladmin, version: v1beta4}
+  - {api: storage, version: v1}

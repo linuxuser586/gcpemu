@@ -220,4 +220,18 @@ make release       # static binaries for linux/darwin × amd64/arm64
 Each service is an isolated package implementing `emu.Service`
 (`internal/emu/emu.go`); cross-service contracts live in `internal/emu/xservice.go`.
 
+API route tables and field-behaviour validation (REQUIRED, OUTPUT_ONLY, IMMUTABLE) are
+generated into `internal/apidef` from the googleapis commit pinned in
+`internal/apidef/apis.yaml` and from the discovery documents of the `google.golang.org/api`
+version in `go.mod`. gRPC services get REST through `internal/transcode`, and the gateway
+checks every gRPC request against the generated tables. After a version bump, regenerate:
+
+```sh
+make generate                     # after go get google.golang.org/api@... or editing apis.yaml
+make generate GOOGLEAPIS=latest   # move the googleapis pin to master, then regenerate
+go test ./internal/apidef         # TestDrift: the pin and the Go modules must agree
+```
+
+Annotations a real API doesn't enforce go in the `relax` lists of `apis.yaml`, each with its reason.
+
 Licensed under Apache-2.0.

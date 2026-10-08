@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/linuxuser586/gcpemu/internal/apidef"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 )
 
@@ -164,6 +165,11 @@ func call[Req proto.Message, Resp proto.Message](w http.ResponseWriter, r *http.
 	}
 	if setup != nil {
 		setup(req)
+	}
+	// The field behaviours the gateway checks on gRPC calls.
+	if err := apidef.CheckProto(apidef.RPCForInput(string(req.ProtoReflect().Descriptor().FullName())), req); err != nil {
+		apierr.Write(w, err)
+		return
 	}
 	resp, err := fn(r.Context(), req)
 	if err != nil {

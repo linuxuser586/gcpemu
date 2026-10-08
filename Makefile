@@ -1,12 +1,20 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version=$(VERSION)
 
-.PHONY: build test race vet lint release e2e compat tofu action
+.PHONY: build test race vet lint release e2e compat tofu action generate
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu ./cmd/gcpemu
 
 test:
 	go test ./...
+
+# NFR-MNT-001: regenerate the API route tables and field-behaviour
+# validation (internal/apidef) from the pinned googleapis commit and the
+# discovery documents of the google.golang.org/api version in go.mod.
+# GOOGLEAPIS=latest (or a commit SHA) moves the googleapis pin first.
+generate:
+	go mod download google.golang.org/api
+	cd internal/apidef && go run ./internal/apigen -config apis.yaml -out . $(if $(GOOGLEAPIS),-googleapis $(GOOGLEAPIS))
 
 race:
 	go test -race ./...

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/apidef"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/lro"
@@ -75,9 +76,12 @@ func (s *Service) Name() string { return "compute" }
 // Register mounts compute v1 at /compute/v1/ (the Go client and gcloud base
 // URL path), under the /compute/ gateway prefix and for host
 // compute.googleapis.com; servicenetworking under /servicenetworking/.
+// Requests are first checked against the pinned discovery document's
+// required parameters and fields (NFR-MNT-001).
 func (s *Service) Register(r emu.Router) error {
-	r.Handle("/compute/v1/", s.mux)
-	r.Mount("compute", []string{"compute.googleapis.com"}, s.mux)
+	api := apidef.REST("compute", "v1").Handler(s.mux)
+	r.Handle("/compute/v1/", api)
+	r.Mount("compute", []string{"compute.googleapis.com"}, api)
 	r.Mount("servicenetworking", []string{"servicenetworking.googleapis.com"}, s.sn)
 	s.lro.Register(r)
 	return nil
