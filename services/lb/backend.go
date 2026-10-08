@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math/rand/v2"
@@ -774,8 +775,7 @@ func (b *backendSvc) dialTLS(ctx context.Context, network, addr string, h2 bool)
 			cfg.Certificates = []tls.Certificate{*crt}
 		}
 		if roots == nil || !emptyPool(roots) {
-			sans := ts.SubjectAltNames
-			sni := cfg.ServerName
+			sans, sni := ts.SubjectAltNames, ts.Sni
 			cfg.VerifyConnection = func(st tls.ConnectionState) error {
 				return verifyBackend(st, roots, sni, sans)
 			}
@@ -800,7 +800,8 @@ func emptyPool(p *x509.CertPool) bool { return p.Equal(x509.NewCertPool()) }
 
 // verifyBackend validates the backend's chain against roots (nil = system
 // roots) and, when subjectAltNames are configured, that one of them is in
-// the certificate; otherwise the SNI must match.
+// the certificate; otherwise a configured tlsSettings.sni must match the
+// certificate. An SNI taken from the request Host is not checked.
 func verifyBackend(st tls.ConnectionState, roots *x509.CertPool, sni string, sans []*computev1.BackendServiceTlsSettingsSubjectAltName) error {
 	if len(st.PeerCertificates) == 0 {
 		return errors.New("backend presented no certificate")
@@ -825,6 +826,11 @@ func verifyBackend(st tls.ConnectionState, roots *x509.CertPool, sni string, san
 			}
 		}
 		return errors.New("backend certificate matches none of tlsSettings.subjectAltNames")
+	}
+	if sni != "" {
+		if err := leaf.VerifyHostname(sni); err != nil {
+			return fmt.Errorf("backend certificate does not match tlsSettings.sni: %w", err)
+		}
 	}
 	return nil
 }

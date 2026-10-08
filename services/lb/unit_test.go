@@ -188,3 +188,35 @@ func TestOutlierAndPick(t *testing.T) {
 		t.Error("draining endpoint picked")
 	}
 }
+
+// TestVerifyBackend is FR-LB-006: the backend certificate must chain to
+// the trust config and match subjectAltNames, or tlsSettings.sni when no
+// subjectAltNames are configured.
+func TestVerifyBackend(t *testing.T) {
+	authority, _ := ca.Load(t.TempDir(), "unit")
+	other, _ := ca.Load(t.TempDir(), "other")
+	leaf, _ := authority.Issue(ca.Leaf{DNSNames: []string{"gateway.mesh.test"}})
+	st := tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf.Leaf}}
+	san := func(n string) []*computev1.BackendServiceTlsSettingsSubjectAltName {
+		return []*computev1.BackendServiceTlsSettingsSubjectAltName{{DnsName: n}}
+	}
+	cases := []struct {
+		name  string
+		roots *ca.CA
+		sni   string
+		sans  []*computev1.BackendServiceTlsSettingsSubjectAltName
+		ok    bool
+	}{
+		{"sni matches", authority, "gateway.mesh.test", nil, true},
+		{"sni mismatch", authority, "other.mesh.test", nil, false},
+		{"no sni or sans", authority, "", nil, true},
+		{"sans override sni", authority, "other.mesh.test", san("gateway.mesh.test"), true},
+		{"sans mismatch", authority, "gateway.mesh.test", san("other.mesh.test"), false},
+		{"untrusted chain", other, "gateway.mesh.test", nil, false},
+	}
+	for _, c := range cases {
+		if err := verifyBackend(st, c.roots.Pool(), c.sni, c.sans); (err == nil) != c.ok {
+			t.Errorf("%s: err = %v", c.name, err)
+		}
+	}
+}
