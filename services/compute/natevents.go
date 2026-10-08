@@ -18,12 +18,14 @@ import (
 )
 
 // NAT gateway → emulator event channel. The in-container agent posts
-// connection events (NAT translations seen by conntrack, and --offline
-// sink attempts) to POST /compute/v1/_gcpemu/natEvents through the
-// services network; requests carry a per-process token. Translations are
-// logged in Cloud Logging JSON shape when the NAT's logConfig asks for
-// them (FR-NAT-004); sink attempts are always logged and recorded in the
-// store namespace "compute/natsink", visible through the admin API
+// connection events (NAT translations seen by conntrack, connections the
+// gateway drops, and --offline sink attempts) to
+// POST /compute/v1/_gcpemu/natEvents through the services network;
+// requests carry a per-process token. Translations and drops of covered
+// sources are logged in Cloud Logging JSON shape when the NAT's logConfig
+// filter asks for them (FR-NAT-004); every egress attempt goes to the
+// request log (FR-CORE-061); sink attempts are always logged and recorded
+// in the store namespace "compute/natsink", visible through the admin API
 // (/_emu/v1/resources?namespace=compute/natsink) (FR-NAT-005).
 
 const (
@@ -34,7 +36,7 @@ const (
 
 // natEvent is one connection event from the gateway agent.
 type natEvent struct {
-	Type    string `json:"type"` // "translation" or "sink"
+	Type    string `json:"type"` // "translation", "dropped" or "sink"
 	Time    string `json:"time"`
 	Proto   string `json:"proto"`
 	Src     string `json:"src"`
@@ -203,11 +205,16 @@ func (s *Service) logNatFlow(np string, ev natEvent, c *coverage, vm, subnet, st
 		}
 		return nil
 	})
+	conn := map[string]any{
+		"src_ip": ev.Src, "src_port": ev.SrcPort, "dest_ip": ev.Dst, "dest_port": ev.DstPort,
+		"protocol": protoNumber(ev.Proto),
+	}
+	// A dropped connection was never allocated a NAT IP and port.
+	if status != "DROPPED" {
+		conn["nat_ip"], conn["nat_port"] = natIP, ev.NatPort
+	}
 	payload := map[string]any{
-		"connection": map[string]any{
-			"src_ip": ev.Src, "src_port": ev.SrcPort, "dest_ip": ev.Dst, "dest_port": ev.DstPort,
-			"protocol": protoNumber(ev.Proto), "nat_ip": natIP, "nat_port": ev.NatPort,
-		},
+		"connection":        conn,
 		"allocation_status": status,
 		"gateway_identifiers": map[string]any{
 			"gateway_name": c.nat, "router_name": lastSeg(c.router), "region": c.region,

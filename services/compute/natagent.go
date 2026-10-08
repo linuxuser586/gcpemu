@@ -21,8 +21,9 @@ import (
 // The "nat-gateway" agent runs inside the NAT egress gateway container. It
 // keeps the container alive, serves the --offline egress sink (connections
 // REDIRECTed by iptables; the original destination comes from
-// SO_ORIGINAL_DST) and streams conntrack NEW events, reporting both to the
-// emulator (see natevents.go).
+// SO_ORIGINAL_DST), streams conntrack NEW events and reads the NFLOG copies
+// of dropped connections (natflog.go), reporting all three to the emulator
+// (see natevents.go).
 
 func init() { agent.Register(natAgentName, runNatAgent) }
 
@@ -45,6 +46,7 @@ func runNatAgent(ctx context.Context, _ []string) error {
 	}
 	go func() { <-ctx.Done(); l.Close() }()
 	go watchConntrack(ctx, r)
+	go watchDrops(ctx, r)
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -130,6 +132,36 @@ func watchConntrack(ctx context.Context, r *natReporter) {
 		case <-ctx.Done():
 		case <-time.After(time.Second):
 		}
+	}
+}
+
+// natDropDedup suppresses repeats of one dropped flow (SYN retransmits).
+const natDropDedup = 30 * time.Second
+
+// watchDrops reports connections the gateway drops or rejects, once per
+// flow within natDropDedup.
+func watchDrops(ctx context.Context, r *natReporter) {
+	seen := map[string]time.Time{}
+	err := readNflog(ctx, natDropGroup, func(b []byte) {
+		now := time.Now()
+		for _, ev := range parseNflog(b) {
+			k := fmt.Sprintf("%s %s:%d %s:%d", ev.Proto, ev.Src, ev.SrcPort, ev.Dst, ev.DstPort)
+			if t, ok := seen[k]; ok && now.Sub(t) < natDropDedup {
+				continue
+			}
+			seen[k] = now
+			r.send(ev)
+		}
+		if len(seen) > 4096 {
+			for k, t := range seen {
+				if now.Sub(t) >= natDropDedup {
+					delete(seen, k)
+				}
+			}
+		}
+	})
+	if err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "nat-gateway: nflog: %v (dropped connections are not logged)\n", err)
 	}
 }
 
