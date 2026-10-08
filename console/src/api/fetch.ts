@@ -36,3 +36,13 @@ export async function gcpFetch<T>(path: string, init?: RequestInit): Promise<T> 
   if (!res.ok) throw toApiError(res.status, body)
   return body as T
 }
+
+/**
+ * gcpText calls a public API that answers with plain text, such as a pod's
+ * log through the Connect gateway.
+ */
+export async function gcpText(path: string): Promise<string> {
+  const res = await send(new Request(new URL(path, origin()), { credentials: 'omit' }))
+  if (!res.ok) throw toApiError(res.status, await readBody(res))
+  return res.text()
+}

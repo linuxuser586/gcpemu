@@ -138,6 +138,9 @@ How long an Operation takes before it completes, configured per Service ID. Oper
 **Project**:
 A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects. Only a request handled by a Service counts as a reference. Choosing a Project in the Web console only scopes what is shown and creates nothing.
 
+**Connect gateway**:
+GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
+
 **Strict projects**:
 An Instance setting under which referencing a Project that does not exist is an error instead of creating it.
 

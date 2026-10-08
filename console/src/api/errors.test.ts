@@ -29,6 +29,22 @@ describe('toApiError', () => {
     })
   })
 
+  it('reads a Kubernetes Status passed through the Connect gateway', () => {
+    const status = {
+      kind: 'Status',
+      apiVersion: 'v1',
+      status: 'Failure',
+      message: 'pods "web" is forbidden: User "dev@example.com" cannot get resource "pods"',
+      reason: 'Forbidden',
+      code: 403,
+    }
+    expect(toApiError(403, status)).toMatchObject({
+      httpStatus: 403,
+      status: 'PERMISSION_DENIED',
+      message: status.message,
+    })
+  })
+
   it('falls back to the body text or the HTTP status', () => {
     expect(toApiError(502, 'bad gateway\n')).toMatchObject({
       status: 'INTERNAL',

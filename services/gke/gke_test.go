@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	gcpproject "github.com/linuxuser586/gcpemu/internal/project"
 )
 
 const (
@@ -326,6 +327,66 @@ func TestGKE(t *testing.T) {
 		})
 		if code, _ := e.kube("GET", "/api/v1/namespaces/default/secrets", tok, nil, nil); code != 403 {
 			t.Errorf("viewer listed secrets: %d", code)
+		}
+	})
+
+	// Connect gateway (ADR 0002): the Kubernetes API through the API
+	// gateway, as the caller's principal.
+	t.Run("ConnectGateway", func(t *testing.T) {
+		email, tok := saToken(t, inst, "gw-dev")
+		get := func(path, token string, hdr ...string) (int, string) {
+			req, _ := http.NewRequest("GET", inst.GatewayURL()+"/connectgateway/v1/projects/"+path, nil)
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			for i := 0; i+1 < len(hdr); i += 2 {
+				req.Header.Set(hdr[i], hdr[i+1])
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			return resp.StatusCode, string(b)
+		}
+		// The default principal owns every Project.
+		var ns struct {
+			Items []struct{ Metadata struct{ Name string } }
+		}
+		code, b := get(project+"/locations/global/gkeMemberships/c1/api/v1/namespaces", "")
+		if code != 200 || json.Unmarshal([]byte(b), &ns) != nil || len(ns.Items) == 0 {
+			t.Fatalf("namespaces: %d %s", code, b)
+		}
+		// By Project number and region, as gcloud's fleet kubeconfig names it.
+		if code, b := get(gcpproject.NumberString(project)+"/locations/us-central1/gkeMemberships/c1/version", ""); code != 200 || !strings.Contains(b, "gitVersion") {
+			t.Errorf("version by number and region: %d %s", code, b)
+		}
+		if code, _ := get(project+"/locations/europe-west1/gkeMemberships/c1/version", ""); code != 404 {
+			t.Errorf("wrong location: %d", code)
+		}
+		if code, _ := get(project+"/locations/global/gkeMemberships/nope/version", ""); code != 404 {
+			t.Errorf("unknown membership: %d", code)
+		}
+		// Without gkehub.gateway.get the gateway refuses (IAM enforce).
+		if code, b := get(project+"/locations/global/gkeMemberships/c1/api/v1/namespaces/default/pods", tok); code != 403 || !strings.Contains(b, "gkehub.gateway.get") {
+			t.Fatalf("no role: %d %s", code, b)
+		}
+		policy := map[string]any{"policy": map[string]any{"bindings": []map[string]any{
+			{"role": "roles/gkehub.gatewayReader", "members": []string{"serviceAccount:" + email}},
+			{"role": "roles/container.viewer", "members": []string{"serviceAccount:" + email, "serviceAccount:kube-dev@" + project + ".iam.gserviceaccount.com"}},
+		}}}
+		if code := gw(t, inst, "POST", "/cloudresourcemanager/v1/projects/"+project+":setIamPolicy", policy, nil); code != 200 {
+			t.Fatalf("setIamPolicy: %d", code)
+		}
+		eventually(t, 20*time.Second, "gateway reader access", func() bool {
+			code, _ := get(project+"/locations/global/gkeMemberships/c1/api/v1/namespaces/default/pods", tok)
+			return code == 200
+		})
+		// The API server sees the caller, not the gateway: container.viewer
+		// cannot read secrets, even when the caller asks to impersonate.
+		if code, b := get(project+"/locations/global/gkeMemberships/c1/api/v1/namespaces/default/secrets", tok, "Impersonate-User", "system:admin"); code != 403 || !strings.Contains(b, email) {
+			t.Errorf("secrets as viewer: %d %s", code, b)
 		}
 	})
 

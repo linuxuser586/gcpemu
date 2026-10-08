@@ -22,7 +22,7 @@ reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 | Compute networking | `services/compute` | Networks, subnetworks, firewalls, routes, addresses, routers, zonal/regional/global NEGs, operations; servicenetworking; subnetworks realised as container networks; VPC peering (recorded) |
 | Cloud NAT | `services/compute`, `services/nat` | Router NAT configs drive an egress gateway container; drop/reject, logging, offline sink |
 | Cloud SQL | `services/sql` | sqladmin v1beta4/v1 over real PostgreSQL 14–17 containers; connector (3307), IAM DB auth, authorized networks, private IP, backups, import/export |
-| GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, real-hostname Google APIs in pods |
+| GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
@@ -50,6 +50,9 @@ opens it. It calls only the public APIs and the admin API, as the default princi
 works offline. `--console=false` turns it off; under `CI=true` it is off unless `--console`
 is passed, and it is not served when `--bind` is beyond loopback. `make build` builds it when
 `pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
+It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gateway
+(`/connectgateway/v1/projects/P/locations/L/gkeMemberships/CLUSTER/...`, see
+`docs/adr/0002-kubernetes-api-through-connect-gateway.md`), which `kubectl` can use too.
 
 ### Endpoints
 

@@ -11,14 +11,18 @@ const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, '../../b
 const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // --console: CI=true turns the console off by default (FR-CI-003).
 // Compute Operations take 2 s, long enough to watch them
-// run (FR-UI-012); compute needs no container runtime either.
+// run (FR-UI-012); compute needs no container runtime either. GKE runs
+// on Linux only; its clusters need a container runtime, so the GKE view
+// tests that create them skip without one (gke.spec.ts). Each browser
+// runs a cluster of up to 2 nodes, beyond the default limit of 5.
+const services = ['gcs', 'pubsub', 'compute', ...(process.platform === 'linux' ? ['gke'] : [])]
 const child = spawn(
   bin,
   [
     'start',
     '--ephemeral',
     '--services',
-    'gcs,pubsub,compute',
+    services.join(','),
     '--lro-latency',
     'compute=2s',
     '--port',
@@ -29,7 +33,10 @@ const child = spawn(
     '--data-dir',
     dir,
   ],
-  { stdio: ['ignore', 'inherit', 'inherit'] },
+  {
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: { ...process.env, GCPEMU_GKE_MAX_NODES: process.env.GCPEMU_GKE_MAX_NODES ?? '12' },
+  },
 )
 
 let exiting = false
