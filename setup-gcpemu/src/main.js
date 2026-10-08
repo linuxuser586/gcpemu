@@ -111,6 +111,10 @@ async function resolveTag(version) {
 // restoreImages loads the images saved by an earlier successful job.
 async function restoreImages({ os, arch, digest, services, temp }) {
   const { key, prefix } = imagesKey({ os, arch, digest, services })
+  // Images already on the runner (e.g. another instance's) are not this
+  // instance's to cache; images restored below are.
+  const before = await exec.getExecOutput('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}'], { silent: true, ignoreReturnCode: true })
+  core.saveState('imagesBefore', JSON.stringify(before.stdout.split('\n').map((s) => s.trim()).filter(Boolean)))
   const dir = path.join(temp, 'gcpemu-images')
   core.saveState('imagesKey', key)
   core.saveState('imagesDir', dir)

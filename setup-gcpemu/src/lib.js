@@ -94,12 +94,15 @@ export function shouldUpload(mode, failed) {
 }
 
 // cacheableImages returns the images to cache: those of the instance's
-// containers plus local images from the registries gcpemu pulls from.
-export function cacheableImages(containerImages, localImages) {
+// containers plus local images from the registries gcpemu pulls from that
+// were not on the runner before the action ran (before), so a second
+// instance does not cache the first one's images.
+export function cacheableImages(containerImages, localImages, before = []) {
   const prefixes = ['rancher/', 'docker.io/rancher/', 'postgres:', 'docker.io/library/postgres:']
+  const had = new Set(before)
   const set = new Set(containerImages.filter(Boolean))
   for (const ref of localImages) {
-    if (!ref.includes('<none>') && prefixes.some((p) => ref.startsWith(p))) set.add(ref)
+    if (!ref.includes('<none>') && !had.has(ref) && prefixes.some((p) => ref.startsWith(p))) set.add(ref)
   }
   return [...set].sort()
 }

@@ -107,6 +107,7 @@ async function saveImages(containers) {
   const images = cacheableImages(
     containers.map((c) => c.image),
     local.stdout.split('\n').map((s) => s.trim()).filter(Boolean),
+    JSON.parse(core.getState('imagesBefore') || '[]'),
   )
   if (images.length === 0) return
   const dir = core.getState('imagesDir')
