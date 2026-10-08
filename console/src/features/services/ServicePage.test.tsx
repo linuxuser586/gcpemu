@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it } from 'vitest'
 
@@ -29,7 +29,10 @@ it('lists only enabled Services in the sidebar, carrying the view state', async 
   await user.click(within(nav).getByRole('link', { name: 'Cloud Storage' }))
   expect(router.state.location.pathname).toBe('/gcs')
   expect(router.state.location.search).toBe('?project=alpha-project&location=us-east1&q=logs')
-  expect(await screen.findByRole('heading', { name: 'Cloud Storage' })).toBeInTheDocument()
+  // The page re-renders as its queries settle; look the heading up afresh.
+  await waitFor(() =>
+    expect(screen.getByRole('heading', { name: 'Cloud Storage' })).toBeInTheDocument(),
+  )
 })
 
 it('says when no Service has that ID', async () => {

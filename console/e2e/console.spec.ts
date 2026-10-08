@@ -150,16 +150,13 @@ test('FR-UI-006: a bucket created through the public API shows up within 1 s', a
   const id = projectId('e2e-live', browserName)
   const name = `${id}-bucket`
   const stream = page.waitForResponse((r) => new URL(r.url()).pathname === '/_emu/v1/events')
-  await page.goto('/console/gcs')
+  await page.goto(`/console/gcs?project=${id}`)
   expect((await stream).headers()['content-type']).toBe('text/event-stream')
-  const buckets = page
-    .getByText('Buckets', { exact: true })
-    .locator('xpath=following-sibling::dd[1]')
-  const before = Number(await buckets.textContent())
+  await expect(page.getByText('No buckets in this Project yet.')).toBeVisible()
 
-  // The stream reports the new bucket. (Counts do not poll: see
-  // Dashboard.test.tsx.) The server subscribes a stream before it
-  // answers, so once this one is open it cannot miss the event.
+  // The stream reports the new bucket; the bucket list does not poll.
+  // The server subscribes a stream before it answers, so once this one
+  // is open it cannot miss the event.
   type Win = { bucketEvent: Promise<unknown> }
   await page.evaluate(async (key) => {
     const es = new EventSource('/_emu/v1/events')
@@ -176,10 +173,7 @@ test('FR-UI-006: a bucket created through the public API shows up within 1 s', a
   }, name)
   const created = await request.post(`/storage/v1/b?project=${id}`, { data: { name } })
   expect(created.ok()).toBe(true)
-  // Other tests create buckets in parallel.
-  await expect
-    .poll(async () => Number(await buckets.textContent()), { timeout: 1000 })
-    .toBeGreaterThan(before)
+  await expect(page.getByRole('link', { name, exact: true })).toBeVisible({ timeout: 1000 })
   expect(await page.evaluate(() => (window as unknown as Win).bucketEvent)).toEqual({
     service: 'gcs',
     namespace: 'gcs/buckets',
