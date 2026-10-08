@@ -362,7 +362,9 @@ func TestAddressesRoutersAndNAT(t *testing.T) {
 }
 
 func TestOperationsLatency(t *testing.T) {
-	_, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = "300ms" })
+	const latency = 300 * time.Millisecond
+	_, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = latency.String() })
+	start := time.Now()
 	op, err := c.Networks.Insert(proj, &computev1.Network{Name: "slow", AutoCreateSubnetworks: true}).Do()
 	if err != nil {
 		t.Fatal(err)
@@ -370,7 +372,11 @@ func TestOperationsLatency(t *testing.T) {
 	if op.Status != "RUNNING" {
 		t.Fatalf("status %s", op.Status)
 	}
-	if _, err := c.Networks.Get(proj, "slow").Do(); code(err) != http.StatusNotFound {
+	// The operation's timer starts after start, so before start+latency the
+	// network cannot exist yet; a slower round trip (-race on a loaded
+	// host) proves nothing either way.
+	_, err = c.Networks.Get(proj, "slow").Do()
+	if time.Since(start) < latency && code(err) != http.StatusNotFound {
 		t.Fatalf("network must not exist before the operation completes: %v", err)
 	}
 	got, err := c.GlobalOperations.Get(proj, op.Name).Do()

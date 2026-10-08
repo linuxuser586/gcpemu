@@ -38,6 +38,10 @@ type Service struct {
 	opWake chan struct{}
 	timers map[string]*time.Timer
 	closed bool
+	// lastOp is closed once the most recently accepted operation's work has
+	// run, so that operations complete in the order they were accepted.
+	lastOp  chan struct{}
+	stopped chan struct{} // closed by Stop
 
 	// vpcMu serialises realisation of container networks and IP allocation.
 	vpcMu sync.Mutex
@@ -57,13 +61,16 @@ var _ emu.VPC = (*Service)(nil)
 // New returns the service.
 func New(env *emu.Env) emu.Service {
 	s := &Service{
-		env:    env,
-		mux:    http.NewServeMux(),
-		sn:     http.NewServeMux(),
-		opWake: make(chan struct{}),
-		timers: map[string]*time.Timer{},
-		egress: map[string]*gateway{},
+		env:     env,
+		mux:     http.NewServeMux(),
+		sn:      http.NewServeMux(),
+		opWake:  make(chan struct{}),
+		timers:  map[string]*time.Timer{},
+		lastOp:  make(chan struct{}),
+		stopped: make(chan struct{}),
+		egress:  map[string]*gateway{},
 	}
+	close(s.lastOp)
 	s.lro = lro.NewManager(env, "compute")
 	s.sink = &sinkServer{token: randomToken()}
 	s.routes()
@@ -97,6 +104,9 @@ func (s *Service) Start(ctx context.Context) error {
 // Stop cancels pending operations and stops the NAT sink.
 func (s *Service) Stop(ctx context.Context) error {
 	s.opMu.Lock()
+	if !s.closed {
+		close(s.stopped)
+	}
 	s.closed = true
 	for k, t := range s.timers {
 		t.Stop()

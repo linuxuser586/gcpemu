@@ -86,7 +86,17 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 	bg := context.WithoutCancel(ctx)
 	s.opMu.Lock()
 	if !s.closed {
+		// Every operation has the same latency, so running each one's work
+		// after the previous one's keeps completion in acceptance order:
+		// separate timer goroutines that fire together would otherwise race.
+		prev, done := s.lastOp, make(chan struct{})
+		s.lastOp = done
 		s.timers[path] = time.AfterFunc(d, func() {
+			defer close(done)
+			select {
+			case <-prev:
+			case <-s.stopped:
+			}
 			s.opMu.Lock()
 			_, live := s.timers[path]
 			delete(s.timers, path)
