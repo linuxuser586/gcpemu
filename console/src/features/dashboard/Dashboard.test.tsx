@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, it, vi } from 'vitest'
 
+import { POLL_MS } from '@/api/queries'
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
@@ -85,4 +86,24 @@ it('humanizes resource types', () => {
   expect(humanize('hmacKeys')).toBe('HMAC keys')
   expect(humanize('sslCertificates')).toBe('SSL certificates')
   expect(humanize('targetHttpsProxies')).toBe('Target HTTPS proxies')
+})
+
+it('does not poll resource counts: the event stream keeps them fresh (FR-UI-006)', async () => {
+  let fetched = 0
+  server.use(
+    http.get('*/_emu/v1/resources/counts', () => {
+      fetched++
+      return HttpResponse.json(fake.counts)
+    }),
+  )
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    renderApp('/')
+    await screen.findByRole('region', { name: 'Cloud Storage' })
+    expect(fetched).toBe(1)
+    await vi.advanceTimersByTimeAsync(10 * POLL_MS)
+    expect(fetched).toBe(1)
+  } finally {
+    vi.useRealTimers()
+  }
 })

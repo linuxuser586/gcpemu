@@ -157,6 +157,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent stream of resource changes, Operation progress and Request log entries (FR-UI-006).
+         * @description A `text/event-stream` that stays open. Each event has an `id`, an
+         *     `event` type and one line of JSON `data`:
+         *
+         *     - `resource`: a ResourceChange, sent when a control-plane store key
+         *       is written or deleted.
+         *     - `operation`: an OperationChange, sent when an Operation of any
+         *       Service (including Cloud DNS changes) is created, progresses,
+         *       completes or is deleted.
+         *     - `request`: a RequestEntry, sent for every Request log entry.
+         *     - `reset`: `{}`; all state was replaced (`gcpemu reset`). Refetch
+         *       everything.
+         *     - `gap`: `{}`; only sent first on a resumed stream whose missed
+         *       events are no longer retained or whose ID belongs to another
+         *       process. Refetch everything.
+         *
+         *     Events are numbered per process. To resume, reconnect with the last
+         *     `id` in `Last-Event-ID` (EventSource does this itself): missed
+         *     events are replayed, or `gap` is sent. Idle streams carry a comment
+         *     every 15 s. The server ends a stream whose client falls too far
+         *     behind, and at shutdown; the `retry` field asks clients to
+         *     reconnect after 1 s.
+         */
+        get: operations["events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/requests": {
         parameters: {
             query?: never;
@@ -406,6 +446,27 @@ export interface components {
                     reason?: string;
                 };
             };
+        };
+        /** @description Data of a `resource` event. */
+        ResourceChange: {
+            /** @description The namespace's first segment: a Service ID, or "core" for state the emulator owns (Projects in "core/projects"). */
+            service: string;
+            /** @description Store namespace */
+            namespace: string;
+            /** @description Store key within the namespace. */
+            key: string;
+            deleted?: boolean;
+        };
+        /** @description Data of an `operation` event. */
+        OperationChange: {
+            /** @description Service ID that owns the Operation. */
+            service: string;
+            /** @description Store namespace */
+            namespace: string;
+            /** @description The Operation's name for google.longrunning Operations, otherwise its store key (e.g. "P/OP" for Cloud SQL). */
+            name: string;
+            done: boolean;
+            deleted?: boolean;
         };
         RequestEntry: {
             /** Format: date-time */
@@ -681,6 +742,43 @@ export interface operations {
         responses: {
             200: components["responses"]["Status"];
             400: components["responses"]["Error"];
+        };
+    };
+    events: {
+        parameters: {
+            query?: {
+                /** @description As Last-Event-ID, for clients that cannot set headers. */
+                lastEventId?: string;
+            };
+            header?: {
+                /** @description ID of the last event received, to resume after it. */
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example retry: 1000
+                     *
+                     *     id: lx2k9q1c-7
+                     *     event: resource
+                     *     data: {"service":"gcs","namespace":"gcs/buckets","key":"my-bucket"}
+                     *
+                     *     id: lx2k9q1c-8
+                     *     event: request
+                     *     data: {"time":"2026-10-08T12:00:00Z","service":"gcs","protocol":"http","method":"POST /storage/v1/b","status":200,"latencyMs":1.2}
+                     */
+                    "text/event-stream": string;
+                };
+            };
         };
     };
     requests: {
