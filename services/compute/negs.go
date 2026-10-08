@@ -15,8 +15,11 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
-// Zonal network endpoint groups (FR-GKE-008). GKE's NEG sync uses the
-// emu.VPC methods below; users and the load balancer use the REST API.
+// Network endpoint groups: zonal (FR-GKE-008), regional (serverless,
+// Private Service Connect, internet and port-mapping NEGs) and global
+// (internet NEGs). GKE's NEG sync uses the emu.VPC methods below; users and
+// the load balancer use the REST API. Only zonal and internet IP endpoints
+// carry traffic; the other kinds are recorded.
 
 const (
 	nsNEGs        = "compute/networkEndpointGroups"
@@ -27,13 +30,43 @@ func negPath(project, zone, name string) string {
 	return "projects/" + project + "/zones/" + zone + "/networkEndpointGroups/" + name
 }
 
-func (s *Service) insertNEG(w http.ResponseWriter, r *http.Request) {
-	p, zone := r.PathValue("project"), r.PathValue("zone")
+// negLoc validates the project and location of a NEG request and returns
+// the location segment ("zones/Z", "regions/R" or "global").
+func (s *Service) negLoc(r *http.Request) (project, loc string, err error) {
+	p := r.PathValue("project")
 	if err := s.env.EnsureProject(p); err != nil {
-		apierr.Write(w, err)
-		return
+		return p, "", err
 	}
-	if err := checkZone(p, zone); err != nil {
+	switch zone, region := r.PathValue("zone"), r.PathValue("region"); {
+	case zone != "":
+		return p, "zones/" + zone, checkZone(p, zone)
+	case region != "":
+		return p, "regions/" + region, checkRegion(p, region)
+	}
+	return p, "global", nil
+}
+
+// negPerm names the IAM permission of verb on NEGs at loc: regional NEGs
+// have their own resource type.
+func negPerm(loc, verb string) string {
+	if strings.HasPrefix(loc, "regions/") {
+		return "compute.regionNetworkEndpointGroups." + verb
+	}
+	return "compute.networkEndpointGroups." + verb
+}
+
+// negLocOf returns the location segment of a NEG path.
+func negLocOf(path string) string {
+	segs := strings.Split(path, "/")
+	if len(segs) == 5 {
+		return "global"
+	}
+	return segs[2] + "/" + segs[3]
+}
+
+func (s *Service) insertNEG(w http.ResponseWriter, r *http.Request) {
+	p, loc, err := s.negLoc(r)
+	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
@@ -46,8 +79,8 @@ func (s *Service) insertNEG(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	path := negPath(p, zone, g.Name)
-	if err := s.check(r.Context(), "compute.networkEndpointGroups.create", path); err != nil {
+	path := "projects/" + p + "/" + loc + "/networkEndpointGroups/" + g.Name
+	if err := s.check(r.Context(), negPerm(loc, "create"), path); err != nil {
 		apierr.Write(w, err)
 		return
 	}
@@ -56,7 +89,7 @@ func (s *Service) insertNEG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.Id = s.env.IDs.Uint64()
-	op, err := s.startOp(r.Context(), opSpec{project: p, scope: "zones/" + zone, opType: "insert", target: path, targetID: g.Id},
+	op, err := s.startOp(r.Context(), opSpec{project: p, scope: loc, opType: "insert", target: path, targetID: g.Id},
 		func(ctx context.Context) error { return s.createNEG(path, &g) })
 	reply(w, op, err)
 }
@@ -66,15 +99,55 @@ func (s *Service) prepareNEG(tx store.Tx, path string, g *computev1.NetworkEndpo
 	if store.Exists(tx, nsNEGs, path) {
 		return errExists(path)
 	}
-	p, zone, _ := pathParts(path)
-	region, _ := locations.ZoneRegion(zone)
+	p, l, _ := pathParts(path)
+	loc := negLocOf(path)
 	if g.NetworkEndpointType == "" {
 		g.NetworkEndpointType = "GCE_VM_IP_PORT"
 	}
-	switch g.NetworkEndpointType {
-	case "GCE_VM_IP_PORT", "GCE_VM_IP", "NON_GCP_PRIVATE_IP_PORT":
+	region := l
+	switch {
+	case strings.HasPrefix(loc, "zones/"):
+		region, _ = locations.ZoneRegion(l)
+		switch g.NetworkEndpointType {
+		case "GCE_VM_IP_PORT", "GCE_VM_IP", "NON_GCP_PRIVATE_IP_PORT":
+		default:
+			return errInvalidField("resource.networkEndpointType", g.NetworkEndpointType, "Zonal network endpoint groups support GCE_VM_IP_PORT, GCE_VM_IP and NON_GCP_PRIVATE_IP_PORT.")
+		}
+	case loc == "global":
+		switch g.NetworkEndpointType {
+		case "INTERNET_FQDN_PORT", "INTERNET_IP_PORT":
+		default:
+			return errInvalidField("resource.networkEndpointType", g.NetworkEndpointType, "Global network endpoint groups support INTERNET_FQDN_PORT and INTERNET_IP_PORT.")
+		}
+		if g.Network != "" || g.Subnetwork != "" {
+			return errInvalidField("resource.network", g.Network, "Global network endpoint groups cannot specify a network.")
+		}
+		return s.checkNEGDefaultPort(g)
 	default:
-		return errInvalidField("resource.networkEndpointType", g.NetworkEndpointType, "Zonal network endpoint groups support GCE_VM_IP_PORT, GCE_VM_IP and NON_GCP_PRIVATE_IP_PORT.")
+		switch g.NetworkEndpointType {
+		case "SERVERLESS":
+			if err := checkServerlessNEG(g); err != nil {
+				return err
+			}
+			if g.Network != "" || g.Subnetwork != "" {
+				return errInvalidField("resource.network", g.Network, "Serverless network endpoint groups cannot specify a network.")
+			}
+			return nil
+		case "PRIVATE_SERVICE_CONNECT":
+			if g.PscTargetService == "" {
+				return errRequired("resource.pscTargetService")
+			}
+			if g.Network == "" && g.Subnetwork == "" {
+				return nil
+			}
+		case "INTERNET_FQDN_PORT", "INTERNET_IP_PORT":
+			if g.Network == "" {
+				return errRequired("resource.network")
+			}
+		case "GCE_VM_IP_PORTMAP":
+		default:
+			return errInvalidField("resource.networkEndpointType", g.NetworkEndpointType, "Regional network endpoint groups support SERVERLESS, PRIVATE_SERVICE_CONNECT, INTERNET_FQDN_PORT, INTERNET_IP_PORT and GCE_VM_IP_PORTMAP.")
+		}
 	}
 	if g.Subnetwork != "" {
 		sp, err := regionalRef(p, region, "subnetworks", g.Subnetwork)
@@ -98,14 +171,45 @@ func (s *Service) prepareNEG(tx store.Tx, path string, g *computev1.NetworkEndpo
 		return errInvalidField("resource.network", g.Network, "The referenced network resource cannot be found.")
 	}
 	g.Network = link(np)
+	return s.checkNEGDefaultPort(g)
+}
+
+func (s *Service) checkNEGDefaultPort(g *computev1.NetworkEndpointGroup) error {
 	if g.DefaultPort < 0 || g.DefaultPort > 65535 {
 		return errInvalidField("resource.defaultPort", g.DefaultPort, "Must be between 1 and 65535.")
 	}
 	return nil
 }
 
+// checkServerlessNEG requires exactly one serverless target.
+func checkServerlessNEG(g *computev1.NetworkEndpointGroup) error {
+	n := 0
+	for _, set := range []bool{g.CloudRun != nil, g.AppEngine != nil, g.CloudFunction != nil} {
+		if set {
+			n++
+		}
+	}
+	if n != 1 {
+		return errInvalidField("resource", g.Name, "Exactly one of cloudRun, appEngine and cloudFunction must be specified for a SERVERLESS network endpoint group.")
+	}
+	if g.DefaultPort != 0 {
+		return errInvalidField("resource.defaultPort", g.DefaultPort, "Serverless network endpoint groups cannot specify a default port.")
+	}
+	return nil
+}
+
+// endpointless reports NEG types whose endpoints the user cannot manage.
+func endpointless(g *computev1.NetworkEndpointGroup) bool {
+	return g.NetworkEndpointType == "SERVERLESS" || g.NetworkEndpointType == "PRIVATE_SERVICE_CONNECT"
+}
+
+func internetNEG(g *computev1.NetworkEndpointGroup) bool {
+	return g.NetworkEndpointType == "INTERNET_FQDN_PORT" || g.NetworkEndpointType == "INTERNET_IP_PORT"
+}
+
 func (s *Service) createNEG(path string, g *computev1.NetworkEndpointGroup) error {
-	p, zone, _ := pathParts(path)
+	p, _, _ := pathParts(path)
+	loc := negLocOf(path)
 	return s.env.Store.Update(func(tx store.Tx) error {
 		if err := s.prepareNEG(tx, path, g); err != nil {
 			return err
@@ -116,23 +220,27 @@ func (s *Service) createNEG(path string, g *computev1.NetworkEndpointGroup) erro
 		g.Kind = "compute#networkEndpointGroup"
 		g.CreationTimestamp = stamp(s.env.Clock.Now())
 		g.SelfLink = link(path)
-		g.Zone = link("projects/" + p + "/zones/" + zone)
+		g.Zone, g.Region = "", ""
+		switch {
+		case strings.HasPrefix(loc, "zones/"):
+			g.Zone = link("projects/" + p + "/" + loc)
+		case strings.HasPrefix(loc, "regions/"):
+			g.Region = link("projects/" + p + "/" + loc)
+		}
 		g.Size = 0
 		g.ForceSendFields = []string{"Size"}
 		return store.PutJSON(tx, nsNEGs, path, g)
 	})
 }
 
-func (s *Service) loadNEG(r *http.Request, perm string) (string, *computev1.NetworkEndpointGroup, error) {
-	p, zone := r.PathValue("project"), r.PathValue("zone")
-	if err := s.env.EnsureProject(p); err != nil {
+// loadNEG authorizes verb on the NEG a request names and loads it.
+func (s *Service) loadNEG(r *http.Request, verb string) (string, *computev1.NetworkEndpointGroup, error) {
+	p, loc, err := s.negLoc(r)
+	if err != nil {
 		return "", nil, err
 	}
-	if err := checkZone(p, zone); err != nil {
-		return "", nil, err
-	}
-	path := negPath(p, zone, r.PathValue("neg"))
-	if err := s.check(r.Context(), perm, path); err != nil {
+	path := "projects/" + p + "/" + loc + "/networkEndpointGroups/" + r.PathValue("neg")
+	if err := s.check(r.Context(), negPerm(loc, verb), path); err != nil {
 		return "", nil, err
 	}
 	var g *computev1.NetworkEndpointGroup
@@ -146,25 +254,21 @@ func (s *Service) loadNEG(r *http.Request, perm string) (string, *computev1.Netw
 }
 
 func (s *Service) getNEG(w http.ResponseWriter, r *http.Request) {
-	_, g, err := s.loadNEG(r, "compute.networkEndpointGroups.get")
+	_, g, err := s.loadNEG(r, "get")
 	reply(w, g, err)
 }
 
 func (s *Service) listNEGs(w http.ResponseWriter, r *http.Request) {
-	p, zone := r.PathValue("project"), r.PathValue("zone")
-	if err := s.env.EnsureProject(p); err != nil {
+	p, loc, err := s.negLoc(r)
+	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	if err := checkZone(p, zone); err != nil {
+	if err := s.check(r.Context(), negPerm(loc, "list"), "projects/"+p); err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	if err := s.check(r.Context(), "compute.networkEndpointGroups.list", "projects/"+p); err != nil {
-		apierr.Write(w, err)
-		return
-	}
-	coll := "projects/" + p + "/zones/" + zone + "/networkEndpointGroups"
+	coll := "projects/" + p + "/" + loc + "/networkEndpointGroups"
 	var items []listItem
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		for _, g := range list[computev1.NetworkEndpointGroup](tx, nsNEGs, coll+"/") {
@@ -187,7 +291,7 @@ func (s *Service) aggregatedNEGs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteNEG(w http.ResponseWriter, r *http.Request) {
-	path, g, err := s.loadNEG(r, "compute.networkEndpointGroups.delete")
+	path, g, err := s.loadNEG(r, "delete")
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -196,8 +300,8 @@ func (s *Service) deleteNEG(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errInUse("networkEndpointGroup", path, u))
 		return
 	}
-	p, zone, _ := pathParts(path)
-	op, err := s.startOp(r.Context(), opSpec{project: p, scope: "zones/" + zone, opType: "delete", target: path, targetID: g.Id},
+	p, _, _ := pathParts(path)
+	op, err := s.startOp(r.Context(), opSpec{project: p, scope: negLocOf(path), opType: "delete", target: path, targetID: g.Id},
 		func(ctx context.Context) error {
 			if u := s.externalUser(ctx, path); u != "" {
 				return errInUse("networkEndpointGroup", path, u)
@@ -217,13 +321,47 @@ func (s *Service) deleteNEG(w http.ResponseWriter, r *http.Request) {
 
 // endpointKey identifies an endpoint for attach/detach de-duplication.
 func endpointKey(e *computev1.NetworkEndpoint) string {
-	return fmt.Sprintf("%s|%s|%d", lastSeg(e.Instance), e.IpAddress, e.Port)
+	return fmt.Sprintf("%s|%s|%s|%d", lastSeg(e.Instance), e.IpAddress, e.Fqdn, e.Port)
 }
 
 // normalizeEndpoints validates endpoints against the NEG.
 func normalizeEndpoints(g *computev1.NetworkEndpointGroup, eps []*computev1.NetworkEndpoint) error {
+	if endpointless(g) {
+		return errInvalidField("networkEndpoints", len(eps), "Network endpoints cannot be attached to a "+g.NetworkEndpointType+" network endpoint group.")
+	}
 	for i, e := range eps {
 		f := fmt.Sprintf("networkEndpoints[%d]", i)
+		switch g.NetworkEndpointType {
+		case "INTERNET_FQDN_PORT":
+			if e.Fqdn == "" {
+				return errRequired(f + ".fqdn")
+			}
+			if e.IpAddress != "" || e.Instance != "" {
+				return errInvalidField(f+".ipAddress", e.IpAddress, "INTERNET_FQDN_PORT endpoints have only fqdn and port.")
+			}
+		case "INTERNET_IP_PORT":
+			if e.Fqdn != "" || e.Instance != "" {
+				return errInvalidField(f+".fqdn", e.Fqdn, "INTERNET_IP_PORT endpoints have only ipAddress and port.")
+			}
+		default:
+			if e.Fqdn != "" {
+				return errInvalidField(f+".fqdn", e.Fqdn, "Only INTERNET_FQDN_PORT endpoints have an fqdn.")
+			}
+		}
+		if internetNEG(g) {
+			if e.IpAddress != "" {
+				if _, ok := parseIP(e.IpAddress); !ok {
+					return errInvalidField(f+".ipAddress", e.IpAddress, "Must be a valid IPv4 address.")
+				}
+			}
+			if e.Port == 0 {
+				e.Port = g.DefaultPort
+			}
+			if e.Port < 0 || e.Port > 65535 {
+				return errInvalidField(f+".port", e.Port, "Must be between 1 and 65535.")
+			}
+			continue
+		}
 		if e.IpAddress == "" && e.Instance == "" {
 			return errRequired(f + ".ipAddress")
 		}
@@ -282,6 +420,9 @@ func (s *Service) changeEndpoints(tx store.Tx, path string, eps []*computev1.Net
 			kept = append(kept, e)
 		}
 	}
+	if internetNEG(g) && len(kept) > 1 {
+		return errInvalidField("networkEndpoints", len(kept), "Internet network endpoint groups can have at most one endpoint.")
+	}
 	g.Size = int64(len(kept))
 	g.ForceSendFields = []string{"Size"}
 	if err := store.PutJSON(tx, nsNEGEndpoint, path, kept); err != nil {
@@ -300,7 +441,7 @@ func (s *Service) attachDetach(w http.ResponseWriter, r *http.Request, add bool)
 	if !add {
 		verb, opType = "detachNetworkEndpoints", "detachNetworkEndpoints"
 	}
-	path, g, err := s.loadNEG(r, "compute.networkEndpointGroups."+verb)
+	path, g, err := s.loadNEG(r, verb)
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -316,8 +457,8 @@ func (s *Service) attachDetach(w http.ResponseWriter, r *http.Request, add bool)
 		apierr.Write(w, err)
 		return
 	}
-	p, zone, _ := pathParts(path)
-	op, err := s.startOp(r.Context(), opSpec{project: p, scope: "zones/" + zone, opType: opType, target: path, targetID: g.Id},
+	p, _, _ := pathParts(path)
+	op, err := s.startOp(r.Context(), opSpec{project: p, scope: negLocOf(path), opType: opType, target: path, targetID: g.Id},
 		func(ctx context.Context) error {
 			return s.env.Store.Update(func(tx store.Tx) error { return s.changeEndpoints(tx, path, req.NetworkEndpoints, add, false) })
 		})
@@ -325,7 +466,7 @@ func (s *Service) attachDetach(w http.ResponseWriter, r *http.Request, add bool)
 }
 
 func (s *Service) listNetworkEndpoints(w http.ResponseWriter, r *http.Request) {
-	path, _, err := s.loadNEG(r, "compute.networkEndpointGroups.get")
+	path, _, err := s.loadNEG(r, "get")
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -434,6 +575,9 @@ func (s *Service) NEGEndpoints(ctx context.Context, neg string) ([]emu.NEGEndpoi
 	}
 	out := make([]emu.NEGEndpoint, 0, len(eps))
 	for _, e := range eps {
+		if e.IpAddress == "" {
+			continue // FQDN endpoints are recorded, not dialled
+		}
 		out = append(out, emu.NEGEndpoint{IP: e.IpAddress, Port: int(e.Port), Instance: e.Instance})
 	}
 	return out, nil

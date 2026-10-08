@@ -18,6 +18,12 @@ func init() {
 	kindHealthCheck.prepare = prepareHealthCheck
 	kindSSLCertificate.prepare = prepareSSLCertificate
 	kindSSLPolicy.prepare = prepareSSLPolicy
+	kindSecurityPolicy.prepare = prepareSecurityPolicy
+	kindHTTPHealthCheck.prepare = prepareLegacyHealthCheck
+	kindHTTPSHealthCheck.prepare = prepareLegacyHealthCheck
+	kindTargetSSLProxy.prepare = prepareSSLProxy
+	kindTargetTCPProxy.prepare = prepareTCPProxy
+	kindTargetGRPCProxy.prepare = prepareGRPCProxy
 	kindForwardingRule.afterSave = func(ctx context.Context, s *Service, path string, obj, old any) { s.syncAddressUsers(ctx, obj, old) }
 	kindForwardingRule.afterDelete = func(ctx context.Context, s *Service, path string, obj any) { s.syncAddressUsers(ctx, nil, obj) }
 }
@@ -26,8 +32,10 @@ func init() {
 // first), which is also the seed order.
 func allKinds() []*kind {
 	return []*kind{
-		kindHealthCheck, kindSSLCertificate, kindSSLPolicy, kindBackendService, kindBackendBucket,
-		kindURLMap, kindTargetHTTPProxy, kindTargetHTTPSProxy, kindForwardingRule,
+		kindHealthCheck, kindHTTPHealthCheck, kindHTTPSHealthCheck, kindSSLCertificate, kindSSLPolicy,
+		kindSecurityPolicy, kindBackendService, kindBackendBucket, kindURLMap,
+		kindTargetHTTPProxy, kindTargetHTTPSProxy, kindTargetSSLProxy, kindTargetTCPProxy, kindTargetGRPCProxy,
+		kindForwardingRule,
 	}
 }
 
@@ -46,6 +54,12 @@ func (s *Service) customMethods(k *kind) map[string]http.HandlerFunc {
 		return s.backendServiceMethods()
 	case kindBackendBucket:
 		return s.backendBucketMethods()
+	case kindSecurityPolicy:
+		return s.securityPolicyMethods()
+	case kindTargetSSLProxy:
+		return s.sslProxyMethods()
+	case kindTargetTCPProxy:
+		return s.tcpProxyMethods()
 	}
 	return nil
 }
@@ -54,6 +68,8 @@ func (s *Service) customMethods(k *kind) map[string]http.HandlerFunc {
 func (s *Service) extraRoutes(h func(string, http.HandlerFunc), p string) {
 	h("GET "+p+"/global/sslPolicies/listAvailableFeatures", s.listAvailableFeatures)
 	h("GET "+p+"/regions/{region}/sslPolicies/listAvailableFeatures", s.listAvailableFeatures)
+	h("GET "+p+"/global/securityPolicies/{name}/getRule", s.getRule)
+	h("GET "+p+"/regions/{region}/securityPolicies/{name}/getRule", s.getRule)
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }

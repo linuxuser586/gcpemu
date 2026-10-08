@@ -362,9 +362,9 @@ func (s *Service) psaInUse(tx store.Tx, np string) string {
 	return ""
 }
 
-// removePeering implements compute networks.removePeering for the
-// servicenetworking peering (older OpenTofu providers delete the
-// connection this way).
+// removePeering implements compute networks.removePeering for user
+// peerings (peering.go) and the servicenetworking peering (older OpenTofu
+// providers delete the connection this way).
 func (s *Service) removePeering(w http.ResponseWriter, r *http.Request) {
 	path, cur, err := s.loadNetwork(r, "compute.networks.removePeering")
 	if err != nil {
@@ -377,7 +377,9 @@ func (s *Service) removePeering(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name != psaPeeringName {
-		apierr.Write(w, errNotFound(path+"/peerings/"+req.Name))
+		if !s.removeUserPeering(w, r, path, cur, req.Name) {
+			apierr.Write(w, errNotFound(path+"/peerings/"+req.Name))
+		}
 		return
 	}
 	if err := s.checkDeleteConnection(path); err != nil {

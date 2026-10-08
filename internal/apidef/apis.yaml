@@ -38,6 +38,9 @@ discovery:
       Firewall.name: [compute.firewalls.patch]
       # Documented as defaulting to 1000 when omitted.
       Route.priority: [compute.routes.insert]
+      # The deprecated top-level form; OpenTofu names the peering in
+      # networkPeering.name instead.
+      NetworksAddPeeringRequest.name: [compute.networks.addPeering]
   - {api: dns, version: v1}
   - {api: iam, version: v1}
   - {api: sqladmin, version: v1beta4}

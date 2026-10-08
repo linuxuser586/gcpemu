@@ -29,6 +29,8 @@ func (s *Service) routes() {
 	h("PATCH "+n+"/{network}", s.patchNetwork)
 	h("DELETE "+n+"/{network}", s.deleteNetwork)
 	h("POST "+n+"/{network}/switchToCustomMode", s.switchToCustomMode)
+	h("POST "+n+"/{network}/addPeering", s.addPeering)
+	h("PATCH "+n+"/{network}/updatePeering", s.updatePeering)
 	h("POST "+n+"/{network}/removePeering", s.removePeering)
 
 	// Subnetworks.
@@ -78,15 +80,16 @@ func (s *Service) routes() {
 	h("GET "+ro+"/{router}/getNatMappingInfo", s.getNatMappingInfo)
 	h("GET "+p+"/aggregated/routers", s.aggregatedRouters)
 
-	// Zonal network endpoint groups.
-	ng := p + "/zones/{zone}/networkEndpointGroups"
-	h("POST "+ng, s.insertNEG)
-	h("GET "+ng, s.listNEGs)
-	h("GET "+ng+"/{neg}", s.getNEG)
-	h("DELETE "+ng+"/{neg}", s.deleteNEG)
-	h("POST "+ng+"/{neg}/attachNetworkEndpoints", s.attachEndpoints)
-	h("POST "+ng+"/{neg}/detachNetworkEndpoints", s.detachEndpoints)
-	h("POST "+ng+"/{neg}/listNetworkEndpoints", s.listNetworkEndpoints)
+	// Network endpoint groups (zonal, regional and global).
+	for _, ng := range []string{p + "/zones/{zone}/networkEndpointGroups", p + "/regions/{region}/networkEndpointGroups", p + "/global/networkEndpointGroups"} {
+		h("POST "+ng, s.insertNEG)
+		h("GET "+ng, s.listNEGs)
+		h("GET "+ng+"/{neg}", s.getNEG)
+		h("DELETE "+ng+"/{neg}", s.deleteNEG)
+		h("POST "+ng+"/{neg}/attachNetworkEndpoints", s.attachEndpoints)
+		h("POST "+ng+"/{neg}/detachNetworkEndpoints", s.detachEndpoints)
+		h("POST "+ng+"/{neg}/listNetworkEndpoints", s.listNetworkEndpoints)
+	}
 	h("GET "+p+"/aggregated/networkEndpointGroups", s.aggregatedNEGs)
 
 	h("POST "+natEventsPath, s.natEvents)

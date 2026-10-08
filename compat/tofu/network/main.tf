@@ -1,5 +1,6 @@
 # VPC networking: networks, subnets, firewalls, routes, addresses, Cloud
-# Router with NAT, zonal NEGs with endpoints and private services access.
+# Router with NAT, zonal and regional NEGs with endpoints, private services
+# access and VPC Network Peering.
 
 resource "google_compute_network" "vpc" {
   name                    = "tf-net-vpc"
@@ -204,4 +205,65 @@ resource "google_compute_network_endpoints" "es" {
     ip_address = "10.40.0.31"
     port       = 80
   }
+}
+
+# VPC Network Peering (recorded): ACTIVE once both sides peer.
+resource "google_compute_network" "peer" {
+  name                    = "tf-net-peer"
+  auto_create_subnetworks = false
+}
+
+resource "google_compute_subnetwork" "peer" {
+  name          = "tf-net-peer"
+  region        = var.region
+  network       = google_compute_network.peer.id
+  ip_cidr_range = "10.60.0.0/24"
+}
+
+resource "google_compute_network_peering" "to_peer" {
+  name                 = "tf-net-to-peer"
+  network              = google_compute_network.vpc.self_link
+  peer_network         = google_compute_network.peer.self_link
+  export_custom_routes = true
+  depends_on           = [google_compute_subnetwork.peer]
+}
+
+resource "google_compute_network_peering" "from_peer" {
+  name                 = "tf-net-from-peer"
+  network              = google_compute_network.peer.self_link
+  peer_network         = google_compute_network.vpc.self_link
+  import_custom_routes = true
+  depends_on           = [google_compute_network_peering.to_peer]
+}
+
+# Regional NEGs: serverless, internet (with an endpoint) and Private
+# Service Connect.
+resource "google_compute_region_network_endpoint_group" "run" {
+  name                  = "tf-net-run"
+  region                = var.region
+  network_endpoint_type = "SERVERLESS"
+  cloud_run {
+    service = "hello"
+  }
+}
+
+resource "google_compute_region_network_endpoint_group" "internet" {
+  name                  = "tf-net-inet"
+  region                = var.region
+  network               = google_compute_network.vpc.id
+  network_endpoint_type = "INTERNET_IP_PORT"
+}
+
+resource "google_compute_region_network_endpoint" "e" {
+  region_network_endpoint_group = google_compute_region_network_endpoint_group.internet.name
+  region                        = var.region
+  ip_address                    = "203.0.113.10"
+  port                          = 443
+}
+
+resource "google_compute_region_network_endpoint_group" "psc" {
+  name                  = "tf-net-psc"
+  region                = var.region
+  network_endpoint_type = "PRIVATE_SERVICE_CONNECT"
+  psc_target_service    = "${var.region}-cloudkms.googleapis.com"
 }

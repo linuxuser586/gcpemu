@@ -477,6 +477,165 @@ func TestNEGs(t *testing.T) {
 	waitDo(t, c)(c.Subnetworks.Delete(proj, "us-central1", "s").Do())
 }
 
+func TestRegionalAndGlobalNEGs(t *testing.T) {
+	_, c, _ := newClients(t)
+	customNet(t, c, "vpc")
+	const region = "us-central1"
+
+	// Regional: serverless (no endpoints), internet IP and PSC.
+	if _, err := c.RegionNetworkEndpointGroups.Insert(proj, region, &computev1.NetworkEndpointGroup{
+		Name: "run", NetworkEndpointType: "SERVERLESS",
+	}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("serverless NEG without a target: %v", err)
+	}
+	waitDo(t, c)(c.RegionNetworkEndpointGroups.Insert(proj, region, &computev1.NetworkEndpointGroup{
+		Name: "run", NetworkEndpointType: "SERVERLESS", CloudRun: &computev1.NetworkEndpointGroupCloudRun{Service: "hello"},
+	}).Do())
+	g, err := c.RegionNetworkEndpointGroups.Get(proj, region, "run").Do()
+	if err != nil || lastSeg(g.Region) != region || g.Zone != "" || g.Network != "" {
+		t.Fatalf("serverless NEG: %+v %v", g, err)
+	}
+	if _, err := c.RegionNetworkEndpointGroups.AttachNetworkEndpoints(proj, region, "run", &computev1.RegionNetworkEndpointGroupsAttachEndpointsRequest{
+		NetworkEndpoints: []*computev1.NetworkEndpoint{{IpAddress: "203.0.113.1", Port: 443}},
+	}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("endpoint on a serverless NEG: %v", err)
+	}
+	if _, err := c.RegionNetworkEndpointGroups.Insert(proj, region, &computev1.NetworkEndpointGroup{
+		Name: "inet", NetworkEndpointType: "INTERNET_IP_PORT",
+	}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("regional internet NEG without a network: %v", err)
+	}
+	waitDo(t, c)(c.RegionNetworkEndpointGroups.Insert(proj, region, &computev1.NetworkEndpointGroup{
+		Name: "inet", NetworkEndpointType: "INTERNET_IP_PORT", Network: "global/networks/vpc",
+	}).Do())
+	waitDo(t, c)(c.RegionNetworkEndpointGroups.AttachNetworkEndpoints(proj, region, "inet", &computev1.RegionNetworkEndpointGroupsAttachEndpointsRequest{
+		NetworkEndpoints: []*computev1.NetworkEndpoint{{IpAddress: "203.0.113.1", Port: 443}},
+	}).Do())
+	if g, _ := c.RegionNetworkEndpointGroups.Get(proj, region, "inet").Do(); g.Size != 1 {
+		t.Fatalf("regional internet NEG size: %d", g.Size)
+	}
+	if _, err := c.RegionNetworkEndpointGroups.AttachNetworkEndpoints(proj, region, "inet", &computev1.RegionNetworkEndpointGroupsAttachEndpointsRequest{
+		NetworkEndpoints: []*computev1.NetworkEndpoint{{IpAddress: "203.0.113.2", Port: 443}},
+	}).Do(); err != nil {
+		t.Fatal(err)
+	} else if op, _ := c.RegionNetworkEndpointGroups.Get(proj, region, "inet").Do(); op.Size != 1 {
+		t.Fatalf("internet NEG took a second endpoint: %d", op.Size)
+	}
+	waitDo(t, c)(c.RegionNetworkEndpointGroups.Insert(proj, region, &computev1.NetworkEndpointGroup{
+		Name: "psc", NetworkEndpointType: "PRIVATE_SERVICE_CONNECT", PscTargetService: region + "-cloudkms.googleapis.com",
+	}).Do())
+	l, err := c.RegionNetworkEndpointGroups.List(proj, region).Do()
+	if err != nil || len(l.Items) != 3 {
+		t.Fatalf("regional NEGs: %+v %v", l, err)
+	}
+	if _, err := c.Networks.Delete(proj, "vpc").Do(); reason(err) != "resourceInUseByAnotherResource" {
+		t.Fatalf("network used by a regional NEG: %v", err)
+	}
+
+	// Global: internet FQDN NEG with one endpoint.
+	if _, err := c.GlobalNetworkEndpointGroups.Insert(proj, &computev1.NetworkEndpointGroup{
+		Name: "ext", NetworkEndpointType: "GCE_VM_IP_PORT",
+	}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("global zonal-type NEG: %v", err)
+	}
+	waitDo(t, c)(c.GlobalNetworkEndpointGroups.Insert(proj, &computev1.NetworkEndpointGroup{
+		Name: "ext", NetworkEndpointType: "INTERNET_FQDN_PORT", DefaultPort: 443,
+	}).Do())
+	if _, err := c.GlobalNetworkEndpointGroups.AttachNetworkEndpoints(proj, "ext", &computev1.GlobalNetworkEndpointGroupsAttachEndpointsRequest{
+		NetworkEndpoints: []*computev1.NetworkEndpoint{{IpAddress: "203.0.113.1"}},
+	}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("IP endpoint on an FQDN NEG: %v", err)
+	}
+	waitDo(t, c)(c.GlobalNetworkEndpointGroups.AttachNetworkEndpoints(proj, "ext", &computev1.GlobalNetworkEndpointGroupsAttachEndpointsRequest{
+		NetworkEndpoints: []*computev1.NetworkEndpoint{{Fqdn: "origin.example.test"}},
+	}).Do())
+	eps, err := c.GlobalNetworkEndpointGroups.ListNetworkEndpoints(proj, "ext").Do()
+	if err != nil || len(eps.Items) != 1 || eps.Items[0].NetworkEndpoint.Fqdn != "origin.example.test" || eps.Items[0].NetworkEndpoint.Port != 443 {
+		t.Fatalf("global endpoints: %+v %v", eps, err)
+	}
+	agg, err := c.NetworkEndpointGroups.AggregatedList(proj).Do()
+	if err != nil || len(agg.Items["global"].NetworkEndpointGroups) != 1 || len(agg.Items["regions/"+region].NetworkEndpointGroups) != 3 {
+		t.Fatalf("aggregated NEGs: %+v %v", agg, err)
+	}
+	waitDo(t, c)(c.GlobalNetworkEndpointGroups.DetachNetworkEndpoints(proj, "ext", &computev1.GlobalNetworkEndpointGroupsDetachEndpointsRequest{
+		NetworkEndpoints: []*computev1.NetworkEndpoint{{Fqdn: "origin.example.test", Port: 443}},
+	}).Do())
+	waitDo(t, c)(c.GlobalNetworkEndpointGroups.Delete(proj, "ext").Do())
+	for _, n := range []string{"run", "inet", "psc"} {
+		waitDo(t, c)(c.RegionNetworkEndpointGroups.Delete(proj, region, n).Do())
+	}
+	waitDo(t, c)(c.Networks.Delete(proj, "vpc").Do())
+}
+
+func TestNetworkPeering(t *testing.T) {
+	_, c, _ := newClients(t)
+	customNet(t, c, "a")
+	customNet(t, c, "b")
+	subnet(t, c, "a", "a", "us-central1", "10.0.0.0/24")
+	subnet(t, c, "b", "b", "us-central1", "10.0.0.0/16")
+	peer := func(n *computev1.Network) *computev1.NetworkPeering {
+		t.Helper()
+		if len(n.Peerings) != 1 {
+			t.Fatalf("peerings of %s: %+v", n.Name, n.Peerings)
+		}
+		return n.Peerings[0]
+	}
+	if _, err := c.Networks.AddPeering(proj, "a", &computev1.NetworksAddPeeringRequest{NetworkPeering: &computev1.NetworkPeering{
+		Name: "self", Network: "global/networks/a",
+	}}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("peering with itself: %v", err)
+	}
+	if _, err := c.Networks.AddPeering(proj, "a", &computev1.NetworksAddPeeringRequest{NetworkPeering: &computev1.NetworkPeering{
+		Name: "x", Network: "global/networks/missing",
+	}}).Do(); code(err) != http.StatusNotFound {
+		t.Fatalf("peering with a missing network: %v", err)
+	}
+	waitDo(t, c)(c.Networks.AddPeering(proj, "a", &computev1.NetworksAddPeeringRequest{NetworkPeering: &computev1.NetworkPeering{
+		Name: "a-b", Network: "projects/" + proj + "/global/networks/b", ExportCustomRoutes: true,
+	}}).Do())
+	n, _ := c.Networks.Get(proj, "a").Do()
+	if p := peer(n); p.State != "INACTIVE" || !p.ExchangeSubnetRoutes || p.StackType != "IPV4_ONLY" || !p.ExportCustomRoutes {
+		t.Fatalf("one-sided peering: %+v", p)
+	}
+	// The other side would activate it, but the subnetworks overlap.
+	if _, err := c.Networks.AddPeering(proj, "b", &computev1.NetworksAddPeeringRequest{NetworkPeering: &computev1.NetworkPeering{
+		Name: "b-a", Network: "global/networks/a",
+	}}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("overlapping peering: %v", err)
+	}
+	waitDo(t, c)(c.Subnetworks.Delete(proj, "us-central1", "b").Do())
+	subnet(t, c, "b", "b", "us-central1", "10.1.0.0/16")
+	// The legacy request form.
+	waitDo(t, c)(c.Networks.AddPeering(proj, "b", &computev1.NetworksAddPeeringRequest{
+		Name: "b-a", PeerNetwork: "global/networks/a", AutoCreateRoutes: true,
+	}).Do())
+	for _, name := range []string{"a", "b"} {
+		n, _ := c.Networks.Get(proj, name).Do()
+		if p := peer(n); p.State != "ACTIVE" || p.PeerMtu != 1460 {
+			t.Fatalf("peering of %s: %+v", name, p)
+		}
+	}
+	waitDo(t, c)(c.Networks.UpdatePeering(proj, "b", &computev1.NetworksUpdatePeeringRequest{NetworkPeering: &computev1.NetworkPeering{
+		Name: "b-a", ImportCustomRoutes: true,
+	}}).Do())
+	if n, _ := c.Networks.Get(proj, "b").Do(); !peer(n).ImportCustomRoutes {
+		t.Fatalf("updated peering: %+v", peer(n))
+	}
+	if _, err := c.Networks.Delete(proj, "a").Do(); reason(err) != "resourceInUseByAnotherResource" {
+		t.Fatalf("network with a peering: %v", err)
+	}
+	waitDo(t, c)(c.Networks.RemovePeering(proj, "b", &computev1.NetworksRemovePeeringRequest{Name: "b-a"}).Do())
+	if n, _ := c.Networks.Get(proj, "a").Do(); peer(n).State != "INACTIVE" {
+		t.Fatalf("peering after the peer left: %+v", peer(n))
+	}
+	if _, err := c.Networks.RemovePeering(proj, "b", &computev1.NetworksRemovePeeringRequest{Name: "b-a"}).Do(); code(err) != http.StatusNotFound {
+		t.Fatalf("removing a removed peering: %v", err)
+	}
+	waitDo(t, c)(c.Networks.RemovePeering(proj, "a", &computev1.NetworksRemovePeeringRequest{Name: "a-b"}).Do())
+	waitDo(t, c)(c.Subnetworks.Delete(proj, "us-central1", "a").Do())
+	waitDo(t, c)(c.Networks.Delete(proj, "a").Do())
+}
+
 func TestServiceNetworking(t *testing.T) {
 	inst, c, sn := newClients(t)
 	customNet(t, c, "vpc")

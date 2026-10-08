@@ -4,7 +4,9 @@
 // and SSL policies, global and regional; FR-LB-001) served on the compute
 // API, and a real in-process L7 proxy per forwarding rule wired exactly as
 // GCP wires them: forwarding rule → target proxy → URL map → backend
-// service or bucket → NEG endpoints (FR-LB-002..010).
+// service or bucket → NEG endpoints (FR-LB-002..010). Cloud Armor security
+// policies, target TCP, SSL and gRPC proxies and legacy HTTP(S) health
+// checks are recorded: served by the API with no data-plane effect.
 //
 // The routing engine (FR-LB-003) is the pure package lb/urlmap. Cloud CDN
 // (services/cdn) wraps backends with enableCdn; Certificate Manager and
