@@ -102,6 +102,9 @@ func (s *Service) Stop(ctx context.Context) error {
 
 func (s *Service) Ready() error { return nil }
 
+// Operations implements emu.OperationLister.
+func (s *Service) Operations() []emu.OperationInfo { return s.ops.Operations() }
+
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
 	out := map[string]int{}

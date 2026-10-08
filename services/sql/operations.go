@@ -2,10 +2,12 @@ package sql
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -226,4 +228,34 @@ func (s *Service) listOperations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, &sqladmin.OperationsListResponse{Kind: "sql#operationsList", Items: page, NextPageToken: next})
+}
+
+// Operations implements emu.OperationLister.
+func (s *Service) Operations() []emu.OperationInfo {
+	var out []emu.OperationInfo
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		tx.Scan(nsOps, "", func(_ string, b []byte) bool {
+			var op sqladmin.Operation
+			if json.Unmarshal(b, &op) != nil {
+				return true
+			}
+			oi := emu.OperationInfo{
+				Name: "projects/" + op.TargetProject + "/operations/" + op.Name, Project: op.TargetProject,
+				Type: op.OperationType, Target: "projects/" + op.TargetProject + "/instances/" + op.TargetId,
+				Status: op.Status, Done: op.Status == "DONE",
+				StartTime: emu.ParseTime(op.InsertTime), EndTime: emu.ParseTime(op.EndTime), Operation: b,
+			}
+			if op.Error != nil && len(op.Error.Errors) > 0 {
+				var msgs []string
+				for _, e := range op.Error.Errors {
+					msgs = append(msgs, e.Message)
+				}
+				oi.Error = &emu.OperationError{Code: op.Error.Errors[0].Code, Message: strings.Join(msgs, "; ")}
+			}
+			out = append(out, oi)
+			return true
+		})
+		return nil
+	})
+	return out
 }

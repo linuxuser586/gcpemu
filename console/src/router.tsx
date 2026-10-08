@@ -6,12 +6,14 @@ import {
   endpointsQuery,
   envQuery,
   infoQuery,
+  operationsQuery,
   readinessQuery,
   resourceCountsQuery,
 } from '@/api/queries'
 import { AppShell } from '@/components/shell/AppShell'
 import { RouteError } from '@/components/shell/RouteError'
 import { Dashboard } from '@/features/dashboard/Dashboard'
+import { Operations } from '@/features/operations/Operations'
 import { ServicePage } from '@/features/services/ServicePage'
 
 export const BASENAME = '/console'
@@ -42,6 +44,15 @@ export function routes(queryClient: QueryClient): RouteObject[] {
               queryClient.ensureQueryData(resourceCountsQuery()),
               queryClient.ensureQueryData(envQuery()),
             ])
+            return null
+          },
+        },
+        {
+          path: 'operations',
+          element: <Operations />,
+          loader: async ({ request }) => {
+            const project = new URL(request.url).searchParams.get('project') ?? ''
+            await Promise.allSettled([queryClient.ensureQueryData(operationsQuery(project))])
             return null
           },
         },

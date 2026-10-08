@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -319,4 +320,40 @@ func (s *Service) aggregatedOperations(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	writeAggregated(w, r, "compute#operationAggregatedList", "projects/"+p+"/aggregated/operations", "operations", scoped)
+}
+
+// Operations implements emu.OperationLister: the compute#operations of
+// every scope, and the google.longrunning Operations of Service
+// Networking.
+func (s *Service) Operations() []emu.OperationInfo {
+	var out []emu.OperationInfo
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		tx.Scan(nsOps, "", func(_ string, b []byte) bool {
+			var op computev1.Operation
+			if json.Unmarshal(b, &op) == nil {
+				out = append(out, opInfo(&op, b))
+			}
+			return true
+		})
+		return nil
+	})
+	return append(out, s.lro.Operations()...)
+}
+
+func opInfo(op *computev1.Operation, raw []byte) emu.OperationInfo {
+	name := relPath(op.SelfLink)
+	project, loc, _ := pathParts(name)
+	oi := emu.OperationInfo{
+		Name: name, Project: project, Location: loc, Type: op.OperationType,
+		Target: relPath(op.TargetLink), Status: op.Status, Done: op.Status == "DONE",
+		StartTime: emu.ParseTime(op.InsertTime), EndTime: emu.ParseTime(op.EndTime), Operation: raw,
+	}
+	if op.Error != nil && len(op.Error.Errors) > 0 {
+		var msgs []string
+		for _, e := range op.Error.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		oi.Error = &emu.OperationError{Code: op.Error.Errors[0].Code, Message: strings.Join(msgs, "; ")}
+	}
+	return oi
 }

@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
 
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
@@ -279,5 +282,32 @@ func TestWIAllowedFailsClosed(t *testing.T) {
 				t.Fatalf("wiAllowed = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOperationsSummary(t *testing.T) {
+	cfg := config.Defaults()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
+		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()}).(*Service)
+	op := &containerpb.Operation{
+		Name: "operation-1", Location: "us-central1", OperationType: containerpb.Operation_CREATE_CLUSTER,
+		Status: containerpb.Operation_DONE, TargetLink: "https://container.googleapis.com/v1/projects/123/locations/us-central1/clusters/c",
+		StartTime: "2026-10-08T12:00:00Z", EndTime: "2026-10-08T12:01:00Z",
+		Error: &status.Status{Code: int32(codes.ResourceExhausted), Message: "no capacity"},
+	}
+	if err := s.putOp("p1", op); err != nil {
+		t.Fatal(err)
+	}
+	ops := s.Operations()
+	if len(ops) != 1 {
+		t.Fatalf("ops = %+v", ops)
+	}
+	got := ops[0]
+	if got.Name != "projects/p1/locations/us-central1/operations/operation-1" || got.Project != "p1" ||
+		got.Location != "us-central1" || got.Type != "CREATE_CLUSTER" || got.Status != "DONE" || !got.Done ||
+		got.Target != "projects/123/locations/us-central1/clusters/c" || got.EndTime.Sub(got.StartTime) != time.Minute ||
+		got.Error == nil || got.Error.Code != "RESOURCE_EXHAUSTED" || got.Error.Message != "no capacity" {
+		t.Fatalf("summary = %+v %+v", got, got.Error)
 	}
 }

@@ -19,7 +19,13 @@ it('lists only enabled Services in the sidebar, carrying the view state', async 
   const links = within(nav)
     .getAllByRole('link')
     .map((a) => a.textContent)
-  expect(links).toEqual(['Dashboard', 'IAM & Resource Manager', 'Pub/Sub', 'Cloud Storage'])
+  expect(links).toEqual([
+    'Dashboard',
+    'Operations',
+    'IAM & Resource Manager',
+    'Pub/Sub',
+    'Cloud Storage',
+  ])
   await user.click(within(nav).getByRole('link', { name: 'Cloud Storage' }))
   expect(router.state.location.pathname).toBe('/gcs')
   expect(router.state.location.search).toBe('?project=alpha-project&location=us-east1&q=logs')

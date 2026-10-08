@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"cloud.google.com/go/certificatemanager/apiv1/certificatemanagerpb"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -162,5 +163,37 @@ func TestServeREST(t *testing.T) {
 	}
 	if code, out, _ := call("GET", op.Name); code != 404 || out["error"] == nil {
 		t.Fatalf("get deleted = %d %v", code, out)
+	}
+}
+
+func TestOperationsSummary(t *testing.T) {
+	m, _ := setup(t, "1h")
+	md := &certificatemanagerpb.OperationMetadata{Target: "projects/p/locations/l/things/a", Verb: "create"}
+	pending, err := m.Run(context.Background(), "projects/p/locations/l", md, resp("ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := NewManager(m.env, "other")
+	if _, err := other.Run(context.Background(), "projects/q/locations/l", nil, resp("x")); err != nil {
+		t.Fatal(err)
+	}
+	ops := m.Operations()
+	if len(ops) != 1 {
+		t.Fatalf("ops = %+v, want only svc's", ops)
+	}
+	got := ops[0]
+	if got.Name != pending.Name || got.Project != "p" || got.Location != "l" || got.Done || got.Status != "RUNNING" ||
+		got.Type != "create" || got.Target != "projects/p/locations/l/things/a" || got.StartTime.IsZero() || !got.EndTime.IsZero() {
+		t.Fatalf("pending = %+v", got)
+	}
+	m.cancel(pending.Name)
+	got = m.Operations()[0]
+	if !got.Done || got.Status != "DONE" || got.EndTime.Before(got.StartTime) ||
+		got.Error == nil || got.Error.Code != "CANCELLED" || got.Error.Message != "Operation was cancelled." {
+		t.Fatalf("cancelled = %+v %+v", got, got.Error)
+	}
+	var wire map[string]any
+	if json.Unmarshal(got.Operation, &wire) != nil || wire["name"] != pending.Name {
+		t.Fatalf("operation = %s", got.Operation)
 	}
 }

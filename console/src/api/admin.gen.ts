@@ -251,6 +251,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every Operation of every service (Web console Operations view, FR-UI-012).
+         * @description Operations of every wire format (google.longrunning, Compute, Cloud SQL, GKE, Cloud DNS changes) summarised in one shape, newest first. Services without Operations are absent. The `operation` events of /_emu/v1/events report changes to them.
+         */
+        get: operations["operations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/reset": {
         parameters: {
             query?: never;
@@ -445,6 +465,36 @@ export interface components {
                     ready: boolean;
                     reason?: string;
                 };
+            };
+        };
+        Operation: {
+            /** @description Service ID that owns the Operation. */
+            service: string;
+            /** @description The Operation's resource name, e.g. "projects/p/global/operations/operation-1". */
+            name: string;
+            project?: string;
+            /** @description "global", a region, a zone or an API location. */
+            location?: string;
+            /** @description What the Operation does, as its API names it ("insert", "CREATE_CLUSTER", "change"). */
+            type?: string;
+            /** @description The resource the Operation acts on or produced. */
+            target?: string;
+            /** @description The API's own status ("RUNNING", "pending", "DONE"). */
+            status?: string;
+            done: boolean;
+            /** @description Why the Operation failed. */
+            error?: {
+                /** @description e.g. "NOT_FOUND", "RESOURCE_ALREADY_EXISTS". */
+                code?: string;
+                message: string;
+            };
+            /** Format: date-time */
+            startTime?: string;
+            /** Format: date-time */
+            endTime?: string;
+            /** @description The Operation as the Service's API returns it. */
+            operation?: {
+                [key: string]: unknown;
             };
         };
         /** @description Data of a `resource` event. */
@@ -850,6 +900,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceCounts"];
+                };
+            };
+        };
+    };
+    operations: {
+        parameters: {
+            query?: {
+                /** @description Only this Service ID's Operations. */
+                service?: string;
+                /** @description Only this Project's Operations. */
+                project?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Operations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        operations: components["schemas"]["Operation"][];
+                    };
                 };
             };
         };

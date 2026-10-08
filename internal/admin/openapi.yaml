@@ -254,6 +254,36 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ResourceCounts" }
+  /_emu/v1/operations:
+    get:
+      summary: Every Operation of every service (Web console Operations view, FR-UI-012).
+      operationId: operations
+      description: >-
+        Operations of every wire format (google.longrunning, Compute, Cloud
+        SQL, GKE, Cloud DNS changes) summarised in one shape, newest first.
+        Services without Operations are absent. The `operation` events of
+        /_emu/v1/events report changes to them.
+      parameters:
+        - name: service
+          in: query
+          description: Only this Service ID's Operations.
+          schema: { type: string }
+        - name: project
+          in: query
+          description: Only this Project's Operations.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The Operations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operations]
+                properties:
+                  operations:
+                    type: array
+                    items: { $ref: "#/components/schemas/Operation" }
   /_emu/v1/reset:
     post:
       summary: Wipe all state, keeping configuration (`gcpemu reset`).
@@ -464,6 +494,35 @@ components:
             properties:
               ready: { type: boolean }
               reason: { type: string }
+    Operation:
+      type: object
+      required: [service, name, done]
+      properties:
+        service: { type: string, description: Service ID that owns the Operation. }
+        name:
+          type: string
+          description: The Operation's resource name, e.g. "projects/p/global/operations/operation-1".
+        project: { type: string }
+        location: { type: string, description: '"global", a region, a zone or an API location.' }
+        type:
+          type: string
+          description: What the Operation does, as its API names it ("insert", "CREATE_CLUSTER", "change").
+        target: { type: string, description: The resource the Operation acts on or produced. }
+        status: { type: string, description: 'The API''s own status ("RUNNING", "pending", "DONE").' }
+        done: { type: boolean }
+        error:
+          type: object
+          description: Why the Operation failed.
+          required: [message]
+          properties:
+            code: { type: string, description: 'e.g. "NOT_FOUND", "RESOURCE_ALREADY_EXISTS".' }
+            message: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        operation:
+          type: object
+          additionalProperties: {}
+          description: The Operation as the Service's API returns it.
     ResourceChange:
       type: object
       description: Data of a `resource` event.

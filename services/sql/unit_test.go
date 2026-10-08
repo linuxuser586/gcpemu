@@ -367,3 +367,22 @@ func TestBootstrapSQL(t *testing.T) {
 		t.Error("postgres must not be a superuser")
 	}
 }
+
+func TestOperationsSummary(t *testing.T) {
+	s := testService(t, config.IAMOff)
+	op := s.newOp(context.Background(), "p1", "main", "CREATE")
+	op.Status, op.StartTime, op.EndTime = "DONE", "2026-10-08T12:00:00.000Z", "2026-10-08T12:00:02.500Z"
+	op.InsertTime = "2026-10-08T12:00:00.000Z"
+	op.Error = &sqladmin.OperationErrors{Errors: []*sqladmin.OperationError{{Code: "INTERNAL_ERROR", Message: "boom"}}}
+	s.saveOp(op)
+	ops := s.Operations()
+	if len(ops) != 1 {
+		t.Fatalf("ops = %+v", ops)
+	}
+	got := ops[0]
+	if got.Name != "projects/p1/operations/"+op.Name || got.Project != "p1" || got.Type != "CREATE" ||
+		got.Target != "projects/p1/instances/main" || !got.Done || got.EndTime.Sub(got.StartTime).Milliseconds() != 2500 ||
+		got.Error == nil || got.Error.Code != "INTERNAL_ERROR" || got.Error.Message != "boom" {
+		t.Fatalf("summary = %+v %+v", got, got.Error)
+	}
+}

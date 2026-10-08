@@ -12,6 +12,7 @@ export type Endpoints = components['schemas']['Endpoints']
 export type RequestEntry = components['schemas']['RequestEntry']
 export type ResourceChange = components['schemas']['ResourceChange']
 export type OperationChange = components['schemas']['OperationChange']
+export type Operation = components['schemas']['Operation']
 
 /** admin is a typed client for the /_emu/v1 admin API. */
 export const admin = createClient<paths>({
