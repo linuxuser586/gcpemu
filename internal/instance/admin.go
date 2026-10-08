@@ -78,6 +78,7 @@ func newAdmin(in *Instance) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "seeded"})
 	})
+	mux.Handle("GET /_emu/v1/events", in.Events)
 	mux.HandleFunc("GET /_emu/v1/requests", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"requests": in.Log.Entries(r.URL.Query().Get("service"))})
 	})

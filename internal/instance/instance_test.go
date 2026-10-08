@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 type fakeSvc struct{ started, stopped bool }
@@ -436,5 +438,79 @@ func getJSON(t *testing.T, url string, v any) {
 	defer resp.Body.Close()
 	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 		t.Fatalf("%s: %v", url, err)
+	}
+}
+
+// storeSvc writes a managed zone to the store on every request.
+type storeSvc struct {
+	fakeSvc
+	env *emu.Env
+}
+
+func (s *storeSvc) Register(r emu.Router) error {
+	r.Mount("dns", nil, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = s.env.Store.Update(func(tx store.Tx) error { return tx.Put("dns/zones", "p/z", []byte(`{}`)) })
+	}))
+	return nil
+}
+
+// TestEvents: a Service's store write and the request that caused it reach
+// /_emu/v1/events, and Shutdown ends the stream (FR-UI-006).
+func TestEvents(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ephemeral = true
+	cfg.DataDir = t.TempDir()
+	cfg.Services = []string{"dns"}
+	cfg.Ports["gateway"] = 0
+	in, err := New(&cfg, map[string]Factory{"dns": func(env *emu.Env) emu.Service { return &storeSvc{env: env} }}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := in.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + in.Env.Endpoints.Get("gateway")
+	resp, err := http.Get(base + "/_emu/v1/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("events: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	r, err := http.Get(base + "/dns/v1/projects/p/managedZones/z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+
+	sc := bufio.NewScanner(resp.Body)
+	var seen []string
+	for len(seen) < 2 && sc.Scan() {
+		if data, ok := strings.CutPrefix(sc.Text(), "data: "); ok {
+			seen = append(seen, data)
+		}
+	}
+	if len(seen) < 2 || seen[0] != `{"service":"dns","namespace":"dns/zones","key":"p/z"}` ||
+		!strings.Contains(seen[1], `"method":"GET /v1/projects/p/managedZones/z"`) {
+		t.Errorf("events = %q", seen)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		for sc.Scan() {
+		}
+		close(done)
+	}()
+	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := in.Shutdown(sctx); err != nil {
+		t.Errorf("Shutdown: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("event stream still open after Shutdown")
 	}
 }

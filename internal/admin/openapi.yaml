@@ -148,6 +148,58 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }
+  /_emu/v1/events:
+    get:
+      summary: Server-sent stream of resource changes, Operation progress and Request log entries (FR-UI-006).
+      operationId: events
+      description: |
+        A `text/event-stream` that stays open. Each event has an `id`, an
+        `event` type and one line of JSON `data`:
+
+        - `resource`: a ResourceChange, sent when a control-plane store key
+          is written or deleted.
+        - `operation`: an OperationChange, sent when an Operation of any
+          Service (including Cloud DNS changes) is created, progresses,
+          completes or is deleted.
+        - `request`: a RequestEntry, sent for every Request log entry.
+        - `reset`: `{}`; all state was replaced (`gcpemu reset`). Refetch
+          everything.
+        - `gap`: `{}`; only sent first on a resumed stream whose missed
+          events are no longer retained or whose ID belongs to another
+          process. Refetch everything.
+
+        Events are numbered per process. To resume, reconnect with the last
+        `id` in `Last-Event-ID` (EventSource does this itself): missed
+        events are replayed, or `gap` is sent. Idle streams carry a comment
+        every 15 s. The server ends a stream whose client falls too far
+        behind, and at shutdown; the `retry` field asks clients to
+        reconnect after 1 s.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          description: ID of the last event received, to resume after it.
+          schema: { type: string }
+        - name: lastEventId
+          in: query
+          description: As Last-Event-ID, for clients that cannot set headers.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                retry: 1000
+
+                id: lx2k9q1c-7
+                event: resource
+                data: {"service":"gcs","namespace":"gcs/buckets","key":"my-bucket"}
+
+                id: lx2k9q1c-8
+                event: request
+                data: {"time":"2026-10-08T12:00:00Z","service":"gcs","protocol":"http","method":"POST /storage/v1/b","status":200,"latencyMs":1.2}
   /_emu/v1/requests:
     get:
       summary: Recent request log entries, oldest first (FR-CORE-061).
@@ -412,6 +464,33 @@ components:
             properties:
               ready: { type: boolean }
               reason: { type: string }
+    ResourceChange:
+      type: object
+      description: Data of a `resource` event.
+      required: [service, namespace, key]
+      properties:
+        service:
+          type: string
+          description: >-
+            The namespace's first segment: a Service ID, or "core" for state
+            the emulator owns (Projects in "core/projects").
+        namespace: { type: string, description: Store namespace, e.g. "gcs/buckets". }
+        key: { type: string, description: Store key within the namespace. }
+        deleted: { type: boolean }
+    OperationChange:
+      type: object
+      description: Data of an `operation` event.
+      required: [service, namespace, name, done]
+      properties:
+        service: { type: string, description: Service ID that owns the Operation. }
+        namespace: { type: string, description: Store namespace, e.g. "lro/operations". }
+        name:
+          type: string
+          description: >-
+            The Operation's name for google.longrunning Operations,
+            otherwise its store key (e.g. "P/OP" for Cloud SQL).
+        done: { type: boolean }
+        deleted: { type: boolean }
     RequestEntry:
       type: object
       properties:

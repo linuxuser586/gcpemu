@@ -1,12 +1,18 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap, type Readiness } from './admin'
+import { admin, unwrap, type Readiness, type RequestEntry } from './admin'
 import { toApiError } from './errors'
 import { gcpFetch } from './fetch'
 
 // Server state lives only in TanStack Query: every read the console makes
-// is one of these query option factories. The dashboard polls until the
-// /_emu/v1/events stream replaces polling.
+// is one of these query option factories. Queries over state the
+// /_emu/v1/events stream reports (resources, Operations, the Request log)
+// are kept fresh by the event bridge (events.ts) and do not poll; the rest
+// (readiness, runtime, containers) poll.
+//
+// Queries of a Service's own API are keyed by Service ID first (["gcs",
+// ...]) so that the bridge can invalidate them by the Service its events
+// name.
 export const POLL_MS = 3000
 
 export const infoQuery = () =>
@@ -47,7 +53,18 @@ export const resourceCountsQuery = () =>
   queryOptions({
     queryKey: ['admin', 'resources', 'counts'],
     queryFn: () => unwrap(admin.GET('/_emu/v1/resources/counts')),
-    refetchInterval: POLL_MS,
+  })
+
+/** requestsQuery is the Request log, oldest first; the bridge appends to it. */
+export const requestsQuery = (service = '') =>
+  queryOptions({
+    queryKey: ['admin', 'requests', service],
+    queryFn: async (): Promise<RequestEntry[]> =>
+      (
+        await unwrap(
+          admin.GET('/_emu/v1/requests', { params: { query: service ? { service } : {} } }),
+        )
+      ).requests ?? [],
   })
 
 export const envQuery = () =>
@@ -67,7 +84,7 @@ export interface Project {
 /** projectsQuery lists Projects through Resource Manager (the iam Service). */
 export const projectsQuery = () =>
   queryOptions({
-    queryKey: ['cloudresourcemanager', 'v3', 'projects:search'],
+    queryKey: ['iam', 'projects'],
     queryFn: async () => {
       const out: Project[] = []
       let pageToken = ''

@@ -119,7 +119,7 @@ test('FR-UI-010 dashboard', async ({ page, request, context, browserName }) => {
   await expect(page.getByRole('heading', { name: 'Container runtime' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Managed containers' })).toBeVisible()
 
-  // Resource counts follow the Instance by polling.
+  // Resource counts follow the Instance through /_emu/v1/events.
   const buckets = page
     .getByRole('region', { name: 'Cloud Storage' })
     .getByText('Buckets', { exact: true })
@@ -129,7 +129,8 @@ test('FR-UI-010 dashboard', async ({ page, request, context, browserName }) => {
     data: { name: `${id}-bucket` },
   })
   expect(created.ok()).toBe(true)
-  await expect(buckets).toHaveText(String(before + 1), { timeout: 10_000 })
+  // Other tests create buckets in parallel.
+  await expect.poll(async () => Number(await buckets.textContent())).toBeGreaterThan(before)
 
   const env = page.getByTestId('env-output')
   await expect(env).toContainText('export STORAGE_EMULATOR_HOST=')
@@ -139,6 +140,51 @@ test('FR-UI-010 dashboard', async ({ page, request, context, browserName }) => {
     await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(await env.textContent())
   }
+})
+
+test('FR-UI-006: a bucket created through the public API shows up within 1 s', async ({
+  page,
+  request,
+  browserName,
+}) => {
+  const id = projectId('e2e-live', browserName)
+  const name = `${id}-bucket`
+  const stream = page.waitForResponse((r) => new URL(r.url()).pathname === '/_emu/v1/events')
+  await page.goto('/console/gcs')
+  expect((await stream).headers()['content-type']).toBe('text/event-stream')
+  const buckets = page
+    .getByText('Buckets', { exact: true })
+    .locator('xpath=following-sibling::dd[1]')
+  const before = Number(await buckets.textContent())
+
+  // The stream reports the new bucket. (Counts do not poll: see
+  // Dashboard.test.tsx.) The server subscribes a stream before it
+  // answers, so once this one is open it cannot miss the event.
+  type Win = { bucketEvent: Promise<unknown> }
+  await page.evaluate(async (key) => {
+    const es = new EventSource('/_emu/v1/events')
+    ;(window as unknown as Win).bucketEvent = new Promise((resolve) => {
+      es.addEventListener('resource', (e: MessageEvent<string>) => {
+        const data = JSON.parse(e.data) as { namespace: string; key: string }
+        if (data.namespace === 'gcs/buckets' && data.key === key) {
+          es.close()
+          resolve(data)
+        }
+      })
+    })
+    await new Promise((resolve) => es.addEventListener('open', resolve, { once: true }))
+  }, name)
+  const created = await request.post(`/storage/v1/b?project=${id}`, { data: { name } })
+  expect(created.ok()).toBe(true)
+  // Other tests create buckets in parallel.
+  await expect
+    .poll(async () => Number(await buckets.textContent()), { timeout: 1000 })
+    .toBeGreaterThan(before)
+  expect(await page.evaluate(() => (window as unknown as Win).bucketEvent)).toEqual({
+    service: 'gcs',
+    namespace: 'gcs/buckets',
+    key: name,
+  })
 })
 
 test('a deep link to a disabled Service says how to enable it', async ({ page }) => {

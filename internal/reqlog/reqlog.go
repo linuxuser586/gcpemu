@@ -35,12 +35,17 @@ type Log struct {
 	next    int
 	full    bool
 	log     *slog.Logger
+	onAdd   func(Entry)
 }
 
 // New returns a log keeping the last size entries.
 func New(size int, log *slog.Logger) *Log {
 	return &Log{entries: make([]Entry, size), log: log}
 }
+
+// OnAdd sets a function called with every entry added. Set it before the
+// Log is used.
+func (l *Log) OnAdd(fn func(Entry)) { l.onAdd = fn }
 
 // Add records e. A nil Log discards it.
 func (l *Log) Add(e Entry) {
@@ -54,6 +59,9 @@ func (l *Log) Add(e Entry) {
 		l.full = true
 	}
 	l.mu.Unlock()
+	if l.onAdd != nil {
+		l.onAdd(e)
+	}
 	if l.log != nil {
 		l.log.Info("request",
 			"service", e.Service, "protocol", e.Protocol, "method", e.Method,

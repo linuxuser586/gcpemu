@@ -22,6 +22,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/events"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
@@ -51,6 +52,8 @@ type Instance struct {
 	Config *config.Config
 	Env    *emu.Env
 	Log    *reqlog.Log
+	// Events is the change feed served at /_emu/v1/events.
+	Events *events.Hub
 	ID     string
 	Dir    string
 
@@ -117,10 +120,12 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	in.clock = clock.NewOffset(base)
 
+	in.Events = events.NewHub(4096)
 	in.Log = reqlog.New(2000, logger.With("component", "request"))
+	in.Log.OnAdd(func(e reqlog.Entry) { in.Events.Publish(events.Request, e) })
 	env := &emu.Env{
 		Config:    cfg,
-		Store:     st,
+		Store:     store.Observe(st, events.StoreObserver(in.Events)),
 		Clock:     in.clock,
 		IDs:       emu.NewIDs(cfg.Deterministic),
 		Log:       logger,
@@ -392,6 +397,7 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		in.hm.Stop()
 		errs = append(errs, in.containers.shutdown())
 		errs = append(errs, in.fe.Close())
+		in.Events.Close() // end event streams so the gateway can drain
 		errs = append(errs, in.gw.Shutdown(ctx))
 		errs = append(errs, in.Env.Store.Close())
 		_ = os.Remove(filepath.Join(in.Dir, PIDFile))
