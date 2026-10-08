@@ -12,7 +12,7 @@ jobs:
       actions: read # lets the post step tell whether the job failed
     steps:
       - uses: actions/checkout@v4
-      - uses: linuxuser586/gcpemu/setup-gcpemu@v1
+      - uses: linuxuser586/gcpemu/setup-gcpemu@v0
         with:
           services: gcs,pubsub,sql
           seed: test/emu-seed.yaml
@@ -66,6 +66,10 @@ The post step always runs. It does three things:
 | `token` | `github.token` | Used to resolve `latest` and to read the job's result |
 
 Outputs: `version`, `gateway` (host:port), `data-dir`, `bin`.
+
+Use `@v0` until v1.0.0: a `vX.Y.Z` release moves its major tag `vX`, so `@v0` follows the latest
+0.x release. Pin a release such as `@v0.1.0` for reproducible builds. `version: latest` installs
+the newest release, whichever major it is.
 
 Runs on `ubuntu-24.04`, `ubuntu-24.04-arm` and macOS runners. GKE, Cloud SQL and Cloud NAT need
 Docker.
