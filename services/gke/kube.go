@@ -208,7 +208,15 @@ type kubeNode struct {
 	} `json:"status"`
 }
 
+// ready reports whether the node is Ready and the node controller has
+// lifted the not-ready and unreachable taints it adds at registration,
+// which lag the Ready condition and keep pods off the node.
 func (n *kubeNode) ready() bool {
+	for _, t := range n.Spec.Taints {
+		if t.Key == "node.kubernetes.io/not-ready" || t.Key == "node.kubernetes.io/unreachable" {
+			return false
+		}
+	}
 	for _, c := range n.Status.Conditions {
 		if c.Type == "Ready" {
 			return c.Status == "True"
