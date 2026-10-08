@@ -3,3 +3,8 @@
 *.test
 *.out
 /gcpemu
+/console/node_modules/
+/console/dist/*
+!/console/dist/index.html
+/console/test-results/
+/console/playwright-report/

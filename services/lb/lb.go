@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/compute"
 )
 
@@ -120,6 +121,15 @@ func (s *Service) Stop(ctx context.Context) error {
 
 // Ready: the proxy needs nothing external to start.
 func (s *Service) Ready() error { return nil }
+
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	nss := map[string]string{}
+	for _, k := range allKinds() {
+		nss[k.coll] = k.ns()
+	}
+	return store.Counts(s.env.Store, nss)
+}
 
 // Reset drops the data plane's runtime state; the store is wiped by the core.
 func (s *Service) Reset(ctx context.Context) error {

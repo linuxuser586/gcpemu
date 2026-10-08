@@ -130,6 +130,13 @@ func (s *Service) Ready() error {
 	return nil
 }
 
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	return store.Counts(s.env.Store, map[string]string{
+		"instances": nsInstances, "databases": nsDatabases, "users": nsUsers, "backupRuns": nsBackups, "sslCerts": nsSSLCerts,
+	})
+}
+
 // Reset removes every instance container and volume (`gcpemu reset`).
 func (s *Service) Reset(ctx context.Context) error {
 	var any bool

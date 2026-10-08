@@ -1,9 +1,34 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Evaluated once, before the console build rewrites console/dist/index.html.
+ifeq ($(origin VERSION),undefined)
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+endif
 LDFLAGS := -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version=$(VERSION)
 
-.PHONY: build test race vet lint release e2e compat tofu action generate
+# FR-UI-001: the Web console is embedded from console/dist. Building it
+# overwrites the committed placeholder console/dist/index.html, which is
+# put back once the binaries are built.
+CONSOLE_PLACEHOLDER := console/dist/index.html
+restore-placeholder = git checkout -- $(CONSOLE_PLACEHOLDER) 2>/dev/null || true
+
+.PHONY: build test race vet lint release cross console console-e2e e2e compat tofu action generate
+# Builds the console first when pnpm is on PATH; without it the binary
+# embeds the "console not built" placeholder.
 build:
+	@if command -v pnpm >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory console; \
+	else \
+		echo "warning: pnpm not found; embedding the Web console placeholder (install Node.js 24 and pnpm for the real console)" >&2; \
+	fi
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu ./cmd/gcpemu
+	@$(restore-placeholder)
+
+console:
+	cd console && pnpm install --frozen-lockfile && pnpm build
+
+# FR-UI-023: Playwright on Chromium, Firefox and WebKit against a binary
+# with the real console.
+console-e2e: build
+	cd console && pnpm exec playwright test
 
 test:
 	go test ./...
@@ -38,8 +63,15 @@ compat:
 tofu:
 	go test -tags compat ./compat -run TestOpenTofu -count=1 -timeout 60m -v
 
-# NFR-PORT-001: static builds for every supported OS/arch.
-release:
+# NFR-PORT-001: static builds for every supported OS/arch, with the real
+# Web console embedded.
+release: console
+	@! grep -q 'content="placeholder"' $(CONSOLE_PLACEHOLDER) || { echo "release: the Web console bundle is not built" >&2; exit 1; }
+	@$(MAKE) --no-print-directory cross || { $(restore-placeholder); exit 1; }
+	@$(restore-placeholder)
+
+# The release builds with whatever console/dist holds (Node-free CI).
+cross:
 	@for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do \
 		os=$${p%/*}; arch=$${p#*/}; \
 		echo "building $$os/$$arch"; \

@@ -17,6 +17,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // Name is the service name.
@@ -121,6 +122,13 @@ func (s *Service) Ready() error {
 		return errors.New("gcs: starting")
 	}
 	return nil
+}
+
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	return store.Counts(s.env.Store, map[string]string{
+		"buckets": nsBuckets, "objects": nsObjects, "notificationConfigs": nsNotifs, "hmacKeys": nsHMAC,
+	})
 }
 
 // Reset implements emu.Resetter: object data files are deleted; the core

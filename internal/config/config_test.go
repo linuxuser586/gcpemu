@@ -48,6 +48,41 @@ func TestCIDefaults(t *testing.T) {
 	if !c.Ephemeral || c.LogFormat != "json" {
 		t.Errorf("CI defaults not applied: %+v", c)
 	}
+	if c.ConsoleEnabled() {
+		t.Error("console should be off under CI=true unless asked for")
+	}
+	on := true
+	c.ApplyFlags(&Config{Console: &on}, map[string]bool{"Console": true})
+	if !c.ConsoleEnabled() {
+		t.Error("--console should turn the console on under CI=true")
+	}
+}
+
+// TestConsoleSetting: the console is on by default, and "false" in the
+// file or the environment turns it off.
+func TestConsoleSetting(t *testing.T) {
+	t.Setenv("CI", "")
+	c := Defaults()
+	if !c.ConsoleEnabled() {
+		t.Error("console should be on by default")
+	}
+	file := filepath.Join(t.TempDir(), "gcpemu.yaml")
+	if err := os.WriteFile(file, []byte("console: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.LoadFile(file); err != nil {
+		t.Fatal(err)
+	}
+	if c.ConsoleEnabled() {
+		t.Error("console: false in the file should turn it off")
+	}
+	c = Defaults()
+	if err := c.LoadEnv(func(k string) string { return map[string]string{"GCPEMU_CONSOLE": "false"}[k] }); err != nil {
+		t.Fatal(err)
+	}
+	if c.ConsoleEnabled() {
+		t.Error("GCPEMU_CONSOLE=false should turn it off")
+	}
 }
 
 func TestResolveServices(t *testing.T) {

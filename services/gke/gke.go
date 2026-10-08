@@ -199,6 +199,11 @@ func (s *Service) Ready() error {
 	return nil
 }
 
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	return store.Counts(s.env.Store, map[string]string{"clusters": nsClusters})
+}
+
 // Reset tears down every cluster's containers and volumes; the store is
 // reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {

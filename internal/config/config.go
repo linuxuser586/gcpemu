@@ -65,6 +65,18 @@ type Config struct {
 	// CDNCacheSize is the Cloud CDN cache size limit (FR-CDN-008), e.g.
 	// "1GiB", "512MiB" or a byte count; empty means 1 GiB.
 	CDNCacheSize string `yaml:"cdnCacheSize" env:"CDN_CACHE_SIZE"`
+	// Console serves the Web console under /console on the gateway
+	// (FR-UI-002); nil means the default of ConsoleEnabled.
+	Console *bool `yaml:"console" env:"CONSOLE"`
+}
+
+// ConsoleEnabled reports whether the Web console is served: as configured,
+// otherwise on except under CI=true (FR-CI-003).
+func (c *Config) ConsoleEnabled() bool {
+	if c.Console != nil {
+		return *c.Console
+	}
+	return os.Getenv("CI") != "true"
 }
 
 // Default service ports (Section 3.2).
@@ -265,6 +277,12 @@ func setString(f reflect.Value, v string) error {
 		f.SetInt(n)
 	case reflect.Slice:
 		f.Set(reflect.ValueOf(SplitList(v)))
+	case reflect.Pointer:
+		p := reflect.New(f.Type().Elem())
+		if err := setString(p.Elem(), v); err != nil {
+			return err
+		}
+		f.Set(p)
 	case reflect.Map:
 		if f.IsNil() {
 			f.Set(reflect.MakeMap(f.Type()))

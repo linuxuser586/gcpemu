@@ -1,0 +1,66 @@
+// Runs an Ephemeral Instance from bin/gcpemu (built with the real console
+// by `make build`) for the Playwright tests. Playwright's webServer starts
+// this script and reads the gateway URL from the line it prints once the
+// Instance is ready.
+import { spawn } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, '../../bin/gcpemu')
+const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
+// --console: CI=true turns the console off by default (FR-CI-003).
+const child = spawn(
+  bin,
+  [
+    'start',
+    '--ephemeral',
+    '--services',
+    'gcs,pubsub',
+    '--port',
+    '0',
+    '--console',
+    '--log-level',
+    'warn',
+    '--data-dir',
+    dir,
+  ],
+  { stdio: ['ignore', 'inherit', 'inherit'] },
+)
+
+let exiting = false
+function stop(code: number) {
+  if (exiting) return
+  exiting = true
+  child.kill('SIGTERM')
+  child.once('exit', () => {
+    rmSync(dir, { recursive: true, force: true })
+    process.exit(code)
+  })
+}
+process.on('SIGTERM', () => stop(0))
+process.on('SIGINT', () => stop(0))
+child.on('exit', (code) => {
+  if (exiting) return
+  console.error(`gcpemu exited (${code}) before the tests finished`)
+  rmSync(dir, { recursive: true, force: true })
+  process.exit(1)
+})
+
+const endpoints = path.join(dir, 'endpoints.json')
+const deadline = Date.now() + 60_000
+while (Date.now() < deadline) {
+  await new Promise((r) => setTimeout(r, 100))
+  if (!existsSync(endpoints)) continue
+  const { gateway } = JSON.parse(readFileSync(endpoints, 'utf8')) as { gateway?: string }
+  if (!gateway) continue
+  const ready = await fetch(`http://${gateway}/_emu/v1/ready`).catch(() => undefined)
+  if (ready?.ok) {
+    console.log(`gcpemu ready at http://${gateway}`)
+    break
+  }
+}
+if (Date.now() >= deadline) {
+  console.error('gcpemu did not become ready within 60 s')
+  stop(1)
+}

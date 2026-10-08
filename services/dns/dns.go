@@ -133,6 +133,11 @@ func (s *Service) Ready() error {
 	return nil
 }
 
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	return store.Counts(s.env.Store, map[string]string{"managedZones": nsZones, "resourceRecordSets": nsRRSets})
+}
+
 // Reset drops the in-memory query index; it is rebuilt from the store on
 // the next query.
 func (s *Service) Reset(context.Context) error {

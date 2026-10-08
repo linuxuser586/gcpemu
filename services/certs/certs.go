@@ -28,6 +28,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/lro"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // Service is the certs service module.
@@ -100,6 +101,27 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 func (s *Service) Ready() error { return nil }
+
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	out := map[string]int{}
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		for _, k := range allKinds {
+			out[k.coll] = 0
+		}
+		tx.Scan(nsRes, "projects/", func(key string, _ []byte) bool {
+			for _, k := range allKinds {
+				if _, err := parseName(k, key); err == nil {
+					out[k.coll]++
+					break
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	return out
+}
 
 // Reset drops cached certificates; the store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {

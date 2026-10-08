@@ -212,6 +212,11 @@ func (s *Service) Ready() error {
 	return nil
 }
 
+// ResourceCounts implements emu.ResourceCounter.
+func (s *Service) ResourceCounts() map[string]int {
+	return store.Counts(s.env.Store, map[string]string{"repositories": nsRepos, "dockerImages": nsManifests, "tags": nsTags})
+}
+
 // Reset removes every blob and upload; the store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {
 	s.mu.Lock()

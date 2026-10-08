@@ -67,6 +67,14 @@ type ClockObserver interface {
 	ClockAdvanced(ctx context.Context) error
 }
 
+// ResourceCounter is implemented by services that report how many
+// resources they hold (admin API /_emu/v1/resources/counts, the Web
+// console dashboard). Keys are user-facing resource types named like the
+// API's collections ("buckets", "subscriptions"), not store namespaces.
+type ResourceCounter interface {
+	ResourceCounts() map[string]int
+}
+
 // Env is the shared environment passed to every service.
 type Env struct {
 	Config *config.Config

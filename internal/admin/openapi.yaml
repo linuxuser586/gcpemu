@@ -63,20 +63,7 @@ paths:
           description: Instance information.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  instance: { type: string }
-                  id: { type: string }
-                  pid: { type: integer }
-                  version: { type: string }
-                  dir: { type: string, description: Instance data directory. }
-                  ephemeral: { type: boolean }
-                  iamMode: { type: string, enum: [off, audit, enforce] }
-                  services:
-                    type: array
-                    items: { type: string }
-                  endpoints: { $ref: "#/components/schemas/Endpoints" }
+              schema: { $ref: "#/components/schemas/Info" }
   /_emu/v1/endpoints:
     get:
       summary: Listener addresses by endpoint name (as in endpoints.json).
@@ -142,18 +129,11 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [containers]
                 properties:
                   containers:
                     type: array
-                    items:
-                      type: object
-                      properties:
-                        name: { type: string }
-                        service: { type: string }
-                        resource: { type: string }
-                        role: { type: string }
-                        image: { type: string }
-                        state: { type: string }
+                    items: { $ref: "#/components/schemas/Container" }
         "500": { $ref: "#/components/responses/Error" }
   /_emu/v1/seed:
     post:
@@ -208,6 +188,20 @@ paths:
                   type: object
                   additionalProperties: {}
         "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/resources/counts:
+    get:
+      summary: Number of resources of each type, per service (Web console dashboard).
+      operationId: resourceCounts
+      description: >-
+        Keys are service IDs and user-facing resource types named like the
+        API's collections ("buckets", "subscriptions"), not store namespaces.
+        Services that hold no resources of their own (cdn, nat) are absent.
+      responses:
+        "200":
+          description: Service ID to resource type to count.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResourceCounts" }
   /_emu/v1/reset:
     post:
       summary: Wipe all state, keeping configuration (`gcpemu reset`).
@@ -354,18 +348,67 @@ components:
             properties:
               error: { type: string }
   schemas:
+    Info:
+      type: object
+      required: [instance, id, pid, version, dir, ephemeral, iamMode, strictProjects, console, services, endpoints, runtime]
+      properties:
+        instance: { type: string }
+        id: { type: string }
+        pid: { type: integer }
+        version: { type: string }
+        dir: { type: string, description: Instance data directory. }
+        ephemeral: { type: boolean }
+        iamMode: { type: string, enum: ["off", audit, enforce] }
+        strictProjects:
+          type: boolean
+          description: Referencing a project that does not exist is an error instead of creating it.
+        console: { type: boolean, description: Whether the gateway serves the Web console under /console/. }
+        services:
+          type: array
+          description: Enabled services, in start order.
+          items: { type: string }
+        endpoints: { $ref: "#/components/schemas/Endpoints" }
+        runtime: { $ref: "#/components/schemas/RuntimeStatus" }
+    RuntimeStatus:
+      type: object
+      description: >-
+        The container runtime the instance uses, or would use once a service
+        needs one. Probed at most every few seconds.
+      required: [kind, reachable]
+      properties:
+        kind: { type: string, enum: [docker, podman, none] }
+        version: { type: string }
+        reachable: { type: boolean }
+        error: { type: string, description: Why the runtime is not reachable. }
+    Container:
+      type: object
+      required: [name, image, state]
+      properties:
+        name: { type: string }
+        service: { type: string }
+        resource: { type: string }
+        role: { type: string }
+        image: { type: string }
+        state: { type: string }
+    ResourceCounts:
+      type: object
+      additionalProperties:
+        type: object
+        additionalProperties: { type: integer }
     Endpoints:
       type: object
       description: Endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port.
       additionalProperties: { type: string }
     Readiness:
       type: object
+      required: [ready, services]
       properties:
         ready: { type: boolean }
         services:
           type: object
           additionalProperties:
             type: object
+            required: [ready]
             properties:
               ready: { type: boolean }
               reason: { type: string }

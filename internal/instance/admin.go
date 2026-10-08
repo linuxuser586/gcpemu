@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/admin"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 )
 
@@ -38,20 +39,23 @@ func newAdmin(in *Instance) http.Handler {
 		writeJSON(w, code, map[string]any{"ready": code == http.StatusOK, "services": out})
 	})
 	mux.HandleFunc("GET /_emu/v1/info", func(w http.ResponseWriter, r *http.Request) {
-		var names []string
+		names := []string{}
 		for _, s := range in.services {
 			names = append(names, s.Name())
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"instance":  in.Config.Instance,
-			"id":        in.ID,
-			"pid":       os.Getpid(),
-			"version":   Version,
-			"dir":       in.Dir,
-			"ephemeral": in.Config.Ephemeral,
-			"iamMode":   in.Config.IAMMode,
-			"services":  names,
-			"endpoints": in.Env.Endpoints.All(),
+			"instance":       in.Config.Instance,
+			"id":             in.ID,
+			"pid":            os.Getpid(),
+			"version":        Version,
+			"dir":            in.Dir,
+			"ephemeral":      in.Config.Ephemeral,
+			"iamMode":        in.Config.IAMMode,
+			"strictProjects": in.Config.StrictProjects,
+			"console":        in.consoleServed,
+			"services":       names,
+			"endpoints":      in.Env.Endpoints.All(),
+			"runtime":        in.RuntimeStatus(r.Context()),
 		})
 	})
 	mux.HandleFunc("GET /_emu/v1/endpoints", func(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +102,15 @@ func newAdmin(in *Instance) http.Handler {
 				}
 			}
 			out[name] = m
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+	mux.HandleFunc("GET /_emu/v1/resources/counts", func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]map[string]int{}
+		for _, s := range in.services {
+			if c, ok := s.(emu.ResourceCounter); ok {
+				out[s.Name()] = c.ResourceCounts()
+			}
 		}
 		writeJSON(w, http.StatusOK, out)
 	})

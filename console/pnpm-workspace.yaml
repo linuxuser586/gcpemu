@@ -1,0 +1,3 @@
+allowBuilds:
+  # Its postinstall copies the browser worker; the tests use msw/node.
+  msw: false
