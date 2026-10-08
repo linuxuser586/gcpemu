@@ -219,18 +219,20 @@ func (s *Service) lookupPod(ctx context.Context, key, ip string) wiEntry {
 }
 
 // wiAllowed reports whether member may impersonate gsa. IAM mode off
-// allows everything.
+// allows everything; otherwise it fails closed, denying when the iam
+// service is absent or cannot test permissions, so a misconfiguration
+// never silently grants GSA tokens.
 func (s *Service) wiAllowed(ctx context.Context, member, gsa string) bool {
 	if s.env.Auth.Mode() == config.IAMOff {
 		return true
 	}
 	p, ok := s.env.Lookup("iam")
 	if !ok {
-		return true
+		return false
 	}
 	t, ok := p.(emu.IAMPermissionTester)
 	if !ok {
-		return true
+		return false
 	}
 	proj := "-"
 	if _, dom, ok := strings.Cut(gsa, "@"); ok {
