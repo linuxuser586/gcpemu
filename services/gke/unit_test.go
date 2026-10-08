@@ -225,3 +225,59 @@ func TestPreloadLists(t *testing.T) {
 		}
 	}
 }
+
+// fakeIAM is an iam peer without emu.IAMPermissionTester; fakeTesterIAM
+// adds it with a fixed verdict.
+type fakeIAM struct{}
+
+func (fakeIAM) Name() string                { return "iam" }
+func (fakeIAM) Register(emu.Router) error   { return nil }
+func (fakeIAM) Start(context.Context) error { return nil }
+func (fakeIAM) Stop(context.Context) error  { return nil }
+func (fakeIAM) Ready() error                { return nil }
+
+type fakeTesterIAM struct {
+	fakeIAM
+	grant bool
+}
+
+func (f fakeTesterIAM) TestPermissions(_ context.Context, _ string, perms []string) []string {
+	if f.grant {
+		return perms
+	}
+	return nil
+}
+
+// TestWIAllowedFailsClosed is FR-GKE-005: outside IAM mode off, Workload
+// Identity impersonation is denied when the iam service is absent or cannot
+// test permissions, and otherwise follows the policy verdict.
+func TestWIAllowedFailsClosed(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	const member, gsa = "serviceAccount:p.svc.id.goog[ns/ksa]", "app@p.iam.gserviceaccount.com"
+	tests := []struct {
+		name string
+		mode string
+		iam  emu.Service
+		want bool
+	}{
+		{"off, no iam", config.IAMOff, nil, true},
+		{"enforce, no iam", config.IAMEnforce, nil, false},
+		{"audit, no iam", config.IAMAudit, nil, false},
+		{"enforce, no tester", config.IAMEnforce, fakeIAM{}, false},
+		{"enforce, denied", config.IAMEnforce, fakeTesterIAM{}, false},
+		{"enforce, granted", config.IAMEnforce, fakeTesterIAM{grant: true}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			env := &emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
+				Auth: emu.NewPolicyAuthorizer(tt.mode, log), Endpoints: emu.NewEndpoints()}
+			if tt.iam != nil {
+				env.SetServices(map[string]emu.Service{"iam": tt.iam})
+			}
+			if got := New(env).(*Service).wiAllowed(context.Background(), member, gsa); got != tt.want {
+				t.Fatalf("wiAllowed = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
