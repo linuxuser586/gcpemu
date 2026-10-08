@@ -1,7 +1,8 @@
 name: release
 # A vX.Y.Z tag publishes the static binaries and SHA256SUMS that
 # setup-gcpemu downloads and verifies (FR-CI-001), and moves the major tag
-# (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves.
+# (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves. The image
+# job then publishes the same linux binaries as the OCI image (NFR-PORT-004).
 on:
   push:
     tags: ["v*.*.*"]
@@ -40,9 +41,62 @@ jobs:
           pre=""
           case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
           gh release create "$GITHUB_REF_NAME" dist/gcpemu-* dist/SHA256SUMS --verify-tag --generate-notes $pre
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: dist/gcpemu-linux-*
+          if-no-files-found: error
       - name: Move the major tag
         if: ${{ !contains(github.ref_name, '-') }}
         run: |
           major="${GITHUB_REF_NAME%%.*}"
           git tag -f "$major" "$GITHUB_REF_NAME^{commit}"
           git push -f origin "refs/tags/$major"
+
+  # A separate job, so a registry outage never holds up the binaries that
+  # setup-gcpemu downloads, and it can be re-run on its own.
+  image:
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
+          path: dist
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # vX.Y.Z pushes X.Y.Z, X.Y, X and latest; a prerelease only its
+      # exact version.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            docker.io/linuxuser586/gcpemu
+            ghcr.io/linuxuser586/gcpemu
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: dist
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          sbom: true
+          provenance: mode=max

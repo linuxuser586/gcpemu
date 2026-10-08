@@ -153,6 +153,36 @@ fails, it uploads the logs, request log, resource dump and kubeconfig as an arti
 [setup-gcpemu/README.md](setup-gcpemu/README.md). Releases are published from `vX.Y.Z` tags, and each one moves
 its major tag. Until v1.0.0 that tag is `@v0`; pin `@v0.1.0` for an exact release.
 
+### Container image
+
+Each release is also a multi-arch (amd64, arm64) distroless image, running as a non-root
+user, at `docker.io/linuxuser586/gcpemu` and `ghcr.io/linuxuser586/gcpemu`. It is tagged
+`X.Y.Z`, `X.Y`, `X` and `latest`; a prerelease gets only its exact version.
+
+```sh
+docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 \
+  -v gcpemu:/data linuxuser586/gcpemu:0
+docker exec gcpemu /gcpemu status
+```
+
+The image binds `0.0.0.0` with IAM in audit mode, keeps state in `/data` (mount a volume to
+keep it across containers, or set `GCPEMU_EPHEMERAL=true`), and reports healthy once every
+Service is ready (`gcpemu status --ready`). The Web console is not served, because the emulator
+is not bound to loopback. The image has no container runtime, so it starts every
+Service except Cloud SQL, GKE and Cloud NAT (`GCPEMU_SERVICES=iam,compute,dns,certs,ar,pubsub,gcs,lb,cdn`).
+Load balancer forwarding rules listen on their own ports, so publish those with extra `-p`
+flags. As a GitHub Actions service container (the job waits for the health check):
+
+```yaml
+services:
+  gcpemu:
+    image: linuxuser586/gcpemu:0
+    ports: ["4510:4510", "4443:4443", "8085:8085"]
+env:
+  STORAGE_EMULATOR_HOST: http://localhost:4443
+  PUBSUB_EMULATOR_HOST: localhost:8085
+```
+
 ### Reference stack (SRS 11.2)
 
 `e2e/` is the acceptance test of the whole emulator: one OpenTofu root module
