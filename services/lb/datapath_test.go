@@ -335,10 +335,16 @@ func TestLeastRequest(t *testing.T) {
 		}()
 		time.Sleep(2 * time.Millisecond)
 	}
+	// Re-check while waiting: the last request may land on the stuck
+	// endpoint after the check, and then no fast response comes.
 	deadline := time.After(20 * time.Second)
-	for got := 0; int64(got)+stuck.Load() < n; got++ {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for got := 0; int64(got)+stuck.Load() < n; {
 		select {
 		case <-fast:
+			got++
+		case <-tick.C:
 		case <-deadline:
 			t.Fatalf("only %d fast responses and %d stuck requests", got, stuck.Load())
 		}
