@@ -17,7 +17,7 @@ The user-chosen label for an Instance's configuration, e.g. "default".
 The unique identifier that tags everything an Instance owns, such as its containers and networks.
 
 **Product**:
-A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN). There are ten.
+A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager). There are eleven.
 
 **Service**:
 An independently enabled unit of emulation that implements all or part of a Product. One Product may be split across several Services, which is why there are more Services than Products.
@@ -141,6 +141,16 @@ A GCP project that exists in an Instance. It is created implicitly the first tim
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
+**Secret Manager secret**:
+A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
+_Avoid_: secret (unqualified)
+
+**Secret version**:
+One immutable payload of a Secret Manager secret, which can be enabled, disabled or destroyed.
+
+**Secret sync**:
+GKE's copying of Secret versions into Kubernetes Secrets inside a cluster.
+
 **Strict projects**:
 An Instance setting under which referencing a Project that does not exist is an error instead of creating it.
 
@@ -171,4 +181,5 @@ _Avoid_: "acceptance" on its own, e2e
 - "Snapshot" on its own is ambiguous. Use *State snapshot* or *Pub/Sub snapshot*.
 - "Endpoint" on its own is ambiguous. Use *Service endpoint*, *Endpoint override*, or GCP's *network endpoint* (NEG).
 - "Gateway" and "frontend" on their own are ambiguous. Load balancer frontends and the network's gateway IP keep their GCP meanings and are always qualified.
+- "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
