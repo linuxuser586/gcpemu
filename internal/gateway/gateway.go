@@ -21,7 +21,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
+	"github.com/linuxuser586/gcpemu/internal/apidef"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -75,6 +77,11 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 			ctx, err = g.authGRPC(ctx)
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
+			}
+			if m, ok := req.(proto.Message); ok && err == nil {
+				// Field behaviours (NFR-MNT-001): required, output-only and
+				// immutable fields, from the generated API definitions.
+				err = apidef.CheckProto(info.FullMethod, m)
 			}
 			if err == nil {
 				func() {
