@@ -2,61 +2,194 @@ package iam
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
-	"unicode"
 
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/env"
+	"cel.dev/cel-go/common/operators"
+	"cel.dev/cel-go/common/overloads"
+	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/common/types/ref"
 	iamv1 "google.golang.org/api/iam/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 )
 
-// IAM Conditions (FR-IAM-005). A small CEL subset is supported:
+// IAM Conditions (FR-IAM-005) are CEL expressions evaluated with cel-go,
+// restricted to the attributes and functions IAM supports:
 //
-//	request.time  < <= > >= == !=  timestamp("RFC3339")
-//	resource.name / resource.type / resource.service  == != and
-//	  .startsWith("…") .endsWith("…") .contains("…")
-//	&& || ! ( ) true false
+//	request.time  resource.name  resource.type  resource.service
+//	&& || ! == != < <= > >= + - in, list literals
+//	string: startsWith endsWith contains matches extract
+//	timestamp() duration() and the timestamp get* methods (optional time zone)
+//	resource.matchTag matchTagId hasTagKey hasTagKeyId
+//	api.getAttribute(name, default)
 //
-// Unsupported expressions are rejected by setIamPolicy.
+// Macros (has, all, exists, …) and other standard functions are not
+// available, so expressions using them are rejected by setIamPolicy.
+// Workload identity attribute mappings and conditions use full CEL over
+// assertion, attribute and google.
 
-// condEnv is the evaluation context of a condition. vars holds extra
-// roots (assertion, attribute, google) for workload identity mappings.
-type condEnv struct {
-	now      time.Time
-	resource string // full resource name
-	vars     map[string]any
+// condFunctions are the standard-library functions IAM Conditions allow.
+var condFunctions = []string{
+	operators.LogicalAnd, operators.LogicalOr, operators.LogicalNot,
+	operators.Equals, operators.NotEquals,
+	operators.Less, operators.LessEquals, operators.Greater, operators.GreaterEquals,
+	operators.Add, operators.Subtract, operators.In,
+	overloads.StartsWith, overloads.EndsWith, overloads.Contains, overloads.Matches,
+	overloads.TypeConvertTimestamp, overloads.TypeConvertDuration,
+	overloads.TimeGetFullYear, overloads.TimeGetMonth, overloads.TimeGetDayOfYear,
+	overloads.TimeGetDate, overloads.TimeGetDayOfMonth, overloads.TimeGetDayOfWeek,
+	overloads.TimeGetHours, overloads.TimeGetMinutes, overloads.TimeGetSeconds,
+	overloads.TimeGetMilliseconds,
 }
 
-// varRoots are the identifier roots resolved through condEnv.vars.
-var varRoots = map[string]bool{"assertion": true, "attribute": true, "google": true}
+var (
+	condEnvOnce sync.Once
+	condCELEnv  *cel.Env
+	condEnvErr  error
 
-func (e condEnv) attr(name string) (any, bool) {
-	root, _, _ := strings.Cut(name, ".")
-	if varRoots[root] {
-		var cur any = e.vars
-		for _, part := range strings.Split(name, ".") {
-			m, ok := cur.(map[string]any)
-			if !ok {
-				return nil, true
-			}
-			cur = m[part]
+	mapEnvOnce sync.Once
+	mapCELEnv  *cel.Env
+	mapEnvErr  error
+
+	condPrograms sync.Map // expression → cel.Program
+	mapPrograms  sync.Map
+)
+
+// extractFunc is IAM's string.extract(template): the text between the
+// literal prefix and suffix around the template's single {placeholder},
+// or "" when they do not match.
+var extractFunc = cel.Function("extract",
+	cel.MemberOverload("string_extract_string", []*cel.Type{cel.StringType, cel.StringType}, cel.StringType,
+		cel.BinaryBinding(func(s, tmpl ref.Val) ref.Val {
+			return types.String(extract(string(s.(types.String)), string(tmpl.(types.String))))
+		})))
+
+func extract(s, tmpl string) string {
+	open, close := strings.IndexByte(tmpl, '{'), strings.IndexByte(tmpl, '}')
+	if open < 0 || close < open {
+		return ""
+	}
+	prefix, suffix := tmpl[:open], tmpl[close+1:]
+	i := strings.Index(s, prefix)
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len(prefix):]
+	if suffix == "" {
+		return rest
+	}
+	if j := strings.Index(rest, suffix); j >= 0 {
+		return rest[:j]
+	}
+	return ""
+}
+
+// tagFunc declares a resource tag function. The emulator does not model
+// tags, so every tag test is false.
+func tagFunc(name string, args int) cel.EnvOption {
+	argTypes := make([]*cel.Type, args)
+	for i := range argTypes {
+		argTypes[i] = cel.StringType
+	}
+	return cel.Function("resource."+name,
+		cel.Overload("resource_"+name, argTypes, cel.BoolType,
+			cel.FunctionBinding(func(...ref.Val) ref.Val { return types.False })))
+}
+
+func conditionEnv() (*cel.Env, error) {
+	condEnvOnce.Do(func() {
+		subset := env.NewLibrarySubset().SetDisableMacros(true)
+		for _, fn := range condFunctions {
+			subset.AddIncludedFunctions(&env.Function{Name: fn})
 		}
-		return cur, true
+		condCELEnv, condEnvErr = cel.NewCustomEnv(
+			cel.StdLib(cel.StdLibSubset(subset)),
+			cel.Variable("request.time", cel.TimestampType),
+			cel.Variable("resource.name", cel.StringType),
+			cel.Variable("resource.type", cel.StringType),
+			cel.Variable("resource.service", cel.StringType),
+			extractFunc,
+			tagFunc("matchTag", 2), tagFunc("matchTagId", 2),
+			tagFunc("hasTagKey", 1), tagFunc("hasTagKeyId", 1),
+			// No API attributes are modeled; the default is returned.
+			cel.Function("api.getAttribute",
+				cel.Overload("api_getAttribute", []*cel.Type{cel.StringType, cel.DynType}, cel.DynType,
+					cel.BinaryBinding(func(_, def ref.Val) ref.Val { return def }))),
+		)
+	})
+	return condCELEnv, condEnvErr
+}
+
+func mappingEnv() (*cel.Env, error) {
+	mapEnvOnce.Do(func() {
+		dynMap := cel.MapType(cel.StringType, cel.DynType)
+		mapCELEnv, mapEnvErr = cel.NewEnv(
+			cel.Variable("assertion", dynMap),
+			cel.Variable("attribute", dynMap),
+			cel.Variable("google", dynMap),
+			extractFunc,
+		)
+	})
+	return mapCELEnv, mapEnvErr
+}
+
+// compile compiles expr in e, caching the program in cache. When
+// boolean is set the expression must evaluate to a bool.
+func compile(e *cel.Env, envErr error, cache *sync.Map, expr string, boolean bool) (cel.Program, error) {
+	if envErr != nil {
+		return nil, envErr
 	}
-	host, path := splitResource(e.resource)
-	switch name {
-	case "request.time":
-		return e.now, true
-	case "resource.name":
-		return path, true
-	case "resource.service":
-		return host, true
-	case "resource.type":
-		return resourceType(host, path), true
+	if p, ok := cache.Load(expr); ok {
+		return p.(cel.Program), nil
 	}
-	return nil, false
+	ast, iss := e.Compile(expr)
+	if iss.Err() != nil {
+		return nil, iss.Err()
+	}
+	if boolean && ast.OutputType() != cel.BoolType {
+		return nil, fmt.Errorf("expression must be boolean, got %s", ast.OutputType())
+	}
+	p, err := e.Program(ast)
+	if err != nil {
+		return nil, err
+	}
+	cache.Store(expr, p)
+	return p, nil
+}
+
+// compileCondition compiles an IAM Condition.
+func compileCondition(expr string) (cel.Program, error) {
+	e, err := conditionEnv()
+	return compile(e, err, &condPrograms, expr, true)
+}
+
+// compileMapping compiles a workload identity attribute mapping or
+// attribute condition.
+func compileMapping(expr string) (cel.Program, error) {
+	e, err := mappingEnv()
+	return compile(e, err, &mapPrograms, expr, false)
+}
+
+// evalMapping evaluates a workload identity expression over vars
+// (assertion, attribute, google), returning a native Go value.
+func evalMapping(expr string, vars map[string]any) (any, error) {
+	p, err := compileMapping(expr)
+	if err != nil {
+		return nil, err
+	}
+	act := map[string]any{"assertion": map[string]any{}, "attribute": map[string]any{}, "google": map[string]any{}}
+	for k, v := range vars {
+		act[k] = v
+	}
+	v, _, err := p.Eval(act)
+	if err != nil {
+		return nil, err
+	}
+	return v.Value(), nil
 }
 
 // resourceType derives a resource.type value such as
@@ -84,7 +217,7 @@ func resourceType(host, path string) string {
 	return host + "/" + strings.ToUpper(coll[:1]) + coll[1:]
 }
 
-// validateCondition parses a condition expression.
+// validateCondition compiles a condition expression.
 func validateCondition(c *iamv1.Expr) error {
 	if strings.TrimSpace(c.Expression) == "" {
 		return apierr.InvalidArgument("Condition expression must not be empty.")
@@ -92,453 +225,25 @@ func validateCondition(c *iamv1.Expr) error {
 	if c.Title == "" {
 		return apierr.InvalidArgument("Condition title must be specified.")
 	}
-	if _, err := parseCond(c.Expression); err != nil {
+	if _, err := compileCondition(c.Expression); err != nil {
 		return apierr.InvalidArgument("Condition expression %q is invalid: %v", c.Expression, err).WithReason(iamDomain, "INVALID_CONDITION")
 	}
 	return nil
 }
 
-// evalCondition evaluates c for an access to resource at now; parse or
-// type errors evaluate to false (deny).
+// evalCondition evaluates c for an access to resource at now; compile or
+// evaluation errors evaluate to false (deny).
 func evalCondition(c *iamv1.Expr, resource string, now time.Time) bool {
-	n, err := parseCond(c.Expression)
+	p, err := compileCondition(c.Expression)
 	if err != nil {
 		return false
 	}
-	v, err := n.eval(condEnv{now: now, resource: resource})
-	if err != nil {
-		return false
-	}
-	b, ok := v.(bool)
-	return ok && b
-}
-
-// --- lexer ---
-
-type tok struct {
-	kind string // ident, string, op, (, ), ",", "."
-	val  string
-}
-
-func lexCond(s string) ([]tok, error) {
-	var out []tok
-	for i := 0; i < len(s); {
-		c := rune(s[i])
-		switch {
-		case unicode.IsSpace(c):
-			i++
-		case c == '"' || c == '\'':
-			j := i + 1
-			var sb strings.Builder
-			for j < len(s) && rune(s[j]) != c {
-				if s[j] == '\\' && j+1 < len(s) {
-					j++
-				}
-				sb.WriteByte(s[j])
-				j++
-			}
-			if j >= len(s) {
-				return nil, fmt.Errorf("unterminated string")
-			}
-			out = append(out, tok{"string", sb.String()})
-			i = j + 1
-		case unicode.IsLetter(c) || c == '_':
-			j := i
-			for j < len(s) && (unicode.IsLetter(rune(s[j])) || unicode.IsDigit(rune(s[j])) || s[j] == '_') {
-				j++
-			}
-			out = append(out, tok{"ident", s[i:j]})
-			i = j
-		case c == '(' || c == ')' || c == ',' || c == '.':
-			out = append(out, tok{string(c), string(c)})
-			i++
-		default:
-			for _, op := range []string{"&&", "||", "==", "!=", "<=", ">=", "<", ">", "!", "+"} {
-				if strings.HasPrefix(s[i:], op) {
-					out = append(out, tok{"op", op})
-					i += len(op)
-					goto next
-				}
-			}
-			return nil, fmt.Errorf("unexpected character %q", c)
-		next:
-		}
-	}
-	return out, nil
-}
-
-// --- parser ---
-
-type condNode interface {
-	eval(e condEnv) (any, error)
-}
-
-type (
-	litNode  struct{ v any }
-	attrNode struct{ name string }
-	notNode  struct{ x condNode }
-	binNode  struct {
-		op   string
-		l, r condNode
-	}
-	callNode struct {
-		recv condNode // nil for global functions
-		fn   string
-		args []condNode
-	}
-)
-
-type condParser struct {
-	toks []tok
-	pos  int
-}
-
-func parseCond(s string) (condNode, error) {
-	toks, err := lexCond(s)
-	if err != nil {
-		return nil, err
-	}
-	p := &condParser{toks: toks}
-	n, err := p.or()
-	if err != nil {
-		return nil, err
-	}
-	if p.pos != len(p.toks) {
-		return nil, fmt.Errorf("unexpected %q", p.toks[p.pos].val)
-	}
-	return n, nil
-}
-
-func (p *condParser) peek() (tok, bool) {
-	if p.pos >= len(p.toks) {
-		return tok{}, false
-	}
-	return p.toks[p.pos], true
-}
-
-func (p *condParser) accept(kind, val string) bool {
-	t, ok := p.peek()
-	if ok && t.kind == kind && (val == "" || t.val == val) {
-		p.pos++
-		return true
-	}
-	return false
-}
-
-func (p *condParser) or() (condNode, error) {
-	l, err := p.and()
-	for err == nil && p.accept("op", "||") {
-		var r condNode
-		if r, err = p.and(); err == nil {
-			l = &binNode{"||", l, r}
-		}
-	}
-	return l, err
-}
-
-func (p *condParser) and() (condNode, error) {
-	l, err := p.cmp()
-	for err == nil && p.accept("op", "&&") {
-		var r condNode
-		if r, err = p.cmp(); err == nil {
-			l = &binNode{"&&", l, r}
-		}
-	}
-	return l, err
-}
-
-var cmpOps = map[string]bool{"==": true, "!=": true, "<": true, "<=": true, ">": true, ">=": true}
-
-func (p *condParser) cmp() (condNode, error) {
-	l, err := p.add()
-	if err != nil {
-		return nil, err
-	}
-	if t, ok := p.peek(); ok && t.kind == "op" && cmpOps[t.val] {
-		p.pos++
-		r, err := p.add()
-		if err != nil {
-			return nil, err
-		}
-		return &binNode{t.val, l, r}, nil
-	}
-	return l, nil
-}
-
-func (p *condParser) add() (condNode, error) {
-	l, err := p.unary()
-	for err == nil && p.accept("op", "+") {
-		var r condNode
-		if r, err = p.unary(); err == nil {
-			l = &binNode{"+", l, r}
-		}
-	}
-	return l, err
-}
-
-func (p *condParser) unary() (condNode, error) {
-	if p.accept("op", "!") {
-		x, err := p.unary()
-		if err != nil {
-			return nil, err
-		}
-		return &notNode{x}, nil
-	}
-	return p.postfix()
-}
-
-func (p *condParser) postfix() (condNode, error) {
-	n, err := p.primary()
-	if err != nil {
-		return nil, err
-	}
-	for p.accept(".", "") {
-		t, ok := p.peek()
-		if !ok || t.kind != "ident" {
-			return nil, fmt.Errorf("expected method name")
-		}
-		p.pos++
-		if !p.accept("(", "") {
-			return nil, fmt.Errorf("unsupported field access .%s", t.val)
-		}
-		args, err := p.args()
-		if err != nil {
-			return nil, err
-		}
-		n = &callNode{recv: n, fn: t.val, args: args}
-	}
-	return n, nil
-}
-
-func (p *condParser) args() ([]condNode, error) {
-	var args []condNode
-	if p.accept(")", "") {
-		return nil, nil
-	}
-	for {
-		a, err := p.or()
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, a)
-		if p.accept(")", "") {
-			return args, nil
-		}
-		if !p.accept(",", "") {
-			return nil, fmt.Errorf("expected , or )")
-		}
-	}
-}
-
-func (p *condParser) primary() (condNode, error) {
-	t, ok := p.peek()
-	if !ok {
-		return nil, fmt.Errorf("unexpected end of expression")
-	}
-	p.pos++
-	switch t.kind {
-	case "string":
-		return &litNode{t.val}, nil
-	case "(":
-		n, err := p.or()
-		if err != nil {
-			return nil, err
-		}
-		if !p.accept(")", "") {
-			return nil, fmt.Errorf("missing )")
-		}
-		return n, nil
-	case "ident":
-		switch t.val {
-		case "true", "false":
-			return &litNode{t.val == "true"}, nil
-		case "timestamp", "duration":
-			if !p.accept("(", "") {
-				return nil, fmt.Errorf("expected ( after %s", t.val)
-			}
-			args, err := p.args()
-			if err != nil {
-				return nil, err
-			}
-			return &callNode{fn: t.val, args: args}, nil
-		case "request", "resource":
-			name := t.val
-			if !p.accept(".", "") {
-				return nil, fmt.Errorf("expected attribute after %s", t.val)
-			}
-			f, ok := p.peek()
-			if !ok || f.kind != "ident" {
-				return nil, fmt.Errorf("expected attribute name")
-			}
-			p.pos++
-			name += "." + f.val
-			if _, ok := (condEnv{}).attr(name); !ok {
-				return nil, fmt.Errorf("unsupported attribute %s", name)
-			}
-			return &attrNode{name}, nil
-		default:
-			if !varRoots[t.val] {
-				break
-			}
-			name := t.val
-			// Consume ".field" segments, leaving ".method(" to postfix.
-			for p.pos+1 < len(p.toks) && p.toks[p.pos].kind == "." && p.toks[p.pos+1].kind == "ident" &&
-				(p.pos+2 >= len(p.toks) || p.toks[p.pos+2].kind != "(") {
-				name += "." + p.toks[p.pos+1].val
-				p.pos += 2
-			}
-			return &attrNode{name}, nil
-		}
-	}
-	return nil, fmt.Errorf("unexpected %q", t.val)
-}
-
-// --- evaluation ---
-
-func (n *litNode) eval(condEnv) (any, error) { return n.v, nil }
-
-func (n *attrNode) eval(e condEnv) (any, error) {
-	v, _ := e.attr(n.name)
-	return v, nil
-}
-
-func (n *notNode) eval(e condEnv) (any, error) {
-	v, err := n.x.eval(e)
-	if err != nil {
-		return nil, err
-	}
-	b, ok := v.(bool)
-	if !ok {
-		return nil, fmt.Errorf("! on non-bool")
-	}
-	return !b, nil
-}
-
-func (n *binNode) eval(e condEnv) (any, error) {
-	l, err := n.l.eval(e)
-	if err != nil {
-		return nil, err
-	}
-	if n.op == "&&" || n.op == "||" {
-		lb, ok := l.(bool)
-		if !ok {
-			return nil, fmt.Errorf("%s on non-bool", n.op)
-		}
-		if (n.op == "&&" && !lb) || (n.op == "||" && lb) {
-			return lb, nil
-		}
-		r, err := n.r.eval(e)
-		if err != nil {
-			return nil, err
-		}
-		rb, ok := r.(bool)
-		if !ok {
-			return nil, fmt.Errorf("%s on non-bool", n.op)
-		}
-		return rb, nil
-	}
-	r, err := n.r.eval(e)
-	if err != nil {
-		return nil, err
-	}
-	if n.op == "+" {
-		ls, lok := l.(string)
-		rs, rok := r.(string)
-		if !lok || !rok {
-			return nil, fmt.Errorf("+ needs strings")
-		}
-		return ls + rs, nil
-	}
-	var c int
-	switch lv := l.(type) {
-	case time.Time:
-		rv, ok := r.(time.Time)
-		if !ok {
-			return nil, fmt.Errorf("type mismatch")
-		}
-		c = lv.Compare(rv)
-	case string:
-		rv, ok := r.(string)
-		if !ok {
-			return nil, fmt.Errorf("type mismatch")
-		}
-		c = strings.Compare(lv, rv)
-	case bool:
-		rv, ok := r.(bool)
-		if !ok || (n.op != "==" && n.op != "!=") {
-			return nil, fmt.Errorf("type mismatch")
-		}
-		if lv != rv {
-			c = 1
-		}
-	default:
-		return nil, fmt.Errorf("unsupported operand")
-	}
-	switch n.op {
-	case "==":
-		return c == 0, nil
-	case "!=":
-		return c != 0, nil
-	case "<":
-		return c < 0, nil
-	case "<=":
-		return c <= 0, nil
-	case ">":
-		return c > 0, nil
-	case ">=":
-		return c >= 0, nil
-	}
-	return nil, fmt.Errorf("unknown operator %s", n.op)
-}
-
-func (n *callNode) eval(e condEnv) (any, error) {
-	args := make([]any, len(n.args))
-	for i, a := range n.args {
-		v, err := a.eval(e)
-		if err != nil {
-			return nil, err
-		}
-		args[i] = v
-	}
-	if n.recv == nil {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("%s takes one argument", n.fn)
-		}
-		str, ok := args[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("%s takes a string", n.fn)
-		}
-		switch n.fn {
-		case "timestamp":
-			return time.Parse(time.RFC3339Nano, str)
-		case "duration":
-			if sec, ok := strings.CutSuffix(str, "s"); ok {
-				f, err := strconv.ParseFloat(sec, 64)
-				return time.Duration(f * float64(time.Second)), err
-			}
-			return time.ParseDuration(str)
-		}
-		return nil, fmt.Errorf("unknown function %s", n.fn)
-	}
-	recv, err := n.recv.eval(e)
-	if err != nil {
-		return nil, err
-	}
-	rs, ok := recv.(string)
-	if !ok || len(args) != 1 {
-		return nil, fmt.Errorf("unsupported method %s", n.fn)
-	}
-	arg, ok := args[0].(string)
-	if !ok {
-		return nil, fmt.Errorf("%s takes a string", n.fn)
-	}
-	switch n.fn {
-	case "startsWith":
-		return strings.HasPrefix(rs, arg), nil
-	case "endsWith":
-		return strings.HasSuffix(rs, arg), nil
-	case "contains":
-		return strings.Contains(rs, arg), nil
-	}
-	return nil, fmt.Errorf("unsupported method %s", n.fn)
+	host, path := splitResource(resource)
+	v, _, err := p.Eval(map[string]any{
+		"request.time":     now,
+		"resource.name":    path,
+		"resource.service": host,
+		"resource.type":    resourceType(host, path),
+	})
+	return err == nil && v == types.True
 }
