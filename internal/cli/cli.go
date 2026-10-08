@@ -360,7 +360,7 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 }
 
 func (o *rootOpts) statusCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, needReady bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show instance status",
@@ -377,14 +377,22 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("instance %q is not running: %w", cfg.Instance, err)
 			}
-			_, ready, _ := c.do(http.MethodGet, "/_emu/v1/ready")
+			code, ready, _ := c.do(http.MethodGet, "/_emu/v1/ready")
+			// --ready makes status a readiness probe (NFR-PORT-004: the OCI
+			// image's HEALTHCHECK, as distroless has no curl).
+			notReady := func() error {
+				if needReady && code != http.StatusOK {
+					return fmt.Errorf("instance %q is not ready", cfg.Instance)
+				}
+				return nil
+			}
 			cts, err := c.get("/_emu/v1/containers")
 			if err != nil {
 				cts = []byte(`{"containers":[]}`)
 			}
 			if asJSON {
 				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s}\n", info, ready, cts)
-				return nil
+				return notReady()
 			}
 			var i struct {
 				Instance, ID, Version, Dir, IamMode string
@@ -420,10 +428,11 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			for _, x := range ct.Containers {
 				fmt.Fprintf(out, "  %-8s %-24s %-8s %s (%s)\n", x.Service, x.Resource, x.Role, x.Name, x.State)
 			}
-			return nil
+			return notReady()
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().BoolVar(&needReady, "ready", false, "exit non-zero unless every service is ready")
 	return cmd
 }
 
