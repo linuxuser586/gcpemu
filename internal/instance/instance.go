@@ -57,6 +57,7 @@ type Instance struct {
 	byName   map[string]emu.Service
 	failedMu sync.RWMutex
 	failed   map[string]error
+	holds    map[string]error // readiness holds (HoldReady), under failedMu
 	tmpDir   string
 	clock    *clock.Offset
 
@@ -82,7 +83,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 			"bind", cfg.Bind, "iamMode", cfg.IAMMode)
 	}
 
-	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, done: make(chan struct{})}
+	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, holds: map[string]error{}, done: make(chan struct{})}
 	in.ID = instanceID(dir, cfg.Ephemeral)
 
 	var st store.Store
@@ -255,9 +256,29 @@ func (in *Instance) failure(name string) error {
 	return in.failed[name]
 }
 
-// Readiness reports each service's readiness: nil error means ready.
+// HoldReady keeps the instance not ready, with name and reason reported
+// by Readiness, until release is called. The CLI holds it while the
+// startup seed is applied, so that "ready" means seeded (FR-CI-001).
+func (in *Instance) HoldReady(name, reason string) (release func()) {
+	in.failedMu.Lock()
+	in.holds[name] = errors.New(reason)
+	in.failedMu.Unlock()
+	return func() {
+		in.failedMu.Lock()
+		delete(in.holds, name)
+		in.failedMu.Unlock()
+	}
+}
+
+// Readiness reports each service's readiness, and any readiness holds:
+// nil error means ready.
 func (in *Instance) Readiness() map[string]error {
 	out := map[string]error{}
+	in.failedMu.RLock()
+	for name, err := range in.holds {
+		out[name] = err
+	}
+	in.failedMu.RUnlock()
 	for _, s := range in.services {
 		if err := in.failure(s.Name()); err != nil {
 			out[s.Name()] = err

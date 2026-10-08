@@ -126,6 +126,20 @@ inst := emutest.Start(t, []string{"gcs", "pubsub"})
 inst.Setenv(t) // client env vars for this test
 ```
 
+### GitHub Actions
+
+```yaml
+- uses: linuxuser586/gcpemu/setup-gcpemu@v1
+  with:
+    services: gcs,pubsub,sql
+    seed: test/emu-seed.yaml
+```
+
+This installs the release binary after checking it against `SHA256SUMS`, and starts the
+instance once the seed has been applied. It exports `gcpemu env` to later steps. When the job
+fails, it uploads the logs, request log, resource dump and kubeconfig as an artifact. See
+[setup-gcpemu/README.md](setup-gcpemu/README.md). Releases are published from `vX.Y.Z` tags.
+
 ### Reference stack (SRS 11.2)
 
 `e2e/` is the acceptance test of the whole emulator: one OpenTofu root module

@@ -1,0 +1,4 @@
+# Self-test config (.github/workflows/ci.yml, job "action"): only the
+# declared project may be used.
+strictProjects: true
+projects: [selftest-proj]

@@ -97,6 +97,90 @@ jobs:
       - name: OpenTofu acceptance (SRS 11.1)
         run: make tofu
 
+  # FR-CI-001/002: the setup-gcpemu action, with this commit's binary
+  # served as release v0.0.0-selftest.
+  action:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read # the post step reads the job's result
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Unit tests; dist/ matches the sources
+        working-directory: setup-gcpemu
+        run: |
+          npm ci
+          npm test
+          npm run build
+          git diff --exit-code dist/ || { echo "::error::setup-gcpemu/dist is stale: run 'make action' and commit it"; exit 1; }
+      - name: Serve this commit as a release
+        run: |
+          rel="$RUNNER_TEMP/rel/v0.0.0-selftest"
+          mkdir -p "$rel"
+          CGO_ENABLED=0 go build -trimpath -ldflags '-X github.com/linuxuser586/gcpemu/internal/instance.Version=v0.0.0-selftest' \
+            -o "$rel/gcpemu-linux-$(go env GOARCH)" ./cmd/gcpemu
+          (cd "$rel" && sha256sum gcpemu-* > SHA256SUMS)
+          nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/rel" >/dev/null 2>&1 &
+      - uses: ./setup-gcpemu
+        id: emu
+        with:
+          version: v0.0.0-selftest
+          download-url: http://127.0.0.1:8765
+          services: gcs,pubsub,sql
+          seed: setup-gcpemu/test/seed.yaml
+          config: setup-gcpemu/test/gcpemu.yaml
+          diagnostics: always
+          artifact-name: gcpemu-selftest-${{ runner.arch }}
+      - name: Environment, seed and config reach the instance
+        run: setup-gcpemu/test/check.sh
+        env:
+          EXPECT_BIN: ${{ steps.emu.outputs.bin }}
+      - name: Outputs
+        run: |
+          test "${{ steps.emu.outputs.version }}" = v0.0.0-selftest
+          test -n "${{ steps.emu.outputs.gateway }}"
+      # A second instance from a local binary. Its post step must find this
+      # job successful and upload nothing (checked by action-artifacts).
+      - uses: ./setup-gcpemu
+        with:
+          binary: ${{ steps.emu.outputs.bin }}
+          instance: second
+          services: pubsub
+          artifact-name: gcpemu-selftest-second-${{ runner.arch }}
+      - run: test "$GCPEMU_INSTANCE" = second && gcpemu status | grep -q 'instance second'
+
+  action-artifacts:
+    needs: action
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gcpemu-selftest-*
+          path: diag
+      - name: Diagnostics of the first instance only
+        run: |
+          ls -R diag
+          for arch in X64 ARM64; do
+            d=diag/gcpemu-selftest-$arch
+            for f in gcpemu.log requests.json resources.json containers.json info.json status.txt; do
+              test -s "$d/$f" || { echo "::error::$d/$f is missing"; exit 1; }
+            done
+            ls "$d"/containers/*.log
+            grep -q selftest-bucket "$d/resources.json"
+            test ! -e "diag/gcpemu-selftest-second-$arch" || { echo "::error::a successful job uploaded diagnostics"; exit 1; }
+          done
+
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
   perf:
