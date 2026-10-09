@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -358,12 +359,20 @@ func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, erro
 	return out.ID, nil
 }
 
+// pinMu serializes createPinned within the process: between deleting the
+// probe network and creating the pinned one, another creation would be
+// handed the same (lowest free) subnet.
+var pinMu sync.Mutex
+
 // createPinned creates s on the subnet the runtime picks (see
 // NetworkSpec.Pin): it creates the network, reads the subnet and creates
-// it again with that subnet.
+// it again with that subnet. If other processes keep taking the subnet in
+// between, the network is left unpinned.
 func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error) {
+	pinMu.Lock()
+	defer pinMu.Unlock()
 	s.Pin = false
-	for attempt := 0; ; attempt++ {
+	for attempt := 0; attempt < 10; attempt++ {
 		id, err := c.createNetwork(ctx, s)
 		if err != nil {
 			return "", err
@@ -381,11 +390,17 @@ func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error
 		p := s
 		p.Subnet, p.Gateway = n.Subnet, n.Gateway
 		id, err = c.createNetwork(ctx, p)
-		if err == nil || attempt >= 3 || !strings.Contains(strings.ToLower(err.Error()), "overlap") {
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "overlap") {
 			return id, err
 		}
-		// Another network took the subnet in between: pick again.
+		// Another process took the subnet in between: pick again.
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(rand.IntN(100)) * time.Millisecond):
+		}
 	}
+	return c.createNetwork(ctx, s)
 }
 
 // poolsExhausted reports a runtime that has no default address pool left
