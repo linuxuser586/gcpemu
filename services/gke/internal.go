@@ -57,6 +57,8 @@ func (s *Service) internalHandler() http.Handler {
 			switch {
 			case len(segs) == 5 && segs[4] == "token":
 				s.serveNodeToken(w, r, key, node)
+			case len(segs) == 5 && segs[4] == "mount" && r.Method == http.MethodPost:
+				s.serveProviderMount(w, r, key)
 			case len(segs) >= 6 && segs[4] == "md":
 				s.serveMetadata(w, r, key, node, segs[5], "/"+strings.Join(segs[6:], "/"))
 			default:

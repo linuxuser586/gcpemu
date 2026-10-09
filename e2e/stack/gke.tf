@@ -1,4 +1,5 @@
-# Private GKE cluster with Workload Identity, its node pool and the
+# Private GKE cluster with Workload Identity, the Gateway API CRDs, the
+# Secret Manager add-on and secret synchronization, its node pool and the
 # Artifact Registry repository the app image is pushed to.
 
 resource "google_service_account" "nodes" {
@@ -28,6 +29,18 @@ resource "google_container_cluster" "gke" {
 
   workload_identity_config {
     workload_pool = "${var.project}.svc.id.goog"
+  }
+
+  gateway_api_config {
+    channel = "CHANNEL_STANDARD"
+  }
+
+  secret_manager_config {
+    enabled = true
+  }
+
+  secret_sync_config {
+    enabled = true
   }
 }
 

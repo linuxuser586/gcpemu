@@ -1,5 +1,6 @@
-# GKE Standard: a VPC-native private cluster with Workload Identity and a
-# separately managed node pool with autoscaling.
+# GKE Standard: a VPC-native private cluster with Workload Identity, the
+# Gateway API CRDs, the Secret Manager add-on and secret synchronization,
+# and a separately managed node pool with autoscaling.
 
 resource "google_compute_network" "vpc" {
   name                    = "tf-gke-vpc"
@@ -52,6 +53,26 @@ resource "google_container_cluster" "c" {
 
   release_channel {
     channel = "REGULAR"
+  }
+
+  gateway_api_config {
+    channel = "CHANNEL_STANDARD"
+  }
+
+  secret_manager_config {
+    enabled = true
+    rotation_config {
+      enabled           = true
+      rotation_interval = "120s"
+    }
+  }
+
+  secret_sync_config {
+    enabled = true
+    rotation_config {
+      enabled           = true
+      rotation_interval = "300s"
+    }
   }
 }
 

@@ -367,6 +367,7 @@ Each GKE cluster is a real, CNCF-conformant Kubernetes cluster (a k3s-class dist
 | FR-GKE-010 | GKE Ingress and Gateway API controllers (`gke-l7-global-external-managed`) that create LB resources from Kubernetes objects. | S |
 | FR-GKE-011 | Network policy enforcement (Dataplane V2 semantics). | S |
 | FR-GKE-012 | Autopilot mode, excluded from v1.0; until then, clusters with Autopilot enabled are rejected as UNIMPLEMENTED. | C |
+| FR-GKE-013 | Cluster settings that install components, on create and update, removed (keeping CRDs, user objects and synced Secrets) when disabled: `networkConfig.gatewayApiConfig` installs the Gateway API CRDs of the channel (v1.5.1); `secretManagerConfig` installs the Secrets Store CSI driver as `secrets-store-gke.csi.k8s.io` with the `gke` provider reading Secret Manager as the pod's Workload Identity, with optional rotation; `secretSyncConfig` runs the `SecretSync` (`secret-sync.gke.io/v1`) controller that copies Secret Manager versions into Kubernetes Secrets. IAM matches GKE's `principal://…/subject/ns/NS/sa/KSA` and `principalSet://…/namespace/NS` members. | S |
 
 ### 5.8 Application Load Balancer
 
@@ -576,7 +577,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 
 | Service | Real | Faithful | Recorded only |
 | --- | --- | --- | --- |
-| GKE | Kubernetes, container runtime, pod networking | Cluster API, node pools, Workload Identity, NEG sync, private nodes | Machine types, autoscaling bounds, maintenance windows, logging/monitoring config |
+| GKE | Kubernetes, container runtime, pod networking, Secrets Store CSI driver | Cluster API, node pools, Workload Identity, NEG sync, private nodes, Gateway API CRD install, Secret Manager add-on and secret synchronization | Machine types, autoscaling bounds, maintenance windows, logging/monitoring config |
 | ALB | HTTP/TLS proxying | URL map semantics, health checks, backend mTLS, managed-cert lifecycle | Global anycast, regional failover, capacity scaler, Cloud Armor |
 | Cloud CDN | HTTP cache | Cache modes, keys, TTLs, invalidation, signed URLs | Edge locations, cache fill between PoPs |
 | Cloud NAT | Packet egress | Coverage rules, port allocation reporting, logging | Exact port-allocation algorithm, NAT IP reputation |

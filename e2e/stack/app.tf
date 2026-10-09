@@ -136,3 +136,25 @@ resource "google_project_iam_member" "app_sql" {
   role     = each.value
   member   = local.app_member
 }
+
+# ---- Secret Manager ----
+
+# The app's configuration secret, read in the cluster through the Secret
+# Manager add-on and secret synchronization as the app GSA.
+resource "google_secret_manager_secret" "app_config" {
+  secret_id = "ref-app-config"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "app_config" {
+  secret      = google_secret_manager_secret.app_config.id
+  secret_data = "ref-config-v1"
+}
+
+resource "google_secret_manager_secret_iam_member" "app_config" {
+  secret_id = google_secret_manager_secret.app_config.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = local.app_member
+}

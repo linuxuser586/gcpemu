@@ -82,13 +82,16 @@ var resources = map[string]struct {
 	group, plural string
 	namespaced    bool
 }{
-	"Namespace":      {"/api/v1", "namespaces", false},
-	"ServiceAccount": {"/api/v1", "serviceaccounts", true},
-	"Secret":         {"/api/v1", "secrets", true},
-	"Service":        {"/api/v1", "services", true},
-	"Deployment":     {"/apis/apps/v1", "deployments", true},
-	"Gateway":        {"/apis/networking.istio.io/v1", "gateways", true},
-	"VirtualService": {"/apis/networking.istio.io/v1", "virtualservices", true},
+	"Namespace":           {"/api/v1", "namespaces", false},
+	"ServiceAccount":      {"/api/v1", "serviceaccounts", true},
+	"Secret":              {"/api/v1", "secrets", true},
+	"Service":             {"/api/v1", "services", true},
+	"Deployment":          {"/apis/apps/v1", "deployments", true},
+	"Pod":                 {"/api/v1", "pods", true},
+	"SecretProviderClass": {"/apis/secrets-store.csi.x-k8s.io/v1", "secretproviderclasses", true},
+	"SecretSync":          {"/apis/secret-sync.gke.io/v1", "secretsyncs", true},
+	"Gateway":             {"/apis/networking.istio.io/v1", "gateways", true},
+	"VirtualService":      {"/apis/networking.istio.io/v1", "virtualservices", true},
 }
 
 func objPath(kind, ns, name string) string {

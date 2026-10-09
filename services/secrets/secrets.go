@@ -124,3 +124,14 @@ func (s *Service) ResourceCounts() map[string]int {
 func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]string {
 	return map[string]string{"CLOUDSDK_API_ENDPOINT_OVERRIDES_SECRETMANAGER": "http://" + gw + "/secretmanager/"}
 }
+
+var _ emu.SecretAccessor = (*Service)(nil)
+
+// AccessSecretVersion implements emu.SecretAccessor.
+func (s *Service) AccessSecretVersion(ctx context.Context, name string) ([]byte, string, error) {
+	resp, err := s.api.AccessSecretVersion(ctx, &secretmanagerpb.AccessSecretVersionRequest{Name: name})
+	if err != nil {
+		return nil, "", err
+	}
+	return resp.GetPayload().GetData(), resp.GetName(), nil
+}
