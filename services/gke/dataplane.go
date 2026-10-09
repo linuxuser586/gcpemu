@@ -394,6 +394,13 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if rec.Int.ExternalIP != "" {
 		args = append(args, "--tls-san", rec.Int.ExternalIP)
 	}
+	// Inside a container the host cannot reach the cluster networks, so
+	// the API server is also published on the host's loopback.
+	var ports []runtime.Port
+	if d.rt.Self() != "" {
+		args = append(args, "--tls-san", "127.0.0.1")
+		ports = []runtime.Port{{HostIP: "127.0.0.1", HostPort: rec.Int.APIHostPort, ContainerPort: 443}}
+	}
 	id, err := d.rt.CreateContainer(ctx, runtime.ContainerSpec{
 		Name:     name,
 		Image:    ver.Image,
@@ -402,6 +409,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		Labels:   s.labels(d, key, "server"),
 		Hostname: trunc("gke-"+c.Name, 40) + "-cp",
 		Networks: nets,
+		Ports:    ports,
 		Mounts:   []runtime.Mount{{Type: "volume", Source: name, Target: k3sDataDir}},
 		Tmpfs:    map[string]string{"/run": ""},
 	})
@@ -432,8 +440,13 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if ip == "" {
 		ip = ct.IPs[sn.Name]
 	}
+	apiPort := 0
+	if addr := ct.Ports["443/tcp"]; addr != "" {
+		_, p, _ := net.SplitHostPort(addr)
+		apiPort, _ = strconv.Atoi(p)
+	}
 	if err := s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
-		rec.Int.ServerIP, rec.Int.ExternalIP = ip, extIP
+		rec.Int.ServerIP, rec.Int.ExternalIP, rec.Int.APIHostPort = ip, extIP, apiPort
 		return nil
 	}); err != nil {
 		return err

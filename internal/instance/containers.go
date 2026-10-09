@@ -48,7 +48,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
-	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint)
+	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
 	c.rt = m
 	return m, nil
 }

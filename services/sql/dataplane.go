@@ -252,7 +252,11 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	} else {
 		publicIP = ""
 	}
-	if err := s.waitReady(ctx, rt, id, net.JoinHostPort(s.hostIP(), strconv.Itoa(hostPort))); err != nil {
+	addr, err := s.readyAddr(ctx, rt, svc.Name, id, hostPort)
+	if err != nil {
+		return err
+	}
+	if err := s.waitReady(ctx, rt, id, addr); err != nil {
 		return err
 	}
 	return s.updateRecord(project, name, func(r *instanceRecord) error {
@@ -340,7 +344,7 @@ func (s *Service) stopContainer(ctx context.Context, project, name string) error
 
 // restartContainer restarts PostgreSQL (and the agent) in place.
 func (s *Service) restartContainer(ctx context.Context, project, name string) error {
-	rt, _, err := s.plane(ctx)
+	rt, plane, err := s.plane(ctx)
 	if err != nil {
 		return err
 	}
@@ -355,10 +359,29 @@ func (s *Service) restartContainer(ctx context.Context, project, name string) er
 	if err := rt.RestartContainer(ctx, cname, stopTimeout); err != nil {
 		return err
 	}
-	if err := s.waitReady(ctx, rt, cname, net.JoinHostPort(s.hostIP(), strconv.Itoa(rec.HostPort))); err != nil {
+	svc, err := plane.Services(ctx)
+	if err != nil {
 		return err
 	}
-	return nil
+	addr, err := s.readyAddr(ctx, rt, svc.Name, cname, rec.HostPort)
+	if err != nil {
+		return err
+	}
+	return s.waitReady(ctx, rt, cname, addr)
+}
+
+// readyAddr is where the emulator probes an instance's PostgreSQL: the
+// published host port, or inside a container (ADR 0003) the container's
+// address on the services network.
+func (s *Service) readyAddr(ctx context.Context, rt *runtime.Manager, svcNet, id string, hostPort int) (string, error) {
+	if rt.Self() == "" {
+		return net.JoinHostPort(s.hostIP(), strconv.Itoa(hostPort)), nil
+	}
+	c, err := rt.InspectContainer(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(c.IPs[svcNet], strconv.Itoa(proxy.PublicPort)), nil
 }
 
 // running reports whether the instance's container is running.

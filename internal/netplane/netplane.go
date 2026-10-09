@@ -126,8 +126,20 @@ func (p *Plane) Addr(ctx context.Context, name string) (string, error) {
 	if target == "" {
 		return "", fmt.Errorf("endpoint %q is not running", name)
 	}
-	_, port, _ := net.SplitHostPort(target)
-	f, err := newForwarder(svc.Gateway, port, target, name == "dns", p.log)
+	host, port, _ := net.SplitHostPort(target)
+	ip := svc.Gateway
+	// Inside a container (ADR 0003) the emulator is on the services
+	// network itself: an endpoint bound to every interface is reachable
+	// there directly, others through a forwarder on its own address.
+	if self, err := p.rt.SelfIP(ctx, svc.Name); err != nil {
+		return "", err
+	} else if self != "" {
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			return net.JoinHostPort(self, port), nil
+		}
+		ip = self
+	}
+	f, err := newForwarder(ip, port, target, name == "dns", p.log)
 	if err != nil {
 		return "", err
 	}

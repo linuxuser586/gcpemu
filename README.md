@@ -169,10 +169,34 @@ docker exec gcpemu /gcpemu status
 The image binds `0.0.0.0` with IAM in audit mode, keeps state in `/data` (mount a volume to
 keep it across containers, or set `GCPEMU_EPHEMERAL=true`), and reports healthy once every
 Service is ready (`gcpemu status --ready`). The Web console is not served, because the emulator
-is not bound to loopback. The image has no container runtime, so it starts every
-Service except Cloud SQL, GKE and Cloud NAT (`GCPEMU_SERVICES=iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn`).
-Load balancer forwarding rules listen on their own ports, so publish those with extra `-p`
-flags. As a GitHub Actions service container (the job waits for the health check):
+is not bound to loopback. Load balancer forwarding rules listen on their own ports, so publish
+those with extra `-p` flags.
+
+Cloud SQL, GKE and Cloud NAT start containers of their own, so they need the host's Docker
+socket (Docker-outside-of-Docker). Without the socket the image starts every other Service and
+logs which it skipped. With it, the emulator stays unprivileged and non-root; it needs only the
+socket's group:
+
+```sh
+docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --group-add "$(stat -c %g /var/run/docker.sock)" \
+  linuxuser586/gcpemu:0 start --ephemeral
+```
+
+The emulator finds its own container and joins the networks it creates (taking each
+subnetwork's reserved second-to-last address), so it works on a normal bridge or compose
+network as well as with `--network host`. Privileged GKE nodes get their privilege from the
+Docker daemon, not from the emulator's container. From the host:
+
+- Cloud SQL instances are published on `127.0.0.1` (`GCPEMU_SQL_*` ports, as on the host).
+  The Cloud SQL Auth Proxy and connectors dial the instance IPs on the emulator's bridge
+  networks, which a Linux host reaches directly (Docker Desktop does not).
+- `GET /container/_emu/kubeconfig?cluster=projects/P/locations/L/clusters/C` returns a
+  kubeconfig whose server is the cluster's API published on `127.0.0.1`; the Connect gateway
+  (`/connectgateway/v1/...`) works through the API gateway port.
+- Use `--ephemeral` (or a volume on `/data`): stopping an ephemeral instance removes all of its
+  containers, networks and volumes, while a persistent one keeps them for its next start. As a GitHub Actions service container (the job waits for the health check):
 
 ```yaml
 services:

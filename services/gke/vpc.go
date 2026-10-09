@@ -130,7 +130,7 @@ func (l *localVPC) AllocateIP(ctx context.Context, sn emu.SubnetNet, owner strin
 	}
 	base := ipn.IP.To4()
 	ones, bits := ipn.Mask.Size()
-	for i := 2; i < (1<<(bits-ones))-1; i++ {
+	for i := 2; i < (1<<(bits-ones))-2; i++ { // GCP reserves the last two addresses
 		ip := net.IPv4(base[0], base[1], base[2]+byte(i>>8), base[3]+byte(i&0xff)).String()
 		if !used[ip] {
 			l.owned[owner] = ip

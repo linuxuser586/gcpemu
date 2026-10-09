@@ -54,9 +54,19 @@ func (m *Manager) Name(parts ...string) string {
 }
 
 // Reclaim removes every container this instance ID owns (orphans from a
-// previous run). For ephemeral instances it also removes networks and volumes.
+// previous run). For ephemeral instances it also removes networks and
+// volumes; inside a container the emulator rejoins the networks kept.
 func (m *Manager) Reclaim(ctx context.Context) error {
-	return m.cleanup(ctx, m.Ephemeral)
+	err := m.cleanup(ctx, m.Ephemeral)
+	if m.Self() == "" || m.Ephemeral {
+		return err
+	}
+	nets, lerr := m.ListNetworks(ctx, map[string]string{LabelInstance: m.InstanceID})
+	errs := []error{err, lerr}
+	for _, n := range nets {
+		errs = append(errs, m.AttachSelf(ctx, n.Name))
+	}
+	return errors.Join(errs...)
 }
 
 // Cleanup removes all of the instance's containers; with all=true also its
