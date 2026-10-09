@@ -89,7 +89,8 @@ func (s *Service) Start(ctx context.Context) error {
 		case in.State == "PENDING_DELETE":
 			s.goBackground(func(ctx context.Context) { _ = s.destroyInstance(ctx, in.Project, in.Name) })
 		case in.Settings != nil && in.Settings.ActivationPolicy == "NEVER":
-		case in.State == "PENDING_CREATE" || in.State == "FAILED":
+		case in.State == "PENDING_CREATE" || in.State == "FAILED" && rec.HostPort == 0:
+			// Never started: there is no data to bring back.
 			_ = s.setState(in.Project, in.Name, "FAILED")
 		default:
 			s.recovering.Add(1)
@@ -109,6 +110,23 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ReservedAddrs implements emu.AddressReserver: the public and private IPs
+// instances ask for again when their containers are recreated.
+func (s *Service) ReservedAddrs() []string {
+	var out []string
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		scanJSON(tx, nsInstances, "", func(_ string, rec *instanceRecord) {
+			for _, ip := range []string{rec.PublicIP, rec.PrivateIP} {
+				if ip != "" {
+					out = append(out, ip)
+				}
+			}
+		})
+		return nil
+	})
+	return out
 }
 
 // Stop cancels background work and waits for it.
@@ -224,6 +242,17 @@ func (s *Service) goBackground(fn func(ctx context.Context)) {
 		defer s.wg.Done()
 		fn(s.bgCtx)
 	}()
+}
+
+// clearFailed marks a FAILED instance RUNNABLE once its container has been
+// started or stopped again.
+func (s *Service) clearFailed(project, name string) error {
+	return s.updateRecord(project, name, func(rec *instanceRecord) error {
+		if rec.Instance.State == "FAILED" {
+			rec.Instance.State = "RUNNABLE"
+		}
+		return nil
+	})
 }
 
 // setState updates an instance's state.
