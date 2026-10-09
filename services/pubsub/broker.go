@@ -173,6 +173,9 @@ type sub struct {
 	// push worker control (FR-PS-006)
 	pushStop  func()
 	pushState string
+	// deadLettered counts messages forwarded to the dead-letter topic
+	// (memory only, for the admin API's statistics).
+	deadLettered int64
 }
 
 func newSub(name string, cfg *pubsubpb.Subscription, f filterExpr) *sub {

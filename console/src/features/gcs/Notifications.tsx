@@ -5,7 +5,6 @@ import { useForm } from 'react-hook-form'
 import { useParams } from 'react-router'
 import { z } from 'zod'
 
-import { gcpFetch } from '@/api/fetch'
 import { infoQuery } from '@/api/queries'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
@@ -30,6 +29,7 @@ import { formatLabels, parseLabels } from '@/lib/labels'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
 
+import { topicsQuery } from '../pubsub/api'
 import {
   createNotification,
   deleteNotification,
@@ -219,24 +219,15 @@ export function notificationValues(body: Body): Values {
   }
 }
 
-/** topicsQuery lists a Project's topics to choose from. */
-const topicsQuery = (project: string, enabled: boolean) => ({
-  queryKey: ['pubsub', 'topics', project],
-  queryFn: async () =>
-    (
-      await gcpFetch<{ topics?: { name: string }[] }>(
-        `/pubsub/v1/projects/${encodeURIComponent(project)}/topics`,
-      )
-    ).topics ?? [],
-  enabled,
-})
-
 export function CreateNotification() {
   const bucket = useBucket()
   const [view] = useViewState()
   const project = view.project ?? ''
   const { data: info } = useQuery(infoQuery())
-  const topics = useQuery(topicsQuery(project, !!project && !!info?.services.includes('pubsub')))
+  const topics = useQuery({
+    ...topicsQuery(project),
+    enabled: !!project && !!info?.services.includes('pubsub'),
+  })
   const navigate = useCarriedNavigate()
   const qc = useQueryClient()
   const defaults: Values = {

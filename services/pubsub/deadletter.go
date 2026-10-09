@@ -78,6 +78,7 @@ func (s *Service) forwardDeadLetter(sb *sub, e *entry) {
 			s.enqueue(sb, e, now)
 		} else {
 			s.ackEntry(sb, e, &w, now)
+			sb.deadLettered++
 		}
 	}
 	s.mu.Unlock()
