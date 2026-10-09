@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 	"gopkg.in/yaml.v3"
@@ -75,8 +76,12 @@ func (s *Service) buildKubeconfig(keep func(*clusterRecord) bool) []byte {
 			continue
 		}
 		name := contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name)
+		server := "https://" + c.Endpoint
+		if rec.Int.APIHostPort != 0 {
+			server = "https://127.0.0.1:" + strconv.Itoa(rec.Int.APIHostPort)
+		}
 		kc.Clusters = append(kc.Clusters, kcNamed{Name: name, Cluster: map[string]any{
-			"server":                     "https://" + c.Endpoint,
+			"server":                     server,
 			"certificate-authority-data": base64.StdEncoding.EncodeToString(creds.CA),
 		}})
 		kc.Users = append(kc.Users, kcNamed{Name: name, User: map[string]any{

@@ -403,6 +403,9 @@ func IsLoopback(bind string) bool {
 	return bind == "" || bind == "localhost" || strings.HasPrefix(bind, "127.") || bind == "::1"
 }
 
+// RuntimeServices need a container runtime to do anything.
+var RuntimeServices = map[string]bool{"sql": true, "gke": true, "nat": true}
+
 // Dependencies of each service (FR-CORE-003).
 var Dependencies = map[string][]string{
 	"gke":     {"iam", "compute", "ar", "dns"},

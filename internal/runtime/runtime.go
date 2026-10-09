@@ -49,6 +49,8 @@ type Client struct {
 	base string // e.g. "http://docker/v1.41"
 	// Endpoint is the socket or URL in use.
 	Endpoint string
+	// self is the emulator's own container (self.go).
+	self string
 }
 
 // Info describes the connected runtime.
@@ -71,6 +73,7 @@ func Detect() (*Client, error) {
 		candidates = append(candidates, "unix://"+filepath.Join(d, "podman", "podman.sock"), "unix://"+filepath.Join(d, "docker.sock"))
 	}
 	candidates = append(candidates, "unix:///run/podman/podman.sock")
+	var denied []string
 	for _, c := range candidates {
 		if p, ok := strings.CutPrefix(c, "unix://"); ok {
 			if fi, err := os.Stat(p); err != nil || fi.Mode()&os.ModeSocket == 0 {
@@ -83,10 +86,19 @@ func Detect() (*Client, error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_, err = cl.Info(ctx)
+		if err == nil {
+			cl.detectSelf(ctx)
+		}
 		cancel()
 		if err == nil {
 			return cl, nil
 		}
+		if errors.Is(err, os.ErrPermission) || strings.Contains(err.Error(), "permission denied") {
+			denied = append(denied, strings.TrimPrefix(c, "unix://"))
+		}
+	}
+	if len(denied) > 0 {
+		return nil, fmt.Errorf("container runtime socket %s found but permission denied (uid %d): in the OCI image, run with --group-add $(stat -c %%g %s)", denied[0], os.Getuid(), denied[0])
 	}
 	return nil, errors.New("no container runtime found: start Docker Engine (>= 24) or Podman (>= 4.9) with its Docker-compatible socket, or set DOCKER_HOST")
 }
@@ -290,8 +302,20 @@ type Network struct {
 	Bridge string
 }
 
-// CreateNetwork creates a bridge network and returns its ID.
+// CreateNetwork creates a bridge network and returns its ID. Inside a
+// container the emulator joins it (AttachSelf).
 func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, error) {
+	id, err := c.createNetwork(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	if err := c.AttachSelf(ctx, s.Name); err != nil {
+		return id, fmt.Errorf("connect the emulator to network %s: %w", s.Name, err)
+	}
+	return id, nil
+}
+
+func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, error) {
 	opts := map[string]string{}
 	for k, v := range s.Options {
 		opts[k] = v
@@ -449,6 +473,9 @@ func (c *Client) ListNetworks(ctx context.Context, labels map[string]string) ([]
 
 // RemoveNetwork deletes a network; a missing network is not an error.
 func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
+	if c.self != "" {
+		_ = c.Disconnect(ctx, name, c.self)
+	}
 	err := c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(name), nil, nil, nil)
 	if errors.Is(err, ErrNotFound) {
 		return nil

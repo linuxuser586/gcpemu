@@ -153,7 +153,7 @@ func (s *Service) allocSkipping(tx store.Tx, project, region string, a *computev
 			used[v] = true
 		}
 	}
-	for v := c.base + 2; v < c.last(); v++ {
+	for v := c.base + 2; v < c.last()-1; v++ { // GCP reserves the last two addresses
 		if c.usable(v) && !used[v] && !inUse(ipString(v)) {
 			*out = ipString(v)
 			return nil

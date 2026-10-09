@@ -74,7 +74,7 @@ Today a GCP stack of GKE, a global external Application Load Balancer with Cloud
 | Host OS | Linux (amd64, arm64) primary; macOS (arm64, amd64) secondary, without GKE in v1.0; Windows via WSL2 only |
 | CI | GitHub Actions `ubuntu-24.04` and `ubuntu-24.04-arm` hosted runners; any Linux CI with Docker |
 | Container runtime | Required only for GKE and Cloud SQL: Docker Engine ≥ 24, Podman ≥ 4.9, or containerd ≥ 1.7. All other services run with no runtime |
-| Privileges | Unprivileged for all services except GKE, which needs a runtime that can run privileged containers |
+| Privileges | The emulator itself runs unprivileged; GKE needs a runtime that can run privileged containers (the nodes), which the runtime grants, also when the emulator runs in a container with the runtime's socket |
 | Network | Works fully offline once images are cached; internet needed only for first image pulls and for NAT egress tests |
 
 ### 2.4 Design and implementation constraints
@@ -502,7 +502,7 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | NFR-PORT-001 | Release builds for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, built with `CGO_ENABLED=0`. | M |
 | NFR-PORT-002 | Identical behaviour on amd64 and arm64; GKE nodes and Cloud SQL run native-arch images. | M |
 | NFR-PORT-003 | GKE is Linux-only in v1.0; on macOS, selecting it fails at start with a clear message. Cloud SQL on macOS uses the user's Docker-compatible VM (Docker Desktop, Colima, OrbStack, Podman machine), and loopback aliases are replaced by host ports. | S |
-| NFR-PORT-004 | Also published as a multi-arch OCI image for CI systems that prefer service containers (non-GKE services only when not privileged). | S |
+| NFR-PORT-004 | Also published as a multi-arch OCI image for CI systems that prefer service containers. Every service runs from the image, unprivileged; Cloud SQL, GKE and Cloud NAT need the host's runtime socket mounted (with its group) and are skipped without it (ADR 0003). | S |
 
 ### 8.3 Reliability and determinism
 

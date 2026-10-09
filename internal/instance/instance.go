@@ -12,8 +12,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/internal/webconsole"
 )
@@ -151,7 +154,24 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	for _, s := range cfg.Services {
 		explicit[s] = true
 	}
-	for _, name := range config.ResolveServices(cfg.Services) {
+	selected := config.ResolveServices(cfg.Services)
+	if len(cfg.Services) == 0 {
+		// Every Service by default, except those that need a container
+		// runtime when none is usable (e.g. the OCI image without the
+		// Docker socket).
+		if _, err := runtime.Detect(); err != nil {
+			var skipped []string
+			selected = slices.DeleteFunc(selected, func(s string) bool {
+				if config.RuntimeServices[s] {
+					skipped = append(skipped, s)
+					return true
+				}
+				return false
+			})
+			logger.Info("no container runtime; not starting the Services that need one", "skipped", strings.Join(skipped, ","), "reason", err.Error())
+		}
+	}
+	for _, name := range selected {
 		f, ok := factories[name]
 		if !ok {
 			if explicit[name] {
