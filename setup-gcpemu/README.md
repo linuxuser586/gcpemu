@@ -11,7 +11,7 @@ jobs:
       contents: read
       actions: read # lets the post step tell whether the job failed
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: linuxuser586/gcpemu/setup-gcpemu@v0
         with:
           services: gcs,pubsub,sql

@@ -11,8 +11,8 @@ jobs:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: make vet
@@ -28,11 +28,11 @@ jobs:
       run:
         working-directory: console
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: console/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: console/.nvmrc
           cache: pnpm
@@ -55,14 +55,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: console/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: console/.nvmrc
           cache: pnpm
@@ -72,7 +72,7 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
         working-directory: console
       - run: make console-e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
@@ -90,13 +90,13 @@ jobs:
     env:
       GCPEMU_NET_TESTS: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install OpenTofu
         run: .github/install-tofu.sh
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-e2e
           key: gcpemu-e2e-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
@@ -115,14 +115,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin,kubectl
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-compat
           key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
@@ -142,13 +142,13 @@ jobs:
     env:
       GCPEMU_TOFU_PROVIDERS: ${{ matrix.provider }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install OpenTofu
         run: .github/install-tofu.sh
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-compat/tofu-plugins
           key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**') }}
@@ -169,11 +169,11 @@ jobs:
       contents: read
       actions: read # the post step reads the job's result
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - name: Unit tests; dist/ matches the sources
@@ -223,7 +223,7 @@ jobs:
     needs: action
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: gcpemu-selftest-*
           path: diag
@@ -252,8 +252,8 @@ jobs:
     env:
       GCPEMU_PERF_TESTS: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       # SRS 8.1 measures with images pre-cached.
