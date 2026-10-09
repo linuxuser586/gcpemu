@@ -424,6 +424,47 @@ paths:
                   subscriptions:
                     type: array
                     items: { $ref: "#/components/schemas/SubscriptionStats" }
+  /_emu/v1/lb/listeners:
+    get:
+      summary: Each forwarding rule's local listener (lb service, FR-LB-002; Web console Load Balancer view).
+      operationId: lbListeners
+      parameters:
+        - name: project
+          in: query
+          description: Only this Project's forwarding rules.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The listeners, by forwarding rule.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [listeners]
+                properties:
+                  listeners:
+                    type: array
+                    items: { $ref: "#/components/schemas/LbListener" }
+  /_emu/v1/lb/route:
+    post:
+      summary: Which route and backend of a URL map would serve a request (lb service; Web console Load Balancer view).
+      operationId: lbRoute
+      description: >-
+        Routes the request with the stored URL map exactly as the load
+        balancer's data plane does (FR-LB-003), without sending it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LbRouteRequest" }
+      responses:
+        "200":
+          description: The routing decision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LbRoute" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
   /_emu/v1/ca/rotate:
     post:
       summary: Replace the instance CA and re-issue managed certificates (`gcpemu ca rotate`; certs service).
@@ -570,6 +611,70 @@ components:
         deadLettered:
           type: integer
           description: Messages forwarded to the dead-letter topic since the Instance started.
+    LbListener:
+      type: object
+      required: [forwardingRule, ipAddress, port, listener, mode, https]
+      properties:
+        forwardingRule: { type: string, description: The forwarding rule's resource path. }
+        ipAddress: { type: string, description: The forwarding rule's IP address. }
+        port: { type: integer }
+        listener: { type: string, description: The host:port clients connect to. }
+        mode:
+          type: string
+          enum: [loopback, edge, fallback]
+          description: >-
+            loopback is 127.0.0.x on the rule's port, edge the lb-edge
+            container (privileged ports), fallback 127.0.0.x on a high port.
+        https: { type: boolean }
+    LbRouteRequest:
+      type: object
+      required: [urlMap, host]
+      properties:
+        urlMap: { type: string, description: The URL map's resource path or selfLink. }
+        scheme: { type: string, enum: [http, https], default: http }
+        method: { type: string, default: GET }
+        host: { type: string }
+        path: { type: string, description: Path and optional query; defaults to /. }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+    LbRoute:
+      type: object
+      required: [match, host, path]
+      properties:
+        match:
+          type: string
+          enum: [routeRule, pathRule, pathMatcherDefault, urlMapDefault]
+        pathMatcher: { type: string, description: The path matcher the host selected. }
+        routeRule:
+          type: object
+          additionalProperties: true
+          description: The matched compute HttpRouteRule.
+        pathRule:
+          type: object
+          additionalProperties: true
+          description: The matched compute PathRule.
+        service: { type: string, description: The backend service or bucket, absent for a redirect. }
+        weightedBackendServices:
+          type: array
+          description: The weighted backend services the request is split across, when more than one.
+          items:
+            type: object
+            additionalProperties: true
+        redirect:
+          type: object
+          required: [code, location]
+          properties:
+            code: { type: integer }
+            location: { type: string }
+        host: { type: string, description: The host after URL rewrites. }
+        path: { type: string, description: The path after URL rewrites. }
+        headerActions:
+          type: array
+          description: The header actions that apply, most specific first.
+          items:
+            type: object
+            additionalProperties: true
     ResourceChange:
       type: object
       description: Data of a `resource` event.

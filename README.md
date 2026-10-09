@@ -57,6 +57,9 @@ It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gat
 Its Cloud SQL query runner uses `instances.executeSql` (the Data API), so an instance needs
 `settings.dataApiAccess` set to `ALLOW_DATA_API`; statements run read-only unless unticked.
 Unlike Cloud SQL, the emulator lets `executeSql` name a built-in user without a password.
+Its Load Balancer view reads each forwarding rule's local listener from
+`GET /_emu/v1/lb/listeners`, and "test a URL" asks `POST /_emu/v1/lb/route` which route and
+backend of a URL map would serve a host, path and headers, without sending the request.
 
 ### Endpoints
 

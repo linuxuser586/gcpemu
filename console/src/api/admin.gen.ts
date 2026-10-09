@@ -412,6 +412,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/lb/listeners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Each forwarding rule's local listener (lb service, FR-LB-002; Web console Load Balancer view). */
+        get: operations["lbListeners"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/lb/route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Which route and backend of a URL map would serve a request (lb service; Web console Load Balancer view).
+         * @description Routes the request with the stored URL map exactly as the load balancer's data plane does (FR-LB-003), without sending it.
+         */
+        post: operations["lbRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/ca/rotate": {
         parameters: {
             query?: never;
@@ -533,6 +570,70 @@ export interface components {
             oldestUnackedPublishTime?: string;
             /** @description Messages forwarded to the dead-letter topic since the Instance started. */
             deadLettered: number;
+        };
+        LbListener: {
+            /** @description The forwarding rule's resource path. */
+            forwardingRule: string;
+            /** @description The forwarding rule's IP address. */
+            ipAddress: string;
+            port: number;
+            /** @description The host:port clients connect to. */
+            listener: string;
+            /**
+             * @description loopback is 127.0.0.x on the rule's port, edge the lb-edge container (privileged ports), fallback 127.0.0.x on a high port.
+             * @enum {string}
+             */
+            mode: "loopback" | "edge" | "fallback";
+            https: boolean;
+        };
+        LbRouteRequest: {
+            /** @description The URL map's resource path or selfLink. */
+            urlMap: string;
+            /**
+             * @default http
+             * @enum {string}
+             */
+            scheme: "http" | "https";
+            /** @default GET */
+            method: string;
+            host: string;
+            /** @description Path and optional query; defaults to /. */
+            path?: string;
+            headers?: {
+                [key: string]: string;
+            };
+        };
+        LbRoute: {
+            /** @enum {string} */
+            match: "routeRule" | "pathRule" | "pathMatcherDefault" | "urlMapDefault";
+            /** @description The path matcher the host selected. */
+            pathMatcher?: string;
+            /** @description The matched compute HttpRouteRule. */
+            routeRule?: {
+                [key: string]: unknown;
+            };
+            /** @description The matched compute PathRule. */
+            pathRule?: {
+                [key: string]: unknown;
+            };
+            /** @description The backend service or bucket */
+            service?: string;
+            /** @description The weighted backend services the request is split across, when more than one. */
+            weightedBackendServices?: {
+                [key: string]: unknown;
+            }[];
+            redirect?: {
+                code: number;
+                location: string;
+            };
+            /** @description The host after URL rewrites. */
+            host: string;
+            /** @description The path after URL rewrites. */
+            path: string;
+            /** @description The header actions that apply, most specific first. */
+            headerActions?: {
+                [key: string]: unknown;
+            }[];
         };
         /** @description Data of a `resource` event. */
         ResourceChange: {
@@ -1169,6 +1270,57 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    lbListeners: {
+        parameters: {
+            query?: {
+                /** @description Only this Project's forwarding rules. */
+                project?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The listeners, by forwarding rule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        listeners: components["schemas"]["LbListener"][];
+                    };
+                };
+            };
+        };
+    };
+    lbRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LbRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description The routing decision. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LbRoute"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     caRotate: {
