@@ -17,6 +17,7 @@ const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // SQL view tests that create instances (sql.spec.ts). Each browser
 // runs a cluster of up to 2 nodes, beyond the default limit of 5.
 const services = [
+  'ar',
   'gcs',
   'pubsub',
   'secrets',

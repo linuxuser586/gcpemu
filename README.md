@@ -65,6 +65,10 @@ editing and removing one patches its `cdnPolicy` and `enableCdn`, and invalidati
 `urlMaps.invalidateCache`. Each origin's cached entries and hit ratio come from
 `GET /_emu/v1/cdn` and `GET /_emu/v1/cdn/entries`, and "Purge all" is `POST /_emu/v1/cdn/purge`;
 hit and miss totals survive a purge and are cleared by `gcpemu reset`.
+Its Artifact Registry view lists repositories in every location by asking each one in turn, as
+the API lists one location at a time. Deleting a digest deletes the tags on it too
+(`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when host mode is
+ready and the registry port (`127.0.0.1:5000/LOCATION-docker.pkg.dev/...`) otherwise.
 
 ### Endpoints
 

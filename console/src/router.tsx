@@ -12,6 +12,17 @@ import {
 } from '@/api/queries'
 import { AppShell } from '@/components/shell/AppShell'
 import { RouteError } from '@/components/shell/RouteError'
+import {
+  dockerImagesQuery,
+  packagesQuery,
+  repositoriesQuery,
+  repositoryQuery,
+} from '@/features/ar/api'
+import { ArLayout, hostModeQuery } from '@/features/ar/ArLayout'
+import { DigestPage, ImagePage } from '@/features/ar/ImagePage'
+import { Repositories } from '@/features/ar/Repositories'
+import { CreateRepository, EditRepository } from '@/features/ar/RepositoryForm'
+import { Images, RepositoryOverview, RepositoryPage } from '@/features/ar/RepositoryPage'
 import { backendsQuery, statsQuery as cdnStatsQuery } from '@/features/cdn/api'
 import { CdnLayout } from '@/features/cdn/CdnLayout'
 import { AddOrigin, EditOrigin } from '@/features/cdn/OriginForm'
@@ -120,6 +131,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           },
         },
         {
+          path: 'ar',
+          element: <ArLayout />,
+          children: arRoutes(queryClient),
+        },
+        {
           path: 'gke',
           element: <GkeLayout />,
           children: gkeRoutes(queryClient),
@@ -208,6 +224,65 @@ function gkeRoutes(queryClient: QueryClient): RouteObject[] {
         { path: 'pods', element: <Pods /> },
         { path: 'pods/:namespace/:pod', element: <PodLogs /> },
         { path: 'negs', element: <Negs /> },
+      ],
+    },
+  ]
+}
+
+// The Artifact Registry view (SRS 4.8.3). Paths follow the API's resource
+// names, with the Project in ?project=; an image is its path (slashes
+// escaped) under images/, and a digest of it is one segment more. The
+// list shows every location unless ?location= names one.
+function arRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const repo = 'locations/:location/repositories/:repo'
+  const refOf = (request: Request, params: Record<string, string | undefined>) => ({
+    project: projectOf(request),
+    location: params.location ?? '',
+    repo: params.repo ?? '',
+  })
+  // Pull commands name the registry port, or the real host in host mode.
+  const registry = () => [
+    queryClient.ensureQueryData(endpointsQuery()),
+    queryClient.ensureQueryData(hostModeQuery()),
+  ]
+  const images: RouteObject['loader'] = ({ request, params }) => {
+    const r = refOf(request, params)
+    return r.project ? warm(queryClient.ensureQueryData(dockerImagesQuery(r)), ...registry()) : null
+  }
+  return [
+    {
+      index: true,
+      element: <Repositories />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        const location = new URL(request.url).searchParams.get('location') ?? ''
+        return project
+          ? warm(queryClient.ensureQueryData(repositoriesQuery(project, location)))
+          : null
+      },
+    },
+    { path: 'create', element: <CreateRepository /> },
+    { path: `${repo}/edit`, element: <EditRepository /> },
+    { path: `${repo}/images/:image`, element: <ImagePage />, loader: images },
+    { path: `${repo}/images/:image/:digest`, element: <DigestPage />, loader: images },
+    {
+      path: repo,
+      element: <RepositoryPage />,
+      loader: ({ request, params }) => {
+        const r = refOf(request, params)
+        return r.project
+          ? warm(
+              queryClient.ensureQueryData(repositoryQuery(r)),
+              queryClient.ensureQueryData(packagesQuery(r)),
+              queryClient.ensureQueryData(dockerImagesQuery(r)),
+              ...registry(),
+            )
+          : null
+      },
+      children: [
+        { index: true, element: <Images /> },
+        { path: 'overview', element: <RepositoryOverview /> },
       ],
     },
   ]
