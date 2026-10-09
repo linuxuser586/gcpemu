@@ -66,7 +66,7 @@ export function apiMethod(k: KindInfo, region: string, verb: string) {
   return `region${k.api[0]!.toUpperCase()}${k.api.slice(1)}.${verb}`
 }
 
-function resolver(spec: KindSpec, edit: boolean): Resolver<Values> {
+export function resolver(spec: KindSpec, edit: boolean): Resolver<Values> {
   return (values) => {
     const errs = validate(spec, values, edit)
     if (Object.keys(errs).length === 0) return { values, errors: {} }
@@ -375,7 +375,7 @@ function RoutingEditor({
 }
 
 /** SpecFields are a kind's form fields; edit leaves out the create-only ones. */
-function SpecFields({
+export function SpecFields({
   spec,
   form,
   edit,
@@ -409,7 +409,7 @@ function SpecFields({
   )
 }
 
-const keysOf = (spec: KindSpec) => spec.fields.map((f) => f.key)
+export const keysOf = (spec: KindSpec) => spec.fields.map((f) => f.key)
 
 export function CreateResource() {
   const { coll: param = '' } = useParams()

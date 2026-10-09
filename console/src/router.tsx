@@ -12,6 +12,11 @@ import {
 } from '@/api/queries'
 import { AppShell } from '@/components/shell/AppShell'
 import { RouteError } from '@/components/shell/RouteError'
+import { backendsQuery, statsQuery as cdnStatsQuery } from '@/features/cdn/api'
+import { CdnLayout } from '@/features/cdn/CdnLayout'
+import { AddOrigin, EditOrigin } from '@/features/cdn/OriginForm'
+import { OriginPage } from '@/features/cdn/OriginPage'
+import { Origins } from '@/features/cdn/Origins'
 import { Dashboard } from '@/features/dashboard/Dashboard'
 import { bucketQuery, bucketsQuery, objectQuery } from '@/features/gcs/api'
 import { CreateBucket, EditBucket } from '@/features/gcs/BucketForm'
@@ -143,6 +148,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'lb',
           element: <LbLayout />,
           children: lbRoutes(queryClient),
+        },
+        {
+          path: 'cdn',
+          element: <CdnLayout />,
+          children: cdnRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -438,6 +448,49 @@ function lbRoutes(queryClient: QueryClient): RouteObject[] {
     { path: 'regions/:region/:coll/:name', element: <ResourcePage />, loader: page },
     { path: 'regions/:region/:coll/:name/edit', element: <EditResource /> },
     { path: ':coll', element: <Resources />, loader: list() },
+  ]
+}
+
+// The Cloud CDN view (SRS 4.8.3). An origin is a backend service or
+// bucket; its path follows the API's, global/C/N or regions/R/C/N, with
+// the Project in ?project=. The add page is not under global/, so that no
+// name is shadowed.
+function cdnRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const page: RouteObject['loader'] = ({ request, params }) => {
+    const project = projectOf(request)
+    const r = {
+      project,
+      region: params.region ?? '',
+      coll: params.coll as Coll,
+      name: params.name ?? '',
+    }
+    return project && kindInfo(r.coll)
+      ? warm(
+          queryClient.ensureQueryData(resourceQuery(r)),
+          queryClient.ensureQueryData(cdnStatsQuery(project)),
+        )
+      : null
+  }
+  return [
+    {
+      index: true,
+      element: <Origins />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(
+              queryClient.ensureQueryData(backendsQuery(project)),
+              queryClient.ensureQueryData(cdnStatsQuery(project)),
+            )
+          : null
+      },
+    },
+    { path: 'add', element: <AddOrigin /> },
+    { path: 'global/:coll/:name', element: <OriginPage />, loader: page },
+    { path: 'global/:coll/:name/edit', element: <EditOrigin /> },
+    { path: 'regions/:region/:coll/:name', element: <OriginPage />, loader: page },
+    { path: 'regions/:region/:coll/:name/edit', element: <EditOrigin /> },
   ]
 }
 
