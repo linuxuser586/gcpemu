@@ -2,6 +2,7 @@ package gke
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -172,6 +173,37 @@ func TestNodeConfigHelpers(t *testing.T) {
 	k := webhookKubeconfig("http://10.0.0.1:4510/x")
 	if !strings.Contains(string(k), "server: http://10.0.0.1:4510/x") {
 		t.Error("webhook kubeconfig")
+	}
+}
+
+// TestStartCounts checks that an autoscaled pool without initialNodeCount
+// starts at its minimum, as GKE does (#111).
+func TestStartCounts(t *testing.T) {
+	zones := []string{"us-central1-a", "us-central1-b", "us-central1-c"}
+	as := func(min, max, tmin, tmax int32) *containerpb.NodePoolAutoscaling {
+		return &containerpb.NodePoolAutoscaling{Enabled: true, MinNodeCount: min, MaxNodeCount: max, TotalMinNodeCount: tmin, TotalMaxNodeCount: tmax}
+	}
+	tests := []struct {
+		name  string
+		np    *containerpb.NodePool
+		zones int
+		want  []int
+	}{
+		{"initial", &containerpb.NodePool{InitialNodeCount: 2}, 2, []int{2, 2}},
+		{"initial wins", &containerpb.NodePool{InitialNodeCount: 3, Autoscaling: as(1, 5, 0, 0)}, 1, []int{3}},
+		{"no autoscaling", &containerpb.NodePool{}, 1, []int{0}},
+		{"disabled", &containerpb.NodePool{Autoscaling: &containerpb.NodePoolAutoscaling{MinNodeCount: 2}}, 1, []int{0}},
+		{"min per zone", &containerpb.NodePool{Autoscaling: as(2, 4, 0, 0)}, 2, []int{2, 2}},
+		{"min unset", &containerpb.NodePool{Autoscaling: as(0, 3, 0, 0)}, 3, []int{1, 1, 1}},
+		{"total spread", &containerpb.NodePool{Autoscaling: as(0, 0, 4, 6)}, 3, []int{2, 1, 1}},
+		{"total below zones", &containerpb.NodePool{Autoscaling: as(0, 0, 1, 3)}, 3, []int{1, 0, 0}},
+		{"total min unset", &containerpb.NodePool{Autoscaling: as(0, 0, 0, 3)}, 2, []int{1, 0}},
+	}
+	for _, tt := range tests {
+		tt.np.Locations = zones[:tt.zones]
+		if got := startCounts(tt.np); fmt.Sprint(got) != fmt.Sprint(tt.want) {
+			t.Errorf("%s: startCounts = %v; want %v", tt.name, got, tt.want)
+		}
 	}
 }
 

@@ -65,7 +65,7 @@ func (a *api) CreateNodePool(ctx context.Context, req *containerpb.CreateNodePoo
 		if err := a.s.fillPool(r, c, np, ""); err != nil {
 			return err
 		}
-		nodes := a.s.planNodes(c, np, nil)
+		nodes := a.s.planNodes(c, np, nil, startCounts(np))
 		if err := a.s.limitFor(others, len(rec.Int.Nodes)+len(nodes)); err != nil {
 			return err
 		}
@@ -137,7 +137,7 @@ func (a *api) SetNodePoolSize(ctx context.Context, req *containerpb.SetNodePoolS
 		// per-zone size.
 		np.InitialNodeCount = req.NodeCount
 		cur := rec.nodesOf(r.Pool)
-		next := a.s.planNodes(c, np, cur)
+		next := a.s.planNodes(c, np, cur, zoneCounts(np, int(req.NodeCount)))
 		keep := map[string]bool{}
 		for _, n := range next {
 			keep[n.Name] = true
@@ -158,9 +158,10 @@ func (a *api) SetNodePoolSize(ctx context.Context, req *containerpb.SetNodePoolS
 		if err := a.s.limitFor(others, len(nodes)); err != nil {
 			return err
 		}
-		// Removed nodes stay recorded until their containers are gone.
-		rec.Int.Nodes = append(nodes, gone...)
+		rec.Int.Nodes = nodes
 		refreshCounts(rec, c)
+		// Removed nodes stay recorded until their containers are gone.
+		rec.Int.Nodes = append(rec.Int.Nodes, gone...)
 		return nil
 	}, func(ctx context.Context) error {
 		if err := a.s.removeNodes(ctx, r.key(), gone); err != nil {
@@ -308,13 +309,11 @@ func (s *Service) nodesElsewhere(key string) int {
 
 // refreshCounts updates the cluster's node counts and instance groups.
 func refreshCounts(rec *clusterRecord, c *containerpb.Cluster) {
-	n := 0
 	c.InstanceGroupUrls = nil
 	for _, np := range c.NodePools {
-		n += poolNodeCount(np)
 		c.InstanceGroupUrls = append(c.InstanceGroupUrls, np.InstanceGroupUrls...)
 	}
-	c.CurrentNodeCount = int32(n)
+	c.CurrentNodeCount = int32(len(rec.Int.Nodes))
 }
 
 // dropNodes removes node records from the stored cluster.

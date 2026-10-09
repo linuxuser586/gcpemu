@@ -225,11 +225,6 @@ func findPool(c *containerpb.Cluster, n string) *containerpb.NodePool {
 	return nil
 }
 
-// totalNodes is the number of nodes a pool runs (count per zone × zones).
-func poolNodeCount(np *containerpb.NodePool) int {
-	return int(np.InitialNodeCount) * max(1, len(np.Locations))
-}
-
 func errf(format string, a ...any) error { return fmt.Errorf(format, a...) }
 
 // listClusters returns every cluster record under prefix.

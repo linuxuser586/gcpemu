@@ -47,8 +47,8 @@ func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	return &emutest.Instance{Instance: in}
 }
 
-// TestRestart checks FR-CORE-031: a cluster and its Kubernetes state
-// survive an emulator stop/start with the same data dir.
+// TestRestart checks FR-CORE-031: a cluster, its nodes and its Kubernetes
+// state survive an emulator stop/start with the same data dir.
 func TestRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
@@ -74,7 +74,11 @@ func TestRestart(t *testing.T) {
 	}()
 	cm := newClient(t, inst)
 	op, err := cm.CreateCluster(context.Background(), &containerpb.CreateClusterRequest{Parent: parent, Cluster: &containerpb.Cluster{
-		Name: "keep", NodePools: []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
+		Name: "keep", NodePools: []*containerpb.NodePool{
+			{Name: "np", InitialNodeCount: 1},
+			// An autoscaled pool without initialNodeCount starts at its minimum (#111).
+			{Name: "auto", Autoscaling: &containerpb.NodePoolAutoscaling{Enabled: true, MinNodeCount: 1, MaxNodeCount: 1}},
+		},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +86,9 @@ func TestRestart(t *testing.T) {
 	waitOp(t, cm, zone, op.Name, 3*time.Minute)
 	name := parent + "/clusters/keep"
 	c, _ := cm.GetCluster(context.Background(), &containerpb.GetClusterRequest{Name: name})
+	if c.CurrentNodeCount != 2 {
+		t.Errorf("currentNodeCount = %d; want 2", c.CurrentNodeCount)
+	}
 	adm, pool := adminClient(t, inst, name)
 	e := &env{t: t, inst: inst, c: c, ca: pool, adm: adm}
 	e.mustKube("POST", "/api/v1/namespaces/default/configmaps", map[string]any{"metadata": map[string]any{"name": "persist"}, "data": map[string]string{"k": "v"}}, nil)
@@ -117,7 +124,7 @@ func TestRestart(t *testing.T) {
 	}
 	var nodes struct{ Items []any }
 	e.mustKube("GET", "/api/v1/nodes", nil, &nodes)
-	if len(nodes.Items) != 1 {
+	if len(nodes.Items) != 2 {
 		t.Errorf("nodes after restart = %d", len(nodes.Items))
 	}
 	// Deleting removes the volumes too.
