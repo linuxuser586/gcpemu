@@ -14,6 +14,7 @@ import (
 	"github.com/linuxuser586/gcpemu/services/lb"
 	"github.com/linuxuser586/gcpemu/services/nat"
 	"github.com/linuxuser586/gcpemu/services/pubsub"
+	"github.com/linuxuser586/gcpemu/services/secrets"
 	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
@@ -26,6 +27,7 @@ func Factories() map[string]instance.Factory {
 		"ar":      ar.New,
 		"gcs":     gcs.New,
 		"pubsub":  pubsub.New,
+		"secrets": secrets.New,
 		"sql":     sql.New,
 		"gke":     gke.New,
 		"nat":     nat.New,

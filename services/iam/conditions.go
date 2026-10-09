@@ -214,6 +214,9 @@ func resourceType(host, path string) string {
 	if coll == "" {
 		return host
 	}
+	if coll == "version" && host == "secretmanager.googleapis.com" {
+		coll = "secretVersion"
+	}
 	return host + "/" + strings.ToUpper(coll[:1]) + coll[1:]
 }
 

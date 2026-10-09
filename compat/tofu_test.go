@@ -85,6 +85,12 @@ var resourceTypes = map[string][]string{
 		"google_container_cluster", "google_container_node_pool", "google_compute_instance_group_named_port",
 		"google_compute_network", "google_compute_subnetwork", "google_service_account",
 	},
+	"secrets": {
+		"google_secret_manager_secret", "google_secret_manager_secret_version",
+		"google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy",
+		"google_secret_manager_regional_secret", "google_secret_manager_regional_secret_version",
+		"google_pubsub_topic", "google_service_account",
+	},
 	"ar": {
 		"google_artifact_registry_repository",
 		"google_artifact_registry_repository_iam_member", "google_artifact_registry_repository_iam_binding",

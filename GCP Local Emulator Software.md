@@ -6,7 +6,7 @@ Oct 7, 2026 · @Barry
 
 ### 1.1 Purpose
 
-This SRS defines the requirements for `gcpemu`, a single Go binary that emulates ten Google Cloud services well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for endpoint configuration, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
+This SRS defines the requirements for `gcpemu`, a single Go binary that emulates eleven Google Cloud services well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for endpoint configuration, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
 
 ### 1.2 Scope
 
@@ -24,8 +24,9 @@ In scope are the control-plane APIs and a working data plane for these services:
 | Application Load Balancer | `compute.googleapis.com` v1 (forwarding rules, proxies, URL maps, backend services/buckets, health checks, NEGs, SSL certs) | In-process L7 proxy |
 | Cloud CDN | Cache settings on backend services and buckets; `urlMaps.invalidateCache` | HTTP cache in the L7 proxy |
 | Cloud NAT | `compute.googleapis.com` v1 routers and NAT configs | Egress gateway for cluster workloads |
+| Secret Manager | `secretmanager.googleapis.com` v1 (gRPC and REST), global and regional endpoints | Secret payload store with Pub/Sub event notifications and Cloud SQL credential rotation |
 
-Supporting resources those services depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, long-running operations) are emulated to the degree the ten services need them. A React web console embedded in the binary lets users inspect and operate all ten services from a browser.
+Supporting resources those services depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, long-running operations) are emulated to the degree the eleven services need them. A React web console embedded in the binary lets users inspect and operate all eleven services from a browser.
 
 Out of scope: production use, performance or SLA parity with GCP, billing, real global anycast, and every service not listed. Section 10 gives the full exclusions list.
 
@@ -246,6 +247,7 @@ The web console is a React single-page app compiled into the binary and served a
 | Load Balancer | Forwarding rules with local listener addresses, proxies, URL maps rendered as a route tree, backend health per endpoint, cert status | Edit URL map; "test a URL" shows which route and backend would serve a given host, path and headers | M |
 | Cloud CDN | Cache settings per backend, hit ratio, cached entries and sizes | Invalidate a path, purge all | M |
 | Cloud NAT | Routers, NAT configs, covered subnets, port usage, translation log | Toggle offline sink | S |
+| Secret Manager | Global and regional secrets, labels, expiry, rotation and topics; versions with state and aliases | CRUD secrets; add a version; reveal a payload (masked by default); enable, disable and destroy versions | M |
 | Load Balancer traffic | Live per-request trace: forwarding rule, matched route, backend, cache status, latency | Filter by host or path | S |
 
 #### 4.8.4 Console quality
@@ -266,7 +268,7 @@ IAM is the identity backbone every other service calls; enforcement defaults to 
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-IAM-001 | Service accounts: create, get, list, patch, disable/enable, delete, undelete; keys: create (JSON, RSA-2048), list, delete, upload. | M |
-| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the ten services, plus project-level custom roles (create, patch, delete, undelete). | M |
+| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the eleven services, plus project-level custom roles (create, patch, delete, undelete). | M |
 | FR-IAM-003 | `getIamPolicy`, `setIamPolicy`, `testIamPermissions` on projects and on every resource type GCP supports them on (buckets, topics, subscriptions, AR repositories, service accounts, clusters via project). Etag concurrency enforced. | M |
 | FR-IAM-004 | Enforcement modes: `off` (allow all), `audit` (allow, log every call that real IAM would deny with the missing permission), `enforce` (deny with `PERMISSION_DENIED`). Default mode is audit. Each API method maps to the permission GCP checks. | M |
 | FR-IAM-005 | IAM Conditions on bindings, evaluating `request.time`, `resource.name` and `resource.type` CEL expressions. | S |
@@ -408,6 +410,17 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | FR-NAT-005 | `--offline` mode: NAT-allowed egress is redirected to a sink that records the attempt and returns a configurable response, so tests never hit the internet. | S |
 | FR-NAT-006 | NAT rules (per-destination NAT IP selection). | C |
 
+### 5.11 Secret Manager
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-SM-001 | Secrets: create, get, list (with `filter`), patch with `update_mask`, delete; global secrets with automatic or user-managed replication, and regional secrets (`projects/*/locations/*/secrets/*`) also served on `secretmanager.<region>.rep.googleapis.com`. Names are reported with the project number. Etags guard updates and deletes. | M |
+| FR-SM-002 | Versions: add (payload up to 64 KiB, optional CRC32C check), get, list, access, enable, disable and destroy; `latest` and user-defined version aliases resolve on get and access. | M |
+| FR-SM-003 | Secret IAM policies; `secretmanager.*` permissions and the predefined Secret Manager roles under every IAM enforcement level. Editor does not grant `secretmanager.versions.access`. | M |
+| FR-SM-004 | Time-driven behaviour on the Emulator clock: `expire_time`/`ttl` deletes the secret, `version_destroy_ttl` delays destruction, and `rotation` schedules `SECRET_ROTATE` notifications. | M |
+| FR-SM-005 | Event notifications: every change to a secret with `topics` is published to the emulated Pub/Sub in the `JSON_API_V1` format. | M |
+| FR-SM-006 | Managed rotation (`EnableManagedRotation`, `RotateSecret`, scheduled rotation) of a `CLOUD_SQL_DB_CREDENTIALS` regional secret sets a new password on the Cloud SQL user and stores it as the newest version. | S |
+
 ## 6. Cross-service integration
 
 The emulator's value is in the seams: each row below is a path that must work end to end without user glue.
@@ -436,9 +449,9 @@ The compatibility bar is the client, not the spec: a requirement is met when the
 
 | ID | Client | How it is pointed at the emulator | Must work for | Pri |
 | --- | --- | --- | --- | --- |
-| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the ten services, including `plan` with no diff after `apply` and clean `destroy` | M |
-| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or host mode | Storage, Pub/Sub, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector | M |
-| IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `container`, `compute` (LB, routers, NEGs), `dns`, `artifacts`, `sql`, `iam` command groups | M |
+| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the eleven services, including `plan` with no diff after `apply` and clean `destroy` | M |
+| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector | M |
+| IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `secrets`, `container`, `compute` (LB, routers, NEGs), `dns`, `artifacts`, `sql`, `iam` command groups | M |
 | IF-004 | `kubectl`, Helm, `istioctl` | Kubeconfig from `get-credentials` | Standard cluster operations | M |
 | IF-005 | Docker, Podman, `crane`, `ko` | Registry host from `gcpemu env`; credential helper | Push and pull multi-arch images | M |
 | IF-006 | `psql`, pgx, Cloud SQL Auth Proxy v2 | Host port or proxy with emulator endpoint | Connect, IAM auth | M |
@@ -573,10 +586,11 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 | Pub/Sub | — | Delivery, ordering, DLQ, filters, push, exactly-once | Message storage policy, CMEK |
 | Cloud DNS | DNS server | Zones, record sets, changes | DNSSEC signing, anycast name servers |
 | IAM | — | Policies, roles, tokens, impersonation, metadata server | Org policy, recommender, audit logs as a separate API |
+| Secret Manager | — | Secrets, versions, aliases, expiry, delayed destruction, event notifications, managed rotation of Cloud SQL credentials | Replication policy, CMEK, the secret's own identity (`policy_member`) |
 
 ### 10.3 Out of scope for v1.0
 
-- Any GCP service not in Section 1.2 (BigQuery, Cloud Run, Firestore, Secret Manager, Cloud Logging and Monitoring APIs, KMS, etc.)
+- Any GCP service not in Section 1.2 (BigQuery, Cloud Run, Firestore, Cloud Logging and Monitoring APIs, KMS, etc.)
 - Billing, quotas (except a configurable soft cap per resource type), budgets, SLAs
 - Organisation, folder and Shared VPC hierarchies; VPC peering; Private Service Connect; interconnect and VPN
 - Classic Application Load Balancer and network (L4) load balancers except the in-cluster `LoadBalancer` Service allocator

@@ -31,7 +31,7 @@ func perfGate(t *testing.T, ok bool, format string, args ...any) {
 
 // nonContainerServices are the services NFR-PERF-001/004 cover (all
 // except GKE and Cloud SQL).
-const nonContainerServices = "iam,compute,dns,certs,ar,pubsub,gcs,lb,cdn,nat"
+const nonContainerServices = "iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn,nat"
 
 // TestColdStartAndIdleRSS is NFR-PERF-001 (cold start to ready <= 2 s)
 // and NFR-PERF-004 (idle RSS <= 150 MB) for every non-container service.

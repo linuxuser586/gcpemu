@@ -31,6 +31,8 @@ cloud.google.com/go/networksecurity v0.20.0 h1:89TlCISilA1nOHufVz+9+h6upTIvwYQ9H
 cloud.google.com/go/networksecurity v0.20.0/go.mod h1:+gZyaZn7oVuUALmlTVnF+YRcFsIymhuBFkL3M3zleYA=
 cloud.google.com/go/pubsub/v2 v2.7.0 h1:MFrBTZZa6PDWZzCi4NJRsHKMm2w0a4oAaYNqwjgbQTE=
 cloud.google.com/go/pubsub/v2 v2.7.0/go.mod h1:JaFvWNVRk3Knoil/4M1ECeLOaI9D8drbmJWypQlK5aM=
+cloud.google.com/go/secretmanager v1.22.0 h1:c9nPLiK4IZeT/zDyLjvNaBw1BHNkp0Ysybj1FfFIAPQ=
+cloud.google.com/go/secretmanager v1.22.0/go.mod h1:aDN9cW5x6Y8QVj32snakZv96vYyW7Nf1P+eqZGH8408=
 cloud.google.com/go/sql v0.2.0 h1:ueC47wWBJ6xlcWQUpaLCFjAIvV1sQUPSpf8h4kCYDtE=
 cloud.google.com/go/sql v0.2.0/go.mod h1:GWT0CP2EnD9l3VjF9aXnonD66/vQYCP7p+Gd0OoJkeQ=
 cloud.google.com/go/storage v1.69.0 h1:jAAMC1411HEh78nKsU0Zns+eFj3TnhjAWIhg5Ud/XBM=

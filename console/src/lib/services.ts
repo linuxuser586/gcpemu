@@ -12,6 +12,7 @@ export const SERVICES: readonly ServiceInfo[] = [
   { id: 'certs', name: 'Certificate Manager' },
   { id: 'ar', name: 'Artifact Registry' },
   { id: 'pubsub', name: 'Pub/Sub' },
+  { id: 'secrets', name: 'Secret Manager' },
   { id: 'gcs', name: 'Cloud Storage' },
   { id: 'sql', name: 'Cloud SQL' },
   { id: 'gke', name: 'Google Kubernetes Engine' },

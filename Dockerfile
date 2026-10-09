@@ -15,7 +15,7 @@ COPY --chmod=0755 gcpemu-linux-${TARGETARCH} /gcpemu
 # Listeners must be reachable from outside the container. IAM stays in
 # audit mode, and the Web console is not served beyond loopback.
 ENV GCPEMU_BIND=0.0.0.0 \
-    GCPEMU_SERVICES=iam,compute,dns,certs,ar,pubsub,gcs,lb,cdn \
+    GCPEMU_SERVICES=iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn \
     GCPEMU_DATA_DIR=/data
 
 # Created owned by the nonroot user; mount a volume here to keep state.
