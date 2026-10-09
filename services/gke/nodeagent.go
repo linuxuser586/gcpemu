@@ -94,6 +94,11 @@ func runNodeAgent(ctx context.Context, args []string) error {
 	if err := evacuateCgroup(); err != nil {
 		return err
 	}
+	// CSI drivers (the Secret Manager add-on) mount into pods with
+	// Bidirectional propagation, which needs shared mounts.
+	if out, err := exec.Command("mount", "--make-rshared", "/").CombinedOutput(); err != nil {
+		return fmt.Errorf("make / rshared: %v: %s", err, out)
+	}
 	if err := setupNodeNetwork(cfg); err != nil {
 		return err
 	}
@@ -113,6 +118,9 @@ func runNodeAgent(ctx context.Context, args []string) error {
 			return err
 		}
 		go func() { _ = frontend.Relay(feL, cfg.Frontend) }()
+	}
+	if err := serveProvider(ctx, cfg.Emu); err != nil {
+		return err
 	}
 	stopDNS, err := serveNodeDNS(cfg)
 	if err != nil {

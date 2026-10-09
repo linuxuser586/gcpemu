@@ -55,7 +55,11 @@ func (s *Service) startControllers(key string) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	rt.cancel = cancel
 	rt.mu.Unlock()
-	s.wg.Add(1)
+	s.wg.Add(2)
+	go func() {
+		defer s.wg.Done()
+		s.secretSyncLoop(ctx, key)
+	}()
 	go func() {
 		defer s.wg.Done()
 		t := time.NewTicker(negInterval)

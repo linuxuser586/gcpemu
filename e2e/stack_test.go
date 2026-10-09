@@ -42,6 +42,9 @@ import (
 //     certificate is refused by the gateway;
 //  5. the app writes to GCS, inserts into Cloud SQL (connector, IAM auth,
 //     private IP) and publishes to Pub/Sub with Workload Identity;
+//     5b. a pod of the app's KSA mounts the app's Secret Manager secret
+//     through the cluster's Secret Manager add-on, and a SecretSync copies
+//     it into a Kubernetes Secret;
 //  6. bucket notification and app message arrive by push with a verified
 //     OIDC token;
 //  7. pod egress works through Cloud NAT and stops without it;
@@ -83,6 +86,7 @@ func TestReferenceStack(t *testing.T) {
 	r.step("9 invalidate cache", false, r.step9)
 	if netTests {
 		r.step("5 app gcs sql pubsub", false, r.step5)
+		r.step("5b secrets csi and sync", false, r.step5b)
 		r.step("6 push oidc", false, r.step6)
 		r.step("7 egress via nat", false, r.step7)
 		r.step("8 iam enforce", false, r.step8)
@@ -392,6 +396,42 @@ func (r *run) step5(t *testing.T) {
 	}
 }
 
+func (r *run) step5b(t *testing.T) {
+	k := r.kube
+	k.apply(obj("SecretProviderClass", "app", "app-config", nil, map[string]any{"spec": map[string]any{
+		"provider":   "gke",
+		"parameters": map[string]any{"secrets": "- resourceName: \"" + r.out["app_config_secret"] + "/versions/latest\"\n  path: config.txt\n"},
+	}}))
+	k.apply(obj("Pod", "app", "config-reader", nil, map[string]any{
+		"metadata": map[string]any{"name": "config-reader", "namespace": "app", "labels": map[string]string{"app": "config-reader"}},
+		"spec": map[string]any{
+			"serviceAccountName": "app", "restartPolicy": "Never",
+			"containers": []any{map[string]any{
+				"name": "c", "image": "rancher/mirrored-library-busybox:1.37.0", "imagePullPolicy": "IfNotPresent",
+				"command":      []string{"sh", "-c", "echo CONFIG=$(cat /etc/app-config/config.txt)"},
+				"volumeMounts": []any{map[string]any{"name": "config", "mountPath": "/etc/app-config", "readOnly": true}},
+			}},
+			"volumes": []any{map[string]any{"name": "config", "csi": map[string]any{
+				"driver": "secrets-store-gke.csi.k8s.io", "readOnly": true,
+				"volumeAttributes": map[string]string{"secretProviderClass": "app-config"},
+			}}},
+		},
+	}))
+	k.apply(obj("SecretSync", "app", "app-config", nil, map[string]any{"spec": map[string]any{
+		"serviceAccountName": "app", "secretProviderClassName": "app-config",
+		"secretObject": map[string]any{"type": "Opaque", "data": []any{map[string]string{"sourcePath": "config.txt", "targetKey": "CONFIG"}}},
+	}}))
+	eventually(t, 3*time.Minute, "the CSI-mounted secret", func() bool {
+		return strings.Contains(k.logs("app", "app=config-reader"), "CONFIG=ref-config-v1")
+	}, func() string { return k.logs("app", "app=config-reader") })
+	var sec struct {
+		Data map[string][]byte `json:"data"`
+	}
+	eventually(t, time.Minute, "the synced Secret", func() bool {
+		return k.get(objPath("Secret", "app", "app-config"), &sec) && string(sec.Data["CONFIG"]) == "ref-config-v1"
+	}, func() string { return fmt.Sprint(sec.Data) })
+}
+
 func (r *run) step6(t *testing.T) {
 	var got []struct {
 		Verified   bool
@@ -510,7 +550,8 @@ func (r *run) step10(t *testing.T) {
 // ---- helpers ----
 
 func obj(kind, ns, name string, annotations map[string]string, extra map[string]any) map[string]any {
-	api := map[string]string{"Deployment": "apps/v1", "Gateway": "networking.istio.io/v1", "VirtualService": "networking.istio.io/v1"}[kind]
+	api := map[string]string{"Deployment": "apps/v1", "Gateway": "networking.istio.io/v1", "VirtualService": "networking.istio.io/v1",
+		"SecretProviderClass": "secrets-store.csi.x-k8s.io/v1", "SecretSync": "secret-sync.gke.io/v1"}[kind]
 	if api == "" {
 		api = "v1"
 	}

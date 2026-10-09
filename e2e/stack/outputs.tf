@@ -83,3 +83,7 @@ output "mesh_ca_pem" {
 output "lb_client_ca_pem" {
   value = tls_self_signed_cert.client_ca.cert_pem
 }
+
+output "app_config_secret" {
+  value = google_secret_manager_secret.app_config.id
+}

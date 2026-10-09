@@ -36,6 +36,7 @@ locals {
     sql                 = "/sql/v1beta4/"
     certificate_manager = "/certificatemanager/v1/"
     network_security    = "/networksecurity/v1/"
+    secret_manager      = "/secretmanager/v1/"
   }
   ep = { for k, v in local.endpoints : k => local.emu != "" ? "${local.emu}${v}" : null }
 }
@@ -63,6 +64,7 @@ provider "google" {
   sql_custom_endpoint                 = local.ep.sql
   certificate_manager_custom_endpoint = local.ep.certificate_manager
   network_security_custom_endpoint    = local.ep.network_security
+  secret_manager_custom_endpoint      = local.ep.secret_manager
 
   add_terraform_attribution_label = false
 }

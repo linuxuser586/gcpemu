@@ -50,6 +50,7 @@ type clusterRT struct {
 	creds  adminCreds
 	cancel context.CancelFunc // controllers (NEG sync)
 	wi     sync.Map           // pod IP → wiEntry
+	syncs  sync.Map           // SecretSync UID → syncState
 }
 
 func (rt *clusterRT) stop() {
@@ -212,6 +213,9 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	}
 	if err := s.waitNodes(ctx, key, ""); err != nil {
 		return err
+	}
+	if err := s.reconcileAddons(ctx, key); err != nil {
+		return fmt.Errorf("cluster add-ons: %w", err)
 	}
 	err = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		if c.Status != containerpb.Cluster_STOPPING {
@@ -541,7 +545,10 @@ func (s *Service) upgradeServer(ctx context.Context, key, version string) error 
 		return err
 	}
 	s.installCAInjector(ctx, d, key)
-	return s.waitNodes(ctx, key, "")
+	if err := s.waitNodes(ctx, key, ""); err != nil {
+		return err
+	}
+	return s.reconcileAddons(ctx, key)
 }
 
 // ---- nodes ----

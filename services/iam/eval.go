@@ -185,8 +185,48 @@ func (s *Service) memberMatches(tx store.Tx, m string, p emu.Principal) bool {
 				}
 			}
 		}
-	case "principalSet":
-		return s.principalSetMatches(tx, val, p)
+	case "principal", "principalSet":
+		if pool, ns, ksa, ok := gkeWorkloadMember(m); ok {
+			// Workload Identity Federation for GKE: the member names a
+			// Kubernetes service account (or a namespace's) of the
+			// PROJECT.svc.id.goog pool, which callers present as
+			// serviceAccount:POOL[NS/KSA].
+			want := "serviceAccount:" + pool + "[" + ns + "/"
+			if ksa == "" {
+				return strings.HasPrefix(string(p), want) && strings.HasSuffix(string(p), "]")
+			}
+			return strings.EqualFold(string(p), want+ksa+"]")
+		}
+		if kind == "principalSet" {
+			return s.principalSetMatches(tx, val, p)
+		}
 	}
 	return false
+}
+
+// gkeWorkloadMember parses GKE's Workload Identity members
+//
+//	principal://iam.googleapis.com/projects/NUM/locations/global/workloadIdentityPools/PROJECT.svc.id.goog/subject/ns/NS/sa/KSA
+//	principalSet://iam.googleapis.com/projects/NUM/locations/global/workloadIdentityPools/PROJECT.svc.id.goog/namespace/NS
+//
+// returning the pool, namespace and KSA (empty for a namespace set). NUM
+// must be PROJECT's number.
+func gkeWorkloadMember(m string) (pool, ns, ksa string, ok bool) {
+	kind, rest, _ := strings.Cut(m, "://iam.googleapis.com/")
+	segs := strings.Split(rest, "/")
+	if len(segs) < 8 || segs[0] != "projects" || segs[2] != "locations" || segs[3] != "global" || segs[4] != "workloadIdentityPools" {
+		return "", "", "", false
+	}
+	pool = segs[5]
+	pid, isGKE := strings.CutSuffix(pool, ".svc.id.goog")
+	if !isGKE || project.NumberString(pid) != segs[1] {
+		return "", "", "", false
+	}
+	switch {
+	case kind == "principal" && len(segs) == 11 && segs[6] == "subject" && segs[7] == "ns" && segs[9] == "sa":
+		return pool, segs[8], segs[10], true
+	case kind == "principalSet" && len(segs) == 8 && segs[6] == "namespace":
+		return pool, segs[7], "", true
+	}
+	return "", "", "", false
 }

@@ -135,6 +135,9 @@ func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterR
 	if err != nil {
 		return nil, err
 	}
+	if err := a.s.checkAddons(rec.cluster()); err != nil {
+		return nil, err
+	}
 	err = a.s.env.Store.Update(func(tx store.Tx) error {
 		if store.Exists(tx, nsClusters, r.key()) {
 			return apierr.AlreadyExists("Already exists: %s.", r.clusterName())
@@ -458,9 +461,19 @@ func (a *api) UpdateCluster(ctx context.Context, req *containerpb.UpdateClusterR
 		pool := u.DesiredNodePoolId
 		return a.upgradePools(ctx, r, pool, u.DesiredNodeVersion)
 	}
+	var work workFunc
+	if u.DesiredGatewayApiConfig != nil || u.DesiredSecretManagerConfig != nil || u.DesiredSecretSyncConfig != nil {
+		work = func(ctx context.Context) error { return a.s.reconcileAddons(ctx, r.key()) }
+	}
 	return a.mutate(ctx, r, containerpb.Operation_UPDATE_CLUSTER, u.Etag, func(rec *clusterRecord, c *containerpb.Cluster) error {
-		return applyClusterUpdate(r, c, u)
-	}, nil)
+		if err := applyClusterUpdate(r, c, u); err != nil {
+			return err
+		}
+		if work == nil {
+			return nil
+		}
+		return a.s.checkAddons(c)
+	}, work)
 }
 
 // applyClusterUpdate applies the store-only parts of a ClusterUpdate.
@@ -541,6 +554,12 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 	}
 	if u.DesiredGatewayApiConfig != nil {
 		c.NetworkConfig.GatewayApiConfig = u.DesiredGatewayApiConfig
+	}
+	if u.DesiredSecretManagerConfig != nil {
+		c.SecretManagerConfig = u.DesiredSecretManagerConfig
+	}
+	if u.DesiredSecretSyncConfig != nil {
+		c.SecretSyncConfig = u.DesiredSecretSyncConfig
 	}
 	if u.DesiredDnsConfig != nil {
 		c.NetworkConfig.DnsConfig = u.DesiredDnsConfig

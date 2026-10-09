@@ -76,6 +76,16 @@ type SQLUsers interface {
 	SetUserPassword(ctx context.Context, project, instance, user, password string) error
 }
 
+// SecretAccessor is provided by the "secrets" service for GKE's Secret
+// Manager add-on and secret synchronization.
+type SecretAccessor interface {
+	// AccessSecretVersion returns the payload of a secret version
+	// ("projects/P/[locations/L/]secrets/S/versions/V") and the version's
+	// full name, checking secretmanager.versions.access for the Principal
+	// in ctx.
+	AccessSecretVersion(ctx context.Context, name string) (payload []byte, version string, err error)
+}
+
 const projectsNS = "core/projects"
 
 // EnsureProject implements FR-CORE-020: any valid project ID is
