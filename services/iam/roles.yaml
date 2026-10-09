@@ -379,7 +379,7 @@ roles:
   - name: roles/cloudsql.instanceUser
     title: Cloud SQL Instance User
     description: Role allowing access to a Cloud SQL instance.
-    permissions: [cloudsql.instances.get, cloudsql.instances.login]
+    permissions: [cloudsql.instances.executeSql, cloudsql.instances.get, cloudsql.instances.login]
 
   # GKE.
   - name: roles/container.admin
