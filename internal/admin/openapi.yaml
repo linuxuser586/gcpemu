@@ -393,6 +393,37 @@ paths:
                 type: object
                 properties:
                   purged: { type: integer }
+  /_emu/v1/pubsub/subscriptions:
+    get:
+      summary: Pub/Sub subscription statistics (pubsub service; Web console Pub/Sub view).
+      operationId: pubsubStats
+      description: >-
+        What GCP reports as Cloud Monitoring metrics of a subscription
+        (num_undelivered_messages, oldest_unacked_message_age,
+        dead_letter_message_count), which the emulator does not serve.
+      parameters:
+        - name: project
+          in: query
+          description: Only this Project's subscriptions.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The subscriptions, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [now, subscriptions]
+                properties:
+                  now:
+                    type: string
+                    format: date-time
+                    description: >-
+                      The Emulator clock, which publish times follow. Seeking
+                      a subscription to it purges every message published so far.
+                  subscriptions:
+                    type: array
+                    items: { $ref: "#/components/schemas/SubscriptionStats" }
   /_emu/v1/ca/rotate:
     post:
       summary: Replace the instance CA and re-issue managed certificates (`gcpemu ca rotate`; certs service).
@@ -523,6 +554,22 @@ components:
           type: object
           additionalProperties: {}
           description: The Operation as the Service's API returns it.
+    SubscriptionStats:
+      type: object
+      required: [name, topic, backlog, backlogBytes, outstanding, deadLettered]
+      properties:
+        name: { type: string, description: The subscription's resource name. }
+        topic: { type: string }
+        backlog: { type: integer, description: Unacked messages, leased or not. }
+        backlogBytes: { type: integer }
+        outstanding: { type: integer, description: Messages leased to a subscriber now. }
+        oldestUnackedPublishTime:
+          type: string
+          format: date-time
+          description: Publish time of the oldest unacked message; absent when the backlog is empty.
+        deadLettered:
+          type: integer
+          description: Messages forwarded to the dead-letter topic since the Instance started.
     ResourceChange:
       type: object
       description: Data of a `resource` event.

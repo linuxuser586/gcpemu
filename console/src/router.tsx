@@ -32,6 +32,22 @@ import { CreateNodePool, EditNodePool } from '@/features/gke/NodePoolForm'
 import { NodePoolPage, NodePools } from '@/features/gke/NodePools'
 import { PodLogs } from '@/features/gke/PodLogs'
 import { Operations } from '@/features/operations/Operations'
+import {
+  statsQuery,
+  subscriptionQuery,
+  subscriptionsQuery,
+  topicQuery,
+  topicSubscriptionsQuery,
+  topicsQuery,
+} from '@/features/pubsub/api'
+import { Messages } from '@/features/pubsub/Messages'
+import { PubSubLayout } from '@/features/pubsub/PubSubLayout'
+import { CreateSubscription, EditSubscription } from '@/features/pubsub/SubscriptionForm'
+import { SubscriptionOverview, SubscriptionPage } from '@/features/pubsub/SubscriptionPage'
+import { Subscriptions } from '@/features/pubsub/Subscriptions'
+import { CreateTopic, EditTopic } from '@/features/pubsub/TopicForm'
+import { TopicOverview, TopicPage, TopicSubscriptions } from '@/features/pubsub/TopicPage'
+import { Topics } from '@/features/pubsub/Topics'
 import { locationsQuery, secretQuery, secretsQuery, versionsQuery } from '@/features/secrets/api'
 import { CreateSecret, EditSecret } from '@/features/secrets/SecretForm'
 import { SecretOverview, SecretPage } from '@/features/secrets/SecretPage'
@@ -92,6 +108,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'gcs',
           element: <GcsLayout />,
           children: gcsRoutes(queryClient),
+        },
+        {
+          path: 'pubsub',
+          element: <PubSubLayout />,
+          children: pubsubRoutes(queryClient),
         },
         {
           path: 'secrets',
@@ -191,6 +212,66 @@ function gcsRoutes(queryClient: QueryClient): RouteObject[] {
             warm(queryClient.ensureQueryData(objectQuery(params.bucket ?? '', params['*'] ?? ''))),
         },
         { path: 'edit/*', element: <EditObject /> },
+      ],
+    },
+  ]
+}
+
+// The Pub/Sub view (SRS 4.8.3). Paths follow the API's resource names,
+// with the Project in ?project=; create pages are not under topics/ and
+// subscriptions/, so that no ID is shadowed.
+function pubsubRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const list: RouteObject['loader'] = ({ request }) => {
+    const project = projectOf(request)
+    return project
+      ? warm(
+          queryClient.ensureQueryData(topicsQuery(project)),
+          queryClient.ensureQueryData(subscriptionsQuery(project)),
+          queryClient.ensureQueryData(statsQuery(project)),
+        )
+      : null
+  }
+  return [
+    { index: true, element: <Topics />, loader: list },
+    { path: 'subscriptions', element: <Subscriptions />, loader: list },
+    { path: 'create-topic', element: <CreateTopic /> },
+    { path: 'create-subscription', element: <CreateSubscription /> },
+    { path: 'topics/:topic/edit', element: <EditTopic /> },
+    {
+      path: 'topics/:topic',
+      element: <TopicPage />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        const topic = params.topic ?? ''
+        return project
+          ? warm(
+              queryClient.ensureQueryData(topicQuery(project, topic)),
+              queryClient.ensureQueryData(topicSubscriptionsQuery(project, topic)),
+            )
+          : null
+      },
+      children: [
+        { index: true, element: <TopicSubscriptions /> },
+        { path: 'overview', element: <TopicOverview /> },
+      ],
+    },
+    { path: 'subscriptions/:subscription/edit', element: <EditSubscription /> },
+    {
+      path: 'subscriptions/:subscription',
+      element: <SubscriptionPage />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(
+              queryClient.ensureQueryData(subscriptionQuery(project, params.subscription ?? '')),
+              queryClient.ensureQueryData(statsQuery(project)),
+            )
+          : null
+      },
+      children: [
+        { index: true, element: <Messages /> },
+        { path: 'overview', element: <SubscriptionOverview /> },
       ],
     },
   ]

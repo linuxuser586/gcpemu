@@ -392,6 +392,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/pubsub/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pub/Sub subscription statistics (pubsub service; Web console Pub/Sub view).
+         * @description What GCP reports as Cloud Monitoring metrics of a subscription (num_undelivered_messages, oldest_unacked_message_age, dead_letter_message_count), which the emulator does not serve.
+         */
+        get: operations["pubsubStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/ca/rotate": {
         parameters: {
             query?: never;
@@ -496,6 +516,23 @@ export interface components {
             operation?: {
                 [key: string]: unknown;
             };
+        };
+        SubscriptionStats: {
+            /** @description The subscription's resource name. */
+            name: string;
+            topic: string;
+            /** @description Unacked messages */
+            backlog: number;
+            backlogBytes: number;
+            /** @description Messages leased to a subscriber now. */
+            outstanding: number;
+            /**
+             * Format: date-time
+             * @description Publish time of the oldest unacked message; absent when the backlog is empty.
+             */
+            oldestUnackedPublishTime?: string;
+            /** @description Messages forwarded to the dead-letter topic since the Instance started. */
+            deadLettered: number;
         };
         /** @description Data of a `resource` event. */
         ResourceChange: {
@@ -1099,6 +1136,36 @@ export interface operations {
                 content: {
                     "application/json": {
                         purged?: number;
+                    };
+                };
+            };
+        };
+    };
+    pubsubStats: {
+        parameters: {
+            query?: {
+                /** @description Only this Project's subscriptions. */
+                project?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The subscriptions, by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * Format: date-time
+                         * @description The Emulator clock, which publish times follow. Seeking a subscription to it purges every message published so far.
+                         */
+                        now: string;
+                        subscriptions: components["schemas"]["SubscriptionStats"][];
                     };
                 };
             };

@@ -95,7 +95,7 @@ func (s *Service) resetMemory() {
 }
 
 // Register loads persisted state and mounts the gRPC and REST APIs on the
-// gateway (FR-CORE-040).
+// gateway (FR-CORE-040), and the subscription statistics on the admin API.
 func (s *Service) Register(r emu.Router) error {
 	if err := s.load(); err != nil {
 		return err
@@ -103,6 +103,7 @@ func (s *Service) Register(r emu.Router) error {
 	s.loaded.Store(true)
 	s.registerGRPC(r.GRPC())
 	r.Mount("pubsub", []string{"pubsub.googleapis.com"}, s.restHandler())
+	r.Handle("GET /_emu/v1/pubsub/subscriptions", http.HandlerFunc(s.serveStats))
 	return nil
 }
 
