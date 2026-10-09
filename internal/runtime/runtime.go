@@ -288,6 +288,10 @@ type NetworkSpec struct {
 	MTU int
 	// Options are extra driver options (e.g. com.docker.network.bridge.*).
 	Options map[string]string
+	// Pin, without a Subnet, creates the network on the subnet the runtime
+	// picks, but as a configured one: before Docker 29, containers can ask
+	// for a fixed address only on networks created with a subnet.
+	Pin bool
 }
 
 // Network is an inspected network.
@@ -316,6 +320,9 @@ func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, erro
 }
 
 func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, error) {
+	if s.Pin && s.Subnet == "" {
+		return c.createPinned(ctx, s)
+	}
 	opts := map[string]string{}
 	for k, v := range s.Options {
 		opts[k] = v
@@ -349,6 +356,36 @@ func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, erro
 		return "", fmt.Errorf("create network %s: %w", s.Name, err)
 	}
 	return out.ID, nil
+}
+
+// createPinned creates s on the subnet the runtime picks (see
+// NetworkSpec.Pin): it creates the network, reads the subnet and creates
+// it again with that subnet.
+func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error) {
+	s.Pin = false
+	for attempt := 0; ; attempt++ {
+		id, err := c.createNetwork(ctx, s)
+		if err != nil {
+			return "", err
+		}
+		n, err := c.InspectNetwork(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if n.Subnet == "" {
+			return id, nil
+		}
+		if err := c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(id), nil, nil, nil); err != nil {
+			return "", fmt.Errorf("create network %s: %w", s.Name, err)
+		}
+		p := s
+		p.Subnet, p.Gateway = n.Subnet, n.Gateway
+		id, err = c.createNetwork(ctx, p)
+		if err == nil || attempt >= 3 || !strings.Contains(strings.ToLower(err.Error()), "overlap") {
+			return id, err
+		}
+		// Another network took the subnet in between: pick again.
+	}
 }
 
 // poolsExhausted reports a runtime that has no default address pool left
