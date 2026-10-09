@@ -365,8 +365,28 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Cloud CDN cache statistics (cdn service). */
+        /**
+         * Cloud CDN cache statistics (cdn service; Web console Cloud CDN view).
+         * @description The cache's usage, and each backend service or bucket with cached entries or traffic since the Instance started or was reset. Purging keeps the traffic totals.
+         */
         get: operations["cdnStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/cdn/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One backend's cached responses (cdn service; Web console Cloud CDN view). */
+        get: operations["cdnEntries"];
         put?: never;
         post?: never;
         delete?: never;
@@ -570,6 +590,44 @@ export interface components {
             oldestUnackedPublishTime?: string;
             /** @description Messages forwarded to the dead-letter topic since the Instance started. */
             deadLettered: number;
+        };
+        CdnBackend: {
+            /** @description The backend service or bucket's resource path. */
+            backend: string;
+            entries: number;
+            bytes: number;
+            /** @description Responses served from cache ({cdn_cache_status} hit). */
+            hits: number;
+            /** @description Responses filled from the origin. */
+            misses: number;
+            /** @description Stale entries the origin confirmed. */
+            revalidated: number;
+            /** @description Responses the cache could not store or bypassed. */
+            uncacheable: number;
+        };
+        CdnEntry: {
+            host: string;
+            path: string;
+            /** @description The cache key per the backend's cache key policy. */
+            cacheKey: string;
+            status: number;
+            bytes: number;
+            contentType?: string;
+            /**
+             * Format: date-time
+             * @description When it was filled or revalidated.
+             */
+            stored: string;
+            /** @description Age in seconds. */
+            age: number;
+            /** @description Freshness lifetime in seconds. */
+            ttl: number;
+            /** @description Request headers the entry varies on. */
+            vary?: string[];
+            /** @description Its Cache-Tag values. */
+            tags?: string[];
+            /** @enum {string} */
+            tier: "memory" | "disk";
         };
         LbListener: {
             /** @description The forwarding rule's resource path. */
@@ -1198,7 +1256,10 @@ export interface operations {
     };
     cdnStats: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only this Project's backends. */
+                project?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1212,12 +1273,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        entries?: number;
-                        bytes?: number;
-                        limitBytes?: number;
+                        entries: number;
+                        bytes: number;
+                        limitBytes: number;
+                        backends: components["schemas"]["CdnBackend"][];
                     };
                 };
             };
+        };
+    };
+    cdnEntries: {
+        parameters: {
+            query: {
+                /** @description The backend service or bucket's resource path or selfLink. */
+                backend: string;
+                /** @description At most this many entries (default and maximum 1000). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entries, by host and path. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        entries: components["schemas"]["CdnEntry"][];
+                        /** @description More entries were left out. */
+                        truncated: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
         };
     };
     cdnPurge: {

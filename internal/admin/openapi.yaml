@@ -367,8 +367,17 @@ paths:
         "202": { $ref: "#/components/responses/Status" }
   /_emu/v1/cdn:
     get:
-      summary: Cloud CDN cache statistics (cdn service).
+      summary: Cloud CDN cache statistics (cdn service; Web console Cloud CDN view).
       operationId: cdnStats
+      description: >-
+        The cache's usage, and each backend service or bucket with cached
+        entries or traffic since the Instance started or was reset. Purging
+        keeps the traffic totals.
+      parameters:
+        - name: project
+          in: query
+          description: Only this Project's backends.
+          schema: { type: string }
       responses:
         "200":
           description: Cache usage.
@@ -376,10 +385,42 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [entries, bytes, limitBytes, backends]
                 properties:
                   entries: { type: integer }
                   bytes: { type: integer }
                   limitBytes: { type: integer }
+                  backends:
+                    type: array
+                    items: { $ref: "#/components/schemas/CdnBackend" }
+  /_emu/v1/cdn/entries:
+    get:
+      summary: One backend's cached responses (cdn service; Web console Cloud CDN view).
+      operationId: cdnEntries
+      parameters:
+        - name: backend
+          in: query
+          required: true
+          description: The backend service or bucket's resource path or selfLink.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: At most this many entries (default and maximum 1000).
+          schema: { type: integer }
+      responses:
+        "200":
+          description: The entries, by host and path.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, truncated]
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/CdnEntry" }
+                  truncated: { type: boolean, description: More entries were left out. }
+        "400": { $ref: "#/components/responses/Error" }
   /_emu/v1/cdn/purge:
     post:
       summary: Clear the Cloud CDN cache (`gcpemu cdn purge`, FR-CDN-008).
@@ -611,6 +652,33 @@ components:
         deadLettered:
           type: integer
           description: Messages forwarded to the dead-letter topic since the Instance started.
+    CdnBackend:
+      type: object
+      required: [backend, entries, bytes, hits, misses, revalidated, uncacheable]
+      properties:
+        backend: { type: string, description: The backend service or bucket's resource path. }
+        entries: { type: integer }
+        bytes: { type: integer }
+        hits: { type: integer, description: "Responses served from cache ({cdn_cache_status} hit)." }
+        misses: { type: integer, description: Responses filled from the origin. }
+        revalidated: { type: integer, description: Stale entries the origin confirmed. }
+        uncacheable: { type: integer, description: Responses the cache could not store or bypassed. }
+    CdnEntry:
+      type: object
+      required: [host, path, cacheKey, status, bytes, stored, age, ttl, tier]
+      properties:
+        host: { type: string }
+        path: { type: string }
+        cacheKey: { type: string, description: The cache key per the backend's cache key policy. }
+        status: { type: integer }
+        bytes: { type: integer }
+        contentType: { type: string }
+        stored: { type: string, format: date-time, description: When it was filled or revalidated. }
+        age: { type: integer, description: Age in seconds. }
+        ttl: { type: integer, description: Freshness lifetime in seconds. }
+        vary: { type: array, items: { type: string }, description: Request headers the entry varies on. }
+        tags: { type: array, items: { type: string }, description: Its Cache-Tag values. }
+        tier: { type: string, enum: [memory, disk] }
     LbListener:
       type: object
       required: [forwardingRule, ipAddress, port, listener, mode, https]

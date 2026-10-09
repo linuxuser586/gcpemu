@@ -66,6 +66,15 @@ export interface FieldSpec {
   /** initial is the create form's value. */
   initial?: FormValue
   mono?: boolean
+  /**
+   * codec reads and writes a field whose API shape is not the type's,
+   * e.g. a list of objects edited as lines. read gets the whole body for
+   * defaults that depend on it.
+   */
+  codec?: {
+    read: (api: unknown, body: Obj) => FormValue
+    write: (value: FormValue, cur: unknown) => unknown
+  }
 }
 
 export interface KindSpec {
@@ -77,7 +86,7 @@ export interface KindSpec {
 
 // ---- paths ----
 
-function getPath(o: Obj, path: string): unknown {
+export function getPath(o: Obj, path: string): unknown {
   let cur: unknown = o
   for (const p of path.split('.')) {
     if (!isObj(cur)) return undefined
@@ -87,7 +96,7 @@ function getPath(o: Obj, path: string): unknown {
 }
 
 /** setPath sets a dotted field, creating parents; undefined removes it. */
-function setPath(o: Obj, path: string, value: unknown) {
+export function setPath(o: Obj, path: string, value: unknown) {
   const parts = path.split('.')
   const last = parts.pop()!
   let cur = o
@@ -114,7 +123,7 @@ const sameRef = (a: unknown, b: unknown) => !!a && short(a) === short(b)
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
 const list = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [])
-const lines = (s: string) =>
+export const lines = (s: string) =>
   s
     .split('\n')
     .map((l) => l.trim())
@@ -205,6 +214,7 @@ function writeRouting(body: Obj, ms: Matcher[]) {
 function fromApi(f: FieldSpec, body: Obj, v: Values): FormValue {
   if (f.type === 'routing') return readRouting(body)
   const api = getPath(body, pathOf(f, v) ?? '')
+  if (f.codec) return f.codec.read(api, body)
   switch (f.type) {
     case 'checkbox':
       return api === true
@@ -228,6 +238,7 @@ function fromApi(f: FieldSpec, body: Obj, v: Values): FormValue {
 }
 
 function toApi(f: FieldSpec, value: FormValue, cur: unknown): unknown {
+  if (f.codec) return f.codec.write(value, cur)
   switch (f.type) {
     case 'checkbox':
       return value === true ? true : cur === undefined ? undefined : false
@@ -340,7 +351,7 @@ export const nameMessage = (name: string) =>
 /** requiredMessage is the API's message for a missing field. */
 export const requiredMessage = (path: string) => `Required field 'resource.${path}' not specified`
 
-const invalid = (path: string, value: unknown, why: string) =>
+export const invalid = (path: string, value: unknown, why: string) =>
   `Invalid value for field 'resource.${path}': '${text(value)}'. ${why}`
 
 const empty = (v: FormValue | undefined) =>

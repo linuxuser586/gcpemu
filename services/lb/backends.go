@@ -101,6 +101,11 @@ func prepareBackendService(ctx context.Context, s *Service, sc scope, path strin
 	if b.LogConfig != nil && (b.LogConfig.SampleRate < 0 || b.LogConfig.SampleRate > 1) {
 		return errInvalid("resource.logConfig.sampleRate", b.LogConfig.SampleRate, "Must be between 0.0 and 1.0.")
 	}
+	if b.CdnPolicy != nil {
+		if err := validateCdnPolicy(serviceCdnPolicy(b.CdnPolicy)); err != nil {
+			return err
+		}
+	}
 	if b.EnableCDN {
 		b.CdnPolicy = defaultServiceCdnPolicy(b.CdnPolicy, old == nil)
 	}
@@ -282,6 +287,11 @@ func prepareBackendBucket(ctx context.Context, s *Service, sc scope, path string
 	var err error
 	if b.EdgeSecurityPolicy, err = s.refSecurityPolicy(sc, b.EdgeSecurityPolicy, "resource.edgeSecurityPolicy", "CLOUD_ARMOR_EDGE"); err != nil {
 		return err
+	}
+	if b.CdnPolicy != nil {
+		if err := validateCdnPolicy(bucketCdnPolicy(b.CdnPolicy)); err != nil {
+			return err
+		}
 	}
 	if b.EnableCdn {
 		b.CdnPolicy = defaultBucketCdnPolicy(b.CdnPolicy, old == nil)

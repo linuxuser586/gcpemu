@@ -72,6 +72,8 @@ type Cache struct {
 	inflight map[string]*flight
 	// bg tracks background revalidations (stale-while-revalidate).
 	bg sync.WaitGroup
+	// counts are each backend's {cdn_cache_status} totals, by backend ID.
+	counts sync.Map // string → *counts
 }
 
 type flight struct{ done chan struct{} }
@@ -152,8 +154,15 @@ type request struct {
 
 // Serve answers r from cache or via origin (the LB's backend handler) per
 // Cloud CDN rules and returns the {cdn_cache_status} value: "hit", "miss",
-// "revalidated" or "uncacheable" (FR-CDN-001..007).
+// "revalidated" or "uncacheable" (FR-CDN-001..007). It counts the value
+// for the backend's hit ratio.
 func (c *Cache) Serve(w http.ResponseWriter, r *http.Request, b Backend, origin http.Handler) string {
+	st := c.serve(w, r, b, origin)
+	c.count(b.ID, st)
+	return st
+}
+
+func (c *Cache) serve(w http.ResponseWriter, r *http.Request, b Backend, origin http.Handler) string {
 	now := c.clock.Now()
 	signed, err := verifySigned(r, b.SignedURLKeys, now)
 	if err != nil {

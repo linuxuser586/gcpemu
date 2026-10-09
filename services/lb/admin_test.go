@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	computev1 "google.golang.org/api/compute/v1"
@@ -97,4 +98,40 @@ func TestConsoleReports(t *testing.T) {
 	route(map[string]any{"urlMap": "projects/" + proj + "/global/urlMaps/missing", "host": "a"}, 404)
 	route(map[string]any{"urlMap": rm}, 400)
 	route(map[string]any{"urlMap": "nope", "host": "a"}, 400)
+}
+
+// TestCdnPolicyValidation checks the cdnPolicy limits GCP enforces, which
+// the Web console's Cloud CDN view shows before sending.
+func TestCdnPolicyValidation(t *testing.T) {
+	e := start(t)
+	bad := []struct {
+		policy *computev1.BackendBucketCdnPolicy
+		msg    string
+	}{
+		{&computev1.BackendBucketCdnPolicy{CacheMode: "CACHE_SOME"}, "'resource.cdnPolicy.cacheMode': 'CACHE_SOME'"},
+		{&computev1.BackendBucketCdnPolicy{DefaultTtl: 31622401}, "Must be between 0 and 31622400."},
+		{&computev1.BackendBucketCdnPolicy{DefaultTtl: 7200, MaxTtl: 3600}, "Default TTL must be less than or equal to max TTL."},
+		{&computev1.BackendBucketCdnPolicy{ServeWhileStale: 604801}, "Must be between 0 and 604800."},
+		{&computev1.BackendBucketCdnPolicy{NegativeCachingPolicy: []*computev1.BackendBucketCdnPolicyNegativeCachingPolicy{{Code: 404, Ttl: 60}}},
+			"Negative caching policy requires negative caching to be enabled."},
+		{&computev1.BackendBucketCdnPolicy{NegativeCaching: true, NegativeCachingPolicy: []*computev1.BackendBucketCdnPolicyNegativeCachingPolicy{{Code: 500, Ttl: 60}}},
+			"'resource.cdnPolicy.negativeCachingPolicy[0].code': '500'"},
+		{&computev1.BackendBucketCdnPolicy{NegativeCaching: true, NegativeCachingPolicy: []*computev1.BackendBucketCdnPolicyNegativeCachingPolicy{{Code: 404, Ttl: 1801}}},
+			"'resource.cdnPolicy.negativeCachingPolicy[0].ttl': '1801'. Must be between 0 and 1800."},
+	}
+	for _, c := range bad {
+		_, err := e.c.BackendBuckets.Insert(proj, &computev1.BackendBucket{Name: "b", BucketName: "x", EnableCdn: true, CdnPolicy: c.policy}).Do()
+		if code, _ := apiErr(err); code != http.StatusBadRequest || !strings.Contains(err.Error(), c.msg) {
+			t.Errorf("%+v: %v, want %q", c.policy, err, c.msg)
+		}
+	}
+	_, err := e.c.BackendServices.Insert(proj, &computev1.BackendService{Name: "s", EnableCDN: true,
+		CdnPolicy: &computev1.BackendServiceCdnPolicy{CacheKeyPolicy: &computev1.CacheKeyPolicy{IncludeQueryString: true,
+			QueryStringWhitelist: []string{"a"}, QueryStringBlacklist: []string{"b"}}}}).Do()
+	if code, _ := apiErr(err); code != http.StatusBadRequest || !strings.Contains(err.Error(), "Only one of queryStringWhitelist and queryStringBlacklist") {
+		t.Errorf("both query lists: %v", err)
+	}
+	e.do(e.c.BackendBuckets.Insert(proj, &computev1.BackendBucket{Name: "ok", BucketName: "x", EnableCdn: true,
+		CdnPolicy: &computev1.BackendBucketCdnPolicy{CacheMode: "FORCE_CACHE_ALL", DefaultTtl: 60, NegativeCaching: true,
+			NegativeCachingPolicy: []*computev1.BackendBucketCdnPolicyNegativeCachingPolicy{{Code: 404, Ttl: 30}}}}).Do())
 }

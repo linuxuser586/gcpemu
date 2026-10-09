@@ -62,18 +62,19 @@ func (s *Service) Name() string { return Name }
 
 // Register mounts the admin endpoints:
 //
-//	POST /_emu/v1/cdn/purge  clears the cache (`gcpemu cdn purge`)
-//	GET  /_emu/v1/cdn        reports entries, bytes used and the limit
+//	POST /_emu/v1/cdn/purge    clears the cache (`gcpemu cdn purge`)
+//	GET  /_emu/v1/cdn          reports entries, bytes used and the limit, and each backend's
+//	GET  /_emu/v1/cdn/entries  lists a backend's cached entries
+//
+// Purging keeps the backends' hit and miss totals; Reset clears them.
 func (s *Service) Register(r emu.Router) error {
 	r.Handle("POST /_emu/v1/cdn/purge", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := s.cache.purge()
 		s.log.Info("cache purged", "entries", n)
 		writeJSON(w, map[string]any{"purged": n})
 	}))
-	r.Handle("GET /_emu/v1/cdn", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n, used := s.cache.Stats()
-		writeJSON(w, map[string]any{"entries": n, "bytes": used, "limitBytes": s.cache.Limit()})
-	}))
+	r.Handle("GET /_emu/v1/cdn", http.HandlerFunc(s.serveStats))
+	r.Handle("GET /_emu/v1/cdn/entries", http.HandlerFunc(s.serveEntries))
 	return nil
 }
 
@@ -94,9 +95,10 @@ func (s *Service) Stop(ctx context.Context) error {
 // Ready implements emu.Service.
 func (s *Service) Ready() error { return nil }
 
-// Reset clears the cache on `gcpemu reset`.
+// Reset clears the cache and the backends' totals on `gcpemu reset`.
 func (s *Service) Reset(ctx context.Context) error {
 	s.cache.Purge()
+	s.cache.resetCounts()
 	return nil
 }
 
