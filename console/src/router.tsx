@@ -32,6 +32,12 @@ import { CreateNodePool, EditNodePool } from '@/features/gke/NodePoolForm'
 import { NodePoolPage, NodePools } from '@/features/gke/NodePools'
 import { PodLogs } from '@/features/gke/PodLogs'
 import { Operations } from '@/features/operations/Operations'
+import { locationsQuery, secretQuery, secretsQuery, versionsQuery } from '@/features/secrets/api'
+import { CreateSecret, EditSecret } from '@/features/secrets/SecretForm'
+import { SecretOverview, SecretPage } from '@/features/secrets/SecretPage'
+import { Secrets } from '@/features/secrets/Secrets'
+import { SecretsLayout } from '@/features/secrets/SecretsLayout'
+import { Versions } from '@/features/secrets/Versions'
 import { ServicePage } from '@/features/services/ServicePage'
 
 export const BASENAME = '/console'
@@ -86,6 +92,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'gcs',
           element: <GcsLayout />,
           children: gcsRoutes(queryClient),
+        },
+        {
+          path: 'secrets',
+          element: <SecretsLayout />,
+          children: secretsRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -182,6 +193,60 @@ function gcsRoutes(queryClient: QueryClient): RouteObject[] {
         { path: 'edit/*', element: <EditObject /> },
       ],
     },
+  ]
+}
+
+// The Secret Manager view (SRS 4.8.3). Paths follow the API's resource
+// names, with the Project in ?project=; the list shows one location
+// (?location=, global by default).
+function secretsRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const secret = (location: boolean): RouteObject => ({
+    path: `${location ? 'locations/:location/' : ''}secrets/:secret`,
+    element: <SecretPage />,
+    loader: ({ request, params }) => {
+      const r = {
+        project: projectOf(request),
+        location: params.location ?? '',
+        secret: params.secret ?? '',
+      }
+      return r.project
+        ? warm(
+            queryClient.ensureQueryData(secretQuery(r)),
+            queryClient.ensureQueryData(versionsQuery(r)),
+          )
+        : null
+    },
+    children: [
+      { index: true, element: <Versions /> },
+      { path: 'overview', element: <SecretOverview /> },
+    ],
+  })
+  const edit = (location: boolean): RouteObject => ({
+    path: `${location ? 'locations/:location/' : ''}secrets/:secret/edit`,
+    element: <EditSecret />,
+  })
+  return [
+    {
+      index: true,
+      element: <Secrets />,
+      loader: async ({ request }) => {
+        const project = projectOf(request)
+        const location = new URL(request.url).searchParams.get('location') ?? ''
+        if (project) {
+          await warm(
+            queryClient.ensureQueryData(secretsQuery(project, location)),
+            queryClient.ensureQueryData(locationsQuery(project)),
+          )
+        }
+        return null
+      },
+    },
+    { path: 'create', element: <CreateSecret /> },
+    edit(false),
+    edit(true),
+    secret(false),
+    secret(true),
   ]
 }
 

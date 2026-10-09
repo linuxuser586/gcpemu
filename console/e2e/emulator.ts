@@ -15,7 +15,13 @@ const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // on Linux only; its clusters need a container runtime, so the GKE view
 // tests that create them skip without one (gke.spec.ts). Each browser
 // runs a cluster of up to 2 nodes, beyond the default limit of 5.
-const services = ['gcs', 'pubsub', 'compute', ...(process.platform === 'linux' ? ['gke'] : [])]
+const services = [
+  'gcs',
+  'pubsub',
+  'secrets',
+  'compute',
+  ...(process.platform === 'linux' ? ['gke'] : []),
+]
 const child = spawn(
   bin,
   [
