@@ -270,7 +270,7 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 		if err := s.fillPool(r, c, np, ""); err != nil {
 			return nil, err
 		}
-		rec.Int.Nodes = append(rec.Int.Nodes, s.planNodes(c, np, nil)...)
+		rec.Int.Nodes = append(rec.Int.Nodes, s.planNodes(c, np, nil, startCounts(np))...)
 	}
 	c.NodeConfig = proto.Clone(c.NodePools[0].Config).(*containerpb.NodeConfig)
 	// initialNodeCount keeps the requested value, like GKE (the OpenTofu
@@ -374,18 +374,55 @@ func (s *Service) fillPool(r ref, c *containerpb.Cluster, np *containerpb.NodePo
 	return nil
 }
 
-// planNodes returns node records for a pool at its configured size,
-// keeping existing nodes where possible.
-func (s *Service) planNodes(c *containerpb.Cluster, np *containerpb.NodePool, existing []nodeRecord) []nodeRecord {
+// startCounts returns the number of nodes a new pool starts in each of its
+// locations. Like GKE, an autoscaled pool without initialNodeCount starts at
+// its minimum: minNodeCount per zone, or totalMinNodeCount spread across the
+// zones, and at least one node per zone (or in all, for a total).
+func startCounts(np *containerpb.NodePool) []int {
+	counts := make([]int, len(np.Locations))
+	as := np.GetAutoscaling()
+	switch {
+	case np.InitialNodeCount > 0 || !as.GetEnabled():
+		for i := range counts {
+			counts[i] = int(np.InitialNodeCount)
+		}
+	case as.TotalMinNodeCount > 0 || as.TotalMaxNodeCount > 0:
+		total := max(int(as.TotalMinNodeCount), 1)
+		for i := range counts {
+			counts[i] = total / len(counts)
+			if i < total%len(counts) {
+				counts[i]++
+			}
+		}
+	default:
+		for i := range counts {
+			counts[i] = max(int(as.MinNodeCount), 1)
+		}
+	}
+	return counts
+}
+
+// zoneCounts returns n nodes for each of a pool's locations.
+func zoneCounts(np *containerpb.NodePool, n int) []int {
+	counts := make([]int, len(np.Locations))
+	for i := range counts {
+		counts[i] = n
+	}
+	return counts
+}
+
+// planNodes returns node records for a pool with counts[i] nodes in
+// np.Locations[i], keeping existing nodes where possible.
+func (s *Service) planNodes(c *containerpb.Cluster, np *containerpb.NodePool, existing []nodeRecord, counts []int) []nodeRecord {
 	byZone := map[string][]nodeRecord{}
 	for _, n := range existing {
 		byZone[n.Zone] = append(byZone[n.Zone], n)
 	}
 	var out []nodeRecord
 	h := shortHash(c.Id + "/" + np.Name)
-	for _, z := range np.Locations {
+	for zi, z := range np.Locations {
 		cur := byZone[z]
-		for i := 0; i < int(np.InitialNodeCount); i++ {
+		for i := 0; i < counts[zi]; i++ {
 			if i < len(cur) {
 				out = append(out, cur[i])
 				continue
