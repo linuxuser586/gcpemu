@@ -193,7 +193,7 @@ export function NotRunning({ i, what }: { i: DatabaseInstance; what: string }) {
 }
 
 /** CopyText is a value with a button that copies it. */
-function CopyText({ label, value }: { label: string; value: string }) {
+export function CopyText({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {

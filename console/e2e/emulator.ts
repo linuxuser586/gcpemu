@@ -21,6 +21,7 @@ const services = [
   'pubsub',
   'secrets',
   'compute',
+  'lb',
   'sql',
   ...(process.platform === 'linux' ? ['gke'] : []),
 ]

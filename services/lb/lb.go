@@ -75,7 +75,8 @@ func (s *Service) Name() string { return "lb" }
 
 // Register installs the load-balancing collections on the compute API's
 // mux (so selfLinks, operations, filters and paging are uniform with the
-// rest of compute) and the resource-in-use checks (FR-CORE-026).
+// rest of compute), the resource-in-use checks (FR-CORE-026) and the Web
+// console's listener and routing reports (admin.go).
 func (s *Service) Register(r emu.Router) error {
 	svc, ok := s.env.Lookup("compute")
 	if !ok {
@@ -91,6 +92,8 @@ func (s *Service) Register(r emu.Router) error {
 		s.local.HandleFunc(pattern, h)
 	})
 	cmp.AddUsageChecker(s.usedBy)
+	r.Handle("GET /_emu/v1/lb/listeners", http.HandlerFunc(s.serveListeners))
+	r.Handle("POST /_emu/v1/lb/route", http.HandlerFunc(s.serveRoute))
 	return nil
 }
 

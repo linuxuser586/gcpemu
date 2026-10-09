@@ -31,6 +31,11 @@ import { Negs } from '@/features/gke/Negs'
 import { CreateNodePool, EditNodePool } from '@/features/gke/NodePoolForm'
 import { NodePoolPage, NodePools } from '@/features/gke/NodePools'
 import { PodLogs } from '@/features/gke/PodLogs'
+import { kindInfo, kindQuery, listenersQuery, resourceQuery, type Coll } from '@/features/lb/api'
+import { LbLayout } from '@/features/lb/LbLayout'
+import { CreateResource, EditResource } from '@/features/lb/ResourceForm'
+import { ResourcePage } from '@/features/lb/ResourcePage'
+import { Resources } from '@/features/lb/Resources'
 import { Operations } from '@/features/operations/Operations'
 import {
   statsQuery,
@@ -133,6 +138,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'sql',
           element: <SqlLayout />,
           children: sqlRoutes(queryClient),
+        },
+        {
+          path: 'lb',
+          element: <LbLayout />,
+          children: lbRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -387,6 +397,47 @@ function sqlRoutes(queryClient: QueryClient): RouteObject[] {
         { path: 'backups', element: <Backups /> },
       ],
     },
+  ]
+}
+
+// The Load Balancer view (SRS 4.8.3). Each kind has a list (forwarding
+// rules at /lb); resource paths follow the API's, global/C/N or
+// regions/R/C/N, with the Project in ?project=; create pages are under
+// create/, so that no name is shadowed.
+function lbRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const list =
+    (fixed?: Coll): RouteObject['loader'] =>
+    ({ request, params }) => {
+      const project = projectOf(request)
+      const coll = fixed ?? (params.coll as Coll)
+      return project && kindInfo(coll)
+        ? warm(
+            queryClient.ensureQueryData(kindQuery(project, coll)),
+            ...(coll === 'forwardingRules'
+              ? [queryClient.ensureQueryData(listenersQuery(project))]
+              : []),
+          )
+        : null
+    }
+  const page: RouteObject['loader'] = ({ request, params }) => {
+    const project = projectOf(request)
+    const r = {
+      project,
+      region: params.region ?? '',
+      coll: params.coll as Coll,
+      name: params.name ?? '',
+    }
+    return project && kindInfo(r.coll) ? warm(queryClient.ensureQueryData(resourceQuery(r))) : null
+  }
+  return [
+    { index: true, element: <Resources />, loader: list('forwardingRules') },
+    { path: 'create/:coll', element: <CreateResource /> },
+    { path: 'global/:coll/:name', element: <ResourcePage />, loader: page },
+    { path: 'global/:coll/:name/edit', element: <EditResource /> },
+    { path: 'regions/:region/:coll/:name', element: <ResourcePage />, loader: page },
+    { path: 'regions/:region/:coll/:name/edit', element: <EditResource /> },
+    { path: ':coll', element: <Resources />, loader: list() },
   ]
 }
 

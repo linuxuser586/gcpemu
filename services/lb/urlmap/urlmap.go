@@ -67,6 +67,10 @@ type Result struct {
 	ErrorPolicy *compute.CustomErrorResponsePolicy
 	// PathMatcher names the matched path matcher ("" for map defaults).
 	PathMatcher string
+	// RouteRule or PathRule is the rule that matched; neither is set when
+	// the path matcher's or URL map's defaults apply.
+	RouteRule *compute.HttpRouteRule
+	PathRule  *compute.PathRule
 }
 
 // Router is a compiled URL map. It is immutable and safe for concurrent use.
@@ -223,6 +227,7 @@ func (rt *Router) Route(req *Request, pick func(total int64) int64) *Result {
 		for _, rr := range mt.rules {
 			if mi, ok := rt.matchRule(rr, req); ok {
 				matched = true
+				res.RouteRule = rr
 				var ha []*compute.HttpHeaderAction
 				ha = append(ha, rr.HeaderAction)
 				rt.apply(res, req, pick, rr.Service, rr.RouteAction, rr.UrlRedirect, ha, mi)
@@ -236,6 +241,7 @@ func (rt *Router) Route(req *Request, pick func(total int64) int64) *Result {
 		for _, e := range mt.paths {
 			if mi, ok := matchPath(e, req.Path); ok {
 				matched = true
+				res.PathRule = e.rule
 				rt.apply(res, req, pick, e.rule.Service, e.rule.RouteAction, e.rule.UrlRedirect, nil, mi)
 				if e.rule.CustomErrorResponsePolicy != nil {
 					res.ErrorPolicy = e.rule.CustomErrorResponsePolicy
