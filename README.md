@@ -21,7 +21,7 @@ reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 | Artifact Registry | `services/ar` | Repositories API with LROs; OCI Distribution v1.1 registry with referrers; pull-through cache, remote and virtual repositories |
 | Compute networking | `services/compute` | Networks, subnetworks, firewalls, routes, addresses, routers, zonal/regional/global NEGs, operations; servicenetworking; subnetworks realised as container networks; VPC peering (recorded) |
 | Cloud NAT | `services/compute`, `services/nat` | Router NAT configs drive an egress gateway container; drop/reject, logging, offline sink |
-| Cloud SQL | `services/sql` | sqladmin v1beta4/v1 over real PostgreSQL 14–17 containers; connector (3307), IAM DB auth, authorized networks, private IP, backups, import/export |
+| Cloud SQL | `services/sql` | sqladmin v1beta4/v1 over real PostgreSQL 14–18 containers; connector (3307), IAM DB auth, authorized networks, private IP, backups, import/export |
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |

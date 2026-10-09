@@ -24,7 +24,7 @@ import (
 //	  instances:
 //	    - name: main
 //	      project: my-project
-//	      databaseVersion: POSTGRES_16      # default POSTGRES_17
+//	      databaseVersion: POSTGRES_16      # default POSTGRES_18
 //	      region: us-central1
 //	      tier: db-custom-1-3840
 //	      rootPassword: secret

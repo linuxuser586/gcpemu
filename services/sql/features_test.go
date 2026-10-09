@@ -38,7 +38,7 @@ func TestDataFeatures(t *testing.T) {
 	ctx := context.Background()
 	open := []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}}
 	in := createInstance(t, svc, &sqladmin.DatabaseInstance{
-		Name: "data", DatabaseVersion: "POSTGRES_17", RootPassword: "rootpw",
+		Name: "data", DatabaseVersion: "POSTGRES_18", RootPassword: "rootpw",
 		Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true, AuthorizedNetworks: open}},
 	})
 	ip := publicIP(in)

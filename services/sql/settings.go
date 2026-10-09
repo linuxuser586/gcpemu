@@ -13,9 +13,15 @@ import (
 // Settings defaults and validation (FR-SQL-001). Tier, disk and
 // availability type are Recorded: stored and reported, not enforced.
 
-const defaultTier = "db-custom-1-3840"
+const (
+	defaultTier     = "db-custom-1-3840"
+	defaultPlusTier = "db-perf-optimized-N-2"
+	// plusSince is the first major version on which an unset edition
+	// means Enterprise Plus, as in GCP.
+	plusSince = 16
+)
 
-var tierRe = regexp.MustCompile(`^db-[a-z0-9-]+$`)
+var tierRe = regexp.MustCompile(`^db-[a-zA-Z0-9-]+$`)
 
 // fromMap converts a JSON object into v.
 func fromMap(m map[string]any, v any) error {
@@ -78,10 +84,19 @@ func merge(dst, patch map[string]any) map[string]any {
 
 // applySettingsDefaults fills settings the way Cloud SQL reports them.
 // raw is the request's settings object (to tell absent from false).
-func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone string, create bool) {
+func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone, version string, create bool) {
 	st.Kind = "sql#settings"
+	if st.Edition == "" || st.Edition == "EDITION_UNSPECIFIED" {
+		st.Edition = "ENTERPRISE"
+		if strings.HasPrefix(st.Tier, "db-perf-optimized-") || pgVersions[version].Major >= plusSince {
+			st.Edition = "ENTERPRISE_PLUS"
+		}
+	}
 	if st.Tier == "" {
 		st.Tier = defaultTier
+		if st.Edition == "ENTERPRISE_PLUS" {
+			st.Tier = defaultPlusTier
+		}
 	}
 	if st.ActivationPolicy == "" || st.ActivationPolicy == "SQL_ACTIVATION_POLICY_UNSPECIFIED" {
 		st.ActivationPolicy = "ALWAYS"
@@ -100,12 +115,6 @@ func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone strin
 	}
 	if st.ReplicationType == "" {
 		st.ReplicationType = "SYNCHRONOUS"
-	}
-	if st.Edition == "" || st.Edition == "EDITION_UNSPECIFIED" {
-		st.Edition = "ENTERPRISE"
-		if strings.HasPrefix(st.Tier, "db-perf-optimized-") {
-			st.Edition = "ENTERPRISE_PLUS"
-		}
 	}
 	if st.ConnectorEnforcement == "" || st.ConnectorEnforcement == "CONNECTOR_ENFORCEMENT_UNSPECIFIED" {
 		st.ConnectorEnforcement = "NOT_REQUIRED"
@@ -171,6 +180,19 @@ func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone strin
 func validateSettings(st *sqladmin.Settings, version string) (map[string]string, error) {
 	if !tierRe.MatchString(st.Tier) {
 		return nil, errInvalid("Invalid Tier (%s) for (%s) Edition.", st.Tier, st.Edition)
+	}
+	perf := strings.HasPrefix(st.Tier, "db-perf-optimized-")
+	switch st.Edition {
+	case "ENTERPRISE":
+		if perf {
+			return nil, errInvalid("Invalid Tier (%s) for (%s) Edition.", st.Tier, st.Edition)
+		}
+	case "ENTERPRISE_PLUS":
+		if !perf {
+			return nil, errInvalid("Invalid Tier (%s) for (%s) Edition. Set settings.edition to ENTERPRISE for this tier; POSTGRES_%d and later default to ENTERPRISE_PLUS.", st.Tier, st.Edition, plusSince)
+		}
+	default:
+		return nil, errInvalid("Invalid edition %s.", st.Edition)
 	}
 	switch st.ActivationPolicy {
 	case "ALWAYS", "NEVER":

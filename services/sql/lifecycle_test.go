@@ -50,7 +50,8 @@ func TestInstanceLifecycle(t *testing.T) {
 		Region:          "us-central1",
 		RootPassword:    "rootpw",
 		Settings: &sqladmin.Settings{
-			Tier: "db-custom-1-3840",
+			Tier:    "db-custom-1-3840",
+			Edition: "ENTERPRISE",
 			IpConfiguration: &sqladmin.IpConfiguration{
 				Ipv4Enabled:        true,
 				AuthorizedNetworks: []*sqladmin.AclEntry{{Name: "all", Value: "0.0.0.0/0"}},
