@@ -24,7 +24,10 @@ import (
 	"github.com/linuxuser586/gcpemu/services/sql/proxy"
 )
 
-func init() { agent.Register(proxy.Name, proxy.Main) }
+func init() {
+	agent.Register(proxy.Name, proxy.Main)
+	agent.Register(proxy.QueryName, proxy.QueryMain)
+}
 
 // Service is the Cloud SQL service module.
 type Service struct {

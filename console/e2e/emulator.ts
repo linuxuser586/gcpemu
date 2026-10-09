@@ -13,13 +13,15 @@ const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // Compute Operations take 2 s, long enough to watch them
 // run (FR-UI-012); compute needs no container runtime either. GKE runs
 // on Linux only; its clusters need a container runtime, so the GKE view
-// tests that create them skip without one (gke.spec.ts). Each browser
+// tests that create them skip without one (gke.spec.ts), as do the Cloud
+// SQL view tests that create instances (sql.spec.ts). Each browser
 // runs a cluster of up to 2 nodes, beyond the default limit of 5.
 const services = [
   'gcs',
   'pubsub',
   'secrets',
   'compute',
+  'sql',
   ...(process.platform === 'linux' ? ['gke'] : []),
 ]
 const child = spawn(

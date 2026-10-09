@@ -55,6 +55,16 @@ import { Secrets } from '@/features/secrets/Secrets'
 import { SecretsLayout } from '@/features/secrets/SecretsLayout'
 import { Versions } from '@/features/secrets/Versions'
 import { ServicePage } from '@/features/services/ServicePage'
+import { databasesQuery, instanceQuery, instancesQuery } from '@/features/sql/api'
+import { Backups } from '@/features/sql/Backups'
+import { CreateDatabase, Databases, EditDatabase } from '@/features/sql/Databases'
+import { Flags } from '@/features/sql/Flags'
+import { CreateInstance, EditInstance } from '@/features/sql/InstanceForm'
+import { InstanceOverview, InstancePage } from '@/features/sql/InstancePage'
+import { Instances } from '@/features/sql/Instances'
+import { Query } from '@/features/sql/Query'
+import { SqlLayout } from '@/features/sql/SqlLayout'
+import { CreateUser, EditUser, Users } from '@/features/sql/Users'
 
 export const BASENAME = '/console'
 
@@ -118,6 +128,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'secrets',
           element: <SecretsLayout />,
           children: secretsRoutes(queryClient),
+        },
+        {
+          path: 'sql',
+          element: <SqlLayout />,
+          children: sqlRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -328,6 +343,50 @@ function secretsRoutes(queryClient: QueryClient): RouteObject[] {
     edit(true),
     secret(false),
     secret(true),
+  ]
+}
+
+// The Cloud SQL view (SRS 4.8.3). Paths follow the API's resource names,
+// with the Project in ?project=; the create page is not under instances/,
+// so that no instance ID is shadowed.
+function sqlRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  return [
+    {
+      index: true,
+      element: <Instances />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(instancesQuery(project))) : null
+      },
+    },
+    { path: 'create', element: <CreateInstance /> },
+    { path: 'instances/:instance/edit', element: <EditInstance /> },
+    {
+      path: 'instances/:instance',
+      element: <InstancePage />,
+      loader: ({ request, params }) => {
+        const r = { project: projectOf(request), instance: params.instance ?? '' }
+        return r.project
+          ? warm(
+              queryClient.ensureQueryData(instanceQuery(r)),
+              queryClient.ensureQueryData(databasesQuery(r)),
+            )
+          : null
+      },
+      children: [
+        { index: true, element: <InstanceOverview /> },
+        { path: 'databases', element: <Databases /> },
+        { path: 'databases/create', element: <CreateDatabase /> },
+        { path: 'databases/:database/edit', element: <EditDatabase /> },
+        { path: 'users', element: <Users /> },
+        { path: 'users/create', element: <CreateUser /> },
+        { path: 'users/:user/edit', element: <EditUser /> },
+        { path: 'flags', element: <Flags /> },
+        { path: 'query', element: <Query /> },
+        { path: 'backups', element: <Backups /> },
+      ],
+    },
   ]
 }
 

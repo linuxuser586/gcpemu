@@ -182,11 +182,11 @@ test('FR-UI-006: a bucket created through the public API shows up within 1 s', a
 })
 
 test('a deep link to a disabled Service says how to enable it', async ({ page }) => {
-  await page.goto('/console/sql/instances?project=whatever-project')
+  await page.goto('/console/nat/routers?project=whatever-project')
   await expect(
-    page.getByRole('heading', { name: 'Service sql is not enabled on this Instance' }),
+    page.getByRole('heading', { name: 'Service nat is not enabled on this Instance' }),
   ).toBeVisible()
-  await expect(page.getByText(/gcpemu start --services .*sql/)).toBeVisible()
+  await expect(page.getByText(/gcpemu start --services .*nat/)).toBeVisible()
 })
 
 test('FR-UI-012 Operations: live status, duration and the resulting resource or error', async ({

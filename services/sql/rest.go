@@ -76,6 +76,7 @@ func (s *Service) routes() *http.ServeMux {
 	mux.HandleFunc("GET "+i+"/connectSettings", s.connectSettings)
 	mux.HandleFunc("POST "+i+"/generateEphemeralCert", s.generateEphemeralCert)
 	mux.HandleFunc("POST "+i+"/createEphemeral", s.createEphemeral)
+	mux.HandleFunc("POST "+i+"/executeSql", s.executeSQL)
 
 	mux.HandleFunc("POST "+i+"/sslCerts", s.insertSslCert)
 	mux.HandleFunc("GET "+i+"/sslCerts", s.listSslCerts)

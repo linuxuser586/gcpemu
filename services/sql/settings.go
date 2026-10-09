@@ -204,6 +204,11 @@ func validateSettings(st *sqladmin.Settings, version string) (map[string]string,
 	default:
 		return nil, errInvalid("Invalid availability type %s.", st.AvailabilityType)
 	}
+	switch st.DataApiAccess {
+	case "", "DATA_API_ACCESS_UNSPECIFIED", "DISALLOW_DATA_API", "ALLOW_DATA_API":
+	default:
+		return nil, errInvalid("Invalid data API access %s.", st.DataApiAccess)
+	}
 	ipc := st.IpConfiguration
 	if !ipc.Ipv4Enabled && ipc.PrivateNetwork == "" && (ipc.PscConfig == nil || !ipc.PscConfig.PscEnabled) {
 		return nil, errInvalid("At least one of public IP or private IP must be enabled.")
