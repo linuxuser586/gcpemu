@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -43,7 +44,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	m := &runtime.Manager{
 		Client: cl, Info: info, InstanceID: c.in.ID, Instance: c.in.Config.Instance,
 		Offline: c.in.Config.Offline, Ephemeral: c.in.Config.Ephemeral,
-		Log: c.in.Env.Log.With("component", "runtime"),
+		Log: c.in.Env.Log.With("component", "runtime"), Reserved: c.reservedAddrs,
 	}
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
@@ -51,6 +52,18 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
 	c.rt = m
 	return m, nil
+}
+
+// reservedAddrs collects the addresses services' stored resources have
+// recorded (emu.AddressReserver).
+func (c *containers) reservedAddrs() []string {
+	var out []string
+	for _, s := range c.in.services {
+		if r, ok := s.(emu.AddressReserver); ok {
+			out = append(out, r.ReservedAddrs()...)
+		}
+	}
+	return out
 }
 
 func (c *containers) Netplane(ctx context.Context) (*netplane.Plane, error) {

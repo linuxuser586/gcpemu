@@ -229,6 +229,12 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 		}
 		_ = rt.RemoveContainer(ctx, id, true)
 		msg := err.Error()
+		if publicIP != "" && strings.Contains(msg, "Address already in use") {
+			// Something outside the emulator holds the recorded address.
+			s.env.Log.Warn("sql: public IP taken; using a new one", "instance", project+":"+name, "ip", publicIP)
+			publicIP = ""
+			continue
+		}
 		portBusy := strings.Contains(msg, "already allocated") || strings.Contains(msg, "address already in use")
 		if !portBusy || attempt >= 20 {
 			return err

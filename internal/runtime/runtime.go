@@ -453,6 +453,47 @@ func (c *Client) InspectNetwork(ctx context.Context, name string) (Network, erro
 	return n, nil
 }
 
+// NetworkAddrs returns the IPv4 addresses held on a network: those of
+// attached containers and those that created (not yet started) containers
+// asked for.
+func (c *Client) NetworkAddrs(ctx context.Context, network string) (map[string]bool, error) {
+	var nv struct {
+		Containers map[string]struct{ IPv4Address string }
+	}
+	if err := c.do(ctx, http.MethodGet, "/networks/"+url.PathEscape(network), nil, nil, &nv); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, ep := range nv.Containers {
+		if ip, _, _ := strings.Cut(ep.IPv4Address, "/"); ip != "" {
+			out[ip] = true
+		}
+	}
+	var cv []struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAMConfig *struct{ IPv4Address string }
+				IPAddress  string
+			}
+		}
+	}
+	q := url.Values{"all": {"true"}, "filters": {`{"network":[` + strconv.Quote(network) + `]}`}}
+	if err := c.do(ctx, http.MethodGet, "/containers/json", q, nil, &cv); err != nil {
+		return nil, err
+	}
+	for _, ct := range cv {
+		for _, ep := range ct.NetworkSettings.Networks {
+			if ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != "" {
+				out[ep.IPAMConfig.IPv4Address] = true
+			}
+			if ep.IPAddress != "" {
+				out[ep.IPAddress] = true
+			}
+		}
+	}
+	return out, nil
+}
+
 // ListNetworks returns networks carrying all the given labels.
 func (c *Client) ListNetworks(ctx context.Context, labels map[string]string) ([]Network, error) {
 	var v []struct {
