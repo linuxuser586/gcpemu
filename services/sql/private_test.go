@@ -98,9 +98,21 @@ func TestPrivateIP(t *testing.T) {
 	if pubIP == "" {
 		t.Error("no PRIMARY address")
 	}
+	// The address lies in the PSA range, or in the runtime-picked range
+	// compute falls back to when another network on the host overlaps it
+	// (another gcpemu instance, say); clients get the reachable address.
 	ga := must(c.GlobalAddresses.Get(testProject, "psa").Do())
-	if privIP == "" || !cidrHas(ga.Address+"/20", privIP) {
-		t.Fatalf("private IP %q not in the PSA range %s/20", privIP, ga.Address)
+	cvc, _ := inst.Env.Lookup("compute")
+	vpc := cvc.(emu.VPC)
+	psaNet, err := vpc.PrivateServicesNetwork(ctx, "projects/"+testProject+"/global/networks/vpc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if psaNet.Subnet != ga.Address+"/20" {
+		t.Logf("PSA range %s/20 overlaps a host network; compute fell back to %s", ga.Address, psaNet.Subnet)
+	}
+	if privIP == "" || !cidrHas(psaNet.Subnet, privIP) {
+		t.Fatalf("private IP %q not in the PSA network %s (range %s/20)", privIP, psaNet.Subnet, ga.Address)
 	}
 	conn, err := connect(ctx, privIP, 5432, "postgres", "rootpw", "postgres")
 	if err != nil {
@@ -110,8 +122,6 @@ func TestPrivateIP(t *testing.T) {
 
 	// FR-INT-008: a workload on a VPC subnetwork (as a GKE node/pod is,
 	// default route via compute's gateway) reaches the private IP.
-	cvc, _ := inst.Env.Lookup("compute")
-	vpc := cvc.(emu.VPC)
 	sp := "projects/" + testProject + "/regions/us-central1/subnetworks/s"
 	subnet, err := vpc.SubnetNetwork(ctx, sp)
 	if err != nil {
