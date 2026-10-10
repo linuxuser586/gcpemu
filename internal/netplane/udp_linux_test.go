@@ -1,8 +1,9 @@
-package dns
+package netplane
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strconv"
 	"syscall"
@@ -40,7 +41,7 @@ func freeUDPPort(t *testing.T) string {
 }
 
 // TestListenUDPBesideMDNS: with a wildcard mDNS socket on the port, a
-// plain bind of a specific address fails, listenUDP succeeds, and unicast
+// plain bind of a specific address fails, ListenUDP succeeds, and unicast
 // queries to that address reach the emulator rather than the mDNS daemon.
 // A wildcard bind does not use SO_REUSEADDR, so it can't take over the
 // daemon's traffic.
@@ -55,9 +56,9 @@ func TestListenUDPBesideMDNS(t *testing.T) {
 	} else if !errors.Is(err, syscall.EADDRINUSE) {
 		t.Fatalf("plain bind: %v", err)
 	}
-	ours, err := listenUDP(ctx, "127.0.0.1", port)
+	ours, err := ListenUDP(ctx, "127.0.0.1", port)
 	if err != nil {
-		t.Fatalf("listenUDP beside mDNS: %v", err)
+		t.Fatalf("ListenUDP beside mDNS: %v", err)
 	}
 	defer ours.Close()
 
@@ -80,9 +81,54 @@ func TestListenUDPBesideMDNS(t *testing.T) {
 	}
 
 	for _, host := range []string{"0.0.0.0", ""} {
-		if pc, err := listenUDP(ctx, host, port); err == nil {
+		if pc, err := ListenUDP(ctx, host, port); err == nil {
 			pc.Close()
 			t.Errorf("wildcard bind %q shared the mDNS port", host)
 		}
+	}
+}
+
+// TestForwarderBesideMDNS: the DNS forwarder binds its UDP side on the
+// endpoint's port while an mDNS daemon holds that port on the wildcard
+// address (issue #114), and relays queries to the target.
+func TestForwarderBesideMDNS(t *testing.T) {
+	port := freeUDPPort(t)
+	mdnsHolder(t, port)
+	echo, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buf := make([]byte, 64)
+		for {
+			n, from, err := echo.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			_, _ = echo.WriteTo(append([]byte("re:"), buf[:n]...), from)
+		}
+	}()
+
+	f, err := newForwarder("127.0.0.1", port, echo.LocalAddr().String(), true, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("forwarder beside mDNS: %v", err)
+	}
+	defer f.close()
+	if want := "127.0.0.1:" + port; f.addr != want {
+		t.Fatalf("forwarder on %s, want %s", f.addr, want)
+	}
+	c, err := net.Dial("udp4", f.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := c.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	if n, err := c.Read(buf); err != nil || string(buf[:n]) != "re:q" {
+		t.Fatalf("relayed answer %q %v", buf[:n], err)
 	}
 }

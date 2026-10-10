@@ -17,6 +17,7 @@ import (
 	mdns "github.com/miekg/dns"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -75,7 +76,7 @@ func (s *Service) Start(ctx context.Context) error {
 			return fmt.Errorf("dns tcp listen: %w", err)
 		}
 		_, port, _ := net.SplitHostPort(tl.Addr().String())
-		pc, err = listenUDP(ctx, s.env.Config.Bind, port)
+		pc, err = netplane.ListenUDP(ctx, s.env.Config.Bind, port)
 		if err == nil {
 			break
 		}

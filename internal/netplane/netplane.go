@@ -180,7 +180,7 @@ func newForwarder(ip, port, target string, withUDP bool, log *slog.Logger) (*for
 	f := &forwarder{addr: l.Addr().String(), tcp: l, target: target, log: log}
 	if withUDP {
 		_, p, _ := net.SplitHostPort(f.addr)
-		if f.udp, err = net.ListenPacket("udp", net.JoinHostPort(ip, p)); err != nil {
+		if f.udp, err = ListenUDP(context.Background(), ip, p); err != nil {
 			l.Close()
 			return nil, fmt.Errorf("udp forwarder on %s:%s: %w", ip, p, err)
 		}
