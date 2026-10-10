@@ -162,6 +162,13 @@ _Avoid_: instance (unqualified)
 The emulator's log of API requests it has received.
 _Avoid_: recording, records
 
+**Declared range**:
+The CIDR that a subnetwork or a private services access allocation has in GCP's API, as the user declared it.
+
+**Fallback range**:
+The CIDR that a VPC's container network uses instead of its Declared range, because the Declared range overlapped another network on the host.
+_Avoid_: actual range, real range
+
 ### Testing
 
 **Client compatibility suite**:
