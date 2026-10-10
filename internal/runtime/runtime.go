@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -288,6 +289,10 @@ type NetworkSpec struct {
 	MTU int
 	// Options are extra driver options (e.g. com.docker.network.bridge.*).
 	Options map[string]string
+	// Pin, without a Subnet, creates the network on the subnet the runtime
+	// picks, but as a configured one: before Docker 29, containers can ask
+	// for a fixed address only on networks created with a subnet.
+	Pin bool
 }
 
 // Network is an inspected network.
@@ -316,6 +321,9 @@ func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, erro
 }
 
 func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, error) {
+	if s.Pin && s.Subnet == "" {
+		return c.createPinned(ctx, s)
+	}
 	opts := map[string]string{}
 	for k, v := range s.Options {
 		opts[k] = v
@@ -349,6 +357,50 @@ func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, erro
 		return "", fmt.Errorf("create network %s: %w", s.Name, err)
 	}
 	return out.ID, nil
+}
+
+// pinMu serializes createPinned within the process: between deleting the
+// probe network and creating the pinned one, another creation would be
+// handed the same (lowest free) subnet.
+var pinMu sync.Mutex
+
+// createPinned creates s on the subnet the runtime picks (see
+// NetworkSpec.Pin): it creates the network, reads the subnet and creates
+// it again with that subnet. If other processes keep taking the subnet in
+// between, the network is left unpinned.
+func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error) {
+	pinMu.Lock()
+	defer pinMu.Unlock()
+	s.Pin = false
+	for attempt := 0; attempt < 10; attempt++ {
+		id, err := c.createNetwork(ctx, s)
+		if err != nil {
+			return "", err
+		}
+		n, err := c.InspectNetwork(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if n.Subnet == "" {
+			return id, nil
+		}
+		if err := c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(id), nil, nil, nil); err != nil {
+			return "", fmt.Errorf("create network %s: %w", s.Name, err)
+		}
+		p := s
+		p.Subnet, p.Gateway = n.Subnet, n.Gateway
+		id, err = c.createNetwork(ctx, p)
+		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "overlap") {
+			return id, err
+		}
+		// Another process took the subnet in between: pick again.
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Duration(rand.IntN(100)) * time.Millisecond):
+		}
+	}
+	return c.createNetwork(ctx, s)
 }
 
 // poolsExhausted reports a runtime that has no default address pool left
@@ -451,6 +503,47 @@ func (c *Client) InspectNetwork(ctx context.Context, name string) (Network, erro
 		n.Bridge = "br-" + v.ID[:12]
 	}
 	return n, nil
+}
+
+// NetworkAddrs returns the IPv4 addresses held on a network: those of
+// attached containers and those that created (not yet started) containers
+// asked for.
+func (c *Client) NetworkAddrs(ctx context.Context, network string) (map[string]bool, error) {
+	var nv struct {
+		Containers map[string]struct{ IPv4Address string }
+	}
+	if err := c.do(ctx, http.MethodGet, "/networks/"+url.PathEscape(network), nil, nil, &nv); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, ep := range nv.Containers {
+		if ip, _, _ := strings.Cut(ep.IPv4Address, "/"); ip != "" {
+			out[ip] = true
+		}
+	}
+	var cv []struct {
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAMConfig *struct{ IPv4Address string }
+				IPAddress  string
+			}
+		}
+	}
+	q := url.Values{"all": {"true"}, "filters": {`{"network":[` + strconv.Quote(network) + `]}`}}
+	if err := c.do(ctx, http.MethodGet, "/containers/json", q, nil, &cv); err != nil {
+		return nil, err
+	}
+	for _, ct := range cv {
+		for _, ep := range ct.NetworkSettings.Networks {
+			if ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != "" {
+				out[ep.IPAMConfig.IPv4Address] = true
+			}
+			if ep.IPAddress != "" {
+				out[ep.IPAddress] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 // ListNetworks returns networks carrying all the given labels.

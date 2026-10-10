@@ -261,6 +261,14 @@ type EnvVarer interface {
 	EnvVars(gateway string, endpoints map[string]string) map[string]string
 }
 
+// AddressReserver is implemented by services whose stored resources record
+// container addresses and ask for them again when their containers are
+// recreated (a Cloud SQL instance's public and private IP). Containers
+// started without a fixed address never take one of them.
+type AddressReserver interface {
+	ReservedAddrs() []string
+}
+
 // Containers gives services lazy access to the container runtime and the
 // instance's container networks (Section 3.3). It is nil-safe: services
 // that need a runtime call Netplane and report not-ready on error.

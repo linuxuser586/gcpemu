@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,88 @@ type Manager struct {
 	// Ephemeral instances also delete volumes and networks on cleanup.
 	Ephemeral bool
 	Log       *slog.Logger
+	// Reserved, when set, returns the addresses that stored resources have
+	// recorded and ask for again when their containers are recreated (a
+	// Cloud SQL instance's public IP). See CreateContainer.
+	Reserved func() []string
+
+	addrMu sync.Mutex
+}
+
+// CreateContainer creates a container like Client.CreateContainer, except
+// that an attachment without a fixed address, on a network whose subnet
+// holds a Reserved address, gets the lowest free address outside the
+// reserved set. The runtime would otherwise hand out a reserved address
+// whose container is not running yet, e.g. after a restart.
+func (m *Manager) CreateContainer(ctx context.Context, s ContainerSpec) (string, error) {
+	var reserved []netip.Addr
+	if m.Reserved != nil {
+		for _, a := range m.Reserved() {
+			if ip, err := netip.ParseAddr(a); err == nil && ip.Is4() {
+				reserved = append(reserved, ip)
+			}
+		}
+	}
+	dynamic := slices.ContainsFunc(s.Networks, func(a Attachment) bool { return a.IP == "" })
+	if len(reserved) == 0 || !dynamic {
+		return m.Client.CreateContainer(ctx, s)
+	}
+	// Serialized so that the next pick sees this container's address.
+	m.addrMu.Lock()
+	defer m.addrMu.Unlock()
+	picked := s
+	picked.Networks = slices.Clone(s.Networks)
+	changed := false
+	for i, a := range picked.Networks {
+		if a.IP != "" {
+			continue
+		}
+		ip, err := m.freeAddr(ctx, a.Network, reserved)
+		if err != nil {
+			return "", fmt.Errorf("create container %s: %w", s.Name, err)
+		}
+		picked.Networks[i].IP = ip
+		changed = changed || ip != ""
+	}
+	id, err := m.Client.CreateContainer(ctx, picked)
+	if err != nil && changed {
+		// Runtimes that allow fixed addresses only on networks created
+		// with a subnet refuse the pick; let them choose instead.
+		if m.Log != nil {
+			m.Log.Warn("fixed address refused; the runtime picks one", "container", s.Name, "err", err)
+		}
+		return m.Client.CreateContainer(ctx, s)
+	}
+	return id, err
+}
+
+// freeAddr returns the lowest address of network that is not reserved,
+// held or the gateway, or "" (the runtime picks) when no reserved address
+// lies in the network's subnet.
+func (m *Manager) freeAddr(ctx context.Context, network string, reserved []netip.Addr) (string, error) {
+	n, err := m.InspectNetwork(ctx, network)
+	if err != nil {
+		return "", err
+	}
+	prefix, err := netip.ParsePrefix(n.Subnet)
+	if err != nil || !prefix.Addr().Is4() || !slices.ContainsFunc(reserved, prefix.Contains) {
+		return "", nil
+	}
+	held, err := m.NetworkAddrs(ctx, network)
+	if err != nil {
+		return "", err
+	}
+	for _, ip := range reserved {
+		held[ip.String()] = true
+	}
+	held[n.Gateway] = true
+	prefix = prefix.Masked()
+	for ip := prefix.Addr().Next(); prefix.Contains(ip.Next()); ip = ip.Next() {
+		if !held[ip.String()] {
+			return ip.String(), nil
+		}
+	}
+	return "", fmt.Errorf("network %s has no free address", network)
 }
 
 // Labels returns the standard label set for an object.

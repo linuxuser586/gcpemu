@@ -392,16 +392,23 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 		return
 	}
 
-	needsWork := oldAct != newAct || (newAct != "NEVER" && (netChanged || flagsChanged))
+	failed := cur.State == "FAILED"
+	needsWork := oldAct != newAct || (newAct != "NEVER" && (netChanged || flagsChanged || failed))
 	op := s.newOp(ctx, project, name, "UPDATE")
 	op = s.runOp(op, needsWork, func(ctx context.Context) error {
 		switch {
 		case newAct == "NEVER" && oldAct != "NEVER":
-			return s.stopContainer(ctx, project, name)
+			if err := s.stopContainer(ctx, project, name); err != nil {
+				return err
+			}
+			return s.clearFailed(project, name)
 		case newAct == "NEVER":
 			return nil
-		case oldAct == "NEVER" || netChanged:
+		case oldAct == "NEVER" || netChanged || failed:
 			if err := s.startContainer(ctx, project, name); err != nil {
+				return err
+			}
+			if err := s.clearFailed(project, name); err != nil {
 				return err
 			}
 		}
@@ -481,13 +488,19 @@ func (s *Service) restartInstance(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	if err := requireRunnable(rec); err != nil {
-		apierr.Write(w, err)
-		return
+	// A FAILED instance is brought back from its kept data volume.
+	if rec.Instance.State != "FAILED" || rec.Instance.Settings != nil && rec.Instance.Settings.ActivationPolicy == "NEVER" {
+		if err := requireRunnable(rec); err != nil {
+			apierr.Write(w, err)
+			return
+		}
 	}
 	op := s.newOp(ctx, project, name, "RESTART")
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
-		return s.restartContainer(ctx, project, name)
+		if err := s.restartContainer(ctx, project, name); err != nil {
+			return err
+		}
+		return s.clearFailed(project, name)
 	}))
 }
 
