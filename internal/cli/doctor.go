@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
@@ -97,9 +101,10 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			ca := filepath.Join(dir, "ca.pem")
-			if _, err := os.Stat(ca); err == nil {
-				fmt.Fprintf(out, "[ok  ] emulator CA present at %s (trust it with `gcpemu ca install`)\n", ca)
+			caPath := filepath.Join(dir, ca.CertFile)
+			if pemBytes, err := os.ReadFile(caPath); err == nil {
+				fmt.Fprintf(out, "[ok  ] emulator CA present at %s\n", caPath)
+				checkCATrust(out, cfg.Instance, pemBytes)
 			} else {
 				fmt.Fprintln(out, "[--  ] emulator CA not created yet (created on first start)")
 			}
@@ -133,6 +138,84 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 	}
 	report(false, fmt.Sprintf("port %s/udp (dns) free", addr),
 		"stop whatever holds it, bind a specific address (--bind 127.0.0.1) or use --port dns=5354")
+}
+
+// checkCATrust reports where the CA is trusted: the OS store, then each
+// browser (NSS) database on Linux, which browsers read instead of the OS
+// store. Missing trust is a note, not a failure, since only HTTPS to
+// load balancers and host mode need it.
+func checkCATrust(out io.Writer, instance string, pemBytes []byte) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		fmt.Fprintln(out, "[--  ] emulator CA unreadable; skipping trust checks")
+		return
+	}
+	trusted := func(ok bool, where string) {
+		if ok {
+			fmt.Fprintf(out, "[ok  ] emulator CA trusted by %s\n", where)
+		} else {
+			fmt.Fprintf(out, "[--  ] emulator CA not trusted by %s (run `gcpemu ca install`)\n", where)
+		}
+	}
+	trusted(osTrustsCA(block.Bytes), "the OS trust store")
+	if runtime.GOOS != "linux" {
+		return
+	}
+	home, _ := nssUser(os.Geteuid() == 0)
+	var dbs []nssDB
+	for _, d := range nssDBs(home) {
+		if fileExists(filepath.Join(d.dir, "cert9.db")) {
+			dbs = append(dbs, d)
+		}
+	}
+	if len(dbs) == 0 {
+		return
+	}
+	if !certutilPresent() {
+		fmt.Fprintf(out, "[--  ] cannot check browser (NSS) trust: certutil not found (install %s, then run `gcpemu ca install`)\n", nssProvider)
+		return
+	}
+	for _, d := range dbs {
+		trusted(nssHas(d.dir, nssNickname(instance)), d.what+" ("+d.dir+")")
+	}
+}
+
+// systemBundles are the CA bundles update-ca-certificates and
+// update-ca-trust generate. They are read directly, not through Go's
+// system pool, so SSL_CERT_FILE (`gcpemu env --trust`) cannot pass for
+// OS trust.
+var systemBundles = []string{
+	"/etc/ssl/certs/ca-certificates.crt",
+	"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+	"/etc/pki/tls/certs/ca-bundle.crt",
+}
+
+// osTrustsCA reports whether the OS trust store holds the CA (DER).
+func osTrustsCA(der []byte) bool {
+	if runtime.GOOS != "linux" {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return false
+		}
+		_, err = cert.Verify(x509.VerifyOptions{KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+		return err == nil
+	}
+	for _, f := range systemBundles {
+		rest, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for {
+			var b *pem.Block
+			if b, rest = pem.Decode(rest); b == nil {
+				break
+			}
+			if bytes.Equal(b.Bytes, der) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func orNone(s string) string {

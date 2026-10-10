@@ -23,8 +23,8 @@ import (
 )
 
 // `gcpemu ca` manages the instance's local root CA (Section 7.4,
-// FR-CORE-043): print it, add it to (or remove it from) the OS trust store
-// and rotate it.
+// FR-CORE-043): print it, add it to (or remove it from) the OS, container
+// and browser trust stores and rotate it.
 
 func (o *rootOpts) caCmd() *cobra.Command {
 	root := &cobra.Command{Use: "ca", Short: "Manage the instance's local certificate authority"}
@@ -63,7 +63,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 	var yes, dryRun bool
 	install := &cobra.Command{
 		Use:   "install",
-		Short: "Add the CA to the OS, Docker and containerd trust stores (asks for confirmation; uses sudo)",
+		Short: "Add the CA to the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, c, err := loadCA(cmd)
 			if err != nil {
@@ -75,14 +75,18 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, true)...)
-			return runPlan(cmd, plan, yes, dryRun)
+			nss, note := nssPlan(h, cfg.Instance, c, nssInstall)
+			if note != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
+			}
+			return runPlan(cmd, append(plan, nss...), yes, dryRun)
 		},
 	}
 	install.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password)")
 	install.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
 	uninstall := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the CA from the OS, Docker and containerd trust stores (asks for confirmation; uses sudo)",
+		Short: "Remove the CA from the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, c, err := loadCA(cmd)
 			if err != nil {
@@ -94,7 +98,8 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
-			return runPlan(cmd, plan, yes, dryRun)
+			nss, _ := nssPlan(h, cfg.Instance, c, nssUninstall)
+			return runPlan(cmd, append(plan, nss...), yes, dryRun)
 		},
 	}
 	uninstall.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password)")
@@ -104,7 +109,8 @@ func (o *rootOpts) caCmd() *cobra.Command {
 		Short: "Replace the CA with a new one and re-issue managed certificates",
 		Long: "Replaces the instance CA. On a running instance the certs service rotates it live and\n" +
 			"re-issues every Google-managed certificate; a stopped instance is rotated on disk and\n" +
-			"re-issues on next start. Re-run `gcpemu ca install` afterwards.",
+			"re-issues on next start. Browser (NSS) databases that trust the old CA are updated\n" +
+			"in place; re-run `gcpemu ca install` afterwards for the OS and container stores.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
@@ -115,8 +121,11 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				switch {
 				case err == nil && code == http.StatusOK:
 					fmt.Fprintf(cmd.OutOrStdout(), "Rotated the CA of running instance %q; managed certificates were re-issued.\n", cfg.Instance)
-					fmt.Fprintln(cmd.OutOrStdout(), "Run `gcpemu ca install` to trust the new CA.")
-					return nil
+					c, err := ca.Load(cfg.InstanceDir(), cfg.Instance)
+					if err != nil {
+						return err
+					}
+					return rotateTrust(cmd, cfg.Instance, c)
 				case err == nil && code == http.StatusNotFound:
 					return fmt.Errorf("instance %q is running without the certs service; stop it (`gcpemu stop`) and rotate again", cfg.Instance)
 				case err == nil:
@@ -132,12 +141,24 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Rotated the CA in %s; managed certificates are re-issued on next start.\n", c.Path())
-			fmt.Fprintln(cmd.OutOrStdout(), "Run `gcpemu ca install` to trust the new CA.")
-			return nil
+			return rotateTrust(cmd, cfg.Instance, c)
 		},
 	}
 	root.AddCommand(path, print, install, uninstall, rotate)
 	return root
+}
+
+// rotateTrust replaces the old CA with c in the browser databases that
+// trusted it. They belong to the user, so this needs neither sudo nor
+// confirmation; the OS and container stores still need `ca install`.
+func rotateTrust(cmd *cobra.Command, instance string, c *ca.CA) error {
+	if plan, _ := nssPlan(hostTrust(), instance, c, nssReplace); len(plan) > 0 {
+		if err := runPlan(cmd, plan, true, false); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "Run `gcpemu ca install` to trust the new CA in the OS and container stores.")
+	return nil
 }
 
 // trustHost describes the host's trust store tooling.
@@ -147,15 +168,27 @@ type trustHost struct {
 	etc      string // "/etc" unless set (tests)
 	lookPath func(string) bool
 	isDir    func(string) bool
+
+	// NSS (browser) databases: home holds them, nssUser owns them when
+	// gcpemu runs as root under sudo, nssHas reports whether a database
+	// holds a nickname.
+	home       string
+	nssUser    string
+	nssHas     func(db, nick string) bool
+	fileExists func(string) bool
 }
 
 func hostTrust() trustHost {
-	return trustHost{
-		goos:     goruntime.GOOS,
-		root:     os.Geteuid() == 0,
-		lookPath: func(n string) bool { _, err := exec.LookPath(n); return err == nil },
-		isDir:    func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
+	h := trustHost{
+		goos:       goruntime.GOOS,
+		root:       os.Geteuid() == 0,
+		lookPath:   func(n string) bool { _, err := exec.LookPath(n); return err == nil },
+		isDir:      func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
+		nssHas:     nssHas,
+		fileExists: fileExists,
 	}
+	h.home, h.nssUser = nssUser(h.root)
+	return h
 }
 
 // trustStep is one command of an install/uninstall plan.
@@ -166,6 +199,8 @@ type trustStep struct {
 	stdin []byte
 	// script is shown below the command when stdin is a shell script.
 	script bool
+	// soft steps only warn on failure; the rest of the plan still runs.
+	soft bool
 }
 
 func (s trustStep) String() string { return strings.Join(s.args, " ") }
@@ -249,6 +284,10 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 			c.Stdin, c.Stdout = os.Stdin, out
 		}
 		if err := c.Run(); err != nil {
+			if s.soft {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s: %v\n", s, err)
+				continue
+			}
 			return fmt.Errorf("%s: %w", s, err)
 		}
 	}
