@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -14,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
 
 // doctorCmd implements FR-CORE-007: check the host and print fixes.
@@ -77,6 +80,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 					}
 					report(err == nil, fmt.Sprintf("port %s (%s) free", addr, n),
 						fmt.Sprintf("stop whatever holds it or use --port %s=0", n))
+					if n == "dns" {
+						checkDNSUDP(out, report, cfg.Bind, strconv.Itoa(p))
+					}
 				}
 			}
 
@@ -105,6 +111,28 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// checkDNSUDP checks the UDP side of the DNS port. An mDNS daemon (avahi,
+// browsers) holds UDP 0.0.0.0:5353 on most Linux desktops; the emulator and
+// its services-network forwarder share the port on a specific address, so
+// that clash is a note, not a failure, unless the bind is the wildcard.
+func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port string) {
+	addr := net.JoinHostPort(host, port)
+	pc, err := net.ListenPacket("udp", addr)
+	if err == nil {
+		pc.Close()
+		report(true, fmt.Sprintf("port %s/udp (dns) free", addr), "")
+		return
+	}
+	pc, err = netplane.ListenUDP(context.Background(), host, port)
+	if err == nil {
+		pc.Close()
+		fmt.Fprintf(out, "[ok  ] port %s/udp (dns) shared with another socket on the wildcard address, likely mDNS (avahi-daemon or a browser); DNS answers still reach the emulator\n", addr)
+		return
+	}
+	report(false, fmt.Sprintf("port %s/udp (dns) free", addr),
+		"stop whatever holds it, bind a specific address (--bind 127.0.0.1) or use --port dns=5354")
 }
 
 func orNone(s string) string {

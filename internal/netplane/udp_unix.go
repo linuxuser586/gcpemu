@@ -1,6 +1,6 @@
 //go:build unix
 
-package dns
+package netplane
 
 import "syscall"
 

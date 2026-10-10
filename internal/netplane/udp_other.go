@@ -1,5 +1,5 @@
 //go:build !unix
 
-package dns
+package netplane
 
 func setReuseAddr(uintptr) error { return nil }

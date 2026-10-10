@@ -225,7 +225,9 @@ func (m *Manager) run(ctx context.Context) (Status, error) {
 		return Status{}, err
 	}
 	if m.env.Endpoints.Get("dns") != "" {
-		cfg.DNS, _ = np.Addr(ctx, "dns")
+		if cfg.DNS, err = np.Addr(ctx, "dns"); err != nil {
+			m.env.Log.Warn("host mode: Cloud DNS zones will not resolve through host mode", "err", err)
+		}
 	}
 	if err := rt.EnsureImage(ctx, Image, m.env.Config.Offline); err != nil {
 		return Status{}, fmt.Errorf("host mode image %s: %w", Image, err)
