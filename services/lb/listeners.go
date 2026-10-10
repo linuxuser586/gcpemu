@@ -41,6 +41,8 @@ type listener struct {
 	// virt receives edge-relayed connections for this frontend.
 	virt    *chanListener
 	onClose func()
+	// serve runs srv on another listener of this frontend (--lb-bind).
+	serve func(net.Listener)
 }
 
 func (l *listener) close() {
@@ -141,6 +143,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 			d.s.env.Log.Debug("lb: listener stopped", "forwardingRule", fe.frPath, "err", err)
 		}
 	}
+	l.serve = serve
 	if l.ln != nil {
 		go serve(l.ln)
 	}

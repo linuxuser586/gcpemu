@@ -219,6 +219,13 @@ func (e *Endpoints) Set(name, addr string) {
 	e.mu.Unlock()
 }
 
+// Delete removes an endpoint.
+func (e *Endpoints) Delete(name string) {
+	e.mu.Lock()
+	delete(e.m, name)
+	e.mu.Unlock()
+}
+
 func (e *Endpoints) Get(name string) string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -89,6 +91,8 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 					}
 				}
 			}
+
+			checkLBBind(out, report, cfg, running == nil, rt != "")
 
 			dir := cfg.InstanceDir()
 			if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -216,6 +220,53 @@ func osTrustsCA(der []byte) bool {
 		}
 	}
 	return false
+}
+
+// checkLBBind reports the --lb-bind addresses: those the running instance
+// serves forwarding rules on, otherwise whether the configured ones can be
+// bound (an address of this host; privileged ports need the lb-lan relay).
+func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime bool) {
+	if running {
+		c, err := clientFor(cfg)
+		if err != nil {
+			return
+		}
+		b, err := c.get("/_emu/v1/info")
+		if err != nil {
+			return
+		}
+		var i struct{ Endpoints map[string]string }
+		_ = json.Unmarshal(b, &i)
+		for _, n := range sortedKeys(i.Endpoints) {
+			if name, ok := strings.CutPrefix(n, "lb-lan:"); ok {
+				fmt.Fprintf(out, "[ok  ] forwarding rule %s exposed beyond loopback on %s\n", name, i.Endpoints[n])
+			}
+		}
+		return
+	}
+	if len(cfg.LBBind) == 0 {
+		return
+	}
+	local := map[string]bool{}
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok {
+				local[ipn.IP.String()] = true
+			}
+		}
+	}
+	for _, a := range cfg.LBBind {
+		ip := net.ParseIP(a)
+		report(ip != nil && local[ip.String()], fmt.Sprintf("--lb-bind %s is an address of this host", a),
+			"pick one from `ip -br addr` (or `ifconfig`)")
+	}
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start"); err == nil {
+		start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+		if start > 80 {
+			report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
+				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")
+		}
+	}
 }
 
 func orNone(s string) string {

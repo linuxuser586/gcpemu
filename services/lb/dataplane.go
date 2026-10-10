@@ -40,6 +40,12 @@ type dataplane struct {
 
 	logs *accessLogger
 	edge *edge
+
+	// --lb-bind (lan.go): claimed address:port → binding, and failures
+	// already logged.
+	lan    map[string]*lanBinding
+	lanErr map[string]string
+	relay  *lanRelay
 }
 
 // config is a snapshot of the load-balancing resources.
@@ -79,6 +85,7 @@ type frontend struct {
 
 func newDataplane(s *Service) *dataplane {
 	d := &dataplane{s: s, listeners: map[string]*listener{}, loopX: map[string]int{}, backends: map[string]*backendSvc{}}
+	d.relay = &lanRelay{d: d}
 	d.cfg.Store(&config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, svcs: map[string]*backendSvc{}})
 	return d
 }
@@ -101,6 +108,7 @@ func (d *dataplane) close(ctx context.Context) {
 	d.listeners = map[string]*listener{}
 	bs := d.backends
 	d.backends = map[string]*backendSvc{}
+	d.closeLAN(ctx)
 	d.mu.Unlock()
 	for _, l := range ls {
 		l.close()
@@ -185,6 +193,7 @@ func (d *dataplane) reconcile() {
 		}
 		d.listeners[key] = l
 	}
+	d.syncLAN()
 }
 
 // buildFrontend resolves a forwarding rule's target proxy, URL map and TLS

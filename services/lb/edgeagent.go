@@ -59,6 +59,9 @@ type edgeRoute struct {
 type edgeAgent struct {
 	token  string
 	subnet *net.IPNet
+	// lan: the --lb-bind relay (lan.go) listens on host addresses and
+	// owns none.
+	lan bool
 
 	mu        sync.Mutex
 	ingress   string
@@ -145,7 +148,7 @@ func (a *edgeAgent) apply(cfg edgeConfig) error {
 		wantL[net.JoinHostPort(l.IP, strconv.Itoa(l.Port))] = l
 	}
 	for ip := range want {
-		if !a.aliases[ip] {
+		if !a.lan && !a.aliases[ip] {
 			if err := ipCmd("addr", "add", ip+"/"+strconv.Itoa(ones), "dev", iface); err != nil && !strings.Contains(err.Error(), "File exists") {
 				errs = append(errs, err.Error())
 				continue
