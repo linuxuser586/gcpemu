@@ -228,13 +228,18 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 			break
 		}
 		_ = rt.RemoveContainer(ctx, id, true)
-		msg := err.Error()
-		if publicIP != "" && strings.Contains(msg, "Address already in use") {
+		msg := strings.ToLower(err.Error())
+		// The runtime says "Address already in use" both for a taken
+		// container address and for a taken host port: drop the recorded
+		// address first, then pick another port.
+		if publicIP != "" && strings.Contains(msg, "address already in use") {
 			// Something outside the emulator holds the recorded address.
 			s.env.Log.Warn("sql: public IP taken; using a new one", "instance", project+":"+name, "ip", publicIP)
 			publicIP = ""
 			continue
 		}
+		// A dynamic host port is free when picked but bound by the runtime
+		// only now, so another process may have taken it in between.
 		portBusy := strings.Contains(msg, "already allocated") || strings.Contains(msg, "address already in use")
 		if !portBusy || attempt >= 20 {
 			return err

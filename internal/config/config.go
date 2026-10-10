@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -68,6 +69,10 @@ type Config struct {
 	// Console serves the Web console under /console on the gateway
 	// (FR-UI-002); nil means the default of ConsoleEnabled.
 	Console *bool `yaml:"console" env:"CONSOLE"`
+	// LBBind lists extra addresses on which the load balancer's forwarding
+	// rule listeners also serve, on their real ports, alongside loopback.
+	// Nothing else is exposed there, so it needs no Insecure.
+	LBBind []string `yaml:"lbBind" env:"LB_BIND"`
 }
 
 // ConsoleEnabled reports whether the Web console is served: as configured,
@@ -376,6 +381,15 @@ func (c *Config) Validate() error {
 		}
 		if name == AllPorts && p != 0 {
 			return fmt.Errorf("--port %d: a port without a name must be 0 (every listener picks a free port)", p)
+		}
+	}
+	for _, a := range c.LBBind {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			return fmt.Errorf("invalid --lb-bind %q (want an IP address of this host)", a)
+		}
+		if ip.IsUnspecified() {
+			return fmt.Errorf("invalid --lb-bind %s: name an address of this host, not the wildcard", a)
 		}
 	}
 	if !IsLoopback(c.Bind) && c.IAMMode == IAMOff && !c.Insecure {

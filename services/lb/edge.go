@@ -236,14 +236,8 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 		e.id, e.pushed = "", ""
 		e.nets = map[string]bool{}
 	}
-	if e.ingress == nil {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return err
-		}
-		e.ingress = ln
-		e.env().Endpoints.Set("lb-edge-in", ln.Addr().String())
-		go e.serveIngress(ln)
+	if _, err := e.ingressLocked(); err != nil {
+		return err
 	}
 	plane, err := e.env().Containers.Netplane(ctx)
 	if err != nil {
@@ -341,6 +335,31 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	return nil
 }
 
+// ingressLocked starts the ingress that edge-relayed connections arrive on
+// (PROXY v2) if needed and returns its host address.
+func (e *edge) ingressLocked() (string, error) {
+	if e.ingress == nil {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return "", err
+		}
+		e.ingress = ln
+		e.env().Endpoints.Set("lb-edge-in", ln.Addr().String())
+		go e.serveIngress(ln)
+	}
+	return e.ingress.Addr().String(), nil
+}
+
+// ingressAddr is ingressLocked for the --lb-bind relay (lan.go).
+func (e *edge) ingressAddr() (string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopped {
+		return "", errors.New("lb is stopping")
+	}
+	return e.ingressLocked()
+}
+
 // pushLocked sends the desired listeners and routes to the agent.
 func (e *edge) pushLocked(ctx context.Context) error {
 	if e.id == "" {
@@ -387,10 +406,14 @@ func (e *edge) serveIngress(ln net.Listener) {
 				c.Close()
 				return
 			}
+			dst := pc.LocalAddr().String()
 			e.mu.Lock()
-			key := e.byAlias[pc.LocalAddr().String()]
+			key := e.byAlias[dst]
 			e.mu.Unlock()
 			e.d.mu.Lock()
+			if b := e.d.lan[dst]; key == "" && b != nil && b.relay {
+				key = b.key
+			}
 			l := e.d.listeners[key]
 			e.d.mu.Unlock()
 			if l == nil || l.virt == nil || !l.virt.deliver(pc) {

@@ -111,6 +111,20 @@ func TestValidate(t *testing.T) {
 	if err := c.Validate(); err == nil {
 		t.Error("expected unknown service error")
 	}
+
+	// --lb-bind exposes only the load balancer: no insecure flag needed.
+	c = Defaults()
+	c.IAMMode = IAMOff
+	c.LBBind = []string{"192.168.1.20", "fd00::1"}
+	if err := c.Validate(); err != nil {
+		t.Error(err)
+	}
+	for _, bad := range []string{"0.0.0.0", "::", "lan.example"} {
+		c.LBBind = []string{bad}
+		if err := c.Validate(); err == nil {
+			t.Errorf("--lb-bind %s: expected an error", bad)
+		}
+	}
 }
 
 func TestLRO(t *testing.T) {

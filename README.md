@@ -81,6 +81,16 @@ listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports incl
 `--port-range 20000-20999` draws those free ports from a range. The choices are written to
 `<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
+To reach a load balancer from another device (say, a phone on the LAN), pass
+`--lb-bind <address>` (repeatable; `lbBind` / `GCPEMU_LB_BIND`). Every forwarding rule is then
+also served on `<address>:<its port>`, while the admin API, the gateway and every other data
+plane stay on `--bind`. Nothing else is exposed, so `--lb-bind` doesn't need
+`--i-understand-this-is-insecure`. The emulator binds the port itself when it can. When the port is
+privileged (`net.ipv4.ip_unprivileged_port_start` above it), a labelled `gcpemu-<id>-lb-lan`
+container on the host network listens there and relays to the emulator. If two forwarding rules
+share a port, only one gets the address. `gcpemu status` lists each rule's addresses as
+`lb-lan:<name>`, and `gcpemu doctor` checks the addresses before start and lists them while running.
+
 ### Container runtime
 
 Cloud SQL, GKE and Cloud NAT need Docker Engine (>= 24) or Podman (>= 4.9, Docker-compatible
