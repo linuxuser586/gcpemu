@@ -70,6 +70,11 @@ Its Artifact Registry view lists repositories in every location by asking each o
 the API lists one location at a time. Deleting a digest deletes the tags on it too
 (`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when host mode is
 ready and the registry port (`127.0.0.1:5000/LOCATION-docker.pkg.dev/...`) otherwise.
+Its Cloud DNS view edits record sets only through `changes.create` (an edit deletes and re-adds
+the record set in one change), and deleting a zone first deletes its record sets in one change.
+Its query box asks `GET /_emu/v1/dns/query?name=N&type=T[&network=projects/P/global/networks/V]`,
+which sends the query to the Instance's DNS server, from the host or as a client on that VPC
+network, so private zones answer only on the networks they are bound to.
 
 ### Endpoints
 

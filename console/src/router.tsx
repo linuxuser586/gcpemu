@@ -29,6 +29,15 @@ import { AddOrigin, EditOrigin } from '@/features/cdn/OriginForm'
 import { OriginPage } from '@/features/cdn/OriginPage'
 import { Origins } from '@/features/cdn/Origins'
 import { Dashboard } from '@/features/dashboard/Dashboard'
+import { changesQuery, rrsetsQuery, zoneQuery, zonesQuery } from '@/features/dns/api'
+import { Changes } from '@/features/dns/Changes'
+import { DnsLayout } from '@/features/dns/DnsLayout'
+import { Query as DnsQuery } from '@/features/dns/Query'
+import { CreateRecordSet, EditRecordSet } from '@/features/dns/RecordSetForm'
+import { RecordSets } from '@/features/dns/RecordSets'
+import { CreateZone, EditZone } from '@/features/dns/ZoneForm'
+import { ZoneOverview, ZonePage } from '@/features/dns/ZonePage'
+import { Zones } from '@/features/dns/Zones'
 import { bucketQuery, bucketsQuery, objectQuery } from '@/features/gcs/api'
 import { CreateBucket, EditBucket } from '@/features/gcs/BucketForm'
 import { BucketOverview, BucketPage } from '@/features/gcs/BucketPage'
@@ -169,6 +178,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'cdn',
           element: <CdnLayout />,
           children: cdnRoutes(queryClient),
+        },
+        {
+          path: 'dns',
+          element: <DnsLayout />,
+          children: dnsRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -566,6 +580,61 @@ function cdnRoutes(queryClient: QueryClient): RouteObject[] {
     { path: 'global/:coll/:name/edit', element: <EditOrigin /> },
     { path: 'regions/:region/:coll/:name', element: <OriginPage />, loader: page },
     { path: 'regions/:region/:coll/:name/edit', element: <EditOrigin /> },
+  ]
+}
+
+// The Cloud DNS view (SRS 4.8.3). Paths follow the API's resource names,
+// with the Project in ?project=; a record set is its DNS name and type
+// under rrsets/. The query box is /dns/query, its question in ?name=,
+// ?type= and ?network=.
+function dnsRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  return [
+    {
+      index: true,
+      element: <Zones />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(zonesQuery(project))) : null
+      },
+    },
+    {
+      path: 'query',
+      element: <DnsQuery />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(zonesQuery(project))) : null
+      },
+    },
+    { path: 'create', element: <CreateZone /> },
+    { path: 'zones/:zone/edit', element: <EditZone /> },
+    {
+      path: 'zones/:zone',
+      element: <ZonePage />,
+      loader: ({ request, params }) => {
+        const r = { project: projectOf(request), zone: params.zone ?? '' }
+        return r.project
+          ? warm(
+              queryClient.ensureQueryData(zoneQuery(r)),
+              queryClient.ensureQueryData(rrsetsQuery(r)),
+            )
+          : null
+      },
+      children: [
+        { index: true, element: <RecordSets /> },
+        { path: 'rrsets/create', element: <CreateRecordSet /> },
+        { path: 'rrsets/:name/:type/edit', element: <EditRecordSet /> },
+        {
+          path: 'changes',
+          element: <Changes />,
+          loader: ({ request, params }) => {
+            const r = { project: projectOf(request), zone: params.zone ?? '' }
+            return r.project ? warm(queryClient.ensureQueryData(changesQuery(r))) : null
+          },
+        },
+        { path: 'overview', element: <ZoneOverview /> },
+      ],
+    },
   ]
 }
 
