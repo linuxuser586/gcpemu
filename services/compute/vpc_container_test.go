@@ -3,6 +3,7 @@ package compute_test
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"testing"
@@ -21,8 +22,9 @@ import (
 
 const probeImage = "rancher/k3s:v1.36.5-k3s1"
 
-// workload starts a container on net with its default route via gw, as a
-// private GKE node would be.
+// workload starts a container holding ip on net, as a Managed container
+// would (aliased on a Translated network), with its default route via the
+// egress gateway gw when set, as a private GKE node would be.
 func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw string) (*runtime.Manager, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -30,13 +32,17 @@ func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw st
 	if err != nil {
 		t.Fatal(err)
 	}
+	a := runtime.Attachment{Network: net.Name, IP: ip}
+	if net.Translated {
+		a.IP = ""
+	}
 	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
 		Name:       rt.Name("test", "vm", ip),
 		Image:      probeImage,
-		Entrypoint: []string{"sh", "-c", "ip route replace default via " + gw + " && exec sleep 3600"},
+		Entrypoint: []string{"sleep", "3600"},
 		Labels:     rt.Labels("compute-test", "", "probe"),
 		CapAdd:     []string{"NET_ADMIN"},
-		Networks:   []runtime.Attachment{{Network: net.Name, IP: ip}},
+		Networks:   []runtime.Attachment{a},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +54,56 @@ func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw st
 	if err := rt.WaitRunning(ctx, id); err != nil {
 		t.Fatal(err)
 	}
+	ct, err := rt.InspectContainer(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	switch {
+	case net.Translated && gw != "":
+		script = net.AliasScript(ip, ct.IPs[net.Name], "default")
+	case net.Translated:
+		script = net.AliasScript(ip, ct.IPs[net.Name])
+	case gw != "":
+		script = "ip route replace default via " + gw
+	}
+	if script != "" {
+		res, err := rt.Exec(ctx, id, []string{"sh", "-c", script}, nil)
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("network setup of %s: %v %s%s", ip, err, res.Stdout, res.Stderr)
+		}
+	}
 	return rt, id
+}
+
+// overlap creates a Docker network on rng so that a VPC range realised on
+// it afterwards falls back to another range. If rng is already in use, it
+// overlaps that.
+func overlap(t *testing.T, rng string) {
+	t.Helper()
+	ctx := context.Background()
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("gcpemu-test-overlap-%d", rand.Uint32())
+	if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
+		t.Logf("creating %s on %s: %v (the range is in use, which overlaps it too)", name, rng, err)
+		return
+	}
+	t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), name) })
+}
+
+// translated fails unless net, whose Declared range rng overlaps a host
+// network, is Translated, and skips when compute could not translate it.
+func translated(t *testing.T, net emu.SubnetNet, rng string) {
+	t.Helper()
+	if net.Subnet != rng {
+		t.Skipf("range %s overlaps a host network and compute could not translate it (container network on %s)", rng, net.Subnet)
+	}
+	if !net.Translated || net.ContainerSubnet == rng {
+		t.Fatalf("range %s overlaps a host network but is not Translated: %+v", rng, net)
+	}
 }
 
 // fetch runs an HTTP request to an internet IP from the workload and
@@ -94,9 +149,24 @@ func natRouter(t *testing.T, c *computev1.Service) {
 func TestEgressThroughNAT(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	testEgressThroughNAT(t, "10.123.0.0/24", false)
+}
+
+// TestEgressThroughNATTranslated is TestEgressThroughNAT on a subnetwork
+// whose range overlaps a host network (ADR 0004): the workload sends from
+// its Declared address, which the NAT covers and attributes.
+func TestEgressThroughNATTranslated(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	rng := fmt.Sprintf("10.%d.%d.0/24", 176+rand.IntN(16), rand.IntN(256))
+	overlap(t, rng)
+	testEgressThroughNAT(t, rng, true)
+}
+
+func testEgressThroughNAT(t *testing.T, rng string, overlapped bool) {
 	inst, c, _ := newClients(t, func(cfg *config.Config) { cfg.NATReject = true })
 	customNet(t, c, "vpc")
-	subnet(t, c, "vpc", "nodes", "us-central1", "10.123.0.0/24", &computev1.SubnetworkSecondaryRange{RangeName: "pods", IpCidrRange: "10.124.0.0/16"})
+	subnet(t, c, "vpc", "nodes", "us-central1", rng, &computev1.SubnetworkSecondaryRange{RangeName: "pods", IpCidrRange: "10.124.0.0/16"})
 	svc, _ := inst.Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
@@ -112,6 +182,9 @@ func TestEgressThroughNAT(t *testing.T) {
 	if net.SecondaryRanges["pods"] != "10.124.0.0/16" || net.NetworkName != "projects/"+proj+"/global/networks/vpc" {
 		t.Fatalf("subnet net: %+v", net)
 	}
+	if overlapped {
+		translated(t, net, rng)
+	}
 	gw, err := vpc.EgressGateway(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
@@ -123,8 +196,8 @@ func TestEgressThroughNAT(t *testing.T) {
 	if again, _ := vpc.AllocateIP(ctx, net, "vm-1"); again != ip {
 		t.Fatalf("AllocateIP not idempotent: %s vs %s", ip, again)
 	}
-	if !net2(net.Subnet, ip, gw) {
-		t.Fatalf("ip %s / gateway %s not in %s", ip, gw, net.Subnet)
+	if !net2(net.Subnet, ip) || !net2(net.ContainerSubnet, gw) {
+		t.Fatalf("ip %s not in %s or gateway %s not in %s", ip, net.Subnet, gw, net.ContainerSubnet)
 	}
 	rt, id := workload(t, inst, net, ip, gw)
 
@@ -234,7 +307,8 @@ func egressLogged(t *testing.T, inst *emutest.Instance, code, resource string) {
 }
 
 // TestSubnetOverlapFallback: two instances realising the same range on one
-// host; the second gets a runtime-chosen range (FR-CORE-033).
+// host; the second's container network gets another range (FR-CORE-033),
+// while both allocate addresses from the Declared range.
 func TestSubnetOverlapFallback(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
@@ -263,11 +337,17 @@ func TestSubnetOverlapFallback(t *testing.T) {
 	if nets[0].Name == nets[1].Name {
 		t.Fatalf("instances share a network name: %s", nets[0].Name)
 	}
-	if nets[0].Subnet == nets[1].Subnet {
-		t.Fatalf("both instances use %s", nets[0].Subnet)
+	if nets[0].ContainerSubnet == nets[1].ContainerSubnet {
+		t.Fatalf("both instances' container networks use %s", nets[0].ContainerSubnet)
 	}
-	if nets[0].Subnet != "10.126.0.0/24" && nets[1].Subnet != "10.126.0.0/24" {
-		t.Logf("neither instance got the requested range (host conflict): %s, %s", nets[0].Subnet, nets[1].Subnet)
+	if nets[0].ContainerSubnet != "10.126.0.0/24" && nets[1].ContainerSubnet != "10.126.0.0/24" {
+		t.Logf("neither instance got the requested range (host conflict): %s, %s", nets[0].ContainerSubnet, nets[1].ContainerSubnet)
+	}
+	// Both report the Declared range (ADR 0004).
+	for _, n := range nets {
+		if n.ContainerSubnet != "10.126.0.0/24" {
+			translated(t, n, "10.126.0.0/24")
+		}
 	}
 }
 
@@ -321,17 +401,7 @@ func TestIntraVPCRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
-		Name: rt.Name("test", "db"), Image: probeImage, Entrypoint: []string{"sleep", "3600"},
-		Labels: rt.Labels("compute-test", "", "probe"), Networks: []runtime.Attachment{{Network: psa.Name, IP: ipDB}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = rt.RemoveContainer(context.Background(), id, true) })
-	if err := rt.StartContainer(ctx, id); err != nil {
-		t.Fatal(err)
-	}
+	workload(t, inst, psa, ipDB, "")
 	if _, err := vpc.EgressGateway(ctx, "projects/"+proj+"/regions/us-central1/subnetworks/a"); err != nil {
 		t.Fatal(err) // re-sync attaches the gateway to the PSA network
 	}
@@ -387,5 +457,73 @@ func TestNetworksSurviveRestart(t *testing.T) {
 	}
 	if ip, _ := svc.(emu.VPC).AllocateIP(ctx, again, "vm"); ip != firstIP {
 		t.Fatalf("allocation lost: %s vs %s", ip, firstIP)
+	}
+}
+
+// TestTranslatedNetworkSurvivesRestart is ADR 0004 across a restart: a
+// subnetwork whose range overlaps a host network allocates its Declared
+// addresses around internal addresses reserved through the compute API,
+// and keeps them when its container network is recreated on another
+// Fallback range.
+func TestTranslatedNetworkSurvivesRestart(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	o2, o3 := 192+rand.IntN(16), rand.IntN(256)
+	rng := fmt.Sprintf("10.%d.%d.0/24", o2, o3)
+	reserved := fmt.Sprintf("10.%d.%d.2", o2, o3)
+	overlap(t, rng)
+	dir := t.TempDir()
+	persistent := func(cfg *config.Config) { cfg.Ephemeral = false; cfg.DataDir = dir }
+	ctx := context.Background()
+	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
+	var first emu.SubnetNet
+	var firstIP string
+	{
+		inst := emutest.Start(t, []string{"compute"}, persistent)
+		c, _ := computev1.NewService(ctx, option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
+		customNet(t, c, "vpc")
+		subnet(t, c, "vpc", "s", "us-central1", rng)
+		waitDo(t, c)(c.Addresses.Insert(proj, "us-central1", &computev1.Address{Name: "res", AddressType: "INTERNAL",
+			Subnetwork: "regions/us-central1/subnetworks/s", Address: reserved}).Do())
+		svc, _ := inst.Env.Lookup("compute")
+		var err error
+		if first, err = svc.(emu.VPC).SubnetNetwork(ctx, sp); err != nil {
+			t.Fatal(err)
+		}
+		translated(t, first, rng)
+		if firstIP, err = svc.(emu.VPC).AllocateIP(ctx, first, "vm"); err != nil {
+			t.Fatal(err)
+		}
+		if firstIP == reserved || !net2(rng, firstIP) {
+			t.Fatalf("allocated %s: want an address in %s other than the reserved %s", firstIP, rng, reserved)
+		}
+		sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := inst.Shutdown(sctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The container network is recreated elsewhere: its old range is taken.
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.RemoveNetwork(ctx, first.Name); err != nil {
+		t.Fatal(err)
+	}
+	overlap(t, first.ContainerSubnet)
+	inst := emutest.Start(t, []string{"compute"}, persistent)
+	rt, _ := inst.Env.Containers.Runtime(ctx)
+	svc, _ := inst.Env.Lookup("compute")
+	again, err := svc.(emu.VPC).SubnetNetwork(ctx, sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.RemoveNetwork(context.Background(), again.Name) })
+	if !again.Translated || again.Subnet != rng || again.ContainerSubnet == first.ContainerSubnet {
+		t.Fatalf("after recreation: %+v (first on %s)", again, first.ContainerSubnet)
+	}
+	if ip, _ := svc.(emu.VPC).AllocateIP(ctx, again, "vm"); ip != firstIP {
+		t.Fatalf("allocation changed: %s vs %s", ip, firstIP)
 	}
 }

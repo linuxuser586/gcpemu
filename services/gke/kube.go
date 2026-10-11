@@ -69,7 +69,9 @@ type kubeClient struct {
 	ca   []byte
 }
 
-func newKubeClient(server string, creds adminCreds) (*kubeClient, error) {
+// newKubeClient dials server and verifies its certificate for name (the
+// address the API server advertises, when server is another one).
+func newKubeClient(server, name string, creds adminCreds) (*kubeClient, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(creds.CA) {
 		return nil, errors.New("invalid cluster CA")
@@ -79,7 +81,7 @@ func newKubeClient(server string, creds adminCreds) (*kubeClient, error) {
 		return nil, err
 	}
 	tr := &http.Transport{
-		TLSClientConfig:     &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		TLSClientConfig:     &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, ServerName: name},
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     30 * time.Second,
 	}

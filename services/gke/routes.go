@@ -40,7 +40,7 @@ func (s *Service) PodRoutes(ctx context.Context) []PodRoute {
 		}
 		ips := map[string]string{}
 		for _, n := range rec.Int.Nodes {
-			ips[n.Name] = n.IP
+			ips[n.Name] = n.dialIP()
 		}
 		var nodes kubeList[kubeNode]
 		if err := kc.get(ctx, "/api/v1/nodes", &nodes); err != nil {

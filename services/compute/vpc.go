@@ -21,10 +21,15 @@ import (
 // realised as container bridge networks named
 // gcpemu-<id>-vpc-<network>-<subnet>-<hash>, with the subnetwork's range
 // and its first host address as the (host-side) gateway, like GCP's .1.
-// When the range overlaps another network on the host (another emulator
-// instance, a docker network), a free range is used instead and reported
-// in SubnetNet.Subnet. Realisation state and IP allocations are persisted,
-// and networks are reused idempotently after a restart.
+// When the range (the Declared range) overlaps another network on the
+// host (another emulator instance, a docker network), a free Fallback
+// range is used instead. Addresses are still allocated from the Declared
+// range and aliased onto Managed containers' interfaces (ADR 0004): the
+// network is Translated. Only when Managed containers cannot get NET_ADMIN
+// are addresses allocated from, and reported in, the Fallback range. The
+// choice is made when the network is first realised on a Fallback range.
+// Realisation state and IP allocations are persisted, and networks are
+// reused idempotently after a restart.
 //
 // The bridges are not --internal: Docker's internal-network rules drop
 // routed traffic, which would make the egress gateway impossible. Instead
@@ -46,13 +51,44 @@ type vpcNet struct {
 	Gateway  string `json:"gateway"`  // host-side address
 	Range    string `json:"range"`    // the GCP range
 	Fallback bool   `json:"fallback"` // Subnet != Range
-	Network  string `json:"network"`  // VPC network path
-	Region   string `json:"region,omitempty"`
+	// Translated: on a Fallback range, addresses are allocated from Range
+	// and aliased onto containers (ADR 0004).
+	Translated bool   `json:"translated,omitempty"`
+	Network    string `json:"network"` // VPC network path
+	Region     string `json:"region,omitempty"`
 	// Subnetwork is the subnetwork path, empty for PSA ranges.
 	Subnetwork string `json:"subnetwork,omitempty"`
 }
 
 func psaKey(np string) string { return "psa:" + np }
+
+// translated reports whether Managed containers alias Declared addresses.
+func (st *vpcNet) translated() bool { return st.Fallback && st.Translated }
+
+// addrRange is the range addresses are allocated from and reported in.
+func (st *vpcNet) addrRange() string {
+	if st.Fallback && !st.Translated {
+		return st.Subnet
+	}
+	return st.Range
+}
+
+// ranges lists the ranges workloads on st send from: the container
+// network's, and the Declared range when st is Translated.
+func (st *vpcNet) ranges() []string {
+	if st.translated() {
+		return []string{st.Subnet, st.Range}
+	}
+	return []string{st.Subnet}
+}
+
+// subnetNet is the emu.SubnetNet view of st.
+func (st *vpcNet) subnetNet() emu.SubnetNet {
+	return emu.SubnetNet{
+		Name: st.Name, Subnet: st.addrRange(), ContainerSubnet: st.Subnet, Translated: st.translated(),
+		Gateway: st.Gateway, SubnetworkName: st.Subnetwork, NetworkName: st.Network, Region: st.Region,
+	}
+}
 
 func shortHash(s string) string {
 	h := fnv.New32a()
@@ -174,11 +210,8 @@ func (s *Service) SubnetNetwork(ctx context.Context, subnetwork string) (emu.Sub
 	if err != nil {
 		return emu.SubnetNet{}, err
 	}
-	out := emu.SubnetNet{
-		Name: st.Name, Subnet: st.Subnet, Gateway: st.Gateway,
-		SubnetworkName: sp, NetworkName: np, Region: region,
-		SecondaryRanges: map[string]string{},
-	}
+	out := st.subnetNet()
+	out.SecondaryRanges = map[string]string{}
 	for _, sr := range sn.SecondaryIpRanges {
 		out.SecondaryRanges[sr.RangeName] = sr.IpCidrRange
 	}
@@ -222,7 +255,7 @@ func (s *Service) PrivateServicesNetwork(ctx context.Context, network string) (e
 		return emu.SubnetNet{}, err
 	}
 	s.attachIfGateway(ctx, np)
-	return emu.SubnetNet{Name: st.Name, Subnet: st.Subnet, Gateway: st.Gateway, NetworkName: np}, nil
+	return st.subnetNet(), nil
 }
 
 // realize creates (or adopts) the container network for key.
@@ -237,12 +270,80 @@ func (s *Service) realize(ctx context.Context, rt *runtime.Manager, key, name, r
 	if err != nil {
 		return nil, apierr.Internal("Realising VPC range %s as container network %s: %v", rng, name, err)
 	}
+	var prev *vpcNet
+	_ = s.env.Store.View(func(tx store.Tx) error { prev, _ = get[vpcNet](tx, nsVPCNets, key); return nil })
 	st := &vpcNet{Name: n.Name, Subnet: n.Subnet, Gateway: n.Gateway, Range: rng, Network: np, Region: region, Subnetwork: sp}
 	st.Fallback = st.Subnet != rng
+	switch {
+	case !st.Fallback:
+	case prev != nil && prev.Fallback && prev.Range == rng:
+		// Decided when the network first fell back; addresses were
+		// allocated accordingly. A state without the field predates
+		// translation and keeps its Fallback-range addresses.
+		st.Translated = prev.Translated
+	default:
+		if err := s.canAlias(ctx, rt); err != nil {
+			s.env.Log.Warn("compute: VPC range overlaps another network on this host and Managed containers cannot alias its addresses; addresses on this network come from the Fallback range",
+				"network", np, "range", rng, "fallback", st.Subnet, "reason", err)
+		} else {
+			st.Translated = true
+		}
+	}
 	if err := s.env.Store.Update(func(tx store.Tx) error { return store.PutJSON(tx, nsVPCNets, key, st) }); err != nil {
 		return nil, err
 	}
 	return st, nil
+}
+
+// aliasProbeImage runs the probe that checks that Managed containers can
+// be given NET_ADMIN to alias Declared addresses (it has sh and ip).
+const aliasProbeImage = "busybox:1.37"
+
+// canAlias reports why Managed containers cannot alias Declared addresses
+// onto their interfaces, or nil when they can: it starts a container with
+// NET_ADMIN and adds an address to its loopback. The result is cached
+// unless ctx ended first.
+func (s *Service) canAlias(ctx context.Context, rt *runtime.Manager) error {
+	s.aliasMu.Lock()
+	defer s.aliasMu.Unlock()
+	if !s.aliasDone {
+		s.aliasErr = s.probeAlias(ctx, rt)
+		s.aliasDone = ctx.Err() == nil
+	}
+	return s.aliasErr
+}
+
+func (s *Service) probeAlias(ctx context.Context, rt *runtime.Manager) error {
+	if err := rt.EnsureImage(ctx, aliasProbeImage, s.env.Config.Offline); err != nil {
+		return fmt.Errorf("probe image %s: %w", aliasProbeImage, err)
+	}
+	name := rt.Name("vpc", "alias-probe")
+	_ = rt.RemoveContainer(ctx, name, true)
+	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
+		Name:       name,
+		Image:      aliasProbeImage,
+		Entrypoint: []string{"sleep", "30"},
+		Labels:     rt.Labels("compute", "alias-probe", "probe"),
+		CapAdd:     []string{"NET_ADMIN"},
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rt.RemoveContainer(context.Background(), id, true) }()
+	if err := rt.StartContainer(ctx, id); err != nil {
+		return err
+	}
+	if err := rt.WaitRunning(ctx, id); err != nil {
+		return err
+	}
+	res, err := rt.Exec(ctx, id, []string{"ip", "addr", "add", "192.0.2.1/32", "dev", "lo"}, nil)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("NET_ADMIN is not effective: %s", strings.TrimSpace(string(res.Stderr)+string(res.Stdout)))
+	}
+	return nil
 }
 
 // createBridge creates a bridge with the requested range, falling back to
@@ -342,7 +443,8 @@ func stateOf(tx store.Tx, net emu.SubnetNet) (*vpcNet, string) {
 }
 
 // AllocateIP implements emu.VPC: it reserves the lowest free address of
-// the container network for owner, skipping the network and gateway
+// the network's address range (the Declared range unless the network fell
+// back without translation) for owner, skipping the network and gateway
 // addresses, GCP's reserved second-to-last address (where the egress
 // gateway lives) and the broadcast address, plus internal addresses
 // reserved through the compute API.
@@ -350,20 +452,25 @@ func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner strin
 	if owner == "" {
 		return "", apierr.InvalidArgument("AllocateIP: owner is required")
 	}
-	c, err := parseCIDR(net.Subnet, false)
-	if err != nil {
-		return "", apierr.InvalidArgument("AllocateIP: invalid subnet %q", net.Subnet)
-	}
 	s.vpcMu.Lock()
 	defer s.vpcMu.Unlock()
 	var ip string
-	err = s.env.Store.Update(func(tx store.Tx) error {
+	err := s.env.Store.Update(func(tx store.Tx) error {
 		if b, ok := tx.Get(nsIPAlloc, net.Name+"/owner/"+owner); ok {
 			ip = string(b)
 			return nil
 		}
+		rng := net.Subnet
+		st, _ := stateOf(tx, net)
+		if st != nil {
+			rng = st.addrRange()
+		}
+		c, err := parseCIDR(rng, false)
+		if err != nil {
+			return apierr.InvalidArgument("AllocateIP: invalid subnet %q", rng)
+		}
 		used := allocatedIPs(tx, net.Name)
-		if st, _ := stateOf(tx, net); st != nil && !st.Fallback && st.Subnetwork != "" {
+		if st != nil && rng == st.Range && st.Subnetwork != "" {
 			for _, a := range list[computev1.Address](tx, nsAddresses, "projects/") {
 				if a.AddressType == "INTERNAL" && relPath(a.Subnetwork) == st.Subnetwork {
 					if v, ok := parseIP(a.Address); ok {
@@ -381,7 +488,7 @@ func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner strin
 				return tx.Put(nsIPAlloc, net.Name+"/owner/"+owner, []byte(ip))
 			}
 		}
-		return apierr.New(8, "IP space of %s (%s) is exhausted.", net.SubnetworkName, net.Subnet).WithLegacy("ipSpaceExhausted")
+		return apierr.New(8, "IP space of %s (%s) is exhausted.", net.SubnetworkName, rng).WithLegacy("ipSpaceExhausted")
 	})
 	return ip, err
 }

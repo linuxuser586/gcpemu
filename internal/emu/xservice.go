@@ -5,6 +5,9 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
+	"net"
+	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/project"
@@ -162,14 +165,30 @@ func isNumeric(s string) bool {
 }
 
 // SubnetNet is a VPC subnetwork realised as a container network.
+//
+// Addresses are reported from Subnet, and the emulator dials a container
+// at its address on the container network (as the runtime reports it),
+// never at a reported address: on a Translated network only workloads on
+// the VPC can reach those (ADR 0004).
 type SubnetNet struct {
 	// Name is the runtime network name.
 	Name string
-	// Subnet is the CIDR actually used by the container network. It equals
-	// the subnetwork's ipCidrRange unless that range overlapped another
-	// network on the host, in which case the runtime chose one.
+	// Subnet is the range that addresses from AllocateIP come from, and
+	// that the emulator reports: the Declared range (the subnetwork's
+	// ipCidrRange or the private services access allocation). Only when
+	// the Declared range overlapped another network on the host and the
+	// network could not be Translated is it the Fallback range.
 	Subnet string
-	// Gateway is the host-side address (the subnet's .1, like GCP's gateway).
+	// ContainerSubnet is the CIDR the container network actually uses. It
+	// differs from Subnet only on a Translated network.
+	ContainerSubnet string
+	// Translated is set when the container network is on a Fallback range
+	// while its Managed containers hold Declared addresses: such a
+	// container attaches without a fixed address, needs NET_ADMIN, and
+	// runs AliasScript once started (and again after a restart).
+	Translated bool
+	// Gateway is the host-side address of the container network (the
+	// .1 of ContainerSubnet, like GCP's gateway).
 	Gateway string
 	// SubnetworkName is "projects/P/regions/R/subnetworks/S".
 	SubnetworkName string
@@ -178,6 +197,52 @@ type SubnetNet struct {
 	Region      string
 	// SecondaryRanges maps rangeName to CIDR (GKE pods/services ranges).
 	SecondaryRanges map[string]string
+}
+
+// AliasVLAN is the VLAN that carries Declared addresses on a Translated
+// network's bridge. Tagged frames bypass the host's iptables (with the
+// default bridge-nf-filter-vlan-tagged=0), so the host's rules for the
+// network that holds the Declared range, such as its MASQUERADE, do not
+// rewrite them.
+const AliasVLAN = 4000
+
+// AliasScript returns sh commands (iproute2 or busybox ip) that give a
+// Managed container on a Translated network its Declared address ip: on a
+// VLAN (AliasVLAN) of the interface holding cip, its address on the
+// container network, with an on-link route for the Declared range sourced
+// from ip. Each of routes ("default", or a CIDR) then goes via the egress
+// gateway's Declared address, also sourced from ip. The commands are
+// idempotent. It returns "" when n is not Translated.
+func (n SubnetNet) AliasScript(ip, cip string, routes ...string) string {
+	if !n.Translated {
+		return ""
+	}
+	_, ipn, err := net.ParseCIDR(n.Subnet)
+	if err != nil || ipn.IP.To4() == nil {
+		return ""
+	}
+	ones, bits := ipn.Mask.Size()
+	tail := make(net.IP, 4)
+	for i, v := range ipn.IP.To4() {
+		tail[i] = v | ^ipn.Mask[i]
+	}
+	tail[3]-- // GCP's reserved second-to-last address, the egress gateway
+	if ones >= bits-1 {
+		routes = nil
+	}
+	var b strings.Builder
+	b.WriteString("set -e\n")
+	fmt.Fprintf(&b, "IF=$(ip -o -4 addr show | awk -v a=%s '{split($4,x,\"/\"); if (x[1]==a) print $2}' | head -n1)\n", cip)
+	fmt.Fprintf(&b, "[ -n \"$IF\" ] || { echo 'no interface holds %s' >&2; exit 1; }\n", cip)
+	fmt.Fprintf(&b, "V=\"$IF.%d\"\n", AliasVLAN)
+	fmt.Fprintf(&b, "ip link show \"$V\" >/dev/null 2>&1 || ip link add link \"$IF\" name \"$V\" type vlan id %d\n", AliasVLAN)
+	b.WriteString("ip link set \"$V\" up\n")
+	fmt.Fprintf(&b, "ip -o -4 addr show dev \"$V\" | grep -q ' inet %s/' || ip addr add %s/%d dev \"$V\"\n", ip, ip, ones)
+	fmt.Fprintf(&b, "ip route replace %s dev \"$V\" src %s\n", ipn.String(), ip)
+	for _, r := range routes {
+		fmt.Fprintf(&b, "ip route replace %s via %s dev \"$V\" src %s\n", r, tail, ip)
+	}
+	return b.String()
 }
 
 // NEGEndpoint is a GCE_VM_IP_PORT network endpoint.

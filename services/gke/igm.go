@@ -303,7 +303,7 @@ func (s *Service) resolveIG(_ context.Context, p string) (compute.InstanceGroup,
 		}
 		ig := compute.InstanceGroup{NamedPorts: map[string]int{}}
 		for _, n := range g.nodes {
-			ig.Instances = append(ig.Instances, emu.NEGEndpoint{IP: n.IP, Instance: n.Name})
+			ig.Instances = append(ig.Instances, emu.NEGEndpoint{IP: n.dialIP(), Instance: n.Name})
 		}
 		for _, np := range g.namedPorts {
 			if _, dup := ig.NamedPorts[np.Name]; !dup {
