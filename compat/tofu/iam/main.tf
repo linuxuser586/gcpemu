@@ -83,3 +83,14 @@ resource "google_iam_workload_identity_pool_provider" "gh" {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
 }
+
+# Modules read the project number for service agents and Workload Identity
+# principals. IAM resolves the default compute account only from the number
+# it uses itself, so the binding fails if the two disagree.
+data "google_project" "this" {}
+
+resource "google_service_account_iam_member" "compute" {
+  service_account_id = "projects/${var.project}/serviceAccounts/${data.google_project.this.number}-compute@developer.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.a.email}"
+}
