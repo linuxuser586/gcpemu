@@ -877,6 +877,38 @@ components:
             refused.
         code: { type: string }
         latencyMs: { type: number }
+        lb: { $ref: "#/components/schemas/LbTrace" }
+    LbTrace:
+      type: object
+      description: >-
+        How a load balancer served one data-plane request (lb service; Web
+        console Load Balancer traffic view). The forwarding rule is the
+        entry's resource.
+      required: [host, path]
+      properties:
+        host: { type: string }
+        path: { type: string, description: The path and query as the client sent them. }
+        targetProxy: { type: string, description: The target proxy's resource path. }
+        urlMap: { type: string, description: The URL map's resource path. }
+        match:
+          type: string
+          enum: [routeRule, pathRule, pathMatcherDefault, urlMapDefault]
+          description: The URL map rule that matched; absent when the URL map is missing or invalid.
+        pathMatcher: { type: string }
+        priority: { type: integer, format: int64, description: The matched route rule's priority. }
+        paths:
+          type: array
+          items: { type: string }
+          description: The matched path rule's paths.
+        redirect: { type: string, description: Location of a redirect the load balancer answered with. }
+        backend: { type: string, description: The backend service or bucket's resource path. }
+        endpoint: { type: string, description: The endpoint (ip:port) or bucket that answered. }
+        cacheStatus:
+          type: string
+          enum: [hit, miss, revalidated, uncacheable, disabled]
+          description: Cloud CDN's {cdn_cache_status}; disabled when the backend has no CDN.
+        statusDetails: { type: string, description: The access log's statusDetails. }
+        backendLatencyMs: { type: number }
     FaultRule:
       type: object
       properties:

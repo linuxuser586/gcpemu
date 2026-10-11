@@ -134,18 +134,8 @@ func (s *Service) serveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	// The first weighted backend service; all of them are reported.
 	res := rt.Route(in, func(int64) int64 { return 0 })
-	out := routeResult{PathMatcher: res.PathMatcher, RouteRule: res.RouteRule, PathRule: res.PathRule,
+	out := routeResult{Match: matchOf(res), PathMatcher: res.PathMatcher, RouteRule: res.RouteRule, PathRule: res.PathRule,
 		Service: res.Service, Host: res.Host, Path: res.Path, HeaderActions: res.HeaderActions}
-	switch {
-	case res.RouteRule != nil:
-		out.Match = "routeRule"
-	case res.PathRule != nil:
-		out.Match = "pathRule"
-	case res.PathMatcher != "":
-		out.Match = "pathMatcherDefault"
-	default:
-		out.Match = "urlMapDefault"
-	}
 	if res.Action != nil && len(res.Action.WeightedBackendServices) > 1 {
 		out.Weighted = res.Action.WeightedBackendServices
 	}
@@ -153,4 +143,18 @@ func (s *Service) serveRoute(w http.ResponseWriter, r *http.Request) {
 		out.Redirect, out.Service = &redirect{Code: res.Redirect.Code, Location: res.Redirect.Location}, ""
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// matchOf names the URL map rule that routed res.
+func matchOf(res *urlmap.Result) string {
+	switch {
+	case res.RouteRule != nil:
+		return "routeRule"
+	case res.PathRule != nil:
+		return "pathRule"
+	case res.PathMatcher != "":
+		return "pathMatcherDefault"
+	default:
+		return "urlMapDefault"
+	}
 }

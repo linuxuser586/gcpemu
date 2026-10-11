@@ -8,6 +8,7 @@ import {
   infoQuery,
   operationsQuery,
   readinessQuery,
+  requestsQuery,
   resourceCountsQuery,
 } from '@/api/queries'
 import { AppShell } from '@/components/shell/AppShell'
@@ -61,6 +62,7 @@ import { LbLayout } from '@/features/lb/LbLayout'
 import { CreateResource, EditResource } from '@/features/lb/ResourceForm'
 import { ResourcePage } from '@/features/lb/ResourcePage'
 import { Resources } from '@/features/lb/Resources'
+import { Traffic } from '@/features/lb/Traffic'
 import {
   customRoleQuery,
   customRolesQuery,
@@ -629,7 +631,8 @@ function sqlRoutes(queryClient: QueryClient): RouteObject[] {
 // The Load Balancer view (SRS 4.8.3). Each kind has a list (forwarding
 // rules at /lb); resource paths follow the API's, global/C/N or
 // regions/R/C/N, with the Project in ?project=; create pages are under
-// create/, so that no name is shadowed.
+// create/, so that no name is shadowed. The traffic view is /lb/traffic,
+// its filters in ?host= and ?path=.
 function lbRoutes(queryClient: QueryClient): RouteObject[] {
   const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
   const list =
@@ -659,6 +662,11 @@ function lbRoutes(queryClient: QueryClient): RouteObject[] {
   return [
     { index: true, element: <Resources />, loader: list('forwardingRules') },
     { path: 'create/:coll', element: <CreateResource /> },
+    {
+      path: 'traffic',
+      element: <Traffic />,
+      loader: () => warm(queryClient.ensureQueryData(requestsQuery('lb'))),
+    },
     { path: 'global/:coll/:name', element: <ResourcePage />, loader: page },
     { path: 'global/:coll/:name/edit', element: <EditResource /> },
     { path: 'regions/:region/:coll/:name', element: <ResourcePage />, loader: page },

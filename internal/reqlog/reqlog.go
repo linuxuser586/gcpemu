@@ -26,6 +26,37 @@ type Entry struct {
 	Status    int     `json:"status"`
 	Code      string  `json:"code,omitempty"`
 	LatencyMS float64 `json:"latencyMs"`
+	// LB is the load balancer's trace of a data-plane request.
+	LB *LBTrace `json:"lb,omitempty"`
+}
+
+// LBTrace is how a load balancer served one request: the forwarding rule
+// is the Entry's Resource.
+type LBTrace struct {
+	Host string `json:"host"`
+	// Path is the path and query as the client sent them.
+	Path        string `json:"path"`
+	TargetProxy string `json:"targetProxy,omitempty"`
+	URLMap      string `json:"urlMap,omitempty"`
+	// Match is the URL map rule that matched: "routeRule", "pathRule",
+	// "pathMatcherDefault" or "urlMapDefault"; empty when the URL map is
+	// missing or invalid.
+	Match       string `json:"match,omitempty"`
+	PathMatcher string `json:"pathMatcher,omitempty"`
+	// Priority is the matched route rule's; Paths the matched path rule's.
+	Priority *int64   `json:"priority,omitempty"`
+	Paths    []string `json:"paths,omitempty"`
+	// Redirect is the Location of a redirect the load balancer answered.
+	Redirect string `json:"redirect,omitempty"`
+	// Backend is the backend service or bucket path, Endpoint the
+	// endpoint (ip:port, or the bucket) that answered.
+	Backend  string `json:"backend,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+	// CacheStatus is Cloud CDN's {cdn_cache_status}: hit, miss,
+	// revalidated, uncacheable, or disabled when the backend has no CDN.
+	CacheStatus      string  `json:"cacheStatus,omitempty"`
+	StatusDetails    string  `json:"statusDetails,omitempty"`
+	BackendLatencyMS float64 `json:"backendLatencyMs,omitempty"`
 }
 
 // Log is a bounded ring buffer of entries that also writes to a logger.

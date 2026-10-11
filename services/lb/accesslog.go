@@ -135,7 +135,7 @@ func (l *accessLogger) log(rs *reqState, w *respWriter) {
 	fe := rs.fe
 	if l.env.RequestLog != nil {
 		l.env.RequestLog.Add(reqlog.Entry{Time: rs.start, Service: "lb", Protocol: "http", Method: r.Method + " " + r.Host + r.URL.RequestURI(),
-			Resource: fe.frPath, Status: w.status, LatencyMS: float64(lat.Microseconds()) / 1000})
+			Resource: fe.frPath, Status: w.status, LatencyMS: ms(lat), LB: trace(rs)})
 	}
 	if rs.kind != "" && (!rs.logEnable || (rs.sample < 1 && rand.Float64() >= rs.sample)) {
 		return
@@ -228,6 +228,34 @@ func (l *accessLogger) log(rs *reqState, w *respWriter) {
 	default: // never block the data plane
 	}
 }
+
+// trace is the Request log's account of how rs was served (the Web
+// console's Load Balancer traffic view).
+func trace(rs *reqState) *reqlog.LBTrace {
+	fe := rs.fe
+	t := &reqlog.LBTrace{Host: rs.req.Host, Path: rs.req.URL.RequestURI(), TargetProxy: fe.proxyPath, URLMap: fe.urlMap,
+		Backend: rs.service, Endpoint: rs.backend, StatusDetails: rs.details, BackendLatencyMS: ms(rs.bLat)}
+	if res := rs.route; res != nil {
+		t.Match, t.PathMatcher = matchOf(res), res.PathMatcher
+		if res.RouteRule != nil {
+			p := res.RouteRule.Priority
+			t.Priority = &p
+		}
+		if res.PathRule != nil {
+			t.Paths = res.PathRule.Paths
+		}
+		if res.Redirect != nil {
+			t.Redirect = res.Redirect.Location
+		}
+	}
+	if rs.kind != "" {
+		t.CacheStatus = rs.cacheStatusNow()
+	}
+	return t
+}
+
+// ms is d in milliseconds, to the microsecond.
+func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
 func indexAny(s, chars string) int {
 	for i := 0; i < len(s); i++ {

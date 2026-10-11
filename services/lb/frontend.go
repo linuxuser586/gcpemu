@@ -34,10 +34,11 @@ type reqState struct {
 	clientPort string
 	certErr    string
 
-	service string // backend service/bucket path
-	kind    string // "backendService" or "backendBucket"
-	details string // statusDetails
-	backend string // backend endpoint ip:port
+	route   *urlmap.Result // nil when the URL map is missing or invalid
+	service string         // backend service/bucket path
+	kind    string         // "backendService" or "backendBucket"
+	details string         // statusDetails
+	backend string         // backend endpoint ip:port
 	bLat    time.Duration
 
 	logEnable bool
@@ -169,6 +170,7 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 	host := r.Host
 	res := fe.router.Route(&urlmap.Request{Scheme: scheme, Method: r.Method, Host: host, Path: r.URL.Path,
 		RawQuery: r.URL.RawQuery, Header: r.Header}, nil)
+	rs.route = res
 	if res.Redirect != nil {
 		rs.details = "redirected_by_load_balancer"
 		w.onHeader = func(h http.Header) { applyResponseActions(h, res.HeaderActions, rs) }
