@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +67,33 @@ func TestSignedURL(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 403 || !strings.Contains(string(body), "SignatureDoesNotMatch") {
 		t.Errorf("tampered = %d %s", resp.StatusCode, body)
+	}
+
+	// response-* overrides are part of the signature and applied once it checks.
+	ou, err := b.SignedURL("dir/file name.txt", &storage.SignedURLOptions{
+		GoogleAccessID: sa, PrivateKey: pemKey(fk), Method: "GET", Expires: time.Now().Add(time.Hour),
+		Scheme: storage.SigningSchemeV4, Insecure: true,
+		QueryParameters: url.Values{
+			"response-content-type":        {"text/plain"},
+			"response-content-disposition": {`attachment; filename="notes.txt"`},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Get(ou)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/plain" || resp.Header.Get("Content-Disposition") != `attachment; filename="notes.txt"` {
+		t.Errorf("signed overrides = %d %v", resp.StatusCode, resp.Header)
+	}
+	resp, _ = http.Get(strings.Replace(ou, "response-content-type=text%2Fplain", "response-content-type=text%2Fhtml", 1))
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 403 || resp.Header.Get("Content-Type") == "text/html" {
+		t.Errorf("tampered override = %d %s", resp.StatusCode, body)
 	}
 
 	// Signed PUT.

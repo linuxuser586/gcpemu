@@ -70,7 +70,7 @@ func (s *Service) ServeObject(w http.ResponseWriter, r *http.Request, bucket, pa
 		r.Header.Del("Range")
 		w = &statusOverride{ResponseWriter: w, status: status}
 	}
-	if err := s.serveMedia(w, r, rec); err != nil {
+	if err := s.serveMedia(w, r, rec, nil); err != nil {
 		xmlError(w, err)
 	}
 }

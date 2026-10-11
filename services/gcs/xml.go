@@ -235,7 +235,7 @@ func (s *Service) xmlGetObject(w http.ResponseWriter, r *http.Request, bucket, o
 		xmlError(w, err)
 		return
 	}
-	if err := s.serveMedia(w, r, rec); err != nil {
+	if err := s.serveMedia(w, r, rec, xmlResponseHeaders(r.URL.Query())); err != nil {
 		xmlError(w, err)
 	}
 }
