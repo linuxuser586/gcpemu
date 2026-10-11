@@ -22,6 +22,17 @@ func TestProviderEndpointsIAMBeta(t *testing.T) {
 	t.Fatal("tofu-provider does not set iam_beta_custom_endpoint")
 }
 
+// data "google_project" reads billing info; without the setting tofu
+// would call cloudbilling.googleapis.com (#130).
+func TestProviderEndpointsCloudBilling(t *testing.T) {
+	for _, e := range providerEndpoints {
+		if e.setting == "cloud_billing_custom_endpoint" && e.service == "iam" && e.path == "/cloudbilling/v1/" {
+			return
+		}
+	}
+	t.Fatal("tofu-provider does not set cloud_billing_custom_endpoint")
+}
+
 // TestTofuProviderBeta is #112: --beta adds a google-beta block with the
 // same endpoints except container's v1beta1, and the default output stays a
 // single google block.

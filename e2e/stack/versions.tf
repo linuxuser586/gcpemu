@@ -26,6 +26,7 @@ locals {
     iam_credentials     = "/iamcredentials/v1/"
     resource_manager    = "/cloudresourcemanager/v1/"
     resource_manager_v3 = "/cloudresourcemanager/v3/"
+    cloud_billing       = "/cloudbilling/v1/"
     storage             = "/storage/v1/"
     pubsub              = "/pubsub/v1/"
     dns                 = "/dns/v1/"
@@ -54,6 +55,7 @@ provider "google" {
   iam_credentials_custom_endpoint     = local.ep.iam_credentials
   resource_manager_custom_endpoint    = local.ep.resource_manager
   resource_manager_v3_custom_endpoint = local.ep.resource_manager_v3
+  cloud_billing_custom_endpoint       = local.ep.cloud_billing
   storage_custom_endpoint             = local.ep.storage
   pubsub_custom_endpoint              = local.ep.pubsub
   dns_custom_endpoint                 = local.ep.dns

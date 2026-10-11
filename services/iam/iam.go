@@ -54,8 +54,8 @@ func New(env *emu.Env) emu.Service {
 
 func (s *Service) Name() string { return "iam" }
 
-// Register mounts iam, cloudresourcemanager, oauth2 and iamcredentials and
-// installs the policy evaluator into the authorizer.
+// Register mounts iam, cloudresourcemanager, cloudbilling, oauth2 and
+// iamcredentials and installs the policy evaluator into the authorizer.
 func (s *Service) Register(r emu.Router) error {
 	dir, err := s.env.ServiceDir("iam")
 	if err != nil {
@@ -69,6 +69,7 @@ func (s *Service) Register(r emu.Router) error {
 	}
 	r.Mount("iam", []string{"iam.googleapis.com"}, http.HandlerFunc(s.serveIAM))
 	r.Mount("cloudresourcemanager", []string{"cloudresourcemanager.googleapis.com"}, http.HandlerFunc(s.serveCRM))
+	r.Mount("cloudbilling", []string{"cloudbilling.googleapis.com"}, http.HandlerFunc(s.serveBilling))
 	r.Mount("oauth2", []string{"oauth2.googleapis.com", "accounts.google.com"}, http.HandlerFunc(s.serveOAuth2))
 	r.Mount("iamcredentials", []string{"iamcredentials.googleapis.com"}, http.HandlerFunc(s.serveCredentials))
 	r.Mount("sts", []string{"sts.googleapis.com"}, http.HandlerFunc(s.serveSTS))
