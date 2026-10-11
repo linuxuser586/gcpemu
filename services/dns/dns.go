@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -53,11 +54,13 @@ func New(env *emu.Env) emu.Service {
 func (s *Service) Name() string { return "dns" }
 
 // Register mounts the REST API at /dns/v1/ (root, as the Go client and
-// gcloud address it), under the /dns/ gateway prefix and in host mode.
+// gcloud address it), under the /dns/ gateway prefix and in host mode,
+// and the console's query endpoint on the admin API (admin.go).
 func (s *Service) Register(r emu.Router) error {
 	h := s.handler()
 	r.Handle("/dns/v1/", h)
 	r.Mount("dns", []string{"dns.googleapis.com"}, h)
+	r.Handle("GET /_emu/v1/dns/query", http.HandlerFunc(s.serveQuery))
 	return nil
 }
 

@@ -22,6 +22,7 @@ const services = [
   'pubsub',
   'secrets',
   'compute',
+  'dns',
   'lb',
   'cdn',
   'sql',

@@ -506,6 +506,38 @@ paths:
               schema: { $ref: "#/components/schemas/LbRoute" }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/dns/query:
+    get:
+      summary: Resolve a name against the Instance's DNS server (dns service; Web console Cloud DNS view).
+      operationId: dnsQuery
+      description: >-
+        Sends the query over the wire to the DNS data plane, as dig would,
+        so it is answered (and logged) as a client's query is. With network
+        it carries the VPC network in the EDNS0 option a VPC's DNS relay
+        adds, so that private zones bound to that network are visible.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: The name to resolve; a trailing dot is added.
+          schema: { type: string }
+        - name: type
+          in: query
+          description: The record type, e.g. A, AAAA, CNAME, MX, TXT (default A).
+          schema: { type: string }
+        - name: network
+          in: query
+          description: Query from this VPC network (projects/P/global/networks/N or its URL) instead of the host.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The DNS server's response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DnsQueryResult" }
+        "400": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /_emu/v1/ca/rotate:
     post:
       summary: Replace the instance CA and re-issue managed certificates (`gcpemu ca rotate`; certs service).
@@ -679,6 +711,30 @@ components:
         vary: { type: array, items: { type: string }, description: Request headers the entry varies on. }
         tags: { type: array, items: { type: string }, description: Its Cache-Tag values. }
         tier: { type: string, enum: [memory, disk] }
+    DnsQueryResult:
+      type: object
+      required: [server, name, type, rcode, authoritative, recursionAvailable, answer, authority, additional, latencyMs]
+      properties:
+        server: { type: string, description: The DNS server's host:port. }
+        name: { type: string, description: The name asked, fully qualified. }
+        type: { type: string }
+        network: { type: string, description: The VPC network the query came from, if any. }
+        rcode: { type: string, description: "NOERROR, NXDOMAIN, REFUSED, SERVFAIL, ..." }
+        authoritative: { type: boolean }
+        recursionAvailable: { type: boolean, description: False when forwarding is off (--dns-no-forward). }
+        zone: { type: string, description: "The managed zone that answers the name on that network (projects/P/managedZones/Z); absent when the name is forwarded." }
+        answer: { type: array, items: { $ref: "#/components/schemas/DnsRecord" } }
+        authority: { type: array, items: { $ref: "#/components/schemas/DnsRecord" } }
+        additional: { type: array, items: { $ref: "#/components/schemas/DnsRecord" } }
+        latencyMs: { type: number }
+    DnsRecord:
+      type: object
+      required: [name, type, ttl, data]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        ttl: { type: integer }
+        data: { type: string, description: The record's data in presentation format. }
     LbListener:
       type: object
       required: [forwardingRule, ipAddress, port, listener, mode, https]

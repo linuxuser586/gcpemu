@@ -469,6 +469,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/dns/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve a name against the Instance's DNS server (dns service; Web console Cloud DNS view).
+         * @description Sends the query over the wire to the DNS data plane, as dig would, so it is answered (and logged) as a client's query is. With network it carries the VPC network in the EDNS0 option a VPC's DNS relay adds, so that private zones bound to that network are visible.
+         */
+        get: operations["dnsQuery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/ca/rotate": {
         parameters: {
             query?: never;
@@ -628,6 +648,33 @@ export interface components {
             tags?: string[];
             /** @enum {string} */
             tier: "memory" | "disk";
+        };
+        DnsQueryResult: {
+            /** @description The DNS server's host:port. */
+            server: string;
+            /** @description The name asked */
+            name: string;
+            type: string;
+            /** @description The VPC network the query came from */
+            network?: string;
+            /** @description NOERROR, NXDOMAIN, REFUSED, SERVFAIL, ... */
+            rcode: string;
+            authoritative: boolean;
+            /** @description False when forwarding is off (--dns-no-forward). */
+            recursionAvailable: boolean;
+            /** @description The managed zone that answers the name on that network (projects/P/managedZones/Z); absent when the name is forwarded. */
+            zone?: string;
+            answer: components["schemas"]["DnsRecord"][];
+            authority: components["schemas"]["DnsRecord"][];
+            additional: components["schemas"]["DnsRecord"][];
+            latencyMs: number;
+        };
+        DnsRecord: {
+            name: string;
+            type: string;
+            ttl: number;
+            /** @description The record's data in presentation format. */
+            data: string;
         };
         LbListener: {
             /** @description The forwarding rule's resource path. */
@@ -1413,6 +1460,36 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    dnsQuery: {
+        parameters: {
+            query: {
+                /** @description The name to resolve; a trailing dot is added. */
+                name: string;
+                /** @description The record type, e.g. A, AAAA, CNAME, MX, TXT (default A). */
+                type?: string;
+                /** @description Query from this VPC network (projects/P/global/networks/N or its URL) instead of the host. */
+                network?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The DNS server's response. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DnsQueryResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     caRotate: {
