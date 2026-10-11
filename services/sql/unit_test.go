@@ -220,6 +220,20 @@ func TestIAMUserMatching(t *testing.T) {
 	if q := createRoleSQL(&sqladmin.User{Name: `we"ird`}, "p'w"); !strings.Contains(q, `"we""ird"`) || !strings.Contains(q, `'p''w'`) || !strings.Contains(q, "cloudsqlsuperuser") {
 		t.Errorf("createRoleSQL = %s", q)
 	}
+	sa = &sqladmin.User{Name: "a@p.iam", Type: "CLOUD_IAM_SERVICE_ACCOUNT"}
+	if q, want := rolesSQL(sa, []string{"cloudsqlsuperuser", "app"}, []string{"old"}), "ALTER ROLE \"a@p.iam\" WITH CREATEDB CREATEROLE;\nGRANT \"cloudsqlsuperuser\" TO \"a@p.iam\";\nGRANT \"app\" TO \"a@p.iam\";\nREVOKE \"old\" FROM \"a@p.iam\";\n"; q != want {
+		t.Errorf("rolesSQL = %q, want %q", q, want)
+	}
+	if q := rolesSQL(sa, nil, []string{"cloudsqlsuperuser"}); !strings.Contains(q, "NOCREATEDB NOCREATEROLE") {
+		t.Errorf("rolesSQL revoking cloudsqlsuperuser = %q", q)
+	}
+	// A BUILT_IN user is a member of cloudsqlsuperuser already, and stays one.
+	if q := rolesSQL(&sqladmin.User{Name: "app"}, []string{"cloudsqlsuperuser"}, []string{"cloudsqlsuperuser"}); q != "" {
+		t.Errorf("rolesSQL for a BUILT_IN user = %q", q)
+	}
+	if validateRoles([]string{"cloudsqladmin"}) == nil || validateRoles([]string{""}) == nil || validateRoles([]string{"app"}) != nil {
+		t.Error("validateRoles")
+	}
 }
 
 // testService builds a service on a memory store without a runtime.
