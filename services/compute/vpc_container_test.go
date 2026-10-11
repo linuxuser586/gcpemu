@@ -76,9 +76,10 @@ func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw st
 	return rt, id
 }
 
-// overlap creates a Docker network on rng so that a VPC range realised on
-// it afterwards falls back to another range. If rng is already in use, it
-// overlaps that.
+// overlap creates a Docker network on rng and holds it for the rest of
+// the test, so that a VPC range realised on it afterwards falls back to
+// another range. While rng is in use by another network, which may be
+// freed at any time, it retries for up to 30s, then skips the test.
 func overlap(t *testing.T, rng string) {
 	t.Helper()
 	ctx := context.Background()
@@ -87,9 +88,19 @@ func overlap(t *testing.T, rng string) {
 		t.Fatal(err)
 	}
 	name := fmt.Sprintf("gcpemu-test-overlap-%d", rand.Uint32())
-	if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
-		t.Logf("creating %s on %s: %v (the range is in use, which overlaps it too)", name, rng, err)
-		return
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		_, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng})
+		if err == nil {
+			break
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), "overlap") {
+			t.Fatalf("creating %s on %s: %v", name, rng, err)
+		}
+		if time.Now().After(deadline) {
+			t.Skipf("range %s stayed in use by another network for 30s: %v", rng, err)
+		}
+		time.Sleep(100*time.Millisecond + rand.N(400*time.Millisecond))
 	}
 	t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), name) })
 }
