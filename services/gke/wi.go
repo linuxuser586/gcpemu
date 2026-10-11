@@ -171,7 +171,16 @@ func (s *Service) isPodIP(rec *clusterRecord, ip string) bool {
 	return rec.Int.PodCIDR != "" && containsIP(rec.Int.PodCIDR, ip)
 }
 
-// resolvePod finds the pod with ip and its service account annotation.
+// podWait bounds how long a request from a pod IP that no pod has yet
+// waits for one: the kubelet reports a new pod's IP to the API server a
+// few seconds after its containers start, and client libraries treat a
+// 404 from the metadata server as final, so a Job that fetches a token at
+// once would otherwise always fail. GKE's metadata server knows the pod
+// from the node's own records.
+var podWait, podPoll = 10 * time.Second, 250 * time.Millisecond
+
+// resolvePod finds the pod with ip and its service account annotation,
+// waiting up to podWait for the API server to report a pod with that IP.
 func (s *Service) resolvePod(ctx context.Context, key, ip string) wiEntry {
 	rt := s.rtFor(key)
 	if v, ok := rt.wi.Load(ip); ok {
@@ -179,24 +188,39 @@ func (s *Service) resolvePod(ctx context.Context, key, ip string) wiEntry {
 			return e
 		}
 	}
-	e := s.lookupPod(ctx, key, ip)
-	ttl := 5 * time.Second
-	if e.err != nil {
-		ttl = time.Second
+	wctx, cancel := context.WithTimeout(ctx, podWait)
+	defer cancel()
+	for {
+		e, found := s.lookupPod(wctx, key, ip)
+		if found {
+			e.exp = time.Now().Add(5 * time.Second)
+			rt.wi.Store(ip, e)
+			return e
+		}
+		if wctx.Err() != nil {
+			return wiEntry{err: errf("no pod has IP %s", ip)}
+		}
+		if e.err != nil {
+			return e
+		}
+		select {
+		case <-wctx.Done():
+			return wiEntry{err: errf("no pod has IP %s", ip)}
+		case <-time.After(podPoll):
+		}
 	}
-	e.exp = time.Now().Add(ttl)
-	rt.wi.Store(ip, e)
-	return e
 }
 
-func (s *Service) lookupPod(ctx context.Context, key, ip string) wiEntry {
+// lookupPod returns the identity of the running pod with ip, found false
+// when there is none (or e.err when the API server cannot tell).
+func (s *Service) lookupPod(ctx context.Context, key, ip string) (e wiEntry, found bool) {
 	kc, err := s.kube(key)
 	if err != nil {
-		return wiEntry{err: err}
+		return wiEntry{err: err}, false
 	}
 	var pods kubeList[kubePod]
 	if err := kc.get(ctx, "/api/v1/pods?fieldSelector=status.podIP%3D"+url.QueryEscape(ip), &pods); err != nil {
-		return wiEntry{err: err}
+		return wiEntry{err: err}, false
 	}
 	for _, p := range pods.Items {
 		if p.Spec.HostNetwork || p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" {
@@ -210,12 +234,12 @@ func (s *Service) lookupPod(ctx context.Context, key, ip string) wiEntry {
 			Metadata objectMeta `json:"metadata"`
 		}
 		if err := kc.get(ctx, "/api/v1/namespaces/"+e.ns+"/serviceaccounts/"+e.ksa, &sa); err != nil {
-			return wiEntry{err: err}
+			return wiEntry{err: err}, false
 		}
 		e.gsa = strings.TrimSpace(sa.Metadata.Annotations[annoGSA])
-		return e
+		return e, true
 	}
-	return wiEntry{err: errf("no pod has IP %s", ip)}
+	return wiEntry{}, false
 }
 
 // wiAllowed reports whether member may impersonate gsa. IAM mode off
