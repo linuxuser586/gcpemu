@@ -30,14 +30,26 @@ func mdnsHolder(t *testing.T, port string) net.PacketConn {
 	return pc
 }
 
+// freeUDPPort returns a port free on 127.0.0.1 for both UDP and TCP: the
+// forwarder binds TCP on the port first and falls back to another port
+// when it is taken.
 func freeUDPPort(t *testing.T) string {
 	t.Helper()
-	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for range 100 {
+		l, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+		pc, err := net.ListenPacket("udp4", "127.0.0.1:"+port)
+		l.Close()
+		if err == nil {
+			pc.Close()
+			return port
+		}
 	}
-	defer pc.Close()
-	return strconv.Itoa(pc.LocalAddr().(*net.UDPAddr).Port)
+	t.Fatal("no port free for both TCP and UDP")
+	return ""
 }
 
 // TestListenUDPBesideMDNS: with a wildcard mDNS socket on the port, a
