@@ -87,7 +87,7 @@ func (l *localVPC) SubnetNetwork(ctx context.Context, subnetwork string) (emu.Su
 		return emu.SubnetNet{}, err
 	}
 	segs := strings.Split(subnetwork, "/")
-	sn := emu.SubnetNet{Name: n.Name, Subnet: n.Subnet, Gateway: n.Gateway, SubnetworkName: subnetwork}
+	sn := emu.SubnetNet{Name: n.Name, Subnet: n.Subnet, ContainerSubnet: n.Subnet, Gateway: n.Gateway, SubnetworkName: subnetwork}
 	if len(segs) == 6 {
 		sn.Region = segs[3]
 		sn.NetworkName = "projects/" + segs[1] + "/global/networks/default"

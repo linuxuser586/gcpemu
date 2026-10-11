@@ -2,6 +2,8 @@ package sql_test
 
 import (
 	"context"
+	"fmt"
+	"math/rand/v2"
 	"path"
 	"strings"
 	"testing"
@@ -44,13 +46,41 @@ func computeOp(t testing.TB, c *computev1.Service, op *computev1.Operation, err 
 }
 
 // TestPrivateIP covers FR-SQL-004 / FR-INT-008: an instance on a VPC
-// with a private services access connection gets a PRIVATE address on
-// compute's private services network, reachable without authorized
-// networks, also from a workload on a VPC subnetwork; without the
-// connection insert fails like in GCP.
+// with a private services access connection gets a PRIVATE address in the
+// PSA range, reachable without authorized networks from a workload on the
+// PSA network and from one on a VPC subnetwork; without the connection
+// insert fails like in GCP.
 func TestPrivateIP(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	testPrivateIP(t, "")
+}
+
+// TestPrivateIPOverlap is TestPrivateIP on a PSA range that overlaps a
+// network on the host, which a Docker network created first forces: the
+// container network falls back to another range and the Declared
+// addresses are aliased onto the containers (ADR 0004).
+func TestPrivateIPOverlap(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	ctx := context.Background()
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := fmt.Sprintf("10.%d.%d.0/20", 160+rand.IntN(16), rand.IntN(16)*16)
+	name := fmt.Sprintf("gcpemu-test-overlap-%d", rand.Uint32())
+	if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
+		t.Logf("creating %s on %s: %v (the range is in use, which overlaps it too)", name, rng, err)
+	} else {
+		t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), name) })
+	}
+	testPrivateIP(t, rng)
+}
+
+// testPrivateIP runs TestPrivateIP with the PSA range at psa ("" lets
+// compute allocate it).
+func testPrivateIP(t *testing.T, psa string) {
 	inst := emutest.Start(t, []string{"sql", "compute"})
 	ctx := context.Background()
 	c, err := computev1.NewService(ctx, option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
@@ -77,7 +107,11 @@ func TestPrivateIP(t *testing.T) {
 		t.Fatalf("insert without a servicenetworking connection: %v", err)
 	}
 
-	cop(c.GlobalAddresses.Insert(testProject, &computev1.Address{Name: "psa", AddressType: "INTERNAL", Purpose: "VPC_PEERING", PrefixLength: 20, Network: "global/networks/vpc"}).Do())
+	alloc := &computev1.Address{Name: "psa", AddressType: "INTERNAL", Purpose: "VPC_PEERING", PrefixLength: 20, Network: "global/networks/vpc"}
+	if psa != "" {
+		alloc.Address = strings.TrimSuffix(psa, "/20")
+	}
+	cop(c.GlobalAddresses.Insert(testProject, alloc).Do())
 	snOp, err := sn.Services.Connections.Create("services/servicenetworking.googleapis.com", &snv1.Connection{
 		Network: "projects/" + testProject + "/global/networks/vpc", ReservedPeeringRanges: []string{"psa"},
 	}).Do()
@@ -98,30 +132,80 @@ func TestPrivateIP(t *testing.T) {
 	if pubIP == "" {
 		t.Error("no PRIMARY address")
 	}
-	// The address lies in the PSA range, or in the runtime-picked range
-	// compute falls back to when another network on the host overlaps it
-	// (another gcpemu instance, say); clients get the reachable address.
 	ga := must(c.GlobalAddresses.Get(testProject, "psa").Do())
+	declared := ga.Address + "/20"
 	cvc, _ := inst.Env.Lookup("compute")
 	vpc := cvc.(emu.VPC)
 	psaNet, err := vpc.PrivateServicesNetwork(ctx, "projects/"+testProject+"/global/networks/vpc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if psaNet.Subnet != ga.Address+"/20" {
-		t.Logf("PSA range %s/20 overlaps a host network; compute fell back to %s", ga.Address, psaNet.Subnet)
+	if psaNet.Subnet != declared {
+		t.Skipf("PSA range %s overlaps a host network and compute could not translate it (container network on %s)", declared, psaNet.Subnet)
 	}
-	if privIP == "" || !cidrHas(psaNet.Subnet, privIP) {
-		t.Fatalf("private IP %q not in the PSA network %s (range %s/20)", privIP, psaNet.Subnet, ga.Address)
+	if psa != "" && !psaNet.Translated {
+		t.Errorf("PSA range %s overlaps a host network but is not Translated (container network on %s)", declared, psaNet.ContainerSubnet)
 	}
-	conn, err := connect(ctx, privIP, 5432, "postgres", "rootpw", "postgres")
+	if privIP == "" || !cidrHas(declared, privIP) {
+		t.Fatalf("private IP %q not in the PSA range %s", privIP, declared)
+	}
+	rt, err := inst.Env.Containers.Runtime(ctx)
 	if err != nil {
-		t.Fatalf("connect to private IP: %v", err)
+		t.Fatal(err)
 	}
-	conn.Close(ctx)
+	sqlContainer := "gcpemu-" + rt.InstanceID + "-sql-" + testProject + "-priv"
+	// psql connects to the private IP from a workload and returns the
+	// client address the instance sees (the Sidecar agent in front of
+	// PostgreSQL holds the connection, so it is read from its socket).
+	psql := func(what, id string) string {
+		t.Helper()
+		cmd := "PGPASSWORD=rootpw PGCONNECT_TIMEOUT=3 psql -h " + privIP + " -U postgres -d postgres -Atc "
+		var out string
+		for i := 0; ; i++ {
+			res, err := rt.Exec(ctx, id, []string{"sh", "-c", cmd + "'SELECT 1' 2>&1"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = strings.TrimSpace(string(res.Stdout))
+			if res.ExitCode == 0 && out == "1" {
+				break
+			}
+			if i == 50 {
+				t.Fatalf("%s → private IP %s: %s", what, privIP, out)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if _, err := rt.Exec(ctx, id, []string{"sh", "-c", cmd + "'SELECT pg_sleep(10)' >/dev/null 2>&1 &"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 50; i++ {
+			res, err := rt.Exec(ctx, sqlContainer, []string{"netstat", "-tn"}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, l := range strings.Split(string(res.Stdout), "\n") {
+				// The agent's socket is dual-stack: "::ffff:10.0.0.2:5432".
+				f := strings.Fields(strings.ReplaceAll(l, "::ffff:", ""))
+				if len(f) >= 6 && f[3] == privIP+":5432" && f[5] == "ESTABLISHED" {
+					return f[4][:strings.LastIndex(f[4], ":")]
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("%s: no connection to %s:5432 seen in the instance", what, privIP)
+		return ""
+	}
+
+	// A workload on the PSA network itself reaches the private IP
+	// directly; the instance sees its address.
+	peerIP, peer := vpcWorkload(t, inst, vpc, psaNet, "sql-test-peer", "")
+	if got := psql("PSA workload", peer); got != peerIP {
+		t.Errorf("the instance sees the PSA workload as %s, want %s", got, peerIP)
+	}
 
 	// FR-INT-008: a workload on a VPC subnetwork (as a GKE node/pod is,
-	// default route via compute's gateway) reaches the private IP.
+	// default route via compute's gateway) reaches the private IP. The
+	// gateway relays it, and the instance sees an address of the VPC.
 	sp := "projects/" + testProject + "/regions/us-central1/subnetworks/s"
 	subnet, err := vpc.SubnetNetwork(ctx, sp)
 	if err != nil {
@@ -131,49 +215,12 @@ func TestPrivateIP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	podIP, err := vpc.AllocateIP(ctx, subnet, "sql-test-pod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt, err := inst.Env.Containers.Runtime(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pod, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
-		Name:       rt.Name("sql-test", "pod"),
-		Image:      "postgres:17.10-alpine",
-		Entrypoint: []string{"sh", "-c", "ip route replace default via " + gw + " && exec sleep 3600"},
-		Labels:     rt.Labels("sql-test", "", "probe"),
-		CapAdd:     []string{"NET_ADMIN"},
-		Networks:   []runtime.Attachment{{Network: subnet.Name, IP: podIP}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = rt.RemoveContainer(context.Background(), pod, true) })
-	if err := rt.StartContainer(ctx, pod); err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.WaitRunning(ctx, pod); err != nil {
-		t.Fatal(err)
-	}
-	var out string
-	for i := 0; i < 50; i++ {
-		res, err := rt.Exec(ctx, pod, []string{"sh", "-c", "PGPASSWORD=rootpw PGCONNECT_TIMEOUT=3 psql -h " + privIP + " -U postgres -d postgres -Atc 'SELECT inet_client_addr() IS NOT NULL' 2>&1"}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out = string(res.Stdout)
-		if res.ExitCode == 0 && strings.TrimSpace(out) == "t" {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if strings.TrimSpace(out) != "t" {
-		t.Fatalf("pod → private IP: %s", out)
+	_, pod := vpcWorkload(t, inst, vpc, subnet, "sql-test-pod", gw)
+	if got := psql("subnetwork workload", pod); !cidrHas(declared, got) && !cidrHas(subnet.Subnet, got) {
+		t.Errorf("the instance sees the subnetwork workload as %s, outside the VPC's ranges %s and %s", got, declared, subnet.Subnet)
 	}
 	// The instance's own default route stays on the external network.
-	res, err := rt.Exec(ctx, "gcpemu-"+rt.InstanceID+"-sql-"+testProject+"-priv", []string{"ip", "route", "show", "default"}, nil)
+	res, err := rt.Exec(ctx, sqlContainer, []string{"ip", "route", "show", "default"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +228,72 @@ func TestPrivateIP(t *testing.T) {
 	if !strings.Contains(string(res.Stdout), "via "+ext.Gateway+" ") {
 		t.Errorf("instance default route = %q, want via %s (external network)", res.Stdout, ext.Gateway)
 	}
+
+	// After a restart of its container the instance keeps its address.
+	waitOp(t, svc, must(svc.Instances.Restart(testProject, "priv").Do()))
+	if got := psql("PSA workload after restart", peer); got != peerIP {
+		t.Errorf("after restart the instance sees the PSA workload as %s, want %s", got, peerIP)
+	}
 	waitOp(t, svc, must(svc.Instances.Delete(testProject, "priv").Do()))
 	assertNoRuntimeObjects(t, inst, "projects/"+testProject+"/instances/priv")
+}
+
+// vpcWorkload starts a container holding an address of net, as a Managed
+// container would (aliased on a Translated network), with its default
+// route via the egress gateway via when set. It returns the address and
+// the container.
+func vpcWorkload(t *testing.T, inst *emutest.Instance, vpc emu.VPC, net emu.SubnetNet, owner, via string) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	ip, err := vpc.AllocateIP(ctx, net, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = vpc.ReleaseIP(context.Background(), net, owner) })
+	rt, err := inst.Env.Containers.Runtime(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := runtime.Attachment{Network: net.Name, IP: ip}
+	if net.Translated {
+		a.IP = ""
+	}
+	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
+		Name:       rt.Name("sql-test", owner),
+		Image:      "postgres:17.10-alpine",
+		Entrypoint: []string{"sleep", "3600"},
+		Labels:     rt.Labels("sql-test", "", "probe"),
+		CapAdd:     []string{"NET_ADMIN"},
+		Networks:   []runtime.Attachment{a},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.RemoveContainer(context.Background(), id, true) })
+	if err := rt.StartContainer(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.WaitRunning(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	ct, err := rt.InspectContainer(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	switch {
+	case net.Translated && via != "":
+		script = net.AliasScript(ip, ct.IPs[net.Name], "default")
+	case net.Translated:
+		script = net.AliasScript(ip, ct.IPs[net.Name])
+	case via != "":
+		script = "ip route replace default via " + via
+	}
+	if script != "" {
+		res, err := rt.Exec(ctx, id, []string{"sh", "-c", script}, nil)
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("network setup of %s: %v %s%s", owner, err, res.Stdout, res.Stderr)
+		}
+	}
+	return ip, id
 }

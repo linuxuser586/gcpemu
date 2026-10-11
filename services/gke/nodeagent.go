@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/trust"
 )
@@ -82,6 +83,12 @@ type nodeConfig struct {
 	// CA is the emulator's root CA (PEM), added to the node's system
 	// trust store (Section 7.4: GKE nodes trust it automatically).
 	CA string `json:"ca,omitempty"`
+	// VPC is set when the node's subnetwork is Translated: the agent
+	// aliases the node's Declared address IP onto its VPC interface
+	// before k3s starts, and routes via the VPC egress gateway go via the
+	// gateway's Declared address, sourced from IP (ADR 0004).
+	VPC *emu.SubnetNet `json:"vpc,omitempty"`
+	IP  string         `json:"ip,omitempty"`
 }
 
 func init() { agent.Register(nodeAgentName, runNodeAgent) }
@@ -183,17 +190,37 @@ func setupNodeNetwork(cfg nodeConfig) error {
 		!strings.Contains(string(out), "File exists") {
 		return fmt.Errorf("ip addr add: %v: %s", err, out)
 	}
-	if cfg.DefaultVia != "" {
-		if out, err := exec.Command("ip", "route", "replace", "default", "via", cfg.DefaultVia).CombinedOutput(); err != nil {
-			return fmt.Errorf("ip route replace default via %s: %v: %s", cfg.DefaultVia, err, out)
+	private := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	defaultVia, privateVia := cfg.DefaultVia, cfg.PrivateVia
+	if cfg.VPC != nil && cfg.VPC.Translated {
+		// Routes via the VPC egress gateway go via its Declared address,
+		// sourced from the node's (ADR 0004).
+		cip, err := addrIn(cfg.VPC.ContainerSubnet)
+		if err != nil {
+			return err
+		}
+		var routes []string
+		if defaultVia != "" && inCIDR(cfg.VPC.ContainerSubnet, defaultVia) {
+			routes, defaultVia = append(routes, "default"), ""
+		}
+		if privateVia != "" && inCIDR(cfg.VPC.ContainerSubnet, privateVia) {
+			routes, privateVia = append(routes, private...), ""
+		}
+		if out, err := exec.Command("sh", "-c", cfg.VPC.AliasScript(cfg.IP, cip, routes...)).CombinedOutput(); err != nil {
+			return fmt.Errorf("aliasing %s: %v: %s", cfg.IP, err, out)
+		}
+	}
+	if defaultVia != "" {
+		if out, err := exec.Command("ip", "route", "replace", "default", "via", defaultVia).CombinedOutput(); err != nil {
+			return fmt.Errorf("ip route replace default via %s: %v: %s", defaultVia, err, out)
 		}
 	} else if cfg.NoDefaultRoute {
 		_ = exec.Command("ip", "route", "del", "default").Run()
 	}
-	if cfg.PrivateVia != "" {
-		for _, cidr := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
-			if out, err := exec.Command("ip", "route", "replace", cidr, "via", cfg.PrivateVia).CombinedOutput(); err != nil {
-				return fmt.Errorf("ip route replace %s via %s: %v: %s", cidr, cfg.PrivateVia, err, out)
+	if privateVia != "" {
+		for _, cidr := range private {
+			if out, err := exec.Command("ip", "route", "replace", cidr, "via", privateVia).CombinedOutput(); err != nil {
+				return fmt.Errorf("ip route replace %s via %s: %v: %s", cidr, privateVia, err, out)
 			}
 		}
 	}
@@ -345,4 +372,23 @@ func nodeDNSAnswer(cfg nodeConfig, addr net.IP) func(string) net.IP {
 		}
 		return nil
 	}
+}
+
+// addrIn returns this host's IPv4 address inside cidr.
+func addrIn(cidr string) (string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && inCIDR(cidr, ipn.IP.String()) {
+			return ipn.IP.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no interface has an address in %s", cidr)
+}
+
+func inCIDR(cidr, ip string) bool {
+	_, n, err := net.ParseCIDR(cidr)
+	return err == nil && n.Contains(net.ParseIP(ip))
 }

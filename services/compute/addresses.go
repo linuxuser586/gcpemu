@@ -228,7 +228,7 @@ func (s *Service) allocRegionalInternal(tx store.Tx, project, region string, a *
 			}
 		}
 	}
-	if st, ok := get[vpcNet](tx, nsVPCNets, sp); ok && st.Subnet == sn.IpCidrRange {
+	if st, ok := get[vpcNet](tx, nsVPCNets, sp); ok && st.addrRange() == sn.IpCidrRange {
 		for ip := range allocatedIPs(tx, st.Name) {
 			used[ip] = true
 		}

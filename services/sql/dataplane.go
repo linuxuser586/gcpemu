@@ -178,6 +178,22 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	}
 	control := fmt.Sprintf("http://%s/sqladmin/_agent/v1/projects/%s/instances/%s", gw, project, name)
 
+	// The private services network is realised again: after a restart its
+	// container network may have been recreated on another Fallback range.
+	if rec.PrivateNet != nil && rec.Instance.Settings.IpConfiguration != nil && rec.Instance.Settings.IpConfiguration.PrivateNetwork != "" {
+		if vpc, ok := s.vpc(); ok {
+			if pn, err := vpc.PrivateServicesNetwork(ctx, rec.Instance.Settings.IpConfiguration.PrivateNetwork); err == nil {
+				rec.PrivateNet = &pn
+			} else {
+				s.env.Log.Warn("sql: realising the private services network; using the recorded one", "instance", project+":"+name, "err", err)
+			}
+		}
+	}
+	translated := rec.PrivateNet != nil && rec.PrivateIP != "" && rec.PrivateNet.Translated
+	var capAdd []string
+	if translated {
+		capAdd = []string{"NET_ADMIN"}
+	}
 	hostPort := s.allocHostPort(project, name, rec.HostPort)
 	publicIP := rec.PublicIP
 	var id string
@@ -187,7 +203,11 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 			nets = append(nets, runtime.Attachment{Network: ext.Name, IP: publicIP})
 		}
 		if rec.PrivateNet != nil && rec.PrivateIP != "" {
-			nets = append(nets, runtime.Attachment{Network: rec.PrivateNet.Name, IP: rec.PrivateIP})
+			a := runtime.Attachment{Network: rec.PrivateNet.Name, IP: rec.PrivateIP}
+			if translated {
+				a.IP = "" // the private IP is aliased once started (ADR 0004)
+			}
+			nets = append(nets, a)
 		}
 		spec := runtime.ContainerSpec{
 			Name:       cname,
@@ -210,6 +230,7 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 			Ports:    []runtime.Port{{HostIP: s.hostIP(), HostPort: hostPort, ContainerPort: proxy.PublicPort}},
 			Mounts:   []runtime.Mount{{Type: "volume", Source: vol, Target: ver.DataMount}},
 			Init:     true,
+			CapAdd:   capAdd,
 		}
 		id, err = rt.CreateContainer(ctx, spec)
 		if err != nil && publicIP != "" && attempt < 3 {
@@ -263,6 +284,9 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	} else {
 		publicIP = ""
 	}
+	if err := aliasPrivateIP(ctx, rt, rec, id); err != nil {
+		return err
+	}
 	addr, err := s.readyAddr(ctx, rt, svc.Name, id, hostPort)
 	if err != nil {
 		return err
@@ -272,6 +296,9 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	}
 	return s.updateRecord(project, name, func(r *instanceRecord) error {
 		r.HostPort, r.PublicIP = hostPort, publicIP
+		if rec.PrivateNet != nil && r.PrivateNet != nil {
+			r.PrivateNet = rec.PrivateNet
+		}
 		r.Instance.IpAddresses = ipMappings(r)
 		r.AppliedFlags = flagMap(r.Instance.Settings)
 		return nil
@@ -370,6 +397,9 @@ func (s *Service) restartContainer(ctx context.Context, project, name string) er
 	if err := rt.RestartContainer(ctx, cname, stopTimeout); err != nil {
 		return err
 	}
+	if err := aliasPrivateIP(ctx, rt, rec, cname); err != nil {
+		return err
+	}
 	svc, err := plane.Services(ctx)
 	if err != nil {
 		return err
@@ -379,6 +409,26 @@ func (s *Service) restartContainer(ctx context.Context, project, name string) er
 		return err
 	}
 	return s.waitReady(ctx, rt, cname, addr)
+}
+
+// aliasPrivateIP gives a running container on a Translated private
+// services network its private IP (ADR 0004); a restart drops it.
+func aliasPrivateIP(ctx context.Context, rt *runtime.Manager, rec *instanceRecord, id string) error {
+	if rec.PrivateNet == nil || rec.PrivateIP == "" || !rec.PrivateNet.Translated {
+		return nil
+	}
+	c, err := rt.InspectContainer(ctx, id)
+	if err != nil {
+		return err
+	}
+	res, err := rt.Exec(ctx, id, []string{"sh", "-c", rec.PrivateNet.AliasScript(rec.PrivateIP, c.IPs[rec.PrivateNet.Name])}, nil)
+	if err == nil && res.ExitCode != 0 {
+		err = fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr)
+	}
+	if err != nil {
+		return newOpError("INTERNAL_ERROR", "aliasing private IP %s: %v", rec.PrivateIP, err)
+	}
+	return nil
 }
 
 // readyAddr is where the emulator probes an instance's PostgreSQL: the

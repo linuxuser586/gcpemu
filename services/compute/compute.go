@@ -47,6 +47,11 @@ type Service struct {
 
 	// vpcMu serialises realisation of container networks and IP allocation.
 	vpcMu sync.Mutex
+	// aliasDone is set once a probe found whether Managed containers can
+	// alias Declared addresses (ADR 0004); aliasErr is why they cannot.
+	aliasMu   sync.Mutex
+	aliasDone bool
+	aliasErr  error
 	// egress holds the NAT egress gateways by VPC network path.
 	egMu   sync.Mutex
 	egress map[string]*gateway

@@ -68,9 +68,21 @@ type nodeRecord struct {
 	Zone       string `json:"zone"`
 	IP         string `json:"ip"`
 	ExternalIP string `json:"externalIp,omitempty"`
+	// ContainerIP is the node container's address on the subnetwork's
+	// container network, which the emulator dials. It differs from IP
+	// only on a Translated network (ADR 0004).
+	ContainerIP string `json:"containerIp,omitempty"`
 	// Password is the k3s node password, kept so that a recreated node
 	// container can re-register under the same name.
 	Password string `json:"password"`
+}
+
+// dialIP is the address the emulator reaches the node at.
+func (n nodeRecord) dialIP() string {
+	if n.ContainerIP != "" {
+		return n.ContainerIP
+	}
+	return n.IP
 }
 
 func clusterKey(projectID, location, name string) string {

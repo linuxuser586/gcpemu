@@ -169,6 +169,9 @@ The CIDR that a subnetwork or a private services access allocation has in GCP's 
 The CIDR that a VPC's container network uses instead of its Declared range, because the Declared range overlapped another network on the host.
 _Avoid_: actual range, real range
 
+**Translated network**:
+A VPC container network on a Fallback range whose Managed containers still hold, and report, addresses from the Declared range, aliased onto their VPC interfaces (ADR 0004). A network that cannot be translated reports Fallback-range addresses.
+
 ### Testing
 
 **Client compatibility suite**:

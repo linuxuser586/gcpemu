@@ -155,8 +155,10 @@ func (s *Service) logEgress(network string, ev natEvent, c *coverage) {
 // inNets reports whether ip is inside one of the VPC's container networks.
 func inNets(nets []*vpcNet, ip string) bool {
 	for _, st := range nets {
-		if inCIDR(st.Subnet, ip) {
-			return true
+		for _, r := range st.ranges() {
+			if inCIDR(r, ip) {
+				return true
+			}
 		}
 	}
 	return false
@@ -175,7 +177,7 @@ func inCIDR(c, ip string) bool {
 func (s *Service) ownerOfIP(nets []*vpcNet, ip string) (owner, subnet string) {
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		for _, st := range nets {
-			if !inCIDR(st.Subnet, ip) {
+			if !inNets([]*vpcNet{st}, ip) {
 				continue
 			}
 			subnet = st.Subnetwork

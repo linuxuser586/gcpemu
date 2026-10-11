@@ -45,6 +45,7 @@ const natImage = "rancher/k3s:v1.36.5-k3s1"
 // (pinned by tag; digests are pinned at release).
 var Images = map[string]string{
 	"nat-gateway": natImage,
+	"alias-probe": aliasProbeImage,
 }
 
 // natSinkPort is the sink's port inside the gateway.
@@ -90,7 +91,7 @@ func (s *Service) EgressGateway(ctx context.Context, subnetwork string) (string,
 	if err := g.sync(ctx); err != nil {
 		return "", err
 	}
-	c, _ := parseCIDR(net.Subnet, false)
+	c, _ := parseCIDR(net.ContainerSubnet, false)
 	return ipString(c.reservedTail()), nil
 }
 
@@ -357,7 +358,14 @@ func (s *Service) natCoverage(np string, nets []*vpcNet) []coverage {
 					continue
 				}
 				for _, nat := range rt.Nats {
-					for _, c := range natRanges(nat, sn, st.Subnet) {
+					var ranges []string
+					for _, c := range natRanges(nat, sn, st.addrRange()) {
+						ranges = append(ranges, c)
+						if c == st.Range && st.translated() {
+							ranges = append(ranges, st.Subnet)
+						}
+					}
+					for _, c := range ranges {
 						cv := coverage{cidr: c, router: relPath(rt.SelfLink), nat: nat.Name, region: reg, subnet: st.Subnetwork}
 						if nat.LogConfig != nil && nat.LogConfig.Enable {
 							cv.log = true
@@ -384,6 +392,13 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	fmt.Fprintf(&b, "ifc() { ip -o -4 addr show | awk -v a=\"$1\" '{split($4,x,\"/\"); if (x[1]==a) print $2}'; }\n")
 	fmt.Fprintf(&b, "EXT=$(ifc %s)\n[ -n \"$EXT\" ]\n", g.extIP)
 	fmt.Fprintf(&b, "ip route replace default via %s dev \"$EXT\"\n", g.extGW)
+	for _, st := range nets {
+		if st.translated() {
+			dc, _ := parseCIDR(st.Range, false)
+			fc, _ := parseCIDR(st.Subnet, false)
+			b.WriteString(st.subnetNet().AliasScript(ipString(dc.reservedTail()), ipString(fc.reservedTail())))
+		}
+	}
 	b.WriteString("iptables -N GCPEMU-FWD 2>/dev/null || true\n")
 	b.WriteString("iptables -t nat -N GCPEMU-POST 2>/dev/null || true\n")
 	b.WriteString("iptables -t nat -N GCPEMU-PRE 2>/dev/null || true\n")
@@ -407,14 +422,14 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	b.WriteString("-A GCPEMU-POST -o $EXT -j MASQUERADE\n")
 	// Intra-VPC traffic is source-NATed to the gateway so replies return
 	// through it regardless of the destination's default route.
+	var internal []string
 	for _, st := range nets {
-		fmt.Fprintf(&b, "-A GCPEMU-POST -d %s ! -s %s -j MASQUERADE\n", st.Subnet, st.Subnet)
+		internal = append(internal, st.ranges()...)
+	}
+	for _, r := range internal {
+		fmt.Fprintf(&b, "-A GCPEMU-POST -d %s ! -s %s -j MASQUERADE\n", r, r)
 	}
 	if s.env.Config.Offline {
-		var internal []string
-		for _, st := range nets {
-			internal = append(internal, st.Subnet)
-		}
 		for _, c := range cov {
 			for _, in := range internal {
 				fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s -j RETURN\n", c.cidr, in)

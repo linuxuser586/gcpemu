@@ -367,6 +367,12 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	}
 	hooks := "http://" + gw + "/container/_emu/hooks/" + c.Id + "/" + rec.Int.Secret
 	nets := []runtime.Attachment{{Network: sn.Name, IP: ip}, {Network: d.svc.Name}}
+	var capAdd []string
+	if sn.Translated {
+		// The address is aliased once started (ADR 0004).
+		nets[0].IP = ""
+		capAdd = []string{"NET_ADMIN"}
+	}
 	var ext netplane.Net
 	if !privateEndpoint(c) {
 		if ext, err = d.np.External(ctx); err != nil {
@@ -412,6 +418,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		Ports:    ports,
 		Mounts:   []runtime.Mount{{Type: "volume", Source: name, Target: k3sDataDir}},
 		Tmpfs:    map[string]string{"/run": ""},
+		CapAdd:   capAdd,
 	})
 	if err != nil {
 		return err
@@ -440,6 +447,13 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if ip == "" {
 		ip = ct.IPs[sn.Name]
 	}
+	dial := ip
+	if sn.Translated {
+		dial = ct.IPs[sn.Name]
+		if err := alias(ctx, d.rt, id, sn, ip, dial); err != nil {
+			return err
+		}
+	}
 	apiPort := 0
 	if addr := ct.Ports["443/tcp"]; addr != "" {
 		_, p, _ := net.SplitHostPort(addr)
@@ -455,7 +469,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err != nil {
 		return err
 	}
-	kc, err := newKubeClient("https://"+ip+":443", creds)
+	kc, err := newKubeClient("https://"+dial+":443", ip, creds)
 	if err != nil {
 		return err
 	}
@@ -592,6 +606,19 @@ func (s *Service) startNodes(ctx context.Context, d *deps, key string, sn emu.Su
 	return errors.Join(errs...)
 }
 
+// alias gives container id its Declared address ip on a Translated
+// network, where cip is its address on the container network (ADR 0004).
+func alias(ctx context.Context, rt *runtime.Manager, id string, sn emu.SubnetNet, ip, cip string) error {
+	res, err := rt.Exec(ctx, id, []string{"sh", "-c", sn.AliasScript(ip, cip)}, nil)
+	if err == nil && res.ExitCode != 0 {
+		err = fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr)
+	}
+	if err != nil {
+		return fmt.Errorf("aliasing %s onto %s: %w", ip, sn.Name, err)
+	}
+	return nil
+}
+
 // nodeName returns the node container (and volume) name.
 func nodeContainer(d *deps, c *containerpb.Cluster, node string) string {
 	return d.rt.Name("gke", shortID(c), node)
@@ -647,6 +674,11 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 		return err
 	}
 	nets := []runtime.Attachment{{Network: sn.Name, IP: ip}, {Network: d.svc.Name}}
+	if sn.Translated {
+		// The node agent aliases the address before k3s starts (ADR 0004).
+		nets[0].IP = ""
+		cfg.VPC, cfg.IP = &sn, ip
+	}
 	private := privateNodes(c, np)
 	var ext netplane.Net
 	if !private {
@@ -710,17 +742,19 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	if err := d.rt.WaitRunning(ctx, id); err != nil {
 		return err
 	}
-	extIP := ""
-	if ext.Name != "" {
-		if ct, err := d.rt.InspectContainer(ctx, id); err == nil {
-			extIP = ct.IPs[ext.Name]
-		}
+	extIP, cip := "", ""
+	if ct, err := d.rt.InspectContainer(ctx, id); err == nil {
+		extIP, cip = ct.IPs[ext.Name], ct.IPs[sn.Name]
+	}
+	if !sn.Translated {
+		cip = ""
 	}
 	return s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		for i := range rec.Int.Nodes {
 			if rec.Int.Nodes[i].Name == node.Name {
 				rec.Int.Nodes[i].IP = ip
 				rec.Int.Nodes[i].ExternalIP = extIP
+				rec.Int.Nodes[i].ContainerIP = cip
 			}
 		}
 		return nil
