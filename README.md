@@ -61,6 +61,9 @@ Unlike Cloud SQL, the emulator lets `executeSql` name a built-in user without a 
 Its Load Balancer view reads each forwarding rule's local listener from
 `GET /_emu/v1/lb/listeners`, and "test a URL" asks `POST /_emu/v1/lb/route` which route and
 backend of a URL map would serve a host, path and headers, without sending the request.
+Its traffic tab (`/console/lb/traffic`, filtered by `?host=` and `?path=`) traces each request
+live from the request log, whose `lb` entries carry the matched route, backend, endpoint, cache
+status and backend latency; it shows the newest 500 that match.
 Its Cloud CDN view treats a backend service or bucket with `enableCdn` as an origin: adding,
 editing and removing one patches its `cdnPolicy` and `enableCdn`, and invalidation is
 `urlMaps.invalidateCache`. Each origin's cached entries and hit ratio come from

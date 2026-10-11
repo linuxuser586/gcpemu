@@ -13,6 +13,7 @@ import { gcpFetch } from '@/api/fetch'
 
 export type LbListener = components['schemas']['LbListener']
 export type LbRoute = components['schemas']['LbRoute']
+export type LbTrace = components['schemas']['LbTrace']
 export type LbRouteRequest = components['schemas']['LbRouteRequest']
 
 /** Resource is any compute resource, as the API returns it. */

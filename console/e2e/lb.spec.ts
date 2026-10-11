@@ -211,3 +211,110 @@ test('Load Balancer: build a load balancer, test URLs and edit its URL map', asy
     expect(u.pathname).toMatch(allowed)
   }
 })
+
+test('Load Balancer traffic: a live trace of each request, filtered by path', async ({
+  page,
+  request,
+  browserName,
+  requests,
+}) => {
+  test.setTimeout(3 * 60_000)
+  const id = projectId('e2e-lbtraffic', browserName)
+  const scope = `projects/${id}`
+  const bucket = `lbtraffic-e2e-${browserName}`
+  // A load balancer in front of a CDN-enabled bucket, with a redirect.
+  expect((await request.post(`/storage/v1/b?project=${id}`, { data: { name: bucket } })).ok()).toBe(
+    true,
+  )
+  expect(
+    (
+      await request.post(`/upload/storage/v1/b/${bucket}/o?uploadType=media&name=app.css`, {
+        headers: { 'Content-Type': 'text/css' },
+        data: 'body{}',
+      })
+    ).ok(),
+  ).toBe(true)
+  await compute(request, `${scope}/global/backendBuckets`, {
+    name: 'static',
+    bucketName: bucket,
+    enableCdn: true,
+  })
+  await compute(request, `${scope}/global/urlMaps`, {
+    name: 'web-map',
+    defaultService: 'global/backendBuckets/static',
+    hostRules: [{ hosts: ['*'], pathMatcher: 'app' }],
+    pathMatchers: [
+      {
+        name: 'app',
+        defaultService: 'global/backendBuckets/static',
+        pathRules: [{ paths: ['/old'], urlRedirect: { pathRedirect: '/app.css' } }],
+      },
+    ],
+  })
+  await compute(request, `${scope}/global/targetHttpProxies`, {
+    name: 'web-proxy',
+    urlMap: 'global/urlMaps/web-map',
+  })
+  await compute(request, `${scope}/global/forwardingRules`, {
+    name: 'web',
+    portRange: '8080',
+    loadBalancingScheme: 'EXTERNAL_MANAGED',
+    target: 'global/targetHttpProxies/web-proxy',
+  })
+  let listener = ''
+  await expect(async () => {
+    const res = (await (await request.get(`/_emu/v1/lb/listeners?project=${id}`)).json()) as {
+      listeners: { listener: string }[]
+    }
+    listener = res.listeners[0]?.listener ?? ''
+    expect(listener).not.toBe('')
+  }).toPass()
+
+  await page.goto(`/console/lb?project=${id}`)
+  await page.getByRole('link', { name: 'Traffic' }).click()
+  await expect(page.getByText(/No requests to this Project/)).toBeVisible()
+
+  // Requests appear as they are served, without a reload (FR-UI-006).
+  const rows = page.getByTestId('request')
+  expect((await request.get(`http://${listener}/app.css`)).status()).toBe(200)
+  expect((await request.get(`http://${listener}/app.css`)).status()).toBe(200)
+  expect((await request.get(`http://${listener}/old`, { maxRedirects: 0 })).status()).toBe(301)
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText('/old')
+  await expect(rows.nth(0)).toContainText('301')
+  await expect(rows.nth(0)).toContainText('Path rule /old')
+  await expect(rows.nth(0)).toContainText(`→ http://${listener}/app.css`)
+  await expect(rows.nth(1)).toContainText('/app.css')
+  await expect(rows.nth(1)).toContainText('Default of app')
+  await expect(rows.nth(1)).toContainText('hit')
+  await expect(rows.nth(1).getByRole('link', { name: 'static' })).toBeVisible()
+  await expect(rows.nth(1).getByRole('link', { name: 'web' })).toBeVisible()
+  await expect(rows.nth(2)).toContainText('miss')
+
+  // The whole trace of one request.
+  await rows
+    .nth(2)
+    .getByRole('button', { name: /Details of GET/ })
+    .click()
+  const trace = page.getByLabel(/^Trace of GET/)
+  await expect(trace).toContainText('response_sent_by_backend')
+  await expect(trace).toContainText(`storage.googleapis.com/${bucket}`)
+  await expect(trace.getByRole('link', { name: 'web-proxy' })).toBeVisible()
+
+  // The path filter is in the link, and survives a reload.
+  await page.getByLabel('Path').fill('/old')
+  await expect(rows).toHaveCount(1)
+  await expect(page).toHaveURL(/[?&]path=%2Fold/)
+  await page.reload()
+  await expect(page.getByLabel('Path')).toHaveValue('/old')
+  await expect(rows).toHaveCount(1)
+  await page.getByLabel('Host').fill('nowhere.test')
+  await expect(page.getByText('No requests match the filters.')).toBeVisible()
+
+  // FR-UI-003: only public APIs and the admin API.
+  for (const r of requests) {
+    const u = new URL(r.url())
+    if (u.origin !== new URL(page.url()).origin) continue
+    expect(u.pathname).toMatch(allowed)
+  }
+})

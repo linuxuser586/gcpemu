@@ -35,6 +35,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/services/compute"
 	"github.com/linuxuser586/gcpemu/services/dns"
 	"github.com/linuxuser586/gcpemu/services/lb"
@@ -339,6 +340,32 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	entries := e.inst.Env.RequestLog.Entries("lb")
 	if len(entries) < 5 {
 		t.Errorf("request log has %d lb entries", len(entries))
+	}
+
+	// Each entry traces how it was served (Web console Load Balancer
+	// traffic view).
+	traceOf := func(path string) *reqlog.LBTrace {
+		for i := len(entries) - 1; i >= 0; i-- {
+			if lb := entries[i].LB; lb != nil && lb.Path == path {
+				return lb
+			}
+		}
+		t.Fatalf("no trace of %s in %+v", path, entries)
+		return nil
+	}
+	p := "projects/" + proj + "/global/"
+	if tr := traceOf("/api/users"); tr.Host != "app.example.test:8080" || tr.TargetProxy != p+"targetHttpsProxies/https" ||
+		tr.URLMap != p+"urlMaps/map" || tr.Match != "pathRule" || tr.PathMatcher != "app" || strings.Join(tr.Paths, ",") != "/api/*" ||
+		tr.Backend != p+"backendServices/api" || tr.Endpoint != fmt.Sprintf("127.0.0.1:%d", origin.port()) ||
+		tr.CacheStatus != "disabled" || tr.StatusDetails != "response_sent_by_backend" || tr.BackendLatencyMS <= 0 {
+		t.Errorf("api trace = %+v", tr)
+	}
+	if tr := traceOf("/old?x=1"); tr.Match != "pathRule" || tr.Redirect != "https://app.example.test:8080/new?x=1" ||
+		tr.Backend != "" || tr.CacheStatus != "" || tr.StatusDetails != "redirected_by_load_balancer" {
+		t.Errorf("redirect trace = %+v", tr)
+	}
+	if tr := traceOf("/app.css"); tr.Match != "pathMatcherDefault" || tr.Backend != p+"backendBuckets/static" || tr.CacheStatus != "miss" {
+		t.Errorf("static trace = %+v", tr)
 	}
 
 	// DNS → LB (FR-INT-004): an A record for the forwarding rule IP

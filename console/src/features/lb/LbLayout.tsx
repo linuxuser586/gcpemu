@@ -65,24 +65,28 @@ export function RefLink({ link }: { link?: string }) {
   )
 }
 
-/** KindTabs switches between the kinds' lists. */
-export function KindTabs({ coll }: { coll: Coll }) {
+/** KindTabs switches between the kinds' lists and the traffic view. */
+export function KindTabs({ coll }: { coll: Coll | 'traffic' }) {
+  const tabs = [
+    ...KINDS.map((k) => ({ id: k.coll, title: k.title, to: listPath(k.coll) })),
+    { id: 'traffic', title: 'Traffic', to: '/lb/traffic' },
+  ]
   return (
     <nav aria-label="Resource types" className="flex flex-wrap gap-1 border-b">
-      {KINDS.map((k) => (
+      {tabs.map((k) => (
         <NavLink
-          key={k.coll}
-          to={listPath(k.coll)}
+          key={k.id}
+          to={k.to}
           end
           className={() =>
             cn(
               '-mb-px border-b-2 px-3 py-2 text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-              k.coll === coll
+              k.id === coll
                 ? 'border-primary text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground',
             )
           }
-          aria-current={k.coll === coll ? 'page' : undefined}
+          aria-current={k.id === coll ? 'page' : undefined}
         >
           {k.title}
         </NavLink>

@@ -799,6 +799,44 @@ export interface components {
             status?: number;
             code?: string;
             latencyMs?: number;
+            lb?: components["schemas"]["LbTrace"];
+        };
+        /** @description How a load balancer served one data-plane request (lb service; Web console Load Balancer traffic view). The forwarding rule is the entry's resource. */
+        LbTrace: {
+            host: string;
+            /** @description The path and query as the client sent them. */
+            path: string;
+            /** @description The target proxy's resource path. */
+            targetProxy?: string;
+            /** @description The URL map's resource path. */
+            urlMap?: string;
+            /**
+             * @description The URL map rule that matched; absent when the URL map is missing or invalid.
+             * @enum {string}
+             */
+            match?: "routeRule" | "pathRule" | "pathMatcherDefault" | "urlMapDefault";
+            pathMatcher?: string;
+            /**
+             * Format: int64
+             * @description The matched route rule's priority.
+             */
+            priority?: number;
+            /** @description The matched path rule's paths. */
+            paths?: string[];
+            /** @description Location of a redirect the load balancer answered with. */
+            redirect?: string;
+            /** @description The backend service or bucket's resource path. */
+            backend?: string;
+            /** @description The endpoint (ip:port) or bucket that answered. */
+            endpoint?: string;
+            /**
+             * @description Cloud CDN's {cdn_cache_status}; disabled when the backend has no CDN.
+             * @enum {string}
+             */
+            cacheStatus?: "hit" | "miss" | "revalidated" | "uncacheable" | "disabled";
+            /** @description The access log's statusDetails. */
+            statusDetails?: string;
+            backendLatencyMs?: number;
         };
         FaultRule: {
             readonly id?: string;

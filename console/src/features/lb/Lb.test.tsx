@@ -1,13 +1,15 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, it } from 'vitest'
 
+import type { RequestEntry } from '@/api/admin'
+import { appendRequest } from '@/api/events'
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
-import type { LbListener, LbRoute, Resource } from './api'
+import type { LbListener, LbRoute, LbTrace, Resource } from './api'
 
 const P = 'alpha-project'
 const API = `*/compute/v1/projects/${P}`
@@ -445,4 +447,139 @@ it('deletes a resource and returns to its list', async () => {
     }),
   )
   await waitFor(() => expect(router.state.location.pathname).toBe('/lb/backendBuckets'))
+})
+
+const traced = (path: string, over: Partial<RequestEntry> = {}, lb: Partial<LbTrace> = {}) => ({
+  time: '2026-10-11T12:00:00.123Z',
+  service: 'lb',
+  protocol: 'http',
+  method: `GET app.example.test${path}`,
+  resource: `projects/${P}/global/forwardingRules/web`,
+  status: 200,
+  latencyMs: 2.5,
+  ...over,
+  lb: {
+    host: 'app.example.test',
+    path,
+    targetProxy: `projects/${P}/global/targetHttpProxies/web-proxy`,
+    urlMap: `projects/${P}/global/urlMaps/web-map`,
+    match: 'pathRule' as const,
+    pathMatcher: 'app',
+    paths: ['/api/*'],
+    backend: `projects/${P}/global/backendServices/api`,
+    endpoint: '10.0.0.5:8000',
+    cacheStatus: 'disabled' as const,
+    statusDetails: 'response_sent_by_backend',
+    backendLatencyMs: 1.5,
+    ...lb,
+  },
+})
+
+it('traces each request live, newest first, filtered by host and path', async () => {
+  const user = userEvent.setup()
+  server.use(
+    http.get('*/_emu/v1/requests', ({ request }) => {
+      expect(new URL(request.url).searchParams.get('service')).toBe('lb')
+      return HttpResponse.json({
+        requests: [
+          traced('/api/users'),
+          traced(
+            '/app.css',
+            {},
+            {
+              match: 'pathMatcherDefault',
+              paths: undefined,
+              backend: `projects/${P}/global/backendBuckets/static`,
+              endpoint: 'storage.googleapis.com/assets',
+              cacheStatus: 'hit',
+            },
+          ),
+          // Another Project's load balancer.
+          traced('/other', { resource: 'projects/other/global/forwardingRules/fr' }),
+        ],
+      })
+    }),
+  )
+  const { router, queryClient } = renderApp(`/lb/traffic?project=${P}`)
+  await screen.findByRole('table', { name: 'Requests' })
+  expect(screen.getByRole('link', { name: 'Traffic' })).toHaveAttribute('aria-current', 'page')
+  const rows = () => screen.getAllByTestId('request')
+  expect(rows()).toHaveLength(2)
+  const [css, api] = rows()
+  expect(css).toHaveTextContent('GET app.example.test/app.css')
+  expect(css).toHaveTextContent('Default of app')
+  expect(css).toHaveTextContent('hit')
+  expect(within(css!).getByRole('link', { name: 'static' })).toHaveAttribute(
+    'href',
+    `/lb/global/backendBuckets/static?project=${P}`,
+  )
+  expect(api).toHaveTextContent('Path rule /api/*')
+  expect(api).toHaveTextContent('10.0.0.5:8000')
+  expect(api).toHaveTextContent('2.5 ms')
+  expect(within(api!).getByRole('link', { name: 'web' })).toHaveAttribute(
+    'href',
+    `/lb/global/forwardingRules/web?project=${P}`,
+  )
+
+  // A new entry arrives on the events stream.
+  act(() =>
+    appendRequest(
+      queryClient,
+      traced(
+        '/old',
+        { status: 302 },
+        {
+          backend: undefined,
+          endpoint: undefined,
+          cacheStatus: undefined,
+          redirect: 'https://app.example.test/new',
+          paths: ['/old'],
+        },
+      ),
+    ),
+  )
+  await waitFor(() => expect(rows()).toHaveLength(3))
+  expect(rows()[0]).toHaveTextContent('→ https://app.example.test/new')
+  expect(rows()[0]).toHaveTextContent('302')
+
+  // Details show the whole trace.
+  await user.click(within(rows()[2]!).getByRole('button', { name: /Details of GET/ }))
+  const details = screen.getByLabelText('Trace of GET app.example.test/api/users')
+  expect(details).toHaveTextContent('response_sent_by_backend')
+  expect(within(details).getByRole('link', { name: 'web-map' })).toBeVisible()
+  expect(details).toHaveTextContent('1.5 ms')
+
+  // The filters are in the URL.
+  await user.type(screen.getByLabelText('Path'), '/api')
+  expect(rows()).toHaveLength(1)
+  await waitFor(() => expect(router.state.location.search).toContain('path=%2Fapi'))
+  await user.type(screen.getByLabelText('Host'), 'nope.test')
+  expect(screen.getByText('No requests match the filters.')).toBeVisible()
+
+  // Paused, new entries wait.
+  await user.clear(screen.getByLabelText('Host'))
+  await user.clear(screen.getByLabelText('Path'))
+  await user.click(screen.getByRole('button', { name: 'Pause' }))
+  act(() => appendRequest(queryClient, traced('/api/late')))
+  expect(rows()).toHaveLength(3)
+  await user.click(screen.getByRole('button', { name: 'Resume' }))
+  expect(rows()).toHaveLength(4)
+})
+
+it('opens the traffic view from a filter in the URL', async () => {
+  server.use(
+    http.get('*/_emu/v1/requests', () =>
+      HttpResponse.json({ requests: [traced('/api/users'), traced('/app.css')] }),
+    ),
+  )
+  renderApp(`/lb/traffic?project=${P}&path=.css`)
+  await screen.findByRole('table', { name: 'Requests' })
+  expect(screen.getAllByTestId('request')).toHaveLength(1)
+  expect(screen.getByLabelText('Path')).toHaveValue('.css')
+})
+
+it('says when a Project has no load-balanced traffic yet', async () => {
+  server.use(http.get('*/_emu/v1/requests', () => HttpResponse.json({ requests: [] })))
+  renderApp(`/lb/traffic?project=${P}`)
+  expect(await screen.findByText(/No requests to this Project/)).toBeVisible()
 })
