@@ -112,7 +112,7 @@ permissions:
     - "networkEndpointGroups: attachNetworkEndpoints create delete detachNetworkEndpoints get list use"
     - "regionNetworkEndpointGroups: attachNetworkEndpoints create delete detachNetworkEndpoints get list use"
     - "networks: addPeering create delete get list removePeering update updatePeering updatePolicy use"
-    - "subnetworks: create delete expandIpCidrRange get list setPrivateIpGoogleAccess update use"
+    - "subnetworks: create delete expandIpCidrRange get getIamPolicy list setIamPolicy setPrivateIpGoogleAccess update use"
     - "routers: create delete get list update use"
     - "routes: create delete get list"
     - "securityPolicies: create delete get list setLabels update use"
@@ -133,8 +133,8 @@ permissions:
     - "zones: get list"
     - "projects: get"
   networksecurity:
-    - "serverTlsPolicies: create delete get list update use"
-    - "clientTlsPolicies: create delete get list update use"
+    - "serverTlsPolicies: create delete get getIamPolicy list setIamPolicy update use"
+    - "clientTlsPolicies: create delete get getIamPolicy list setIamPolicy update use"
     - "backendAuthenticationConfigs: create delete get list update use"
     - "locations: get list"
     - "operations: cancel delete get list"
@@ -427,7 +427,7 @@ roles:
   - name: roles/compute.networkAdmin
     title: Compute Network Admin
     description: Full control of Compute Engine networking resources.
-    permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.regionNetworkEndpointGroups.*, compute.networks.*, compute.subnetworks.*, compute.routers.*, compute.routes.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetGrpcProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.regionTargetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.*, compute.regionOperations.*, compute.zoneOperations.*, compute.regions.*, compute.zones.*, compute.projects.get, compute.firewalls.get, compute.firewalls.list, compute.instances.get, compute.instances.list, compute.instanceGroups.*, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
+    permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.regionNetworkEndpointGroups.*, compute.networks.*, compute.subnetworks.*, compute.routers.*, compute.routes.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetGrpcProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.regionTargetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.*, compute.regionOperations.*, compute.zoneOperations.*, compute.regions.*, compute.zones.*, compute.projects.get, compute.firewalls.get, compute.firewalls.list, compute.instances.get, compute.instances.list, compute.instanceGroups.*, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list, "-compute.subnetworks.setIamPolicy", "-networksecurity.serverTlsPolicies.setIamPolicy", "-networksecurity.clientTlsPolicies.setIamPolicy"]
   - name: roles/compute.networkUser
     title: Compute Network User
     description: Provides access to a shared VPC network.
@@ -443,7 +443,7 @@ roles:
   - name: roles/compute.loadBalancerAdmin
     title: Compute Load Balancer Admin
     description: Permissions to create, modify, and delete load balancers and associate resources.
-    permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.regionNetworkEndpointGroups.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.securityPolicies.get, compute.securityPolicies.list, compute.securityPolicies.use, compute.regionSecurityPolicies.get, compute.regionSecurityPolicies.list, compute.regionSecurityPolicies.use, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetGrpcProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.regionTargetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.get, compute.globalOperations.list, compute.regionOperations.get, compute.regionOperations.list, compute.zoneOperations.get, compute.zoneOperations.list, compute.networks.get, compute.networks.list, compute.networks.use, compute.subnetworks.get, compute.subnetworks.list, compute.subnetworks.use, compute.instanceGroups.get, compute.instanceGroups.list, compute.instanceGroups.use, compute.instances.get, compute.instances.list, compute.instances.use, compute.regions.*, compute.zones.*, compute.projects.get, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list]
+    permissions: [compute.addresses.*, compute.globalAddresses.*, compute.backendBuckets.*, compute.backendServices.*, compute.regionBackendServices.*, compute.forwardingRules.*, compute.globalForwardingRules.*, compute.healthChecks.*, compute.httpHealthChecks.*, compute.httpsHealthChecks.*, compute.networkEndpointGroups.*, compute.regionNetworkEndpointGroups.*, compute.sslCertificates.*, compute.sslPolicies.*, compute.securityPolicies.get, compute.securityPolicies.list, compute.securityPolicies.use, compute.regionSecurityPolicies.get, compute.regionSecurityPolicies.list, compute.regionSecurityPolicies.use, compute.targetHttpProxies.*, compute.targetHttpsProxies.*, compute.targetGrpcProxies.*, compute.targetSslProxies.*, compute.targetTcpProxies.*, compute.regionTargetTcpProxies.*, compute.urlMaps.*, compute.globalOperations.get, compute.globalOperations.list, compute.regionOperations.get, compute.regionOperations.list, compute.zoneOperations.get, compute.zoneOperations.list, compute.networks.get, compute.networks.list, compute.networks.use, compute.subnetworks.get, compute.subnetworks.list, compute.subnetworks.use, compute.instanceGroups.get, compute.instanceGroups.list, compute.instanceGroups.use, compute.instances.get, compute.instances.list, compute.instances.use, compute.regions.*, compute.zones.*, compute.projects.get, networksecurity.*, certificatemanager.*, resourcemanager.projects.get, resourcemanager.projects.list, "-compute.subnetworks.setIamPolicy", "-networksecurity.serverTlsPolicies.setIamPolicy", "-networksecurity.clientTlsPolicies.setIamPolicy"]
   - name: roles/certificatemanager.owner
     title: Certificate Manager Owner
     description: Full access to Certificate Manager resources.

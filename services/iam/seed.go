@@ -202,6 +202,7 @@ func (s *Service) EnvVars(gateway string, endpoints map[string]string) map[strin
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_IAMCREDENTIALS":       "http://" + gateway + "/iamcredentials/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDRESOURCEMANAGER": "http://" + gateway + "/cloudresourcemanager/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDBILLING":         "http://" + gateway + "/cloudbilling/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE":         "http://" + gateway + "/serviceusage/",
 		"CLOUDSDK_API_ENDPOINT_OVERRIDES_STS":                  "http://" + gateway + "/sts/",
 		"CLOUDSDK_AUTH_TOKEN_HOST":                             "http://" + gateway + "/oauth2/token",
 	}

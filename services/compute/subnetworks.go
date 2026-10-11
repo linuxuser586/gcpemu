@@ -391,6 +391,9 @@ func (s *Service) deleteSubnetwork(w http.ResponseWriter, r *http.Request) {
 			if err := s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsSubnets, path) }); err != nil {
 				return err
 			}
+			if ps, err := s.policyStore(); err == nil {
+				_ = ps.DeletePolicy(ctx, "//compute.googleapis.com/"+path)
+			}
 			s.releaseNetworkRuntime(ctx, "", []string{path})
 			s.networkChanged(relPath(cur.Network))
 			return nil

@@ -131,7 +131,6 @@ func (s *Service) Register(r emu.Router) error {
 	}
 	containerpb.RegisterClusterManagerServer(r.GRPC(), s.api)
 	r.Mount("container", []string{apiHost}, s.restHandler())
-	r.Mount("serviceusage", []string{"serviceusage.googleapis.com"}, serviceUsageHandler())
 	r.Mount("connectgateway", []string{connectGatewayHost}, http.HandlerFunc(s.serveConnectGateway))
 	s.registerInstanceGroups()
 	return nil
@@ -236,8 +235,7 @@ func (s *Service) Reset(ctx context.Context) error {
 // endpoint override and the kubeconfig the emulator maintains.
 func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]string {
 	return map[string]string{
-		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER":    "http://" + gw + "/container/",
-		"CLOUDSDK_API_ENDPOINT_OVERRIDES_SERVICEUSAGE": "http://" + gw + "/serviceusage/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER": "http://" + gw + "/container/",
 		"KUBECONFIG": s.kubeconfigPath(),
 	}
 }

@@ -26,6 +26,8 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	{"resource_manager_v3_custom_endpoint", "iam", "/cloudresourcemanager/v3/"},
 	// data "google_project" reads the project's billing info.
 	{"cloud_billing_custom_endpoint", "iam", "/cloudbilling/v1/"},
+	// google_project_service lists, enables and disables APIs.
+	{"service_usage_custom_endpoint", "iam", "/serviceusage/v1/"},
 	{"storage_custom_endpoint", "gcs", "/storage/v1/"},
 	{"pubsub_custom_endpoint", "pubsub", "/pubsub/v1/"},
 	{"dns_custom_endpoint", "dns", "/dns/v1/"},

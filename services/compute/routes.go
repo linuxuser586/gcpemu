@@ -42,6 +42,9 @@ func (s *Service) routes() {
 	h("DELETE "+sn+"/{subnetwork}", s.deleteSubnetwork)
 	h("POST "+sn+"/{subnetwork}/expandIpCidrRange", s.expandIpCidrRange)
 	h("POST "+sn+"/{subnetwork}/setPrivateIpGoogleAccess", s.setPrivateIpGoogleAccess)
+	h("GET "+sn+"/{subnetwork}/getIamPolicy", s.getSubnetworkIAM)
+	h("POST "+sn+"/{subnetwork}/setIamPolicy", s.setSubnetworkIAM)
+	h("POST "+sn+"/{subnetwork}/testIamPermissions", s.testSubnetworkIAM)
 	h("GET "+p+"/aggregated/subnetworks", s.aggregatedSubnetworks)
 
 	// Firewalls and routes.

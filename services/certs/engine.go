@@ -455,6 +455,7 @@ func (s *Service) remove(ctx context.Context, k *kind, name, etag string) (*long
 		if err != nil {
 			return nil, err
 		}
+		s.deletePolicy(ctx, k, n)
 		s.afterWrite(k, name)
 		return &emptypb.Empty{}, nil
 	})

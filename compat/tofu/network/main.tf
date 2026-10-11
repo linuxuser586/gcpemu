@@ -267,3 +267,32 @@ resource "google_compute_region_network_endpoint_group" "psc" {
   network_endpoint_type = "PRIVATE_SERVICE_CONNECT"
   psc_target_service    = "${var.region}-cloudkms.googleapis.com"
 }
+
+# Shared VPC grants: a member and a binding on one subnetwork, an
+# authoritative policy on the other.
+resource "google_compute_subnetwork_iam_member" "s" {
+  region     = var.region
+  subnetwork = google_compute_subnetwork.s.name
+  role       = "roles/compute.networkUser"
+  member     = "user:dev@example.com"
+}
+
+resource "google_compute_subnetwork_iam_binding" "s" {
+  region     = var.region
+  subnetwork = google_compute_subnetwork.s.name
+  role       = "roles/compute.networkViewer"
+  members    = ["user:dev@example.com", "user:ops@example.com"]
+}
+
+data "google_iam_policy" "manual" {
+  binding {
+    role    = "roles/compute.networkUser"
+    members = ["user:ops@example.com"]
+  }
+}
+
+resource "google_compute_subnetwork_iam_policy" "manual" {
+  region      = var.region
+  subnetwork  = google_compute_subnetwork.manual.name
+  policy_data = data.google_iam_policy.manual.policy_data
+}

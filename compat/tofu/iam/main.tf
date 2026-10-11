@@ -84,6 +84,33 @@ resource "google_iam_workload_identity_pool_provider" "gh" {
   }
 }
 
+# AWS and SAML providers are managed only: the emulator does not exchange
+# their credentials.
+resource "google_iam_workload_identity_pool_provider" "aws" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.p.workload_identity_pool_id
+  workload_identity_pool_provider_id = "aws-acct"
+  aws {
+    account_id = "999999999999"
+  }
+}
+
+resource "google_iam_workload_identity_pool_provider" "saml" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.p.workload_identity_pool_id
+  workload_identity_pool_provider_id = "saml"
+  attribute_mapping = {
+    "google.subject" = "assertion.subject"
+  }
+  saml {
+    idp_metadata_xml = <<-EOT
+      <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.com">
+        <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.com/sso"/>
+        </md:IDPSSODescriptor>
+      </md:EntityDescriptor>
+    EOT
+  }
+}
+
 # Modules read the project number for service agents and Workload Identity
 # principals. IAM resolves the default compute account only from the number
 # it uses itself, so the binding fails if the two disagree.
@@ -93,4 +120,13 @@ resource "google_service_account_iam_member" "compute" {
   service_account_id = "projects/${var.project}/serviceAccounts/${data.google_project.this.number}-compute@developer.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.a.email}"
+}
+
+# Two at once go through one services:batchEnable; destroy disables them.
+resource "google_project_service" "kms" {
+  service = "cloudkms.googleapis.com"
+}
+
+resource "google_project_service" "logging" {
+  service = "logging.googleapis.com"
 }

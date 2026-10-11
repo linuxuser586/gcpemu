@@ -27,6 +27,7 @@ locals {
     resource_manager    = "/cloudresourcemanager/v1/"
     resource_manager_v3 = "/cloudresourcemanager/v3/"
     cloud_billing       = "/cloudbilling/v1/"
+    service_usage       = "/serviceusage/v1/"
     storage             = "/storage/v1/"
     pubsub              = "/pubsub/v1/"
     dns                 = "/dns/v1/"
@@ -56,6 +57,7 @@ provider "google" {
   resource_manager_custom_endpoint    = local.ep.resource_manager
   resource_manager_v3_custom_endpoint = local.ep.resource_manager_v3
   cloud_billing_custom_endpoint       = local.ep.cloud_billing
+  service_usage_custom_endpoint       = local.ep.service_usage
   storage_custom_endpoint             = local.ep.storage
   pubsub_custom_endpoint              = local.ep.pubsub
   dns_custom_endpoint                 = local.ep.dns
