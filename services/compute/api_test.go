@@ -655,6 +655,44 @@ func TestNetworkPeering(t *testing.T) {
 	waitDo(t, c)(c.Networks.Delete(proj, "a").Do())
 }
 
+// TestPSARangeAvoidsSubnetworks is #132: OpenTofu orders a VPC_PEERING
+// allocation and the network's subnetworks only after the network, so the
+// allocation is often made first. It must not take the low 10/8 space
+// subnetworks are usually given, and a subnetwork overlapping it is
+// refused, as on GCP.
+func TestPSARangeAvoidsSubnetworks(t *testing.T) {
+	_, c, _ := newClients(t)
+	customNet(t, c, "vpc")
+	waitDo(t, c)(c.GlobalAddresses.Insert(proj, &computev1.Address{Name: "psa", AddressType: "INTERNAL", Purpose: "VPC_PEERING", PrefixLength: 20, Network: "global/networks/vpc"}).Do())
+	ga, _ := c.GlobalAddresses.Get(proj, "psa").Do()
+	if ga.Address != "10.127.240.0" {
+		t.Fatalf("PSA range: %+v", ga)
+	}
+	subnet(t, c, "vpc", "nodes", "us-central1", "10.0.0.0/22",
+		&computev1.SubnetworkSecondaryRange{RangeName: "pods", IpCidrRange: "10.4.0.0/14"},
+		&computev1.SubnetworkSecondaryRange{RangeName: "services", IpCidrRange: "10.8.0.0/20"})
+	waitDo(t, c)(c.GlobalAddresses.Insert(proj, &computev1.Address{Name: "psa2", AddressType: "INTERNAL", Purpose: "VPC_PEERING", PrefixLength: 20, Network: "global/networks/vpc"}).Do())
+	if ga, _ := c.GlobalAddresses.Get(proj, "psa2").Do(); ga.Address != "10.127.224.0" {
+		t.Fatalf("second PSA range: %+v", ga)
+	}
+
+	if _, err := c.Subnetworks.Insert(proj, "us-central1", &computev1.Subnetwork{Name: "over", Network: "global/networks/vpc", IpCidrRange: "10.127.0.0/16"}).Do(); code(err) != http.StatusBadRequest || !strings.Contains(err.Error(), "reserved IP range 'psa") {
+		t.Fatalf("subnetwork over a PSA range: %v", err)
+	}
+	if _, err := c.Subnetworks.Insert(proj, "us-central1", &computev1.Subnetwork{Name: "over", Network: "global/networks/vpc", IpCidrRange: "10.1.0.0/24",
+		SecondaryIpRanges: []*computev1.SubnetworkSecondaryRange{{RangeName: "pods", IpCidrRange: "10.127.240.0/24"}}}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("secondary range over a PSA range: %v", err)
+	}
+	sn, _ := c.Subnetworks.Get(proj, "us-central1", "nodes").Do()
+	sn.SecondaryIpRanges = append(sn.SecondaryIpRanges, &computev1.SubnetworkSecondaryRange{RangeName: "more", IpCidrRange: "10.127.248.0/22"})
+	if _, err := c.Subnetworks.Patch(proj, "us-central1", "nodes", sn).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("patching in a secondary range over a PSA range: %v", err)
+	}
+	if _, err := c.GlobalAddresses.Insert(proj, &computev1.Address{Name: "psa3", AddressType: "INTERNAL", Purpose: "VPC_PEERING", Address: "10.0.0.0", PrefixLength: 20, Network: "global/networks/vpc"}).Do(); code(err) != http.StatusBadRequest {
+		t.Fatalf("requested PSA range over a subnetwork: %v", err)
+	}
+}
+
 func TestServiceNetworking(t *testing.T) {
 	inst, c, sn := newClients(t)
 	customNet(t, c, "vpc")
