@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"
@@ -98,9 +99,10 @@ type PolicyEvaluator interface {
 }
 
 // PolicyAuthorizer implements Authorizer using pluggable authenticator and
-// evaluator, applying the configured mode.
+// evaluator, applying the configured mode. The mode starts as configured
+// and can be switched while the Instance runs (SetMode).
 type PolicyAuthorizer struct {
-	mode  string
+	mode  atomic.Value // string
 	log   *slog.Logger
 	authn Authenticator
 	eval  PolicyEvaluator
@@ -109,7 +111,9 @@ type PolicyAuthorizer struct {
 // NewPolicyAuthorizer returns an authorizer that allows everything until an
 // evaluator is installed.
 func NewPolicyAuthorizer(mode string, log *slog.Logger) *PolicyAuthorizer {
-	return &PolicyAuthorizer{mode: mode, log: log}
+	a := &PolicyAuthorizer{log: log}
+	a.mode.Store(mode)
+	return a
 }
 
 // Install sets the authenticator and evaluator (called by the IAM service).
@@ -117,7 +121,10 @@ func (a *PolicyAuthorizer) Install(authn Authenticator, eval PolicyEvaluator) {
 	a.authn, a.eval = authn, eval
 }
 
-func (a *PolicyAuthorizer) Mode() string { return a.mode }
+func (a *PolicyAuthorizer) Mode() string { return a.mode.Load().(string) }
+
+// SetMode switches the enforcement mode; later checks apply it.
+func (a *PolicyAuthorizer) SetMode(mode string) { a.mode.Store(mode) }
 
 func (a *PolicyAuthorizer) Authenticate(ctx context.Context, token string) (Principal, bool) {
 	if a.authn == nil {
@@ -128,14 +135,15 @@ func (a *PolicyAuthorizer) Authenticate(ctx context.Context, token string) (Prin
 
 func (a *PolicyAuthorizer) Check(ctx context.Context, permission, resource string) error {
 	NoteResource(ctx, resource)
-	if a.mode == config.IAMOff || a.eval == nil {
+	mode := a.Mode()
+	if mode == config.IAMOff || a.eval == nil {
 		return nil
 	}
 	p := PrincipalFrom(ctx)
 	if a.eval.Allowed(ctx, p, permission, resource) {
 		return nil
 	}
-	if a.mode == config.IAMAudit {
+	if mode == config.IAMAudit {
 		a.log.Warn("iam audit: would deny", "principal", string(p), "permission", permission, "resource", resource)
 		return nil
 	}

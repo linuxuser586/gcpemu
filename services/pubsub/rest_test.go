@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -145,4 +146,52 @@ func TestREST(t *testing.T) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// TestTestIamPermissionsAudit: testIamPermissions reports the permissions
+// the caller's roles grant, not what audit mode would let through, as the
+// Web console's policy simulator relies on.
+func TestTestIamPermissionsAudit(t *testing.T) {
+	inst := emutest.Start(t, []string{"pubsub"})
+	api := inst.GatewayURL() + "/pubsub/v1/projects/test-project/topics/sim-topic"
+	restCall(t, http.MethodPut, api, map[string]any{}, 200)
+	restCall(t, http.MethodPost, api+":setIamPolicy", map[string]any{
+		"policy": map[string]any{"bindings": []any{
+			map[string]any{"role": "roles/pubsub.publisher", "members": []string{"user:pub@example.com"}},
+		}},
+	}, 200)
+	held := func(principal string) []any {
+		t.Helper()
+		resp, err := http.PostForm(inst.GatewayURL()+"/oauth2/token", url.Values{
+			"grant_type": {"refresh_token"}, "refresh_token": {principal},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tok struct {
+			AccessToken string `json:"access_token"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&tok)
+		resp.Body.Close()
+		b, _ := json.Marshal(map[string]any{"permissions": []string{"pubsub.topics.publish", "pubsub.topics.delete"}})
+		req, _ := http.NewRequest(http.MethodPost, api+":testIamPermissions", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Permissions []any `json:"permissions"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return out.Permissions
+	}
+	if got := held("user:pub@example.com"); len(got) != 1 || got[0] != "pubsub.topics.publish" {
+		t.Errorf("publisher holds %v, want [pubsub.topics.publish]", got)
+	}
+	if got := held("user:nobody@example.com"); len(got) != 0 {
+		t.Errorf("a user without roles holds %v, want none", got)
+	}
 }

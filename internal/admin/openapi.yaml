@@ -64,6 +64,36 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Info" }
+  /_emu/v1/iam/enforcement:
+    get:
+      summary: The IAM enforcement level now in effect (FR-IAM-004).
+      operationId: iamEnforcement
+      responses:
+        "200":
+          description: The enforcement level.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IamEnforcement" }
+    put:
+      summary: Switch the IAM enforcement level until the Instance stops (Web console IAM view).
+      operationId: setIamEnforcement
+      description: >-
+        Later calls are checked at the new level; `--iam-mode` sets it again
+        at the next start. As at startup, `off` is refused while the gateway
+        is bound beyond loopback unless the Instance was started with
+        `--i-understand-this-is-insecure`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IamEnforcement" }
+      responses:
+        "200":
+          description: The enforcement level now in effect.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IamEnforcement" }
+        "400": { $ref: "#/components/responses/Error" }
   /_emu/v1/endpoints:
     get:
       summary: Listener addresses by endpoint name (as in endpoints.json).
@@ -575,6 +605,11 @@ components:
             properties:
               error: { type: string }
   schemas:
+    IamEnforcement:
+      type: object
+      required: [level]
+      properties:
+        level: { type: string, enum: ["off", audit, enforce] }
     Info:
       type: object
       required: [instance, id, pid, version, dir, ephemeral, iamMode, strictProjects, console, services, endpoints, runtime]

@@ -61,6 +61,31 @@ import { LbLayout } from '@/features/lb/LbLayout'
 import { CreateResource, EditResource } from '@/features/lb/ResourceForm'
 import { ResourcePage } from '@/features/lb/ResourcePage'
 import { Resources } from '@/features/lb/Resources'
+import {
+  customRoleQuery,
+  customRolesQuery,
+  keysQuery,
+  permissionsQuery,
+  policyQuery,
+  predefinedRoleQuery,
+  predefinedRolesQuery,
+  serviceAccountQuery,
+  serviceAccountsQuery,
+} from '@/features/iam/api'
+import { IamLayout } from '@/features/iam/IamLayout'
+import { Policies } from '@/features/iam/Policies'
+import { CreateRole, EditRole } from '@/features/iam/RoleForm'
+import { CustomRolePage, PredefinedRolePage } from '@/features/iam/RolePage'
+import { Roles } from '@/features/iam/Roles'
+import { CreateServiceAccount, EditServiceAccount } from '@/features/iam/ServiceAccountForm'
+import {
+  AccountDetails,
+  AccountPermissions,
+  Keys,
+  ServiceAccountPage,
+} from '@/features/iam/ServiceAccountPage'
+import { ServiceAccounts } from '@/features/iam/ServiceAccounts'
+import { Simulator } from '@/features/iam/Simulator'
 import { Operations } from '@/features/operations/Operations'
 import {
   statsQuery,
@@ -140,6 +165,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           },
         },
         {
+          path: 'iam',
+          element: <IamLayout />,
+          children: iamRoutes(queryClient),
+        },
+        {
           path: 'ar',
           element: <ArLayout />,
           children: arRoutes(queryClient),
@@ -193,6 +223,103 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           },
         },
       ],
+    },
+  ]
+}
+
+// The IAM view (SRS 4.8.3). /iam is the policy of the Project, or of the
+// resource in ?kind= and ?name=; service accounts and custom roles follow
+// the API's names (by email and role ID), with the Project in ?project=;
+// a predefined role roles/ID is /iam/roles/ID. Create pages are not under
+// serviceAccounts/ and roles/, so that no name is shadowed.
+function iamRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const account: RouteObject['loader'] = ({ request, params }) => {
+    const project = projectOf(request)
+    return project
+      ? warm(queryClient.ensureQueryData(serviceAccountQuery(project, params.email ?? '')))
+      : null
+  }
+  return [
+    {
+      index: true,
+      element: <Policies />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        const kind = new URL(request.url).searchParams.get('kind')
+        return project && !kind
+          ? warm(
+              queryClient.ensureQueryData(policyQuery({ project, kind: 'project', name: '' })),
+              queryClient.ensureQueryData(predefinedRolesQuery()),
+            )
+          : null
+      },
+    },
+    {
+      path: 'serviceAccounts',
+      element: <ServiceAccounts />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(serviceAccountsQuery(project))) : null
+      },
+    },
+    { path: 'create-service-account', element: <CreateServiceAccount /> },
+    { path: 'serviceAccounts/:email/edit', element: <EditServiceAccount />, loader: account },
+    {
+      path: 'serviceAccounts/:email',
+      element: <ServiceAccountPage />,
+      loader: account,
+      children: [
+        { index: true, element: <AccountDetails /> },
+        {
+          path: 'keys',
+          element: <Keys />,
+          loader: ({ request, params }) => {
+            const project = projectOf(request)
+            return project
+              ? warm(queryClient.ensureQueryData(keysQuery(project, params.email ?? '')))
+              : null
+          },
+        },
+        { path: 'permissions', element: <AccountPermissions /> },
+      ],
+    },
+    {
+      path: 'roles',
+      element: <Roles />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return warm(
+          queryClient.ensureQueryData(predefinedRolesQuery()),
+          ...(project ? [queryClient.ensureQueryData(customRolesQuery(project))] : []),
+        )
+      },
+    },
+    { path: 'create-role', element: <CreateRole /> },
+    {
+      path: 'roles/:role',
+      element: <PredefinedRolePage />,
+      loader: ({ params }) =>
+        warm(queryClient.ensureQueryData(predefinedRoleQuery(params.role ?? ''))),
+    },
+    {
+      path: 'customRoles/:role',
+      element: <CustomRolePage />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(queryClient.ensureQueryData(customRoleQuery(project, params.role ?? '')))
+          : null
+      },
+    },
+    { path: 'customRoles/:role/edit', element: <EditRole /> },
+    {
+      path: 'simulator',
+      element: <Simulator />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(permissionsQuery(project))) : null
+      },
     },
   ]
 }
