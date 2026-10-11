@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -424,6 +425,49 @@ func TestConsole(t *testing.T) {
 			getJSON(t, base+"/_emu/v1/resources/counts", &counts)
 			if counts["dns"]["managedZones"] != 2 {
 				t.Errorf("counts = %v", counts)
+			}
+		})
+	}
+}
+
+// TestEnforcementBeyondLoopback: PUT /_emu/v1/iam/enforcement does not
+// turn IAM off on a gateway bound beyond loopback without
+// --i-understand-this-is-insecure, as startup does not.
+func TestEnforcementBeyondLoopback(t *testing.T) {
+	for _, insecure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("insecure=%v", insecure), func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.Ephemeral = true
+			cfg.DataDir = t.TempDir()
+			cfg.Services = []string{"dns"}
+			cfg.Ports["gateway"] = 0
+			cfg.Bind = "0.0.0.0"
+			cfg.Insecure = insecure
+			cfg.LogFormat = "text"
+			var log syncBuffer
+			in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if err := in.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer in.Shutdown(ctx)
+			_, port, _ := net.SplitHostPort(in.Env.Endpoints.Get("gateway"))
+			req, _ := http.NewRequest(http.MethodPut, "http://127.0.0.1:"+port+"/_emu/v1/iam/enforcement", strings.NewReader(`{"level":"off"}`))
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			want, mode := http.StatusBadRequest, config.IAMAudit
+			if insecure {
+				want, mode = http.StatusOK, config.IAMOff
+			}
+			if resp.StatusCode != want || in.Env.Auth.Mode() != mode {
+				t.Errorf("PUT off: %d %s, mode %s; want %d, mode %s", resp.StatusCode, b, in.Env.Auth.Mode(), want, mode)
 			}
 		})
 	}

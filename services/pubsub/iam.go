@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -178,16 +179,34 @@ func (s *Service) testIamPermissions(ctx context.Context, req *iampb.TestIamPerm
 	if _, err := s.iamResource(req.GetResource()); err != nil {
 		return nil, err
 	}
-	out := &iampb.TestIamPermissionsResponse{}
 	for _, p := range req.GetPermissions() {
 		if !strings.HasPrefix(p, "pubsub.") {
 			return nil, apierr.InvalidArgument("Invalid permission: %s", p)
 		}
-		if err := s.env.Auth.Check(ctx, p, fullName(req.GetResource())); err == nil {
-			out.Permissions = append(out.Permissions, p)
+	}
+	return &iampb.TestIamPermissionsResponse{Permissions: s.testPermissions(ctx, fullName(req.GetResource()), req.GetPermissions())}, nil
+}
+
+// testPermissions returns the permissions the caller holds on resource by
+// evaluating policies, whatever the enforcement mode (except off, which
+// allows everything); Auth.Check alone would report every permission as
+// held in audit mode.
+func (s *Service) testPermissions(ctx context.Context, resource string, perms []string) []string {
+	if s.env.Auth.Mode() == config.IAMOff {
+		return perms
+	}
+	if svc, ok := s.env.Lookup("iam"); ok {
+		if pt, ok := svc.(emu.IAMPermissionTester); ok {
+			return pt.TestPermissions(ctx, resource, perms)
 		}
 	}
-	return out, nil
+	var out []string
+	for _, p := range perms {
+		if s.env.Auth.Check(ctx, p, resource) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func emptyPolicy() *iampb.Policy { return &iampb.Policy{Version: 1, Etag: []byte("\x00\x20\x01")} }

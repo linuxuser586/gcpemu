@@ -188,6 +188,10 @@ func (s *Service) refreshGrant(w http.ResponseWriter, form url.Values) {
 		return
 	}
 	p := s.refreshPrincipal(rt)
+	if email, isSA := strings.CutPrefix(string(p), "serviceAccount:"); isSA && s.accountDisabled(email) {
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "service account "+email+" is disabled")
+		return
+	}
 	scopes := strings.Fields(form.Get("scope"))
 	if len(scopes) == 0 {
 		scopes = []string{cloudPlatformScope, "openid", "https://www.googleapis.com/auth/userinfo.email"}

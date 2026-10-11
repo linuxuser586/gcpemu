@@ -6,7 +6,6 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
 import { errorMessage } from '@/api/errors'
-import { gcpFetch } from '@/api/fetch'
 import { infoQuery } from '@/api/queries'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { Button } from '@/components/ui/button'
@@ -23,6 +22,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
 
+import { serviceAccountsQuery } from '../iam/api'
 import { MAX_EXPIRY_SECONDS, SIGNED_METHODS, signedUrl } from './signedUrl'
 
 const schema = z.object({
@@ -40,18 +40,6 @@ const schema = z.object({
 })
 type Values = z.infer<typeof schema>
 
-/** serviceAccountsQuery lists a Project's service accounts to sign with. */
-const serviceAccountsQuery = (project: string, enabled: boolean) => ({
-  queryKey: ['iam', 'serviceAccounts', project],
-  queryFn: async () =>
-    (
-      await gcpFetch<{ accounts?: { email: string }[] }>(
-        `/iam/v1/projects/${encodeURIComponent(project)}/serviceAccounts`,
-      )
-    ).accounts ?? [],
-  enabled,
-})
-
 /**
  * SignedUrlDialog generates a V4 signed URL for one object (FR-GCS-006),
  * signed through IAM Credentials signBlob by a service account. Signing
@@ -63,7 +51,10 @@ export function SignedUrlDialog({ bucket, object }: { bucket: string; object: st
   const [view] = useViewState()
   const { data: info } = useQuery(infoQuery())
   const iam = info?.services.includes('iam') ?? false
-  const accounts = useQuery(serviceAccountsQuery(view.project ?? '', open && iam && !!view.project))
+  const accounts = useQuery({
+    ...serviceAccountsQuery(view.project ?? ''),
+    enabled: open && iam && !!view.project,
+  })
   const id = useId()
   const form = useForm<Values>({
     resolver: zodResolver(schema),

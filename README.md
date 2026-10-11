@@ -75,6 +75,12 @@ the record set in one change), and deleting a zone first deletes its record sets
 Its query box asks `GET /_emu/v1/dns/query?name=N&type=T[&network=projects/P/global/networks/V]`,
 which sends the query to the Instance's DNS server, from the host or as a client on that VPC
 network, so private zones answer only on the networks they are bound to.
+Its IAM view edits the policy of a Project, service account, bucket, topic, subscription, AR
+repository, secret, subnetwork or TLS policy through that resource's own `setIamPolicy`, carrying
+the etag it read. Its policy simulator gets a token for the chosen Principal from the OAuth2
+refresh token grant (the emulator takes `user:EMAIL` or `serviceAccount:EMAIL` as the refresh
+token), calls the resource's `testIamPermissions` with it and revokes it. The IAM enforcement
+level is switched with `PUT /_emu/v1/iam/enforcement` until the Instance stops.
 
 ### Endpoints
 
@@ -159,7 +165,8 @@ test without changing the host, use `curl --resolve storage.googleapis.com:443:<
 ### Configuration
 
 Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. `CI=true` implies `--ephemeral`,
-JSON logs and no Web console. IAM runs in `audit` mode by default (`--iam-mode off|audit|enforce`).
+JSON logs and no Web console. IAM runs in `audit` mode by default (`--iam-mode off|audit|enforce`);
+`PUT /_emu/v1/iam/enforcement` with `{"level":"enforce"}` switches it while the Instance runs.
 
 ### Seed files
 

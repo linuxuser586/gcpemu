@@ -2,11 +2,13 @@ package instance
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/admin"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 )
@@ -50,7 +52,7 @@ func newAdmin(in *Instance) http.Handler {
 			"version":        Version,
 			"dir":            in.Dir,
 			"ephemeral":      in.Config.Ephemeral,
-			"iamMode":        in.Config.IAMMode,
+			"iamMode":        in.Env.Auth.Mode(),
 			"strictProjects": in.Config.StrictProjects,
 			"console":        in.consoleServed,
 			"services":       names,
@@ -58,6 +60,10 @@ func newAdmin(in *Instance) http.Handler {
 			"runtime":        in.RuntimeStatus(r.Context()),
 		})
 	})
+	mux.HandleFunc("GET /_emu/v1/iam/enforcement", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, enforcement{Level: in.Env.Auth.Mode()})
+	})
+	mux.HandleFunc("PUT /_emu/v1/iam/enforcement", in.setEnforcement)
 	mux.HandleFunc("GET /_emu/v1/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, in.Env.Endpoints.All())
 	})
@@ -171,6 +177,43 @@ func newAdmin(in *Instance) http.Handler {
 		in.RequestShutdown()
 	})
 	return mux
+}
+
+// enforcement is the body of /_emu/v1/iam/enforcement.
+type enforcement struct {
+	Level string `json:"level"`
+}
+
+// setEnforcement is PUT /_emu/v1/iam/enforcement (FR-IAM-004, SRS 4.8.3):
+// it switches the IAM enforcement level until the Instance stops. As at
+// startup, a gateway bound beyond loopback is not left without IAM unless
+// --i-understand-this-is-insecure was given.
+func (in *Instance) setEnforcement(w http.ResponseWriter, r *http.Request) {
+	var req enforcement
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	switch req.Level {
+	case config.IAMOff, config.IAMAudit, config.IAMEnforce:
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid IAM enforcement level %q (want off, audit or enforce)", req.Level)})
+		return
+	}
+	if req.Level == config.IAMOff && !config.IsLoopback(in.Config.Bind) && !in.Config.Insecure {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("refusing to turn IAM off with the gateway bound to %s; start with --i-understand-this-is-insecure", in.Config.Bind)})
+		return
+	}
+	setter, ok := in.Env.Auth.(interface{ SetMode(string) })
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the IAM enforcement level cannot be changed"})
+		return
+	}
+	if was := in.Env.Auth.Mode(); was != req.Level {
+		setter.SetMode(req.Level)
+		in.Env.Log.Info("IAM enforcement level changed", "from", was, "to", req.Level)
+	}
+	writeJSON(w, http.StatusOK, enforcement{Level: in.Env.Auth.Mode()})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
