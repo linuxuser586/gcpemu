@@ -521,6 +521,40 @@ sleep 1; done`
 			t.Errorf("tokeninfo = %s", b)
 		}
 	}
+
+	// #134: a new pod's first request is answered even before the API
+	// server knows the pod's IP. Each Job fetches a token at once and has
+	// no retries, so any 404 fails it.
+	jobs := []string{"wi-job-1", "wi-job-2", "wi-job-3"}
+	for _, name := range jobs {
+		e.mustKube("POST", "/apis/batch/v1/namespaces/default/jobs", map[string]any{
+			"apiVersion": "batch/v1", "kind": "Job",
+			"metadata": map[string]any{"name": name},
+			"spec": map[string]any{
+				"backoffLimit": 0,
+				"template": map[string]any{"spec": map[string]any{
+					"serviceAccountName": "app", "restartPolicy": "Never",
+					"containers": []map[string]any{{
+						"name": "c", "image": testImage, "imagePullPolicy": "IfNotPresent",
+						"command": []string{"wget", "-q", "-O", "-", "--header", "Metadata-Flavor: Google",
+							"http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"},
+					}},
+				}},
+			},
+		}, nil)
+	}
+	for _, name := range jobs {
+		var job struct {
+			Status struct{ Succeeded, Failed int }
+		}
+		eventually(t, 60*time.Second, name+" done", func() bool {
+			e.mustKube("GET", "/apis/batch/v1/namespaces/default/jobs/"+name, nil, &job)
+			return job.Status.Succeeded+job.Status.Failed > 0
+		})
+		if job.Status.Succeeded != 1 {
+			t.Errorf("Job %s fetching a token at start failed", name)
+		}
+	}
 }
 
 // testPrivateDNS is FR-DNS-004 / FR-INT-005: pods resolve Cloud DNS
