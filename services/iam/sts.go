@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -28,7 +29,9 @@ import (
 )
 
 // Workload Identity Federation (FR-IAM-009): workload identity pools and
-// OIDC providers (iam v1) and the STS token exchange.
+// OIDC, AWS and SAML providers (iam v1) and the STS token exchange, which
+// only OIDC providers support (verifying an AWS credential means calling
+// AWS STS).
 
 const (
 	nsPools     = "iam/wipools"      // pool name → iamv1.WorkloadIdentityPool
@@ -97,13 +100,10 @@ func (s *Service) routeWorkloadIdentity(w http.ResponseWriter, r *http.Request, 
 			if err := readJSON(r, &in); err != nil {
 				return err
 			}
-			if in.Oidc == nil {
-				return apierr.Unimplemented("Only OIDC providers are supported by the emulator.")
+			if err := validateProvider(&in); err != nil {
+				return err
 			}
-			if in.Oidc.IssuerUri == "" {
-				return apierr.InvalidArgument("oidc.issuerUri is required.")
-			}
-			if in.AttributeMapping == nil {
+			if in.Oidc != nil && in.AttributeMapping == nil {
 				in.AttributeMapping = map[string]string{"google.subject": "assertion.sub"}
 			}
 			if err := validateMapping(&in); err != nil {
@@ -258,6 +258,9 @@ func (s *Service) wifItem(w http.ResponseWriter, r *http.Request, ctx context.Co
 	if ns == nsProviders {
 		var p iamv1.WorkloadIdentityPoolProvider
 		if err := json.Unmarshal(b, &p); err == nil {
+			if err := validateProvider(&p); err != nil {
+				return err
+			}
 			if err := validateMapping(&p); err != nil {
 				return err
 			}
@@ -271,8 +274,69 @@ func (s *Service) wifItem(w http.ResponseWriter, r *http.Request, ctx context.Co
 	return nil
 }
 
+var awsAccountRE = regexp.MustCompile(`^[0-9]{12}$`)
+
+// validateProvider checks that p configures exactly one identity
+// provider: oidc, aws or saml (x509 is not emulated).
+func validateProvider(p *iamv1.WorkloadIdentityPoolProvider) error {
+	if p.X509 != nil {
+		return apierr.Unimplemented("X.509 providers are not supported by the emulator.")
+	}
+	n := 0
+	for _, set := range []bool{p.Oidc != nil, p.Aws != nil, p.Saml != nil} {
+		if set {
+			n++
+		}
+	}
+	if n != 1 {
+		return apierr.InvalidArgument("Exactly one of oidc, aws or saml must be set.")
+	}
+	switch {
+	case p.Oidc != nil && p.Oidc.IssuerUri == "":
+		return apierr.InvalidArgument("oidc.issuerUri is required.")
+	case p.Aws != nil && !awsAccountRE.MatchString(p.Aws.AccountId):
+		return apierr.InvalidArgument("aws.accountId must be a 12-digit AWS account ID.")
+	case p.Saml != nil:
+		return validateIdPMetadata(p.Saml.IdpMetadataXml)
+	}
+	return nil
+}
+
+// validateIdPMetadata checks that x is SAML 2.0 metadata of an identity
+// provider: an EntityDescriptor with an IDPSSODescriptor.
+func validateIdPMetadata(x string) error {
+	invalid := apierr.InvalidArgument("saml.idpMetadataXml must be the SAML 2.0 metadata of an identity provider.")
+	d := xml.NewDecoder(strings.NewReader(x))
+	root, idp := false, false
+	for {
+		tok, err := d.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return invalid
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if !root {
+				if se.Name.Local != "EntityDescriptor" {
+					return invalid
+				}
+				root = true
+			}
+			idp = idp || se.Name.Local == "IDPSSODescriptor"
+		}
+	}
+	if !idp {
+		return invalid
+	}
+	return nil
+}
+
+// validateMapping checks the attribute mapping and condition. Only an AWS
+// provider may omit the mapping: GCP then applies its AWS default when a
+// credential is exchanged.
 func validateMapping(p *iamv1.WorkloadIdentityPoolProvider) error {
-	if _, ok := p.AttributeMapping["google.subject"]; !ok {
+	if _, ok := p.AttributeMapping["google.subject"]; !ok && (p.Aws == nil || len(p.AttributeMapping) > 0) {
 		return apierr.InvalidArgument("attributeMapping must contain google.subject.")
 	}
 	for k, expr := range p.AttributeMapping {
@@ -328,6 +392,9 @@ func (s *Service) tokenExchange(w http.ResponseWriter, form url.Values) {
 	}
 	switch form.Get("subject_token_type") {
 	case "urn:ietf:params:oauth:token-type:jwt", "urn:ietf:params:oauth:token-type:id_token":
+	case "urn:ietf:params:aws:token-type:aws4_request", "urn:ietf:params:oauth:token-type:saml2":
+		oauthError(w, http.StatusBadRequest, "invalid_request", "Exchanging AWS or SAML credentials is not emulated; federate through an OIDC provider.")
+		return
 	default:
 		oauthError(w, http.StatusBadRequest, "invalid_request", "Unsupported subject_token_type: "+form.Get("subject_token_type"))
 		return
@@ -382,6 +449,9 @@ func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[st
 	}
 	if prov.State != "ACTIVE" || prov.Disabled || pool.State != "ACTIVE" || pool.Disabled {
 		return "", nil, "", errors.New("the workload identity pool or provider is disabled or deleted")
+	}
+	if prov.Oidc == nil {
+		return "", nil, "", errors.New("the provider is not an OIDC provider; exchanging AWS or SAML credentials is not emulated")
 	}
 	claims := jwt.MapClaims{}
 	_, err = jwt.ParseWithClaims(subjectToken, claims, func(t *jwt.Token) (any, error) {
