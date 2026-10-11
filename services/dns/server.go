@@ -90,10 +90,12 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	} else {
 		resp.Compress = true
 	}
+	// Log before replying, so a client that has its answer finds the
+	// query in the request log.
+	s.logQuery(w, req, resp, network, start)
 	if err := w.WriteMsg(resp); err != nil {
 		s.env.Log.Debug("dns write", "err", err)
 	}
-	s.logQuery(w, req, resp, network, start)
 }
 
 // logQuery adds a query to the request log (FR-CORE-061): the answering

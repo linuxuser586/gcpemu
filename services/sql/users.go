@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -17,7 +18,9 @@ import (
 // cloudsqliamuser / cloudsqliamserviceaccount, and authenticate through
 // the agent with an access token (or the connector's ephemeral
 // certificate). A service account's database user name is its email
-// without ".gserviceaccount.com".
+// without ".gserviceaccount.com". A user's databaseRoles are roles it is
+// granted; cloudsqlsuperuser among them also gives CREATEDB/CREATEROLE,
+// which don't inherit through membership.
 
 func newUser(project, inst, name, typ string) *sqladmin.User {
 	u := &sqladmin.User{Kind: "sql#user", Name: name, Instance: inst, Project: project}
@@ -95,6 +98,56 @@ func createRoleSQL(u *sqladmin.User, password string) string {
 	return q + ";\nGRANT cloudsqlsuperuser TO " + id + ";\n"
 }
 
+// validateRoles checks a user's databaseRoles.
+func validateRoles(roles []string) error {
+	for _, r := range roles {
+		switch {
+		case r == "":
+			return errInvalid("Database role name is required.")
+		case r == "cloudsqladmin":
+			return errInvalid("Database role (%s) is reserved.", r)
+		}
+	}
+	return nil
+}
+
+// dedupe returns roles without repeats, in order.
+func dedupe(roles []string) []string {
+	var out []string
+	for _, r := range roles {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// rolesSQL returns the SQL granting u the roles in add and revoking those
+// in revoke. A BUILT_IN user is always a member of cloudsqlsuperuser.
+func rolesSQL(u *sqladmin.User, add, revoke []string) string {
+	id := quoteIdent(u.Name)
+	var b strings.Builder
+	for _, r := range add {
+		if r == "cloudsqlsuperuser" {
+			if u.Type == "" {
+				continue
+			}
+			b.WriteString("ALTER ROLE " + id + " WITH CREATEDB CREATEROLE;\n")
+		}
+		b.WriteString("GRANT " + quoteIdent(r) + " TO " + id + ";\n")
+	}
+	for _, r := range revoke {
+		if r == "cloudsqlsuperuser" {
+			if u.Type == "" {
+				continue
+			}
+			b.WriteString("ALTER ROLE " + id + " WITH NOCREATEDB NOCREATEROLE;\n")
+		}
+		b.WriteString("REVOKE " + quoteIdent(r) + " FROM " + id + ";\n")
+	}
+	return b.String()
+}
+
 func (s *Service) insertUser(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.instanceFor(r, "cloudsql.users.create")
 	if err != nil {
@@ -110,6 +163,10 @@ func (s *Service) insertUser(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
+	if err := validateRoles(u.DatabaseRoles); err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	if err := requireRunnable(rec); err != nil {
 		apierr.Write(w, err)
 		return
@@ -121,6 +178,8 @@ func (s *Service) insertUser(w http.ResponseWriter, r *http.Request) {
 	}
 	typ := orDefault(u.Type, "BUILT_IN")
 	ur := &userRecord{User: newUser(project, inst, u.Name, typ), Password: u.Password}
+	ur.User.DatabaseRoles = dedupe(u.DatabaseRoles)
+	ur.User.Etag = etagOf(ur.User)
 	op := s.newOp(r.Context(), project, inst, "CREATE_USER")
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
 		return s.createUser(ctx, project, inst, ur)
@@ -129,7 +188,8 @@ func (s *Service) insertUser(w http.ResponseWriter, r *http.Request) {
 
 // createUser creates the role and records the user.
 func (s *Service) createUser(ctx context.Context, project, inst string, ur *userRecord) error {
-	if _, err := s.execSQL(ctx, project, inst, "postgres", "", createRoleSQL(ur.User, ur.Password)); err != nil {
+	q := createRoleSQL(ur.User, ur.Password) + rolesSQL(ur.User, ur.User.DatabaseRoles, nil)
+	if _, err := s.execSQL(ctx, project, inst, "postgres", "", q); err != nil {
 		return err
 	}
 	return s.env.Store.Update(func(tx store.Tx) error {
@@ -180,10 +240,18 @@ func (s *Service) updateUser(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	name := r.URL.Query().Get("name")
+	query := r.URL.Query()
+	name := query.Get("name")
 	if name == "" {
 		name = body.Name
 	}
+	// Roles come from the query; the body's databaseRoles are ignored.
+	roles := dedupe(query["databaseRoles"])
+	if err := validateRoles(roles); err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	revokeExisting := query.Get("revokeExistingRoles") == "true"
 	project, inst := rec.Instance.Project, rec.Instance.Name
 	ur, ok := s.findUser(project, inst, name)
 	if !ok {
@@ -203,8 +271,38 @@ func (s *Service) updateUser(w http.ResponseWriter, r *http.Request) {
 		if ur.User.Type == "" {
 			password = body.Password
 		}
+		if err := s.updateRoles(ctx, project, inst, ur.User, roles, revokeExisting); err != nil {
+			return err
+		}
 		return s.saveUser(ctx, project, inst, ur, password)
 	}))
+}
+
+// updateRoles grants u the roles it lacks and, with revokeExisting,
+// revokes those it has outside roles.
+func (s *Service) updateRoles(ctx context.Context, project, inst string, u *sqladmin.User, roles []string, revokeExisting bool) error {
+	var add, revoke []string
+	for _, r := range roles {
+		if !slices.Contains(u.DatabaseRoles, r) {
+			add = append(add, r)
+		}
+	}
+	keep := slices.Concat(u.DatabaseRoles, add)
+	if revokeExisting {
+		keep = roles
+		for _, r := range u.DatabaseRoles {
+			if !slices.Contains(roles, r) {
+				revoke = append(revoke, r)
+			}
+		}
+	}
+	if q := rolesSQL(u, add, revoke); q != "" {
+		if _, err := s.execSQL(ctx, project, inst, "postgres", "", q); err != nil {
+			return err
+		}
+	}
+	u.DatabaseRoles = keep
+	return nil
 }
 
 // saveUser stores ur, first setting a built-in user's password in

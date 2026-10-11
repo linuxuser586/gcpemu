@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -192,6 +193,107 @@ func TestConnectivityAndIAM(t *testing.T) {
 	}
 	if _, err := connect(ctx, ip, 5432, "alice@example.com", saTok.AccessToken, "postgres"); err == nil {
 		t.Fatal("a service account's token accepted for a user")
+	}
+}
+
+// TestIAMUserDatabaseRoles is issue #133: an IAM service-account user
+// with databaseRoles [cloudsqlsuperuser] is a member of it and has
+// CREATEROLE and CREATEDB, so through the connector it can create roles
+// and hand them databases; an update revoking the role takes them away.
+func TestIAMUserDatabaseRoles(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithIAMMode("enforce"))
+	svc := adminClient(t, inst)
+	ctx := context.Background()
+
+	in := createInstance(t, svc, &sqladmin.DatabaseInstance{
+		Name:            "roles",
+		DatabaseVersion: "POSTGRES_18",
+		RootPassword:    "rootpw",
+		Settings: &sqladmin.Settings{
+			IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true},
+			DatabaseFlags:   []*sqladmin.DatabaseFlags{{Name: "cloudsql.iam_authentication", Value: "on"}},
+		},
+	})
+	waitOp(t, svc, must(svc.Databases.Insert(testProject, "roles", &sqladmin.Database{Name: "app"}).Do()))
+
+	const sa = "db-admin@" + testProject + ".iam.gserviceaccount.com"
+	saUser := strings.TrimSuffix(sa, ".gserviceaccount.com")
+	iamSvc, err := iamv1.NewService(ctx, option.WithEndpoint(inst.GatewayURL()+"/iam/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := iamSvc.Projects.ServiceAccounts.Create("projects/"+testProject, &iamv1.CreateServiceAccountRequest{AccountId: "db-admin"}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	grantProjectRole(t, inst, "roles/cloudsql.instanceUser", "serviceAccount:"+sa)
+	if _, err := svc.Users.Insert(testProject, "roles", &sqladmin.User{Name: saUser, Type: "CLOUD_IAM_SERVICE_ACCOUNT", DatabaseRoles: []string{""}}).Do(); err == nil {
+		t.Fatal("empty database role accepted")
+	}
+	waitOp(t, svc, must(svc.Users.Insert(testProject, "roles", &sqladmin.User{
+		Name: saUser, Type: "CLOUD_IAM_SERVICE_ACCOUNT", DatabaseRoles: []string{"cloudsqlsuperuser"},
+	}).Do()))
+	if got := must(svc.Users.Get(testProject, "roles", saUser).Do()).DatabaseRoles; !slices.Equal(got, []string{"cloudsqlsuperuser"}) {
+		t.Fatalf("users.get databaseRoles = %v", got)
+	}
+	for _, u := range must(svc.Users.List(testProject, "roles").Do()).Items {
+		if u.Name == saUser && !slices.Equal(u.DatabaseRoles, []string{"cloudsqlsuperuser"}) {
+			t.Fatalf("users.list databaseRoles = %v", u.DatabaseRoles)
+		}
+	}
+
+	admin := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "owner", Expiry: time.Now().Add(time.Hour)})
+	d, err := cloudsqlconn.NewDialer(ctx, cloudsqlconn.WithAdminAPIEndpoint(inst.GatewayURL()+"/"),
+		cloudsqlconn.WithIAMAuthN(), cloudsqlconn.WithIAMAuthNTokenSources(admin, oauth2.StaticTokenSource(accessToken(t, inst, "serviceAccount:"+sa))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	dial := func() *pgx.Conn {
+		t.Helper()
+		cfg, err := pgx.ParseConfig(fmt.Sprintf("user=%s dbname=postgres sslmode=disable", saUser))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) { return d.Dial(ctx, in.ConnectionName) }
+		c, err := pgx.ConnectConfig(ctx, cfg)
+		if err != nil {
+			t.Fatalf("connector dial: %v", err)
+		}
+		return c
+	}
+	c := dial()
+	for _, q := range []string{
+		"CREATE ROLE app_owner NOLOGIN",
+		// PostgreSQL 16+: the creator has ADMIN on the role, not SET,
+		// which ALTER ... OWNER TO needs.
+		"GRANT app_owner TO CURRENT_USER",
+		"ALTER DATABASE app OWNER TO app_owner",
+		"CREATE DATABASE scratch",
+	} {
+		if _, err := c.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	c.Close(ctx)
+
+	// Replacing the roles revokes cloudsqlsuperuser and its attributes.
+	waitOp(t, svc, must(svc.Users.Update(testProject, "roles", &sqladmin.User{}).Name(saUser).
+		DatabaseRoles("pg_read_all_data").RevokeExistingRoles(true).Do()))
+	if got := must(svc.Users.Get(testProject, "roles", saUser).Do()).DatabaseRoles; !slices.Equal(got, []string{"pg_read_all_data"}) {
+		t.Fatalf("databaseRoles after update = %v", got)
+	}
+	c = dial()
+	defer c.Close(ctx)
+	var createRole, createDB, super, reader bool
+	if err := c.QueryRow(ctx, `SELECT rolcreaterole, rolcreatedb,
+		pg_has_role(current_user, 'cloudsqlsuperuser', 'MEMBER'), pg_has_role(current_user, 'pg_read_all_data', 'MEMBER')
+		FROM pg_roles WHERE rolname = current_user`).Scan(&createRole, &createDB, &super, &reader); err != nil {
+		t.Fatal(err)
+	}
+	if createRole || createDB || super || !reader {
+		t.Fatalf("after revoke: createrole=%v createdb=%v cloudsqlsuperuser=%v pg_read_all_data=%v", createRole, createDB, super, reader)
 	}
 }
 
