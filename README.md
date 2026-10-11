@@ -36,6 +36,7 @@ bin/gcpemu start --detach --services gcs,pubsub --seed seed.yaml
 eval "$(bin/gcpemu env)"       # STORAGE_EMULATOR_HOST, PUBSUB_EMULATOR_HOST, GCE_METADATA_HOST, …
 bin/gcpemu status
 bin/gcpemu tofu-provider --project my-project   # provider "google" block with custom endpoints
+                                                # (--beta adds a "google-beta" block)
 bin/gcpemu console              # the Web console in the default browser
 bin/gcpemu stop
 ```
@@ -297,9 +298,10 @@ the modules (`lb,dns`). The resource types each module must declare are listed i
 `compat/tofu_test.go`; that list is the supported surface. It needs `tofu` on `PATH` and, for
 Cloud SQL and GKE, a container runtime.
 
-The `gcpemu tofu-provider` block works for `google-beta` as well: rename it to
-`provider "google-beta"` and keep the `/v1/` endpoints, since the emulator also serves the beta
-API versions the provider uses.
+`gcpemu tofu-provider --beta` also prints a `provider "google-beta"` block for modules that use
+`provider = google-beta`. It has the same endpoints, except that container's is
+`/container/v1beta1/`. It is opt-in because a `google-beta` block makes OpenTofu require the
+`hashicorp/google-beta` provider.
 
 Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus a token: for
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
