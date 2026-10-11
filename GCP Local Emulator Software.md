@@ -311,7 +311,7 @@ IAM is the identity backbone every other service calls; enforcement defaults to 
 | FR-GCS-003 | Generations and metagenerations; preconditions `ifGenerationMatch`, `ifGenerationNotMatch`, `ifMetagenerationMatch` and their 412 errors. | M |
 | FR-GCS-004 | Checksums: MD5 and CRC32C computed and validated on upload; returned in headers and metadata. | M |
 | FR-GCS-005 | XML API (S3-compatible subset): GET/PUT/HEAD/DELETE object, list, multipart upload; HMAC keys. | S |
-| FR-GCS-006 | V4 signed URLs and signed POST policies signed by emulator SA keys (or `signBlob`) are verified, including expiry. | M |
+| FR-GCS-006 | V4 signed URLs and signed POST policies signed by emulator SA keys (or `signBlob`) are verified, including expiry. XML API downloads apply the `response-*` header overrides (`response-content-type`, `response-content-disposition`, etc.), after any signature over them is verified. | M |
 | FR-GCS-007 | Pub/Sub notifications (`OBJECT_FINALIZE`, `OBJECT_DELETE`, `OBJECT_ARCHIVE`, `OBJECT_METADATA_UPDATE`) to emulated topics with GCS's payload and attributes. | M |
 | FR-GCS-008 | Lifecycle rules (delete, set storage class) evaluated on a configurable clock with `gcpemu time advance` for tests. | S |
 | FR-GCS-009 | Object ACLs (legacy fine-grained) when uniform access is off. | C |

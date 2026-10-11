@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -248,5 +249,49 @@ func TestBatch(t *testing.T) {
 	code, h, b := do(t, "POST", base+"/batch/storage/v1", strings.NewReader(body), map[string]string{"Content-Type": "multipart/mixed; boundary=B"})
 	if code != 200 || !strings.HasPrefix(h.Get("Content-Type"), "multipart/mixed") || !strings.Contains(string(b), "HTTP/1.1 204") || !strings.Contains(string(b), "HTTP/1.1 404") || !strings.Contains(string(b), "response-1") {
 		t.Errorf("batch = %d %s", code, b)
+	}
+}
+
+func TestXMLResponseOverrides(t *testing.T) {
+	inst := start(t)
+	base := "http://" + inst.Endpoint("gcs")
+	if code, _, b := do(t, "PUT", base+"/overrides", nil, map[string]string{"X-Goog-Project-Id": testProject}); code != 200 {
+		t.Fatalf("create = %d %s", code, b)
+	}
+	if code, _, b := do(t, "PUT", base+"/overrides/a.svg", strings.NewReader("<svg/>"), map[string]string{"Content-Type": "image/svg+xml", "Cache-Control": "no-store"}); code != 200 {
+		t.Fatalf("put = %d %s", code, b)
+	}
+	q := url.Values{
+		"response-content-type":        {"text/plain"},
+		"response-content-disposition": {`attachment; filename="notes.txt"`},
+		"response-cache-control":       {"private, max-age=60"},
+		"response-content-language":    {"en"},
+		"response-expires":             {"Thu, 01 Dec 1994 16:00:00 GMT"},
+	}
+	want := map[string]string{
+		"Content-Type":        "text/plain",
+		"Content-Disposition": `attachment; filename="notes.txt"`,
+		"Cache-Control":       "private, max-age=60",
+		"Content-Language":    "en",
+		"Expires":             "Thu, 01 Dec 1994 16:00:00 GMT",
+	}
+	for _, method := range []string{"GET", "HEAD"} {
+		code, h, b := do(t, method, base+"/overrides/a.svg?"+q.Encode(), nil, nil)
+		if code != 200 {
+			t.Fatalf("%s = %d %s", method, code, b)
+		}
+		for k, v := range want {
+			if h.Get(k) != v {
+				t.Errorf("%s %s = %q, want %q", method, k, h.Get(k), v)
+			}
+		}
+		if method == "GET" && string(b) != "<svg/>" {
+			t.Errorf("GET body = %q", b)
+		}
+	}
+	// Without overrides the stored metadata is served.
+	code, h, _ := do(t, "GET", base+"/overrides/a.svg", nil, nil)
+	if code != 200 || h.Get("Content-Type") != "image/svg+xml" || h.Get("Cache-Control") != "no-store" || h.Get("Content-Disposition") != "" {
+		t.Errorf("plain get = %d %v", code, h)
 	}
 }

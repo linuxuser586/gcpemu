@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,7 @@ func (s *Service) downloadJSON(w http.ResponseWriter, r *http.Request, bucket, n
 		apierr.Write(w, err)
 		return
 	}
-	if err := s.serveMedia(w, r, rec); err != nil {
+	if err := s.serveMedia(w, r, rec, nil); err != nil {
 		apierr.Write(w, err)
 	}
 }
@@ -83,6 +84,29 @@ func setObjectHeaders(h http.Header, o *storage.Object) {
 	for k, v := range o.Metadata {
 		h.Set("X-Goog-Meta-"+k, v)
 	}
+}
+
+// responseOverrides maps the XML API's response-* query parameters to the
+// headers they replace on a download.
+var responseOverrides = []struct{ param, header string }{
+	{"response-cache-control", "Cache-Control"},
+	{"response-content-disposition", "Content-Disposition"},
+	{"response-content-encoding", "Content-Encoding"},
+	{"response-content-language", "Content-Language"},
+	{"response-content-type", "Content-Type"},
+	{"response-expires", "Expires"},
+}
+
+// xmlResponseHeaders returns the headers the response-* parameters in q
+// override. Callers must have verified any signature over q first.
+func xmlResponseHeaders(q url.Values) http.Header {
+	h := http.Header{}
+	for _, o := range responseOverrides {
+		if q.Has(o.param) {
+			h.Set(o.header, q.Get(o.param))
+		}
+	}
+	return h
 }
 
 // byteRange is a resolved request range [start, end].
@@ -140,8 +164,8 @@ func parseRange(h string, size int64) (br byteRange, ok, satisfiable bool) {
 }
 
 // serveMedia streams an object's data honouring Range, HEAD and gzip
-// decompressive transcoding.
-func (s *Service) serveMedia(w http.ResponseWriter, r *http.Request, rec *objectRec) error {
+// decompressive transcoding. over replaces the object's own headers.
+func (s *Service) serveMedia(w http.ResponseWriter, r *http.Request, rec *objectRec, over http.Header) error {
 	o := rec.Object
 	f, err := s.blobs.open(rec.Blob)
 	if err != nil {
@@ -150,6 +174,9 @@ func (s *Service) serveMedia(w http.ResponseWriter, r *http.Request, rec *object
 	defer f.Close()
 	h := w.Header()
 	setObjectHeaders(h, o)
+	for k, v := range over {
+		h[k] = v
+	}
 	size := int64(o.Size)
 
 	// Decompressive transcoding: gzip objects are served decompressed to
