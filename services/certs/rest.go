@@ -24,6 +24,8 @@ import (
 //	GET    /v1/{name}                        get
 //	PATCH  /v1/{name}?updateMask=...         update (LRO)
 //	DELETE /v1/{name}[?etag=...]             delete (LRO)
+//	...    /v1/{name}:getIamPolicy|:setIamPolicy|:testIamPermissions
+//	                                         (server and client TLS policies)
 //	...    /v1/projects/P/locations/L/operations[...]
 func (s *Service) restHandler(api string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +42,15 @@ func (s *Service) restHandler(api string) http.Handler {
 }
 
 func (s *Service) serveREST(w http.ResponseWriter, r *http.Request, api, path string) {
-	if strings.Contains(path, ":") {
+	path, verb, _ := strings.Cut(path, ":")
+	if verb != "" {
+		segs := strings.Split(strings.Trim(path, "/"), "/")
+		if len(segs) >= 6 && len(segs)%2 == 0 {
+			if k := kindFor(api, segs[len(segs)-2]); iamKinds[k] {
+				s.serveIAM(w, r, k, path, verb)
+				return
+			}
+		}
 		apierr.Write(w, apierr.NotFound("The requested URL %s was not found on this server.", r.URL.Path))
 		return
 	}
