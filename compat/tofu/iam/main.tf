@@ -94,3 +94,12 @@ resource "google_service_account_iam_member" "compute" {
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.a.email}"
 }
+
+# Two at once go through one services:batchEnable; destroy disables them.
+resource "google_project_service" "kms" {
+  service = "cloudkms.googleapis.com"
+}
+
+resource "google_project_service" "logging" {
+  service = "logging.googleapis.com"
+}
