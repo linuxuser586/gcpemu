@@ -294,12 +294,7 @@ func (s *Service) allocGlobalInternal(tx store.Tx, project string, a *computev1.
 		}
 		return nil
 	}
-	size := uint32(1) << (32 - a.PrefixLength)
-	ten, _ := parseCIDR("10.0.0.0/8", true)
-	// GCP picks from unused RFC 1918 space; the emulator scans 10/8 upwards
-	// starting above the auto-mode ranges' typical neighbours.
-	for base := ten.base; base+size-1 <= ten.last() && base >= ten.base; base += size {
-		c := cidr{base: base, bits: int(a.PrefixLength)}
+	for _, c := range psaCandidates(int(a.PrefixLength)) {
 		free := true
 		for _, t := range taken {
 			if t.overlaps(c) {
@@ -308,11 +303,39 @@ func (s *Service) allocGlobalInternal(tx store.Tx, project string, a *computev1.
 			}
 		}
 		if free {
-			a.Address = ipString(base)
+			a.Address = ipString(c.base)
 			return nil
 		}
 	}
 	return apierr.New(8, "No free range of size /%d in the network.", a.PrefixLength).WithLegacy("ipSpaceExhausted")
+}
+
+// psaCandidates lists the ranges of a prefix length that an automatic
+// VPC_PEERING allocation tries, in order. GCP picks unused RFC 1918 space
+// well away from the low 10/8 ranges people give their subnetworks; the
+// emulator scans 10.0.0.0/9 downwards from its top, then 10.128.0.0/9
+// (auto-mode subnetworks' space) upwards. Starting high matters because an
+// allocation and a subnetwork of the same network are often created
+// concurrently (OpenTofu orders them only after the network), and a
+// subnetwork overlapping the allocation is refused.
+func psaCandidates(bits int) []cidr {
+	size := uint64(1) << (32 - bits)
+	ten, _ := parseCIDR("10.0.0.0/8", true)
+	half := ten.size() / 2
+	if size > half {
+		return []cidr{ten}
+	}
+	var out []cidr
+	for off := half - size; ; off -= size {
+		out = append(out, cidr{base: ten.base + uint32(off), bits: bits})
+		if off == 0 {
+			break
+		}
+	}
+	for off := half; off < ten.size(); off += size {
+		out = append(out, cidr{base: ten.base + uint32(off), bits: bits})
+	}
+	return out
 }
 
 // networkRanges lists every range in use in a VPC: subnet primary and
@@ -325,6 +348,9 @@ func networkRanges(tx store.Tx, np string) []cidr {
 			out = append(out, c)
 		}
 	}
+	for _, r := range peeringRanges(tx, np) {
+		out = append(out, r.c)
+	}
 	for _, sn := range list[computev1.Subnetwork](tx, nsSubnets, "projects/"+p+"/regions/") {
 		if relPath(sn.Network) != np {
 			continue
@@ -334,9 +360,25 @@ func networkRanges(tx store.Tx, np string) []cidr {
 			add(sr.IpCidrRange)
 		}
 	}
+	return out
+}
+
+// peeringRange is a VPC_PEERING allocation of a network.
+type peeringRange struct {
+	c    cidr
+	name string
+}
+
+// peeringRanges lists the network's VPC_PEERING allocations.
+func peeringRanges(tx store.Tx, np string) []peeringRange {
+	p, _, _ := pathParts(np)
+	var out []peeringRange
 	for _, a := range list[computev1.Address](tx, nsGlobalAddresses, "projects/"+p+"/global/addresses/") {
-		if a.Purpose == "VPC_PEERING" && relPath(a.Network) == np {
-			add(a.Address + "/" + strconv.Itoa(int(a.PrefixLength)))
+		if a.Purpose != "VPC_PEERING" || relPath(a.Network) != np {
+			continue
+		}
+		if c, err := parseCIDR(a.Address+"/"+strconv.Itoa(int(a.PrefixLength)), false); err == nil {
+			out = append(out, peeringRange{c, a.Name})
 		}
 	}
 	return out

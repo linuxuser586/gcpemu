@@ -165,6 +165,16 @@ func validateSubnetRanges(tx store.Tx, netPath, self string, sn *computev1.Subne
 			}
 		}
 	}
+	// Ranges allocated for private services access are reserved in the
+	// consumer network, as on GCP.
+	for _, pr := range peeringRanges(tx, netPath) {
+		for _, m := range mine {
+			if m.c.overlaps(pr.c) {
+				return apierr.InvalidArgument("Invalid IPCidrRange: %s conflicts with existing reserved IP range '%s' (%s) in network '%s'.",
+					m.c.String(), pr.name, pr.c.String(), lastSeg(netPath)).WithLegacy("invalid")
+			}
+		}
+	}
 	return nil
 }
 
