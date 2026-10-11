@@ -53,6 +53,7 @@ var resourceTypes = map[string][]string{
 		"google_compute_network_endpoint_group", "google_compute_network_endpoint", "google_compute_network_endpoints",
 		"google_compute_network_peering",
 		"google_compute_region_network_endpoint_group", "google_compute_region_network_endpoint",
+		"google_compute_subnetwork_iam_member", "google_compute_subnetwork_iam_binding", "google_compute_subnetwork_iam_policy",
 	},
 	"lb": {
 		"google_compute_health_check", "google_compute_region_health_check",
