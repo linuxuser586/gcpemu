@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, it, vi } from 'vitest'
@@ -84,18 +84,20 @@ it('filters by Service, status and text, keeping the filters in the URL', async 
   expect(rows()).toHaveLength(1)
   expect(screen.getByLabelText('Status')).toHaveValue('failed')
 
+  // The filters live in the URL, so the table re-renders once the
+  // navigation lands.
   await user.selectOptions(screen.getByLabelText('Status'), '')
-  expect(rows()).toHaveLength(3)
+  await waitFor(() => expect(rows()).toHaveLength(3))
   await user.selectOptions(screen.getByLabelText('Service'), 'dns')
-  expect(rows()).toHaveLength(1)
+  await waitFor(() => expect(rows()).toHaveLength(1))
   expect(router.state.location.search).toBe('?service=dns')
 
   await user.selectOptions(screen.getByLabelText('Service'), '')
   await user.type(screen.getByLabelText('Filter'), 'vpc-')
-  expect(rows()).toHaveLength(2)
+  await waitFor(() => expect(rows()).toHaveLength(2))
   expect(router.state.location.search).toBe('?q=vpc-')
   await user.type(screen.getByLabelText('Filter'), 'zzz')
-  expect(screen.getByText('No Operations match the filters.')).toBeInTheDocument()
+  expect(await screen.findByText('No Operations match the filters.')).toBeInTheDocument()
 })
 
 it('says when there are no Operations', async () => {
