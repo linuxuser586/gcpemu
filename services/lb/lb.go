@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -42,8 +43,9 @@ type Service struct {
 	stop     context.CancelFunc
 	bgDone   chan struct{}
 
-	// Options for tests.
-	opts Options
+	// Options for tests. Tests set them after Start, while the data-plane
+	// loops already read them.
+	opts atomic.Pointer[Options]
 
 	ptState
 }
@@ -61,15 +63,15 @@ type Options struct {
 // New returns the service.
 func New(env *emu.Env) emu.Service {
 	s := &Service{env: env, local: http.NewServeMux(), certKick: make(chan struct{}, 1)}
+	s.opts.Store(&Options{DirectDial: os.Getenv("GCPEMU_LB_DIRECT_DIAL") == "1"})
 	s.dp = newDataplane(s)
-	if os.Getenv("GCPEMU_LB_DIRECT_DIAL") == "1" {
-		s.opts.DirectDial = true
-	}
 	return s
 }
 
 // SetOptions changes data-plane options (call before creating resources).
-func (s *Service) SetOptions(o Options) { s.opts = o }
+func (s *Service) SetOptions(o Options) { s.opts.Store(&o) }
+
+func (s *Service) options() Options { return *s.opts.Load() }
 
 func (s *Service) Name() string { return "lb" }
 

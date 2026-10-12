@@ -148,10 +148,16 @@ jobs:
           go-version-file: go.mod
       - name: Install OpenTofu
         run: .github/install-tofu.sh
+      # actions/cache saves nothing after an exact key hit, so the week in
+      # the key lets new provider releases and the version list reach it.
+      - id: week
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
         with:
-          path: ~/.cache/gcpemu-compat/tofu-plugins
-          key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**', 'compat/tofu_test.go') }}
+          path: |
+            ~/.cache/gcpemu-compat/tofu-plugins
+            ~/.cache/gcpemu-compat/tofu-versions-*.json
+          key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**', 'compat/tofu_test.go') }}-${{ steps.week.outputs.week }}
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
       - name: OpenTofu acceptance (SRS 11.1)
         run: make tofu
