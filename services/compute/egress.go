@@ -29,7 +29,8 @@ import (
 //     ranges a Cloud NAT on a router in the subnetwork's region and
 //     network covers (sourceSubnetworkIpRangesToNat), dropping the rest
 //     (GCP-like timeout) or rejecting it with natReject;
-//   - in --offline mode redirects NAT-allowed TCP egress to a sink in the
+//   - while the offline sink is on (--offline, or switched through the
+//     admin API) redirects NAT-allowed TCP egress to a sink in the
 //     gateway that records the attempt and answers with natSinkResponse;
 //   - streams conntrack events for NAT translation logs, and NFLOGs the
 //     first packet of every refused egress connection for drop logs
@@ -429,7 +430,7 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	for _, r := range internal {
 		fmt.Fprintf(&b, "-A GCPEMU-POST -d %s ! -s %s -j MASQUERADE\n", r, r)
 	}
-	if s.env.Config.Offline {
+	if s.sinkOn.Load() {
 		for _, c := range cov {
 			for _, in := range internal {
 				fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s -j RETURN\n", c.cidr, in)

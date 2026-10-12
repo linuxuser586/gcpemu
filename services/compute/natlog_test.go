@@ -195,6 +195,59 @@ func TestNatEgressRequestLog(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("request log:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+	// Each entry traces the connection for the console's translation log;
+	// a translation is reported from the NAT's own IP.
+	es := s.env.RequestLog.Entries("nat")
+	vm, sub := "projects/p/zones/us-central1-a/instances/vm-1", "projects/p/regions/us-central1/subnetworks/nodes"
+	wantTr := []reqlog.NATTrace{
+		{Network: tNet, Subnetwork: sub, VM: vm, SrcIP: "10.0.0.2", SrcPort: 40000, DestIP: "1.1.1.1", DestPort: 443, NatIP: "203.0.113.5", NatPort: 40001},
+		{Network: tNet, Subnetwork: sub, VM: vm, SrcIP: "10.0.0.2", SrcPort: 40002, DestIP: "1.1.1.1", DestPort: 443},
+		{Network: tNet, Subnetwork: "projects/p/regions/europe-west1/subnetworks/eu", SrcIP: "10.0.1.2", SrcPort: 5353, DestIP: "8.8.8.8", DestPort: 53},
+	}
+	for i, e := range es {
+		if e.NAT == nil || *e.NAT != wantTr[i] {
+			t.Errorf("entry %d trace = %+v, want %+v", i, e.NAT, wantTr[i])
+		}
+	}
+}
+
+// TestNatSinkSwitch is FR-NAT-005 switched at run time (Web console Cloud
+// NAT view): covered TCP egress is redirected to the sink only while it
+// is on, and a sink attempt is traced with the request it carried.
+func TestNatSinkSwitch(t *testing.T) {
+	s, _ := natTestService(t, nil)
+	s.env.Config.NATSinkResponse = "418:offline"
+	s.egress = map[string]*gateway{}
+	g := &gateway{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
+	redirect := "-A GCPEMU-PRE -s 10.0.0.0/24 -p tcp -j REDIRECT --to-ports 15001\n"
+	rules := func() string {
+		r, err := s.natRules(g, s.netsOf(tNet))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if on, _, _ := s.NATSink(); on || strings.Contains(rules(), redirect) {
+		t.Fatalf("sink on by default:\n%s", rules())
+	}
+	s.SetNATSink(true)
+	on, status, body := s.NATSink()
+	if !on || status != 418 || body != "offline" {
+		t.Fatalf("NATSink() = %v %d %q", on, status, body)
+	}
+	if r := rules(); !strings.Contains(r, redirect) || strings.Contains(r, "-s 10.0.1.0/24 -p tcp -j REDIRECT") {
+		t.Fatalf("sink on: redirects:\n%s", r)
+	}
+	s.handleNatEvents(natReport{Network: tNet, Events: []natEvent{{Type: "sink", Time: "2026-10-08T00:00:00Z", Proto: "tcp",
+		Src: "10.0.0.2", SrcPort: 40010, Dst: "192.0.2.1", DstPort: 80, Request: "GET / HTTP/1.1"}}})
+	es := s.env.RequestLog.Entries("nat")
+	if len(es) != 1 || es[0].Code != "OFFLINE_SINK" || es[0].NAT == nil || es[0].NAT.Request != "GET / HTTP/1.1" || es[0].NAT.NatIP != "" {
+		t.Fatalf("sink entry: %+v", es)
+	}
+	s.SetNATSink(false)
+	if strings.Contains(rules(), redirect) {
+		t.Fatalf("sink off: still redirects:\n%s", rules())
+	}
 }
 
 // TestNatRulesDropChain: refused egress goes through GCPEMU-DROP, which

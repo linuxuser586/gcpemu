@@ -88,6 +88,21 @@ import {
 } from '@/features/iam/ServiceAccountPage'
 import { ServiceAccounts } from '@/features/iam/ServiceAccounts'
 import { Simulator } from '@/features/iam/Simulator'
+import {
+  mappingsQuery,
+  routerQuery,
+  routersQuery,
+  sinkQuery,
+  statusQuery,
+  subnetsQuery,
+} from '@/features/nat/api'
+import { AddNat, EditNat } from '@/features/nat/NatForm'
+import { NatLayout } from '@/features/nat/NatLayout'
+import { NatPage } from '@/features/nat/NatPage'
+import { CreateRouter, EditRouter } from '@/features/nat/RouterForm'
+import { RouterPage } from '@/features/nat/RouterPage'
+import { Routers } from '@/features/nat/Routers'
+import { TranslationLogPage } from '@/features/nat/Translations'
 import { Operations } from '@/features/operations/Operations'
 import {
   statsQuery,
@@ -215,6 +230,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'dns',
           element: <DnsLayout />,
           children: dnsRoutes(queryClient),
+        },
+        {
+          path: 'nat',
+          element: <NatLayout />,
+          children: natRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -770,6 +790,56 @@ function dnsRoutes(queryClient: QueryClient): RouteObject[] {
         { path: 'overview', element: <ZoneOverview /> },
       ],
     },
+  ]
+}
+
+// The Cloud NAT view (SRS 4.8.3). Routers follow the API's resource
+// names, with the Project in ?project=; a NAT gateway is under its
+// router's nats/. The translation log's filters are ?src=, ?dst= and
+// ?outcome=.
+function natRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const router: RouteObject['loader'] = ({ request, params }) => {
+    const r = {
+      project: projectOf(request),
+      region: params.region ?? '',
+      router: params.router ?? '',
+    }
+    return r.project
+      ? warm(
+          queryClient.ensureQueryData(routerQuery(r)),
+          queryClient.ensureQueryData(statusQuery(r)),
+          queryClient.ensureQueryData(subnetsQuery(r.project)),
+          ...(params.nat ? [queryClient.ensureQueryData(mappingsQuery(r, params.nat))] : []),
+        )
+      : null
+  }
+  return [
+    {
+      index: true,
+      element: <Routers />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(
+              queryClient.ensureQueryData(routersQuery(project)),
+              queryClient.ensureQueryData(subnetsQuery(project)),
+              queryClient.ensureQueryData(sinkQuery()),
+            )
+          : null
+      },
+    },
+    {
+      path: 'translations',
+      element: <TranslationLogPage />,
+      loader: () => warm(queryClient.ensureQueryData(requestsQuery('nat'))),
+    },
+    { path: 'create', element: <CreateRouter /> },
+    { path: 'regions/:region/routers/:router', element: <RouterPage />, loader: router },
+    { path: 'regions/:region/routers/:router/edit', element: <EditRouter /> },
+    { path: 'regions/:region/routers/:router/nats/add', element: <AddNat /> },
+    { path: 'regions/:region/routers/:router/nats/:nat', element: <NatPage />, loader: router },
+    { path: 'regions/:region/routers/:router/nats/:nat/edit', element: <EditNat /> },
   ]
 }
 

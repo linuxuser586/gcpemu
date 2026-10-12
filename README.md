@@ -78,6 +78,11 @@ the record set in one change), and deleting a zone first deletes its record sets
 Its query box asks `GET /_emu/v1/dns/query?name=N&type=T[&network=projects/P/global/networks/V]`,
 which sends the query to the Instance's DNS server, from the host or as a client on that VPC
 network, so private zones answer only on the networks they are bound to.
+Its Cloud NAT view edits a NAT gateway by patching its router's `nats[]` with the whole list;
+port usage is `routers.getNatMappingInfo`. Its translation log (`/console/nat/translations`,
+filtered by `?src=`, `?dst=` and `?outcome=`) reads the request log's `nat` entries, which carry
+each connection's source, destination, workload and NAT IP and port. The offline sink switch is
+`GET`/`PUT /_emu/v1/nat/sink`; it lasts until the Instance stops.
 Its IAM view edits the policy of a Project, service account, bucket, topic, subscription, AR
 repository, secret, subnetwork or TLS policy through that resource's own `setIamPolicy`, carrying
 the etag it read. Its policy simulator gets a token for the chosen Principal from the OAuth2
@@ -115,8 +120,9 @@ holding Postgres and Kubernetes state are kept so resources survive a restart. T
 copies its own (static) binary into containers as an in-container agent. GKE is Linux-only.
 
 Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress immediately
-instead of timing out; with `--offline`, NAT-allowed egress hits a sink that records the attempt
-and returns `natSinkResponse` (`GCPEMU_NAT_SINK_RESPONSE`, default `503:gcpemu offline: egress blocked`).
+instead of timing out; with `--offline` (or the offline sink switched on from the Web console),
+NAT-allowed egress hits a sink that records the attempt and returns `natSinkResponse`
+(`GCPEMU_NAT_SINK_RESPONSE`, default `503:gcpemu offline: egress blocked`).
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009).

@@ -14,8 +14,10 @@ const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // run (FR-UI-012); compute needs no container runtime either. GKE runs
 // on Linux only; its clusters need a container runtime, so the GKE view
 // tests that create them skip without one (gke.spec.ts), as do the Cloud
-// SQL view tests that create instances (sql.spec.ts). Each browser
-// runs a cluster of up to 2 nodes, beyond the default limit of 5.
+// SQL view tests that create instances (sql.spec.ts). Cloud NAT is
+// ready only with a container runtime, so it runs on Linux too. Each
+// browser runs a cluster of up to 2 nodes and a private one of 1 node
+// behind Cloud NAT (nat.spec.ts), beyond the default limit of 5.
 const services = [
   'ar',
   'gcs',
@@ -26,7 +28,7 @@ const services = [
   'lb',
   'cdn',
   'sql',
-  ...(process.platform === 'linux' ? ['gke'] : []),
+  ...(process.platform === 'linux' ? ['gke', 'nat'] : []),
 ]
 const child = spawn(
   bin,

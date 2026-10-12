@@ -510,6 +510,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/nat/sink": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether Cloud NAT's offline sink is on (nat service; FR-NAT-005, Web console Cloud NAT view). */
+        get: operations["natSink"];
+        /**
+         * Switch Cloud NAT's offline sink until the Instance stops (Web console Cloud NAT view).
+         * @description While the sink is on, TCP egress a Cloud NAT allows is answered by the sink in the egress gateway, recorded and logged as OFFLINE_SINK, instead of reaching the internet. Running egress gateways are re-programmed; `--offline` turns it on again at the next start. The sink's response (natSinkResponse) is read only.
+         */
+        put: operations["setNatSink"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/ca/rotate": {
         parameters: {
             query?: never;
@@ -800,6 +821,33 @@ export interface components {
             code?: string;
             latencyMs?: number;
             lb?: components["schemas"]["LbTrace"];
+            nat?: components["schemas"]["NatTrace"];
+        };
+        /** @description One connection the NAT egress gateway saw leave a VPC network (nat service; Web console Cloud NAT translation log): the entry's code is OK (translated), DROPPED (no Cloud NAT covers the source) or OFFLINE_SINK, and its resource the Cloud NAT gateway (projects/P/regions/R/routers/ROUTER/nats/NAT), or the network when no NAT covers the source. */
+        NatTrace: {
+            /** @description The VPC network's resource path. */
+            network: string;
+            /** @description The source's subnetwork's resource path. */
+            subnetwork?: string;
+            /** @description The workload holding the source address */
+            vm?: string;
+            srcIp: string;
+            srcPort: number;
+            destIp: string;
+            destPort: number;
+            /** @description The NAT IP a translation used. */
+            natIp?: string;
+            /** @description The NAT port a translation used. */
+            natPort?: number;
+            /** @description The first line the offline sink received. */
+            request?: string;
+        };
+        NatSink: {
+            enabled: boolean;
+            /** @description The HTTP status the sink answers with. */
+            status?: number;
+            /** @description The body the sink answers with. */
+            body?: string;
         };
         /** @description How a load balancer served one data-plane request (lb service; Web console Load Balancer traffic view). The forwarding rule is the entry's resource. */
         LbTrace: {
@@ -1597,6 +1645,55 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    natSink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sink's state and response. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NatSink"];
+                };
+            };
+            503: components["responses"]["Error"];
+        };
+    };
+    setNatSink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The sink's state now. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NatSink"];
+                };
+            };
+            400: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };

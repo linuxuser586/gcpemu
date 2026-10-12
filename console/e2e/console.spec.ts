@@ -1,4 +1,5 @@
 import { expect, projectId, test } from './fixtures'
+import { SERVICES } from '../src/lib/services'
 
 // The paths the console may call: its own bundle, the admin API and public
 // GCP API paths ("/<api>/v<n>/...") on the gateway it was served from.
@@ -181,12 +182,16 @@ test('FR-UI-006: a bucket created through the public API shows up within 1 s', a
   })
 })
 
-test('a deep link to a disabled Service says how to enable it', async ({ page }) => {
-  await page.goto('/console/nat/routers?project=whatever-project')
+test('a deep link to a disabled Service says how to enable it', async ({ page, request }) => {
+  // On Linux the Instance runs every Service.
+  const info = (await (await request.get('/_emu/v1/info')).json()) as { services: string[] }
+  const off = SERVICES.find((s) => !info.services.includes(s.id))?.id
+  test.skip(!off, 'every Service is enabled')
+  await page.goto(`/console/${off}/anything?project=whatever-project`)
   await expect(
-    page.getByRole('heading', { name: 'Service nat is not enabled on this Instance' }),
+    page.getByRole('heading', { name: `Service ${off} is not enabled on this Instance` }),
   ).toBeVisible()
-  await expect(page.getByText(/gcpemu start --services .*nat/)).toBeVisible()
+  await expect(page.getByText(new RegExp(`gcpemu start --services .*${off}`))).toBeVisible()
 })
 
 test('FR-UI-012 Operations: live status, duration and the resulting resource or error', async ({

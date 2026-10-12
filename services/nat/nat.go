@@ -4,13 +4,15 @@
 // egress gateway data plane (FR-NAT-002..005), which compute's emu.VPC
 // starts when workloads ask for their egress gateway. This module exists
 // so `--services nat` selects Cloud NAT (pulling in compute through
-// config.Dependencies) and so readiness reflects whether a container
-// runtime is available for the data plane.
+// config.Dependencies), so readiness reflects whether a container
+// runtime is available for the data plane, and for the admin API's
+// offline sink switch (admin.go).
 package nat
 
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -29,8 +31,13 @@ type Service struct {
 // New returns the service.
 func New(env *emu.Env) emu.Service { return &Service{env: env} }
 
-func (s *Service) Name() string                { return "nat" }
-func (s *Service) Register(r emu.Router) error { return nil }
+func (s *Service) Name() string { return "nat" }
+
+func (s *Service) Register(r emu.Router) error {
+	r.Handle("GET /_emu/v1/nat/sink", http.HandlerFunc(s.getSink))
+	r.Handle("PUT /_emu/v1/nat/sink", http.HandlerFunc(s.putSink))
+	return nil
+}
 
 // Start probes the runtime in the background; instance start never fails
 // because of it (the control plane works without a runtime).

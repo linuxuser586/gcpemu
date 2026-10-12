@@ -568,6 +568,43 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /_emu/v1/nat/sink:
+    get:
+      summary: Whether Cloud NAT's offline sink is on (nat service; FR-NAT-005, Web console Cloud NAT view).
+      operationId: natSink
+      responses:
+        "200":
+          description: The sink's state and response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NatSink" }
+        "503": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Switch Cloud NAT's offline sink until the Instance stops (Web console Cloud NAT view).
+      operationId: setNatSink
+      description: >-
+        While the sink is on, TCP egress a Cloud NAT allows is answered by
+        the sink in the egress gateway, recorded and logged as
+        OFFLINE_SINK, instead of reaching the internet. Running egress
+        gateways are re-programmed; `--offline` turns it on again at the
+        next start. The sink's response (natSinkResponse) is read only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The sink's state now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NatSink" }
+        "400": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /_emu/v1/ca/rotate:
     post:
       summary: Replace the instance CA and re-issue managed certificates (`gcpemu ca rotate`; certs service).
@@ -878,6 +915,35 @@ components:
         code: { type: string }
         latencyMs: { type: number }
         lb: { $ref: "#/components/schemas/LbTrace" }
+        nat: { $ref: "#/components/schemas/NatTrace" }
+    NatTrace:
+      type: object
+      description: >-
+        One connection the NAT egress gateway saw leave a VPC network
+        (nat service; Web console Cloud NAT translation log): the entry's
+        code is OK (translated), DROPPED (no Cloud NAT covers the source)
+        or OFFLINE_SINK, and its resource the Cloud NAT gateway
+        (projects/P/regions/R/routers/ROUTER/nats/NAT), or the network
+        when no NAT covers the source.
+      required: [network, srcIp, srcPort, destIp, destPort]
+      properties:
+        network: { type: string, description: The VPC network's resource path. }
+        subnetwork: { type: string, description: The source's subnetwork's resource path. }
+        vm: { type: string, description: The workload holding the source address, e.g. a GKE node. }
+        srcIp: { type: string }
+        srcPort: { type: integer }
+        destIp: { type: string }
+        destPort: { type: integer }
+        natIp: { type: string, description: The NAT IP a translation used. }
+        natPort: { type: integer, description: The NAT port a translation used. }
+        request: { type: string, description: The first line the offline sink received. }
+    NatSink:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        status: { type: integer, description: The HTTP status the sink answers with. }
+        body: { type: string, description: The body the sink answers with. }
     LbTrace:
       type: object
       description: >-
