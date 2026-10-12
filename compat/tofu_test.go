@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -18,7 +19,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 )
 
 // resourceTypes lists, per module in tofu/, the provider resource types
@@ -111,7 +115,9 @@ var resourceRE = regexp.MustCompile(`(?m)^resource\s+"(google_[a-z0-9_]+)"`)
 // module in tofu/ is applied, planned again (no changes allowed) and
 // destroyed with the google and google-beta providers at the current and
 // previous minor version. The provider block is what `gcpemu tofu-provider`
-// prints.
+// prints. plan, apply and destroy run behind an Escape guard, so an
+// Escaped request fails the module; the escape-guard subtest proves that
+// the guard catches one.
 //
 // GCPEMU_TOFU_PROVIDERS narrows the matrix: "google-beta" (both minors),
 // "google@8.6.0" or "google@8.6.0,google-beta@8.5.0". GCPEMU_TOFU_MODULES
@@ -141,13 +147,17 @@ func TestOpenTofu(t *testing.T) {
 			project := "tf-" + strings.ReplaceAll(strings.ReplaceAll(p.name, "google", "g"), "-beta", "b") +
 				"-" + strings.ReplaceAll(p.minor(), ".", "-")
 			block := e.run(t, e.bin, "tofu-provider", "--data-dir", e.dir, "--project", project)
+			t.Run("escape-guard", func(t *testing.T) {
+				t.Parallel()
+				canary(t, tofuBin, plugins, p, project, block, &in)
+			})
 			for _, m := range modules {
 				t.Run(m, func(t *testing.T) {
 					t.Parallel()
 					if needsRuntime[m] && !e.runtime {
 						t.Skip("needs a container runtime")
 					}
-					tf := newModule(t, tofuBin, m, plugins, p, project, block)
+					tf := newModule(t, tofuBin, os.DirFS(filepath.Join("tofu", m)), m, plugins, p, project, block)
 					in.init(tf, plugins, p)
 					tf.run(20*time.Minute, "apply", "-auto-approve", "-no-color")
 					tf.planClean()
@@ -319,20 +329,59 @@ func fetchVersions(name string) ([]string, error) {
 
 func versionString(v [3]int) string { return fmt.Sprintf("%d.%d.%d", v[0], v[1], v[2]) }
 
+// canaryEndpoint is the setting the escape-guard subtest leaves out of
+// the provider block, and canaryHost where the provider then sends it.
+const (
+	canaryEndpoint = "dns_custom_endpoint"
+	canaryHost     = "dns.gcpemu.invalid"
+)
+
+// canary plans a module that reads a DNS zone through a provider block
+// without its dns endpoint, and fails unless the Escape guard refuses the
+// read. Without it, a provider that ignored HTTPS_PROXY would pass every
+// module with the guard never seeing a request.
+func canary(t *testing.T, bin, plugins string, p provider, project, block string, in *initer) {
+	var kept []string
+	for _, l := range strings.Split(block, "\n") {
+		if !strings.Contains(l, canaryEndpoint) {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) == len(strings.Split(block, "\n")) {
+		t.Fatalf("the provider block sets no %s:\n%s", canaryEndpoint, block)
+	}
+	src := fstest.MapFS{"main.tf": {Data: []byte(`variable "project" {}
+
+data "google_dns_managed_zone" "canary" {
+  name = "escape-guard-canary"
+}
+`)}}
+	tf := newModule(t, bin, src, "escape-guard", plugins, p, project, strings.Join(kept, "\n"))
+	in.init(tf, plugins, p)
+	out, escaped, err := tf.exec(5*time.Minute, "plan", "-no-color")
+	if err == nil {
+		t.Errorf("plan without %s succeeded:\n%s", canaryEndpoint, tail(out, 40))
+	}
+	if !slices.Equal(escaped, []string{canaryHost}) {
+		t.Errorf("the Escape guard refused %v, want [%s]; tofu plan said:\n%s", escaped, canaryHost, tail(out, 40))
+	}
+}
+
 // module is a copy of one tofu/ module bound to a provider version.
 type module struct {
 	t                 *testing.T
 	bin, dir, project string
 	env               []string
+	guard             *escapeguard.Guard
 }
 
-// newModule copies tofu/<name> and adds the provider requirements (the
+// newModule copies the module in src and adds the provider requirements (the
 // local name "google" maps to google-beta when that is under test, so the
 // modules are the same for both) and the provider block.
-func newModule(t *testing.T, bin, name, plugins string, p provider, project, block string) *module {
+func newModule(t *testing.T, bin string, src fs.FS, name, plugins string, p provider, project, block string) *module {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), name)
-	if err := os.CopyFS(dir, os.DirFS(filepath.Join("tofu", name))); err != nil {
+	if err := os.CopyFS(dir, src); err != nil {
 		t.Fatal(err)
 	}
 	versions := fmt.Sprintf(`terraform {
@@ -357,7 +406,7 @@ func newModule(t *testing.T, bin, name, plugins string, p provider, project, blo
 	if os.Getenv("TF_PLUGIN_CACHE_DIR") == "" {
 		env = append(env, "TF_PLUGIN_CACHE_DIR="+plugins)
 	}
-	return &module{t: t, bin: bin, dir: dir, env: env, project: project}
+	return &module{t: t, bin: bin, dir: dir, env: env, project: project, guard: escapeguard.New(t)}
 }
 
 // initer runs tofu init for the modules one at a time, since they share
@@ -425,19 +474,35 @@ func (m *module) run(timeout time.Duration, args ...string) string {
 	return out
 }
 
+// try runs tofu and fails the test on each request the Escape guard
+// refused.
 func (m *module) try(timeout time.Duration, args ...string) (string, error) {
+	m.t.Helper()
+	out, escaped, err := m.exec(timeout, args...)
+	for _, h := range escaped {
+		m.t.Errorf("tofu %s: %s", args[0], escapeguard.Describe(h))
+	}
+	return out, err
+}
+
+// exec runs tofu and returns the hosts the Escape guard refused. plan,
+// apply and destroy run behind the guard; init and the commands that
+// stay local do not, since init downloads providers from the registry.
+func (m *module) exec(timeout time.Duration, args ...string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	full := append([]string{"-chdir=" + m.dir}, args...)
+	env := m.env
 	if args[0] == "apply" || args[0] == "plan" || args[0] == "destroy" {
 		full = append(full, "-var", "project="+m.project)
+		env = append(slices.Clip(env), m.guard.Env()...)
 	}
 	cmd := exec.CommandContext(ctx, m.bin, full...)
-	cmd.Env = m.env
+	cmd.Env = env
 	start := time.Now()
 	out, err := cmd.CombinedOutput()
 	m.t.Logf("tofu %s (%v)", args[0], time.Since(start).Round(100*time.Millisecond))
-	return string(out), err
+	return string(out), m.guard.Take(), err
 }
 
 // planClean fails the test unless a plan right after apply is empty, and
