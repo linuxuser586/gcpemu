@@ -50,6 +50,8 @@ test('Cloud NAT: a router’s NAT gateways, their coverage and the offline sink'
   requests,
 }, testInfo) => {
   test.skip(!(await runtime(request)).nat, 'Cloud NAT runs on Linux only')
+  // Eight compute Operations of 2 s each (--lro-latency), and the pages between them.
+  test.setTimeout(3 * 60_000)
   const id = projectId(`e2e-nat${testInfo.retry}`, browserName)
   await compute(request, 'POST', `projects/${id}/global/networks`, {
     name: 'vpc',
