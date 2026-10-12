@@ -1,11 +1,13 @@
 // Package escapeguard is the Escape guard (see CONTEXT.md): a proxy that
-// OpenTofu runs in the acceptance tests go through, so that an Escaped
-// request fails the test, naming the host, instead of reaching Google.
+// OpenTofu and gcloud runs in the acceptance tests go through, so that an
+// Escaped request fails the test, naming the host, instead of reaching
+// Google.
 //
 // The guard refuses every request; it never forwards one. A client
 // reaches it through HTTPS_PROXY and HTTP_PROXY (Env). Requests to the
-// API gateway bypass it, since Go never proxies loopback addresses, so
-// the guard only sees traffic that would leave the machine.
+// API gateway bypass it: Go never proxies loopback addresses, and NO_PROXY
+// exempts them for clients such as gcloud that otherwise would. The guard
+// only sees traffic that would leave the machine.
 package escapeguard
 
 import (
@@ -44,15 +46,19 @@ func New(t testing.TB) *Guard {
 	return g
 }
 
+// loopback is the NO_PROXY list Env sets: the hosts Go never proxies,
+// spelled out for Python clients (gcloud), which proxy them too.
+const loopback = "127.0.0.1,localhost,::1"
+
 // Env returns the variables that send a client's outbound requests to
-// the guard. They override any proxy set in the environment, and clear
-// NO_PROXY so that no host is exempt (loopback always is).
+// the guard. They override any proxy set in the environment, and set
+// NO_PROXY so that only loopback is exempt.
 func (g *Guard) Env() []string {
 	u := "http://" + g.addr
 	return []string{
 		"HTTPS_PROXY=" + u, "https_proxy=" + u,
 		"HTTP_PROXY=" + u, "http_proxy=" + u,
-		"NO_PROXY=", "no_proxy=",
+		"NO_PROXY=" + loopback, "no_proxy=" + loopback,
 	}
 }
 
@@ -83,11 +89,22 @@ func (g *Guard) refuse(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "gcpemu escape guard: refused "+Describe(host), http.StatusForbidden)
 }
 
-// Describe explains why a request to host escaped.
+// Describe explains why a request from OpenTofu to host escaped.
 func Describe(host string) string {
 	if api, ok := strings.CutSuffix(host, invalidUniverse); ok {
 		return fmt.Sprintf("Escaped request to %s: no *_custom_endpoint in the provider block covers %s.googleapis.com "+
 			"(add its setting to providerEndpoints in internal/cli/extra.go)", host, api)
+	}
+	return "Escaped request to " + host
+}
+
+// DescribeGcloud explains why a request from gcloud to host escaped:
+// gcloud sends an API without a CLOUDSDK_API_ENDPOINT_OVERRIDES_<API> to
+// <api>.googleapis.com.
+func DescribeGcloud(host string) string {
+	if api, ok := strings.CutSuffix(host, ".googleapis.com"); ok && !strings.Contains(api, ".") {
+		return fmt.Sprintf("Escaped request to %s: no CLOUDSDK_API_ENDPOINT_OVERRIDES_%s in the environment "+
+			"(the Service serving %s should print it from EnvVars)", host, strings.ToUpper(api), api)
 	}
 	return "Escaped request to " + host
 }

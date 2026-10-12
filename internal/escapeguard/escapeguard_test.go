@@ -51,3 +51,23 @@ func TestDescribe(t *testing.T) {
 		t.Errorf("Describe = %q, want %q", got, want)
 	}
 }
+
+func TestDescribeGcloud(t *testing.T) {
+	if got := DescribeGcloud("pubsub.googleapis.com"); !strings.Contains(got, "CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB") {
+		t.Errorf("DescribeGcloud(pubsub.googleapis.com) = %q", got)
+	}
+	for _, h := range []string{"secretmanager.us-central1.rep.googleapis.com", "example.com"} {
+		if got, want := DescribeGcloud(h), "Escaped request to "+h; got != want {
+			t.Errorf("DescribeGcloud = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestEnvExemptsOnlyLoopback(t *testing.T) {
+	env := New(t).Env()
+	for _, want := range []string{"NO_PROXY=127.0.0.1,localhost,::1", "no_proxy=127.0.0.1,localhost,::1"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("Env() = %v, lacks %s", env, want)
+		}
+	}
+}

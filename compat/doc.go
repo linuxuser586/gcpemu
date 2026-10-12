@@ -11,7 +11,9 @@
 // versions into $GCPEMU_COMPAT_CACHE (default <user cache dir>/gcpemu-compat),
 // and psql runs from the PostgreSQL image. Cloud SQL and GKE need a
 // container runtime; some steps (crane copy from Docker Hub, ko's base
-// image) need the internet.
+// image) need the internet. gcloud runs behind an Escape guard
+// (internal/escapeguard), so a gcloud request that no endpoint override
+// covers fails the step instead of reaching Google.
 //
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with

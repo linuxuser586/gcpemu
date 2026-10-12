@@ -306,6 +306,13 @@ the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. 
 `gke-gcloud-auth-plugin` component), kubectl, dig and Docker come from `PATH`; Helm, crane, ko
 and the Auth Proxy are downloaded at pinned, checksum-verified versions.
 
+gcloud runs behind the same Escape guard as the OpenTofu acceptance (below), with `NO_PROXY`
+covering loopback, because gcloud, unlike Go, proxies loopback too. A gcloud request with no
+`CLOUDSDK_API_ENDPOINT_OVERRIDES_*` covering it fails the step and names the missing variable.
+The `gcloud/escape-guard` subtest lists Pub/Sub topics without the pubsub override, and fails
+unless the guard refuses `pubsub.googleapis.com`. The other clients run without the guard: they
+either stay on loopback or reach the internet on purpose.
+
 ### OpenTofu acceptance (SRS 11.1, IF-001)
 
 `make tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
@@ -322,7 +329,7 @@ Cloud SQL and GKE, a container runtime.
 `tofu plan`, `apply` and `destroy` run behind an Escape guard: `HTTPS_PROXY` and `HTTP_PROXY`
 point at an in-test proxy that refuses every request that would leave the machine. Each refused
 host fails the module, and the error names it. The instance listens on loopback, which Go
-never proxies. `tofu init` runs without the guard so it can still download providers. An
+never proxies and `NO_PROXY` exempts. `tofu init` runs without the guard so it can still download providers. An
 `escape-guard` subtest per provider plans a data source whose `dns_custom_endpoint` is removed
 from the provider block, and fails unless the guard refuses `dns.gcpemu.invalid`. The Reference
 stack's OpenTofu runs use the same guard.
