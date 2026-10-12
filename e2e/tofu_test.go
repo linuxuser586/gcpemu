@@ -11,23 +11,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 )
 
 // tofu runs OpenTofu on a copy of the stack module.
 type tofu struct {
-	t    *testing.T
-	bin  string
-	dir  string
-	env  []string
-	vars map[string]string
+	t     *testing.T
+	bin   string
+	dir   string
+	env   []string
+	vars  map[string]string
+	guard *escapeguard.Guard
 }
 
 // newTofu copies stack/ into a temporary working directory. Providers are
 // cached across runs in the user cache directory (TF_PLUGIN_CACHE_DIR).
+// plan, apply and destroy run behind an Escape guard.
 func newTofu(t *testing.T, bin, gateway string) *tofu {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "stack")
@@ -62,7 +67,8 @@ func newTofu(t *testing.T, bin, gateway string) *tofu {
 		}
 		env = append(env, "TF_PLUGIN_CACHE_DIR="+cache)
 	}
-	return &tofu{t: t, bin: bin, dir: dir, env: env, vars: map[string]string{"emulator_gateway": "http://" + gateway}}
+	return &tofu{t: t, bin: bin, dir: dir, env: env, vars: map[string]string{"emulator_gateway": "http://" + gateway},
+		guard: escapeguard.New(t)}
 }
 
 // cacheDir is the directory for downloads reused across runs
@@ -93,19 +99,24 @@ func (tf *tofu) try(timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	full := append([]string{"-chdir=" + tf.dir}, args...)
+	env := tf.env
 	if args[0] == "apply" || args[0] == "destroy" || args[0] == "plan" {
 		full = append(full, "-no-color")
 		for _, k := range sortedKeys(tf.vars) {
 			full = append(full, "-var", k+"="+tf.vars[k])
 		}
+		env = append(slices.Clip(env), tf.guard.Env()...)
 	}
 	cmd := exec.CommandContext(ctx, tf.bin, full...)
-	cmd.Env = tf.env
+	cmd.Env = env
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	start := time.Now()
 	err := cmd.Run()
 	tf.t.Logf("tofu %s (%v)", strings.Join(args, " "), time.Since(start).Round(100*time.Millisecond))
+	for _, h := range tf.guard.Take() {
+		tf.t.Errorf("tofu %s: %s", args[0], escapeguard.Describe(h))
+	}
 	return buf.String(), err
 }
 

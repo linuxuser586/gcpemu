@@ -319,6 +319,14 @@ the modules (`lb,dns`). The resource types each module must declare are listed i
 `compat/tofu_test.go`; that list is the supported surface. It needs `tofu` on `PATH` and, for
 Cloud SQL and GKE, a container runtime.
 
+`tofu plan`, `apply` and `destroy` run behind an Escape guard: `HTTPS_PROXY` and `HTTP_PROXY`
+point at an in-test proxy that refuses every request that would leave the machine. Each refused
+host fails the module, and the error names it. The instance listens on loopback, which Go
+never proxies. `tofu init` runs without the guard so it can still download providers. An
+`escape-guard` subtest per provider plans a data source whose `dns_custom_endpoint` is removed
+from the provider block, and fails unless the guard refuses `dns.gcpemu.invalid`. The Reference
+stack's OpenTofu runs use the same guard.
+
 `gcpemu tofu-provider --beta` also prints a `provider "google-beta"` block for modules that use
 `provider = google-beta`. It has the same endpoints, except that container's is
 `/container/v1beta1/`. It is opt-in because a `google-beta` block makes OpenTofu require the

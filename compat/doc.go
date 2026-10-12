@@ -16,5 +16,7 @@
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with
 // the google and google-beta providers at their current and previous
-// minor versions. It needs tofu on PATH (`make tofu`; `make compat` skips it).
+// minor versions, behind an Escape guard (internal/escapeguard) that fails
+// a module on any request leaving the machine. It needs tofu on PATH
+// (`make tofu`; `make compat` skips it).
 package compat

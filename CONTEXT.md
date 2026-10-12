@@ -193,6 +193,10 @@ Tests that apply, re-plan and destroy OpenTofu configurations covering every res
 An end-to-end deployment of a representative application across all Products, used as the final acceptance test.
 _Avoid_: "acceptance" on its own, e2e
 
+**Escape guard**:
+A proxy that the OpenTofu acceptance and the Reference stack run behind, so that any request leaving the machine during plan, apply or destroy fails the test, naming the host.
+_Avoid_: egress check, leak detector
+
 ## Flagged ambiguities
 
 - "Service" also appears as GCP and Kubernetes terms. Always qualify those: *backend service*, *Kubernetes Service*, *service account*. The container network that Services share is the *services network*.
