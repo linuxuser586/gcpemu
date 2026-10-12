@@ -20,9 +20,10 @@ import (
 //
 //  1. 127.0.0.x:<port>, x allocated deterministically per forwarding rule
 //     IP (Linux routes all of 127/8 to loopback);
-//  2. when that port is privileged and a container runtime is available,
-//     the lb-edge container (edge.go), which owns one container IP per
-//     forwarding rule and relays connections with PROXY protocol v2;
+//  2. when that port is privileged (or below 1024 with Options.Edge) and a
+//     container runtime is available, the lb-edge container (edge.go),
+//     which owns one container IP per forwarding rule and relays
+//     connections with PROXY protocol v2;
 //  3. otherwise 127.0.0.x:<base+n> (base 18080, or the configured "lb"
 //     port; 0 = dynamic).
 //
@@ -96,11 +97,17 @@ func (d *dataplane) fallbackBase() int {
 func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	l := &listener{name: fe.fr.Name, key: fe.key, https: fe.https}
 	lip := d.loopIP(fe.ip)
-	ln, err := net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
+	// A forced edge takes privileged ports without trying the bind.
+	forced := d.s.options().Edge && fe.port < 1024
+	var ln net.Listener
+	var err error
+	if !forced {
+		ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
+	}
 	switch {
-	case err == nil:
+	case !forced && err == nil:
 		l.ln, l.mode = ln, "loopback"
-	case errors.Is(err, syscall.EACCES) && d.edge.available(d.ctx):
+	case (forced || errors.Is(err, syscall.EACCES)) && d.edge.available(d.ctx):
 		addr, verr := d.edge.add(d.ctx, fe)
 		if verr != nil {
 			d.s.env.Log.Warn("lb: edge container unavailable; using a high port", "forwardingRule", fe.frPath, "err", verr)

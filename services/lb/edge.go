@@ -85,9 +85,6 @@ func (e *edge) env() *emu.Env { return e.d.s.env }
 func (e *edge) available(ctx context.Context) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.d.s.options().Edge {
-		return true
-	}
 	if !e.rtTried {
 		e.rtTried = true
 		if e.env().Containers != nil {
