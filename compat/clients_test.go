@@ -12,10 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 )
 
 const project = "compat-proj"
@@ -23,16 +26,17 @@ const project = "compat-proj"
 // emulator is a detached gcpemu instance and the environment clients run in.
 type emulator struct {
 	bin, dir string
-	vars     map[string]string // from `gcpemu env`
-	env      []string          // full client environment
-	runtime  bool              // a container runtime is available
+	vars     map[string]string  // from `gcpemu env`
+	env      []string           // full client environment
+	runtime  bool               // a container runtime is available
+	guard    *escapeguard.Guard // gcloud runs behind it
 }
 
 // start builds gcpemu statically and starts a detached instance.
 func start(t *testing.T) *emulator {
 	t.Helper()
 	tmp := t.TempDir()
-	e := &emulator{bin: filepath.Join(tmp, "gcpemu"), dir: filepath.Join(tmp, "data")}
+	e := &emulator{bin: filepath.Join(tmp, "gcpemu"), dir: filepath.Join(tmp, "data"), guard: escapeguard.New(t)}
 	build := exec.Command("go", "build", "-o", e.bin, "../cmd/gcpemu")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -104,20 +108,38 @@ func (e *emulator) emuEnv(t *testing.T) map[string]string {
 // run runs a client and fails the test on error.
 func (e *emulator) run(t *testing.T, bin string, args ...string) string {
 	t.Helper()
-	out, err := e.try(bin, args...)
+	out, err := e.try(t, bin, args...)
 	if err != nil {
 		t.Fatalf("%s %s: %v\n%s", filepath.Base(bin), strings.Join(args, " "), err, out)
 	}
 	return out
 }
 
-func (e *emulator) try(bin string, args ...string) (string, error) {
+// try runs a client and fails the test on each request the Escape guard
+// refused.
+func (e *emulator) try(t *testing.T, bin string, args ...string) (string, error) {
+	t.Helper()
+	out, escaped, err := e.exec(e.env, bin, args...)
+	for _, h := range escaped {
+		t.Errorf("gcloud %s: %s", args[0], escapeguard.DescribeGcloud(h))
+	}
+	return out, err
+}
+
+// exec runs a client in env and returns the hosts the Escape guard
+// refused. Only gcloud runs behind the guard: the other clients are Go,
+// which keeps to loopback, or reach the internet on purpose (crane from
+// Docker Hub).
+func (e *emulator) exec(env []string, bin string, args ...string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	if filepath.Base(bin) == "gcloud" {
+		env = append(slices.Clip(env), e.guard.Env()...)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = e.env
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return string(out), e.guard.Take(), err
 }
 
 func contains(t *testing.T, what, out, want string) {
@@ -137,11 +159,41 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// gcloudCanaryOverride is the variable the gcloud escape-guard subtest
+// leaves out of the environment, and gcloudCanaryHost where gcloud then
+// sends it.
+const (
+	gcloudCanaryOverride = "CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB"
+	gcloudCanaryHost     = "pubsub.googleapis.com"
+)
+
+// gcloudCanary lists Pub/Sub topics without the pubsub endpoint override,
+// and fails unless the Escape guard refuses the request. Without it, a
+// gcloud that ignored HTTPS_PROXY would pass every step with the guard
+// never seeing a request.
+func gcloudCanary(t *testing.T, e *emulator, gcloud string) {
+	env := slices.DeleteFunc(slices.Clone(e.env), func(kv string) bool { return strings.HasPrefix(kv, gcloudCanaryOverride+"=") })
+	if len(env) == len(e.env) {
+		t.Fatalf("gcpemu env sets no %s", gcloudCanaryOverride)
+	}
+	out, escaped, err := e.exec(env, gcloud, "pubsub", "topics", "list")
+	if err == nil {
+		t.Errorf("gcloud pubsub topics list without %s succeeded:\n%s", gcloudCanaryOverride, out)
+	}
+	if !slices.Equal(escaped, []string{gcloudCanaryHost}) {
+		t.Errorf("the Escape guard refused %v, want [%s]; gcloud said:\n%s", escaped, gcloudCanaryHost, out)
+	}
+}
+
 // TestClients runs every client against one emulator. Subtests share
 // resources (the SQL instance, the cluster) and run in order.
 func TestClients(t *testing.T) {
 	e := start(t)
 	gcloud := func(t *testing.T) string { return onPath(t, "gcloud") }
+
+	t.Run("gcloud/escape-guard", func(t *testing.T) {
+		gcloudCanary(t, e, gcloud(t))
+	})
 
 	t.Run("gcloud/storage", func(t *testing.T) {
 		g := gcloud(t)
@@ -158,7 +210,7 @@ func TestClients(t *testing.T) {
 			t.Fatalf("downloaded %q", b)
 		}
 		e.run(t, g, "storage", "rm", "gs://compat-bucket/dir/hello.txt")
-		if out, _ := e.try(g, "storage", "ls", "gs://compat-bucket/dir/"); strings.Contains(out, "hello.txt") {
+		if out, _ := e.try(t, g, "storage", "ls", "gs://compat-bucket/dir/"); strings.Contains(out, "hello.txt") {
 			t.Fatalf("object still listed: %s", out)
 		}
 	})
@@ -266,7 +318,7 @@ func TestClients(t *testing.T) {
 		if out, err := login.CombinedOutput(); err != nil {
 			t.Fatalf("crane auth login: %v\n%s", err, out)
 		}
-		if out, err := e.try(crane, "copy", "--insecure", "docker.io/library/busybox:1.36.1", repo+"/base:v1"); err != nil {
+		if out, err := e.try(t, crane, "copy", "--insecure", "docker.io/library/busybox:1.36.1", repo+"/base:v1"); err != nil {
 			t.Skipf("crane copy from Docker Hub (needs the internet): %v\n%s", err, out)
 		}
 		e.run(t, crane, "copy", "--insecure", repo+"/base:v1", repo+"/copy:v1") // cross-repo mount
@@ -308,7 +360,7 @@ func TestClients(t *testing.T) {
 		e.run(t, docker, "push", "-q", repo+"/docker:v2")
 		e.run(t, docker, "rmi", repo+"/docker:v2", repo+"/base:v1")
 		e.run(t, docker, "pull", "-q", repo+"/docker:v2")
-		_, _ = e.try(docker, "rmi", repo+"/docker:v2")
+		_, _ = e.try(t, docker, "rmi", repo+"/docker:v2")
 
 		ar := "us-central1-docker.pkg.dev/" + project + "/compat-repo"
 		contains(t, "artifacts docker images list", e.run(t, g, "artifacts", "docker", "images", "list", ar, "--format=value(package)"), ar+"/docker")
