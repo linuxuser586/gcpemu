@@ -439,3 +439,57 @@ func TestEdgeRetired(t *testing.T) {
 	e.do(c.GlobalForwardingRules.Delete(proj, "fr").Do())
 	eventually(t, 30*time.Second, "edge container removed", func() bool { return edges() == 0 })
 }
+
+// TestEdgeSubnetworkAddress (#148): the lb-edge container joins a
+// subnetwork's container network that is not Translated with an address
+// compute allocated for it, so compute hands it to no other resource and
+// refuses to reserve it as an internal address. Retiring the idle edge
+// frees it.
+func TestEdgeSubnetworkAddress(t *testing.T) {
+	emutest.RequireRuntime(t)
+	e := start(t)
+	c := e.c
+	ctx := context.Background()
+	vpcSvc, _ := e.inst.Env.Lookup("compute")
+	vpc := vpcSvc.(emu.VPC)
+	subnetwork, err := vpc.ResolveSubnetwork(ctx, proj, "us-central1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sn, err := vpc.SubnetNetwork(ctx, subnetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sn.Translated {
+		t.Skipf("subnetwork %s is Translated on this host", subnetwork)
+	}
+	lbSvc, _ := e.inst.Env.Lookup("lb")
+	ip, err := lb.JoinSubnetwork(ctx, lbSvc, subnetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := vpc.AllocateIP(ctx, sn, "lb-edge"); err != nil || got != ip {
+		t.Fatalf("compute's lb-edge address = %q, %v; the edge holds %q", got, err, ip)
+	}
+	if other, err := vpc.AllocateIP(ctx, sn, "test-other"); err != nil || other == ip {
+		t.Fatalf("AllocateIP for another owner = %q, %v; want an address other than the edge's %q", other, err, ip)
+	}
+	if _, err := c.Addresses.Insert(proj, "us-central1", &computev1.Address{Name: "taken", AddressType: "INTERNAL", Subnetwork: "default", Address: ip}).Do(); err == nil || !strings.Contains(err.Error(), "already being used") {
+		t.Fatalf("reserving the edge's address %s: err = %v, want already being used", ip, err)
+	}
+
+	// With no forwarding rule mapped and no pod endpoints, the edge retires
+	// after its idle grace and frees the address (after removing the
+	// container, so poll compute rather than the container list).
+	n := 0
+	eventually(t, 30*time.Second, "edge address freed", func() bool {
+		n++
+		owner := fmt.Sprintf("test-after-%d", n)
+		got, err := vpc.AllocateIP(ctx, sn, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = vpc.ReleaseIP(ctx, sn, owner)
+		return got == ip
+	})
+}

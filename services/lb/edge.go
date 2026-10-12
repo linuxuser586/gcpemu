@@ -59,6 +59,9 @@ type edge struct {
 	routes  []edgeRoute
 	pods    []*net.IPNet
 	nets    map[string]bool
+	// vpcs holds the subnetwork networks on which the edge holds an
+	// address compute allocated for it, by network name.
+	vpcs    map[string]emu.SubnetNet
 	pushed  string
 	stopped bool
 	// idleSince is when the edge last became unused (no forwarding rule
@@ -71,7 +74,7 @@ type edge struct {
 const edgeIdleGrace = 5 * time.Second
 
 func newEdge(d *dataplane) *edge {
-	e := &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}}
+	e := &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}, vpcs: map[string]emu.SubnetNet{}}
 	go e.routeLoop(d.ctx)
 	return e
 }
@@ -478,12 +481,9 @@ func (e *edge) syncRoutes(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		if !e.nets[sn.Name] {
-			if err := rt.Connect(cctx, sn.Name, e.id, ""); err != nil && !strings.Contains(err.Error(), "already exists") {
-				e.env().Log.Warn("lb: attaching edge to subnetwork", "network", sn.Name, "err", err)
-				continue
-			}
-			e.nets[sn.Name] = true
+		if err := e.joinLocked(cctx, rt, vpc, sn); err != nil {
+			e.env().Log.Warn("lb: attaching edge to subnetwork", "network", sn.Name, "err", err)
+			continue
 		}
 		if _, n, err := net.ParseCIDR(pr.CIDR); err == nil && pr.Via != "" {
 			routes = append(routes, edgeRoute{CIDR: pr.CIDR, Via: pr.Via})
@@ -494,6 +494,58 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	e.routes, e.pods = routes, pods
 	if err := e.pushLocked(cctx); err != nil {
 		e.env().Log.Warn("lb: programming edge routes", "err", err)
+	}
+}
+
+// edgeIPOwner owns the edge's addresses in compute's allocations.
+const edgeIPOwner = "lb-edge"
+
+// joinLocked attaches the edge to subnetwork network sn. On a network that
+// is not Translated the container network is on the Declared range, so the
+// edge joins with an address compute allocated for it (#148): compute then
+// neither hands it to another resource nor lets an internal address be
+// reserved on it. On a Translated network the runtime picks a Fallback-range
+// address, which compute never allocates from; pod routes go via the nodes'
+// Fallback-range addresses there.
+func (e *edge) joinLocked(ctx context.Context, rt *runtime.Manager, vpc emu.VPC, sn emu.SubnetNet) error {
+	if e.nets[sn.Name] {
+		return nil
+	}
+	ip := ""
+	if !sn.Translated {
+		var err error
+		if ip, err = vpc.AllocateIP(ctx, sn, edgeIPOwner); err != nil {
+			return err
+		}
+		e.vpcs[sn.Name] = sn
+	}
+	if err := rt.Connect(ctx, sn.Name, e.id, ip); err != nil && !strings.Contains(err.Error(), "already exists") {
+		if ip != "" {
+			// Another container may hold it: allocate afresh next time,
+			// skipping the addresses held on the network.
+			_ = vpc.ReleaseIP(ctx, sn, edgeIPOwner)
+			delete(e.vpcs, sn.Name)
+		}
+		return err
+	}
+	e.nets[sn.Name] = true
+	return nil
+}
+
+// releaseLocked frees the edge's addresses in compute's allocations.
+func (e *edge) releaseLocked(ctx context.Context) {
+	if len(e.vpcs) == 0 {
+		return
+	}
+	vpcSvc, _ := e.env().Lookup("compute")
+	if vpc, ok := vpcSvc.(emu.VPC); ok {
+		for name, sn := range e.vpcs {
+			if err := vpc.ReleaseIP(ctx, sn, edgeIPOwner); err != nil {
+				e.env().Log.Warn("lb: releasing edge address", "network", name, "err", err)
+				continue
+			}
+			delete(e.vpcs, name)
+		}
 	}
 }
 
@@ -526,6 +578,7 @@ func (e *edge) retireIdle(ctx context.Context, now time.Time) {
 	if e.netName != "" {
 		_ = rt.RemoveNetwork(ctx, e.netName)
 	}
+	e.releaseLocked(ctx)
 	e.env().Log.Info("lb: idle edge container removed")
 	e.id, e.ip, e.pushed = "", "", ""
 	e.nets = map[string]bool{}

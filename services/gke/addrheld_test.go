@@ -21,7 +21,7 @@ import (
 )
 
 // TestNodeAddressHeld (#146): containers compute did not allocate for,
-// such as the LB edge relay, join a subnetwork's container network with an
+// such as ones the emulator does not manage, join a subnetwork's container network with an
 // address the runtime picks. A resize still succeeds when one holds the
 // address compute would pick next, and when one takes the new node's
 // address after the node was created but before it started (the runtime
