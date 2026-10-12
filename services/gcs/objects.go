@@ -106,7 +106,20 @@ func (s *Service) patchObject(w http.ResponseWriter, r *http.Request, bucket, na
 		apierr.Write(w, err)
 		return
 	}
-	rec, bkt, err := s.updateObjectMeta(r.Context(), bucket, name, gen, c, baseURL(r), func(o *storage.Object) (*storage.Object, error) {
+	override := q.Get("overrideUnlockedRetention") == "true"
+	if _, ok := body["retention"]; ok {
+		if err := s.check(r.Context(), "storage.objects.setRetention", objectResource(bucket, name)); err != nil {
+			apierr.Write(w, err)
+			return
+		}
+	}
+	if override {
+		if err := s.check(r.Context(), "storage.objects.overrideUnlockedRetention", objectResource(bucket, name)); err != nil {
+			apierr.Write(w, err)
+			return
+		}
+	}
+	rec, bkt, err := s.updateObjectMeta(r.Context(), bucket, name, gen, c, baseURL(r), override, func(o *storage.Object) (*storage.Object, error) {
 		var no storage.Object
 		if err := applyPatch(o, body, mutableObjectFields, replace, &no); err != nil {
 			return nil, err
@@ -121,8 +134,9 @@ func (s *Service) patchObject(w http.ResponseWriter, r *http.Request, bucket, na
 }
 
 // updateObjectMeta applies fn to an object's metadata, bumping its
-// metageneration and publishing OBJECT_METADATA_UPDATE.
-func (s *Service) updateObjectMeta(ctx context.Context, bucket, name string, gen int64, c conds, base string, fn func(*storage.Object) (*storage.Object, error)) (*objectRec, *storage.Bucket, error) {
+// metageneration and publishing OBJECT_METADATA_UPDATE. override is the
+// request's overrideUnlockedRetention.
+func (s *Service) updateObjectMeta(ctx context.Context, bucket, name string, gen int64, c conds, base string, override bool, fn func(*storage.Object) (*storage.Object, error)) (*objectRec, *storage.Bucket, error) {
 	var (
 		out *objectRec
 		bkt *storage.Bucket
@@ -146,6 +160,9 @@ func (s *Service) updateObjectMeta(ctx context.Context, bucket, name string, gen
 		prev := rec.Object
 		no, err := fn(prev)
 		if err != nil {
+			return err
+		}
+		if err := checkRetention(prev.Retention, no.Retention, bkt, override); err != nil {
 			return err
 		}
 		now := s.now()

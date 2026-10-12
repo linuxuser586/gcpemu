@@ -504,3 +504,77 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+func TestObjectRetention(t *testing.T) {
+	clientModes(t, func(t *testing.T, inst *emutest.Instance, c *storage.Client) {
+		ctx := context.Background()
+		plain := c.Bucket("no-object-retention")
+		if err := plain.Create(ctx, testProject, nil); err != nil {
+			t.Fatal(err)
+		}
+		until := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+		w := plain.Object("x").NewWriter(ctx)
+		w.Retention = &storage.ObjectRetention{Mode: "Unlocked", RetainUntil: until}
+		_, _ = w.Write([]byte("x"))
+		if err := w.Close(); httpCode(err) != 400 {
+			t.Errorf("retention without bucket support = %v", err)
+		}
+
+		b := c.Bucket("object-retention")
+		if err := b.SetObjectRetention(true).Create(ctx, testProject, nil); err != nil {
+			t.Fatal(err)
+		}
+		o := b.Object("unlocked")
+		w = o.NewWriter(ctx)
+		w.Retention = &storage.ObjectRetention{Mode: "Unlocked", RetainUntil: until}
+		_, _ = w.Write([]byte("u"))
+		if err := w.Close(); err != nil {
+			t.Fatalf("create with retention: %v", err)
+		}
+		if err := o.Delete(ctx); httpCode(err) != 403 {
+			t.Errorf("delete while retained = %v", err)
+		}
+		// Extending needs no override; shortening and removing do.
+		later := until.Add(24 * time.Hour)
+		if _, err := o.Update(ctx, storage.ObjectAttrsToUpdate{Retention: &storage.ObjectRetention{Mode: "Unlocked", RetainUntil: later}}); err != nil {
+			t.Errorf("extend unlocked: %v", err)
+		}
+		if _, err := o.Update(ctx, storage.ObjectAttrsToUpdate{Retention: &storage.ObjectRetention{Mode: "Unlocked", RetainUntil: until}}); httpCode(err) != 403 {
+			t.Errorf("shorten unlocked without override = %v", err)
+		}
+		if _, err := o.Update(ctx, storage.ObjectAttrsToUpdate{Retention: &storage.ObjectRetention{}}); httpCode(err) != 403 {
+			t.Errorf("remove unlocked without override = %v", err)
+		}
+		past := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+		a, err := o.OverrideUnlockedRetention(true).Update(ctx, storage.ObjectAttrsToUpdate{Retention: &storage.ObjectRetention{Mode: "Unlocked", RetainUntil: past}})
+		if err != nil || a.Retention == nil || !a.Retention.RetainUntil.Equal(past) {
+			t.Fatalf("shorten unlocked with override = %+v, %v", a, err)
+		}
+		if err := o.Delete(ctx); err != nil {
+			t.Errorf("delete after retention passed: %v", err)
+		}
+
+		l := b.Object("locked")
+		w = l.NewWriter(ctx)
+		w.Retention = &storage.ObjectRetention{Mode: "Locked", RetainUntil: until}
+		_, _ = w.Write([]byte("l"))
+		if err := w.Close(); err != nil {
+			t.Fatalf("create locked: %v", err)
+		}
+		for name, r := range map[string]*storage.ObjectRetention{
+			"shorten": {Mode: "Locked", RetainUntil: until.Add(-time.Hour)},
+			"unlock":  {Mode: "Unlocked", RetainUntil: later},
+			"remove":  {},
+		} {
+			if _, err := l.OverrideUnlockedRetention(true).Update(ctx, storage.ObjectAttrsToUpdate{Retention: r}); httpCode(err) != 403 {
+				t.Errorf("%s locked = %v", name, err)
+			}
+		}
+		if _, err := l.Update(ctx, storage.ObjectAttrsToUpdate{Retention: &storage.ObjectRetention{Mode: "Locked", RetainUntil: later}}); err != nil {
+			t.Errorf("extend locked: %v", err)
+		}
+		if _, err := l.Update(ctx, storage.ObjectAttrsToUpdate{Retention: &storage.ObjectRetention{Mode: "Sometimes", RetainUntil: later}}); httpCode(err) != 400 {
+			t.Errorf("bad mode = %v", err)
+		}
+	})
+}

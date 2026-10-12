@@ -111,6 +111,11 @@ func (s *Service) commitObject(ctx context.Context, wr *writeReq) (*objectRec, *
 		events   []event
 		oldBlobs []string
 	)
+	if hasRetention(wr.meta.Retention) {
+		if err := s.check(ctx, "storage.objects.setRetention", objectResource(wr.bucket, wr.meta.Name)); err != nil {
+			return nil, nil, err
+		}
+	}
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		events, oldBlobs = nil, nil
 		brec, err := loadBucket(tx, wr.bucket)
@@ -118,6 +123,9 @@ func (s *Service) commitObject(ctx context.Context, wr *writeReq) (*objectRec, *
 			return err
 		}
 		bkt = brec.Bucket
+		if err := checkRetention(nil, wr.meta.Retention, bkt, false); err != nil {
+			return err
+		}
 		cur, _, err := loadObject(tx, wr.bucket, wr.meta.Name, 0)
 		if err != nil {
 			return err
