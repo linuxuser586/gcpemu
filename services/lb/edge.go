@@ -85,7 +85,7 @@ func (e *edge) env() *emu.Env { return e.d.s.env }
 func (e *edge) available(ctx context.Context) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.d.s.opts.Edge {
+	if e.d.s.options().Edge {
 		return true
 	}
 	if !e.rtTried {
@@ -442,7 +442,7 @@ func (e *edge) routeLoop(ctx context.Context) {
 
 func (e *edge) syncRoutes(ctx context.Context) {
 	e.retireIdle(ctx, time.Now())
-	if e.d.s.opts.DirectDial {
+	if e.d.s.options().DirectDial {
 		return
 	}
 	svc, ok := e.env().Lookup("gke")

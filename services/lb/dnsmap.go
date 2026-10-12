@@ -23,7 +23,7 @@ func (d *dataplane) installDNSMapper() {
 // directly otherwise.
 func (d *dataplane) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, _, _ := net.SplitHostPort(addr)
-	if !d.s.opts.DirectDial && d.edge != nil && d.edge.covers(host) {
+	if !d.s.options().DirectDial && d.edge != nil && d.edge.covers(host) {
 		return d.edge.dial(ctx, addr)
 	}
 	dl := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
