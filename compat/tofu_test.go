@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -120,7 +121,10 @@ func TestOpenTofu(t *testing.T) {
 	tofuBin := onPath(t, "tofu")
 	providers := providerMatrix(t)
 	e := start(t)
-	plugins := filepath.Join(cacheDir(t), "tofu-plugins")
+	plugins := os.Getenv("TF_PLUGIN_CACHE_DIR")
+	if plugins == "" {
+		plugins = filepath.Join(cacheDir(t), "tofu-plugins")
+	}
 	if err := os.MkdirAll(plugins, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +132,7 @@ func TestOpenTofu(t *testing.T) {
 	if v := os.Getenv("GCPEMU_TOFU_MODULES"); v != "" {
 		modules = strings.Split(v, ",")
 	}
-	var initMu sync.Mutex // tofu init shares the plugin cache
+	var in initer // tofu init shares the plugin cache
 	for _, p := range providers {
 		t.Run(p.String(), func(t *testing.T) {
 			// A project per provider version keeps leftovers of one run from
@@ -144,14 +148,7 @@ func TestOpenTofu(t *testing.T) {
 						t.Skip("needs a container runtime")
 					}
 					tf := newModule(t, tofuBin, m, plugins, p, project, block)
-					// A failed init ends the subtest (t.Fatalf), so the lock is
-					// released by defer: otherwise every other module waits on it
-					// until the job times out.
-					func() {
-						initMu.Lock()
-						defer initMu.Unlock()
-						tf.run(10*time.Minute, "init", "-no-color")
-					}()
+					in.init(tf, plugins, p)
 					tf.run(20*time.Minute, "apply", "-auto-approve", "-no-color")
 					tf.planClean()
 					tf.run(20*time.Minute, "destroy", "-auto-approve", "-no-color")
@@ -244,9 +241,51 @@ func providerMatrix(t *testing.T) []provider {
 }
 
 // registryVersions returns the stable releases of hashicorp/<name> in the
-// OpenTofu registry, oldest first.
+// OpenTofu registry, oldest first. Each successful lookup is saved in the
+// cache, and that list stands in when the registry is unreachable.
 func registryVersions(t *testing.T, name string) [][3]int {
 	t.Helper()
+	saved := filepath.Join(cacheDir(t), "tofu-versions-"+name+".json")
+	list, err := fetchVersions(name)
+	if err == nil {
+		b, _ := json.Marshal(list)
+		if err := os.WriteFile(saved, b, 0o644); err != nil {
+			t.Logf("saving the provider versions of %s: %v", name, err)
+		}
+	} else {
+		b, rerr := os.ReadFile(saved)
+		if rerr != nil || json.Unmarshal(b, &list) != nil {
+			t.Fatalf("provider versions of %s (pin versions in GCPEMU_TOFU_PROVIDERS to skip the lookup): %v", name, err)
+		}
+		t.Logf("provider versions of %s: %v; using the cached list in %s", name, err, saved)
+	}
+	var vs [][3]int
+	for _, v := range list {
+		var n [3]int
+		parts := strings.Split(v, ".")
+		if len(parts) != 3 {
+			continue
+		}
+		ok := true
+		for i, p := range parts {
+			if n[i], err = strconv.Atoi(p); err != nil {
+				ok = false // pre-release
+			}
+		}
+		if ok {
+			vs = append(vs, n)
+		}
+	}
+	if len(vs) == 0 {
+		t.Fatalf("no releases of hashicorp/%s", name)
+	}
+	slices.SortFunc(vs, func(a, b [3]int) int { return slices.Compare(a[:], b[:]) })
+	return vs
+}
+
+// fetchVersions asks the OpenTofu registry for the versions of
+// hashicorp/<name>, retrying for about a minute.
+func fetchVersions(name string) ([]string, error) {
 	cl := &http.Client{Timeout: 30 * time.Second}
 	var body struct{ Versions []struct{ Version string } }
 	var err error
@@ -269,30 +308,13 @@ func registryVersions(t *testing.T, name string) [][3]int {
 		}
 	}
 	if err != nil {
-		t.Fatalf("provider versions of %s (pin versions in GCPEMU_TOFU_PROVIDERS to skip the lookup): %v", name, err)
+		return nil, err
 	}
-	var vs [][3]int
+	var out []string
 	for _, v := range body.Versions {
-		var n [3]int
-		parts := strings.Split(v.Version, ".")
-		if len(parts) != 3 {
-			continue
-		}
-		ok := true
-		for i, p := range parts {
-			if n[i], err = strconv.Atoi(p); err != nil {
-				ok = false // pre-release
-			}
-		}
-		if ok {
-			vs = append(vs, n)
-		}
+		out = append(out, v.Version)
 	}
-	if len(vs) == 0 {
-		t.Fatalf("no releases of hashicorp/%s", name)
-	}
-	slices.SortFunc(vs, func(a, b [3]int) int { return slices.Compare(a[:], b[:]) })
-	return vs
+	return out, nil
 }
 
 func versionString(v [3]int) string { return fmt.Sprintf("%d.%d.%d", v[0], v[1], v[2]) }
@@ -321,11 +343,11 @@ func newModule(t *testing.T, bin, name, plugins string, p provider, project, blo
     }
     tls = {
       source  = "hashicorp/tls"
-      version = "= 4.4.1"
+      version = "= %s"
     }
   }
 }
-`, p.name, p.version)
+`, p.name, p.version, tlsVersion)
 	for f, s := range map[string]string{"versions.tf": versions, "provider.tf": block} {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte(s), 0o644); err != nil {
 			t.Fatal(err)
@@ -336,6 +358,62 @@ func newModule(t *testing.T, bin, name, plugins string, p provider, project, blo
 		env = append(env, "TF_PLUGIN_CACHE_DIR="+plugins)
 	}
 	return &module{t: t, bin: bin, dir: dir, env: env, project: project}
+}
+
+// initer runs tofu init for the modules one at a time, since they share
+// the plugin cache.
+type initer struct {
+	mu           sync.Mutex
+	registryDown bool // an init has used up its retries on a registry error
+}
+
+// tlsVersion is the hashicorp/tls version every module requires.
+const tlsVersion = "4.4.1"
+
+// registryErrRE matches tofu init output (with its whitespace collapsed)
+// for a registry or network failure, which a later attempt may not hit.
+var registryErrRE = regexp.MustCompile(`could not query provider|could not connect to registry|failed to request discovery document|` +
+	`connection refused|connection reset|i/o timeout|TLS handshake timeout|no such host|Client\.Timeout exceeded`)
+
+// init initializes tf. When the plugin cache holds every provider tf
+// requires, a lock file is written from the cache first: with it (and
+// only with its h1: hash for this platform) init does not contact the
+// registry at all. Otherwise init is retried while it fails on the
+// registry or the network.
+func (in *initer) init(tf *module, plugins string, p provider) {
+	tf.t.Helper()
+	// A failed init ends the subtest (t.Fatalf), so the lock is released
+	// by defer: otherwise every other module waits on it until the job
+	// times out.
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	platform := runtime.GOOS + "_" + runtime.GOARCH
+	cached := true
+	for _, pv := range []provider{p, {"tls", tlsVersion}} {
+		if _, err := os.Stat(filepath.Join(plugins, "registry.opentofu.org", "hashicorp", pv.name, pv.version, platform)); err != nil {
+			cached = false
+		}
+	}
+	if cached {
+		tf.run(time.Minute, "providers", "lock", "-fs-mirror="+plugins, "-platform="+platform, "-no-color")
+		tf.run(10*time.Minute, "init", "-no-color")
+		return
+	}
+	backoff := []time.Duration{10 * time.Second, 30 * time.Second}
+	for attempt := 0; ; attempt++ {
+		out, err := tf.try(10*time.Minute, "init", "-no-color")
+		if err == nil {
+			return
+		}
+		// tofu wraps its diagnostics, so the match is on the words alone.
+		registry := registryErrRE.MatchString(strings.Join(strings.Fields(out), " "))
+		if !registry || in.registryDown || attempt == len(backoff) {
+			in.registryDown = in.registryDown || registry
+			tf.t.Fatalf("tofu init (attempt %d): %v\n%s", attempt+1, err, tail(out, 80))
+		}
+		tf.t.Logf("tofu init failed on the registry, retrying in %v:\n%s", backoff[attempt], tail(out, 10))
+		time.Sleep(backoff[attempt])
+	}
 }
 
 func (m *module) run(timeout time.Duration, args ...string) string {
