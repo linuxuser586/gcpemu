@@ -72,7 +72,9 @@ func (s *Service) Register(r emu.Router) error {
 	r.Mount("cloudresourcemanager", []string{"cloudresourcemanager.googleapis.com"}, http.HandlerFunc(s.serveCRM))
 	r.Mount("cloudbilling", []string{"cloudbilling.googleapis.com"}, http.HandlerFunc(s.serveBilling))
 	r.Mount("serviceusage", []string{"serviceusage.googleapis.com"}, http.HandlerFunc(s.serveServiceUsage))
-	r.Mount("oauth2", []string{"oauth2.googleapis.com", "accounts.google.com"}, http.HandlerFunc(s.serveOAuth2))
+	// openidconnect.googleapis.com is where the OpenTofu google provider
+	// looks up the caller's email (#155).
+	r.Mount("oauth2", []string{"oauth2.googleapis.com", "accounts.google.com", "openidconnect.googleapis.com"}, http.HandlerFunc(s.serveOAuth2))
 	r.Mount("iamcredentials", []string{"iamcredentials.googleapis.com"}, http.HandlerFunc(s.serveCredentials))
 	r.Mount("sts", []string{"sts.googleapis.com"}, http.HandlerFunc(s.serveSTS))
 	r.Handle("/service_accounts/v1/metadata/", http.HandlerFunc(s.serveX509))

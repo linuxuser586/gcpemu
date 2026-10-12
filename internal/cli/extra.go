@@ -42,6 +42,13 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	{"secret_manager_regional_custom_endpoint", "secrets", "/secretmanager/v1/"},
 }
 
+// providerUniverseDomain is the universe_domain the provider blocks set.
+// Any non-Google value makes the provider (>= 7.2) skip its hard-coded
+// userinfo lookup, which no *_custom_endpoint reaches. An API left without
+// an endpoint is addressed as <api>.gcpemu.invalid, which never resolves
+// (RFC 6761), so it fails instead of reaching Google.
+const providerUniverseDomain = "gcpemu.invalid"
+
 // betaPaths overrides a provider endpoint's base path in the google-beta
 // block, where the provider calls a beta API version.
 var betaPaths = map[string]string{
@@ -58,7 +65,13 @@ func (o *rootOpts) tofuProviderCmd() *cobra.Command {
 
 --beta also prints a provider "google-beta" block with the same endpoints,
 container's at /container/v1beta1/. It is opt-in because the block makes
-OpenTofu require the hashicorp/google-beta provider.`,
+OpenTofu require the hashicorp/google-beta provider.
+
+The blocks set universe_domain = "gcpemu.invalid" so the provider skips its
+caller-email lookup at openidconnect.googleapis.com, which no endpoint
+setting covers. Providers older than 7.2 ignore it for that lookup and
+still call Google on every run, or stall without DNS. Upgrade them, or set
+HTTPS_PROXY to an address that refuses connections.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
@@ -85,6 +98,8 @@ OpenTofu require the hashicorp/google-beta provider.`,
 				fmt.Fprintf(out, "  project      = %q\n", project)
 				fmt.Fprintf(out, "  region       = %q\n", region)
 				fmt.Fprintln(out, `  access_token = "owner" # accepted as the default principal`)
+				fmt.Fprintln(out, "  # Skips the provider's userinfo lookup at openidconnect.googleapis.com (#155).")
+				fmt.Fprintf(out, "  universe_domain = %q\n", providerUniverseDomain)
 				fmt.Fprintln(out)
 				for _, e := range providerEndpoints {
 					if running[e.service] {

@@ -39,3 +39,31 @@ func TestLegacyHostCerts(t *testing.T) {
 		t.Fatalf("certs: %d %v %+v", resp.StatusCode, err, jwks)
 	}
 }
+
+// TestOpenIDConnectHostUserinfo is #155: the OpenTofu google provider looks
+// up the caller's email at a hard-coded openidconnect.googleapis.com URL,
+// so the Google frontend (and with it host mode) answers there.
+func TestOpenIDConnectHostUserinfo(t *testing.T) {
+	inst := startIAM(t)
+	if !slices.Contains(inst.FrontendHosts(), "openidconnect.googleapis.com") {
+		t.Fatalf("frontend hosts %v lack openidconnect.googleapis.com", inst.FrontendHosts())
+	}
+	fe := inst.Endpoint("frontend")
+	cl := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: inst.Env.CA.Pool()},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, fe)
+		},
+	}}
+	req, _ := http.NewRequest("GET", "https://openidconnect.googleapis.com/v1/userinfo?alt=json", nil)
+	req.Header.Set("Authorization", "Bearer owner")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var info struct{ Email string }
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || resp.StatusCode != 200 || info.Email == "" {
+		t.Fatalf("userinfo: %d %v %+v", resp.StatusCode, err, info)
+	}
+}
