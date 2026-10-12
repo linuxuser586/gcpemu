@@ -774,6 +774,126 @@ func TestProtocols(t *testing.T) {
 	}
 }
 
+// TestWebSocketBackends is FR-LB-005 over an HTTPS frontend: a WebSocket
+// upgrade to an HTTP backend service on a hybrid NEG, a zonal NEG, or with
+// Cloud CDN on gets the backend's 101, carries frames both ways and is
+// logged as 101.
+func TestWebSocketBackends(t *testing.T) {
+	e := start(t)
+	c := e.c
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "websocket" || r.Header.Get("Sec-Websocket-Protocol") != "vite-hmr" {
+			_, _ = io.WriteString(w, "page")
+			return
+		}
+		conn, rw, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: vite-hmr\r\n\r\n")
+		_, _ = rw.WriteString("hello from " + r.URL.Path + "\n")
+		_ = rw.Flush()
+		line, _ := rw.ReadString('\n')
+		_, _ = rw.WriteString("echo:" + line)
+		_ = rw.Flush()
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	_, ps, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	port, _ := strconv.Atoi(ps)
+
+	e.do(c.Networks.Insert(proj, &computev1.Network{Name: "vpc", AutoCreateSubnetworks: false, ForceSendFields: []string{"AutoCreateSubnetworks"}}).Do())
+	e.do(c.HealthChecks.Insert(proj, &computev1.HealthCheck{Name: "tcp", Type: "TCP", CheckIntervalSec: 1, TimeoutSec: 1,
+		TcpHealthCheck: &computev1.TCPHealthCheck{Port: int64(port)}}).Do())
+	for _, typ := range []string{"NON_GCP_PRIVATE_IP_PORT", "GCE_VM_IP_PORT"} {
+		name := map[string]string{"NON_GCP_PRIVATE_IP_PORT": "hybrid", "GCE_VM_IP_PORT": "zonal"}[typ]
+		e.do(c.NetworkEndpointGroups.Insert(proj, "us-central1-a", &computev1.NetworkEndpointGroup{Name: name, NetworkEndpointType: typ,
+			Network: "global/networks/vpc", DefaultPort: int64(port)}).Do())
+		e.do(c.NetworkEndpointGroups.AttachNetworkEndpoints(proj, "us-central1-a", name, &computev1.NetworkEndpointGroupsAttachEndpointsRequest{
+			NetworkEndpoints: []*computev1.NetworkEndpoint{{IpAddress: "127.0.0.1", Port: int64(port)}}}).Do())
+	}
+	for name, neg := range map[string]string{"hybrid": "hybrid", "zonal": "zonal", "cdn": "zonal"} {
+		e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: name, LoadBalancingScheme: "EXTERNAL_MANAGED", Protocol: "HTTP",
+			HealthChecks: []string{"global/healthChecks/tcp"}, EnableCDN: name == "cdn", CustomResponseHeaders: []string{"X-Backend: " + name},
+			Backends: []*computev1.Backend{{Group: "zones/us-central1-a/networkEndpointGroups/" + neg, BalancingMode: "RATE", MaxRatePerEndpoint: 1000}}}).Do())
+	}
+	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/hybrid",
+		HostRules: []*computev1.HostRule{{Hosts: []string{"*"}, PathMatcher: "m"}},
+		PathMatchers: []*computev1.PathMatcher{{Name: "m", DefaultService: "global/backendServices/hybrid", PathRules: []*computev1.PathRule{
+			{Paths: []string{"/zonal"}, Service: "global/backendServices/zonal"},
+			{Paths: []string{"/cdn"}, Service: "global/backendServices/cdn"}}}}}).Do())
+	leaf, _ := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
+	chain, key, _ := ca.EncodeCert(leaf)
+	e.do(c.SslCertificates.Insert(proj, &computev1.SslCertificate{Name: "cert", Certificate: string(chain), PrivateKey: string(key)}).Do())
+	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "p", UrlMap: "global/urlMaps/map",
+		SslCertificates: []string{"global/sslCertificates/cert"}}).Do())
+	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpsProxies/p"}).Do())
+	listener := e.inst.Endpoint("lb:fr")
+	cl := e.client(listener)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		resp, err := cl.Get("https://app.example.test/")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("backend never became healthy: %v %v", resp, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	for _, path := range []string{"/", "/zonal", "/cdn"} {
+		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: "app.example.test", RootCAs: e.inst.Env.CA.Pool(), NextProtos: []string{"http/1.1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		_, _ = io.WriteString(conn, "GET "+path+"?token=x HTTP/1.1\r\nHost: app.example.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"+
+			"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: vite-hmr\r\n\r\n")
+		br := bufio.NewReader(conn)
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil || resp.StatusCode != 101 {
+			t.Fatalf("%s: upgrade = %v, %v", path, resp, err)
+		}
+		if got := resp.Header.Get("X-Backend"); got != strings.TrimPrefix(path, "/") && !(path == "/" && got == "hybrid") {
+			t.Errorf("%s: custom response header = %q", path, got)
+		}
+		if line, _ := br.ReadString('\n'); line != "hello from "+path+"\n" {
+			t.Errorf("%s: backend frame = %q", path, line)
+		}
+		_, _ = io.WriteString(conn, "ping\n")
+		if line, _ := br.ReadString('\n'); line != "echo:ping\n" {
+			t.Errorf("%s: echo = %q", path, line)
+		}
+		conn.Close()
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		logged := map[string]int{}
+		for _, en := range e.inst.Env.RequestLog.Entries("lb") {
+			if strings.Contains(en.Method, "?token=x") {
+				logged[en.Method] = en.Status
+			}
+		}
+		ok := len(logged) == 3
+		for _, st := range logged {
+			ok = ok && st == 101
+		}
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("request log statuses = %v, want 101 for each upgrade", logged)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // TestPushViaLB is FR-INT-011: a Pub/Sub push subscription whose endpoint
 // is served by the load balancer delivers through it with an OIDC token.
 func TestPushViaLB(t *testing.T) {

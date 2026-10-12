@@ -119,8 +119,18 @@ func (w *respWriter) Flush() {
 	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 
+// Hijack serves a protocol switch: the proxy writes the backend's 101
+// itself on the hijacked connection, so the status is recorded and the
+// response header actions applied here (FR-LB-005).
 func (w *respWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return http.NewResponseController(w.ResponseWriter).Hijack()
+	conn, brw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil && !w.wrote {
+		w.wrote, w.status = true, http.StatusSwitchingProtocols
+		if w.onHeader != nil {
+			w.onHeader(w.Header())
+		}
+	}
+	return conn, brw, err
 }
 
 func (w *respWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -241,7 +251,8 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 			rs.sample = conf.LogConfig.SampleRate
 		}
 		origin := bs.handler(rs, res.Action)
-		if conf.EnableCDN {
+		// Cloud CDN passes protocol switches (WebSockets) to the backend.
+		if conf.EnableCDN && r.Header.Get("Upgrade") == "" {
 			if c := d.s.cdnCache(); c != nil {
 				rs.cdnOn = true
 				rs.cdnStatus = c.Serve(w, out, cdn.Backend{ID: conf.SelfLink, Kind: "backendService", ServicePolicy: cdnServicePolicy(conf.CdnPolicy),
