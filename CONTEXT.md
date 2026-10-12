@@ -66,6 +66,10 @@ _Avoid_: agent (unqualified)
 The Managed container through which Cloud NAT traffic leaves the emulated network.
 _Avoid_: egress gateway
 
+**Edge relay**:
+The Managed container through which the load balancer's Data plane reaches backends on VPC networks, such as GKE pods.
+_Avoid_: edge (unqualified), LB proxy
+
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)

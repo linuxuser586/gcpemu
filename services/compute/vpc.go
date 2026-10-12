@@ -448,8 +448,9 @@ func stateOf(tx store.Tx, net emu.SubnetNet) (*vpcNet, string) {
 // addresses, GCP's reserved second-to-last address (where the egress
 // gateway lives) and the broadcast address, plus internal addresses
 // reserved through the compute API, and addresses held on the container
-// network by containers compute did not allocate for (#146), such as the
-// LB edge relay, which joins with an address the runtime picks.
+// network by containers compute did not allocate for (#146), such as
+// ones the emulator does not manage, which join with an address the
+// runtime picks.
 func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner string) (string, error) {
 	if owner == "" {
 		return "", apierr.InvalidArgument("AllocateIP: owner is required")

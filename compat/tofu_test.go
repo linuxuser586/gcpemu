@@ -144,9 +144,14 @@ func TestOpenTofu(t *testing.T) {
 						t.Skip("needs a container runtime")
 					}
 					tf := newModule(t, tofuBin, m, plugins, p, project, block)
-					initMu.Lock()
-					tf.run(10*time.Minute, "init", "-no-color")
-					initMu.Unlock()
+					// A failed init ends the subtest (t.Fatalf), so the lock is
+					// released by defer: otherwise every other module waits on it
+					// until the job times out.
+					func() {
+						initMu.Lock()
+						defer initMu.Unlock()
+						tf.run(10*time.Minute, "init", "-no-color")
+					}()
 					tf.run(20*time.Minute, "apply", "-auto-approve", "-no-color")
 					tf.planClean()
 					tf.run(20*time.Minute, "destroy", "-auto-approve", "-no-color")
@@ -316,7 +321,7 @@ func newModule(t *testing.T, bin, name, plugins string, p provider, project, blo
     }
     tls = {
       source  = "hashicorp/tls"
-      version = ">= 4.0, < 5.0"
+      version = "= 4.4.1"
     }
   }
 }

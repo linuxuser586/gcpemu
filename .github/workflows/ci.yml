@@ -151,7 +151,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-compat/tofu-plugins
-          key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**') }}
+          key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**', 'compat/tofu_test.go') }}
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
       - name: OpenTofu acceptance (SRS 11.1)
         run: make tofu
