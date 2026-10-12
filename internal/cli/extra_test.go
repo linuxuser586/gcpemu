@@ -48,24 +48,7 @@ func TestProviderEndpointsServiceUsage(t *testing.T) {
 // same endpoints except container's v1beta1, and the default output stays a
 // single google block.
 func TestTofuProviderBeta(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"services":["gke","gcs"]}`)
-	}))
-	defer srv.Close()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "endpoints.json"), []byte(`{"gateway":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) string {
-		var out bytes.Buffer
-		root := New(nil)
-		root.SetOut(&out)
-		root.SetArgs(append([]string{"tofu-provider", "--config", filepath.Join(dir, "none.yaml"), "--data-dir", dir}, args...))
-		if err := root.Execute(); err != nil {
-			t.Fatalf("tofu-provider %v: %v", args, err)
-		}
-		return out.String()
-	}
+	srvURL, run := tofuProvider(t)
 	plain := run()
 	if strings.Contains(plain, "google-beta") || strings.Contains(plain, "v1beta1") {
 		t.Errorf("default output has a beta block:\n%s", plain)
@@ -79,8 +62,8 @@ func TestTofuProviderBeta(t *testing.T) {
 		t.Errorf("--beta changed the google block:\n%s", out)
 	}
 	for _, want := range []string{
-		`container_custom_endpoint            = "` + srv.URL + `/container/v1beta1/"`,
-		`storage_custom_endpoint              = "` + srv.URL + `/storage/v1/"`,
+		`container_custom_endpoint            = "` + srvURL + `/container/v1beta1/"`,
+		`storage_custom_endpoint              = "` + srvURL + `/storage/v1/"`,
 		`access_token = "owner"`,
 	} {
 		if !strings.Contains(beta, want) {
@@ -89,5 +72,43 @@ func TestTofuProviderBeta(t *testing.T) {
 	}
 	if strings.Contains(beta, "/container/v1/") {
 		t.Errorf("google-beta block uses container v1:\n%s", beta)
+	}
+}
+
+// tofuProvider serves an instance with gke and gcs running and returns its
+// gateway URL and a runner of `gcpemu tofu-provider` against it.
+func tofuProvider(t *testing.T) (string, func(args ...string) string) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"services":["gke","gcs"]}`)
+	}))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "endpoints.json"), []byte(`{"gateway":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return srv.URL, func(args ...string) string {
+		t.Helper()
+		var out bytes.Buffer
+		root := New(nil)
+		root.SetOut(&out)
+		root.SetArgs(append([]string{"tofu-provider", "--config", filepath.Join(dir, "none.yaml"), "--data-dir", dir}, args...))
+		if err := root.Execute(); err != nil {
+			t.Fatalf("tofu-provider %v: %v", args, err)
+		}
+		return out.String()
+	}
+}
+
+// TestTofuProviderUniverseDomain is #155: both blocks set a non-Google
+// universe_domain, without which the provider looks up the caller's email
+// at openidconnect.googleapis.com on every run.
+func TestTofuProviderUniverseDomain(t *testing.T) {
+	_, run := tofuProvider(t)
+	google, beta, _ := strings.Cut(run("--beta"), `provider "google-beta" {`)
+	for name, block := range map[string]string{"google": google, "google-beta": beta} {
+		if !strings.Contains(block, `universe_domain = "gcpemu.invalid"`) {
+			t.Errorf("%s block lacks universe_domain:\n%s", name, block)
+		}
 	}
 }

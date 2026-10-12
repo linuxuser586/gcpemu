@@ -8,7 +8,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 7.0, < 9.0"
+      version = ">= 7.2, < 9.0"
     }
     tls = {
       source  = "hashicorp/tls"
@@ -50,6 +50,9 @@ provider "google" {
 
   # The emulator accepts "owner" as the default principal's token.
   access_token = local.emu != "" ? "owner" : null
+  # Skips the provider's userinfo lookup at openidconnect.googleapis.com,
+  # which no endpoint setting covers (#155; needs provider >= 7.2).
+  universe_domain = local.emu != "" ? "gcpemu.invalid" : null
 
   iam_custom_endpoint                 = local.ep.iam
   iam_beta_custom_endpoint            = local.ep.iam

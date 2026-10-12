@@ -324,6 +324,13 @@ Cloud SQL and GKE, a container runtime.
 `/container/v1beta1/`. It is opt-in because a `google-beta` block makes OpenTofu require the
 `hashicorp/google-beta` provider.
 
+Both blocks set `universe_domain = "gcpemu.invalid"`. Without it, the provider looks up the
+caller's email at `openidconnect.googleapis.com` every time it is configured. No endpoint
+setting covers that URL, so each run calls Google, or stalls for about 10 minutes when there is no DNS.
+An API that the block gives no endpoint is addressed as `<api>.gcpemu.invalid`, which never
+resolves, so the call fails instead of reaching Google. Providers older than 7.2 still make the
+lookup. Upgrade them, or set `HTTPS_PROXY` to an address that refuses connections.
+
 Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus a token: for
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
 clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.

@@ -16,7 +16,8 @@ import (
 
 // OAuth2 token endpoint and OIDC discovery (FR-IAM-006, FR-CORE-052).
 // Served under /oauth2/ on the gateway and at the root of
-// oauth2.googleapis.com / accounts.google.com in host mode.
+// oauth2.googleapis.com / accounts.google.com / openidconnect.googleapis.com
+// in host mode.
 
 // tokenResponse is the OAuth2 token endpoint response.
 type tokenResponse struct {

@@ -43,6 +43,10 @@ _Avoid_: endpoint (unqualified)
 **Endpoint override**:
 Client-side configuration (an env var, provider setting or SDK option) that points a client at a Service endpoint instead of at Google.
 
+**Escaped request**:
+A request that a client configured against an Instance still sends to a real Google host, because no Endpoint override or Host mode covers it.
+_Avoid_: leak, outbound call
+
 **API gateway**:
 The single listener that receives Control plane requests and routes each one to the right Service.
 _Avoid_: gateway (unqualified)
