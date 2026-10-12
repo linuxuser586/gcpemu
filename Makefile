@@ -61,7 +61,7 @@ compat:
 # google and google-beta at the current and previous minor
 # (GCPEMU_TOFU_PROVIDERS narrows it, e.g. google-beta or google@8.6.0).
 tofu:
-	go test -tags compat ./compat -run TestOpenTofu -count=1 -timeout 60m -v
+	go test -tags compat ./compat -run TestOpenTofu -count=1 -timeout 35m -v
 
 # NFR-PORT-001: static builds for every supported OS/arch, with the real
 # Web console embedded.
