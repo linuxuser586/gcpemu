@@ -55,8 +55,10 @@ type Options struct {
 	// DirectDial makes the proxy dial NEG endpoints directly from the host
 	// instead of through the relay container (host-reachable test backends).
 	DirectDial bool
-	// Edge forces the lb-edge container for forwarding rules on privileged
-	// ports even when binding fails for another reason.
+	// Edge sends forwarding rules on ports below 1024 to the lb-edge
+	// container without trying to bind them, so the edge is used even on
+	// hosts that let unprivileged processes bind those ports. It still
+	// needs a container runtime.
 	Edge bool
 }
 

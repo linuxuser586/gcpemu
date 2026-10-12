@@ -59,6 +59,9 @@ import (
 func TestGKEBackends(t *testing.T) {
 	emutest.RequireRuntime(t)
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
+	// Force the edge: some hosts let the emulator bind port 443 itself.
+	svc, _ := inst.Env.Lookup("lb")
+	svc.(*lb.Service).SetOptions(lb.Options{Edge: true})
 	ctx := context.Background()
 	const zone = "us-central1-a"
 	par := "projects/" + proj + "/locations/" + zone
@@ -139,7 +142,7 @@ func TestGKEBackends(t *testing.T) {
 	}
 	listener := inst.Endpoint("lb:https")
 	lh, lp, _ := net.SplitHostPort(listener)
-	if lp != "443" {
+	if lp != "443" || net.ParseIP(lh).IsLoopback() {
 		t.Fatalf("listener %s: want the edge on port 443", listener)
 	}
 	ds, _ := inst.Env.Lookup("dns")
@@ -204,7 +207,6 @@ func TestGKEBackends(t *testing.T) {
 	// A direct client without the LB's certificate is refused.
 	l, _ := c.NetworkEndpointGroups.ListNetworkEndpoints(proj, zone, "secure-neg", &computev1.NetworkEndpointGroupsListEndpointsRequest{}).Do()
 	ep := l.Items[0].NetworkEndpoint
-	svc, _ := inst.Env.Lookup("lb")
 	raw, err := svc.(*lb.Service).DialBackend(ctx, net.JoinHostPort(ep.IpAddress, fmt.Sprint(ep.Port)))
 	if err != nil {
 		t.Fatalf("relay to pod: %v", err)
@@ -412,12 +414,14 @@ func mustPool(pemBytes []byte) *x509.CertPool {
 func TestEdgeRetired(t *testing.T) {
 	emutest.RequireRuntime(t)
 	e := start(t)
+	svc, _ := e.inst.Env.Lookup("lb")
+	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true, Edge: true})
 	c := e.c
 	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "be", LoadBalancingScheme: "EXTERNAL_MANAGED"}).Do())
 	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/be"}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "80", Target: "global/targetHttpProxies/p"}).Do())
-	if _, port, _ := net.SplitHostPort(e.inst.Endpoint("lb:fr")); port != "80" {
+	if host, port, _ := net.SplitHostPort(e.inst.Endpoint("lb:fr")); port != "80" || net.ParseIP(host).IsLoopback() {
 		t.Fatalf("listener %s: want the edge on port 80", e.inst.Endpoint("lb:fr"))
 	}
 	edges := func() int {

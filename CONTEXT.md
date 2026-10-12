@@ -71,7 +71,7 @@ The Managed container through which Cloud NAT traffic leaves the emulated networ
 _Avoid_: egress gateway
 
 **Edge relay**:
-The Managed container through which the load balancer's Data plane reaches backends on VPC networks, such as GKE pods.
+The Managed container that relays clients to the load balancer's Data plane on forwarding rule ports the emulator cannot bind itself, and relays the Data plane to backends the host cannot route to, such as GKE pods.
 _Avoid_: edge (unqualified), LB proxy
 
 **VM runtime**:
