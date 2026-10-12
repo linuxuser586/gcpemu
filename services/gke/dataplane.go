@@ -673,57 +673,13 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	if err != nil {
 		return err
 	}
-	nets := []runtime.Attachment{{Network: sn.Name, IP: ip}, {Network: d.svc.Name}}
-	if sn.Translated {
-		// The node agent aliases the address before k3s starts (ADR 0004).
-		nets[0].IP = ""
-		cfg.VPC, cfg.IP = &sn, ip
-	}
 	private := privateNodes(c, np)
 	var ext netplane.Net
 	if !private {
 		if ext, err = d.np.External(ctx); err != nil {
 			return err
 		}
-		nets = append(nets, runtime.Attachment{Network: ext.Name})
 		cfg.DefaultVia = ext.Gateway
-	}
-	cfgJSON, _ := json.Marshal(cfg)
-	args := []string{"agent", "--node-name", node.Name, "--node-ip", ip,
-		"--resolv-conf", nodeResolvConf, "--kubelet-arg=max-pods=" + strconv.FormatInt(maxPods(c, np), 10)}
-	for _, l := range nodeLabels(c, np, node) {
-		args = append(args, "--node-label", l)
-	}
-	if private {
-		// No egress: never fall back to upstream registries (FR-GKE-007).
-		args = append(args, "--disable-default-registry-endpoint")
-	}
-	for _, t := range np.Config.Taints {
-		args = append(args, "--node-taint", t.Key+"="+t.Value+":"+taintEffect(t.Effect))
-	}
-	labels := s.labels(d, key, "node")
-	labels["gcpemu.gke.node"] = node.Name
-	id, err := d.rt.CreateContainer(ctx, runtime.ContainerSpec{
-		Name:       name,
-		Image:      ver.Image,
-		Entrypoint: []string{agent.ContainerPath},
-		Cmd:        args,
-		Env: []string{
-			agent.EnvVar + "=" + nodeAgentName,
-			nodeConfigEnv + "=" + string(cfgJSON),
-			"K3S_URL=https://" + rec.Int.ServerIP + ":443",
-			"K3S_TOKEN=" + rec.Int.Token,
-		},
-		Labels:     labels,
-		Hostname:   node.Name,
-		Privileged: true,
-		Init:       true,
-		Networks:   nets,
-		Mounts:     []runtime.Mount{{Type: "volume", Source: name, Target: k3sDataDir}},
-		Tmpfs:      map[string]string{"/run": ""},
-	})
-	if err != nil {
-		return err
 	}
 	files := []runtime.File{
 		{Name: strings.TrimPrefix(agent.ContainerPath, "/"), Mode: 0o755, Path: bin},
@@ -733,10 +689,80 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	if preload != "" {
 		files = append(files, runtime.File{Name: strings.TrimPrefix(k3sDataDir, "/") + "/agent/images/gcpemu-preload.tar", Mode: 0o644, Path: preload})
 	}
-	if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
-		return err
+	labels := s.labels(d, key, "node")
+	labels["gcpemu.gke.node"] = node.Name
+	// start creates and starts the container with address ip.
+	start := func(ip string) (string, error) {
+		nets := []runtime.Attachment{{Network: sn.Name, IP: ip}, {Network: d.svc.Name}}
+		if sn.Translated {
+			// The node agent aliases the address before k3s starts (ADR 0004).
+			nets[0].IP = ""
+			cfg.VPC, cfg.IP = &sn, ip
+		}
+		if !private {
+			nets = append(nets, runtime.Attachment{Network: ext.Name})
+		}
+		cfgJSON, _ := json.Marshal(cfg)
+		args := []string{"agent", "--node-name", node.Name, "--node-ip", ip,
+			"--resolv-conf", nodeResolvConf, "--kubelet-arg=max-pods=" + strconv.FormatInt(maxPods(c, np), 10)}
+		for _, l := range nodeLabels(c, np, node) {
+			args = append(args, "--node-label", l)
+		}
+		if private {
+			// No egress: never fall back to upstream registries (FR-GKE-007).
+			args = append(args, "--disable-default-registry-endpoint")
+		}
+		for _, t := range np.Config.Taints {
+			args = append(args, "--node-taint", t.Key+"="+t.Value+":"+taintEffect(t.Effect))
+		}
+		id, err := d.rt.CreateContainer(ctx, runtime.ContainerSpec{
+			Name:       name,
+			Image:      ver.Image,
+			Entrypoint: []string{agent.ContainerPath},
+			Cmd:        args,
+			Env: []string{
+				agent.EnvVar + "=" + nodeAgentName,
+				nodeConfigEnv + "=" + string(cfgJSON),
+				"K3S_URL=https://" + rec.Int.ServerIP + ":443",
+				"K3S_TOKEN=" + rec.Int.Token,
+			},
+			Labels:     labels,
+			Hostname:   node.Name,
+			Privileged: true,
+			Init:       true,
+			Networks:   nets,
+			Mounts:     []runtime.Mount{{Type: "volume", Source: name, Target: k3sDataDir}},
+			Tmpfs:      map[string]string{"/run": ""},
+		})
+		if err != nil {
+			return "", err
+		}
+		if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
+			return "", err
+		}
+		if s.beforeNodeStart != nil {
+			s.beforeNodeStart(ctx, sn, node.Name, ip)
+		}
+		return id, d.rt.StartContainer(ctx, id)
 	}
-	if err := d.rt.StartContainer(ctx, id); err != nil {
+	id, err := start(ip)
+	if err != nil && strings.Contains(err.Error(), "Address already in use") {
+		// A container joined the network with the node's address while
+		// the node was created but not started, when the runtime does not
+		// hold it (#146). Once more with a fresh address: on a Translated
+		// network only the container network's, which the runtime picks.
+		s.env.Log.Warn("gke: node address taken before the node started; retrying", "node", node.Name, "ip", ip, "err", err)
+		if err := d.rt.RemoveContainer(ctx, name, true); err != nil {
+			return err
+		}
+		if !sn.Translated {
+			if ip, err = s.reallocNodeIP(ctx, d, key, sn, node.Name); err != nil {
+				return err
+			}
+		}
+		id, err = start(ip)
+	}
+	if err != nil {
 		return err
 	}
 	if err := d.rt.WaitRunning(ctx, id); err != nil {
@@ -755,6 +781,27 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 				rec.Int.Nodes[i].IP = ip
 				rec.Int.Nodes[i].ExternalIP = extIP
 				rec.Int.Nodes[i].ContainerIP = cip
+			}
+		}
+		return nil
+	})
+}
+
+// reallocNodeIP gives node a fresh address on a network that is not
+// Translated, so that compute's allocation, the node record and the
+// container agree.
+func (s *Service) reallocNodeIP(ctx context.Context, d *deps, key string, sn emu.SubnetNet, node string) (string, error) {
+	if err := d.vpc.ReleaseIP(ctx, sn, key+"/"+node); err != nil {
+		return "", err
+	}
+	ip, err := d.vpc.AllocateIP(ctx, sn, key+"/"+node)
+	if err != nil {
+		return "", err
+	}
+	return ip, s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
+		for i := range rec.Int.Nodes {
+			if rec.Int.Nodes[i].Name == node {
+				rec.Int.Nodes[i].IP = ip
 			}
 		}
 		return nil

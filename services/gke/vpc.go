@@ -101,7 +101,7 @@ func (l *localVPC) PrivateServicesNetwork(ctx context.Context, network string) (
 }
 
 // AllocateIP hands out the lowest address not used by a recorded GKE
-// container or another owner.
+// container, another owner or a container on the network.
 func (l *localVPC) AllocateIP(ctx context.Context, sn emu.SubnetNet, owner string) (string, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -124,6 +124,12 @@ func (l *localVPC) AllocateIP(ctx context.Context, sn emu.SubnetNet, owner strin
 		}
 		return nil
 	})
+	if rt, err := l.env.Containers.Runtime(ctx); err == nil {
+		held, _ := rt.NetworkAddrs(ctx, sn.Name)
+		for ip := range held {
+			used[ip] = true
+		}
+	}
 	_, ipn, err := net.ParseCIDR(sn.Subnet)
 	if err != nil {
 		return "", err
