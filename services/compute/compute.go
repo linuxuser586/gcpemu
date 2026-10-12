@@ -20,6 +20,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/apidef"
@@ -61,6 +62,8 @@ type Service struct {
 	igResolvers []InstanceGroupResolver
 
 	sink *sinkServer
+	// sinkOn: NAT-allowed egress goes to the offline sink (FR-NAT-005).
+	sinkOn atomic.Bool
 }
 
 var _ emu.VPC = (*Service)(nil)
@@ -80,6 +83,7 @@ func New(env *emu.Env) emu.Service {
 	close(s.lastOp)
 	s.lro = lro.NewManager(env, "compute")
 	s.sink = &sinkServer{token: randomToken()}
+	s.sinkOn.Store(env.Config != nil && env.Config.Offline)
 	s.routes()
 	s.snRoutes()
 	return s

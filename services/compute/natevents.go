@@ -67,6 +67,32 @@ func (s *Service) sinkState() *sinkServer { return s.sink }
 
 func (s *Service) sinkToken() string { return s.sinkState().token }
 
+// NATSink reports whether NAT-allowed egress goes to the offline sink
+// (FR-NAT-005), and the HTTP status and body the sink answers with.
+func (s *Service) NATSink() (on bool, status int, body string) {
+	status, body = parseSinkResponse(s.env.Config.NATSinkResponse)
+	return s.sinkOn.Load(), status, body
+}
+
+// SetNATSink switches the offline sink on or off until the Instance stops
+// (the Web console Cloud NAT view; --offline sets it at start) and
+// re-programs every running egress gateway.
+func (s *Service) SetNATSink(on bool) {
+	if s.sinkOn.Swap(on) == on {
+		return
+	}
+	s.env.Log.Info("NAT offline sink switched", "on", on)
+	s.egMu.Lock()
+	nets := make([]string, 0, len(s.egress))
+	for np := range s.egress {
+		nets = append(nets, np)
+	}
+	s.egMu.Unlock()
+	for _, np := range nets {
+		s.networkChanged(np)
+	}
+}
+
 // sinkReportURL is the event URL as reachable from containers.
 func (s *Service) sinkReportURL(ctx context.Context) (string, error) {
 	plane, err := s.env.Containers.Netplane(ctx)
@@ -109,7 +135,7 @@ func (s *Service) handleNatEvents(rep natReport) {
 		}
 		vm, subnet := s.ownerOfIP(nets, ev.Src)
 		if ev.Type != "translation" || !inNets(nets, ev.Dst) {
-			s.logEgress(rep.Network, ev, c)
+			s.logEgress(rep.Network, ev, c, vm, subnet)
 		}
 		switch ev.Type {
 		case "sink":
@@ -129,13 +155,16 @@ func (s *Service) handleNatEvents(rep natReport) {
 }
 
 // logEgress adds an internet egress attempt to the request log
-// (FR-CORE-061): the NAT gateway that served it, or the network when no
-// NAT covers the source.
-func (s *Service) logEgress(network string, ev natEvent, c *coverage) {
+// (FR-CORE-061), with its trace for the Web console's translation log:
+// the NAT gateway that served it, or the network when no NAT covers the
+// source.
+func (s *Service) logEgress(network string, ev natEvent, c *coverage, vm, subnet string) {
 	if ev.Type == "translation" && c == nil {
 		return
 	}
-	e := reqlog.Entry{Service: "nat", Protocol: ev.Proto, Resource: network, Code: "OK",
+	tr := &reqlog.NATTrace{Network: network, Subnetwork: subnet, VM: vm,
+		SrcIP: ev.Src, SrcPort: ev.SrcPort, DestIP: ev.Dst, DestPort: ev.DstPort, Request: ev.Request}
+	e := reqlog.Entry{Service: "nat", Protocol: ev.Proto, Resource: network, Code: "OK", NAT: tr,
 		Method: fmt.Sprintf("EGRESS %s:%d -> %s:%d", ev.Src, ev.SrcPort, ev.Dst, ev.DstPort)}
 	if t, err := time.Parse(time.RFC3339Nano, ev.Time); err == nil {
 		e.Time = t
@@ -148,8 +177,29 @@ func (s *Service) logEgress(network string, ev natEvent, c *coverage) {
 		e.Code = "OFFLINE_SINK"
 	case "dropped":
 		e.Status, e.Code = 1, "DROPPED"
+	default:
+		tr.NatIP, tr.NatPort = s.natIPOf(c, ev.NatIP), ev.NatPort
 	}
 	s.env.RequestLog.Add(e)
+}
+
+// natIPOf is the address a NAT translates to: its first active NAT IP,
+// else the gateway's own (seen) address.
+func (s *Service) natIPOf(c *coverage, seen string) string {
+	natIP := seen
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		if rt, ok := get[computev1.Router](tx, nsRouters, c.router); ok {
+			for _, nat := range rt.Nats {
+				if nat.Name == c.nat {
+					if ips := natIPs(tx, c.router, nat); len(ips) > 0 {
+						natIP = ips[0]
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return natIP
 }
 
 // inNets reports whether ip is inside one of the VPC's container networks.
@@ -194,26 +244,13 @@ func (s *Service) ownerOfIP(nets []*vpcNet, ip string) (owner, subnet string) {
 // logNatFlow writes a Cloud NAT log entry (compute.googleapis.com/nat_flows).
 func (s *Service) logNatFlow(np string, ev natEvent, c *coverage, vm, subnet, status string) {
 	p, _, _ := pathParts(np)
-	natIP := ev.NatIP
-	_ = s.env.Store.View(func(tx store.Tx) error {
-		if rt, ok := get[computev1.Router](tx, nsRouters, c.router); ok {
-			for _, nat := range rt.Nats {
-				if nat.Name == c.nat {
-					if ips := natIPs(tx, c.router, nat); len(ips) > 0 {
-						natIP = ips[0]
-					}
-				}
-			}
-		}
-		return nil
-	})
 	conn := map[string]any{
 		"src_ip": ev.Src, "src_port": ev.SrcPort, "dest_ip": ev.Dst, "dest_port": ev.DstPort,
 		"protocol": protoNumber(ev.Proto),
 	}
 	// A dropped connection was never allocated a NAT IP and port.
 	if status != "DROPPED" {
-		conn["nat_ip"], conn["nat_port"] = natIP, ev.NatPort
+		conn["nat_ip"], conn["nat_port"] = s.natIPOf(c, ev.NatIP), ev.NatPort
 	}
 	payload := map[string]any{
 		"connection":        conn,

@@ -28,6 +28,29 @@ type Entry struct {
 	LatencyMS float64 `json:"latencyMs"`
 	// LB is the load balancer's trace of a data-plane request.
 	LB *LBTrace `json:"lb,omitempty"`
+	// NAT is the egress gateway's trace of an internet egress attempt.
+	NAT *NATTrace `json:"nat,omitempty"`
+}
+
+// NATTrace is one connection the NAT egress gateway saw leave a VPC
+// network: translated, dropped or answered by the offline sink (the
+// Entry's Code). The Cloud NAT gateway, or the network when no NAT covers
+// the source, is the Entry's Resource. Fields follow Cloud NAT's log
+// (FR-NAT-004).
+type NATTrace struct {
+	Network    string `json:"network"`
+	Subnetwork string `json:"subnetwork,omitempty"`
+	// VM is the workload holding the source address, e.g. a GKE node.
+	VM       string `json:"vm,omitempty"`
+	SrcIP    string `json:"srcIp"`
+	SrcPort  int    `json:"srcPort"`
+	DestIP   string `json:"destIp"`
+	DestPort int    `json:"destPort"`
+	// NatIP and NatPort are the translated source, when one was allocated.
+	NatIP   string `json:"natIp,omitempty"`
+	NatPort int    `json:"natPort,omitempty"`
+	// Request is the first line the offline sink received.
+	Request string `json:"request,omitempty"`
 }
 
 // LBTrace is how a load balancer served one request: the forwarding rule
