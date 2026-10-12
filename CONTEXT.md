@@ -74,6 +74,13 @@ _Avoid_: egress gateway
 The Managed container through which the load balancer's Data plane reaches backends on VPC networks, such as GKE pods.
 _Avoid_: edge (unqualified), LB proxy
 
+**VM runtime**:
+A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS.
+
+**VM relay**:
+The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
+_Avoid_: bridge container, tunnel
+
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
