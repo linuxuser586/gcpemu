@@ -30,6 +30,8 @@ type Service struct {
 	api   *api
 	kickC chan struct{}
 
+	sweepMu sync.Mutex // one sweep at a time, side effects included
+
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}

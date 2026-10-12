@@ -26,8 +26,13 @@ type sweepEvent struct {
 	managed bool
 }
 
-// sweep applies every change that is due at the current clock time.
+// sweep applies every change that is due at the current clock time. One
+// sweep runs at a time, side effects included: a sweep that finds nothing
+// due because the loop's sweep claimed it still returns only once that
+// work is applied, as ClockAdvanced promises.
 func (s *Service) sweep(ctx context.Context) {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	now := s.env.Clock.Now()
 	var events []sweepEvent
 	err := s.env.Store.Update(func(tx store.Tx) error {

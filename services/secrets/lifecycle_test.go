@@ -13,6 +13,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/services/secrets"
 )
 
 // pullEvents drains a Pub/Sub subscription and returns its eventType
@@ -139,5 +142,31 @@ func TestTimeDrivenAndEvents(t *testing.T) {
 	}
 	if c := e.rest("GET", "/secretmanager/v1/"+parent+"/secrets/rot", nil, nil); c != http.StatusOK {
 		t.Fatalf("REST get: %d", c)
+	}
+}
+
+// TestClockAdvancedWaitsForSweep holds the sweep as the loop's sweep in
+// flight does, having claimed whatever fell due, and checks that advancing
+// the clock returns only once that sweep is done (#162).
+func TestClockAdvancedWaitsForSweep(t *testing.T) {
+	e := start(t, nil)
+	var svc emu.Service
+	for _, s := range e.inst.Services() {
+		if s.Name() == "secrets" {
+			svc = s
+		}
+	}
+	release := secrets.HoldSweep(svc)
+	done := make(chan error, 1)
+	go func() { done <- e.inst.AdvanceClock(e.ctx, time.Hour) }()
+	select {
+	case err := <-done:
+		release()
+		t.Fatalf("AdvanceClock returned (%v) while a sweep was running", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
