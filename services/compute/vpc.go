@@ -447,13 +447,16 @@ func stateOf(tx store.Tx, net emu.SubnetNet) (*vpcNet, string) {
 // back without translation) for owner, skipping the network and gateway
 // addresses, GCP's reserved second-to-last address (where the egress
 // gateway lives) and the broadcast address, plus internal addresses
-// reserved through the compute API.
+// reserved through the compute API, and addresses held on the container
+// network by containers compute did not allocate for (#146), such as the
+// LB edge relay, which joins with an address the runtime picks.
 func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner string) (string, error) {
 	if owner == "" {
 		return "", apierr.InvalidArgument("AllocateIP: owner is required")
 	}
 	s.vpcMu.Lock()
 	defer s.vpcMu.Unlock()
+	held := s.heldAddrs(ctx, net.Name)
 	var ip string
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		if b, ok := tx.Get(nsIPAlloc, net.Name+"/owner/"+owner); ok {
@@ -470,6 +473,9 @@ func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner strin
 			return apierr.InvalidArgument("AllocateIP: invalid subnet %q", rng)
 		}
 		used := allocatedIPs(tx, net.Name)
+		for v := range held {
+			used[v] = true
+		}
 		if st != nil && rng == st.Range && st.Subnetwork != "" {
 			for _, a := range list[computev1.Address](tx, nsAddresses, "projects/") {
 				if a.AddressType == "INTERNAL" && relPath(a.Subnetwork) == st.Subnetwork {
@@ -491,6 +497,31 @@ func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner strin
 		return apierr.New(8, "IP space of %s (%s) is exhausted.", net.SubnetworkName, rng).WithLegacy("ipSpaceExhausted")
 	})
 	return ip, err
+}
+
+// heldAddrs returns the addresses held on container network name: those of
+// attached containers and those created containers asked for. On a
+// Translated network they lie in the Fallback range, outside the range
+// AllocateIP picks from. Without a runtime or the network, it is empty.
+func (s *Service) heldAddrs(ctx context.Context, name string) map[uint32]bool {
+	out := map[uint32]bool{}
+	if s.env.Containers == nil {
+		return out
+	}
+	rt, err := s.env.Containers.Runtime(ctx)
+	if err != nil {
+		return out
+	}
+	addrs, err := rt.NetworkAddrs(ctx, name)
+	if err != nil {
+		return out
+	}
+	for a := range addrs {
+		if v, ok := parseIP(a); ok {
+			out[v] = true
+		}
+	}
+	return out
 }
 
 // ReleaseIP implements emu.VPC.

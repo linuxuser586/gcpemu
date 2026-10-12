@@ -106,6 +106,9 @@ type Service struct {
 	// hosts lists the gateway's host-routed names (real hostnames the
 	// Google frontend serves, FR-INT-007); nil if the router has none.
 	hosts func() []string
+	// beforeNodeStart, set by tests, runs between a node container's
+	// creation and its start.
+	beforeNodeStart func(ctx context.Context, sn emu.SubnetNet, node, ip string)
 }
 
 // New returns the service.
