@@ -108,6 +108,10 @@ An Instance whose state disappears when it exits.
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts.
 
+**Abandoned Instance ID**:
+An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, so no future Instance will reclaim them.
+_Avoid_: orphan, dead instance
+
 **Emulator clock**:
 The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour.
 
