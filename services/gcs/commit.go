@@ -9,6 +9,7 @@ import (
 
 	storage "google.golang.org/api/storage/v1"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -94,6 +95,9 @@ type writeReq struct {
 	conds conds
 	// componentCount > 0 marks a composite object (no MD5).
 	componentCount int64
+	// predefinedACL is the request's predefinedAcl; meta.Acl may carry an
+	// explicit ACL.
+	predefinedACL string
 	// base is the URL base used for notification payloads.
 	base string
 	// extra lets compose delete its sources in the same transaction.
@@ -116,6 +120,7 @@ func (s *Service) commitObject(ctx context.Context, wr *writeReq) (*objectRec, *
 			return nil, nil, err
 		}
 	}
+	owner := ownerEntity(emu.PrincipalFrom(ctx))
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		events, oldBlobs = nil, nil
 		brec, err := loadBucket(tx, wr.bucket)
@@ -143,9 +148,13 @@ func (s *Service) commitObject(ctx context.Context, wr *writeReq) (*objectRec, *
 				return err
 			}
 		}
+		acl, err := newObjectACL(wr, brec, owner)
+		if err != nil {
+			return err
+		}
 		gen := newGeneration(now, maxGeneration(tx, wr.bucket, wr.meta.Name, cur))
 		obj := buildObject(wr, bkt, gen, now)
-		rec := &objectRec{Object: obj, Blob: wr.blob.ID, RetentionStart: obj.TimeCreated}
+		rec := &objectRec{Object: obj, Blob: wr.blob.ID, RetentionStart: obj.TimeCreated, Owner: owner, ACL: acl}
 		if wr.extra != nil {
 			ev, blobs, err := wr.extra(tx, brec, now)
 			if err != nil {

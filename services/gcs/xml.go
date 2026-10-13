@@ -347,7 +347,7 @@ func (s *Service) xmlCopy(w http.ResponseWriter, r *http.Request, src, bucket, o
 	} else {
 		meta, _ = copyMeta(srcRec.Object, nil, object)
 	}
-	rec, _, err := s.copyTo(ctx, srcRec, bucket, object, meta, c, baseURL(r))
+	rec, _, err := s.copyTo(ctx, srcRec, bucket, object, meta, "", c, baseURL(r))
 	if err != nil {
 		xmlError(w, err)
 		return
@@ -397,7 +397,7 @@ func (s *Service) xmlCreateBucket(w http.ResponseWriter, r *http.Request, bucket
 			b.Location, b.StorageClass = cfg.LocationConstraint, cfg.StorageClass
 		}
 	}
-	if _, err := s.createBucket(r.Context(), proj, b, false); err != nil {
+	if _, err := s.createBucket(r.Context(), proj, b, false, nil); err != nil {
 		xmlError(w, err)
 		return
 	}

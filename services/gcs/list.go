@@ -222,8 +222,9 @@ func (s *Service) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	}
 	out := &storage.Objects{Kind: "storage#objects", Prefixes: res.prefixes, NextPageToken: res.next}
 	base := baseURL(r)
+	full := fullProjection(r, false)
 	for _, rec := range res.items {
-		out.Items = append(out.Items, renderObject(rec, bkt, base))
+		out.Items = append(out.Items, renderObject(rec, bkt, base, full))
 	}
 	writeJSON(w, http.StatusOK, out)
 }

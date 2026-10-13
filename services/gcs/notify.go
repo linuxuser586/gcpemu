@@ -98,7 +98,7 @@ func (s *Service) publish(ctx context.Context, bucket string, bkt *storage.Bucke
 			}
 			var data []byte
 			if cfg.PayloadFormat == payloadJSON {
-				data, _ = json.Marshal(renderObject(ev.rec, bkt, base))
+				data, _ = json.Marshal(renderObject(ev.rec, bkt, base, false))
 			}
 			topic := strings.TrimPrefix(cfg.Topic, "//pubsub.googleapis.com/")
 			if _, err := pub.PublishInternal(ctx, topic, data, attrs); err != nil {

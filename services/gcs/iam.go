@@ -47,14 +47,49 @@ func defaultPolicy(rec *bucketRec) *storage.Policy {
 	}
 }
 
-// bucketPolicy returns the current policy of a bucket.
-func (s *Service) bucketPolicy(ctx context.Context, rec *bucketRec) (*storage.Policy, error) {
-	if !rec.PolicySet {
-		return defaultPolicy(rec), nil
-	}
+// policyTarget is a resource with its own IAM policy: a bucket or a
+// managed folder.
+type policyTarget struct {
+	// resource is the IAM full resource name, resourceID the policy's
+	// resourceId.
+	resource, resourceID string
+	// localKey is the nsIAM key used when iam is absent.
+	localKey string
+	// set records whether setIamPolicy was ever called; until then def is
+	// the policy.
+	set bool
+	def *storage.Policy
+	// markSet records that a policy was set, failing when the resource is
+	// gone.
+	markSet func(tx store.Tx) error
+}
+
+func bucketTarget(rec *bucketRec) *policyTarget {
 	name := rec.Bucket.Name
+	return &policyTarget{
+		resource:   bucketResource(name),
+		resourceID: "projects/_/buckets/" + name,
+		localKey:   name,
+		set:        rec.PolicySet,
+		def:        defaultPolicy(rec),
+		markSet: func(tx store.Tx) error {
+			brec, err := loadBucket(tx, name)
+			if err != nil || brec.PolicySet {
+				return err
+			}
+			brec.PolicySet = true
+			return store.PutJSON(tx, nsBuckets, name, brec)
+		},
+	}
+}
+
+// getPolicy returns the current policy of t.
+func (s *Service) getPolicy(ctx context.Context, t *policyTarget) (*storage.Policy, error) {
+	if !t.set {
+		return t.def, nil
+	}
 	if ps := s.policyStore(); ps != nil {
-		b, err := ps.GetPolicyJSON(ctx, bucketResource(name))
+		b, err := ps.GetPolicyJSON(ctx, t.resource)
 		if err != nil {
 			return nil, err
 		}
@@ -67,9 +102,9 @@ func (s *Service) bucketPolicy(ctx context.Context, rec *bucketRec) (*storage.Po
 		return &p, nil
 	}
 	var lp localPolicy
-	err := s.env.Store.View(func(tx store.Tx) error { return store.GetJSON(tx, nsIAM, name, &lp) })
+	err := s.env.Store.View(func(tx store.Tx) error { return store.GetJSON(tx, nsIAM, t.localKey, &lp) })
 	if err == store.ErrNotFound {
-		return defaultPolicy(rec), nil
+		return t.def, nil
 	}
 	if err != nil {
 		return nil, err
@@ -77,10 +112,10 @@ func (s *Service) bucketPolicy(ctx context.Context, rec *bucketRec) (*storage.Po
 	return lp.Policy, nil
 }
 
-func renderPolicy(p *storage.Policy, bucket string) *storage.Policy {
+func renderPolicy(p *storage.Policy, resourceID string) *storage.Policy {
 	out := *p
 	out.Kind = "storage#policy"
-	out.ResourceId = "projects/_/buckets/" + bucket
+	out.ResourceId = resourceID
 	if out.Version == 0 {
 		out.Version = 1
 	}
@@ -97,12 +132,17 @@ func (s *Service) getBucketIAM(w http.ResponseWriter, r *http.Request, bucket st
 		apierr.Write(w, err)
 		return
 	}
-	p, err := s.bucketPolicy(r.Context(), rec)
+	s.writePolicy(w, r, bucketTarget(rec))
+}
+
+// writePolicy answers getIamPolicy for t.
+func (s *Service) writePolicy(w http.ResponseWriter, r *http.Request, t *policyTarget) {
+	p, err := s.getPolicy(r.Context(), t)
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderPolicy(p, bucket))
+	writeJSON(w, http.StatusOK, renderPolicy(p, t.resourceID))
 }
 
 func (s *Service) setBucketIAM(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -116,12 +156,18 @@ func (s *Service) setBucketIAM(w http.ResponseWriter, r *http.Request, bucket st
 		apierr.Write(w, err)
 		return
 	}
-	out, err := s.setPolicy(ctx, bucket, &p)
+	rec, err := s.getBucketRec(bucket)
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderPolicy(out, bucket))
+	t := bucketTarget(rec)
+	out, err := s.putPolicy(ctx, t, &p)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, renderPolicy(out, t.resourceID))
 }
 
 // setPolicy stores a bucket policy with etag concurrency control.
@@ -130,7 +176,12 @@ func (s *Service) setPolicy(ctx context.Context, bucket string, p *storage.Polic
 	if err != nil {
 		return nil, err
 	}
-	cur, err := s.bucketPolicy(ctx, rec)
+	return s.putPolicy(ctx, bucketTarget(rec), p)
+}
+
+// putPolicy stores t's policy with etag concurrency control.
+func (s *Service) putPolicy(ctx context.Context, t *policyTarget, p *storage.Policy) (*storage.Policy, error) {
+	cur, err := s.getPolicy(ctx, t)
 	if err != nil {
 		return nil, err
 	}
@@ -145,11 +196,11 @@ func (s *Service) setPolicy(ctx context.Context, bucket string, p *storage.Polic
 	p.Kind, p.ResourceId = "", ""
 	var out *storage.Policy
 	if ps := s.policyStore(); ps != nil {
-		if !rec.PolicySet {
+		if !t.set {
 			p.Etag = ""
 		}
 		in, _ := json.Marshal(p)
-		b, err := ps.SetPolicyJSON(ctx, bucketResource(bucket), in)
+		b, err := ps.SetPolicyJSON(ctx, t.resource, in)
 		if err != nil {
 			return nil, err
 		}
@@ -159,46 +210,43 @@ func (s *Service) setPolicy(ctx context.Context, bucket string, p *storage.Polic
 		}
 	}
 	err = s.env.Store.Update(func(tx store.Tx) error {
-		brec, err := loadBucket(tx, bucket)
-		if err != nil {
+		if err := t.markSet(tx); err != nil {
 			return err
 		}
-		if out == nil {
-			var lp localPolicy
-			_ = store.GetJSON(tx, nsIAM, bucket, &lp)
-			if lp.Seq == 0 {
-				lp.Seq = 1
-			}
-			lp.Seq++
-			p.Etag = bucketEtag(lp.Seq)
-			lp.Policy = p
-			if err := store.PutJSON(tx, nsIAM, bucket, &lp); err != nil {
-				return err
-			}
-			out = p
+		if out != nil {
+			return nil
 		}
-		if !brec.PolicySet {
-			brec.PolicySet = true
-			return store.PutJSON(tx, nsBuckets, bucket, brec)
+		var lp localPolicy
+		_ = store.GetJSON(tx, nsIAM, t.localKey, &lp)
+		if lp.Seq == 0 {
+			lp.Seq = 1
 		}
-		return nil
+		lp.Seq++
+		p.Etag = bucketEtag(lp.Seq)
+		lp.Policy = p
+		out = p
+		return store.PutJSON(tx, nsIAM, t.localKey, &lp)
 	})
 	return out, err
 }
 
 func (s *Service) testBucketIAM(w http.ResponseWriter, r *http.Request, bucket string) {
-	ctx := r.Context()
 	if _, err := s.getBucketRec(bucket); err != nil {
 		apierr.Write(w, err)
 		return
 	}
+	s.testIAM(w, r, bucketResource(bucket))
+}
+
+// testIAM answers testIamPermissions on res.
+func (s *Service) testIAM(w http.ResponseWriter, r *http.Request, res string) {
+	ctx := r.Context()
 	var perms []string
 	for _, v := range r.URL.Query()["permissions"] {
 		perms = append(perms, strings.Split(v, ",")...)
 	}
 	out := &storage.TestIamPermissionsResponse{Kind: "storage#testIamPermissionsResponse"}
 	eval := s.evaluator()
-	res := bucketResource(bucket)
 	var valid []string
 	for _, p := range perms {
 		if p == "" {

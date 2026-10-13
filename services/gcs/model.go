@@ -15,14 +15,15 @@ import (
 // Store namespaces. Object keys are "<bucket>\x00<name>" so a prefix scan
 // over "<bucket>\x00<prefix>" yields a bucket's objects in name order.
 const (
-	nsBuckets  = "gcs/buckets"       // name → bucketRec
-	nsObjects  = "gcs/objects"       // bucket\x00name → objectRec (live)
-	nsVersions = "gcs/versions"      // bucket\x00name\x00gen → objectRec (noncurrent)
-	nsUploads  = "gcs/uploads"       // upload id → uploadRec (resumable sessions)
-	nsNotifs   = "gcs/notifications" // bucket\x00id → storage.Notification
-	nsIAM      = "gcs/iam"           // bucket → policy JSON (fallback when iam is absent)
-	nsHMAC     = "gcs/hmac"          // accessId → hmacRec
-	nsMPU      = "gcs/mpu"           // XML multipart upload id → mpuRec
+	nsBuckets  = "gcs/buckets"        // name → bucketRec
+	nsObjects  = "gcs/objects"        // bucket\x00name → objectRec (live)
+	nsVersions = "gcs/versions"       // bucket\x00name\x00gen → objectRec (noncurrent)
+	nsUploads  = "gcs/uploads"        // upload id → uploadRec (resumable sessions)
+	nsNotifs   = "gcs/notifications"  // bucket\x00id → storage.Notification
+	nsIAM      = "gcs/iam"            // bucket → policy JSON (fallback when iam is absent)
+	nsHMAC     = "gcs/hmac"           // accessId → hmacRec
+	nsMPU      = "gcs/mpu"            // XML multipart upload id → mpuRec
+	nsFolders  = "gcs/managedFolders" // bucket\x00name → folderRec
 )
 
 // sep separates key components; it cannot occur in bucket or object names.
@@ -48,6 +49,12 @@ type bucketRec struct {
 	PolicySet bool `json:"policySet,omitempty"`
 	// NextNotification is the next notification config ID.
 	NextNotification int `json:"nextNotification,omitempty"`
+	// Owner is the owner entity; empty for a bucket stored before ACLs were
+	// kept (fillACLDefaults).
+	Owner string `json:"owner,omitempty"`
+	// ACL and DefaultObjectACL are the legacy ACLs.
+	ACL              []aclEntry `json:"acl,omitempty"`
+	DefaultObjectACL []aclEntry `json:"defaultObjectAcl,omitempty"`
 }
 
 // objectRec is the persisted form of one object generation.
@@ -58,6 +65,9 @@ type objectRec struct {
 	// RetentionStart is when the bucket retention period started counting
 	// (creation, or release of an event-based hold).
 	RetentionStart string `json:"retentionStart,omitempty"`
+	// Owner is the owner entity (the uploader) and ACL the legacy ACL.
+	Owner string     `json:"owner,omitempty"`
+	ACL   []aclEntry `json:"acl,omitempty"`
 }
 
 // Timestamp format GCS uses (RFC 3339, millisecond precision, UTC).
@@ -136,17 +146,27 @@ func mountPrefix(r *http.Request) string {
 	return ""
 }
 
-// renderBucket returns a copy of b ready for output.
-func renderBucket(rec *bucketRec, base string) *storage.Bucket {
+// renderBucket returns a copy of b ready for output. full is
+// projection=full: owner and, without uniform bucket-level access, ACLs.
+func renderBucket(rec *bucketRec, base string, full bool) *storage.Bucket {
 	b := *rec.Bucket
 	b.SelfLink = base + "/storage/v1/b/" + b.Name
 	b.Etag = bucketEtag(b.Metageneration)
+	if full {
+		fillACLDefaults(rec)
+		b.Owner = &storage.BucketOwner{Entity: rec.Owner}
+		if !ublaEnabled(&b) {
+			b.Acl = renderBucketACL(rec.ACL, &b, base)
+			b.DefaultObjectAcl = renderObjectACL(rec.DefaultObjectACL, &b, nil, base)
+		}
+	}
 	return &b
 }
 
 // renderObject returns a copy of rec's object with links, etag and computed
-// retention fields filled in.
-func renderObject(rec *objectRec, bkt *storage.Bucket, base string) *storage.Object {
+// retention fields filled in. full is projection=full: owner and, without
+// uniform bucket-level access, the ACL.
+func renderObject(rec *objectRec, bkt *storage.Bucket, base string, full bool) *storage.Object {
 	o := *rec.Object
 	esc := url.PathEscape(o.Name)
 	o.SelfLink = base + "/storage/v1/b/" + o.Bucket + "/o/" + esc
@@ -155,6 +175,14 @@ func renderObject(rec *objectRec, bkt *storage.Bucket, base string) *storage.Obj
 	o.ForceSendFields = []string{"Size"}
 	if t, ok := retentionExpiry(rec, bkt); ok {
 		o.RetentionExpirationTime = ts(t)
+	}
+	if full {
+		if rec.Owner != "" {
+			o.Owner = &storage.ObjectOwner{Entity: rec.Owner}
+		}
+		if bkt != nil && !ublaEnabled(bkt) {
+			o.Acl = renderObjectACL(rec.ACL, bkt, &o, base)
+		}
 	}
 	return &o
 }
