@@ -53,7 +53,9 @@ func TestContainerTrustPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	etc := t.TempDir()
+	// Slash form: the script uses etc unquoted, and on native Windows sh
+	// would eat the backslashes of a Windows path (#220).
+	etc := filepath.ToSlash(t.TempDir())
 	for _, d := range []string{"docker/certs.d/us-docker.pkg.dev", "containerd/certs.d/europe-docker.pkg.dev"} {
 		if err := os.MkdirAll(filepath.Join(etc, d), 0o755); err != nil {
 			t.Fatal(err)
