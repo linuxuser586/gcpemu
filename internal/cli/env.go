@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 
 func (o *rootOpts) envCmd() *cobra.Command {
 	var shell string
-	var trustCA bool
+	var trustCA, noUniverse bool
 	cmd := &cobra.Command{
 		Use:   "env",
 		Short: "Print environment variables that point clients at the instance",
@@ -25,9 +26,16 @@ func (o *rootOpts) envCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path := "/_emu/v1/env"
+			q := url.Values{}
 			if trustCA {
-				path += "?trust=true"
+				q.Set("trust", "true")
+			}
+			if noUniverse {
+				q.Set("universe", "false")
+			}
+			path := "/_emu/v1/env"
+			if len(q) > 0 {
+				path += "?" + q.Encode()
 			}
 			b, err := c.get(path)
 			if err != nil {
@@ -57,6 +65,7 @@ func (o *rootOpts) envCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&shell, "shell", "bash", "output format: bash, fish, github")
 	cmd.Flags().BoolVar(&trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
+	cmd.Flags().BoolVar(&noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials")
 	return cmd
 }
 

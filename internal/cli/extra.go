@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 )
 
@@ -47,7 +48,7 @@ var providerEndpoints = []struct{ setting, service, path string }{
 // userinfo lookup, which no *_custom_endpoint reaches. An API left without
 // an endpoint is addressed as <api>.gcpemu.invalid, which never resolves
 // (RFC 6761), so it fails instead of reaching Google.
-const providerUniverseDomain = "gcpemu.invalid"
+const providerUniverseDomain = emu.InvalidUniverse
 
 // betaPaths overrides a provider endpoint's base path in the google-beta
 // block, where the provider calls a beta API version.

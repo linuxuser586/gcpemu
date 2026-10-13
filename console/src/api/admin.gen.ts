@@ -1195,6 +1195,8 @@ export interface operations {
             query?: {
                 /** @description With true, write a bundle of the system roots plus the emulator CA and point SSL_CERT_FILE at it. */
                 trust?: boolean;
+                /** @description With false, leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe. */
+                universe?: boolean;
             };
             header?: never;
             path?: never;

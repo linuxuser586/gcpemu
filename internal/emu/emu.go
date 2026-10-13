@@ -261,6 +261,12 @@ type Seeder interface {
 	ApplySeed(ctx context.Context, section *yaml.Node, baseDir string) error
 }
 
+// InvalidUniverse is the Invalid universe (see CONTEXT.md): the universe
+// domain clients are given so that an API without an endpoint override is
+// addressed as <api>.gcpemu.invalid, which never resolves (RFC 6761), and
+// fails instead of reaching Google.
+const InvalidUniverse = "gcpemu.invalid"
+
 // EnvVarer is implemented by services that contribute client environment
 // variables to `gcpemu env` (FR-CORE-004). gateway is the gateway host:port,
 // endpoints the recorded listener addresses.

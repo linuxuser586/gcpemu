@@ -139,7 +139,7 @@ func (e *emulator) exec(env []string, bin string, args ...string) (string, []str
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
-	return string(out), e.guard.Take(), err
+	return string(out), escapeguard.Gcloud(e.guard.Take()), err
 }
 
 func contains(t *testing.T, what, out, want string) {
@@ -161,10 +161,10 @@ func freePort(t *testing.T) int {
 
 // gcloudCanaryOverride is the variable the gcloud escape-guard subtest
 // leaves out of the environment, and gcloudCanaryHost where gcloud then
-// sends it.
+// sends it: the Invalid universe that `gcpemu env` sets.
 const (
 	gcloudCanaryOverride = "CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB"
-	gcloudCanaryHost     = "pubsub.googleapis.com"
+	gcloudCanaryHost     = "pubsub.gcpemu.invalid"
 )
 
 // gcloudCanary lists Pub/Sub topics without the pubsub endpoint override,
@@ -199,7 +199,8 @@ func TestClients(t *testing.T) {
 		g := gcloud(t)
 		f := filepath.Join(t.TempDir(), "hello.txt")
 		_ = os.WriteFile(f, []byte("hello compat\n"), 0o644)
-		e.run(t, g, "storage", "buckets", "create", "gs://compat-bucket")
+		// --location is required outside Google's universe.
+		e.run(t, g, "storage", "buckets", "create", "gs://compat-bucket", "--location=us-central1")
 		e.run(t, g, "storage", "cp", f, "gs://compat-bucket/dir/hello.txt")
 		contains(t, "storage ls", e.run(t, g, "storage", "ls", "gs://compat-bucket/dir/"), "gs://compat-bucket/dir/hello.txt")
 		contains(t, "storage cat", e.run(t, g, "storage", "cat", "gs://compat-bucket/dir/hello.txt"), "hello compat")

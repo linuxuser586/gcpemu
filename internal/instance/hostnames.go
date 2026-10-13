@@ -48,10 +48,14 @@ func (in *Instance) hostNameEnvVars(out map[string]string) {
 	}
 }
 
-// serveEnv is GET /_emu/v1/env[?trust=true]: with trust, SSL_CERT_FILE
-// points at a freshly written combined bundle.
+// serveEnv is GET /_emu/v1/env[?trust=true][&universe=false]: with trust,
+// SSL_CERT_FILE points at a freshly written combined bundle; universe=false
+// leaves gcloud in Google's universe.
 func (in *Instance) serveEnv(w http.ResponseWriter, r *http.Request) {
 	vars := in.EnvVars()
+	if u := r.URL.Query().Get("universe"); u == "0" || u == "false" {
+		delete(vars, "CLOUDSDK_CORE_UNIVERSE_DOMAIN")
+	}
 	if t := r.URL.Query().Get("trust"); t == "1" || t == "true" {
 		p, err := in.WriteCABundle()
 		if err != nil {

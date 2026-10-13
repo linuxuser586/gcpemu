@@ -337,8 +337,9 @@ and the Auth Proxy are downloaded at pinned, checksum-verified versions.
 gcloud runs behind the same Escape guard as the OpenTofu acceptance (below), with `NO_PROXY`
 covering loopback, because gcloud, unlike Go, proxies loopback too. A gcloud request with no
 `CLOUDSDK_API_ENDPOINT_OVERRIDES_*` covering it fails the step and names the missing variable.
+gcloud's universe descriptor fetch from `storage.gcpemu.invalid` is not counted as an escape.
 The `gcloud/escape-guard` subtest lists Pub/Sub topics without the pubsub override, and fails
-unless the guard refuses `pubsub.googleapis.com`. The other clients run without the guard: they
+unless the guard refuses `pubsub.gcpemu.invalid`. The other clients run without the guard: they
 either stay on loopback or reach the internet on purpose.
 
 ### OpenTofu acceptance (SRS 11.1, IF-001)
@@ -377,6 +378,24 @@ lookup. Upgrade them, or set `HTTPS_PROXY` to an address that refuses connection
 Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus a token: for
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
 clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.
+
+`gcpemu env` also sets `CLOUDSDK_CORE_UNIVERSE_DOMAIN=gcpemu.invalid`, in Host mode too. A gcloud
+API with no `CLOUDSDK_API_ENDPOINT_OVERRIDES_<API>` then goes to `<api>.gcpemu.invalid`, which
+never resolves, so the command fails instead of reaching Google. gcloud also refuses credentials
+stored for Google (`gcloud auth login`, `activate-service-account`) with a universe mismatch
+error, so they are never sent to the instance; use the token file above. Outside Google's
+universe gcloud behaves differently in a few places:
+
+- `gcloud compute images list` and `gcloud compute instances create` without `--image*` flags fail
+  looking up the universe descriptor at `storage.gcpemu.invalid`. Pass `--no-standard-images`, or
+  `--image-family` with `--image-project`.
+- `gcloud storage buckets create` requires `--location`.
+- `gcloud auth activate-service-account` with a key the emulator issued writes
+  `universe_domain = googleapis.com` into the active gcloud configuration, after which commands
+  without the token file fail. Use the token file, or `--impersonate-service-account`.
+
+`gcpemu env --no-universe` leaves the variable out, for a shell that also points gcloud at Google
+with stored credentials.
 
 ## Development
 

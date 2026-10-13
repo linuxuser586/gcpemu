@@ -162,6 +162,12 @@ paths:
             With true, write a bundle of the system roots plus the emulator CA
             and point SSL_CERT_FILE at it.
           schema: { type: boolean }
+        - name: universe
+          in: query
+          description: >-
+            With false, leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays
+            in Google's universe.
+          schema: { type: boolean, default: true }
       responses:
         "200":
           description: Variable name to value.
