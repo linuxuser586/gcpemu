@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -172,7 +171,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	var err error
 	if !forced {
 		ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
-		if errors.Is(err, syscall.EADDRINUSE) {
+		if addrInUse(err) {
 			if rln, rip, rerr := d.relocateLoop(fe.ip, fe.port); rerr == nil {
 				d.s.env.Log.Warn("lb: loopback address in use by another process; moved", "forwardingRule", fe.frPath, "from", lip, "to", rip)
 				ln, lip, err = rln, rip, nil
@@ -182,7 +181,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	switch {
 	case !forced && err == nil:
 		l.ln, l.mode = ln, "loopback"
-	case (forced || errors.Is(err, syscall.EACCES)) && d.edge.available(d.ctx):
+	case (forced || bindDenied(err)) && d.edge.available(d.ctx):
 		addr, verr := d.edge.add(d.ctx, fe)
 		if verr != nil {
 			d.s.env.Log.Warn("lb: edge container unavailable; using a high port", "forwardingRule", fe.frPath, "err", verr)

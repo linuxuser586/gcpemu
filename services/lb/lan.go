@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
@@ -141,7 +140,7 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 		go l.serve(ln)
 		return b, nil
 	}
-	if !errors.Is(err, syscall.EACCES) {
+	if !bindDenied(err) {
 		return nil, err
 	}
 	if !d.edge.available(d.ctx) {
