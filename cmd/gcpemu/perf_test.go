@@ -29,19 +29,27 @@ func perfGate(t *testing.T, ok bool, format string, args ...any) {
 	}
 }
 
-// nonContainerServices are the services NFR-PERF-001/004 cover (all
-// except GKE and Cloud SQL).
-const nonContainerServices = "iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn,nat"
+// perfServices returns the Services NFR-PERF-001/004 cover: the SRS
+// scope is every Service except GKE and Cloud SQL. nat is a Runtime
+// Service, which can't run on native Windows (ADR 0008), so it is left
+// out there.
+func perfServices() string {
+	s := "iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn"
+	if goruntime.GOOS != "windows" {
+		s += ",nat"
+	}
+	return s
+}
 
 // TestColdStartAndIdleRSS is NFR-PERF-001 (cold start to ready <= 2 s)
-// and NFR-PERF-004 (idle RSS <= 150 MB) for every non-container service.
+// and NFR-PERF-004 (idle RSS <= 150 MB) for the perfServices.
 func TestColdStartAndIdleRSS(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the binary")
 	}
 	dir := t.TempDir()
 	start := time.Now()
-	out := must(t, nil, "start", "--detach", "--data-dir", dir, "--services", nonContainerServices, "--port", "0", "--wait-timeout", "30s")
+	out := must(t, nil, "start", "--detach", "--data-dir", dir, "--services", perfServices(), "--port", "0", "--wait-timeout", "30s")
 	took := time.Since(start)
 	t.Cleanup(func() { _, _ = gcpemu(t, nil, "stop", "--data-dir", dir) })
 	if !strings.Contains(out, "ready") {

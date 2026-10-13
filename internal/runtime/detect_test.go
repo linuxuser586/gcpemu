@@ -3,6 +3,7 @@ package runtime
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,11 +29,18 @@ func newFakeHost(t *testing.T) *fakeHost {
 	return h
 }
 
-// sock adds a socket at p, relative to HOME unless absolute. Only one
+// rooted reports whether p is absolute. A path starting with / counts
+// too, so the literal /var/run/docker.sock in the socket list stays
+// rooted on Windows.
+func rooted(p string) bool {
+	return filepath.IsAbs(p) || strings.HasPrefix(p, "/")
+}
+
+// sock adds a socket at p, relative to HOME unless rooted. Only one
 // under the fake root is created on disk (for the Podman globs); others
 // exist only to the faked socket check.
 func (h *fakeHost) sock(p string, up bool) string {
-	if !filepath.IsAbs(p) {
+	if !rooted(p) {
 		p = filepath.Join(h.home, p)
 	}
 	h.up["unix://"+p] = up
@@ -61,8 +69,12 @@ func (h *fakeHost) write(p, content string) {
 // context stores a Docker context named name with endpoint host.
 func (h *fakeHost) context(name, host string) {
 	sum := sha256.Sum256([]byte(name))
-	h.write(filepath.Join(".docker", "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json"),
-		`{"Name":"`+name+`","Endpoints":{"docker":{"Host":"`+host+`","SkipTLSVerify":false}}}`)
+	meta, err := json.Marshal(map[string]any{"Name": name,
+		"Endpoints": map[string]any{"docker": map[string]any{"Host": host, "SkipTLSVerify": false}}})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.write(filepath.Join(".docker", "contexts", "meta", hex.EncodeToString(sum[:]), "meta.json"), string(meta))
 }
 
 func (h *fakeHost) locate() (Detection, error) {
@@ -125,7 +137,7 @@ func TestLocateSocketOrder(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantPath := path(want)
-			if !filepath.IsAbs(wantPath) {
+			if !rooted(wantPath) {
 				wantPath = filepath.Join(h.home, wantPath)
 			}
 			if d.Endpoint != "unix://"+wantPath || d.Source != "socket list" {

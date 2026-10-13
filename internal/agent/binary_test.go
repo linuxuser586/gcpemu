@@ -114,7 +114,9 @@ func TestReleasePullsAndCaches(t *testing.T) {
 	if got := strings.Join(e.images.pulls, ","); got != "ghcr.io/linuxuser586/gcpemu:1.2.3@linux/arm64" {
 		t.Fatalf("pulls = %s", got)
 	}
-	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm()&0o111 == 0 {
+	// Windows has no exec bit; the tar header into the container sets
+	// the mode anyway.
+	if fi, err := os.Stat(p); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("cached binary not executable: %v %v", fi, err)
 	}
 	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(p), ".gcpemu-*")); len(left) > 0 {
