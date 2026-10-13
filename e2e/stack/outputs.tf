@@ -59,6 +59,10 @@ output "sql_private_ip" {
   value = google_sql_database_instance.db.private_ip_address
 }
 
+output "sql_admin_password_secret_version" {
+  value = google_secret_manager_regional_secret_version.db_admin.name
+}
+
 output "sql_iam_user" {
   value = google_sql_user.app.name
 }

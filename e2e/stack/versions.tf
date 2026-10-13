@@ -39,6 +39,8 @@ locals {
     certificate_manager = "/certificatemanager/v1/"
     network_security    = "/networksecurity/v1/"
     secret_manager      = "/secretmanager/v1/"
+    # Regional secrets live under projects/P/locations/L on the same path.
+    secret_manager_regional = "/secretmanager/v1/"
   }
   ep = { for k, v in local.endpoints : k => local.emu != "" ? "${local.emu}${v}" : null }
 }
@@ -54,24 +56,25 @@ provider "google" {
   # which no endpoint setting covers (#155; needs provider >= 7.2).
   universe_domain = local.emu != "" ? "gcpemu.invalid" : null
 
-  iam_custom_endpoint                 = local.ep.iam
-  iam_beta_custom_endpoint            = local.ep.iam
-  iam_credentials_custom_endpoint     = local.ep.iam_credentials
-  resource_manager_custom_endpoint    = local.ep.resource_manager
-  resource_manager_v3_custom_endpoint = local.ep.resource_manager_v3
-  cloud_billing_custom_endpoint       = local.ep.cloud_billing
-  service_usage_custom_endpoint       = local.ep.service_usage
-  storage_custom_endpoint             = local.ep.storage
-  pubsub_custom_endpoint              = local.ep.pubsub
-  dns_custom_endpoint                 = local.ep.dns
-  artifact_registry_custom_endpoint   = local.ep.artifact_registry
-  compute_custom_endpoint             = local.ep.compute
-  service_networking_custom_endpoint  = local.ep.service_networking
-  container_custom_endpoint           = local.ep.container
-  sql_custom_endpoint                 = local.ep.sql
-  certificate_manager_custom_endpoint = local.ep.certificate_manager
-  network_security_custom_endpoint    = local.ep.network_security
-  secret_manager_custom_endpoint      = local.ep.secret_manager
+  iam_custom_endpoint                     = local.ep.iam
+  iam_beta_custom_endpoint                = local.ep.iam
+  iam_credentials_custom_endpoint         = local.ep.iam_credentials
+  resource_manager_custom_endpoint        = local.ep.resource_manager
+  resource_manager_v3_custom_endpoint     = local.ep.resource_manager_v3
+  cloud_billing_custom_endpoint           = local.ep.cloud_billing
+  service_usage_custom_endpoint           = local.ep.service_usage
+  storage_custom_endpoint                 = local.ep.storage
+  pubsub_custom_endpoint                  = local.ep.pubsub
+  dns_custom_endpoint                     = local.ep.dns
+  artifact_registry_custom_endpoint       = local.ep.artifact_registry
+  compute_custom_endpoint                 = local.ep.compute
+  service_networking_custom_endpoint      = local.ep.service_networking
+  container_custom_endpoint               = local.ep.container
+  sql_custom_endpoint                     = local.ep.sql
+  certificate_manager_custom_endpoint     = local.ep.certificate_manager
+  network_security_custom_endpoint        = local.ep.network_security
+  secret_manager_custom_endpoint          = local.ep.secret_manager
+  secret_manager_regional_custom_endpoint = local.ep.secret_manager_regional
 
   add_terraform_attribution_label = false
 }
