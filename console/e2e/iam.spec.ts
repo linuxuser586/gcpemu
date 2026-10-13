@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The IAM view (SRS 4.8.3, FR-UI-011) against the Instance's iam and gcs
 // Services. Each attempt has its own Project, so a retry does not meet the
@@ -121,16 +121,10 @@ test('IAM: a service account’s lifecycle, its keys, a grant and the policy sim
 
   // Only the simulator's testIamPermissions carries credentials: the token
   // it got for the Principal.
-  for (const r of requests) {
-    const path = new URL(r.url()).pathname
-    expect(path, r.url()).toMatch(allowed)
-    const auth = await r.headerValue('authorization')
-    if (/(\/iam\/testPermissions|:testIamPermissions)$/.test(path)) {
-      expect(auth, r.url()).toMatch(/^Bearer /)
-    } else {
-      expect(auth, r.url()).toBeNull()
-    }
-  }
+  await expectConsoleRequests(requests, {
+    allowed,
+    credentialed: /(\/iam\/testPermissions|:testIamPermissions)$/,
+  })
 })
 
 test('IAM: a custom role’s lifecycle and the IAM enforcement level', async ({

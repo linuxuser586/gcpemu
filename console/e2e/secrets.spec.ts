@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Secret Manager view (SRS 4.8.3, FR-UI-011) against the Instance's
 // secrets and pubsub Services. Each attempt has its own Project, so a
@@ -83,10 +83,7 @@ test('Secret Manager: a secret’s lifecycle, its versions and their values', as
   await expect(page).toHaveURL(new RegExp(`/console/secrets\\?project=${id}$`))
   await expect(page.getByText('No global secrets in this Project yet.')).toBeVisible()
 
-  for (const r of requests) {
-    expect(new URL(r.url()).pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
 })
 
 test('Secret Manager: regional secrets live in their location', async ({

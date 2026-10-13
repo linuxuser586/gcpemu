@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Cloud DNS view (SRS 4.8.3, FR-UI-011) against the Instance's dns
 // Service and its DNS server. Each attempt has its own Project and DNS
@@ -88,10 +88,7 @@ test('Cloud DNS: a zone’s record sets through changes, and the query box', asy
   await expect(page).toHaveURL(new RegExp(`/console/dns\\?project=${id}$`))
   await expect(page.getByText('No managed zones in this Project yet.')).toBeVisible()
 
-  for (const r of requests) {
-    expect(new URL(r.url()).pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
 })
 
 test('Cloud DNS: a private zone answers only on its networks', async ({

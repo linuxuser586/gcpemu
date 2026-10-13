@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Cloud Storage view (SRS 4.8.3, FR-UI-011) against the Instance's
 // gcs, pubsub and iam Services. Each attempt has its own Project, so a
@@ -70,10 +70,7 @@ test('Cloud Storage: a bucket’s lifecycle with the API’s validation messages
   await expect(page).toHaveURL(new RegExp(`/console/gcs\\?project=${id}$`))
   await expect(page.getByText('No buckets in this Project yet.')).toBeVisible()
 
-  for (const r of requests) {
-    expect(new URL(r.url()).pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
 })
 
 test('Cloud Storage: upload, browse, download, generations and a signed URL', async ({
@@ -207,10 +204,7 @@ test('Cloud Storage: upload, browse, download, generations and a signed URL', as
   const tampered = await request.get(url.replace(/X-Goog-Signature=../, 'X-Goog-Signature=00'))
   expect(tampered.status()).toBe(403)
 
-  for (const r of requests) {
-    expect(new URL(r.url()).pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
 })
 
 test('Cloud Storage: notifications to a Pub/Sub topic', async ({

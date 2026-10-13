@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Cloud NAT view (SRS 4.8.3, FR-UI-011) against the Instance's
 // compute and nat Services. nat runs on Linux only (emulator.ts): its
@@ -146,10 +146,7 @@ test('Cloud NAT: a router’s NAT gateways, their coverage and the offline sink'
   await page.getByRole('dialog').getByRole('button', { name: 'Delete router' }).click()
   await expect(page.getByText('No Cloud Routers in this Project yet')).toBeVisible()
 
-  for (const r of requests) {
-    expect(new URL(r.url()).pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
 })
 
 test('Cloud NAT: a private cluster’s egress in the translation log', async ({
