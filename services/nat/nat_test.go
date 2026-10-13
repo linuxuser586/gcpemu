@@ -37,6 +37,7 @@ func TestNATServicePullsInCompute(t *testing.T) {
 // offline sink (FR-NAT-005, Web console Cloud NAT view); --offline turns
 // it on at start.
 func TestSinkSwitch(t *testing.T) {
+	emutest.RequireRuntime(t)
 	type state struct {
 		Enabled bool
 		Status  int

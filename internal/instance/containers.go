@@ -35,6 +35,10 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	if c.rt != nil || c.err != nil {
 		return c.rt, c.err
 	}
+	if err := runtime.Unusable(); err != nil {
+		c.err = err
+		return nil, err
+	}
 	cl, err := runtime.Detect()
 	if err != nil {
 		c.err = err

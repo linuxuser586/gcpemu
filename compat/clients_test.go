@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
+	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 const project = "compat-proj"
@@ -43,7 +44,7 @@ func start(t *testing.T) *emulator {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	services := "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn"
-	if exec.Command("docker", "info").Run() == nil {
+	if emuruntime.Unusable() == nil && exec.Command("docker", "info").Run() == nil {
 		e.runtime = true
 		services += ",sql,gke"
 	}

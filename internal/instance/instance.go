@@ -91,6 +91,10 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	unusable := runtime.Unusable()
+	if err := refuseRuntime(cfg, unusable); err != nil {
+		return nil, err
+	}
 	dir := cfg.InstanceDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -171,19 +175,11 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	selected := config.ResolveServices(cfg.Services)
 	if len(cfg.Services) == 0 {
-		// Every Service by default, except those that need a container
-		// runtime when none is usable (e.g. the OCI image without the
-		// Docker socket).
-		if _, err := runtime.Detect(); err != nil {
-			var skipped []string
-			selected = slices.DeleteFunc(selected, func(s string) bool {
-				if config.RuntimeServices[s] {
-					skipped = append(skipped, s)
-					return true
-				}
-				return false
-			})
-			logger.Info("no container runtime; not starting the Services that need one", "skipped", strings.Join(skipped, ","), "reason", err.Error())
+		var skipped []string
+		var why error
+		selected, skipped, why = defaultServices(unusable, func() error { _, err := runtime.Detect(); return err })
+		if len(skipped) > 0 {
+			logger.Info("no usable container runtime; not starting the Services that need one", "skipped", strings.Join(skipped, ","), "reason", why.Error())
 		}
 	}
 	for _, name := range selected {
@@ -201,6 +197,50 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	env.SetServices(in.byName)
 	return in, nil
+}
+
+// refuseRuntime fails when cfg needs a container runtime that this OS
+// cannot use (unusable, from runtime.Unusable): an explicit Service list
+// naming a Runtime Service, or host mode.
+func refuseRuntime(cfg *config.Config, unusable error) error {
+	if unusable == nil {
+		return nil
+	}
+	var named []string
+	for _, s := range cfg.Services {
+		if config.RuntimeServices[s] && !slices.Contains(named, s) {
+			named = append(named, s)
+		}
+	}
+	if len(named) > 0 {
+		return fmt.Errorf("services %s need a container runtime: %w", strings.Join(named, ","), unusable)
+	}
+	if cfg.HostMode {
+		return fmt.Errorf("--host-mode needs a container runtime: %w", unusable)
+	}
+	return nil
+}
+
+// defaultServices is every Service, less the Runtime Services when the
+// container runtime is unusable on this OS or detect finds none (e.g. the
+// OCI image without the Docker socket); why says which.
+func defaultServices(unusable error, detect func() error) (selected, skipped []string, why error) {
+	selected = config.ResolveServices(nil)
+	why = unusable
+	if why == nil {
+		why = detect()
+	}
+	if why == nil {
+		return selected, nil, nil
+	}
+	selected = slices.DeleteFunc(selected, func(s string) bool {
+		if config.RuntimeServices[s] {
+			skipped = append(skipped, s)
+			return true
+		}
+		return false
+	})
+	return selected, skipped, why
 }
 
 func newLogger(cfg *config.Config, out io.Writer) *slog.Logger {

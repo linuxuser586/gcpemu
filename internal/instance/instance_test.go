@@ -271,7 +271,7 @@ func (n *namedSvc) Register(r emu.Router) error {
 }
 func (n *namedSvc) Start(context.Context) error {
 	if n.failing {
-		return errors.New("no container runtime")
+		return errors.New("backend unavailable")
 	}
 	n.started = true
 	return nil
@@ -291,13 +291,13 @@ func TestServiceIsolation(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
-	cfg.Services = []string{"gcs", "sql"}
+	cfg.Services = []string{"gcs", "secrets"}
 	cfg.Ports[config.AllPorts] = 0
 	built := map[string]*namedSvc{}
 	factories := map[string]Factory{}
 	for _, name := range config.AllServices {
 		factories[name] = func(*emu.Env) emu.Service {
-			s := &namedSvc{name: name, failing: name == "sql"}
+			s := &namedSvc{name: name, failing: name == "secrets"}
 			built[name] = s
 			return s
 		}
@@ -311,7 +311,7 @@ func TestServiceIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer in.Shutdown(ctx)
-	want := config.ResolveServices([]string{"gcs", "sql"})
+	want := config.ResolveServices([]string{"gcs", "secrets"})
 	if len(built) != len(want) {
 		t.Errorf("built %d services, want %v", len(built), want)
 	}
@@ -334,7 +334,7 @@ func TestServiceIsolation(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&r)
 	resp.Body.Close()
-	if resp.StatusCode != 503 || r.Ready || r.Services["sql"].Ready || !strings.Contains(r.Services["sql"].Reason, "no container runtime") ||
+	if resp.StatusCode != 503 || r.Ready || r.Services["secrets"].Ready || !strings.Contains(r.Services["secrets"].Reason, "backend unavailable") ||
 		!r.Services["gcs"].Ready || !r.Services["iam"].Ready {
 		t.Fatalf("ready = %d %+v", resp.StatusCode, r)
 	}
