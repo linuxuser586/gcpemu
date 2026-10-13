@@ -236,11 +236,17 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 			args = append(args, a)
 		}
 	}
-	child := exec.Command(exe, args...)
-	child.Stdout, child.Stderr = logf, logf
-	child.Env = append(os.Environ(), "GCPEMU_DETACHED=1")
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := child.Start(); err != nil {
+	var child *exec.Cmd
+	for _, attr := range detachAttrs() {
+		child = exec.Command(exe, args...)
+		child.Stdout, child.Stderr = logf, logf
+		child.Env = append(os.Environ(), "GCPEMU_DETACHED=1")
+		child.SysProcAttr = attr
+		if err = child.Start(); err == nil {
+			break
+		}
+	}
+	if err != nil {
 		return err
 	}
 	exited := make(chan error, 1)
@@ -270,7 +276,15 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		}
 	}
 	reasons := notReady(cfg)
-	_ = child.Process.Signal(syscall.SIGTERM)
+	// Windows delivers no signal to a detached process: ask the instance to
+	// shut down, and kill it if it cannot be reached.
+	if err := child.Process.Signal(syscall.SIGTERM); err != nil {
+		if c, err := clientFor(cfg); err != nil {
+			_ = child.Process.Kill()
+		} else if _, _, err := c.do(http.MethodPost, "/_emu/v1/shutdown"); err != nil {
+			_ = child.Process.Kill()
+		}
+	}
 	if reasons == "" {
 		reasons = logTail(logPath, logStart, 20)
 	}
@@ -585,9 +599,4 @@ func (o *rootOpts) timeCmd() *cobra.Command {
 		},
 	})
 	return t
-}
-
-// processAlive reports whether a process with pid exists.
-func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
 }

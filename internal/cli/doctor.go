@@ -16,7 +16,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -98,9 +97,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				report(false, "data dir "+dir+" writable", err.Error())
 			} else {
-				var st syscall.Statfs_t
-				if err := syscall.Statfs(dir, &st); err == nil {
-					free := st.Bavail * uint64(st.Bsize) >> 30
+				if free, err := freeGiB(dir); err == nil {
 					report(free >= 2, fmt.Sprintf("disk: %d GiB free in %s", free, dir), "free at least 2 GiB (container images and Postgres data)")
 				}
 			}
