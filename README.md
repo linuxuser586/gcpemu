@@ -432,6 +432,13 @@ For the client libraries, `gcpemu env` sets `GOOGLE_CLOUD_UNIVERSE_DOMAIN=gcpemu
 then sends an API with no endpoint override to `<api>.gcpemu.invalid` instead of Google. The Python
 and Node Cloud Storage clients ignore the variable, so they still need `STORAGE_EMULATOR_HOST`.
 
+`gcpemu env` also sets `GOOGLE_API_USE_MTLS_ENDPOINT=never`, which `--no-universe` keeps. In
+`always` mode, or when a client certificate is found, a Go client dials a hard-coded
+`<api>.mtls.googleapis.com`, which the universe does not change. If you set
+`GOOGLE_API_USE_MTLS_ENDPOINT=always` after `eval "$(gcpemu env)"`, an API with no endpoint
+override reaches Google. The Python client libraries refuse mTLS outside Google's universe, so
+they fail instead.
+
 Service-account keys the emulator issues say `"universe_domain": "gcpemu.invalid"`. A Go client
 that loads one needs `GOOGLE_CLOUD_UNIVERSE_DOMAIN=gcpemu.invalid`, even outside a `gcpemu env`
 shell; without it the first request fails with a universe mismatch. With it, Go clients sign their
@@ -446,6 +453,11 @@ clients compare the key with Google's universe whatever the variable says:
   as the `gcpemu tofu-provider` blocks do.
 
 The metadata server stays in Google's universe, so ADC through it needs none of this.
+
+The Cloud SQL Auth Proxy v2 puts a static `--token` in Google's universe, so in a `gcpemu env`
+shell it refuses the token with a universe mismatch. Its `--universe-domain` cannot go with
+`--sqladmin-api-endpoint`, so run it with `GOOGLE_CLOUD_UNIVERSE_DOMAIN=` or with
+`--credentials-file` and an emulator key.
 
 ## Development
 

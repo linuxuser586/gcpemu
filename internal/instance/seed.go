@@ -63,6 +63,10 @@ func (in *Instance) EnvVars() map[string]string {
 		// for Google.
 		"CLOUDSDK_CORE_UNIVERSE_DOMAIN": emu.InvalidUniverse,
 		"GOOGLE_CLOUD_UNIVERSE_DOMAIN":  emu.InvalidUniverse,
+		// Go clients dial a hard-coded *.mtls.googleapis.com, whatever the
+		// universe, when the mode is "always" or a client certificate is
+		// found (#243). No endpoint override is an mTLS endpoint.
+		"GOOGLE_API_USE_MTLS_ENDPOINT": "never",
 	}
 	for _, s := range in.services {
 		if ev, ok := s.(emu.EnvVarer); ok {
