@@ -209,4 +209,31 @@ func testUniverse(t *testing.T, e *emulator) {
 		expectProbe(t, got, "pubsub-emulator-universe", "OK")
 		expectProbe(t, got, "pubsub-no-override", noOverride)
 	})
+
+	// #243: in "always" mode a Go client dials the mTLS endpoint, which no
+	// universe covers. The probe runs behind the Escape guard, so the
+	// refused host says where it went.
+	t.Run("go-mtls", func(t *testing.T) {
+		if got := e.vars["GOOGLE_API_USE_MTLS_ENDPOINT"]; got != "never" {
+			t.Fatalf("gcpemu env: GOOGLE_API_USE_MTLS_ENDPOINT=%q, want never", got)
+		}
+		bin := filepath.Join(t.TempDir(), "universego")
+		if out, err := exec.Command("go", "build", "-tags", "compat", "-o", bin, "./sdk/universego").CombinedOutput(); err != nil {
+			t.Fatalf("go build: %v\n%s", err, out)
+		}
+		for _, c := range []struct {
+			name, mode, want string
+		}{
+			// The shell set "always" before `eval "$(gcpemu env)"`.
+			{"gcpemu-env", "never", noOverride},
+			// The shell set it after: the gap the README documents.
+			{"always", "always", "pubsub.mtls.googleapis.com"},
+		} {
+			env := withEnv(e.env, map[string]string{"GOOGLE_API_USE_MTLS_ENDPOINT": c.mode}, "PUBSUB_EMULATOR_HOST")
+			out, escaped, _ := e.exec(append(env, e.guard.Env()...), bin, project)
+			if !slices.Equal(escaped, []string{c.want}) {
+				t.Errorf("%s: the Escape guard refused %v, want [%s]; the probe said: %s", c.name, escaped, c.want, out)
+			}
+		}
+	})
 }
