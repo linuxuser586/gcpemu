@@ -32,3 +32,9 @@ func MarkFailed(ctx context.Context, svc emu.Service, project, name string) erro
 	}
 	return s.setState(project, name, "FAILED")
 }
+
+// SetLoopbackAliases replaces the loopback alias probe (exported to the
+// external tests).
+func SetLoopbackAliases(svc emu.Service, aliases bool) {
+	svc.(*Service).aliases = func() bool { return aliases }
+}

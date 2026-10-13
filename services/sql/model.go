@@ -56,6 +56,9 @@ type instanceRecord struct {
 	PublicIP   string         `json:"publicIp,omitempty"`
 	PrivateIP  string         `json:"privateIp,omitempty"`
 	PrivateNet *emu.SubnetNet `json:"privateNet,omitempty"`
+	// LoopIP is the loopback address that stands in for PublicIP on a VM
+	// runtime (loopback.go): reported as PRIMARY and served on the host.
+	LoopIP string `json:"loopIp,omitempty"`
 	// AppliedFlags are the database flags currently applied to PostgreSQL.
 	AppliedFlags map[string]string `json:"appliedFlags,omitempty"`
 	// SeedHash records the init SQL applied by the seed (FR-CORE-011).

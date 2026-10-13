@@ -282,6 +282,13 @@ type AddressReserver interface {
 	ReservedAddrs() []string
 }
 
+// LoopbackHolder is implemented by services that serve host clients on
+// 127.0.0.x addresses they allocate (LB forwarding rules, Cloud SQL
+// instances on a VM runtime), so that each avoids the others' addresses.
+type LoopbackHolder interface {
+	LoopbackAddrs() []string
+}
+
 // Containers gives services lazy access to the container runtime and the
 // instance's container networks (Section 3.3). It is nil-safe: services
 // that need a runtime call Netplane and report not-ready on error.

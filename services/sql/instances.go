@@ -116,6 +116,11 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	rec.Instance = &in
 	rec.AppliedFlags = flagMap(in.Settings) // applied by the bootstrap script
 
+	if ipc.Ipv4Enabled && (in.Settings.ActivationPolicy != "NEVER" || after != nil) {
+		if err := s.checkLoopback(ctx, project, in.Name); err != nil {
+			return nil, err
+		}
+	}
 	// Private IP (FR-SQL-004, FR-INT-008) needs the VPC's private services
 	// access connection, like GCP.
 	if ipc.PrivateNetwork != "" {
@@ -368,6 +373,12 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 	netChanged := oldIP.Ipv4Enabled != newIP.Ipv4Enabled || oldIP.PrivateNetwork != newIP.PrivateNetwork
 	flagsChanged := !reflect.DeepEqual(flagMap(cur.Settings), flagMap(next.Settings))
 
+	if newIP.Ipv4Enabled && newAct != "NEVER" && rec.LoopIP == "" {
+		if err := s.checkLoopback(ctx, project, name); err != nil {
+			apierr.Write(w, err)
+			return
+		}
+	}
 	nrec := *rec
 	nrec.Instance = &next
 	if newIP.PrivateNetwork != "" && rec.PrivateIP == "" {
@@ -385,7 +396,7 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 			return errInProgress()
 		}
 		next.State, next.IpAddresses = latest.Instance.State, ipMappings(&nrec)
-		nrec.HostPort, nrec.PublicIP, nrec.AppliedFlags = latest.HostPort, latest.PublicIP, latest.AppliedFlags
+		nrec.HostPort, nrec.PublicIP, nrec.LoopIP, nrec.AppliedFlags = latest.HostPort, latest.PublicIP, latest.LoopIP, latest.AppliedFlags
 		return store.PutJSON(tx, nsInstances, instKey(project, name), &nrec)
 	}); err != nil {
 		apierr.Write(w, err)
