@@ -178,6 +178,21 @@ func newAdmin(in *Instance) http.Handler {
 		in.Faults().Remove("")
 		writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 	})
+	mux.HandleFunc("PATCH /_emu/v1/faults/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Disabled *bool `json:"disabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Disabled == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body must be {\"disabled\": true|false}"})
+			return
+		}
+		rule, ok := in.Faults().SetDisabled(r.PathValue("id"), *body.Disabled)
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such fault"})
+			return
+		}
+		writeJSON(w, http.StatusOK, rule)
+	})
 	mux.HandleFunc("DELETE /_emu/v1/faults/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !in.Faults().Remove(r.PathValue("id")) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such fault"})

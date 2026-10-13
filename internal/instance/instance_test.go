@@ -147,6 +147,56 @@ func TestFaultInjection(t *testing.T) {
 			t.Errorf("request %d: status %d, want %d", i, resp.StatusCode, want)
 		}
 	}
+	// FR-UI-016: the admin API adds a rule, disables it and enables it
+	// again; a disabled rule does not fire, and keeps its hit count.
+	admin := func(method, path, body string) (int, fault.Rule) {
+		t.Helper()
+		req, _ := http.NewRequest(method, base+path, strings.NewReader(body))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var r fault.Rule
+		_ = json.NewDecoder(resp.Body).Decode(&r)
+		return resp.StatusCode, r
+	}
+	status := func() int {
+		resp, err := http.Get(base + "/dns/ok")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code, r := admin("POST", "/_emu/v1/faults", `{"id":"teapot","service":"dns","code":"ABORTED","httpStatus":418}`); code != 200 || r.ID != "teapot" {
+		t.Fatalf("add = %d %+v", code, r)
+	}
+	if got := status(); got != 418 {
+		t.Errorf("enabled rule: status %d, want 418", got)
+	}
+	if code, r := admin("PATCH", "/_emu/v1/faults/teapot", `{"disabled":true}`); code != 200 || !r.Disabled || r.Fired != 1 {
+		t.Errorf("disable = %d %+v", code, r)
+	}
+	if got := status(); got != 200 {
+		t.Errorf("disabled rule: status %d, want 200", got)
+	}
+	if code, r := admin("PATCH", "/_emu/v1/faults/teapot", `{"disabled":false}`); code != 200 || r.Disabled {
+		t.Errorf("enable = %d %+v", code, r)
+	}
+	if got := status(); got != 418 {
+		t.Errorf("re-enabled rule: status %d, want 418", got)
+	}
+	if code, _ := admin("PATCH", "/_emu/v1/faults/teapot", `{}`); code != 400 {
+		t.Errorf("patch without disabled = %d, want 400", code)
+	}
+	if code, _ := admin("PATCH", "/_emu/v1/faults/nope", `{"disabled":true}`); code != 404 {
+		t.Errorf("patch of a missing rule = %d, want 404", code)
+	}
+	if code, _ := admin("DELETE", "/_emu/v1/faults/teapot", ""); code != 200 {
+		t.Errorf("remove = %d", code)
+	}
+
 	if _, err := in.Faults().Add(fault.Rule{Service: "dns", Drop: true}); err != nil {
 		t.Fatal(err)
 	}

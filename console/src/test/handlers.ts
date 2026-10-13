@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw'
 
 import type { Container, Info, Operation, Readiness, ResourceCounts } from '@/api/admin'
 import type { Project } from '@/api/queries'
+import type { FaultRule } from '@/features/faults/api'
 
 // A fake Instance for component tests: tests mutate `fake` to shape what
 // /_emu/v1 and Resource Manager answer.
@@ -15,6 +16,7 @@ export interface Fake {
   env: Record<string, string>
   projects: Project[]
   operations: Operation[]
+  faults: FaultRule[]
 }
 
 export function defaultFake(): Fake {
@@ -94,6 +96,25 @@ export function defaultFake(): Fake {
         operation: { kind: 'dns#change', id: '1', status: 'done' },
       },
     ],
+    faults: [
+      {
+        id: 'flaky-publish',
+        service: 'pubsub',
+        method: '/google.pubsub.v1.Publisher/Publish',
+        code: 'UNAVAILABLE',
+        probability: 0.25,
+        fired: 7,
+      },
+      {
+        id: 'slow-uploads',
+        service: 'gcs',
+        method: '^POST /upload/',
+        latency: '2s',
+        count: 3,
+        fired: 3,
+      },
+      { id: 'drop-all', drop: true, disabled: true, fired: 0 },
+    ],
   }
 }
 
@@ -121,6 +142,31 @@ export const handlers = [
     return HttpResponse.json({
       operations: fake.operations.filter((op) => !project || op.project === project),
     })
+  }),
+  http.get('*/_emu/v1/faults', () => HttpResponse.json({ faults: fake.faults })),
+  http.post('*/_emu/v1/faults', async ({ request }) => {
+    const rule = (await request.json()) as FaultRule
+    if (!rule.code && !rule.latency && !rule.drop) {
+      return HttpResponse.json({ error: 'rule needs code, latency or drop' }, { status: 400 })
+    }
+    const added = { ...rule, id: rule.id || `fault-${fake.faults.length + 1}`, fired: 0 }
+    fake.faults = [...fake.faults, added]
+    return HttpResponse.json(added)
+  }),
+  http.patch('*/_emu/v1/faults/:id', async ({ params, request }) => {
+    const { disabled } = (await request.json()) as { disabled: boolean }
+    const rule = fake.faults.find((r) => r.id === params.id)
+    if (!rule) return HttpResponse.json({ error: 'no such fault' }, { status: 404 })
+    rule.disabled = disabled
+    return HttpResponse.json(rule)
+  }),
+  http.delete('*/_emu/v1/faults/:id', ({ params }) => {
+    fake.faults = fake.faults.filter((r) => r.id !== params.id)
+    return HttpResponse.json({ status: 'removed' })
+  }),
+  http.delete('*/_emu/v1/faults', () => {
+    fake.faults = []
+    return HttpResponse.json({ status: 'cleared' })
   }),
   http.get('*/cloudresourcemanager/v3/projects\\:search', () =>
     HttpResponse.json({ projects: fake.projects }),

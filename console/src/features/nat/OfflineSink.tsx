@@ -3,8 +3,8 @@ import { useId } from 'react'
 
 import { QueryStatus } from '@/components/QueryStatus'
 import { Card, CardTitle } from '@/components/ui/card'
+import { Switch } from '@/components/ui/switch'
 import { toast } from '@/lib/toast'
-import { cn } from '@/lib/utils'
 
 import { setSink, sinkQuery } from './api'
 
@@ -36,27 +36,13 @@ export function OfflineSink() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <CardTitle id={`${id}-title`}>Offline sink</CardTitle>
         {s && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={on}
+          <Switch
+            checked={on}
             aria-labelledby={`${id}-title`}
             aria-describedby={`${id}-hint`}
             disabled={change.isPending}
             onClick={() => change.mutate(!s.enabled)}
-            className={cn(
-              'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50',
-              on ? 'bg-primary' : 'bg-input',
-            )}
-          >
-            <span
-              aria-hidden
-              className={cn(
-                'inline-block size-5 rounded-full bg-background shadow-sm transition-transform',
-                on ? 'translate-x-5' : 'translate-x-0',
-              )}
-            />
-          </button>
+          />
         )}
       </div>
       <QueryStatus query={query} />

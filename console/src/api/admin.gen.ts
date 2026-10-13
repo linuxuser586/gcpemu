@@ -383,7 +383,11 @@ export interface paths {
         delete: operations["removeFault"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Enable or disable a fault injection rule (FR-UI-016).
+         * @description A disabled rule stays listed, with its hit count, but does not fire.
+         */
+        patch: operations["setFaultDisabled"];
         trace?: never;
     };
     "/_emu/v1/shutdown": {
@@ -962,6 +966,9 @@ export interface components {
             probability?: number;
             /** @description How many times the rule fires; 0 means unlimited. */
             count?: number;
+            /** @description The rule is kept but does not fire. */
+            disabled?: boolean;
+            /** @description How many times the rule has fired. */
             readonly fired?: number;
         };
     };
@@ -1537,6 +1544,36 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Status"];
+            404: components["responses"]["Error"];
+        };
+    };
+    setFaultDisabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    disabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The rule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FaultRule"];
+                };
+            };
+            400: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
     };
