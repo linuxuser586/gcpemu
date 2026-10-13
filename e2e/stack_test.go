@@ -20,11 +20,14 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/oauth2"
 	computev1 "google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
+	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/lb"
 )
 
@@ -42,7 +45,8 @@ import (
 //  4. /api/health goes LB → Istio → app; a client without the LB's
 //     certificate is refused by the gateway;
 //  5. the app writes to GCS, inserts into Cloud SQL (connector, IAM auth,
-//     private IP) and publishes to Pub/Sub with Workload Identity;
+//     private IP) and publishes to Pub/Sub with Workload Identity; the test
+//     reads the row back through the Data API;
 //     5b. a pod of the app's KSA mounts the app's Secret Manager secret
 //     through the cluster's Secret Manager add-on, and a SecretSync copies
 //     it into a Kubernetes Secret;
@@ -63,6 +67,7 @@ func TestReferenceStack(t *testing.T) {
 		t.Skip("OpenTofu (tofu) is not on PATH")
 	}
 	netTests := os.Getenv("GCPEMU_NET_TESTS") == "1"
+	decoyNetwork(t, psaRange)
 	r := &run{t: t, begin: time.Now()}
 	defer r.report()
 
@@ -107,6 +112,37 @@ func TestReferenceStack(t *testing.T) {
 	if total > budget {
 		t.Errorf("reference stack took %v, budget %v (SRS 11.2)", total.Round(time.Second), budget)
 	}
+}
+
+// psaRange is the stack's private services access range, the first
+// automatic /20 VPC_PEERING allocation.
+const psaRange = "10.127.240.0/20"
+
+// decoyNetwork holds subnet on the host for the test, as another Instance,
+// a VPN or a compose network may: the stack's network then goes on a
+// Fallback range, and nothing on the host may rely on routing to a
+// Declared address (ADR 0004, #191). A network already holding the range
+// does the same.
+func decoyNetwork(t *testing.T, subnet string) {
+	t.Helper()
+	rt, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	name := fmt.Sprintf("gcpemu-e2e-decoy-%d", time.Now().UnixNano())
+	if _, err := rt.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: subnet}); err != nil {
+		if msg := strings.ToLower(err.Error()); strings.Contains(msg, "overlap") || strings.Contains(msg, "already used") {
+			t.Logf("%s is already held on the host: %v", subnet, err)
+			return
+		}
+		t.Fatalf("decoy network: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := rt.RemoveNetwork(context.Background(), name); err != nil {
+			t.Errorf("removing decoy network %s: %v", name, err)
+		}
+	})
 }
 
 // run carries state between the steps.
@@ -244,31 +280,48 @@ func (r *run) step2(t *testing.T) {
 }
 
 // migrate creates the app's table as the built-in admin user (the IAM
-// user has no DDL rights, like on Cloud SQL) over the private IP.
+// user has no DDL rights, like on Cloud SQL) through the Data API: the
+// host has no route to the private IP (ADR 0004).
 func (r *run) migrate(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=%s port=5432 user=admin dbname=app sslmode=disable connect_timeout=5", r.out["sql_private_ip"]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Password = "change-me-0123456789"
-	var conn *pgx.Conn
-	eventually(t, time.Minute, "admin connection to Cloud SQL", func() bool {
-		conn, err = pgx.ConnectConfig(ctx, cfg)
-		return err == nil
-	}, func() string { return fmt.Sprint(err) })
-	defer conn.Close(ctx)
 	user := pgx.Identifier{r.out["sql_iam_user"]}.Sanitize()
-	for _, q := range []string{
+	r.execSQL(t, strings.Join([]string{
 		`CREATE TABLE IF NOT EXISTS work_items (id bigserial PRIMARY KEY, item text NOT NULL, pod text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
 		`GRANT SELECT, INSERT ON work_items TO ` + user,
 		`GRANT USAGE ON SEQUENCE work_items_id_seq TO ` + user,
-	} {
-		if _, err := conn.Exec(ctx, q); err != nil {
-			t.Fatalf("%s: %v", q, err)
+	}, ";\n"))
+}
+
+// execSQL runs statements in the app database with instances.executeSql
+// as the admin user, whose password is in a regional secret, and returns
+// the last statement's result.
+func (r *run) execSQL(t *testing.T, sql string) *sqladmin.QueryResult {
+	t.Helper()
+	ctx := context.Background()
+	svc, err := sqladmin.NewService(ctx, option.WithEndpoint(r.inst.GatewayURL()+"/"),
+		option.WithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: r.token(t)})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := strings.Split(r.out["sql_connection_name"], ":") // project:region:instance
+	resp, err := svc.Instances.ExecuteSql(conn[0], conn[2], &sqladmin.ExecuteSqlPayload{
+		Database: "app", User: "admin", PasswordSecretVersion: r.out["sql_admin_password_secret_version"],
+		SqlStatement: sql,
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("executeSql %q: %v", sql, err)
+	}
+	if resp.Status != nil && resp.Status.Code != 0 {
+		t.Fatalf("executeSql %q: %d %s", sql, resp.Status.Code, resp.Status.Message)
+	}
+	for _, res := range resp.Results {
+		if res.Status != nil && res.Status.Code != 0 {
+			t.Fatalf("executeSql %q: %d %s", sql, res.Status.Code, res.Status.Message)
 		}
 	}
+	if len(resp.Results) == 0 {
+		t.Fatalf("executeSql %q: no results", sql)
+	}
+	return resp.Results[len(resp.Results)-1]
 }
 
 // ---- Step 3 ----
@@ -382,16 +435,9 @@ func (r *run) step5(t *testing.T) {
 	if _, err := sc.Bucket(r.out["uploads_bucket"]).Object("work/" + r.workID + ".txt").Attrs(ctx); err != nil {
 		t.Errorf("object written by the app: %v", err)
 	}
-	cfg, _ := pgx.ParseConfig(fmt.Sprintf("host=%s port=5432 user=admin dbname=app sslmode=disable connect_timeout=5", r.out["sql_private_ip"]))
-	cfg.Password = "change-me-0123456789"
-	conn, err := pgx.ConnectConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close(ctx)
-	var n int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM work_items WHERE item = $1", r.workID).Scan(&n); err != nil || n != 1 {
-		t.Errorf("rows for %s: %d %v", r.workID, n, err)
+	res := r.execSQL(t, "SELECT count(*) FROM work_items WHERE item = '"+r.workID+"'")
+	if len(res.Rows) != 1 || len(res.Rows[0].Values) != 1 || res.Rows[0].Values[0].Value != "1" {
+		t.Errorf("rows for %s: %+v", r.workID, res.Rows)
 	}
 	if out["messageId"] == nil || out["messageId"] == "" {
 		t.Errorf("no message ID: %v", out)

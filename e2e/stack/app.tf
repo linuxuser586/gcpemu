@@ -96,8 +96,9 @@ resource "google_sql_database_instance" "db" {
   depends_on          = [google_service_networking_connection.psa]
 
   settings {
-    tier    = "db-custom-1-3840"
-    edition = "ENTERPRISE"
+    tier            = "db-custom-1-3840"
+    edition         = "ENTERPRISE"
+    data_api_access = "ALLOW_DATA_API"
     ip_configuration {
       ipv4_enabled    = false
       private_network = google_compute_network.vpc.id
@@ -121,6 +122,19 @@ resource "google_sql_user" "admin" {
   instance        = google_sql_database_instance.db.name
   password        = var.db_admin_password
   deletion_policy = "ABANDON"
+}
+
+# The admin password in a regional secret in the instance's region, which
+# executeSql (the Data API) reads with passwordSecretVersion: the host has
+# no route to the private IP (ADR 0004).
+resource "google_secret_manager_regional_secret" "db_admin" {
+  secret_id = "ref-db-admin"
+  location  = var.region
+}
+
+resource "google_secret_manager_regional_secret_version" "db_admin" {
+  secret      = google_secret_manager_regional_secret.db_admin.id
+  secret_data = var.db_admin_password
 }
 
 resource "google_sql_user" "app" {
