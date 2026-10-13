@@ -77,8 +77,8 @@ func (s *Service) allowedTx(tx store.Tx, p emu.Principal, perm, resource string)
 }
 
 // policyChain lists the full resource names whose policies apply to
-// resource: the resource, its name prefixes, recorded parents, and the
-// owning project, nearest first.
+// resource: the resource, the managed folders containing an object, its
+// name prefixes, recorded parents, and the owning project, nearest first.
 func (s *Service) policyChain(tx store.Tx, resource string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -102,6 +102,9 @@ func (s *Service) policyChain(tx store.Tx, resource string) []string {
 			if b, ok := tx.Get(nsParents, res); ok {
 				add(string(b), depth+1)
 			}
+			if n == len(segs) {
+				addManagedFolders(host, segs, add, depth)
+			}
 		}
 		if len(segs) >= 2 && segs[0] == "projects" && segs[1] != "_" && segs[1] != "-" && segs[1] != "" {
 			add(projectResource(s.projectID(tx, segs[1])), depth+1)
@@ -115,6 +118,18 @@ func (s *Service) policyChain(tx store.Tx, resource string) []string {
 	}
 	add(resource, 0)
 	return out
+}
+
+// addManagedFolders adds the managed folders containing a Cloud Storage
+// object, nearest first: projects/_/buckets/B/objects/a/b/x is in a/b/ and a/.
+func addManagedFolders(host string, segs []string, add func(string, int), depth int) {
+	if host != "storage.googleapis.com" || len(segs) <= 6 || segs[2] != "buckets" || segs[4] != "objects" {
+		return
+	}
+	bucket := "//" + host + "/" + strings.Join(segs[:4], "/")
+	for n := len(segs) - 1; n > 5; n-- {
+		add(bucket+"/managedFolders/"+strings.Join(segs[5:n], "/")+"/", depth+1)
+	}
 }
 
 // splitResource splits "//host/path" into host and path. Relative names

@@ -583,7 +583,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 | Cloud NAT | Packet egress | Coverage rules, port allocation reporting, logging | Exact port-allocation algorithm, NAT IP reputation |
 | Cloud SQL | PostgreSQL | Admin API, connectors, IAM auth, flags | Tier/CPU/RAM, HA failover, maintenance, Query Insights |
 | Artifact Registry | OCI registry | AR API, auth | Vulnerability scanning, CMEK |
-| Cloud Storage | Byte storage | JSON/XML API, generations, preconditions, signed URLs, notifications | Storage classes, location/dual-region, Autoclass, CMEK |
+| Cloud Storage | Byte storage | JSON/XML API, generations, preconditions, signed URLs, notifications, managed folder IAM | Storage classes, location/dual-region, Autoclass, CMEK, legacy ACLs (IAM alone grants access) |
 | Pub/Sub | — | Delivery, ordering, DLQ, filters, push, exactly-once | Message storage policy, CMEK |
 | Cloud DNS | DNS server | Zones, record sets, changes | DNSSEC signing, anycast name servers |
 | IAM | — | Policies, roles, tokens, impersonation, metadata server | Org policy, recommender, audit logs as a separate API |

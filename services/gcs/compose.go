@@ -126,7 +126,7 @@ func (s *Service) composeObject(w http.ResponseWriter, r *http.Request, bucket, 
 		apierr.Write(w, errInvalid("Provided CRC32C %q doesn't match calculated CRC32C %q.", meta.Crc32c, info.crcB64()))
 		return
 	}
-	wr := &writeReq{bucket: bucket, meta: meta, blob: info, conds: c, componentCount: components, base: baseURL(r)}
+	wr := &writeReq{bucket: bucket, meta: meta, blob: info, conds: c, componentCount: components, base: baseURL(r), predefinedACL: r.URL.Query().Get("destinationPredefinedAcl")}
 	if req.DeleteSourceObjects {
 		wr.extra = func(tx store.Tx, brec *bucketRec, now time.Time) ([]event, []string, error) {
 			var evs []event
@@ -158,7 +158,7 @@ func (s *Service) composeObject(w http.ResponseWriter, r *http.Request, bucket, 
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r), fullProjection(r, len(meta.Acl) > 0)))
 }
 
 // copySource resolves the source of a copy/rewrite with its preconditions.
@@ -205,6 +205,7 @@ func copyMeta(src *storage.Object, body []byte, dstName string) (*storage.Object
 			CustomTime:         src.CustomTime,
 			Metadata:           src.Metadata,
 			StorageClass:       meta.StorageClass,
+			Acl:                meta.Acl,
 		}
 	}
 	if meta.ContentType == "" {
@@ -216,13 +217,13 @@ func copyMeta(src *storage.Object, body []byte, dstName string) (*storage.Object
 }
 
 // copyTo creates the destination object as a hard link of the source.
-func (s *Service) copyTo(ctx context.Context, src *objectRec, dstBucket, dstName string, meta *storage.Object, c conds, base string) (*objectRec, *storage.Bucket, error) {
+func (s *Service) copyTo(ctx context.Context, src *objectRec, dstBucket, dstName string, meta *storage.Object, predefinedACL string, c conds, base string) (*objectRec, *storage.Bucket, error) {
 	id, err := s.blobs.link(src.Blob)
 	if err != nil {
 		return nil, nil, apierr.Internal("copy object data: %v", err)
 	}
 	info := blobInfoOf(src.Object, id)
-	wr := &writeReq{bucket: dstBucket, meta: meta, blob: info, conds: c, componentCount: src.Object.ComponentCount, base: base}
+	wr := &writeReq{bucket: dstBucket, meta: meta, blob: info, conds: c, componentCount: src.Object.ComponentCount, base: base, predefinedACL: predefinedACL}
 	return s.commitObject(ctx, wr)
 }
 
@@ -259,12 +260,12 @@ func (s *Service) copyObject(w http.ResponseWriter, r *http.Request, srcBucket, 
 		apierr.Write(w, err)
 		return
 	}
-	rec, bkt, err := s.copyTo(ctx, src, dstBucket, dstName, meta, c, baseURL(r))
+	rec, bkt, err := s.copyTo(ctx, src, dstBucket, dstName, meta, q.Get("destinationPredefinedAcl"), c, baseURL(r))
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r), fullProjection(r, len(meta.Acl) > 0)))
 }
 
 // rewriteToken is the state carried between rewrite calls.
@@ -329,13 +330,13 @@ func (s *Service) rewriteObject(w http.ResponseWriter, r *http.Request, srcBucke
 		apierr.Write(w, err)
 		return
 	}
-	rec, bkt, err := s.copyTo(ctx, src, dstBucket, dstName, meta, c, baseURL(r))
+	rec, bkt, err := s.copyTo(ctx, src, dstBucket, dstName, meta, q.Get("destinationPredefinedAcl"), c, baseURL(r))
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
 	resp.Done = true
 	resp.TotalBytesRewritten = size
-	resp.Resource = renderObject(rec, bkt, baseURL(r))
+	resp.Resource = renderObject(rec, bkt, baseURL(r), fullProjection(r, len(meta.Acl) > 0))
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -46,6 +46,8 @@ type uploadRec struct {
 	// Result is the finished object, kept so a retried final request gets
 	// the same answer.
 	Result *storage.Object `json:"result,omitempty"`
+	// PredefinedACL is the session's predefinedAcl.
+	PredefinedACL string `json:"predefinedAcl,omitempty"`
 }
 
 // session is the in-memory state of a resumable upload: a lock serialising
@@ -197,7 +199,7 @@ func (s *Service) writeObject(w http.ResponseWriter, r *http.Request, bucket str
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r), fullProjection(r, len(meta.Acl) > 0)))
 }
 
 // putObject validates, stores and commits an object from a stream.
@@ -229,7 +231,7 @@ func (s *Service) putObject(ctx context.Context, bucket string, meta *storage.Ob
 		s.blobs.remove(info.ID)
 		return nil, nil, err
 	}
-	return s.commitObject(ctx, &writeReq{bucket: bucket, meta: meta, blob: info, conds: c, base: base})
+	return s.commitObject(ctx, &writeReq{bucket: bucket, meta: meta, blob: info, conds: c, base: base, predefinedACL: q.Get("predefinedAcl")})
 }
 
 // validateHashes checks client-supplied MD5/CRC32C (JSON fields or an
@@ -325,7 +327,7 @@ func (s *Service) beginResumable(ctx context.Context, bucket string, meta *stora
 	if err := c.check(curObj, false); err != nil {
 		return nil, err
 	}
-	rec := &uploadRec{ID: newUploadID(), Bucket: bucket, Meta: meta, Conds: c, Created: ts(s.now()), Total: total, Base: base}
+	rec := &uploadRec{ID: newUploadID(), Bucket: bucket, Meta: meta, Conds: c, Created: ts(s.now()), Total: total, Base: base, PredefinedACL: q.Get("predefinedAcl")}
 	f, err := os.OpenFile(s.uploadPath(rec.ID), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return nil, err
@@ -414,7 +416,7 @@ func (s *Service) uploadChunk(w http.ResponseWriter, r *http.Request, id string)
 		if bkt != nil {
 			b = bkt.Bucket
 		}
-		writeJSON(w, http.StatusOK, renderObject(&objectRec{Object: rec.Result}, b, baseURL(r)))
+		writeJSON(w, http.StatusOK, renderObject(&objectRec{Object: rec.Result}, b, baseURL(r), false))
 		return
 	}
 	cr, err := parseContentRange(r.Header.Get("Content-Range"))
@@ -529,7 +531,7 @@ func (s *Service) finishUpload(w http.ResponseWriter, r *http.Request, rec *uplo
 		return
 	}
 	meta := *rec.Meta
-	obj, bkt, err := s.commitObject(r.Context(), &writeReq{bucket: rec.Bucket, meta: &meta, blob: info, conds: rec.Conds, base: rec.Base})
+	obj, bkt, err := s.commitObject(r.Context(), &writeReq{bucket: rec.Bucket, meta: &meta, blob: info, conds: rec.Conds, base: rec.Base, predefinedACL: rec.PredefinedACL})
 	if err != nil {
 		_ = s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsUploads, rec.ID) })
 		apierr.Write(w, err)
@@ -537,7 +539,7 @@ func (s *Service) finishUpload(w http.ResponseWriter, r *http.Request, rec *uplo
 	}
 	rec.Result = obj.Object
 	_ = s.env.Store.Update(func(tx store.Tx) error { return store.PutJSON(tx, nsUploads, rec.ID, rec) })
-	writeJSON(w, http.StatusOK, renderObject(obj, bkt, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderObject(obj, bkt, baseURL(r), fullProjection(r, len(meta.Acl) > 0)))
 }
 
 // cancelUpload deletes a resumable session; GCS answers 499.

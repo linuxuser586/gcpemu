@@ -82,7 +82,7 @@ func (s *Service) getObject(w http.ResponseWriter, r *http.Request, bucket, name
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r), fullProjection(r, false)))
 }
 
 func (s *Service) patchObject(w http.ResponseWriter, r *http.Request, bucket, name string, replace bool) {
@@ -106,6 +106,11 @@ func (s *Service) patchObject(w http.ResponseWriter, r *http.Request, bucket, na
 		apierr.Write(w, err)
 		return
 	}
+	setACL, err := parseObjectACLChange(body, q.Get("predefinedAcl"))
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	override := q.Get("overrideUnlockedRetention") == "true"
 	if _, ok := body["retention"]; ok {
 		if err := s.check(r.Context(), "storage.objects.setRetention", objectResource(bucket, name)); err != nil {
@@ -119,9 +124,19 @@ func (s *Service) patchObject(w http.ResponseWriter, r *http.Request, bucket, na
 			return
 		}
 	}
-	rec, bkt, err := s.updateObjectMeta(r.Context(), bucket, name, gen, c, baseURL(r), override, func(o *storage.Object) (*storage.Object, error) {
+	rec, bkt, err := s.updateObjectMeta(r.Context(), bucket, name, gen, c, baseURL(r), override, func(rec *objectRec, bkt *storage.Bucket) (*storage.Object, error) {
+		if setACL != nil {
+			if ublaEnabled(bkt) {
+				return nil, errInvalid("%s%s", errObjectACLUBLA, ublaDoc)
+			}
+			a, err := setACL(bkt.ProjectNumber, rec.Owner)
+			if err != nil {
+				return nil, err
+			}
+			rec.ACL = a
+		}
 		var no storage.Object
-		if err := applyPatch(o, body, mutableObjectFields, replace, &no); err != nil {
+		if err := applyPatch(rec.Object, body, mutableObjectFields, replace, &no); err != nil {
 			return nil, err
 		}
 		return &no, nil
@@ -130,13 +145,13 @@ func (s *Service) patchObject(w http.ResponseWriter, r *http.Request, bucket, na
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderObject(rec, bkt, baseURL(r), fullProjection(r, true)))
 }
 
-// updateObjectMeta applies fn to an object's metadata, bumping its
-// metageneration and publishing OBJECT_METADATA_UPDATE. override is the
-// request's overrideUnlockedRetention.
-func (s *Service) updateObjectMeta(ctx context.Context, bucket, name string, gen int64, c conds, base string, override bool, fn func(*storage.Object) (*storage.Object, error)) (*objectRec, *storage.Bucket, error) {
+// updateObjectMeta has fn return an object's new metadata (fn may also
+// change the record's ACL), bumping its metageneration and publishing
+// OBJECT_METADATA_UPDATE. override is the request's overrideUnlockedRetention.
+func (s *Service) updateObjectMeta(ctx context.Context, bucket, name string, gen int64, c conds, base string, override bool, fn func(*objectRec, *storage.Bucket) (*storage.Object, error)) (*objectRec, *storage.Bucket, error) {
 	var (
 		out *objectRec
 		bkt *storage.Bucket
@@ -158,7 +173,7 @@ func (s *Service) updateObjectMeta(ctx context.Context, bucket, name string, gen
 			return err
 		}
 		prev := rec.Object
-		no, err := fn(prev)
+		no, err := fn(rec, bkt)
 		if err != nil {
 			return err
 		}

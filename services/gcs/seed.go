@@ -140,7 +140,7 @@ func (s *Service) seedBucket(ctx context.Context, raw map[string]any, baseDir st
 		return err
 	}
 	if _, err := s.getBucketRec(b.Name); err != nil {
-		if _, err := s.createBucket(ctx, proj, &b, false); err != nil {
+		if _, err := s.createBucket(ctx, proj, &b, false, nil); err != nil {
 			return err
 		}
 	}

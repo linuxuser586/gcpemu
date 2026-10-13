@@ -118,6 +118,21 @@ func (s *Service) serveBucketPath(w http.ResponseWriter, r *http.Request, bucket
 		default:
 			methodNotAllowed(w, r)
 		}
+	case segs[0] == "acl" || segs[0] == "defaultObjectAcl":
+		sc := aclScope{kind: bucketACL, bucket: bucket}
+		if segs[0] == "defaultObjectAcl" {
+			sc.kind = defaultObjectACL
+		}
+		switch {
+		case n == 1:
+			s.serveACL(w, r, sc, "")
+		case n == 2 && segs[1] != "":
+			s.serveACL(w, r, sc, segs[1])
+		default:
+			methodNotAllowed(w, r)
+		}
+	case segs[0] == "managedFolders":
+		s.serveManagedFolders(w, r, bucket, esc[1:])
 	case n == 1 && segs[0] == "lockRetentionPolicy" && m == http.MethodPost:
 		s.lockRetentionPolicy(w, r, bucket)
 	case segs[0] == "notificationConfigs":
@@ -153,6 +168,21 @@ func (s *Service) serveObjectPath(w http.ResponseWriter, r *http.Request, bucket
 		default:
 			methodNotAllowed(w, r)
 		}
+		return
+	}
+	// ".../o/OBJECT/acl[/ENTITY]": the object ACL, with the name escaped as
+	// one segment as every client sends it.
+	if (len(esc) == 2 || len(esc) == 3) && esc[1] == "acl" {
+		name, err := url.PathUnescape(esc[0])
+		entity := ""
+		if err == nil && len(esc) == 3 {
+			entity, err = url.PathUnescape(esc[2])
+		}
+		if err != nil || name == "" {
+			apierr.Write(w, errInvalid("Invalid path."))
+			return
+		}
+		s.serveACL(w, r, aclScope{kind: objectACL, bucket: bucket, object: name}, entity)
 		return
 	}
 	if m == http.MethodPost {

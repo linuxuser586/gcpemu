@@ -3,6 +3,7 @@ package gcs
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,8 +21,8 @@ import (
 
 // mutableBucketFields are the bucket fields patch/update may change.
 var mutableBucketFields = map[string]bool{
-	"acl": true, "autoclass": true, "billing": true, "cors": true, "defaultEventBasedHold": true,
-	"defaultObjectAcl": true, "encryption": true, "iamConfiguration": true, "ipFilter": true,
+	"autoclass": true, "billing": true, "cors": true, "defaultEventBasedHold": true,
+	"encryption": true, "iamConfiguration": true, "ipFilter": true,
 	"labels": true, "lifecycle": true, "logging": true, "retentionPolicy": true, "rpo": true,
 	"softDeletePolicy": true, "storageClass": true, "versioning": true, "website": true,
 }
@@ -39,6 +40,7 @@ func loadBucket(tx store.Tx, name string) (*bucketRec, error) {
 		}
 		return nil, err
 	}
+	fillACLDefaults(&rec)
 	return &rec, nil
 }
 
@@ -59,21 +61,34 @@ func (s *Service) insertBucket(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errRequired("project"))
 		return
 	}
-	var b storage.Bucket
-	if err := decodeJSON(r, &b); err != nil {
-		apierr.Write(w, err)
-		return
-	}
-	rec, err := s.createBucket(r.Context(), proj, &b, q.Get("enableObjectRetention") == "true")
+	body, raw, err := readJSONBody(r)
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderBucket(rec, baseURL(r)))
+	var b storage.Bucket
+	if len(body) > 0 {
+		if err := json.Unmarshal(raw, &b); err != nil {
+			apierr.Write(w, errInvalid("Invalid JSON payload received. %v", err))
+			return
+		}
+	}
+	acl, err := parseBucketACLChange(body, q)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	rec, err := s.createBucket(r.Context(), proj, &b, q.Get("enableObjectRetention") == "true", acl)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, renderBucket(rec, baseURL(r), fullProjection(r, acl.setACL || acl.setDefaultObjectACL)))
 }
 
-// createBucket validates and stores a new bucket.
-func (s *Service) createBucket(ctx context.Context, proj string, b *storage.Bucket, objectRetention bool) (*bucketRec, error) {
+// createBucket validates and stores a new bucket. acl, when not nil, sets
+// its ACLs instead of the defaults.
+func (s *Service) createBucket(ctx context.Context, proj string, b *storage.Bucket, objectRetention bool, acl *bucketACLChange) (*bucketRec, error) {
 	if err := s.env.EnsureProject(proj); err != nil {
 		return nil, err
 	}
@@ -132,6 +147,12 @@ func (s *Service) createBucket(ctx context.Context, proj string, b *storage.Buck
 	normalizeIAMConfig(b, nil, now)
 
 	rec := &bucketRec{Bucket: b, Project: proj}
+	fillACLDefaults(rec)
+	if acl != nil {
+		if err := acl.apply(rec, b); err != nil {
+			return nil, err
+		}
+	}
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		var existing bucketRec
 		if store.GetJSON(tx, nsBuckets, b.Name, &existing) == nil {
@@ -207,7 +228,7 @@ func (s *Service) getBucket(w http.ResponseWriter, r *http.Request, name string)
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderBucket(rec, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderBucket(rec, baseURL(r), fullProjection(r, false)))
 }
 
 func (s *Service) listBuckets(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +251,7 @@ func (s *Service) listBuckets(w http.ResponseWriter, r *http.Request) {
 	prefix := q.Get("prefix")
 	out := &storage.Buckets{Kind: "storage#buckets"}
 	base := baseURL(r)
+	full := fullProjection(r, false)
 	err := s.env.Store.View(func(tx store.Tx) error {
 		var ierr error
 		tx.Scan(nsBuckets, prefix, func(key string, val []byte) bool {
@@ -247,7 +269,7 @@ func (s *Service) listBuckets(w http.ResponseWriter, r *http.Request) {
 				out.NextPageToken = encodeToken(out.Items[len(out.Items)-1].Name)
 				return false
 			}
-			out.Items = append(out.Items, renderBucket(&rec, base))
+			out.Items = append(out.Items, renderBucket(&rec, base, full))
 			return true
 		})
 		return ierr
@@ -274,6 +296,11 @@ func (s *Service) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		apierr.Write(w, err)
 		return
 	}
+	acl, err := parseBucketACLChange(body, r.URL.Query())
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	var out *bucketRec
 	err = s.env.Store.Update(func(tx store.Tx) error {
 		rec, err := loadBucket(tx, name)
@@ -294,8 +321,11 @@ func (s *Service) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		now := s.now()
 		nb.Metageneration = prev.Metageneration + 1
 		nb.Updated = ts(now)
-		nb.Acl, nb.DefaultObjectAcl = nil, nil
+		nb.Acl, nb.DefaultObjectAcl, nb.Owner = nil, nil, nil
 		normalizeIAMConfig(&nb, prev, now)
+		if err := acl.apply(rec, &nb); err != nil {
+			return err
+		}
 		if nb.RetentionPolicy != nil {
 			if prev.RetentionPolicy == nil || prev.RetentionPolicy.RetentionPeriod != nb.RetentionPolicy.RetentionPeriod {
 				nb.RetentionPolicy.EffectiveTime = ts(now)
@@ -324,7 +354,7 @@ func (s *Service) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderBucket(out, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderBucket(out, baseURL(r), fullProjection(r, true)))
 }
 
 // validateBucketUpdate enforces update rules: locked retention policies
@@ -370,7 +400,8 @@ func (s *Service) removeBucket(ctx context.Context, name string, c conds) error 
 		if err := c.checkBucket(rec.Bucket); err != nil {
 			return err
 		}
-		if store.HasPrefix(tx, nsObjects, objPrefix(name, "")) || store.HasPrefix(tx, nsVersions, objPrefix(name, "")) {
+		if store.HasPrefix(tx, nsObjects, objPrefix(name, "")) || store.HasPrefix(tx, nsVersions, objPrefix(name, "")) ||
+			store.HasPrefix(tx, nsFolders, objPrefix(name, "")) {
 			return errConflict("The bucket you tried to delete is not empty.")
 		}
 		var keys []string
@@ -443,7 +474,7 @@ func (s *Service) lockRetentionPolicy(w http.ResponseWriter, r *http.Request, na
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, renderBucket(out, baseURL(r)))
+	writeJSON(w, http.StatusOK, renderBucket(out, baseURL(r), fullProjection(r, false)))
 }
 
 // getServiceAccount returns the project's GCS service agent.

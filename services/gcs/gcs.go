@@ -1,8 +1,9 @@
 // Package gcs emulates Cloud Storage (SRS 5.4): the JSON API v1 (buckets,
-// objects, uploads, notifications, IAM, HMAC keys), the XML API subset used
-// by the official clients for reads and by S3-style tools, V4 signed URLs
-// and POST policies, Pub/Sub notifications and lifecycle rules. Object data
-// is stored in files under the service data directory.
+// objects, uploads, notifications, IAM, HMAC keys, legacy ACLs, managed
+// folders), the XML API subset used by the official clients for reads and
+// by S3-style tools, V4 signed URLs and POST policies, Pub/Sub
+// notifications and lifecycle rules. Object data is stored in files under
+// the service data directory.
 package gcs
 
 import (
@@ -128,6 +129,7 @@ func (s *Service) Ready() error {
 func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, map[string]string{
 		"buckets": nsBuckets, "objects": nsObjects, "notificationConfigs": nsNotifs, "hmacKeys": nsHMAC,
+		"managedFolders": nsFolders,
 	})
 }
 
