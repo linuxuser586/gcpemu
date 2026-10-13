@@ -359,7 +359,7 @@ func (s *Service) insertH(k *kind) http.HandlerFunc {
 			}
 		}
 		setID(obj, s.env.IDs.Uint64())
-		op, err := s.cmp.StartOperation(r.Context(), sc.project, sc.String(), "insert", path, getID(obj), func(ctx context.Context) error {
+		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), "insert", path, getID(obj), func(ctx context.Context) error {
 			if err := s.env.Store.Update(func(tx store.Tx) error {
 				if store.Exists(tx, k.ns(), path) {
 					return errExists(path)
@@ -447,7 +447,7 @@ func (s *Service) deleteH(k *kind) http.HandlerFunc {
 			apierr.Write(w, errInUse(k.snake, path, u))
 			return
 		}
-		op, err := s.cmp.StartOperation(r.Context(), sc.project, sc.String(), "delete", path, getID(obj), func(ctx context.Context) error {
+		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), "delete", path, getID(obj), func(ctx context.Context) error {
 			if u := s.usedBy(ctx, path); u != "" {
 				return errInUse(k.snake, path, u)
 			}
@@ -535,7 +535,7 @@ func (s *Service) patchH(k *kind, replace bool) http.HandlerFunc {
 				return
 			}
 		}
-		op, err := s.cmp.StartOperation(r.Context(), sc.project, sc.String(), opType, path, getID(cur), func(ctx context.Context) error {
+		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), opType, path, getID(cur), func(ctx context.Context) error {
 			return s.save(ctx, k, sc, path, next, cur)
 		})
 		reply(w, op, err)
@@ -594,7 +594,7 @@ func (s *Service) mutateH(k *kind, verb, opType string, newReq func() any, apply
 				return
 			}
 		}
-		op, err := s.cmp.StartOperation(r.Context(), sc.project, sc.String(), opType, path, getID(cur), func(ctx context.Context) error {
+		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), opType, path, getID(cur), func(ctx context.Context) error {
 			return s.save(ctx, k, sc, path, next, cur)
 		})
 		reply(w, op, err)

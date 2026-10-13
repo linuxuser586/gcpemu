@@ -25,8 +25,14 @@ import (
 
 const nsOps = "compute/operations"
 
+// closedChan is an already closed channel.
+var closedChan = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
+
 // opSpec describes an operation to start.
 type opSpec struct {
+	// service is the Service ID whose LRO latency applies ("compute" when
+	// empty): modules serving compute collections time their own.
+	service string
 	project string
 	// scope is "global", "regions/R" or "zones/Z".
 	scope    string
@@ -73,7 +79,11 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 	case strings.HasPrefix(sp.scope, "zones/"):
 		op.Zone = link("projects/" + sp.project + "/" + sp.scope)
 	}
-	d := s.env.Config.LRO("compute")
+	svc := sp.service
+	if svc == "" {
+		svc = "compute"
+	}
+	d := s.env.Config.LRO(svc)
 	if d <= 0 {
 		s.finishOp(op, fn(ctx))
 		if err := s.putOp(path, op); err != nil {
@@ -87,11 +97,14 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 	bg := context.WithoutCancel(ctx)
 	s.opMu.Lock()
 	if !s.closed {
-		// Every operation has the same latency, so running each one's work
-		// after the previous one's keeps completion in acceptance order:
+		// A Service's operations share one latency, so running each one's
+		// work after the previous one's keeps completion in acceptance order:
 		// separate timer goroutines that fire together would otherwise race.
-		prev, done := s.lastOp, make(chan struct{})
-		s.lastOp = done
+		prev, done := s.lastOp[svc], make(chan struct{})
+		if prev == nil {
+			prev = closedChan
+		}
+		s.lastOp[svc] = done
 		s.timers[path] = time.AfterFunc(d, func() {
 			defer close(done)
 			select {

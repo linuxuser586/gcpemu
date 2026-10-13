@@ -41,9 +41,10 @@ type Service struct {
 	opWake chan struct{}
 	timers map[string]*time.Timer
 	closed bool
-	// lastOp is closed once the most recently accepted operation's work has
-	// run, so that operations complete in the order they were accepted.
-	lastOp  chan struct{}
+	// lastOp is closed, per Service ID, once that Service's most recently
+	// accepted operation's work has run, so that its operations complete
+	// in the order they were accepted.
+	lastOp  map[string]chan struct{}
 	stopped chan struct{} // closed by Stop
 
 	// vpcMu serialises realisation of container networks and IP allocation.
@@ -84,11 +85,10 @@ func New(env *emu.Env) emu.Service {
 		sn:      http.NewServeMux(),
 		opWake:  make(chan struct{}),
 		timers:  map[string]*time.Timer{},
-		lastOp:  make(chan struct{}),
+		lastOp:  map[string]chan struct{}{},
 		stopped: make(chan struct{}),
 		egress:  map[string]*gateway{},
 	}
-	close(s.lastOp)
 	s.lro = lro.NewManager(env, "compute")
 	s.sink = &sinkServer{token: randomToken()}
 	s.sinkOn.Store(env.Config != nil && env.Config.Offline)

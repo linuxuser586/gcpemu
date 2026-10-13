@@ -160,7 +160,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | FR-CORE-020 | Any project ID is accepted and auto-created on first use; `--strict-projects` requires projects to be declared. Project number is derived deterministically from the ID. | M |
 | FR-CORE-021 | Regions and zones are validated against an embedded list of real GCP locations; invalid locations return the same error GCP returns. | M |
 | FR-CORE-022 | Resource names, self-links, IDs, etags, fingerprints, `creationTimestamp` and `selfLink` formats match GCP; IDs are deterministic when `--deterministic` is set (for golden-file tests). | M |
-| FR-CORE-023 | Mutating calls that are long-running in GCP return `Operation` resources (compute, container, sqladmin, artifactregistry, dns changes) with correct polling and `wait` semantics. LRO duration is `instant` by default and configurable per service (`--lro-latency container=20s`). | M |
+| FR-CORE-023 | Mutating calls that are long-running in GCP return `Operation` resources (compute, container, sqladmin, artifactregistry, dns changes) with correct polling and `wait` semantics. LRO duration is `instant` by default and configurable per service (`--lro-latency gke=20s`). | M |
 | FR-CORE-024 | Field validation, required fields, immutable fields, `updateMask`/`fieldMask` handling and pagination (`pageToken`, `maxResults`/`pageSize`) follow each API's spec. | M |
 | FR-CORE-025 | Errors use GCP's status codes and the `google.rpc.Status` / JSON error envelope with `ErrorInfo` reason and domain. | M |
 | FR-CORE-026 | Resource-in-use rules are enforced (e.g. cannot delete a backend service referenced by a URL map; cannot delete a non-empty bucket). | M |

@@ -143,7 +143,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.StringVar(&o.flags.DefaultPrincipal, "default-principal", "user:dev@example.com", "principal for unauthenticated requests")
 	f.StringVar(&o.flags.LogFormat, "log-format", "text", "log format: text or json")
 	f.StringVar(&o.flags.LogLevel, "log-level", "info", "log level")
-	f.StringToStringVar(&o.lro, "lro-latency", nil, "LRO latency per service, e.g. container=20s (default instant)")
+	f.StringToStringVar(&o.lro, "lro-latency", nil, "LRO latency per service ID, e.g. gke=20s (default instant)")
 	f.BoolVar(&o.flags.Deterministic, "deterministic", false, "deterministic IDs and fake clock")
 	f.BoolVar(&o.flags.StrictProjects, "strict-projects", false, "require projects to be declared")
 	f.StringVar(&o.flags.Seed, "seed", "", "seed file to apply before reporting ready")

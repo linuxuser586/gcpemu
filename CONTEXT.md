@@ -171,7 +171,7 @@ A GCP resource representing asynchronous work on another resource. Every Service
 _Avoid_: LRO, job, task
 
 **Operation latency**:
-How long an Operation takes before it completes, configured per Service ID. Operations complete instantly unless it is set.
+How long an Operation takes before it completes, configured per Service ID (`gke=20s`, `lb=5s`), with `*` for every Service. The API names `container` and `sqladmin` still work as aliases for `gke` and `sql`. Operations complete instantly unless it is set.
 
 **Project**:
 A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects. Only a request handled by a Service counts as a reference. Choosing a Project in the Web console only scopes what is shown and creates nothing.

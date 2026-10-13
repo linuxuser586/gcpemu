@@ -129,9 +129,14 @@ func TestValidate(t *testing.T) {
 
 func TestLRO(t *testing.T) {
 	c := Defaults()
-	c.LROLatency = map[string]string{"container": "20s", "*": "1s"}
-	if c.LRO("container") != 20*time.Second || c.LRO("sqladmin") != time.Second {
-		t.Errorf("LRO = %v %v", c.LRO("container"), c.LRO("sqladmin"))
+	c.LROLatency = map[string]string{"gke": "20s", "*": "1s"}
+	if c.LRO("gke") != 20*time.Second || c.LRO("sql") != time.Second {
+		t.Errorf("LRO = %v %v", c.LRO("gke"), c.LRO("sql"))
+	}
+	// API names alias their Service ID; the Service ID wins over its alias.
+	c.LROLatency = map[string]string{"container": "20s", "sqladmin": "2s", "sql": "3s"}
+	if c.LRO("gke") != 20*time.Second || c.LRO("sql") != 3*time.Second || c.LRO("lb") != 0 {
+		t.Errorf("aliases: LRO = %v %v %v", c.LRO("gke"), c.LRO("sql"), c.LRO("lb"))
 	}
 }
 

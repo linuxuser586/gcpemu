@@ -140,7 +140,7 @@ func (s *Service) invalidateCache(w http.ResponseWriter, r *http.Request) {
 	}
 	m := obj.(*computev1.UrlMap)
 	ids := s.cdnBackends(m)
-	op, err := s.cmp.StartOperation(r.Context(), sc.project, sc.String(), "invalidateCache", path, m.Id, func(ctx context.Context) error {
+	op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), "invalidateCache", path, m.Id, func(ctx context.Context) error {
 		if c := s.cdnCache(); c != nil && len(ids) > 0 {
 			c.Invalidate(ids, rule.Host, rule.Path, rule.CacheTags)
 		}

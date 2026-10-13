@@ -408,7 +408,7 @@ func (s *Service) signedKeyH(k *kind, add bool) http.HandlerFunc {
 			apierr.Write(w, apierr.NotFound("The key '%s' was not found.", key.KeyName).WithLegacy("notFound"))
 			return
 		}
-		op, err := s.cmp.StartOperation(r.Context(), sc.project, sc.String(), verb, path, getID(obj), func(ctx context.Context) error {
+		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), verb, path, getID(obj), func(ctx context.Context) error {
 			if err := s.env.Store.Update(func(tx store.Tx) error {
 				var cur signedKeys
 				_ = store.GetJSON(tx, nsSignedKeys, path, &cur)

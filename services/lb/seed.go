@@ -136,7 +136,7 @@ func (s *Service) seedOne(ctx context.Context, k *kind, item map[string]any, def
 		return fmt.Errorf("%s", op.Error.Errors[0].Message)
 	}
 	// With --lro-latency the insert completes later.
-	deadline := time.Now().Add(s.env.Config.LRO("compute") + 10*time.Second)
+	deadline := time.Now().Add(s.env.Config.LRO("lb") + 10*time.Second)
 	for {
 		if _, ok := s.load(k, path); ok {
 			return nil

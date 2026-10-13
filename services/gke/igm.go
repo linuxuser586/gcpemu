@@ -248,7 +248,7 @@ func (s *Service) setNamedPorts(w http.ResponseWriter, r *http.Request, cmp *com
 		return
 	}
 	key := clusterKey(g.project, g.cluster.Location, g.cluster.Name)
-	op, err := cmp.StartOperation(r.Context(), g.project, "zones/"+g.zone, "setNamedPorts",
+	op, err := cmp.StartOperation(r.Context(), "gke", g.project, "zones/"+g.zone, "setNamedPorts",
 		g.zonePath()+"/instanceGroups/"+g.name, g.id(), func(ctx context.Context) error {
 			return s.env.Store.Update(func(tx store.Tx) error {
 				rec, err := getCluster(tx, key)
