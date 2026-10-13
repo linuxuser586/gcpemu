@@ -289,6 +289,10 @@ func (s *Service) metadataTree(id MetadataIdentity) map[string]any {
 				},
 			},
 		},
+		// Unlike key files, Google's universe (#215): Go skips the
+		// universe check for metadata tokens and Node no longer reads
+		// this, but Python Storage and the OpenTofu provider compare it
+		// with a client universe that defaults to googleapis.com.
 		"universe": map[string]any{
 			"universe-domain": "googleapis.com",
 		},

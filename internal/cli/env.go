@@ -65,7 +65,7 @@ func (o *rootOpts) envCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&shell, "shell", "bash", "output format: bash, fish, github")
 	cmd.Flags().BoolVar(&trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
-	cmd.Flags().BoolVar(&noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials")
+	cmd.Flags().BoolVar(&noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials; GOOGLE_CLOUD_UNIVERSE_DOMAIN stays, since emulator keys need it")
 	return cmd
 }
 

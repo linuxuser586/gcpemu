@@ -93,10 +93,13 @@ func TestCLILifecycle(t *testing.T) {
 		t.Errorf("env (bash):\n%s", bash)
 	}
 	const universe = "export CLOUDSDK_CORE_UNIVERSE_DOMAIN='gcpemu.invalid'"
-	if !strings.Contains(bash, universe) {
-		t.Errorf("env (bash) lacks %s:\n%s", universe, bash)
+	const sdkUniverse = "export GOOGLE_CLOUD_UNIVERSE_DOMAIN='gcpemu.invalid'"
+	for _, v := range []string{universe, sdkUniverse} {
+		if !strings.Contains(bash, v) {
+			t.Errorf("env (bash) lacks %s:\n%s", v, bash)
+		}
 	}
-	if out := must(t, nil, "env", "--no-universe", "--data-dir", dir); strings.Contains(out, "CLOUDSDK_CORE_UNIVERSE_DOMAIN") || !strings.Contains(out, "export STORAGE_EMULATOR_HOST=") {
+	if out := must(t, nil, "env", "--no-universe", "--data-dir", dir); strings.Contains(out, "CLOUDSDK_CORE_UNIVERSE_DOMAIN") || !strings.Contains(out, sdkUniverse) || !strings.Contains(out, "export STORAGE_EMULATOR_HOST=") {
 		t.Errorf("env --no-universe:\n%s", out)
 	}
 	if fish := must(t, nil, "env", "--shell", "fish", "--data-dir", dir); !strings.Contains(fish, "set -gx STORAGE_EMULATOR_HOST '"+gcs+"';") {
