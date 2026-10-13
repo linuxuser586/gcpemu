@@ -109,6 +109,11 @@ type Service struct {
 	// beforeNodeStart, set by tests, runs between a node container's
 	// creation and its start.
 	beforeNodeStart func(ctx context.Context, sn emu.SubnetNet, node, ip string)
+	// pubVia and pubIPs are the load balancer's public routes
+	// (RoutePublic), programmed into nodes with external IPs.
+	pubMu  sync.Mutex
+	pubVia string
+	pubIPs []string
 }
 
 // New returns the service.

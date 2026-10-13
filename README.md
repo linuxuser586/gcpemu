@@ -145,6 +145,12 @@ NAT-allowed egress hits a sink that records the attempt and returns `natSinkResp
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009).
 
+Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
+them with the forwarding rule's own IP (host clients still get the local listener), and the
+`lb-edge` container serves those IPs on the external network. Nodes with external IPs route
+them to it directly, and the backend sees the node's address; private nodes go through Cloud
+NAT, so they need one, and the backend sees the NAT's address (ADR 0007).
+
 ### Real hostnames: GKE pods and host mode
 
 The emulator includes a "Google frontend" (endpoint `frontend`, a dynamic port unless you pass
@@ -299,8 +305,10 @@ in-process emulator with IAM in `enforce` mode:
 4. `/api/health` goes LB → Istio → app; a client without the LB certificate is refused;
 5. `/api/work` writes to GCS, inserts into Cloud SQL (Go connector, IAM auth) and publishes,
    using Workload Identity and no endpoint configuration;
-6. the bucket notification and the message arrive by push with a verified OIDC token;
-7. the pod reaches the internet through Cloud NAT, and not after `nat_enabled=false`;
+6. the bucket notification and the message arrive by push with a verified OIDC token; the
+   pod then calls `https://app.example.test/api/health` itself, through Cloud NAT;
+7. the pod reaches the internet through Cloud NAT, and neither the internet nor the load
+   balancer after `nat_enabled=false`;
 8. `app_storage_access=false` makes step 5 fail with `PERMISSION_DENIED`;
 9. `urlMaps.invalidateCache` on `/*` makes the next request a `miss`;
 10. `tofu destroy` leaves no containers (`gcpemu status` lists the instance's containers).

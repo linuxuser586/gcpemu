@@ -50,8 +50,11 @@ type dataplane struct {
 
 // config is a snapshot of the load-balancing resources.
 type config struct {
-	fronts   map[string]*frontend
-	byIP     map[string]bool // forwarding rule IPs
+	fronts map[string]*frontend
+	byIP   map[string]bool // forwarding rule IPs
+	// public holds the external forwarding rule IPs, which VPC workloads
+	// reach through the Edge relay (edge.go, #187).
+	public   map[string]bool
 	svcs     map[string]*backendSvc
 	buckets  map[string]*computev1.BackendBucket
 	frByPath map[string]*computev1.ForwardingRule
@@ -86,7 +89,7 @@ type frontend struct {
 func newDataplane(s *Service) *dataplane {
 	d := &dataplane{s: s, listeners: map[string]*listener{}, loopX: map[string]int{}, backends: map[string]*backendSvc{}}
 	d.relay = &lanRelay{d: d}
-	d.cfg.Store(&config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, svcs: map[string]*backendSvc{}})
+	d.cfg.Store(&config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, public: map[string]bool{}, svcs: map[string]*backendSvc{}})
 	return d
 }
 
@@ -133,7 +136,7 @@ func (d *dataplane) reconcile() {
 		return
 	}
 	s := d.s
-	cfg := &config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, svcs: map[string]*backendSvc{},
+	cfg := &config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, public: map[string]bool{}, svcs: map[string]*backendSvc{},
 		buckets: map[string]*computev1.BackendBucket{}, frByPath: map[string]*computev1.ForwardingRule{}}
 
 	// Backend services: keep runtime state, update configuration.
@@ -170,6 +173,9 @@ func (d *dataplane) reconcile() {
 		}
 		cfg.fronts[fe.key] = fe
 		cfg.byIP[fe.ip] = true
+		if !strings.HasPrefix(f.LoadBalancingScheme, "INTERNAL") {
+			cfg.public[fe.ip] = true
+		}
 		cfg.frByPath[fe.frPath] = f
 	}
 	d.cfg.Store(cfg)

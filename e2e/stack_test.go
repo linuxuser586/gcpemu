@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -88,6 +89,7 @@ func TestReferenceStack(t *testing.T) {
 		r.step("5 app gcs sql pubsub", false, r.step5)
 		r.step("5b secrets csi and sync", false, r.step5b)
 		r.step("6 push oidc", false, r.step6)
+		r.step("6b pod calls lb", false, r.step6b)
 		r.step("7 egress via nat", false, r.step7)
 		r.step("8 iam enforce", false, r.step8)
 	} else {
@@ -473,6 +475,34 @@ func (r *run) egress(t *testing.T) (bool, string) {
 	return resp.StatusCode == 200, body
 }
 
+// step6b: the app calls its own public host, as an OIDC client fetching
+// a discovery document or a webhook would. The pod resolves it to the
+// forwarding rule's address and reaches the load balancer through Cloud
+// NAT, as on GCP (#187).
+func (r *run) step6b(t *testing.T) {
+	var body string
+	eventually(t, time.Minute, "a pod calling https://"+r.appHost()+"/api/health", func() bool {
+		ok, b := r.podGet(t, "https://"+r.appHost()+"/api/health")
+		body = b
+		return ok
+	}, func() string { return body })
+}
+
+// podGet has the app GET url from its pod (/api/egress); ok is true when
+// the answer is 200.
+func (r *run) podGet(t *testing.T, u string) (bool, string) {
+	resp, body := r.get(t, "/api/egress?url="+url.QueryEscape(u))
+	if resp == nil || resp.StatusCode != 200 {
+		return false, body
+	}
+	var out struct {
+		OK     bool
+		Status int
+	}
+	_ = json.Unmarshal([]byte(body), &out)
+	return out.OK && out.Status == 200, body
+}
+
 func (r *run) step7(t *testing.T) {
 	r.tf.t = t
 	var body string
@@ -488,6 +518,11 @@ func (r *run) step7(t *testing.T) {
 		return !ok
 	}, func() string { return body })
 	t.Logf("without NAT: %s", strings.TrimSpace(body))
+	// Private nodes reach a load balancer's public address only through
+	// Cloud NAT, as on GCP (#187).
+	if ok, b := r.podGet(t, "https://"+r.appHost()+"/api/health"); ok {
+		t.Errorf("a pod reached the load balancer without NAT: %s", b)
+	}
 }
 
 func (r *run) step8(t *testing.T) {

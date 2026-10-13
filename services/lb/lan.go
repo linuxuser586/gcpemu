@@ -147,10 +147,7 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 	if !d.edge.available(d.ctx) {
 		return nil, fmt.Errorf("%w (privileged port and no container runtime to relay it; lower net.ipv4.ip_unprivileged_port_start)", err)
 	}
-	if l.virt == nil {
-		l.virt = newChanListener(l.addr)
-		go l.serve(l.virt)
-	}
+	l.relayed()
 	b.relay = true
 	return b, nil
 }

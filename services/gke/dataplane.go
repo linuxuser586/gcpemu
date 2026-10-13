@@ -775,7 +775,7 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	if !sn.Translated {
 		cip = ""
 	}
-	return s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
+	if err := s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		for i := range rec.Int.Nodes {
 			if rec.Int.Nodes[i].Name == node.Name {
 				rec.Int.Nodes[i].IP = ip
@@ -784,7 +784,17 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	// After the record: a concurrent RoutePublic either finds the node
+	// there or has already set the routes read here.
+	if extIP != "" && s.routesPublic() {
+		if err := s.routePublic(ctx, d, name); err != nil {
+			s.env.Log.Warn("gke: node cannot reach load balancers by public address", "node", node.Name, "err", err)
+		}
+	}
+	return nil
 }
 
 // reallocNodeIP gives node a fresh address on a network that is not

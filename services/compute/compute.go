@@ -56,6 +56,11 @@ type Service struct {
 	// egress holds the NAT egress gateways by VPC network path.
 	egMu   sync.Mutex
 	egress map[string]*gateway
+	// pubVia and pubIPs are the load balancer's public routes
+	// (RoutePublic), programmed into every gateway.
+	pubMu  sync.Mutex
+	pubVia string
+	pubIPs []string
 
 	chkMu       sync.RWMutex
 	checkers    []UsageChecker
@@ -66,7 +71,10 @@ type Service struct {
 	sinkOn atomic.Bool
 }
 
-var _ emu.VPC = (*Service)(nil)
+var (
+	_ emu.VPC          = (*Service)(nil)
+	_ emu.PublicRouter = (*Service)(nil)
+)
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {

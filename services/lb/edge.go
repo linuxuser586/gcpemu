@@ -25,12 +25,22 @@ import (
 )
 
 // The lb-edge container (FR-LB-002, FR-INT-001): started on demand when a
-// forwarding rule needs a privileged port the emulator cannot bind, or when
-// a backend's endpoints are GKE pod IPs the host cannot route to. It joins
-// a labelled "lb" network (forwarding rule addresses), the services network
-// (to reach the emulator's edge ingress) and every VPC subnetwork with pod
-// routes. The in-process proxy stays the only L7 implementation: the edge
-// only relays TCP (edgeagent.go).
+// forwarding rule needs a privileged port the emulator cannot bind, when
+// a backend's endpoints are GKE pod IPs the host cannot route to, or when
+// GKE clusters run beside external forwarding rules. It joins a labelled
+// "lb" network (forwarding rule addresses), the services network (to reach
+// the emulator's edge ingress) and every VPC subnetwork with pod routes.
+// The in-process proxy stays the only L7 implementation: the edge only
+// relays TCP (edgeagent.go).
+//
+// VPC workloads reach external forwarding rules by their own address, as
+// on GCP (#187). The emulated DNS answers them with it (dnsmap.go), and
+// the edge joins the external network, holds every external forwarding
+// rule address and relays its ports like the lb-network aliases. Services
+// whose containers egress over the external network (GKE nodes with
+// external IPs, the Cloud NAT gateways) route those addresses via the
+// edge (emu.PublicRouter), so the client the backends see is the node or
+// the NAT, as on GCP.
 
 // Images lists the container images the lb service launches (pinned by
 // tag; digests are pinned at release).
@@ -61,7 +71,13 @@ type edge struct {
 	nets    map[string]bool
 	// vpcs holds the subnetwork networks on which the edge holds an
 	// address compute allocated for it, by network name.
-	vpcs    map[string]emu.SubnetNet
+	vpcs map[string]emu.SubnetNet
+	// public are the external forwarding rule addresses and ports the
+	// edge serves on the external network, where it holds extIP; routed
+	// is the last route set the PublicRouters accepted ("" for none).
+	public  []edgeListener
+	extIP   string
+	routed  string
 	pushed  string
 	stopped bool
 	// idleSince is when the edge last became unused (no forwarding rule
@@ -233,7 +249,7 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 		if c, err := rt.InspectContainer(ctx, e.id); err == nil && c.Running {
 			return nil
 		}
-		e.id, e.pushed = "", ""
+		e.id, e.pushed, e.extIP = "", "", ""
 		e.nets = map[string]bool{}
 	}
 	if _, err := e.ingressLocked(); err != nil {
@@ -365,7 +381,7 @@ func (e *edge) pushLocked(ctx context.Context) error {
 	if e.id == "" {
 		return nil
 	}
-	cfg := edgeConfig{Ingress: e.inAddr, Routes: e.routes}
+	cfg := edgeConfig{Ingress: e.inAddr, Routes: e.routes, Public: e.public}
 	for key, ip := range e.alias {
 		cfg.Listeners = append(cfg.Listeners, edgeListener{IP: ip, Port: e.ports[key]})
 	}
@@ -414,9 +430,16 @@ func (e *edge) serveIngress(ln net.Listener) {
 			if b := e.d.lan[dst]; key == "" && b != nil && b.relay {
 				key = b.key
 			}
-			l := e.d.listeners[key]
+			if key == "" {
+				// An external forwarding rule's own address (#187).
+				key = dst
+			}
+			var virt *chanListener
+			if l := e.d.listeners[key]; l != nil {
+				virt = l.relayed()
+			}
 			e.d.mu.Unlock()
-			if l == nil || l.virt == nil || !l.virt.deliver(pc) {
+			if virt == nil || !virt.deliver(pc) {
 				c.Close()
 			}
 		}()
@@ -453,12 +476,15 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	prs := g.PodRoutes(cctx)
+	var pub []edgeListener
+	if len(prs) > 0 {
+		// Only GKE nodes are VPC workloads that call load balancers.
+		pub = e.d.publicFrontends()
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if len(prs) == 0 && e.id == "" {
-		return
-	}
-	if len(prs) > 0 && !e.needed() {
+	if e.id == "" && (len(prs) == 0 || len(pub) == 0 && !e.d.hasNEGEndpoints()) {
+		e.routePublicLocked(cctx, nil)
 		return
 	}
 	if err := e.ensureLocked(cctx); err != nil {
@@ -489,8 +515,100 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].CIDR < routes[j].CIDR })
 	e.routes, e.pods = routes, pods
+	if len(pub) > 0 {
+		if err := e.joinExternalLocked(cctx, rt); err != nil {
+			e.env().Log.Warn("lb: attaching edge to the external network", "err", err)
+			pub = nil
+		}
+	}
+	e.public = pub
 	if err := e.pushLocked(cctx); err != nil {
 		e.env().Log.Warn("lb: programming edge routes", "err", err)
+		return
+	}
+	e.routePublicLocked(cctx, pub)
+}
+
+// publicFrontends returns the listening external IPv4 forwarding rules.
+func (d *dataplane) publicFrontends() []edgeListener {
+	cfg := d.cfg.Load()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []edgeListener
+	for key, fe := range cfg.fronts {
+		if cfg.public[fe.ip] && d.listeners[key] != nil && net.ParseIP(fe.ip).To4() != nil {
+			out = append(out, edgeListener{IP: fe.ip, Port: fe.port})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		return a.IP < b.IP || a.IP == b.IP && a.Port < b.Port
+	})
+	return out
+}
+
+// joinExternalLocked attaches the edge to the external network, where it
+// serves external forwarding rule addresses to VPC workloads.
+func (e *edge) joinExternalLocked(ctx context.Context, rt *runtime.Manager) error {
+	plane, err := e.env().Containers.Netplane(ctx)
+	if err != nil {
+		return err
+	}
+	ext, err := plane.External(ctx)
+	if err != nil {
+		return err
+	}
+	if e.nets[ext.Name] && e.extIP != "" {
+		return nil
+	}
+	if err := rt.Connect(ctx, ext.Name, e.id, ""); err != nil && !strings.Contains(err.Error(), "already exists") {
+		return err
+	}
+	c, err := rt.InspectContainer(ctx, e.id)
+	if err != nil {
+		return err
+	}
+	if c.IPs[ext.Name] == "" {
+		return fmt.Errorf("no address on %s", ext.Name)
+	}
+	e.nets[ext.Name], e.extIP = true, c.IPs[ext.Name]
+	return nil
+}
+
+// routePublicLocked asks the PublicRouters to route the addresses of pub
+// via the edge, or to remove the routes when pub is empty.
+func (e *edge) routePublicLocked(ctx context.Context, pub []edgeListener) {
+	via, ips := "", []string(nil)
+	if len(pub) > 0 {
+		via = e.extIP
+		for _, l := range pub {
+			if len(ips) == 0 || ips[len(ips)-1] != l.IP {
+				ips = append(ips, l.IP)
+			}
+		}
+	}
+	want := ""
+	if via != "" {
+		want = via + " " + strings.Join(ips, " ")
+	}
+	if want == e.routed {
+		return
+	}
+	ok := true
+	for _, name := range []string{"gke", "compute"} {
+		svc, found := e.env().Lookup(name)
+		if !found {
+			continue
+		}
+		if r, isRouter := svc.(emu.PublicRouter); isRouter {
+			if err := r.RoutePublic(ctx, via, ips); err != nil {
+				e.env().Log.Warn("lb: routing forwarding rule addresses via the edge", "service", name, "err", err)
+				ok = false
+			}
+		}
+	}
+	if ok {
+		e.routed = want
 	}
 }
 
@@ -553,7 +671,7 @@ func (e *edge) releaseLocked(ctx context.Context) {
 func (e *edge) retireIdle(ctx context.Context, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.id == "" || e.stopped || len(e.alias) > 0 || e.d.hasNEGEndpoints() {
+	if e.id == "" || e.stopped || len(e.alias) > 0 || len(e.public) > 0 || e.d.hasNEGEndpoints() {
 		e.idleSince = time.Time{}
 		return
 	}
@@ -577,18 +695,10 @@ func (e *edge) retireIdle(ctx context.Context, now time.Time) {
 	}
 	e.releaseLocked(ctx)
 	e.env().Log.Info("lb: idle edge container removed")
-	e.id, e.ip, e.pushed = "", "", ""
+	e.id, e.ip, e.pushed, e.extIP = "", "", "", ""
 	e.nets = map[string]bool{}
 	e.routes, e.pods = nil, nil
 	e.idleSince = time.Time{}
-}
-
-// needed reports whether any backend endpoint is a pod IP (callers hold e.mu).
-func (e *edge) needed() bool {
-	if e.id != "" {
-		return true
-	}
-	return e.d.hasNEGEndpoints()
 }
 
 func (e *edge) close(ctx context.Context) {
