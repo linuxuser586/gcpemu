@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,10 +127,19 @@ func Defaults() Config {
 	return c
 }
 
-// StateHome returns the base directory for instance data dirs.
-func StateHome() string {
+// StateHome returns the base directory for instance data dirs:
+// $XDG_STATE_HOME/gcpemu when set, otherwise %LOCALAPPDATA%\gcpemu on
+// Windows (ADR 0008) and ~/.local/state/gcpemu elsewhere.
+func StateHome() string { return stateHome(runtime.GOOS) }
+
+func stateHome(goos string) string {
 	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
 		return filepath.Join(d, "gcpemu")
+	}
+	if goos == "windows" {
+		if d := os.Getenv("LOCALAPPDATA"); d != "" {
+			return filepath.Join(d, "gcpemu")
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

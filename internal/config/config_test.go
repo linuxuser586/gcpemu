@@ -196,3 +196,31 @@ func TestPorts(t *testing.T) {
 		t.Error("a bare non-zero port was accepted")
 	}
 }
+
+// TestStateHome is ADR 0008: $XDG_STATE_HOME wins on every OS; otherwise
+// Windows uses %LOCALAPPDATA%\gcpemu and other OSes ~/.local/state/gcpemu.
+func TestStateHome(t *testing.T) {
+	local := filepath.Join(t.TempDir(), "AppData", "Local")
+	t.Setenv("LOCALAPPDATA", local)
+	t.Setenv("XDG_STATE_HOME", "")
+	if got, want := stateHome("windows"), filepath.Join(local, "gcpemu"); got != want {
+		t.Errorf("windows: stateHome = %q, want %q", got, want)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if got, want := stateHome("linux"), filepath.Join(home, ".local", "state", "gcpemu"); got != want {
+			t.Errorf("linux: stateHome = %q, want %q", got, want)
+		}
+	}
+	xdg := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", xdg)
+	for _, goos := range []string{"windows", "linux", "darwin"} {
+		if got, want := stateHome(goos), filepath.Join(xdg, "gcpemu"); got != want {
+			t.Errorf("%s with XDG_STATE_HOME: stateHome = %q, want %q", goos, got, want)
+		}
+	}
+	c := Defaults()
+	c.Instance = "dev"
+	if got, want := c.InstanceDir(), filepath.Join(xdg, "gcpemu", "dev"); got != want {
+		t.Errorf("InstanceDir = %q, want %q", got, want)
+	}
+}

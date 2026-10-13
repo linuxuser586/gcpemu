@@ -72,7 +72,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 	}
 	pf := root.PersistentFlags()
 	pf.StringVar(&o.flags.Instance, "instance", "default", "instance name")
-	pf.StringVar(&o.flags.DataDir, "data-dir", "", "instance data directory (default $XDG_STATE_HOME/gcpemu/<instance>)")
+	pf.StringVar(&o.flags.DataDir, "data-dir", "", "instance data directory (default $XDG_STATE_HOME/gcpemu/<instance>, else ~/.local/state/gcpemu/<instance>, or %LOCALAPPDATA%\\gcpemu\\<instance> on Windows)")
 	pf.StringVar(&o.configFile, "config", "gcpemu.yaml", "config file")
 
 	root.AddCommand(o.startCmd(), o.stopCmd(), o.statusCmd(), o.resetCmd(), o.logsCmd(),

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -106,7 +107,9 @@ func TestDataDirPermissions(t *testing.T) {
 		if rel == "ca.pem" || rel == "ca-bundle.pem" {
 			return nil
 		}
-		if fi.Mode().Perm()&0o077 != 0 {
+		// Windows does not enforce file modes; the per-user ACL of
+		// %LOCALAPPDATA% protects the data dir instead (ADR 0008).
+		if runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
 			t.Errorf("%s is %v, want no group/other access", rel, fi.Mode().Perm())
 		}
 		return nil

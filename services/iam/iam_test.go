@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -180,7 +181,8 @@ func TestPersistence(t *testing.T) {
 
 	keyPath := filepath.Join(dir, "data", "iam", "signing-key.pem")
 	st, err := os.Stat(keyPath)
-	if err != nil || st.Mode().Perm() != 0o600 {
+	// Windows does not enforce file modes (ADR 0008).
+	if err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("signing key %s: %v %v", keyPath, err, st)
 	}
 
