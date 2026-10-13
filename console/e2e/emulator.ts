@@ -7,7 +7,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, '../../bin/gcpemu')
+const exe = process.platform === 'win32' ? '.exe' : ''
+const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, `../../bin/gcpemu${exe}`)
 const dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-'))
 // --console: CI=true turns the console off by default (FR-CI-003).
 // Compute Operations take 2 s, long enough to watch them

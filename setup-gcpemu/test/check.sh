@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Self-test of setup-gcpemu (.github/workflows/ci.yml, job "action"): the
 # exported environment reaches a running, seeded and configured instance.
+# Linux only: psql reaches the instance over docker --network=host, which
+# Docker Desktop does not route the same way (macOS action support is #186).
 set -euo pipefail
 
 fail() { echo "FAIL: $*" >&2; exit 1; }

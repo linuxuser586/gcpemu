@@ -305,6 +305,33 @@ jobs:
             test ! -e "diag/gcpemu-selftest-second-$arch" || { echo "::error::a successful job uploaded diagnostics"; exit 1; }
           done
 
+  # The Makefile and scripts on macOS and Windows (Git Bash). Their tests
+  # join this job with #186 and #207.
+  platforms:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: GNU make
+        if: runner.os == 'Windows'
+        run: command -v make || choco install make --no-progress -y
+      - run: make vet
+      - run: make build
+      - run: make cross
+      - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
+
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
   perf:
@@ -342,7 +369,7 @@ jobs:
   # job was skipped.
   ci-ok:
     if: always()
-    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf]
+    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf, platforms]
     runs-on: ubuntu-24.04
     steps:
       - env:

@@ -11,5 +11,5 @@ Native Windows treats the runtime as unusable because Docker Desktop on Windows 
 
 ## Consequences
 
-- Windows is built and tested in CI (`windows-latest` for unit tests and in-process client compatibility, plus a `GOOS=windows` cross-build in the Linux jobs). Releases include `windows/amd64` and `windows/arm64`.
+- Windows is to be tested in CI on `windows-latest` (unit tests and in-process client compatibility, #207). The `platforms` job already runs the Makefile there, and the Linux jobs cross-build `GOOS=windows`. Releases include `windows/amd64` and `windows/arm64`.
 - State lives under `%LOCALAPPDATA%\gcpemu` unless `$XDG_STATE_HOME` is set. File modes such as 0600 are not enforced on Windows, and the per-user ACL of that directory protects the CA key and the Admin token.
