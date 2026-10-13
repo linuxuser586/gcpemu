@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestNSSPlan(t *testing.T) {
 	strs := func(plan []trustStep) string {
 		var s []string
 		for _, p := range plan {
-			s = append(s, strings.ReplaceAll(p.String(), home, "~"))
+			s = append(s, filepath.ToSlash(strings.ReplaceAll(p.String(), home, "~")))
 			if !p.soft {
 				t.Errorf("%s is not soft", p)
 			}
@@ -99,6 +100,11 @@ certutil -A -d sql:~/.var/app/org.mozilla.firefox/.mozilla/firefox/c.default -n 
 // Chrome's database and trusts the CA everywhere, rotate replaces it and
 // uninstall removes it.
 func TestNSSTrust(t *testing.T) {
+	// The certutil on Windows is Microsoft's, not NSS's; gcpemu uses NSS
+	// only on Linux.
+	if runtime.GOOS != "linux" {
+		t.Skip("NSS trust is Linux-only")
+	}
 	if !certutilPresent() {
 		t.Skip("no certutil")
 	}

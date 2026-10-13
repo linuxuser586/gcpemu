@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"path"
 	goruntime "runtime"
 	"strings"
 
@@ -230,7 +230,7 @@ func trustPlan(h trustHost, instance string, c *ca.CA, install bool) ([]trustSte
 		default:
 			return nil, errors.New("no supported trust store found (need update-ca-certificates or update-ca-trust); trust the file from `gcpemu ca path` manually")
 		}
-		target := filepath.Join(dir[0], file)
+		target := path.Join(dir[0], file)
 		if install {
 			return []trustStep{
 				{args: sudo("tee", target), stdin: c.PEM()},
