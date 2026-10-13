@@ -81,6 +81,10 @@ A container runtime whose networks live inside a virtual machine the host cannot
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
 _Avoid_: bridge container, tunnel
 
+**Loopback alias**:
+An extra `127.0.0.x` address on the host's loopback interface. Linux has every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist.
+_Avoid_: loopback IP (unqualified), alias (unqualified)
+
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
