@@ -9,7 +9,8 @@ import { expect, test } from './fixtures'
 // runs its own Instance bound to 0.0.0.0 and opens the console URL it
 // prints, as a user would.
 
-const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, '../../bin/gcpemu')
+const exe = process.platform === 'win32' ? '.exe' : ''
+const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, `../../bin/gcpemu${exe}`)
 
 let child: ChildProcess | undefined
 let dir = ''

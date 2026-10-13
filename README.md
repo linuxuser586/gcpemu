@@ -401,9 +401,13 @@ with stored credentials.
 
 ```sh
 make vet race      # gofmt, vet, tests with -race
-make release       # static binaries for linux/darwin × amd64/arm64, with the Web console
+make release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
 make cross         # the same binaries without building the console (no Node.js)
 ```
+
+The Makefile needs GNU make (3.81 or later) and a POSIX shell. macOS ships both. On Windows,
+run it from Git Bash with GNU make (`winget install ezwinports.make`); `make build` writes
+`bin/gcpemu.exe` there, and `make race` needs a C compiler for cgo.
 
 The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` embeds its
 `dist/`. With Node.js 24 and pnpm:

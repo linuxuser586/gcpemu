@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "scripts": {
     "build": "esbuild src/main.js src/post.js --bundle --platform=node --target=node24 --format=esm --outdir=dist --minify --legal-comments=none --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
-    "test": "node --test 'src/*.test.js'"
+    "test": "node --test \"src/*.test.js\""
   },
   "dependencies": {
     "@actions/artifact": "^6.3.1",

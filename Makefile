@@ -1,7 +1,14 @@
+# The recipes are POSIX sh. GNU make on Windows falls back to cmd.exe
+# when no sh is on PATH, so run it from Git Bash there.
+ifneq ($(shell echo $$((1+1))),2)
+$(error make needs a POSIX shell: on Windows, run GNU make from Git Bash (winget install ezwinports.make))
+endif
+
 # Evaluated once, before the console build rewrites console/dist/index.html.
 ifeq ($(origin VERSION),undefined)
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 endif
+EXE := $(shell go env GOEXE)
 LDFLAGS := -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version=$(VERSION)
 
 # FR-UI-001: the Web console is embedded from console/dist. Building it
@@ -19,7 +26,7 @@ build:
 	else \
 		echo "warning: pnpm not found; embedding the Web console placeholder (install Node.js 24 and pnpm for the real console)" >&2; \
 	fi
-	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu ./cmd/gcpemu
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu$(EXE) ./cmd/gcpemu
 	@$(restore-placeholder)
 
 console:
@@ -41,7 +48,9 @@ generate:
 	go mod download google.golang.org/api
 	cd internal/apidef && go run ./internal/apigen -config apis.yaml -out . $(if $(GOOGLEAPIS),-googleapis $(GOOGLEAPIS))
 
+# The race detector needs cgo, which Go turns off without a C compiler.
 race:
+	@[ "$$(go env CGO_ENABLED)" = 1 ] || { echo "race: the race detector needs cgo and a C compiler ($$(go env CC)); install one, or run make test" >&2; exit 1; }
 	go test -race ./...
 
 vet:
