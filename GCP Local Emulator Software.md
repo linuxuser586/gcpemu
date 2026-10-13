@@ -125,6 +125,7 @@ Services create and manage the GKE and Cloud SQL containers; the data planes car
 | 8988 | Metadata server (host side) |
 | 54320+ | Cloud SQL instance public IPs, one per instance |
 | 127.0.0.x:80/443 or 18080+ | LB forwarding rules |
+| 127.0.0.x:3307 and :5432 | Cloud SQL instance PRIMARY addresses on a VM runtime (ADR 0005), 127.0.0.1 without loopback aliases |
 
 Every port is configurable and can be set to 0 (FR-CORE-042). The web console has no port of its own; it lives at /console on the API gateway port.
 

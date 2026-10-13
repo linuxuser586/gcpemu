@@ -10,9 +10,12 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
 // Listener mapping (FR-LB-002). For each forwarding rule IP:port the proxy
@@ -73,7 +76,7 @@ func (d *dataplane) loopIP(ip string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(ip))
 	x := int(h.Sum32()%252) + 2
-	used := map[int]bool{}
+	used := d.peerLoops()
 	for _, v := range d.loopX {
 		used[v] = true
 	}
@@ -85,6 +88,37 @@ func (d *dataplane) loopIP(ip string) string {
 	}
 	d.loopX[ip] = x
 	return "127.0.0." + strconv.Itoa(x)
+}
+
+// peerLoops returns the x of the 127.0.0.x addresses that Cloud SQL
+// instances hold (emu.LoopbackHolder).
+func (d *dataplane) peerLoops() map[int]bool {
+	used := map[int]bool{}
+	svc, _ := d.s.env.Lookup("sql")
+	h, ok := svc.(emu.LoopbackHolder)
+	if !ok {
+		return used
+	}
+	for _, a := range h.LoopbackAddrs() {
+		if x, ok := strings.CutPrefix(a, "127.0.0."); ok {
+			if n, err := strconv.Atoi(x); err == nil {
+				used[n] = true
+			}
+		}
+	}
+	return used
+}
+
+// LoopbackAddrs implements emu.LoopbackHolder: the 127.0.0.x addresses
+// forwarding rules map to.
+func (s *Service) LoopbackAddrs() []string {
+	s.dp.mu.Lock()
+	defer s.dp.mu.Unlock()
+	out := make([]string, 0, len(s.dp.loopX))
+	for _, x := range s.dp.loopX {
+		out = append(out, "127.0.0."+strconv.Itoa(x))
+	}
+	return out
 }
 
 // relocateLoop moves forwarding rule IP ip to another loopback address on
@@ -100,7 +134,7 @@ func (d *dataplane) relocateLoop(ip string, port int) (net.Listener, string, err
 			return nil, "", errors.New("forwarding rule IP already listening")
 		}
 	}
-	used := map[int]bool{}
+	used := d.peerLoops()
 	for other, v := range d.loopX {
 		if other != ip {
 			used[v] = true

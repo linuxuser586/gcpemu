@@ -294,8 +294,16 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	if err := s.waitReady(ctx, rt, plane, id, addr); err != nil {
 		return err
 	}
+	loopIP := ""
+	if public && relayOn(plane) {
+		if loopIP, err = s.exposeLoopback(plane, rec, publicIP); err != nil {
+			return err
+		}
+	} else {
+		s.closeLoopback(project, name)
+	}
 	return s.updateRecord(project, name, func(r *instanceRecord) error {
-		r.HostPort, r.PublicIP = hostPort, publicIP
+		r.HostPort, r.PublicIP, r.LoopIP = hostPort, publicIP, loopIP
 		if rec.PrivateNet != nil && r.PrivateNet != nil {
 			r.PrivateNet = rec.PrivateNet
 		}
@@ -309,7 +317,11 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 func ipMappings(rec *instanceRecord) []*sqladmin.IpMapping {
 	var out []*sqladmin.IpMapping
 	if rec.PublicIP != "" {
-		out = append(out, &sqladmin.IpMapping{Type: "PRIMARY", IpAddress: rec.PublicIP})
+		ip := rec.PublicIP
+		if rec.LoopIP != "" {
+			ip = rec.LoopIP // on a VM runtime (loopback.go)
+		}
+		out = append(out, &sqladmin.IpMapping{Type: "PRIMARY", IpAddress: ip})
 	}
 	if rec.PrivateIP != "" {
 		out = append(out, &sqladmin.IpMapping{Type: "PRIVATE", IpAddress: rec.PrivateIP})
@@ -371,6 +383,7 @@ func (s *Service) stopContainer(ctx context.Context, project, name string) error
 	if err != nil {
 		return err
 	}
+	s.closeLoopback(project, name)
 	cname := containerName(rt, project, name)
 	_ = rt.StopContainer(ctx, cname, stopTimeout)
 	if err := rt.RemoveContainer(ctx, cname, true); err != nil {
@@ -464,6 +477,7 @@ func (s *Service) destroyInstance(ctx context.Context, project, name string) err
 	if err != nil {
 		return nil
 	}
+	s.closeLoopback(project, name)
 	if rt, _, err := s.plane(ctx); err == nil {
 		if err := removeLabelled(ctx, rt, map[string]string{
 			runtime.LabelInstance: rt.InstanceID, runtime.LabelService: "sql", runtime.LabelResource: resourceLabel(project, name),

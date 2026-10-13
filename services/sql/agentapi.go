@@ -209,6 +209,15 @@ func (s *Service) networkPolicy(ctx context.Context, rec *instanceRecord, local,
 		if n, err := plane.External(ctx); err == nil {
 			gateways = append(gateways, n.Gateway)
 		}
+		// Host clients on an instance's loopback address come through
+		// the VM relay (loopback.go).
+		if r := plane.Relay(); r != nil {
+			if c, err := plane.Runtime().InspectContainer(ctx, r.ID()); err == nil {
+				for _, ip := range c.IPs {
+					gateways = append(gateways, ip)
+				}
+			}
+		}
 	}
 	if rec.PrivateNet != nil {
 		gateways = append(gateways, rec.PrivateNet.Gateway)

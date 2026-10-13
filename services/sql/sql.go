@@ -19,6 +19,8 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
+	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/sql/proxy"
@@ -43,12 +45,18 @@ type Service struct {
 
 	portMu sync.Mutex
 
+	// loopMu guards exposed and the allocation of loopback addresses.
+	loopMu  sync.Mutex
+	exposed map[string][]*netplane.Exposed // "P/I" → its loopback listeners
+	// aliases reports whether the host has loopback aliases.
+	aliases func() bool
+
 	recovering atomic.Int32
 }
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {
-	s := &Service{env: env, locks: map[string]*sync.Mutex{}}
+	s := &Service{env: env, locks: map[string]*sync.Mutex{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases}
 	s.mux = s.routes()
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	return s
@@ -132,6 +140,7 @@ func (s *Service) ReservedAddrs() []string {
 // Stop cancels background work and waits for it.
 func (s *Service) Stop(ctx context.Context) error {
 	s.bgCancel()
+	defer s.closeAllLoopback()
 	done := make(chan struct{})
 	go func() { s.wg.Wait(); close(done) }()
 	select {
@@ -160,6 +169,7 @@ func (s *Service) ResourceCounts() map[string]int {
 
 // Reset removes every instance container and volume (`gcpemu reset`).
 func (s *Service) Reset(ctx context.Context) error {
+	s.closeAllLoopback()
 	var any bool
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		any = store.HasPrefix(tx, nsInstances, "")
