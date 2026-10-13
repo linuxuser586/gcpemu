@@ -141,6 +141,13 @@ and why. Everything the emulator creates is labelled
 `gcpemu.instance=<id>`; containers are removed on `stop`, and with `--data-dir` the volumes
 holding Postgres and Kubernetes state are kept so resources survive a restart.
 
+On a VM runtime, host clients reach Cloud SQL instances and forwarding rules on loopback
+addresses: a `127.0.0.x` of their own each. Linux has all of `127.0.0.0/8`, but macOS has only
+`127.0.0.1`, so there only one Cloud SQL instance is reachable and forwarding rules share
+`127.0.0.1`. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
+a LaunchDaemon that adds them again at boot; `sudo gcpemu loopback uninstall` removes both.
+`gcpemu doctor` reports whether they are present.
+
 When a subnetwork's range overlaps another network on the host, its container network runs on a
 free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
 (a Translated network, ADR 0004). That needs VLAN (8021q) support in the runtime's kernel, which on

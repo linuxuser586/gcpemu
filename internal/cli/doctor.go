@@ -22,6 +22,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/vmrelay"
@@ -110,6 +111,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			}
 
 			checkLBBind(out, report, cfg, running == nil, hasRuntime)
+			if runtime.GOOS == "darwin" {
+				checkLoopback(out, loopback.Aliases())
+			}
 
 			dir := cfg.InstanceDir()
 			if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -155,6 +159,17 @@ func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) {
 		return
 	}
 	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", vmrelay.Decide(cl.Self() != "", gw))
+}
+
+// checkLoopback reports whether the host has the 127.0.0.x loopback
+// aliases (ADR 0005). Missing ones are a note, not a failure: one Cloud SQL
+// instance and the forwarding rules still work on 127.0.0.1.
+func checkLoopback(out io.Writer, aliases bool) {
+	if aliases {
+		fmt.Fprintln(out, "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present")
+		return
+	}
+	fmt.Fprintf(out, "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `%s` lets more than one Cloud SQL instance run and gives each load balancer forwarding rule its own address\n", loopback.InstallHint)
 }
 
 // checkDNSUDP checks the UDP side of the DNS port. An mDNS daemon (avahi,

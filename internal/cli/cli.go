@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,6 +81,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 		o.cdnCmd(), o.consoleCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.caCmd())
+	root.AddCommand(loopbackCmd(goruntime.GOOS))
 	root.AddCommand(o.adminCmd())
 	return root
 }
