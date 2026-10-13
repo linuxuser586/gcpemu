@@ -245,6 +245,38 @@ func (n SubnetNet) AliasScript(ip, cip string, routes ...string) string {
 	return b.String()
 }
 
+// PublicRouter is implemented by services whose Managed containers send
+// traffic for public addresses over the external network: GKE nodes with
+// external IPs, and the Cloud NAT egress gateways. The external network's
+// gateway is the host, which cannot serve the load balancer's forwarding
+// rule addresses, so the load balancer has its Edge relay serve them on
+// the external network at via and asks for host routes to ips via it
+// (#187). An empty via removes the routes. Implementations apply the
+// routes to containers they start later, too.
+type PublicRouter interface {
+	RoutePublic(ctx context.Context, via string, ips []string) error
+}
+
+// PublicRouteProto tags the routes PublicRoutesScript programs, so that a
+// later script finds and removes the stale ones.
+const PublicRouteProto = 245
+
+// PublicRoutesScript returns idempotent sh commands (iproute2) that make
+// the host routes to ips via via the only routes tagged PublicRouteProto.
+// An empty via removes them all.
+func PublicRoutesScript(via string, ips []string) string {
+	if via == "" {
+		ips = nil
+	}
+	want := strings.Join(ips, " ")
+	var b strings.Builder
+	fmt.Fprintf(&b, "for r in $(ip -4 route show proto %d | awk '{print $1}'); do case \" %s \" in *\" $r \"*) ;; *) ip route del \"$r\" proto %d ;; esac; done\n", PublicRouteProto, want, PublicRouteProto)
+	for _, ip := range ips {
+		fmt.Fprintf(&b, "ip route replace %s/32 via %s proto %d\n", ip, via, PublicRouteProto)
+	}
+	return b.String()
+}
+
 // NEGEndpoint is a GCE_VM_IP_PORT network endpoint.
 type NEGEndpoint struct {
 	IP       string

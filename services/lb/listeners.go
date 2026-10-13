@@ -162,6 +162,17 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	return l, nil
 }
 
+// relayed returns the listener that receives this frontend's connections
+// relayed by a container (lb-edge, lb-lan), creating it on first use.
+// Callers hold d.mu.
+func (l *listener) relayed() *chanListener {
+	if l.virt == nil {
+		l.virt = newChanListener(l.addr)
+		go l.serve(l.virt)
+	}
+	return l.virt
+}
+
 // server builds the HTTP server of a frontend: HTTP/1.1 and HTTP/2 (ALPN
 // on TLS) with WebSocket upgrades (FR-LB-005).
 func (d *dataplane) server(fe *frontend) *http.Server {

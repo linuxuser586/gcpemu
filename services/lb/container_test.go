@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	goruntime "runtime"
@@ -55,7 +56,9 @@ import (
 //     accepted, a direct client without the certificate is refused;
 //   - FR-LB-002 / FR-INT-004: a forwarding rule on port 443 is served by
 //     the lb-edge container on its real port, and emulated DNS resolves the
-//     domain to it; the backend sees the client address (PROXY v2).
+//     domain to it; the backend sees the client address (PROXY v2);
+//   - #187: a pod reaches the same load balancer by hostname, through its
+//     public address.
 func TestGKEBackends(t *testing.T) {
 	emutest.RequireRuntime(t)
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
@@ -181,6 +184,40 @@ func TestGKEBackends(t *testing.T) {
 		"--resolve", "app.example.test:443:"+lh, "https://app.example.test/curl").CombinedOutput(); err != nil || !strings.Contains(string(out), "path=/curl") {
 		t.Errorf("curl https://app.example.test/curl: %v %s", err, out)
 	}
+
+	// #187: a pod calls the load balancer by hostname. The pod resolves it
+	// to the forwarding rule's own address, which its node routes via the
+	// edge; the backend sees the node, not the pod or the host.
+	k.apply(deployment("client", image, 1, 8080, map[string]string{"ECHO_FETCH": "1"}))
+	var clientIP string
+	eventually(t, 2*time.Minute, "client pod", func() bool { clientIP = k.podIP("client"); return clientIP != "" })
+	pc := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DisableKeepAlives: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return svc.(*lb.Service).DialBackend(ctx, net.JoinHostPort(clientIP, "8080"))
+		}}}
+	podFetch := func(u string) string {
+		resp, err := pc.Get("http://client/fetch?url=" + url.QueryEscape(u))
+		if err != nil {
+			return err.Error()
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	for deadline := time.Now().Add(90 * time.Second); ; {
+		body = podFetch("https://app.example.test/from-pod")
+		if strings.HasPrefix(body, "status=200\n") && strings.Contains(body, "pod=web-") && strings.Contains(body, "path=/from-pod") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pod → https://app.example.test/from-pod: %s", body)
+		}
+		time.Sleep(time.Second)
+	}
+	if strings.Contains(body, "xff=127.") || strings.Contains(body, "xff="+clientIP+",") || strings.Contains(body, "xff="+clientIP+"\n") {
+		t.Errorf("pod request seen from %q", body)
+	}
+	t.Logf("pod → LB: %s", strings.TrimSpace(body))
 
 	// Scale up: within 5 s of the NEG update both pods serve.
 	k.patch("/apis/apps/v1/namespaces/default/deployments/web/scale", `{"spec":{"replicas":2}}`)
@@ -315,6 +352,30 @@ func (k *kube) apply(obj map[string]any) {
 		path = "/apis/apps/v1/namespaces/default/deployments"
 	}
 	k.do("POST", path, "application/json", b)
+}
+
+// podIP returns the address of a running pod labelled app, or "".
+func (k *kube) podIP(app string) string {
+	k.t.Helper()
+	resp, err := k.hc.Get(k.endpoint + "/api/v1/namespaces/default/pods?labelSelector=app%3D" + app)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var pods struct {
+		Items []struct {
+			Status struct{ Phase, PodIP string }
+		}
+	}
+	if json.NewDecoder(resp.Body).Decode(&pods) != nil {
+		return ""
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase == "Running" && p.Status.PodIP != "" {
+			return p.Status.PodIP
+		}
+	}
+	return ""
 }
 
 func (k *kube) patch(path, merge string) {

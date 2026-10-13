@@ -3,6 +3,7 @@ package compute
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"log/slog"
@@ -247,6 +248,38 @@ func TestNatSinkSwitch(t *testing.T) {
 	s.SetNATSink(false)
 	if strings.Contains(rules(), redirect) {
 		t.Fatalf("sink off: still redirects:\n%s", rules())
+	}
+}
+
+// TestNatRulesPublicRoutes: the gateway routes the load balancer's
+// forwarding rule addresses via the Edge relay, and the offline sink lets
+// them through, since the load balancer is emulated (#187).
+func TestNatRulesPublicRoutes(t *testing.T) {
+	s, _ := natTestService(t, nil)
+	s.SetNATSink(true)
+	g := &gateway{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
+	rules := func() string {
+		r, err := s.natRules(g, s.netsOf(tNet))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if err := s.RoutePublic(context.Background(), "172.22.0.9", []string{"34.120.0.5"}); err != nil {
+		t.Fatal(err)
+	}
+	r := rules()
+	route := "ip route replace 34.120.0.5/32 via 172.22.0.9 proto 245\n"
+	exempt := strings.Index(r, "-A GCPEMU-PRE -s 10.0.0.0/24 -d 34.120.0.5/32 -j RETURN\n")
+	redirect := strings.Index(r, "-A GCPEMU-PRE -s 10.0.0.0/24 -p tcp -j REDIRECT")
+	if !strings.Contains(r, route) || exempt < 0 || redirect < exempt {
+		t.Fatalf("public routes:\n%s", r)
+	}
+	if err := s.RoutePublic(context.Background(), "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if r := rules(); strings.Contains(r, "34.120.0.5") || !strings.Contains(r, "proto 245 | awk") {
+		t.Fatalf("routes removed:\n%s", r)
 	}
 }
 

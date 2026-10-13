@@ -123,10 +123,11 @@ func (s *Service) logQuery(w mdns.ResponseWriter, req, resp *mdns.Msg, network s
 }
 
 // SetAddressMapper installs a function that rewrites A record addresses in
-// answers (UDP/TCP server and Resolve): the load balancer maps forwarding
-// rule IPs to the local listeners that serve them (FR-LB-002, FR-INT-004).
-// f returns nil to leave an address unchanged.
-func (s *Service) SetAddressMapper(f func(net.IP) net.IP) {
+// answers (UDP/TCP server and Resolve) for a client on network ("" outside
+// every VPC): the load balancer maps forwarding rule IPs to the local
+// listeners that serve them for host clients (FR-LB-002, FR-INT-004). f
+// returns nil to leave an address unchanged.
+func (s *Service) SetAddressMapper(f func(ip net.IP, network string) net.IP) {
 	s.mapper.Store(&f)
 }
 
@@ -140,7 +141,7 @@ func (s *Service) answer(ctx context.Context, network string, q mdns.Question) *
 	}
 	for i, rr := range m.Answer {
 		if a, ok := rr.(*mdns.A); ok {
-			if ip := (*fp)(a.A); ip != nil {
+			if ip := (*fp)(a.A, network); ip != nil {
 				m.Answer[i] = &mdns.A{Hdr: a.Hdr, A: ip}
 			}
 		}

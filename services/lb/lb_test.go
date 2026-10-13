@@ -35,6 +35,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/services/compute"
 	"github.com/linuxuser586/gcpemu/services/dns"
@@ -386,6 +387,15 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	lh, _, _ := net.SplitHostPort(listener)
 	if err != nil || len(rrs) != 1 || rrs[0].(*mdns.A).A.String() != lh {
 		t.Fatalf("resolve = %v, %v (listener %s)", rrs, err, listener)
+	}
+	// A VPC workload gets the forwarding rule's own address, which the
+	// Edge relay serves to it (#187).
+	q := new(mdns.Msg)
+	q.SetQuestion("app.example.test.", mdns.TypeA)
+	q.SetEdns0(1232, false)
+	q = frontend.SetNetwork(q, "projects/"+proj+"/global/networks/default")
+	if in, err := mdns.Exchange(q, e.inst.Endpoint("dns")); err != nil || len(in.Answer) != 1 || in.Answer[0].(*mdns.A).A.String() != fr.IPAddress {
+		t.Fatalf("VPC query = %v, %v; want %s", in, err, fr.IPAddress)
 	}
 
 	// Teardown in dependency order succeeds.

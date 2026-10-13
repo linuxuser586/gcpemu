@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -328,6 +330,35 @@ func (g *gateway) sync(ctx context.Context) error {
 	return nil
 }
 
+// RoutePublic implements emu.PublicRouter: every gateway routes the load
+// balancer's forwarding rule addresses via the Edge relay, so private
+// workloads reach them through Cloud NAT as on GCP, with the NAT's address
+// as the client (#187).
+func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) error {
+	s.pubMu.Lock()
+	s.pubVia, s.pubIPs = via, append([]string(nil), ips...)
+	s.pubMu.Unlock()
+	s.egMu.Lock()
+	gws := make([]*gateway, 0, len(s.egress))
+	for _, g := range s.egress {
+		gws = append(gws, g)
+	}
+	s.egMu.Unlock()
+	var errs []error
+	for _, g := range gws {
+		if err := g.sync(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("NAT gateway of %s: %w", g.network, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (s *Service) publicRoutes() (string, []string) {
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+	return s.pubVia, s.pubIPs
+}
+
 // coverage is a source range a NAT covers.
 type coverage struct {
 	cidr          string
@@ -393,6 +424,8 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	fmt.Fprintf(&b, "ifc() { ip -o -4 addr show | awk -v a=\"$1\" '{split($4,x,\"/\"); if (x[1]==a) print $2}'; }\n")
 	fmt.Fprintf(&b, "EXT=$(ifc %s)\n[ -n \"$EXT\" ]\n", g.extIP)
 	fmt.Fprintf(&b, "ip route replace default via %s dev \"$EXT\"\n", g.extGW)
+	pubVia, pubIPs := s.publicRoutes()
+	b.WriteString(emu.PublicRoutesScript(pubVia, pubIPs))
 	for _, st := range nets {
 		if st.translated() {
 			dc, _ := parseCIDR(st.Range, false)
@@ -434,6 +467,12 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 		for _, c := range cov {
 			for _, in := range internal {
 				fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s -j RETURN\n", c.cidr, in)
+			}
+			// The load balancer is emulated, not the internet.
+			if pubVia != "" {
+				for _, ip := range pubIPs {
+					fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s/32 -j RETURN\n", c.cidr, ip)
+				}
 			}
 			fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -p tcp -j REDIRECT --to-ports %d\n", c.cidr, natSinkPort)
 		}

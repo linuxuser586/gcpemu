@@ -13,9 +13,24 @@ func (d *dataplane) installDNSMapper() {
 	if !ok {
 		return
 	}
-	if m, ok := svc.(interface{ SetAddressMapper(func(net.IP) net.IP) }); ok {
-		m.SetAddressMapper(d.mappedIP)
+	if m, ok := svc.(interface {
+		SetAddressMapper(func(net.IP, string) net.IP)
+	}); ok {
+		m.SetAddressMapper(d.dnsAddress)
 	}
+}
+
+// dnsAddress maps a forwarding rule IP in an answer to a client on
+// network. Host clients get the mapped listener. VPC workloads get an
+// external rule's own address, which the Edge relay serves to them
+// (#187), as on GCP.
+func (d *dataplane) dnsAddress(ip net.IP, network string) net.IP {
+	if network != "" {
+		if cfg := d.cfg.Load(); cfg != nil && cfg.public[ip.String()] {
+			return nil
+		}
+	}
+	return d.mappedIP(ip)
 }
 
 // dialContext connects to a backend endpoint: through the lb-edge relay

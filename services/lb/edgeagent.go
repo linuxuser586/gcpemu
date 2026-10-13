@@ -23,6 +23,9 @@ import (
 //   - owns one address per forwarding rule on the lb network and listens on
 //     the rule's real port (80/443), relaying each connection to the
 //     emulator's edge ingress with a PROXY v2 header (FR-LB-002);
+//   - holds every external forwarding rule's own address on its loopback
+//     and relays its ports the same way, for VPC workloads that route the
+//     address via the edge on the external network (#187);
 //   - relays backend connections to addresses only reachable from container
 //     networks (GKE pod IPs, via `ip route` through the node; FR-INT-001):
 //     the emulator sends "TOKEN host:port\n" and gets "OK\n" before the
@@ -44,6 +47,8 @@ type edgeConfig struct {
 	Ingress   string         `json:"ingress"`
 	Listeners []edgeListener `json:"listeners"`
 	Routes    []edgeRoute    `json:"routes"`
+	// Public are external forwarding rule addresses and ports (#187).
+	Public []edgeListener `json:"public,omitempty"`
 }
 
 type edgeListener struct {
@@ -66,12 +71,13 @@ type edgeAgent struct {
 	mu        sync.Mutex
 	ingress   string
 	aliases   map[string]bool
+	public    map[string]bool // addresses on lo
 	listeners map[string]net.Listener
 	routes    map[string]string
 }
 
 func runEdgeAgent(ctx context.Context, _ []string) error {
-	a := &edgeAgent{token: os.Getenv("GCPEMU_LB_TOKEN"), aliases: map[string]bool{},
+	a := &edgeAgent{token: os.Getenv("GCPEMU_LB_TOKEN"), aliases: map[string]bool{}, public: map[string]bool{},
 		listeners: map[string]net.Listener{}, routes: map[string]string{}}
 	if _, n, err := net.ParseCIDR(os.Getenv("GCPEMU_LB_SUBNET")); err == nil {
 		a.subnet = n
@@ -147,6 +153,20 @@ func (a *edgeAgent) apply(cfg edgeConfig) error {
 		want[l.IP] = true
 		wantL[net.JoinHostPort(l.IP, strconv.Itoa(l.Port))] = l
 	}
+	wantP := map[string]bool{}
+	for _, l := range cfg.Public {
+		wantP[l.IP] = true
+		wantL[net.JoinHostPort(l.IP, strconv.Itoa(l.Port))] = l
+	}
+	for ip := range wantP {
+		if !a.public[ip] {
+			if err := ipCmd("addr", "add", ip+"/32", "dev", "lo"); err != nil && !strings.Contains(err.Error(), "File exists") {
+				errs = append(errs, err.Error())
+				continue
+			}
+			a.public[ip] = true
+		}
+	}
 	for ip := range want {
 		if !a.lan && !a.aliases[ip] {
 			if err := ipCmd("addr", "add", ip+"/"+strconv.Itoa(ones), "dev", iface); err != nil && !strings.Contains(err.Error(), "File exists") {
@@ -166,6 +186,12 @@ func (a *edgeAgent) apply(cfg edgeConfig) error {
 		if !want[ip] {
 			_ = ipCmd("addr", "del", ip+"/"+strconv.Itoa(ones), "dev", iface)
 			delete(a.aliases, ip)
+		}
+	}
+	for ip := range a.public {
+		if !wantP[ip] {
+			_ = ipCmd("addr", "del", ip+"/32", "dev", "lo")
+			delete(a.public, ip)
 		}
 	}
 	for key := range wantL {
