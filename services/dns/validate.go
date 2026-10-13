@@ -36,6 +36,11 @@ func errNotEmpty(name string) *apierr.Error {
 		WithLegacy("containerNotEmpty").WithHTTP(http.StatusBadRequest)
 }
 
+func errInUse(field, name string) *apierr.Error {
+	return apierr.New(codes.FailedPrecondition, "The resource '%s' named '%s' cannot be deleted because it is in use by one or more networks.", field, name).
+		WithLegacy("resourceInUse").WithHTTP(http.StatusBadRequest)
+}
+
 func errConditionNotMet(field string) *apierr.Error {
 	return apierr.New(codes.FailedPrecondition, "Precondition not met for '%s'", field).
 		WithLegacy("conditionNotMet").WithHTTP(http.StatusPreconditionFailed)
