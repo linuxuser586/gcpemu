@@ -22,7 +22,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,48 +63,6 @@ type Info struct {
 	Version  string
 	Arch     string // GOARCH-style
 	Rootless bool
-}
-
-// Detect finds a runtime socket: $DOCKER_HOST, then the default Docker
-// socket, then rootless and rootful Podman sockets.
-func Detect() (*Client, error) {
-	var candidates []string
-	if h := os.Getenv("DOCKER_HOST"); h != "" {
-		candidates = append(candidates, h)
-	}
-	candidates = append(candidates, "unix:///var/run/docker.sock")
-	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		candidates = append(candidates, "unix://"+filepath.Join(d, "podman", "podman.sock"), "unix://"+filepath.Join(d, "docker.sock"))
-	}
-	candidates = append(candidates, "unix:///run/podman/podman.sock")
-	var denied []string
-	for _, c := range candidates {
-		if p, ok := strings.CutPrefix(c, "unix://"); ok {
-			if fi, err := os.Stat(p); err != nil || fi.Mode()&os.ModeSocket == 0 {
-				continue
-			}
-		}
-		cl, err := New(c)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_, err = cl.Info(ctx)
-		if err == nil {
-			cl.detectSelf(ctx)
-		}
-		cancel()
-		if err == nil {
-			return cl, nil
-		}
-		if errors.Is(err, os.ErrPermission) || strings.Contains(err.Error(), "permission denied") {
-			denied = append(denied, strings.TrimPrefix(c, "unix://"))
-		}
-	}
-	if len(denied) > 0 {
-		return nil, fmt.Errorf("container runtime socket %s found but permission denied (uid %d): in the OCI image, run with --group-add $(stat -c %%g %s)", denied[0], os.Getuid(), denied[0])
-	}
-	return nil, errors.New("no container runtime found: start Docker Engine (>= 24) or Podman (>= 4.9) with its Docker-compatible socket, or set DOCKER_HOST")
 }
 
 // New returns a client for endpoint ("unix:///path" or "tcp://host:port").

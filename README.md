@@ -132,7 +132,12 @@ share a port, only one gets the address. `gcpemu status` lists each rule's addre
 ### Container runtime
 
 Cloud SQL, GKE and Cloud NAT need Docker Engine (>= 24) or Podman (>= 4.9, Docker-compatible
-socket; `DOCKER_HOST` is honoured). Everything the emulator creates is labelled
+socket). On macOS, Docker Desktop, OrbStack, Colima and Podman machine work too. The emulator
+uses `DOCKER_HOST` first, then the Docker context (`DOCKER_CONTEXT`, or the current context in
+`~/.docker/config.json`), then the first well-known socket that responds. If `DOCKER_HOST` or a
+context other than `default` names a runtime that doesn't respond, start fails rather than using
+another one, so `gcpemu` and `docker` always agree. `gcpemu doctor` shows the runtime it picked
+and why. Everything the emulator creates is labelled
 `gcpemu.instance=<id>`; containers are removed on `stop`, and with `--data-dir` the volumes
 holding Postgres and Kubernetes state are kept so resources survive a restart. The emulator
 copies its own (static) binary into containers as an in-container agent. GKE is Linux-only.
