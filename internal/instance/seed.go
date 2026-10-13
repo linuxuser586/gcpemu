@@ -58,6 +58,9 @@ func (in *Instance) EnvVars() map[string]string {
 	out := map[string]string{
 		"GCPEMU_GATEWAY":  gw,
 		"GCPEMU_INSTANCE": in.Config.Instance,
+		// gcloud sends an API without an endpoint override to the
+		// Invalid universe, and refuses credentials stored for Google.
+		"CLOUDSDK_CORE_UNIVERSE_DOMAIN": emu.InvalidUniverse,
 	}
 	for _, s := range in.services {
 		if ev, ok := s.(emu.EnvVarer); ok {

@@ -18,12 +18,20 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
-// invalidUniverse is the universe_domain that `gcpemu tofu-provider`
-// prints (providerUniverseDomain in internal/cli/extra.go): the provider
-// addresses an API without a *_custom_endpoint as <api>.gcpemu.invalid.
-const invalidUniverse = ".gcpemu.invalid"
+// invalidUniverse is the suffix of hosts in the Invalid universe, which
+// `gcpemu tofu-provider` and `gcpemu env` give OpenTofu and gcloud: they
+// address an API without an endpoint as <api>.gcpemu.invalid.
+const invalidUniverse = "." + emu.InvalidUniverse
+
+// gcloudDescriptorHost is where gcloud fetches the universe descriptor for
+// a universe other than Google's. The URL is hard-coded and no endpoint
+// override covers it, so it is a side effect of the Invalid universe rather
+// than an Escaped request; gcloud falls back to Google's descriptor.
+const gcloudDescriptorHost = "storage" + invalidUniverse
 
 // Guard is a running Escape guard.
 type Guard struct {
@@ -100,11 +108,24 @@ func Describe(host string) string {
 
 // DescribeGcloud explains why a request from gcloud to host escaped:
 // gcloud sends an API without a CLOUDSDK_API_ENDPOINT_OVERRIDES_<API> to
-// <api>.googleapis.com.
+// <api>.gcpemu.invalid, or to <api>.googleapis.com outside the Invalid
+// universe.
 func DescribeGcloud(host string) string {
-	if api, ok := strings.CutSuffix(host, ".googleapis.com"); ok && !strings.Contains(api, ".") {
+	api, ok := strings.CutSuffix(host, invalidUniverse)
+	if !ok {
+		api, ok = strings.CutSuffix(host, ".googleapis.com")
+	}
+	if ok && !strings.Contains(api, ".") {
 		return fmt.Sprintf("Escaped request to %s: no CLOUDSDK_API_ENDPOINT_OVERRIDES_%s in the environment "+
 			"(the Service serving %s should print it from EnvVars)", host, strings.ToUpper(api), api)
 	}
 	return "Escaped request to " + host
+}
+
+// Gcloud drops from hosts, as Take returns them, the ones gcloud reaches
+// in the Invalid universe without escaping: its universe descriptor fetch.
+// Only gcloud's hosts may be filtered: from OpenTofu, the same host is a
+// storage API with no *_custom_endpoint.
+func Gcloud(hosts []string) []string {
+	return slices.DeleteFunc(hosts, func(h string) bool { return h == gcloudDescriptorHost })
 }

@@ -53,13 +53,22 @@ func TestDescribe(t *testing.T) {
 }
 
 func TestDescribeGcloud(t *testing.T) {
-	if got := DescribeGcloud("pubsub.googleapis.com"); !strings.Contains(got, "CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB") {
-		t.Errorf("DescribeGcloud(pubsub.googleapis.com) = %q", got)
+	for _, h := range []string{"pubsub.gcpemu.invalid", "pubsub.googleapis.com"} {
+		if got := DescribeGcloud(h); !strings.Contains(got, "CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB") {
+			t.Errorf("DescribeGcloud(%s) = %q", h, got)
+		}
 	}
 	for _, h := range []string{"secretmanager.us-central1.rep.googleapis.com", "example.com"} {
 		if got, want := DescribeGcloud(h), "Escaped request to "+h; got != want {
 			t.Errorf("DescribeGcloud = %q, want %q", got, want)
 		}
+	}
+}
+
+func TestGcloudDropsDescriptorFetch(t *testing.T) {
+	got := Gcloud([]string{"storage.gcpemu.invalid", "pubsub.gcpemu.invalid", "storage.googleapis.com"})
+	if want := []string{"pubsub.gcpemu.invalid", "storage.googleapis.com"}; !slices.Equal(got, want) {
+		t.Errorf("Gcloud() = %v, want %v", got, want)
 	}
 }
 
