@@ -28,7 +28,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Liveness of the gateway. */
+        /** Liveness of the API gateway. */
         get: operations["health"];
         put?: never;
         post?: never;
@@ -83,7 +83,7 @@ export interface paths {
         get: operations["iamEnforcement"];
         /**
          * Switch the IAM enforcement level until the Instance stops (Web console IAM view).
-         * @description Later calls are checked at the new level; `--iam-mode` sets it again at the next start. As at startup, `off` is refused while the gateway is bound beyond loopback unless the Instance was started with `--i-understand-this-is-insecure`.
+         * @description Later calls are checked at the new level; `--iam-mode` sets it again at the next start. As at startup, `off` is refused while the API gateway is bound beyond loopback unless the Instance was started with `--i-understand-this-is-insecure`.
          */
         put: operations["setIamEnforcement"];
         post?: never;
@@ -545,7 +545,7 @@ export interface paths {
         get: operations["natSink"];
         /**
          * Switch Cloud NAT's offline sink until the Instance stops (Web console Cloud NAT view).
-         * @description While the sink is on, TCP egress a Cloud NAT allows is answered by the sink in the egress gateway, recorded and logged as OFFLINE_SINK, instead of reaching the internet. Running egress gateways are re-programmed; `--offline` turns it on again at the next start. The sink's response (natSinkResponse) is read only.
+         * @description While the sink is on, TCP egress a Cloud NAT allows is answered by the sink in the NAT egress proxy, recorded and logged as OFFLINE_SINK, instead of reaching the internet. Running NAT egress proxies are re-programmed; `--offline` turns it on again at the next start. The sink's response (natSinkResponse) is read only.
          */
         put: operations["setNatSink"];
         post?: never;
@@ -624,7 +624,7 @@ export interface components {
             iamMode: "off" | "audit" | "enforce";
             /** @description Referencing a project that does not exist is an error instead of creating it. */
             strictProjects: boolean;
-            /** @description Whether the gateway serves the Web console under /console/. */
+            /** @description Whether the API gateway serves the Web console under /console/. */
             console: boolean;
             /** @description Enabled services, in start order. */
             services: string[];
@@ -653,7 +653,7 @@ export interface components {
                 [key: string]: number;
             };
         };
-        /** @description Endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port. */
+        /** @description Service endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port. */
         Endpoints: {
             [key: string]: string;
         };
@@ -879,7 +879,7 @@ export interface components {
             lb?: components["schemas"]["LbTrace"];
             nat?: components["schemas"]["NatTrace"];
         };
-        /** @description One connection the NAT egress gateway saw leave a VPC network (nat service; Web console Cloud NAT translation log): the entry's code is OK (translated), DROPPED (no Cloud NAT covers the source) or OFFLINE_SINK, and its resource the Cloud NAT gateway (projects/P/regions/R/routers/ROUTER/nats/NAT), or the network when no NAT covers the source. */
+        /** @description One connection the NAT egress proxy saw leave a VPC network (nat service; Web console Cloud NAT translation log): the entry's code is OK (translated), DROPPED (no Cloud NAT covers the source) or OFFLINE_SINK, and its resource the Cloud NAT gateway (projects/P/regions/R/routers/ROUTER/nats/NAT), or the network when no NAT covers the source. */
         NatTrace: {
             /** @description The VPC network's resource path. */
             network: string;
@@ -1237,7 +1237,7 @@ export interface operations {
                         enabled?: boolean;
                         state?: string;
                         error?: string;
-                        /** @description Frontend container address (HTTPS :443, HTTP :80, DNS :53). */
+                        /** @description Host-mode container address (HTTPS :443, HTTP :80, DNS :53). */
                         ip?: string;
                         /** @description Host bridge interface the IP is reached through. */
                         interface?: string;

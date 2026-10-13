@@ -62,7 +62,7 @@ func Main() {
 	mu.Unlock()
 	if !ok {
 		sort.Strings(known)
-		fmt.Fprintf(os.Stderr, "gcpemu agent: unknown agent %q (known: %v)\n", name, known)
+		fmt.Fprintf(os.Stderr, "gcpemu agent: unknown Sidecar agent %q (known: %v)\n", name, known)
 		os.Exit(2)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
@@ -86,7 +86,7 @@ func BuildForTests(moduleRoot, dir, arch string) (string, error) {
 	cmd.Dir = moduleRoot
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if b, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("build agent binary: %v\n%s", err, b)
+		return "", fmt.Errorf("build Sidecar agent binary: %v\n%s", err, b)
 	}
 	os.Setenv(BinaryEnv, out)
 	return out, nil

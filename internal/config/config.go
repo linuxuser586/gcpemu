@@ -390,7 +390,7 @@ func (c *Config) Validate() error {
 	switch c.IAMMode {
 	case IAMOff, IAMAudit, IAMEnforce:
 	default:
-		return fmt.Errorf("invalid IAM mode %q (want off, audit or enforce)", c.IAMMode)
+		return fmt.Errorf("invalid IAM enforcement level %q (want off, audit or enforce)", c.IAMMode)
 	}
 	switch c.LogFormat {
 	case "json", "text":

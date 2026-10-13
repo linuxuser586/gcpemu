@@ -54,7 +54,7 @@ func clientFor(cfg *config.Config) (*adminClient, error) {
 	}
 	gw := eps["gateway"]
 	if gw == "" {
-		return nil, fmt.Errorf("no gateway endpoint recorded")
+		return nil, fmt.Errorf("no API gateway address recorded")
 	}
 	return &adminClient{base: "http://" + gw, endpoints: eps, http: &http.Client{Timeout: 10 * time.Second}, token: readAdminToken(cfg)}, nil
 }

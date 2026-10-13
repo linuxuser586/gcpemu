@@ -4,10 +4,10 @@ info:
   version: v1
   description: |
     The emulator's own control interface (SRS 7.3, FR-CORE-045), served on
-    the gateway port under /_emu/v1/. It is the only interface not modelled
+    the API gateway port under /_emu/v1/. It is the only interface not modelled
     on a Google API, and it is not request-logged.
 
-    On loopback (the default bind) it needs no credentials. When the
+    On loopback (the default bind) it needs no credentials. When the API
     gateway is bound beyond loopback, every path except `health` and `ready`
     needs the instance's admin token (FR-UI-009), sent in the
     `X-Gcpemu-Admin-Token` header or in the `gcpemu_admin` cookie that the
@@ -36,7 +36,7 @@ paths:
                 type: string
   /_emu/v1/health:
     get:
-      summary: Liveness of the gateway.
+      summary: Liveness of the API gateway.
       operationId: health
       security: []
       responses:
@@ -91,7 +91,7 @@ paths:
       operationId: setIamEnforcement
       description: >-
         Later calls are checked at the new level; `--iam-mode` sets it again
-        at the next start. As at startup, `off` is refused while the gateway
+        at the next start. As at startup, `off` is refused while the API gateway
         is bound beyond loopback unless the Instance was started with
         `--i-understand-this-is-insecure`.
       requestBody:
@@ -192,7 +192,7 @@ paths:
                   enabled: { type: boolean }
                   state: { type: string }
                   error: { type: string }
-                  ip: { type: string, description: "Frontend container address (HTTPS :443, HTTP :80, DNS :53)." }
+                  ip: { type: string, description: "Host-mode container address (HTTPS :443, HTTP :80, DNS :53)." }
                   interface: { type: string, description: Host bridge interface the IP is reached through. }
                   domains:
                     type: array
@@ -640,9 +640,9 @@ paths:
       operationId: setNatSink
       description: >-
         While the sink is on, TCP egress a Cloud NAT allows is answered by
-        the sink in the egress gateway, recorded and logged as
-        OFFLINE_SINK, instead of reaching the internet. Running egress
-        gateways are re-programmed; `--offline` turns it on again at the
+        the sink in the NAT egress proxy, recorded and logged as
+        OFFLINE_SINK, instead of reaching the internet. Running NAT egress
+        proxies are re-programmed; `--offline` turns it on again at the
         next start. The sink's response (natSinkResponse) is read only.
       requestBody:
         required: true
@@ -685,7 +685,7 @@ components:
       type: apiKey
       in: header
       name: X-Gcpemu-Admin-Token
-      description: The admin token; required only when the gateway is bound beyond loopback.
+      description: The admin token; required only when the API gateway is bound beyond loopback.
     adminTokenCookie:
       type: apiKey
       in: cookie
@@ -749,7 +749,7 @@ components:
         strictProjects:
           type: boolean
           description: Referencing a project that does not exist is an error instead of creating it.
-        console: { type: boolean, description: Whether the gateway serves the Web console under /console/. }
+        console: { type: boolean, description: Whether the API gateway serves the Web console under /console/. }
         services:
           type: array
           description: Enabled services, in start order.
@@ -784,7 +784,7 @@ components:
         additionalProperties: { type: integer }
     Endpoints:
       type: object
-      description: Endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port.
+      description: Service endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port.
       additionalProperties: { type: string }
     Readiness:
       type: object
@@ -1007,7 +1007,7 @@ components:
     NatTrace:
       type: object
       description: >-
-        One connection the NAT egress gateway saw leave a VPC network
+        One connection the NAT egress proxy saw leave a VPC network
         (nat service; Web console Cloud NAT translation log): the entry's
         code is OK (translated), DROPPED (no Cloud NAT covers the source)
         or OFFLINE_SINK, and its resource the Cloud NAT gateway

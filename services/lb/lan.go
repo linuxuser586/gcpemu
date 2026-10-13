@@ -285,7 +285,7 @@ func (r *lanRelay) ensureLocked(ctx context.Context) error {
 	}
 	if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(agent.ContainerPath, "/"), Mode: 0o755, Path: bin}}); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)
-		return fmt.Errorf("lb-lan: copy agent: %w", err)
+		return fmt.Errorf("lb-lan: copy Sidecar agent: %w", err)
 	}
 	if err := rt.StartContainer(ctx, id); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)

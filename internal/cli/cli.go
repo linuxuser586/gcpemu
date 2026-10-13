@@ -66,7 +66,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 	o := &rootOpts{factories: factories}
 	root := &cobra.Command{
 		Use:           "gcpemu",
-		Short:         "Local emulator for Google Cloud services",
+		Short:         "Local emulator for a subset of Google Cloud's Products",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -133,25 +133,25 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&detach, "detach", false, "run in the background and return once ready")
 	f.BoolVar(&o.flags.Ephemeral, "ephemeral", false, "keep state in memory and data in a temp dir removed on exit")
-	f.StringSliceVar(&o.flags.Services, "services", nil, "services to run (default all): "+strings.Join(config.AllServices, ","))
+	f.StringSliceVar(&o.flags.Services, "services", nil, "Service IDs to run (default all): "+strings.Join(config.AllServices, ","))
 	f.StringVar(&o.flags.Bind, "bind", "127.0.0.1", "address to bind listeners to")
 	f.BoolVar(&o.flags.Insecure, "i-understand-this-is-insecure", false, "allow non-loopback bind with IAM off")
 	f.StringSliceVar(&o.flags.LBBind, "lb-bind", nil, "also serve the load balancer's forwarding rules on this address (repeatable), e.g. a LAN IP; nothing else is exposed")
 	f.StringSliceVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443; a bare 0 makes every listener pick a free port")
 	f.StringVar(&o.flags.PortRange, "port-range", "", "LO-HI range that free ports are picked from, e.g. 20000-20999")
-	f.StringVar(&o.flags.IAMMode, "iam-mode", config.IAMAudit, "IAM enforcement: off, audit, enforce")
+	f.StringVar(&o.flags.IAMMode, "iam-mode", config.IAMAudit, "IAM enforcement level: off, audit, enforce")
 	f.StringVar(&o.flags.DefaultPrincipal, "default-principal", "user:dev@example.com", "principal for unauthenticated requests")
 	f.StringVar(&o.flags.LogFormat, "log-format", "text", "log format: text or json")
 	f.StringVar(&o.flags.LogLevel, "log-level", "info", "log level")
-	f.StringToStringVar(&o.lro, "lro-latency", nil, "LRO latency per service ID, e.g. gke=20s (default instant)")
-	f.BoolVar(&o.flags.Deterministic, "deterministic", false, "deterministic IDs and fake clock")
+	f.StringToStringVar(&o.lro, "lro-latency", nil, "Operation latency per Service ID, e.g. gke=20s or *=1s (default instant)")
+	f.BoolVar(&o.flags.Deterministic, "deterministic", false, "run a Deterministic Instance: reproducible IDs and a fake clock")
 	f.BoolVar(&o.flags.StrictProjects, "strict-projects", false, "require projects to be declared")
 	f.StringVar(&o.flags.Seed, "seed", "", "seed file to apply before reporting ready")
 	f.DurationVar(&o.flags.WaitTimeout, "wait-timeout", 120*time.Second, "readiness timeout for --detach and CI")
 	f.BoolVar(&o.flags.DNSNoForward, "dns-no-forward", false, "do not forward unknown DNS names to the host resolver")
 	f.BoolVar(&o.flags.Offline, "offline", false, "never reach the internet")
-	f.BoolVar(&o.console, "console", true, "serve the Web console under /console on the gateway (default false when CI=true)")
-	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via a frontend container and its DNS (see `gcpemu env`, `gcpemu hosts`)")
+	f.BoolVar(&o.console, "console", true, "serve the Web console under /console on the API gateway (default false when CI=true)")
+	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (see gcpemu env and gcpemu hosts)")
 	return cmd
 }
 
@@ -267,7 +267,7 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 			continue
 		}
 		if code, _, err := c.do(http.MethodGet, "/_emu/v1/ready"); err == nil && code == http.StatusOK {
-			fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q ready (pid %d, gateway %s)\n", cfg.Instance, child.Process.Pid, c.base)
+			fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q ready (pid %d, API gateway %s)\n", cfg.Instance, child.Process.Pid, c.base)
 			if c.token != "" {
 				printAdminToken(cmd.ErrOrStderr(), cfg, strings.TrimPrefix(c.base, "http://"), c.token, cfg.ConsoleEnabled())
 			}
@@ -466,7 +466,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "  %-8s %s\n", n, state)
 			}
-			fmt.Fprintln(out, "endpoints:")
+			fmt.Fprintln(out, "service endpoints:")
 			for _, n := range sortedKeys(i.Endpoints) {
 				fmt.Fprintf(out, "  %-8s %s\n", n, i.Endpoints[n])
 			}
@@ -480,7 +480,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
-	cmd.Flags().BoolVar(&needReady, "ready", false, "exit non-zero unless every service is ready")
+	cmd.Flags().BoolVar(&needReady, "ready", false, "exit non-zero unless every Service is ready")
 	return cmd
 }
 

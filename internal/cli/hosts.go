@@ -17,9 +17,9 @@ import (
 func (o *rootOpts) hostsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "hosts",
-		Short: "Print an /etc/hosts block mapping real Google hostnames to the host-mode frontend",
+		Short: "Print an /etc/hosts block mapping real Google hostnames to the host-mode container",
 		Long: "Prints an /etc/hosts block that sends the emulated *.googleapis.com hosts and every\n" +
-			"LOCATION-docker.pkg.dev to the instance's host-mode frontend (start it with --host-mode).\n" +
+			"LOCATION-docker.pkg.dev to the instance's host-mode container (start it with --host-mode).\n" +
 			"Install it with:  gcpemu hosts | sudo tee -a /etc/hosts\n" +
 			"and trust the CA with `gcpemu ca install`. Remove the block when done.",
 		RunE: func(cmd *cobra.Command, args []string) error {

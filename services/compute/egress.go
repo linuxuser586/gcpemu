@@ -215,7 +215,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 	}
 	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
-		return apierr.FailedPrecondition("NAT gateway agent: %v", err)
+		return apierr.FailedPrecondition("NAT egress proxy Sidecar agent: %v", err)
 	}
 	report, err := g.s.sinkReportURL(ctx)
 	if err != nil {
@@ -251,7 +251,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 	}
 	if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(agent.ContainerPath, "/"), Mode: 0o755, Path: bin}}); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)
-		return apierr.Internal("NAT gateway: copy agent: %v", err)
+		return apierr.Internal("NAT egress proxy: copy Sidecar agent: %v", err)
 	}
 	if err := rt.StartContainer(ctx, id); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)
@@ -268,7 +268,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 		return err
 	}
 	g.id, g.extIP, g.extGW, g.svcIP = id, c.IPs[ext.Name], ext.Gateway, c.IPs[svc.Name]
-	g.s.env.Log.Info("compute: NAT egress gateway started", "network", g.network, "container", name)
+	g.s.env.Log.Info("compute: NAT egress proxy started", "network", g.network, "container", name)
 	return nil
 }
 
