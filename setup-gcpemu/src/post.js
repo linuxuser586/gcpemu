@@ -121,7 +121,9 @@ async function saveImages(containers) {
 
 async function adminJSON(gateway, what) {
   try {
-    const res = await fetch(`http://${gateway}/_emu/v1/${what}`, { signal: AbortSignal.timeout(20000) })
+    const token = core.getState('adminToken')
+    const headers = token ? { 'X-Gcpemu-Admin-Token': token } : {}
+    const res = await fetch(`http://${gateway}/_emu/v1/${what}`, { headers, signal: AbortSignal.timeout(20000) })
     return await res.json()
   } catch (e) {
     core.debug(`${what}: ${e.message}`)

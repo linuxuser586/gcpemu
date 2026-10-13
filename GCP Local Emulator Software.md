@@ -218,7 +218,7 @@ The web console is a React single-page app compiled into the binary and served a
 | FR-UI-006 | Live updates without manual refresh, via a server-sent events stream on the admin API (`/_emu/v1/events`) carrying resource changes, LRO progress and request-log entries. | M |
 | FR-UI-007 | Light and dark themes following the OS; keyboard navigation; WCAG 2.1 AA contrast and labels. | S |
 | FR-UI-008 | Supports the latest two versions of Chrome, Firefox, Safari and Edge. | M |
-| FR-UI-009 | When `--bind` exposes the gateway beyond loopback, the console requires a session token printed at startup. | M |
+| FR-UI-009 | When `--bind` exposes the gateway beyond loopback, the admin API and console require an admin token printed at startup. | M |
 
 #### 4.8.2 Cross-service views
 

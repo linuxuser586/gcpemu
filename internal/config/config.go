@@ -73,7 +73,14 @@ type Config struct {
 	// rule listeners also serve, on their real ports, alongside loopback.
 	// Nothing else is exposed there, so it needs no Insecure.
 	LBBind []string `yaml:"lbBind" env:"LB_BIND"`
+	// AdminToken is the Admin token used when the API gateway is bound
+	// beyond loopback (FR-UI-009); empty means a random one per start.
+	// There is no flag, so that it never shows in a process listing.
+	AdminToken string `yaml:"adminToken" env:"ADMIN_TOKEN"`
 }
+
+// MinAdminTokenLen is the shortest AdminToken accepted.
+const MinAdminTokenLen = 32
 
 // ConsoleEnabled reports whether the Web console is served: as configured,
 // otherwise on except under CI=true (FR-CI-003).
@@ -391,6 +398,9 @@ func (c *Config) Validate() error {
 		if ip.IsUnspecified() {
 			return fmt.Errorf("invalid --lb-bind %s: name an address of this host, not the wildcard", a)
 		}
+	}
+	if c.AdminToken != "" && len(c.AdminToken) < MinAdminTokenLen {
+		return fmt.Errorf("GCPEMU_ADMIN_TOKEN is %d characters; use at least %d", len(c.AdminToken), MinAdminTokenLen)
 	}
 	if !IsLoopback(c.Bind) && c.IAMMode == IAMOff && !c.Insecure {
 		return fmt.Errorf("refusing to bind %s with IAM off; pass --i-understand-this-is-insecure", c.Bind)

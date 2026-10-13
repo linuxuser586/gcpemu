@@ -5,13 +5,23 @@ info:
   description: |
     The emulator's own control interface (SRS 7.3, FR-CORE-045), served on
     the gateway port under /_emu/v1/. It is the only interface not modelled
-    on a Google API. It is unauthenticated and not request-logged; bind the
-    gateway to loopback (the default) to keep it private.
+    on a Google API, and it is not request-logged.
+
+    On loopback (the default bind) it needs no credentials. When the
+    gateway is bound beyond loopback, every path except `health` and `ready`
+    needs the instance's admin token (FR-UI-009), sent in the
+    `X-Gcpemu-Admin-Token` header or in the `gcpemu_admin` cookie that the
+    console URL printed at startup sets; without it the answer is 401.
+    `gcpemu admin token` prints the token.
 
     Errors are `{"error": "message"}` unless noted; endpoints provided by a
     service module (cdn, ca) return Google's JSON error envelope.
 servers:
   - url: http://127.0.0.1:4510
+security:
+  - {}
+  - adminTokenHeader: []
+  - adminTokenCookie: []
 paths:
   /_emu/v1/openapi.yaml:
     get:
@@ -28,6 +38,7 @@ paths:
     get:
       summary: Liveness of the gateway.
       operationId: health
+      security: []
       responses:
         "200":
           description: The emulator is up.
@@ -43,6 +54,7 @@ paths:
     get:
       summary: Readiness per service (NFR-REL-003).
       operationId: ready
+      security: []
       responses:
         "200":
           description: Every enabled service is ready.
@@ -624,6 +636,17 @@ paths:
         "500":
           description: Rotation failed (Google JSON error envelope).
 components:
+  securitySchemes:
+    adminTokenHeader:
+      type: apiKey
+      in: header
+      name: X-Gcpemu-Admin-Token
+      description: The admin token; required only when the gateway is bound beyond loopback.
+    adminTokenCookie:
+      type: apiKey
+      in: cookie
+      name: gcpemu_admin
+      description: The admin token as set by opening the console URL printed at startup.
   responses:
     Status:
       description: The operation succeeded.

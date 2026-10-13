@@ -34,9 +34,9 @@ func (o *rootOpts) consoleCmd() *cobra.Command {
 			}
 			if !info.Console {
 				return fmt.Errorf("instance %q does not serve the Web console: it was started with --console=false, "+
-					"with CI=true and no --console, or with --bind beyond loopback", cfg.Instance)
+					"or with CI=true and no --console", cfg.Instance)
 			}
-			url := c.base + "/console/"
+			url := c.consoleURL()
 			fmt.Fprintln(cmd.OutOrStdout(), url)
 			if printOnly {
 				return nil

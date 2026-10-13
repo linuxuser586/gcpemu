@@ -20,7 +20,8 @@ export const admin = createClient<paths>({
   baseUrl: origin(),
   // Resolved per call: tests swap the global fetch after this module loads.
   fetch: (req) => globalThis.fetch(req),
-  credentials: 'omit',
+  // Beyond loopback the admin API needs the admin token cookie (FR-UI-009).
+  credentials: 'same-origin',
 })
 
 admin.use({
