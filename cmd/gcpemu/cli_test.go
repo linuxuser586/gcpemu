@@ -2,14 +2,13 @@ package main_test
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -23,6 +22,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	bin = filepath.Join(dir, "gcpemu")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		panic("go build: " + err.Error() + "\n" + string(out))
 	}
@@ -156,8 +158,8 @@ func TestCLILifecycle(t *testing.T) {
 	if out := must(t, nil, "stop", "--data-dir", dir); !strings.Contains(out, "stopped") {
 		t.Errorf("stop: %s", out)
 	}
-	if err := syscall.Kill(sj.Info.Pid, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("pid %d still exists after stop: %v", sj.Info.Pid, err)
+	if alive(sj.Info.Pid) {
+		t.Errorf("pid %d still exists after stop", sj.Info.Pid)
 	}
 	if _, err := gcpemu(t, nil, "status", "--data-dir", dir); err == nil {
 		t.Error("status succeeded after stop")
@@ -173,6 +175,9 @@ func TestSIGTERMShutdown(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the binary")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no SIGTERM")
+	}
 	dir := t.TempDir()
 	startDetached(t, dir)
 	var sj struct{ Info struct{ Pid int } }
@@ -180,10 +185,10 @@ func TestSIGTERMShutdown(t *testing.T) {
 		t.Fatalf("status --json: %v", err)
 	}
 	start := time.Now()
-	if err := syscall.Kill(sj.Info.Pid, syscall.SIGTERM); err != nil {
+	if err := sigterm(sj.Info.Pid); err != nil {
 		t.Fatal(err)
 	}
-	for syscall.Kill(sj.Info.Pid, 0) == nil {
+	for alive(sj.Info.Pid) {
 		if time.Since(start) > 30*time.Second {
 			t.Fatalf("still running 30 s after SIGTERM")
 		}
@@ -291,10 +296,10 @@ func TestSIGKILLDurability(t *testing.T) {
 	}
 	var sj struct{ Info struct{ Pid int } }
 	_ = json.Unmarshal([]byte(must(t, nil, "status", "--json", "--data-dir", dir)), &sj)
-	if err := syscall.Kill(sj.Info.Pid, syscall.SIGKILL); err != nil {
+	if err := kill(sj.Info.Pid); err != nil {
 		t.Fatal(err)
 	}
-	for syscall.Kill(sj.Info.Pid, 0) == nil {
+	for alive(sj.Info.Pid) {
 		time.Sleep(20 * time.Millisecond)
 	}
 

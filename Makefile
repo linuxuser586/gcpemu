@@ -72,10 +72,11 @@ release: console
 
 # The release builds with whatever console/dist holds (Node-free CI).
 cross:
-	@for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do \
-		os=$${p%/*}; arch=$${p#*/}; \
+	@for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 windows/arm64; do \
+		os=$${p%/*}; arch=$${p#*/}; ext=; \
+		[ $$os = windows ] && ext=.exe; \
 		echo "building $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o dist/gcpemu-$$os-$$arch ./cmd/gcpemu || exit 1; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o dist/gcpemu-$$os-$$arch$$ext ./cmd/gcpemu || exit 1; \
 	done
 
 # FR-CI-001/002: the setup-gcpemu GitHub Action; dist/ is committed (the
