@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -87,7 +88,8 @@ func TestAdminToken(t *testing.T) {
 		t.Fatalf("admin token %q is too short", tok)
 	}
 	path := filepath.Join(in.Dir, AdminTokenFile)
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows does not enforce file modes (ADR 0008).
+	if fi, err := os.Stat(path); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("token file: %v %v", fi, err)
 	}
 	if b, _ := os.ReadFile(path); string(b) != tok {
