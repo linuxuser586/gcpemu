@@ -21,15 +21,6 @@ import (
 // (sql#operation) with status PENDING → RUNNING → DONE and an error list.
 // Data-plane work for one instance is serialized by the instance lock.
 
-// lroLatency is the configured minimum operation duration ("sql", or
-// "sqladmin" as an alias).
-func (s *Service) lroLatency() time.Duration {
-	if _, ok := s.env.Config.LROLatency["sql"]; ok {
-		return s.env.Config.LRO("sql")
-	}
-	return s.env.Config.LRO("sqladmin")
-}
-
 // newOp returns a PENDING operation on an instance.
 func (s *Service) newOp(ctx context.Context, project, instance, opType string) *sqladmin.Operation {
 	h := s.env.IDs.Hex(16)
@@ -64,7 +55,7 @@ func (s *Service) saveOp(op *sqladmin.Operation) {
 // background.
 func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.Context) error) *sqladmin.Operation {
 	s.saveOp(op)
-	latency := s.lroLatency()
+	latency := s.env.Config.LRO("sql")
 	exec := func(ctx context.Context) *sqladmin.Operation {
 		mu := s.lock(op.TargetProject, op.TargetId)
 		defer mu.Unlock()

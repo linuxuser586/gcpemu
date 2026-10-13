@@ -18,11 +18,11 @@ import (
 // their operations, selfLinks and timestamps match this module's.
 
 // StartOperation records a compute Operation (global, "regions/R" or
-// "zones/Z" scope) whose work is fn, honouring the configured LRO latency
-// (FR-CORE-023). Validation should happen before; errors from fn are
-// reported in the operation.
-func (s *Service) StartOperation(ctx context.Context, project, scope, opType, target string, targetID uint64, fn func(ctx context.Context) error) (*computev1.Operation, error) {
-	return s.startOp(ctx, opSpec{project: project, scope: scope, opType: opType, target: relPath(target), targetID: targetID}, fn)
+// "zones/Z" scope) whose work is fn, honouring the LRO latency configured
+// for the Service ID service (FR-CORE-023). Validation should happen
+// before; errors from fn are reported in the operation.
+func (s *Service) StartOperation(ctx context.Context, service, project, scope, opType, target string, targetID uint64, fn func(ctx context.Context) error) (*computev1.Operation, error) {
+	return s.startOp(ctx, opSpec{service: service, project: project, scope: scope, opType: opType, target: relPath(target), targetID: targetID}, fn)
 }
 
 // SetAddressUsers records which resources use an address (status IN_USE

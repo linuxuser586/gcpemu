@@ -19,7 +19,7 @@ import (
 // Operation resource: status PENDING → RUNNING → DONE, an operationType,
 // selfLink/targetLink and an error status. Operations complete when their
 // data-plane work is done and at least the configured LRO latency
-// (--lro-latency container=…) has elapsed.
+// (--lro-latency gke=…, or container=… as an alias) has elapsed.
 
 // workFunc performs an operation's data-plane work.
 type workFunc func(ctx context.Context) error
@@ -74,7 +74,7 @@ func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, 
 		defer s.wg.Done()
 		defer cancel()
 		err := work(ctx)
-		if d := s.env.Config.LRO("container") - time.Since(start); d > 0 && err == nil {
+		if d := s.env.Config.LRO("gke") - time.Since(start); d > 0 && err == nil {
 			select {
 			case <-time.After(d):
 			case <-ctx.Done():

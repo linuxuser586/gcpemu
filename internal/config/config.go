@@ -192,9 +192,17 @@ func (c *Config) ParsePortRange() (lo, hi int, ok bool, err error) {
 	return lo, hi, true, nil
 }
 
-// LRO returns the configured LRO latency for service (FR-CORE-023).
+// lroAliases maps a Service ID to the API name that also keys its LRO
+// latency, so that configs written before the Service ID keys still work.
+var lroAliases = map[string]string{"gke": "container", "sql": "sqladmin"}
+
+// LRO returns the configured LRO latency for the Service ID service
+// (FR-CORE-023): its own key, else its API name alias, else "*".
 func (c *Config) LRO(service string) time.Duration {
 	v, ok := c.LROLatency[service]
+	if !ok {
+		v, ok = c.LROLatency[lroAliases[service]]
+	}
 	if !ok {
 		v = c.LROLatency["*"]
 	}

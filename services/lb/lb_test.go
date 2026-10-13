@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
@@ -1219,5 +1221,32 @@ func testHealthTransitions(t *testing.T, kind string) {
 		if got := served(); got["200 A"] == 0 || got["200 B"] == 0 {
 			t.Errorf("traffic after A recovered = %v, want both", got)
 		}
+	}
+}
+
+// TestOperationLatency is FR-CORE-023: load-balancer Operations take the
+// latency configured for "lb", independent of compute's.
+func TestOperationLatency(t *testing.T) {
+	insert := func(lro map[string]string) (bucket, network string) {
+		inst := emutest.Start(t, []string{"lb"}, func(c *config.Config) { maps.Copy(c.LROLatency, lro) })
+		c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := c.BackendBuckets.Insert(proj, &computev1.BackendBucket{Name: "b", BucketName: "x"}).Do()
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := c.Networks.Insert(proj, &computev1.Network{Name: "n", AutoCreateSubnetworks: true}).Do()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b.Status, n.Status
+	}
+	if b, n := insert(map[string]string{"lb": "1h"}); b != "RUNNING" || n != "DONE" {
+		t.Errorf("lb=1h: bucket %s, network %s", b, n)
+	}
+	if b, n := insert(map[string]string{"compute": "1h"}); b != "DONE" || n != "RUNNING" {
+		t.Errorf("compute=1h: bucket %s, network %s", b, n)
 	}
 }
