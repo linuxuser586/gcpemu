@@ -411,18 +411,24 @@ func TestClients(t *testing.T) {
 		// user, then automatic IAM authentication as the service account.
 		proxy := tool(t, "cloud-sql-proxy")
 		conn := project + ":us-central1:compat-pg"
-		withProxy := func(auth []string, fn func(port int)) {
+		withProxy := func(env, auth []string, fn func(port int)) {
 			t.Helper()
 			p := freePort(t)
 			args := append([]string{"--sqladmin-api-endpoint", "http://" + e.vars["GCPEMU_GATEWAY"] + "/", "--port", strconv.Itoa(p)}, auth...)
 			cmd := exec.Command(proxy, append(args, conn)...)
-			cmd.Env = e.env
+			cmd.Env = env
 			var log strings.Builder
 			cmd.Stdout, cmd.Stderr = &log, &log
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+			defer func() {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				if t.Failed() {
+					t.Logf("auth proxy log:\n%s", log.String())
+				}
+			}()
 			for i := 0; i < 50 && !strings.Contains(log.String(), "ready for new connections"); i++ {
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -431,7 +437,10 @@ func TestClients(t *testing.T) {
 			}
 			fn(p)
 		}
-		withProxy([]string{"--token", "owner"}, func(p int) {
+		// A static --token is in Google's universe, so the proxy refuses it
+		// under GOOGLE_CLOUD_UNIVERSE_DOMAIN, and --universe-domain cannot
+		// go with --sqladmin-api-endpoint: the README says to unset it.
+		withProxy(withEnv(e.env, nil, "GOOGLE_CLOUD_UNIVERSE_DOMAIN"), []string{"--token", "owner"}, func(p int) {
 			if got := psql(fmt.Sprintf("host=127.0.0.1 port=%d user=postgres dbname=appdb sslmode=disable", p), "rootpw", "select current_user"); got != "postgres" {
 				t.Fatalf("via the auth proxy: %q", got)
 			}
@@ -442,7 +451,7 @@ func TestClients(t *testing.T) {
 		// until rate limited.
 		key := filepath.Join(t.TempDir(), "db.json")
 		e.run(t, g, "iam", "service-accounts", "keys", "create", key, "--iam-account", sa)
-		withProxy([]string{"--credentials-file", key, "--auto-iam-authn"}, func(p int) {
+		withProxy(e.env, []string{"--credentials-file", key, "--auto-iam-authn"}, func(p int) {
 			user := strings.TrimSuffix(sa, ".gserviceaccount.com")
 			if got := psql(fmt.Sprintf("host=127.0.0.1 port=%d user=%s dbname=appdb sslmode=disable", p, user), "", "select current_user"); got != user {
 				t.Fatalf("IAM login via the auth proxy: %q", got)

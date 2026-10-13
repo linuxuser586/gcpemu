@@ -454,6 +454,11 @@ clients compare the key with Google's universe whatever the variable says:
 
 The metadata server stays in Google's universe, so ADC through it needs none of this.
 
+The Cloud SQL Auth Proxy v2 puts a static `--token` in Google's universe, so in a `gcpemu env`
+shell it refuses the token with a universe mismatch. Its `--universe-domain` cannot go with
+`--sqladmin-api-endpoint`, so run it with `GOOGLE_CLOUD_UNIVERSE_DOMAIN=` or with
+`--credentials-file` and an emulator key.
+
 ## Development
 
 ```sh
