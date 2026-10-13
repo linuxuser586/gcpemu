@@ -11,7 +11,9 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { cacheableImages, imagesKey, jobFailed, shouldUpload } from './lib.js'
+import { setTimeout as sleep } from 'node:timers/promises'
+
+import { cacheableImages, jobFailed, listJobsReason, retryDelay, shouldUpload, unknownNotice } from './lib.js'
 
 async function run() {
   const bin = core.getState('bin')
@@ -21,11 +23,11 @@ async function run() {
   const gateway = core.getState('gateway')
   const docker = core.getState('docker') === 'true'
 
-  const failed = core.getState('startFailed') === 'true' ? true : await currentJobFailed()
+  const { failed, reason } = core.getState('startFailed') === 'true' ? { failed: true } : await currentJobFailed()
   const containers = gateway ? ((await adminJSON(gateway, 'containers'))?.containers ?? []) : []
 
   if (shouldUpload(core.getInput('diagnostics') || 'failure', failed)) {
-    if (failed === null) core.notice('setup-gcpemu could not read this job\'s result (grant "actions: read" to the token); uploading diagnostics')
+    if (failed === null) core.notice(unknownNotice(reason))
     await step('upload diagnostics', () => uploadDiagnostics({ bin, instance, dataDir, gateway, containers, docker }))
   }
   if (failed === false && docker && core.getBooleanInput('cache') && core.getState('imagesKey') && core.getState('imagesHit') !== 'true') {
@@ -34,32 +36,48 @@ async function run() {
   await exec.exec(bin, ['stop', '--instance', instance, '--data-dir', dataDir], { ignoreReturnCode: true })
 }
 
-// currentJobFailed asks the API whether a step of this job failed: true,
-// false or null (unknown, e.g. without "actions: read").
+// currentJobFailed asks the API whether a step of this job failed:
+// { failed } with true or false, or { failed: null, reason } when the
+// result is unknown (see unknownNotice).
 async function currentJobFailed() {
   const { GITHUB_API_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, RUNNER_NAME } = process.env
-  if (!GITHUB_REPOSITORY || !GITHUB_RUN_ID || !RUNNER_NAME) return null
+  if (!GITHUB_REPOSITORY || !GITHUB_RUN_ID || !RUNNER_NAME) {
+    return { failed: null, reason: { cause: 'job', detail: 'GITHUB_REPOSITORY, GITHUB_RUN_ID or RUNNER_NAME is not set' } }
+  }
   const jobs = []
-  try {
-    for (let page = 1; page <= 10; page++) {
-      const url = `${GITHUB_API_URL || 'https://api.github.com'}/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT || 1}/jobs?per_page=100&page=${page}`
+  for (let page = 1; page <= 10; page++) {
+    const url = `${GITHUB_API_URL || 'https://api.github.com'}/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT || 1}/jobs?per_page=100&page=${page}`
+    const { body, reason } = await listJobs(url)
+    if (reason) return { failed: null, reason }
+    const got = body.jobs ?? []
+    jobs.push(...got)
+    if (jobs.length >= body.total_count || got.length === 0) break
+  }
+  const failed = jobFailed(jobs, RUNNER_NAME)
+  return failed === null ? { failed, reason: { cause: 'job' } } : { failed }
+}
+
+// listJobs fetches one page of the run's jobs, retrying transient
+// failures (retryDelay): { body } or { reason }.
+async function listJobs(url) {
+  for (let attempt = 1; ; attempt++) {
+    let status, error, retryAfter
+    try {
       const res = await fetch(url, {
         headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${core.getInput('token')}` },
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(10000),
       })
-      if (!res.ok) {
-        core.debug(`list jobs: HTTP ${res.status}`)
-        return null
-      }
-      const body = await res.json()
-      jobs.push(...body.jobs)
-      if (jobs.length >= body.total_count || body.jobs.length === 0) break
+      if (res.ok) return { body: await res.json() }
+      status = res.status
+      retryAfter = res.headers.get('retry-after')
+    } catch (e) {
+      error = e.message
     }
-  } catch (e) {
-    core.debug(`list jobs: ${e.message}`)
-    return null
+    core.debug(`list jobs (attempt ${attempt}): ${error || `HTTP ${status}`}`)
+    const delay = retryDelay(attempt, { status, error, retryAfter })
+    if (delay === null) return { reason: listJobsReason({ status, error, attempts: attempt }) }
+    await sleep(delay)
   }
-  return jobFailed(jobs, RUNNER_NAME)
 }
 
 async function uploadDiagnostics({ bin, instance, dataDir, gateway, containers, docker }) {

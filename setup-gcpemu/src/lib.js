@@ -78,6 +78,59 @@ export function jobFailed(jobs, runnerName) {
   return (mine[0].steps || []).some((s) => s.conclusion === 'failure')
 }
 
+// listJobsAttempts is how many times the post step tries each request
+// listing the run's jobs.
+export const listJobsAttempts = 3
+
+// maxRetryAfter bounds a Retry-After wait; a longer one ends the retries,
+// so the post step stays near listJobsAttempts request timeouts.
+const maxRetryAfter = 10000
+
+// retryDelay returns how many milliseconds to wait before retrying a jobs
+// listing after its attempt-th try failed with an HTTP status or a thrown
+// error (network error, timeout), or null to give up. 5xx, 429 and errors
+// are retried with 1 s then 2 s backoff, or after Retry-After when given;
+// other statuses (401/403/404) are not.
+export function retryDelay(attempt, { status, error, retryAfter } = {}, now = Date.now()) {
+  if (attempt >= listJobsAttempts) return null
+  if (!error && status !== 429 && !(status >= 500 && status <= 599)) return null
+  const after = retryAfterMs(retryAfter, now)
+  if (after === null) return 1000 * 2 ** (attempt - 1)
+  return after <= maxRetryAfter ? after : null
+}
+
+// retryAfterMs parses a Retry-After header (seconds or an HTTP date).
+function retryAfterMs(v, now) {
+  v = (v ?? '').trim()
+  if (v === '') return null
+  if (/^\d+$/.test(v)) return Number(v) * 1000
+  const t = Date.parse(v)
+  return Number.isNaN(t) ? null : Math.max(0, t - now)
+}
+
+// listJobsReason classifies why listing the run's jobs failed for good:
+// "access" for 401/403/404 (a private repository without access gives
+// 404), else "api" with the status or error and the attempts made.
+export function listJobsReason({ status, error, attempts }) {
+  if (!error && [401, 403, 404].includes(status)) return { cause: 'access', detail: `HTTP ${status}` }
+  const what = error || `HTTP ${status}`
+  return { cause: 'api', detail: `${what} after ${attempts} attempt${attempts === 1 ? '' : 's'}` }
+}
+
+// unknownNotice is the notice for a job result that could not be read,
+// by the reason's cause: "access", "api" or "job" (this job is not among
+// the run's jobs, or the runner's variables are missing).
+export function unknownNotice({ cause, detail }) {
+  switch (cause) {
+    case 'access':
+      return `setup-gcpemu could not read this job's result (${detail}: grant "actions: read" to the token); uploading diagnostics`
+    case 'api':
+      return `setup-gcpemu could not read this job's result (${detail}); uploading diagnostics`
+    default:
+      return `setup-gcpemu could not identify this job among the run's jobs${detail ? ` (${detail})` : ''}; uploading diagnostics`
+  }
+}
+
 // shouldUpload decides on the diagnostics artifact; an unknown job result
 // uploads, since diagnostics of a failure matter more than a stray artifact.
 export function shouldUpload(mode, failed) {
