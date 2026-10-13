@@ -10,9 +10,9 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,12 +58,23 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				fmt.Fprintln(out, "       note: GKE is Linux-only in v1.0 (NFR-PORT-003)")
 			}
 
-			rt := detectRuntime()
-			report(rt != "", "container runtime "+orNone(rt),
-				"install Docker Engine >= 24, Podman >= 4.9 or containerd >= 1.7 (needed only for GKE and Cloud SQL)")
+			cl, det, rtErr := emuruntime.Locate()
+			if rtErr != nil {
+				fix := "install Docker Engine >= 24, Docker Desktop, OrbStack, Colima or Podman >= 4.9 (needed only for GKE, Cloud SQL and Cloud NAT)"
+				if det.Source != "" {
+					fix = "start that runtime, or choose a running one (unset DOCKER_HOST or DOCKER_CONTEXT, or `docker context use`)"
+				}
+				report(false, "container runtime: "+rtErr.Error(), fix)
+			} else {
+				report(true, fmt.Sprintf("container runtime %s (chosen by %s)", det.Endpoint, det.Source), "")
+			}
+			if others := slices.DeleteFunc(slices.Clone(det.Found), func(s string) bool { return "unix://"+s == det.Endpoint }); len(others) > 0 {
+				fmt.Fprintf(out, "       also found: %s\n", strings.Join(others, ", "))
+			}
+			hasRuntime := rtErr == nil
 
-			if rt != "" {
-				checkVMRelay(cmd.Context(), out)
+			if hasRuntime {
+				checkVMRelay(cmd.Context(), out, cl)
 			}
 
 			_, running := readEndpoints(cfg)
@@ -98,7 +109,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLBBind(out, report, cfg, running == nil, rt != "")
+			checkLBBind(out, report, cfg, running == nil, hasRuntime)
 
 			dir := cfg.InstanceDir()
 			if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -129,12 +140,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 // checkVMRelay prints whether an Instance started now uses the VM relay
 // (ADR 0005), and why. Its services network does not exist before it
 // starts, so the runtime's default bridge network stands in for it.
-func checkVMRelay(ctx context.Context, out io.Writer) {
-	cl, err := emuruntime.Detect()
-	if err != nil {
-		fmt.Fprintf(out, "[--  ] VM relay: undetermined (%v)\n", err)
-		return
-	}
+func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	gw := ""
@@ -296,36 +302,4 @@ func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.C
 				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")
 		}
 	}
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "(none found)"
-	}
-	return s
-}
-
-// detectRuntime finds a usable container runtime CLI or socket.
-func detectRuntime() string {
-	for _, sock := range []string{os.Getenv("DOCKER_HOST"), "/var/run/docker.sock", "/run/podman/podman.sock", "/run/containerd/containerd.sock"} {
-		if sock == "" {
-			continue
-		}
-		if fi, err := os.Stat(trimUnix(sock)); err == nil && fi.Mode()&os.ModeSocket != 0 {
-			return sock
-		}
-	}
-	for _, bin := range []string{"docker", "podman", "nerdctl"} {
-		if p, err := exec.LookPath(bin); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
-func trimUnix(s string) string {
-	if len(s) > 7 && s[:7] == "unix://" {
-		return s[7:]
-	}
-	return s
 }
