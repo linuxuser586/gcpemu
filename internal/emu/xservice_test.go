@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,11 @@ func TestAliasScript(t *testing.T) {
 // TestPublicRoutesScript: the script keeps exactly the wanted public
 // routes among those it tagged, leaving other routes alone (#187).
 func TestPublicRoutesScript(t *testing.T) {
+	// The script runs only for the Runtime Services, which native Windows
+	// does not run (ADR 0008).
+	if runtime.GOOS == "windows" {
+		t.Skip("host routes are not programmed on Windows")
+	}
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
