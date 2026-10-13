@@ -20,6 +20,7 @@ require (
 	github.com/google/go-containerregistry v0.21.5
 	github.com/googleapis/gax-go/v2 v2.26.2
 	github.com/hamba/avro/v2 v2.31.0
+	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/miekg/dns v1.1.58
 	github.com/spf13/cobra v1.10.2

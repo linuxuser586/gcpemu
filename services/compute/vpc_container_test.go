@@ -220,6 +220,7 @@ func testEgressThroughNAT(t *testing.T, rng string, overlapped bool) {
 	natRouter(t, c)
 	eventually(t, "egress with NAT", func() (bool, string) { out := fetch(t, rt, id); return connected(out), out })
 	natLogged(t, inst, "OK")
+	emutest.RequireRelayStream(t, inst, "NAT events", "gateway")
 
 	// Port reporting (FR-NAT-003).
 	m, err := c.Routers.GetNatMappingInfo(proj, "us-central1", "router").Do()

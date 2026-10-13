@@ -3,7 +3,9 @@
 // an internal "services" network on which the emulator's own endpoints
 // (gateway, metadata, DNS, registry, ...) are reachable at the network's
 // gateway address through forwarders, and optionally to an "external"
-// network that provides internet egress (public IPs).
+// network that provides internet egress (public IPs). On a VM runtime the
+// VM relay (ADR 0005) listens for those endpoints instead, and carries the
+// emulator's dials to container addresses (DialContext).
 package netplane
 
 import (
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
 
 // Net describes a container network.
@@ -42,36 +45,111 @@ type Plane struct {
 	ext    *Net
 	fwd    map[string]*forwarder // endpoint name → forwarder on svc gateway
 	closed bool
+	// decision is made with the services network (vmrelay.Decide).
+	decision *vmrelay.Decision
+	relay    *vmrelay.Relay
+	// relayed maps endpoint names to the addresses the relay listens on
+	// for them, which a restarted relay listens on again.
+	relayed map[string]string
 }
 
 // New returns a plane. endpoints returns the current host endpoint map
 // (name → host:port), as recorded by emu.Endpoints.
 func New(rt *runtime.Manager, endpoints func() map[string]string, log *slog.Logger) *Plane {
-	return &Plane{rt: rt, endpoints: endpoints, log: log, fwd: map[string]*forwarder{}}
+	return &Plane{rt: rt, endpoints: endpoints, log: log, fwd: map[string]*forwarder{}, relayed: map[string]string{}}
 }
 
 // Runtime returns the runtime manager.
 func (p *Plane) Runtime() *runtime.Manager { return p.rt }
 
-// Services returns the internal services network, creating it on first use.
+// Services returns the internal services network, creating it on first
+// use, and starts the VM relay if the Instance uses one.
 func (p *Plane) Services(ctx context.Context) (Net, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.svc != nil {
-		return *p.svc, nil
+	return p.servicesLocked(ctx)
+}
+
+func (p *Plane) servicesLocked(ctx context.Context) (Net, error) {
+	if p.svc == nil {
+		n, err := p.ensure(ctx, "svc", true)
+		if err != nil {
+			return Net{}, err
+		}
+		p.svc = &n
 	}
-	n, err := p.ensure(ctx, "svc", true)
+	if p.decision == nil {
+		d := vmrelay.Decide(p.rt.Self() != "", p.svc.Gateway)
+		p.decision = &d
+		p.log.Info("VM relay "+d.String(), "gateway", p.svc.Gateway)
+	}
+	if p.decision.On && p.relay == nil {
+		if err := p.startRelayLocked(ctx); err != nil {
+			return Net{}, err
+		}
+	}
+	return *p.svc, nil
+}
+
+// startRelayLocked starts the relay and has it listen again for the
+// endpoints a previous relay listened for, on the same addresses: it
+// takes the same address on the services network.
+func (p *Plane) startRelayLocked(ctx context.Context) error {
+	if p.closed {
+		return errors.New("netplane closed")
+	}
+	ext, err := p.externalLocked(ctx)
 	if err != nil {
-		return Net{}, err
+		return err
 	}
-	p.svc = &n
-	return n, nil
+	r, err := vmrelay.Start(ctx, p.rt, vmrelay.Options{
+		Services: p.svc.Name, External: ext.Name, Log: p.log,
+		Target: func(name string) string { return p.endpoints()[name] },
+	})
+	if err != nil {
+		return err
+	}
+	for name, addr := range p.relayed {
+		got, err := r.Listen(ctx, name, addr, name == "dns")
+		if err != nil {
+			_ = r.Close(context.Background())
+			return fmt.Errorf("VM relay: listen for %s: %w", name, err)
+		}
+		if got != addr {
+			p.log.Warn("VM relay: endpoint moved after a relay restart", "endpoint", name, "was", addr, "now", got)
+			p.relayed[name] = got
+		}
+	}
+	p.relay = r
+	return nil
+}
+
+// Relay returns the running VM relay, or nil.
+func (p *Plane) Relay() *vmrelay.Relay {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.relay
+}
+
+// RelayDecision reports whether the Instance uses the VM relay, once the
+// services network exists.
+func (p *Plane) RelayDecision() (vmrelay.Decision, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.decision == nil {
+		return vmrelay.Decision{}, false
+	}
+	return *p.decision, true
 }
 
 // External returns the external (egress-capable) network, creating it on first use.
 func (p *Plane) External(ctx context.Context) (Net, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.externalLocked(ctx)
+}
+
+func (p *Plane) externalLocked(ctx context.Context) (Net, error) {
 	if p.ext != nil {
 		return *p.ext, nil
 	}
@@ -108,26 +186,38 @@ func (p *Plane) ensure(ctx context.Context, suffix string, internal bool) (Net, 
 
 // Addr returns the address at which containers on the services network
 // reach the named emulator endpoint ("gateway", "metadata", "dns", "ar",
-// ...), starting a forwarder on the services gateway if needed. The port is
-// the same as the host endpoint's when it is free.
+// ...), starting a forwarder on the services gateway, or having the VM
+// relay listen, if needed. The port is the same as the host endpoint's
+// when it is free.
 func (p *Plane) Addr(ctx context.Context, name string) (string, error) {
-	svc, err := p.Services(ctx)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	svc, err := p.servicesLocked(ctx)
 	if err != nil {
 		return "", err
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed {
 		return "", errors.New("netplane closed")
 	}
 	if f, ok := p.fwd[name]; ok {
 		return f.addr, nil
 	}
+	if a, ok := p.relayed[name]; ok && p.relay != nil {
+		return a, nil
+	}
 	target := p.endpoints()[name]
 	if target == "" {
 		return "", fmt.Errorf("endpoint %q is not running", name)
 	}
 	host, port, _ := net.SplitHostPort(target)
+	if p.relay != nil {
+		a, err := p.relay.Listen(ctx, name, net.JoinHostPort(p.relay.IP(), port), name == "dns")
+		if err != nil {
+			return "", fmt.Errorf("VM relay: listen for %s: %w", name, err)
+		}
+		p.relayed[name] = a
+		return a, nil
+	}
 	ip := svc.Gateway
 	// Inside a container (ADR 0003) the emulator is on the services
 	// network itself: an endpoint bound to every interface is reachable
@@ -148,15 +238,60 @@ func (p *Plane) Addr(ctx context.Context, name string) (string, error) {
 	return f.addr, nil
 }
 
-// Close stops all forwarders. Networks are left to runtime cleanup.
+// DialContext is the ContainerDialer: it connects to an address on one of
+// the Instance's container networks, through the VM relay when there is
+// one and directly otherwise. Addresses elsewhere are always dialed
+// directly.
+func (p *Plane) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	p.mu.Lock()
+	r := p.relay
+	restart := r == nil && p.decision != nil && p.decision.On && !p.closed
+	p.mu.Unlock()
+	if restart { // after Reset
+		if _, err := p.Services(ctx); err != nil {
+			return nil, err
+		}
+		r = p.Relay()
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil && r != nil && r.Covers(host) {
+		return r.DialContext(ctx, network, addr)
+	}
+	d := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return d.DialContext(ctx, network, addr)
+}
+
+// Reset removes the VM relay; the next use of the plane starts a new one,
+// which listens for the same endpoints on the same addresses.
+func (p *Plane) Reset(ctx context.Context) error {
+	p.mu.Lock()
+	r := p.relay
+	p.relay = nil
+	p.mu.Unlock()
+	if r == nil {
+		return nil
+	}
+	return r.Close(ctx)
+}
+
+// Close stops all forwarders and removes the VM relay. Networks are left
+// to runtime cleanup.
 func (p *Plane) Close() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closed = true
 	for _, f := range p.fwd {
 		f.close()
 	}
 	p.fwd = map[string]*forwarder{}
+	r := p.relay
+	p.relay = nil
+	p.mu.Unlock()
+	if r != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := r.Close(ctx); err != nil {
+			p.log.Warn("removing the VM relay", "err", err)
+		}
+	}
 }
 
 // forwarder relays TCP (and optionally UDP) from a services-network
@@ -207,13 +342,18 @@ func (f *forwarder) serveTCP() {
 				return
 			}
 			defer u.Close()
-			done := make(chan struct{}, 2)
-			go func() { _, _ = io.Copy(u, c); closeWrite(u); done <- struct{}{} }()
-			go func() { _, _ = io.Copy(c, u); closeWrite(c); done <- struct{}{} }()
-			<-done
-			<-done
+			splice(c, u)
 		}()
 	}
+}
+
+// splice copies both ways until both directions end.
+func splice(a, b net.Conn) {
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(b, a); closeWrite(b); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(a, b); closeWrite(a); done <- struct{}{} }()
+	<-done
+	<-done
 }
 
 func closeWrite(c net.Conn) {
@@ -258,6 +398,63 @@ func (f *forwarder) close() {
 		f.udp.Close()
 	}
 	f.wg.Wait()
+}
+
+// Exposed is a host port that Expose serves.
+type Exposed struct {
+	l  net.Listener
+	wg sync.WaitGroup
+}
+
+// Expose binds addr, a loopback ip:port on the host, or a free port on the
+// same IP when addr is taken and fallback is set, and pipes each
+// connection it accepts to target, a container address, through
+// DialContext. On a VM runtime this is how host clients reach a container
+// port that appears while the Instance runs, which the runtime cannot
+// publish then.
+func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil && fallback {
+		host, _, _ := net.SplitHostPort(addr)
+		l, err = net.Listen("tcp", net.JoinHostPort(host, "0"))
+	}
+	if err != nil {
+		return nil, err
+	}
+	e := &Exposed{l: l}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				u, err := p.DialContext(ctx, "tcp", target)
+				cancel()
+				if err != nil {
+					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "target", target, "err", err)
+					return
+				}
+				defer u.Close()
+				splice(c, u)
+			}()
+		}
+	}()
+	return e, nil
+}
+
+// Addr is the host address bound.
+func (e *Exposed) Addr() string { return e.l.Addr().String() }
+
+// Close stops accepting connections; open ones run on.
+func (e *Exposed) Close() error {
+	err := e.l.Close()
+	e.wg.Wait()
+	return err
 }
 
 // HostPort splits "ip:port" into its parts with a numeric port.

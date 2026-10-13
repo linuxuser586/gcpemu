@@ -52,6 +52,10 @@ type Client struct {
 	Endpoint string
 	// self is the emulator's own container (self.go).
 	self string
+	// member joins every network like self (SetMember).
+	memberMu sync.Mutex
+	member   string
+	joined   func(Network, bool)
 }
 
 // Info describes the connected runtime.
@@ -308,7 +312,8 @@ type Network struct {
 }
 
 // CreateNetwork creates a bridge network and returns its ID. Inside a
-// container the emulator joins it (AttachSelf).
+// container the emulator joins it (AttachSelf), and so does the member
+// container (SetMember).
 func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, error) {
 	id, err := c.createNetwork(ctx, s)
 	if err != nil {
@@ -316,6 +321,9 @@ func (c *Client) CreateNetwork(ctx context.Context, s NetworkSpec) (string, erro
 	}
 	if err := c.AttachSelf(ctx, s.Name); err != nil {
 		return id, fmt.Errorf("connect the emulator to network %s: %w", s.Name, err)
+	}
+	if err := c.AttachMember(ctx, s.Name, false); err != nil {
+		return id, fmt.Errorf("connect the VM relay to network %s: %w", s.Name, err)
 	}
 	return id, nil
 }
@@ -568,6 +576,15 @@ func (c *Client) ListNetworks(ctx context.Context, labels map[string]string) ([]
 func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
 	if c.self != "" {
 		_ = c.Disconnect(ctx, name, c.self)
+	}
+	c.memberMu.Lock()
+	member, joined := c.member, c.joined
+	c.memberMu.Unlock()
+	if member != "" {
+		if n, err := c.InspectNetwork(ctx, name); err == nil {
+			_ = c.Disconnect(ctx, name, member)
+			joined(n, false)
+		}
 	}
 	err := c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(name), nil, nil, nil)
 	if errors.Is(err, ErrNotFound) {

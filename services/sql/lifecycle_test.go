@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/services/sql/proxy"
 )
 
 // publicIP returns the instance's PRIMARY address.
@@ -68,6 +70,7 @@ func TestInstanceLifecycle(t *testing.T) {
 		t.Logf("insert → RUNNABLE took %v (NFR-PERF-002 target ≤ 10s)", d)
 	}
 	t.Logf("insert → RUNNABLE in %v", time.Since(start))
+	emutest.RequireRelayStream(t, inst, "the readiness probe", ":"+strconv.Itoa(proxy.PublicPort))
 	ip := publicIP(in)
 	if ip == "" || in.ConnectionName != testProject+":us-central1:life" || in.ServerCaCert == nil {
 		t.Fatalf("instance = %+v", in)

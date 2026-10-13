@@ -284,4 +284,8 @@ type Containers interface {
 	Runtime(ctx context.Context) (*runtime.Manager, error)
 	// Netplane returns the instance's services/external network manager.
 	Netplane(ctx context.Context) (*netplane.Plane, error)
+	// DialContext is the ContainerDialer (netplane.Plane.DialContext). It
+	// dials directly until a service has used the netplane, since no
+	// container can be running before then.
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 }
