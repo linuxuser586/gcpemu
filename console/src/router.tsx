@@ -66,6 +66,7 @@ import { Traffic } from '@/features/lb/Traffic'
 import {
   customRoleQuery,
   customRolesQuery,
+  denialsQuery,
   keysQuery,
   permissionsQuery,
   policyQuery,
@@ -74,6 +75,7 @@ import {
   serviceAccountQuery,
   serviceAccountsQuery,
 } from '@/features/iam/api'
+import { Audit } from '@/features/iam/Audit'
 import { IamLayout } from '@/features/iam/IamLayout'
 import { Policies } from '@/features/iam/Policies'
 import { CreateRole, EditRole } from '@/features/iam/RoleForm'
@@ -342,6 +344,11 @@ function iamRoutes(queryClient: QueryClient): RouteObject[] {
         const project = projectOf(request)
         return project ? warm(queryClient.ensureQueryData(permissionsQuery(project))) : null
       },
+    },
+    {
+      path: 'audit',
+      element: <Audit />,
+      loader: ({ request }) => warm(queryClient.ensureQueryData(denialsQuery(projectOf(request)))),
     },
   ]
 }

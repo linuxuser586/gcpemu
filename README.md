@@ -100,7 +100,13 @@ repository, secret, subnetwork or TLS policy through that resource's own `setIam
 the etag it read. Its policy simulator gets a token for the chosen Principal from the OAuth2
 refresh token grant (the emulator takes `user:EMAIL` or `serviceAccount:EMAIL` as the refresh
 token), calls the resource's `testIamPermissions` with it and revokes it. The IAM enforcement
-level is switched with `PUT /_emu/v1/iam/enforcement` until the Instance stops.
+level is switched with `PUT /_emu/v1/iam/enforcement` until the Instance stops. Its audit view
+(`/console/iam/audit`, filtered by `?q=` and `?status=missing|granted`) lists
+`GET /_emu/v1/iam/denials`: every call IAM found the caller lacking a permission for, once per
+Principal, permission and resource, with the smallest predefined role that grants it and the
+Project owning the resource. Grant binds that role on that Project through its `setIamPolicy`.
+The log lives in memory until the Instance stops or is reset; `DELETE /_emu/v1/iam/denials`
+clears it.
 
 ### Endpoints
 

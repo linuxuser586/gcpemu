@@ -58,3 +58,23 @@ func TestRoleHas(t *testing.T) {
 		}
 	}
 }
+
+// TestSmallestRole: the IAM audit view's advice (FR-UI-014) is the
+// predefined role with the fewest permissions that grants one, preferring
+// any to a basic or bucket-only legacy role.
+func TestSmallestRole(t *testing.T) {
+	c := builtin()
+	for perm, want := range map[string]string{
+		"pubsub.topics.publish":                 "roles/pubsub.publisher",
+		"secretmanager.versions.access":         "roles/secretmanager.secretAccessor",
+		"storage.objects.get":                   "roles/storage.objectViewer",
+		"iam.serviceAccounts.actAs":             "roles/iam.serviceAccountUser",
+		"resourcemanager.projects.getIamPolicy": "roles/browser",
+		"resourcemanager.projects.delete":       "roles/owner",
+		"unknown.thing.do":                      "roles/editor",
+	} {
+		if got := c.smallestRole(perm); got == nil || got.Name != want {
+			t.Errorf("smallestRole(%s) = %v, want %s", perm, got, want)
+		}
+	}
+}

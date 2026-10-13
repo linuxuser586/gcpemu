@@ -93,6 +93,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/iam/denials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Calls the audit IAM enforcement level would deny, most recently denied first (FR-UI-014).
+         * @description Every call IAM found the caller lacking a permission for since the Instance started or was reset, whether it was allowed (audit) or failed (enforce). Calls by one Principal for one permission on one resource are one IamDenial. Each carries the smallest predefined role granting the permission, the Project whose policy a binding of that role belongs in, and whether the Principal now holds the permission. The `iamDenial` events of /_emu/v1/events report new denied calls.
+         */
+        get: operations["iamDenials"];
+        put?: never;
+        post?: never;
+        /** Forget every IAM denial (Web console IAM audit view). */
+        delete: operations["clearIamDenials"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/endpoints": {
         parameters: {
             query?: never;
@@ -186,7 +207,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Server-sent stream of resource changes, Operation progress and Request log entries (FR-UI-006).
+         * Server-sent stream of resource changes, Operation progress, Request log entries and IAM denials (FR-UI-006).
          * @description A `text/event-stream` that stays open. Each event has an `id`, an
          *     `event` type and one line of JSON `data`:
          *
@@ -196,6 +217,9 @@ export interface paths {
          *       Service (including Cloud DNS changes) is created, progresses,
          *       completes or is deleted.
          *     - `request`: a RequestEntry, sent for every Request log entry.
+         *     - `iamDenial`: an IamDenial without its role, Project and granted
+         *       fields, sent for every call the audit IAM enforcement level
+         *       would deny.
          *     - `reset`: `{}`; all state was replaced (`gcpemu reset`). Refetch
          *       everything.
          *     - `gap`: `{}`; only sent first on a resumed stream whose missed
@@ -555,6 +579,38 @@ export interface components {
         IamEnforcement: {
             /** @enum {string} */
             level: "off" | "audit" | "enforce";
+        };
+        IamDenial: {
+            /** @description Stable for the Principal */
+            id: string;
+            /** @description The caller, e.g. serviceAccount:EMAIL. */
+            principal: string;
+            /** @description The permission the caller lacked. */
+            permission: string;
+            /** @description The full resource name the permission was checked on. */
+            resource: string;
+            /** @description The Service ID of the latest denied call. */
+            service?: string;
+            /** @description The latest denied call's method */
+            method?: string;
+            /**
+             * @description The IAM enforcement level of the latest denied call; under enforce it failed with PERMISSION_DENIED.
+             * @enum {string}
+             */
+            level: "audit" | "enforce";
+            /** @description How many calls were denied. */
+            count: number;
+            /** Format: date-time */
+            firstTime: string;
+            /** Format: date-time */
+            lastTime: string;
+            /** @description The smallest predefined role granting the permission, e.g. roles/storage.objectViewer. */
+            role?: string;
+            roleTitle?: string;
+            /** @description The ID of the Project owning the resource */
+            project?: string;
+            /** @description The Principal now holds the permission on the resource. */
+            granted: boolean;
         };
         Info: {
             instance: string;
@@ -1075,6 +1131,43 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+        };
+    };
+    iamDenials: {
+        parameters: {
+            query?: {
+                /** @description Only denials of resources in this Project. */
+                project?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The denials. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        denials: components["schemas"]["IamDenial"][];
+                    };
+                };
+            };
+        };
+    };
+    clearIamDenials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
         };
     };
     endpoints: {

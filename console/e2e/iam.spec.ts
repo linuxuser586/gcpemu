@@ -182,3 +182,80 @@ test('IAM: a custom role’s lifecycle and the IAM enforcement level', async ({
   }
   await expect(page.getByText('IAM enforcement level is now audit.')).toBeVisible()
 })
+
+test('IAM: the audit view lists denied calls and grants the smallest role', async ({
+  page,
+  request,
+  browserName,
+}, testInfo) => {
+  const id = projectId(`e2e-iama${testInfo.retry}`, browserName)
+  const who = `user:auditee-${browserName}-${testInfo.retry}@example.com`
+  expect((await request.put(`/pubsub/v1/projects/${id}/topics/orders`, { data: {} })).ok()).toBe(
+    true,
+  )
+  const token = await request.post('/oauth2/token', {
+    form: { grant_type: 'refresh_token', refresh_token: who },
+  })
+  const { access_token } = (await token.json()) as { access_token: string }
+  const as = { Authorization: `Bearer ${access_token}` }
+
+  // denied makes a call as the Principal until the Instance logs it denied:
+  // another test turns IAM off for a moment, and then nothing is checked.
+  const denied = (permission: string, call: () => Promise<unknown>) =>
+    expect
+      .poll(async () => {
+        await call()
+        const res = await request.get(`/_emu/v1/iam/denials?project=${id}`)
+        const { denials } = (await res.json()) as { denials: { permission: string }[] }
+        return denials.some((d) => d.permission === permission)
+      })
+      .toBe(true)
+
+  await denied('pubsub.topics.publish', () =>
+    request.post(`/pubsub/v1/projects/${id}/topics/orders:publish`, {
+      headers: as,
+      data: { messages: [{ data: btoa('hi') }] },
+    }),
+  )
+
+  await page.goto(`/console/iam/audit?project=${id}`)
+  await expect(page.getByRole('heading', { name: 'IAM audit' })).toBeVisible()
+  const publish = page.getByTestId('denial').filter({ hasText: 'pubsub.topics.publish' })
+  await expect(publish).toContainText(who)
+  await expect(publish).toContainText(`//pubsub.googleapis.com/projects/${id}/topics/orders`)
+  await expect(publish).toContainText(':publish')
+  await expect(publish.getByRole('link', { name: /roles\/pubsub\.publisher/ })).toBeVisible()
+
+  // A later denied call appears without a reload, through the event stream.
+  await denied('pubsub.topics.get', () =>
+    request.get(`/pubsub/v1/projects/${id}/topics/orders`, { headers: as }),
+  )
+  const get = page.getByTestId('denial').filter({ hasText: 'pubsub.topics.get' })
+  await expect(get).toBeVisible()
+  await expect(get).toContainText('roles/pubsub.viewer')
+
+  // Filtering keeps the matching calls, in the URL.
+  await page.getByRole('searchbox', { name: 'Filter' }).fill('publish')
+  await expect(page.getByTestId('denial')).toHaveCount(1)
+  await expect(page).toHaveURL(/q=publish/)
+  await page.getByRole('searchbox', { name: 'Filter' }).fill('')
+
+  // One click grants the role on the Project, and the call is granted.
+  await publish
+    .getByRole('button', { name: `Grant roles/pubsub.publisher to ${who} on Project ${id}` })
+    .click()
+  await expect(
+    page.getByText(`Granted roles/pubsub.publisher to ${who} on Project ${id}.`),
+  ).toBeVisible()
+  await expect(publish).toContainText('Granted')
+  await expect(get.getByRole('button', { name: /^Grant/ })).toBeVisible()
+  await page.getByLabel('Status').selectOption('missing')
+  await expect(page.getByTestId('denial')).toHaveCount(1)
+  await expect(page.getByTestId('denial')).toContainText('pubsub.topics.get')
+
+  // The Project's policy holds the binding.
+  await get.getByRole('link', { name: `Policy of ${id}` }).click()
+  await expect(
+    page.getByTestId('binding').filter({ hasText: 'roles/pubsub.publisher' }),
+  ).toContainText(who)
+})

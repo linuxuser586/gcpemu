@@ -75,6 +75,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
 			start := time.Now()
 			ctx, ci := emu.WithCallInfo(ctx)
+			ci.SetCall(owner(info.FullMethod), info.FullMethod)
 			ctx, err = g.authGRPC(ctx)
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
@@ -101,6 +102,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
 			start := time.Now()
 			ctx, ci := emu.WithCallInfo(ss.Context())
+			ci.SetCall(owner(info.FullMethod), info.FullMethod)
 			ctx, err := g.authGRPC(ctx)
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
@@ -320,6 +322,7 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		ctx, ci := emu.WithCallInfo(r.Context())
+		ci.SetCall(service, r.Method+" "+r.URL.Path)
 		r = r.WithContext(ctx)
 		p, err := g.principal(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {

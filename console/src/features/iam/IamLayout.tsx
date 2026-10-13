@@ -39,6 +39,7 @@ const SECTIONS = [
   ['/iam/serviceAccounts', 'Service accounts'],
   ['/iam/roles', 'Roles'],
   ['/iam/simulator', 'Policy simulator'],
+  ['/iam/audit', 'Audit'],
 ] as const
 
 /** section is the IAM section a console path belongs to. */
@@ -47,6 +48,7 @@ function section(pathname: string): string {
   if (/^\/(serviceAccounts|create-service-account)(\/|$)/.test(rest)) return '/iam/serviceAccounts'
   if (/^\/(roles|customRoles|create-role)(\/|$)/.test(rest)) return '/iam/roles'
   if (/^\/simulator(\/|$)/.test(rest)) return '/iam/simulator'
+  if (/^\/audit(\/|$)/.test(rest)) return '/iam/audit'
   return '/iam'
 }
 

@@ -8,11 +8,12 @@ import { gcpFetch, origin, send } from '@/api/fetch'
 // The IAM view's reads and writes: service accounts, keys and roles
 // through iam/v1 REST, policies through each resource's own API, the
 // policy simulator through the OAuth2 token endpoint and
-// testIamPermissions, and the IAM enforcement level through the admin
-// API. Types cover the fields the view reads; the raw JSON editors cover
-// the rest.
+// testIamPermissions, and the IAM enforcement level and the audit view's
+// denials through the admin API. Types cover the fields the view reads;
+// the raw JSON editors cover the rest.
 
 export type EnforcementLevel = components['schemas']['IamEnforcement']['level']
+export type Denial = components['schemas']['IamDenial']
 
 export interface ServiceAccount {
   name: string
@@ -105,6 +106,52 @@ export const PRINCIPAL = /^(user|serviceAccount):[^\s@]+@[^\s@]+$/
 
 export const setEnforcement = (level: EnforcementLevel) =>
   unwrap(admin.PUT('/_emu/v1/iam/enforcement', { body: { level } }))
+
+// ---- the IAM audit view (admin API) ----
+
+/**
+ * denialsQuery lists the calls the audit IAM enforcement level would deny,
+ * most recently denied first, or those of one Project. `iamDenial` events
+ * keep it fresh, and policy changes (iam resource events) refresh whether
+ * each is granted.
+ */
+export const denialsQuery = (project = '') =>
+  queryOptions({
+    queryKey: ['iam', 'denials', project],
+    queryFn: async (): Promise<Denial[]> =>
+      (
+        await unwrap(
+          admin.GET('/_emu/v1/iam/denials', { params: { query: project ? { project } : {} } }),
+        )
+      ).denials,
+  })
+
+export const clearDenials = () => unwrap(admin.DELETE('/_emu/v1/iam/denials'))
+
+/**
+ * withMember is policy granting role to member: added to the role's
+ * unconditional binding, or in a new binding when it has none.
+ */
+export function withMember(policy: Policy, role: string, member: string): Policy {
+  const bindings = [...(policy.bindings ?? [])]
+  const at = bindings.findIndex((b) => b.role === role && !b.condition)
+  if (at < 0) {
+    bindings.push({ role, members: [member] })
+  } else if (!bindings[at]!.members?.includes(member)) {
+    bindings[at] = { ...bindings[at]!, members: [...(bindings[at]!.members ?? []), member] }
+  }
+  return { ...policy, bindings }
+}
+
+/**
+ * grantOnProject binds role to member on project (the audit view's
+ * one-click grant): a read-modify-write of the Project's policy carrying
+ * the etag read.
+ */
+export async function grantOnProject(project: string, role: string, member: string) {
+  const r: ResourceRef = { project, kind: 'project', name: '' }
+  return setPolicy(r, withMember(await getPolicy(r), role, member))
+}
 
 // ---- service accounts ----
 
