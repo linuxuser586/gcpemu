@@ -19,12 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 )
 
 // SDK library versions the universe probes install into the compat cache.
 var (
-	pythonPins = []string{"google-cloud-storage==3.17.0", "google-cloud-pubsub==2.42.0"}
+	pythonPins = []string{"google-auth==2.62.0", "google-cloud-storage==3.17.0", "google-cloud-pubsub==2.42.0"}
 	nodePins   = []string{"@google-cloud/pubsub@6.3.0"}
 )
 
@@ -124,10 +125,11 @@ func emulatorKey(t *testing.T, e *emulator, accountID string) string {
 }
 
 // probeResults runs a probe script from sdk/ and returns each case's
-// output line ("OK ..." or "ERR ...") by case name.
-func probeResults(t *testing.T, e *emulator, env []string, bin string, args ...string) map[string]string {
+// output line ("OK ..." or "ERR ...") by case name, and the hosts the
+// Escape guard refused.
+func probeResults(t *testing.T, e *emulator, env []string, bin string, args ...string) (map[string]string, []string) {
 	t.Helper()
-	out, _, err := e.exec(env, bin, args...)
+	out, escaped, err := e.exec(env, bin, args...)
 	got := map[string]string{}
 	sc := bufio.NewScanner(strings.NewReader(out))
 	for sc.Scan() {
@@ -138,30 +140,36 @@ func probeResults(t *testing.T, e *emulator, env []string, bin string, args ...s
 	if err != nil && len(got) == 0 {
 		t.Fatalf("%s: %v\n%s", filepath.Base(bin), err, out)
 	}
-	return got
+	return got, escaped
 }
 
-// expectProbe checks that a case succeeded (want "OK") or failed with an
-// error containing want.
+// expectProbe checks that a case succeeded (want "OK", or "OK <result>"
+// for a particular result) or failed with an error containing want.
 func expectProbe(t *testing.T, got map[string]string, name, want string) {
 	t.Helper()
 	r, ok := got[name]
+	success := want == "OK" || strings.HasPrefix(want, "OK ")
 	switch {
 	case !ok:
 		t.Errorf("%s: no result", name)
-	case want == "OK" && !strings.HasPrefix(r, "OK"):
-		t.Errorf("%s: want success, got %s", name, r)
-	case want != "OK" && (!strings.HasPrefix(r, "ERR") || !strings.Contains(r, want)):
+	case success && !strings.HasPrefix(r, want):
+		t.Errorf("%s: want %s, got %s", name, want, r)
+	case !success && (!strings.HasPrefix(r, "ERR") || !strings.Contains(r, want)):
 		t.Errorf("%s: want an error containing %q, got %s", name, want, r)
 	}
 }
 
 // testUniverse covers #215: emulator keys and GOOGLE_CLOUD_UNIVERSE_DOMAIN
 // put gcloud and the client libraries in the Invalid universe. The probes
-// pin down the per-library behaviour the README documents.
+// pin down the per-library behaviour the README documents. It also covers
+// #244: the metadata server puts host processes in the Invalid universe,
+// so Python google-auth skips its Regional Access Boundary lookup.
 func testUniverse(t *testing.T, e *emulator) {
 	const mismatch = "does not match the universe domain found in the credentials (gcpemu.invalid)"
 	const noOverride = "pubsub.gcpemu.invalid"
+	// rabHost is where Python google-auth looks up a Regional Access
+	// Boundary for credentials in Google's universe.
+	const rabHost = "iamcredentials.googleapis.com"
 
 	t.Run("gcloud-key", func(t *testing.T) {
 		g := onPath(t, "gcloud")
@@ -192,19 +200,33 @@ func testUniverse(t *testing.T, e *emulator) {
 			// `gcpemu env` leaves out.
 			"STORAGE_EMULATOR_HOST": "http://" + e.vars["STORAGE_EMULATOR_HOST"],
 		})
-		got := probeResults(t, e, env, py, "-I", "sdk/universe.py", key, project, "1")
+		got, escaped := probeResults(t, e, env, py, "-I", "sdk/universe.py", key, project, "1")
 		expectProbe(t, got, "storage-adc", "OK")
 		expectProbe(t, got, "storage-explicit", mismatch)
 		expectProbe(t, got, "storage-explicit-universe", "OK")
+		expectProbe(t, got, "metadata", "OK "+emu.InvalidUniverse)
 		expectProbe(t, got, "pubsub-emulator", "OK")
-		expectProbe(t, got, "pubsub-no-override", noOverride)
+		// Behind the Escape guard, the guard refuses what DNS would
+		// otherwise fail, which also shows that it sees Python's requests.
+		expectProbe(t, got, "pubsub-no-override", "proxy returned response code 403")
+		if want := []string{noOverride}; !slices.Equal(escaped, want) {
+			t.Errorf("the Escape guard refused %v, want %v", escaped, want)
+		}
+
+		// The canary: in Google's universe, the guard refuses the lookup
+		// that the metadata case above must not make.
+		got, escaped = probeResults(t, e, env, py, "-I", "sdk/universe.py", key, project, "1", "canary")
+		expectProbe(t, got, "metadata-google-universe", "OK googleapis.com")
+		if want := []string{rabHost}; !slices.Equal(escaped, want) {
+			t.Errorf("canary: the Escape guard refused %v, want %v", escaped, want)
+		}
 	})
 
 	t.Run("node", func(t *testing.T) {
 		node, modules := nodeLibs(t)
 		key := emulatorKey(t, e, "universe-node")
 		env := withEnv(e.env, map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": key, "NODE_PATH": modules})
-		got := probeResults(t, e, env, node, "sdk/universe.js", project, "1")
+		got, _ := probeResults(t, e, env, node, "sdk/universe.js", project, "1")
 		expectProbe(t, got, "pubsub-emulator", mismatch)
 		expectProbe(t, got, "pubsub-emulator-universe", "OK")
 		expectProbe(t, got, "pubsub-no-override", noOverride)

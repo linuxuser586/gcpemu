@@ -452,7 +452,12 @@ clients compare the key with Google's universe whatever the variable says:
 - An OpenTofu `provider "google"` block that loads a key: set `universe_domain = "gcpemu.invalid"`,
   as the `gcpemu tofu-provider` blocks do.
 
-The metadata server stays in Google's universe, so ADC through it needs none of this.
+The metadata server that `gcpemu env` points host processes at is in the Invalid universe too.
+Python google-auth otherwise looks up each account's Regional Access Boundary at
+`iamcredentials.googleapis.com`, which no Endpoint override covers (ADR 0009). ADC through it
+needs nothing else, except that Python Cloud Storage with those credentials passed explicitly
+needs the same `client_options` as an emulator key. In GKE pods the metadata server stays in
+Google's universe, and the instance answers the lookup.
 
 The Cloud SQL Auth Proxy v2 puts a static `--token` in Google's universe, so in a `gcpemu env`
 shell it refuses the token with a universe mismatch. Its `--universe-domain` cannot go with

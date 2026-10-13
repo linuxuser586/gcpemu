@@ -35,6 +35,8 @@ import (
 // to storage.googleapis.com and publishes to pubsub.googleapis.com (gRPC)
 // with Workload Identity credentials from the metadata server and no
 // endpoint configuration. IAM is enforced, so the GSA's token must flow.
+// It also looks up its Regional Access Boundary at
+// iamcredentials.googleapis.com, in Google's universe (#244).
 func TestRealHostnames(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()

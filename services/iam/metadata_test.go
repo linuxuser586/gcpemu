@@ -46,7 +46,7 @@ func TestMetadataServer(t *testing.T) {
 	if err != nil || email != num+"-compute@developer.gserviceaccount.com" {
 		t.Fatalf("email: %q %v", email, err)
 	}
-	if ud, err := c.GetWithContext(ctx, "universe/universe-domain"); err != nil || ud != "googleapis.com" {
+	if ud, err := c.GetWithContext(ctx, "universe/universe-domain"); err != nil || ud != "gcpemu.invalid" {
 		t.Fatalf("universe domain: %q %v", ud, err)
 	}
 	idt, err := c.GetWithContext(ctx, "instance/service-accounts/default/identity?audience=https://x.example&format=full")

@@ -42,7 +42,15 @@ type MetadataIdentity struct {
 	Email string
 	// Attributes are extra instance attributes (e.g. cluster-name).
 	Attributes map[string]string
+	// Universe is the universe domain, by default the Invalid universe
+	// that `gcpemu env` gives host processes. Callers that reach the
+	// Instance through the Google front end, as GKE pods do, need
+	// GoogleUniverse.
+	Universe string
 }
+
+// GoogleUniverse is Google's own universe domain.
+const GoogleUniverse = "googleapis.com"
 
 type cachedToken struct {
 	token  string
@@ -95,6 +103,9 @@ func (s *Service) resolveIdentity(id MetadataIdentity) MetadataIdentity {
 	}
 	if id.Zone == "" {
 		id.Zone = def.Zone
+	}
+	if id.Universe == "" {
+		id.Universe = emu.InvalidUniverse
 	}
 	if id.Email == "" {
 		if id.Project == def.Project {
@@ -289,12 +300,11 @@ func (s *Service) metadataTree(id MetadataIdentity) map[string]any {
 				},
 			},
 		},
-		// Unlike key files, Google's universe (#215): Go skips the
-		// universe check for metadata tokens and Node no longer reads
-		// this, but Python Storage and the OpenTofu provider compare it
-		// with a client universe that defaults to googleapis.com.
+		// Python google-auth sends a Regional Access Boundary lookup to
+		// iamcredentials.googleapis.com, which no Endpoint override
+		// covers, for credentials in Google's universe (#244, ADR 0009).
 		"universe": map[string]any{
-			"universe-domain": "googleapis.com",
+			"universe-domain": id.Universe,
 		},
 	}
 }

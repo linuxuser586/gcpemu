@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"time"
 
+	"cloud.google.com/go/compute/metadata"
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/storage"
 )
@@ -62,6 +64,41 @@ func run(project, bucket, topic string) error {
 	defer p.Stop()
 	if _, err := p.Publish(ctx, &pubsub.Message{Data: []byte("hello from a GKE pod")}).Get(ctx); err != nil {
 		return fmt.Errorf("pubsub publish: %w", err)
+	}
+	return allowedLocations(ctx)
+}
+
+// allowedLocations checks that the metadata server keeps a pod in Google's
+// universe, and that the Regional Access Boundary lookup client libraries
+// send for it there reaches the emulator (#244).
+func allowedLocations(ctx context.Context) error {
+	if ud, err := metadata.GetWithContext(ctx, "universe/universe-domain"); err != nil || ud != "googleapis.com" {
+		return fmt.Errorf("universe domain %q: %v", ud, err)
+	}
+	email, err := metadata.EmailWithContext(ctx, "default")
+	if err != nil {
+		return err
+	}
+	raw, err := metadata.GetWithContext(ctx, "instance/service-accounts/default/token")
+	if err != nil {
+		return err
+	}
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal([]byte(raw), &tok); err != nil {
+		return err
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"+email+"/allowedLocations", nil)
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var out struct{ EncodedLocations string }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != 200 || out.EncodedLocations != "0x0" {
+		return fmt.Errorf("allowedLocations: %s %+v %v", resp.Status, out, err)
 	}
 	return nil
 }
