@@ -19,7 +19,8 @@ import (
 // listens, in order of preference, on:
 //
 //  1. 127.0.0.x:<port>, x allocated deterministically per forwarding rule
-//     IP (Linux routes all of 127/8 to loopback);
+//     IP (Linux routes all of 127/8 to loopback), or the next free x when
+//     another process holds that address on the port (relocateLoop);
 //  2. when that port is privileged (or below 1024 with Options.Edge) and a
 //     container runtime is available, the lb-edge container (edge.go),
 //     which owns one container IP per forwarding rule and relays
@@ -86,6 +87,40 @@ func (d *dataplane) loopIP(ip string) string {
 	return "127.0.0." + strconv.Itoa(x)
 }
 
+// relocateLoop moves forwarding rule IP ip to another loopback address on
+// which port is free, when another process (such as a second Instance,
+// whose rules hash alike) holds it on the one ip hashed to. The address a
+// forwarding rule IP maps to is all DNS can tell clients, so a high port
+// on a shared address would send them to that process (#193). An IP with
+// a listener on its address already stays put. Callers hold d.mu.
+func (d *dataplane) relocateLoop(ip string, port int) (net.Listener, string, error) {
+	cur := d.loopX[ip]
+	for _, l := range d.listeners {
+		if h, _, _ := net.SplitHostPort(l.key); h == ip {
+			return nil, "", errors.New("forwarding rule IP already listening")
+		}
+	}
+	used := map[int]bool{}
+	for other, v := range d.loopX {
+		if other != ip {
+			used[v] = true
+		}
+	}
+	for i := 1; i < 253; i++ {
+		x := (cur-2+i)%253 + 2
+		if used[x] {
+			continue
+		}
+		lip := "127.0.0." + strconv.Itoa(x)
+		ln, err := net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(port)))
+		if err == nil {
+			d.loopX[ip] = x
+			return ln, lip, nil
+		}
+	}
+	return nil, "", errors.New("no free loopback address")
+}
+
 func (d *dataplane) fallbackBase() int {
 	if v, ok := d.s.env.Config.PortSet("lb"); ok {
 		return v
@@ -103,6 +138,12 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	var err error
 	if !forced {
 		ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
+		if errors.Is(err, syscall.EADDRINUSE) {
+			if rln, rip, rerr := d.relocateLoop(fe.ip, fe.port); rerr == nil {
+				d.s.env.Log.Warn("lb: loopback address in use by another process; moved", "forwardingRule", fe.frPath, "from", lip, "to", rip)
+				ln, lip, err = rln, rip, nil
+			}
+		}
 	}
 	switch {
 	case !forced && err == nil:
