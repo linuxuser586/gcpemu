@@ -105,6 +105,8 @@ func TestCustomRolesAndConditions(t *testing.T) {
 
 	sa := createSA(t, ic, "role-user")
 	_, kf := createKeyFile(t, ic, sa)
+	// As `gcpemu env` sets it: the key is in the Invalid universe.
+	t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", emu.InvalidUniverse)
 	asSA := iamClient(t, inst, option.WithCredentialsJSON(kf))
 
 	keysOf := func() error {

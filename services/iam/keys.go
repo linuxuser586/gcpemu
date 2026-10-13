@@ -22,6 +22,7 @@ import (
 	iamv1 "google.golang.org/api/iam/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -196,7 +197,10 @@ func (s *Service) createKey(sa *iamv1.ServiceAccount) (*keyRecord, []byte, error
 		TokenURI:                s.tokenURI(),
 		AuthProviderX509CertURL: s.gatewayURL() + "/oauth2/v1/certs",
 		ClientX509CertURL:       s.gatewayURL() + "/service_accounts/v1/metadata/x509/" + url.PathEscape(sa.Email),
-		UniverseDomain:          "googleapis.com",
+		// The Invalid universe, matching GOOGLE_CLOUD_UNIVERSE_DOMAIN from
+		// `gcpemu env`: Go clients and gcloud reject a key whose universe
+		// differs from the one they are configured for (#215).
+		UniverseDomain: emu.InvalidUniverse,
 	}, "", "  ")
 	err = s.env.Store.Update(func(tx store.Tx) error {
 		return store.PutJSON(tx, nsKeys, keyKey(sa.Email, rec.KeyID), rec)

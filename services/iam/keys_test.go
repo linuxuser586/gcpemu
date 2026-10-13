@@ -21,6 +21,8 @@ import (
 	crmv1 "google.golang.org/api/cloudresourcemanager/v1"
 	iamv1 "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
+
+	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
 // createKeyFile creates a JSON key for sa and returns the decoded file.
@@ -185,6 +187,45 @@ func TestKeyFileTokenLoop(t *testing.T) {
 	}
 	if _, err := asSA.Projects.GetIamPolicy(testProject, &crmv1.GetIamPolicyRequest{}).Do(); httpCode(err) != 401 {
 		t.Fatalf("disabled account: want 401, got %v", err)
+	}
+}
+
+// TestKeyFileInvalidUniverse covers #215: an emulator key is in the Invalid
+// universe, so a Go client authenticates with it only alongside
+// GOOGLE_CLOUD_UNIVERSE_DOMAIN, and then signs its own JWT instead of
+// calling token_uri. A call without an Endpoint override goes to
+// <api>.gcpemu.invalid instead of Google.
+func TestKeyFileInvalidUniverse(t *testing.T) {
+	inst := startIAM(t, enforce)
+	sa := createSA(t, iamClient(t, inst), "universe")
+	_, kf := createKeyFile(t, iamClient(t, inst), sa)
+	var key struct {
+		UniverseDomain string `json:"universe_domain"`
+	}
+	if err := json.Unmarshal(kf, &key); err != nil || key.UniverseDomain != emu.InvalidUniverse {
+		t.Fatalf("key universe_domain = %q, %v", key.UniverseDomain, err)
+	}
+
+	t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", "")
+	asKey := crmClient(t, inst, option.WithCredentialsJSON(kf))
+	if _, err := asKey.Projects.Get(testProject).Do(); err == nil || !strings.Contains(err.Error(), "universe domain") {
+		t.Fatalf("without GOOGLE_CLOUD_UNIVERSE_DOMAIN: want a universe mismatch, got %v", err)
+	}
+
+	t.Setenv("GOOGLE_CLOUD_UNIVERSE_DOMAIN", emu.InvalidUniverse)
+	asKey = crmClient(t, inst, option.WithCredentialsJSON(kf))
+	// 403, not 401: enforce mode knows the account but it holds no role.
+	if _, err := asKey.Projects.Get(testProject).Do(); httpCode(err) != 403 {
+		t.Fatalf("with GOOGLE_CLOUD_UNIVERSE_DOMAIN: want 403, got %v", err)
+	}
+
+	noOverride, err := crmv1.NewService(context.Background(), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "cloudresourcemanager." + emu.InvalidUniverse
+	if _, err := noOverride.Projects.Get(testProject).Do(); err == nil || !strings.Contains(err.Error(), host) {
+		t.Fatalf("without an Endpoint override: want a failure at %s, got %v", host, err)
 	}
 }
 

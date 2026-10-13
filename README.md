@@ -415,20 +415,37 @@ clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth pr
 `gcpemu env` also sets `CLOUDSDK_CORE_UNIVERSE_DOMAIN=gcpemu.invalid`, in Host mode too. A gcloud
 API with no `CLOUDSDK_API_ENDPOINT_OVERRIDES_<API>` then goes to `<api>.gcpemu.invalid`, which
 never resolves, so the command fails instead of reaching Google. gcloud also refuses credentials
-stored for Google (`gcloud auth login`, `activate-service-account`) with a universe mismatch
-error, so they are never sent to the instance; use the token file above. Outside Google's
-universe gcloud behaves differently in a few places:
+stored for Google (`gcloud auth login`, or a key from real Google) with a universe mismatch
+error, so they are never sent to the instance; use the token file above, or a key the emulator
+issued. Outside Google's universe gcloud behaves differently in a few places:
 
 - `gcloud compute images list` and `gcloud compute instances create` without `--image*` flags fail
   looking up the universe descriptor at `storage.gcpemu.invalid`. Pass `--no-standard-images`, or
   `--image-family` with `--image-project`.
 - `gcloud storage buckets create` requires `--location`.
-- `gcloud auth activate-service-account` with a key the emulator issued writes
-  `universe_domain = googleapis.com` into the active gcloud configuration, after which commands
-  without the token file fail. Use the token file, or `--impersonate-service-account`.
 
-`gcpemu env --no-universe` leaves the variable out, for a shell that also points gcloud at Google
+`gcpemu env --no-universe` leaves that variable out, for a shell that also points gcloud at Google
 with stored credentials.
+
+For the client libraries, `gcpemu env` sets `GOOGLE_CLOUD_UNIVERSE_DOMAIN=gcpemu.invalid` (which
+`--no-universe` keeps). A Go client, or a generated gRPC client such as Pub/Sub in Python or Node,
+then sends an API with no endpoint override to `<api>.gcpemu.invalid` instead of Google. The Python
+and Node Cloud Storage clients ignore the variable, so they still need `STORAGE_EMULATOR_HOST`.
+
+Service-account keys the emulator issues say `"universe_domain": "gcpemu.invalid"`. A Go client
+that loads one needs `GOOGLE_CLOUD_UNIVERSE_DOMAIN=gcpemu.invalid`, even outside a `gcpemu env`
+shell; without it the first request fails with a universe mismatch. With it, Go clients sign their
+own JWTs from the key instead of calling its `token_uri`, which the instance also accepts. Some
+clients compare the key with Google's universe whatever the variable says:
+
+- Python Cloud Storage with credentials passed explicitly: pass
+  `client_options={"universe_domain": "gcpemu.invalid"}`.
+- Node Pub/Sub, including with `PUBSUB_EMULATOR_HOST`: pass `universeDomain: 'gcpemu.invalid'`
+  with `emulatorMode: true`, since any `universeDomain` otherwise turns emulator mode off.
+- An OpenTofu `provider "google"` block that loads a key: set `universe_domain = "gcpemu.invalid"`,
+  as the `gcpemu tofu-provider` blocks do.
+
+The metadata server stays in Google's universe, so ADC through it needs none of this.
 
 ## Development
 

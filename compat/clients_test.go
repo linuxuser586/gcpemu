@@ -269,6 +269,10 @@ func TestClients(t *testing.T) {
 			e.run(t, g, "auth", "print-access-token", "--impersonate-service-account", sa), ".")
 	})
 
+	t.Run("universe", func(t *testing.T) {
+		testUniverse(t, e)
+	})
+
 	t.Run("gcloud/dns+dig", func(t *testing.T) {
 		g := gcloud(t)
 		e.run(t, g, "dns", "managed-zones", "create", "compat-zone", "--dns-name=compat.test.", "--description=compat")

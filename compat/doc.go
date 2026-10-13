@@ -15,6 +15,11 @@
 // (internal/escapeguard), so a gcloud request that no endpoint override
 // covers fails the step instead of reaching Google.
 //
+// The universe subtests (#215) probe the Python and Node client libraries
+// with an emulator-issued key, from the scripts in sdk/. They install
+// pinned library versions into the same cache with python3 -m venv and
+// npm, and skip when either is missing or the install fails.
+//
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with
 // the google and google-beta providers at their current and previous
