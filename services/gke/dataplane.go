@@ -621,7 +621,11 @@ func alias(ctx context.Context, rt *runtime.Manager, id string, sn emu.SubnetNet
 
 // nodeName returns the node container (and volume) name.
 func nodeContainer(d *deps, c *containerpb.Cluster, node string) string {
-	return d.rt.Name("gke", shortID(c), node)
+	return nodeContainerName(d.rt, c, node)
+}
+
+func nodeContainerName(rt *runtime.Manager, c *containerpb.Cluster, node string) string {
+	return rt.Name("gke", shortID(c), node)
 }
 
 // startNode creates and starts one node container. With recreate set, a
@@ -947,11 +951,25 @@ func wiEnabled(c *containerpb.Cluster, np *containerpb.NodePool) bool {
 
 // waitNodes waits until every recorded node of pool ("" = all) is Ready.
 func (s *Service) waitNodes(ctx context.Context, key, pool string) error {
+	var rt *runtime.Manager
+	if d, err := s.deps(ctx); err == nil {
+		rt = d.rt
+	}
+	return s.awaitNodes(ctx, key, pool, rt)
+}
+
+// awaitNodes is waitNodes. It fails as soon as a node that is not Ready
+// has exited (rt, when set, inspects the node containers), with the exit
+// code and the tail of its logs, read before anything removes the
+// container. The node is not recreated: that would hide why it died
+// (#230).
+func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.Manager) error {
 	kc, err := s.kube(key)
 	if err != nil {
 		return err
 	}
 	var missing []string
+	var died error
 	err = waitFor(ctx, nodeReadyWait, func() (bool, error) {
 		rec, err := s.loadKey(key)
 		if err != nil {
@@ -959,7 +977,7 @@ func (s *Service) waitNodes(ctx context.Context, key, pool string) error {
 		}
 		var list kubeList[kubeNode]
 		if err := kc.get(ctx, "/api/v1/nodes", &list); err != nil {
-			return false, nil
+			list.Items = nil // every node is missing; still check for deaths
 		}
 		ready := map[string]bool{}
 		for _, n := range list.Items {
@@ -971,12 +989,37 @@ func (s *Service) waitNodes(ctx context.Context, key, pool string) error {
 				missing = append(missing, n.Name)
 			}
 		}
+		if rt != nil {
+			c := rec.cluster()
+			for _, n := range missing {
+				if died = nodeExited(ctx, rt, nodeContainerName(rt, c, n), n); died != nil {
+					return false, died
+				}
+			}
+		}
 		return len(missing) == 0, nil
 	})
+	if died != nil {
+		return died
+	}
 	if err != nil {
 		return fmt.Errorf("nodes %v did not become ready: %w", missing, err)
 	}
 	return nil
+}
+
+// nodeExited returns an error naming node's exit code and the tail of
+// its logs if its container name has exited.
+func nodeExited(ctx context.Context, rt *runtime.Manager, name, node string) error {
+	ct, err := rt.InspectContainer(ctx, name)
+	if err != nil || (ct.Status != "exited" && ct.Status != "dead") {
+		return nil
+	}
+	logs, err := rt.Logs(ctx, name, 30)
+	if err != nil {
+		logs = "(logs unavailable: " + err.Error() + ")"
+	}
+	return fmt.Errorf("node %s exited with code %d before it became ready: %s", node, ct.ExitCode, strings.TrimSpace(logs))
 }
 
 // reconcilePool starts a pool's missing node containers and waits for them.

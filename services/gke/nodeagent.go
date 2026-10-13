@@ -3,6 +3,7 @@ package gke
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -163,7 +164,14 @@ func runNodeAgent(ctx context.Context, args []string) error {
 // cgroup (v2) and delegates all controllers, so kubelet can create its
 // kubepods hierarchy. k3s does this itself only when it runs as PID 1.
 func evacuateCgroup() error {
-	const root = "/sys/fs/cgroup"
+	return evacuate("/sys/fs/cgroup", os.WriteFile)
+}
+
+// evacuate is evacuateCgroup on the cgroup root, writing with write.
+// A process that joins root meanwhile (the emulator's exec into a node
+// that just started, #230) makes delegating fail with EBUSY: cgroup v2
+// enables no controllers on a cgroup with processes. Move it and retry.
+func evacuate(root string, write func(string, []byte, os.FileMode) error) error {
 	ctrl, err := os.ReadFile(root + "/cgroup.controllers")
 	if err != nil {
 		return nil // cgroup v1
@@ -171,18 +179,24 @@ func evacuateCgroup() error {
 	if err := os.MkdirAll(root+"/init", 0o755); err != nil {
 		return err
 	}
-	procs, _ := os.ReadFile(root + "/cgroup.procs")
-	for _, pid := range strings.Fields(string(procs)) {
-		_ = os.WriteFile(root+"/init/cgroup.procs", []byte(pid), 0)
-	}
 	var sub []string
 	for _, c := range strings.Fields(string(ctrl)) {
 		sub = append(sub, "+"+c)
 	}
-	if err := os.WriteFile(root+"/cgroup.subtree_control", []byte(strings.Join(sub, " ")), 0); err != nil {
-		return fmt.Errorf("delegating cgroup controllers: %w", err)
+	for try := 0; ; try++ {
+		procs, _ := os.ReadFile(root + "/cgroup.procs")
+		for _, pid := range strings.Fields(string(procs)) {
+			_ = write(root+"/init/cgroup.procs", []byte(pid), 0)
+		}
+		err = write(root+"/cgroup.subtree_control", []byte(strings.Join(sub, " ")), 0)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EBUSY) || try == 50 {
+			return fmt.Errorf("delegating cgroup controllers: %w", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return nil
 }
 
 // setupNodeNetwork adds the metadata address, fixes the default route,
