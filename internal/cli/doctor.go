@@ -51,30 +51,25 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			report(runtime.GOOS == "linux" || runtime.GOOS == "darwin",
-				fmt.Sprintf("platform %s/%s", runtime.GOOS, runtime.GOARCH),
-				"run on Linux or macOS (Windows via WSL2)")
-			if runtime.GOOS == "darwin" {
-				fmt.Fprintln(out, "       note: GKE is Linux-only in v1.0 (NFR-PORT-003)")
-			}
-
-			cl, det, rtErr := emuruntime.Locate()
-			if rtErr != nil {
-				fix := "install Docker Engine >= 24, Docker Desktop, OrbStack, Colima or Podman >= 4.9 (needed only for GKE, Cloud SQL and Cloud NAT)"
-				if det.Source != "" {
-					fix = "start that runtime, or choose a running one (unset DOCKER_HOST or DOCKER_CONTEXT, or `docker context use`)"
+			hasRuntime := false
+			if checkPlatform(out, report, runtime.GOOS, runtime.GOARCH) {
+				cl, det, rtErr := emuruntime.Locate()
+				if rtErr != nil {
+					fix := "install Docker Engine >= 24, Docker Desktop, OrbStack, Colima or Podman >= 4.9 (needed only for GKE, Cloud SQL and Cloud NAT)"
+					if det.Source != "" {
+						fix = "start that runtime, or choose a running one (unset DOCKER_HOST or DOCKER_CONTEXT, or `docker context use`)"
+					}
+					report(false, "container runtime: "+rtErr.Error(), fix)
+				} else {
+					report(true, fmt.Sprintf("container runtime %s (chosen by %s)", det.Endpoint, det.Source), "")
 				}
-				report(false, "container runtime: "+rtErr.Error(), fix)
-			} else {
-				report(true, fmt.Sprintf("container runtime %s (chosen by %s)", det.Endpoint, det.Source), "")
-			}
-			if others := slices.DeleteFunc(slices.Clone(det.Found), func(s string) bool { return "unix://"+s == det.Endpoint }); len(others) > 0 {
-				fmt.Fprintf(out, "       also found: %s\n", strings.Join(others, ", "))
-			}
-			hasRuntime := rtErr == nil
-
-			if hasRuntime {
-				checkVMRelay(cmd.Context(), out, cl)
+				if others := slices.DeleteFunc(slices.Clone(det.Found), func(s string) bool { return "unix://"+s == det.Endpoint }); len(others) > 0 {
+					fmt.Fprintf(out, "       also found: %s\n", strings.Join(others, ", "))
+				}
+				hasRuntime = rtErr == nil
+				if hasRuntime {
+					checkVMRelay(cmd.Context(), out, cl)
+				}
 			}
 
 			_, running := readEndpoints(cfg)
@@ -135,6 +130,22 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// checkPlatform reports goos/goarch and what it supports, and whether an
+// Instance there can use a container runtime (emuruntime.UnusableOn), so
+// the runtime is worth checking.
+func checkPlatform(out io.Writer, report func(bool, string, string), goos, goarch string) bool {
+	platform := fmt.Sprintf("platform %s/%s", goos, goarch)
+	report(goos == "linux" || goos == "darwin" || goos == "windows", platform, "run on Linux, macOS or Windows")
+	if goos == "darwin" {
+		fmt.Fprintln(out, "       note: GKE is Linux-only in v1.0 (NFR-PORT-003)")
+	}
+	if err := emuruntime.UnusableOn(goos); err != nil {
+		fmt.Fprintf(out, "[--  ] Cloud SQL, GKE, Cloud NAT and host mode: %v (ADR 0008); every other Service runs here\n", err)
+		return false
+	}
+	return true
 }
 
 // checkVMRelay prints whether an Instance started now uses the VM relay

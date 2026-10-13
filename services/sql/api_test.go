@@ -36,6 +36,7 @@ func httpCode(err error) (int, string) {
 // shapes, pagination, operations, flags and tiers, connectSettings,
 // ephemeral and client certificates, deletion protection.
 func TestAdminAPI(t *testing.T) {
+	emutest.RequireRuntimeOS(t)
 	inst := emutest.Start(t, []string{"sql"})
 	ctx := context.Background()
 	svc := adminClient(t, inst)
@@ -212,6 +213,7 @@ func TestAdminAPI(t *testing.T) {
 // TestEnforce checks that admin calls require cloudsql.* permissions in
 // enforce mode.
 func TestEnforce(t *testing.T) {
+	emutest.RequireRuntimeOS(t)
 	inst := emutest.Start(t, []string{"sql"}, emutest.WithIAMMode("enforce"))
 	tok := accessToken(t, inst, "user:mallory@example.com")
 	svc, err := sqladmin.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/"), option.WithTokenSource(staticTS(tok.AccessToken)))
