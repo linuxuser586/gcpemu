@@ -235,7 +235,7 @@ func (n SubnetNet) AliasScript(ip, cip string, routes ...string) string {
 	fmt.Fprintf(&b, "IF=$(ip -o -4 addr show | awk -v a=%s '{split($4,x,\"/\"); if (x[1]==a) print $2}' | head -n1)\n", cip)
 	fmt.Fprintf(&b, "[ -n \"$IF\" ] || { echo 'no interface holds %s' >&2; exit 1; }\n", cip)
 	fmt.Fprintf(&b, "V=\"$IF.%d\"\n", AliasVLAN)
-	fmt.Fprintf(&b, "ip link show \"$V\" >/dev/null 2>&1 || ip link add link \"$IF\" name \"$V\" type vlan id %d\n", AliasVLAN)
+	fmt.Fprintf(&b, "ip link show \"$V\" >/dev/null 2>&1 || ip link add link \"$IF\" name \"$V\" type vlan id %d || { echo '%s' >&2; exit 1; }\n", AliasVLAN, aliasVLANFailed)
 	b.WriteString("ip link set \"$V\" up\n")
 	fmt.Fprintf(&b, "ip -o -4 addr show dev \"$V\" | grep -q ' inet %s/' || ip addr add %s/%d dev \"$V\"\n", ip, ip, ones)
 	fmt.Fprintf(&b, "ip route replace %s dev \"$V\" src %s\n", ipn.String(), ip)
@@ -243,6 +243,49 @@ func (n SubnetNet) AliasScript(ip, cip string, routes ...string) string {
 		fmt.Fprintf(&b, "ip route replace %s via %s dev \"$V\" src %s\n", r, tail, ip)
 	}
 	return b.String()
+}
+
+// aliasVLANFailed marks AliasScript's output when creating the VLAN link
+// failed, so AliasError can tell that step from the others.
+const aliasVLANFailed = "gcpemu: creating the VLAN link failed"
+
+// noVLAN are what ip prints when the kernel cannot create a VLAN link
+// (no 8021q).
+var noVLAN = []string{"Unknown device type", "Operation not supported", "RTNETLINK answers: Not supported"}
+
+// NoVLANError reports that the kernel of the container runtime cannot
+// create the VLAN link that a Translated network carries its Declared
+// addresses on (ADR 0004). Only that network fails; every other feature
+// works.
+type NoVLANError struct {
+	// Runtime names the container runtime (runtime.Info.String()).
+	Runtime string
+	// Network is the Translated network's runtime name.
+	Network string
+}
+
+func (e *NoVLANError) Error() string {
+	rt := e.Runtime
+	if rt == "" {
+		rt = "the container runtime"
+	}
+	return fmt.Sprintf("the kernel of %s has no VLAN (8021q) support, so Translated network %s can't be used on it: "+
+		"give the subnetwork a range that doesn't overlap the host's networks, or use a runtime whose kernel has 8021q", rt, e.Network)
+}
+
+// AliasError classifies the failure of n's AliasScript, given its output
+// and the error running it: a kernel without VLAN support becomes a
+// NoVLANError naming runtime, and anything else is err unchanged.
+func (n SubnetNet) AliasError(runtime, out string, err error) error {
+	if err == nil || !strings.Contains(out, aliasVLANFailed) {
+		return err
+	}
+	for _, s := range noVLAN {
+		if strings.Contains(out, s) {
+			return &NoVLANError{Runtime: runtime, Network: n.Name}
+		}
+	}
+	return err
 }
 
 // PublicRouter is implemented by services whose Managed containers send

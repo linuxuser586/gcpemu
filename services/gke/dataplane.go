@@ -611,7 +611,7 @@ func (s *Service) startNodes(ctx context.Context, d *deps, key string, sn emu.Su
 func alias(ctx context.Context, rt *runtime.Manager, id string, sn emu.SubnetNet, ip, cip string) error {
 	res, err := rt.Exec(ctx, id, []string{"sh", "-c", sn.AliasScript(ip, cip)}, nil)
 	if err == nil && res.ExitCode != 0 {
-		err = fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr)
+		err = sn.AliasError(rt.Info.String(), string(res.Stderr), fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr))
 	}
 	if err != nil {
 		return fmt.Errorf("aliasing %s onto %s: %w", ip, sn.Name, err)
@@ -826,6 +826,7 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 	}
 	cfg := nodeConfig{
 		Emu:         "http://" + gw + "/container/_emu/node/" + c.Id + "/" + rec.Int.Secret + "/" + node.Name,
+		Runtime:     d.rt.Info.String(),
 		MirrorHosts: arRegistryHosts(),
 		Network:     c.GetNetworkConfig().GetNetwork(),
 	}

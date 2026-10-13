@@ -1,6 +1,7 @@
 package emu
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,72 @@ func TestAliasScript(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("script lacks %q:\n%s", want, s)
 		}
+	}
+}
+
+// TestAliasError (#173): when the kernel cannot create AliasScript's VLAN
+// link, the failure names the runtime and says the Translated network
+// can't be used on it; any other failure passes through unchanged.
+func TestAliasError(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	n := SubnetNet{Name: "gcpemu-vpc-a", Subnet: "10.0.0.0/20", ContainerSubnet: "10.241.0.0/20", Translated: true}
+	const rt = "docker 27.3.1 (Colima, kernel 6.8.0)"
+	// run runs the script with an ip that holds 10.241.0.2 on eth0 and
+	// fails cmd (an ip subcommand) with msg.
+	run := func(t *testing.T, cmd, msg string) (string, error) {
+		t.Helper()
+		dir := t.TempDir()
+		stub := "#!/bin/sh\ncase \"$*\" in\n" +
+			"\"-o -4 addr show\") echo '2: eth0    inet 10.241.0.2/20 brd 10.241.15.255 scope global eth0' ;;\n" +
+			"\"link show\"*) exit 1 ;;\n" +
+			"\"" + cmd + "\"*) echo '" + msg + "' >&2; exit 2 ;;\n" +
+			"esac\n"
+		if err := os.WriteFile(filepath.Join(dir, "ip"), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c := exec.Command("sh", "-c", n.AliasScript("10.0.0.2", "10.241.0.2"))
+		c.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	for _, msg := range []string{
+		`Error: Unknown device type.`,
+		`RTNETLINK answers: Operation not supported`,
+		`RTNETLINK answers: Not supported`,
+	} {
+		out, err := run(t, "link add", msg)
+		if err == nil {
+			t.Fatalf("%s: script succeeded", msg)
+		}
+		got := n.AliasError(rt, out, err)
+		var nv *NoVLANError
+		if !errors.As(got, &nv) || nv.Runtime != rt || nv.Network != n.Name {
+			t.Fatalf("%s: AliasError = %v; want NoVLANError", msg, got)
+		}
+		for _, want := range []string{rt, "VLAN (8021q)", "Translated network gcpemu-vpc-a"} {
+			if !strings.Contains(got.Error(), want) {
+				t.Errorf("%s: %q lacks %q", msg, got, want)
+			}
+		}
+	}
+	// Other failures, including another step failing with the same text,
+	// pass through.
+	for _, tc := range []struct{ cmd, msg string }{
+		{"link add", "RTNETLINK answers: Operation not permitted"},
+		{"route replace", "RTNETLINK answers: Operation not supported"},
+	} {
+		out, err := run(t, tc.cmd, tc.msg)
+		if err == nil {
+			t.Fatalf("%s: script succeeded", tc.cmd)
+		}
+		if got := n.AliasError(rt, out, err); got != err {
+			t.Errorf("%s %q: AliasError = %v; want %v unchanged", tc.cmd, tc.msg, got, err)
+		}
+	}
+	if got := n.AliasError(rt, "", nil); got != nil {
+		t.Errorf("AliasError(nil) = %v", got)
 	}
 }
 

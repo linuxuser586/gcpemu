@@ -68,6 +68,10 @@ type gateway struct {
 	svcIP string
 	// rules is the last programmed rule set (to skip no-op updates).
 	rules string
+	// aliased is the alias script last applied on each Translated
+	// network, and aliasErr why it failed on one (by network name).
+	aliased  map[string]string
+	aliasErr map[string]error
 
 	kick   chan struct{}
 	cancel context.CancelFunc
@@ -93,6 +97,9 @@ func (s *Service) EgressGateway(ctx context.Context, subnetwork string) (string,
 	}
 	if err := g.sync(ctx); err != nil {
 		return "", err
+	}
+	if err := g.aliasError(net.Name); err != nil {
+		return "", apierr.FailedPrecondition("NAT gateway: %v", err)
 	}
 	c, _ := parseCIDR(net.ContainerSubnet, false)
 	return ipString(c.reservedTail()), nil
@@ -193,7 +200,7 @@ func (g *gateway) ensureRunning(ctx context.Context) error {
 			return nil
 		}
 	}
-	g.rules = ""
+	g.rules, g.aliased = "", nil
 	return g.startLocked(ctx, rt)
 }
 
@@ -277,6 +284,8 @@ func (g *gateway) detach(ctx context.Context, netName string) {
 	g.mu.Lock()
 	id := g.id
 	g.rules = ""
+	delete(g.aliased, netName)
+	delete(g.aliasErr, netName)
 	g.mu.Unlock()
 	if id == "" {
 		return
@@ -312,6 +321,7 @@ func (g *gateway) sync(ctx context.Context) error {
 			return apierr.Internal("NAT gateway: attach to %s: %v", st.Name, err)
 		}
 	}
+	g.alias(ctx, rt, nets)
 	rules, err := g.s.natRules(g, nets)
 	if err != nil {
 		return err
@@ -328,6 +338,50 @@ func (g *gateway) sync(ctx context.Context) error {
 	}
 	g.rules = rules
 	return nil
+}
+
+// alias gives the gateway the egress gateway's Declared address on each
+// Translated network (ADR 0004). Each network is aliased on its own, so
+// one that fails, say on a kernel without VLAN support (#173), leaves NAT
+// working on the others; EgressGateway reports the failure for it.
+// Called with g.mu held.
+func (g *gateway) alias(ctx context.Context, rt *runtime.Manager, nets []*vpcNet) {
+	if g.aliased == nil {
+		g.aliased, g.aliasErr = map[string]string{}, map[string]error{}
+	}
+	for _, st := range nets {
+		if !st.translated() {
+			continue
+		}
+		sn := st.subnetNet()
+		dc, _ := parseCIDR(st.Range, false)
+		fc, _ := parseCIDR(st.Subnet, false)
+		script := sn.AliasScript(ipString(dc.reservedTail()), ipString(fc.reservedTail()))
+		if g.aliased[st.Name] == script {
+			continue
+		}
+		res, err := rt.Exec(ctx, g.id, []string{"sh", "-c", script}, nil)
+		if err == nil && res.ExitCode != 0 {
+			err = sn.AliasError(rt.Info.String(), string(res.Stderr), fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr))
+		}
+		if err != nil {
+			if prev := g.aliasErr[st.Name]; prev == nil || prev.Error() != err.Error() {
+				g.s.env.Log.Warn("compute: NAT gateway: aliasing onto a Translated network", "network", st.Name, "err", err)
+			}
+			g.aliasErr[st.Name] = err
+			continue
+		}
+		delete(g.aliasErr, st.Name)
+		g.aliased[st.Name] = script
+	}
+}
+
+// aliasError is why the gateway could not be aliased onto the Translated
+// network netName, or nil.
+func (g *gateway) aliasError(netName string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.aliasErr[netName]
 }
 
 // RoutePublic implements emu.PublicRouter: every gateway routes the load
@@ -426,13 +480,6 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	fmt.Fprintf(&b, "ip route replace default via %s dev \"$EXT\"\n", g.extGW)
 	pubVia, pubIPs := s.publicRoutes()
 	b.WriteString(emu.PublicRoutesScript(pubVia, pubIPs))
-	for _, st := range nets {
-		if st.translated() {
-			dc, _ := parseCIDR(st.Range, false)
-			fc, _ := parseCIDR(st.Subnet, false)
-			b.WriteString(st.subnetNet().AliasScript(ipString(dc.reservedTail()), ipString(fc.reservedTail())))
-		}
-	}
 	b.WriteString("iptables -N GCPEMU-FWD 2>/dev/null || true\n")
 	b.WriteString("iptables -t nat -N GCPEMU-POST 2>/dev/null || true\n")
 	b.WriteString("iptables -t nat -N GCPEMU-PRE 2>/dev/null || true\n")

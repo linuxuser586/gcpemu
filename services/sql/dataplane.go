@@ -425,7 +425,7 @@ func aliasPrivateIP(ctx context.Context, rt *runtime.Manager, rec *instanceRecor
 	}
 	res, err := rt.Exec(ctx, id, []string{"sh", "-c", rec.PrivateNet.AliasScript(rec.PrivateIP, c.IPs[rec.PrivateNet.Name])}, nil)
 	if err == nil && res.ExitCode != 0 {
-		err = fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr)
+		err = rec.PrivateNet.AliasError(rt.Info.String(), string(res.Stderr), fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr))
 	}
 	if err != nil {
 		return newOpError("INTERNAL_ERROR", "aliasing private IP %s: %v", rec.PrivateIP, err)
