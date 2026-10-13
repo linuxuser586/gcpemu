@@ -27,6 +27,10 @@ _Avoid_: module, component, emulated API
 The short canonical name of a Service (e.g. `gcs`, `sql`, `gke`, `ar`). It is used everywhere the emulator chooses the name: flags, config, latency keys and endpoint listings.
 _Avoid_: using the API name (`storage`, `sqladmin`, `container`) except where GCP's wire format requires it
 
+**Runtime Service**:
+A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT). An Instance with no usable runtime runs every other Service.
+_Avoid_: container service, container-backed service
+
 **API name**:
 GCP's own name for the API a Service serves (e.g. `sqladmin`, `container`). It appears only on the wire.
 
