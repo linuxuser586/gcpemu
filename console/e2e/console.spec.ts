@@ -1,4 +1,4 @@
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 import { SERVICES } from '../src/lib/services'
 
 // The paths the console may call: its own bundle, the admin API and public
@@ -55,12 +55,8 @@ test('FR-UI-001, 003, 004: works offline and calls only public APIs and /_emu/v1
   await expect(page.getByRole('heading', { name: 'Cloud Storage' })).toBeVisible()
 
   expect(requests.length).toBeGreaterThan(3)
-  for (const r of requests) {
-    const url = new URL(r.url())
-    expect(url.origin, r.url()).toBe(origin)
-    expect(url.pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  for (const r of requests) expect(new URL(r.url()).origin, r.url()).toBe(origin)
+  await expectConsoleRequests(requests, { allowed })
   expect(violations).toEqual([])
 })
 

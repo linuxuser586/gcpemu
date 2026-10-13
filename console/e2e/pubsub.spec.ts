@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Pub/Sub view (SRS 4.8.3, FR-UI-011) against the Instance's pubsub
 // Service. Each attempt has its own Project, so a retry does not meet the
@@ -140,10 +140,7 @@ test('Pub/Sub: topics, subscriptions, publish, pull, ack, peek, seek and purge',
   await expect(page).toHaveURL(new RegExp(`/console/pubsub\\?project=${id}$`))
   await expect(page.getByTestId('topic')).toHaveCount(1)
 
-  for (const r of requests) {
-    expect(new URL(r.url()).pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
 })
 
 async function put(request: APIRequestContext, path: string, data: unknown) {

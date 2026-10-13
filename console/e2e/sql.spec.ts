@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Cloud SQL view (SRS 4.8.3, FR-UI-011) against real PostgreSQL
 // servers. Instances need a container runtime, so the tests that create
@@ -210,10 +210,6 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   })
 
   // FR-UI-003, 004: only public APIs and /_emu/v1, without credentials.
-  for (const r of requests) {
-    const url = new URL(r.url())
-    expect(url.pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
   expect(requests.some((r) => new URL(r.url()).pathname.endsWith('/executeSql'))).toBe(true)
 })

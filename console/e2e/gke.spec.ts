@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The GKE view (SRS 4.8.3, FR-UI-011) against real k3s clusters. The
 // Instance runs gke on Linux (emulator.ts); clusters need a container
@@ -202,13 +202,7 @@ test('GKE: a cluster’s lifecycle, Kubernetes objects and actions', async ({
   })
 
   // FR-UI-003, 004: only public APIs and /_emu/v1, without credentials.
-  for (const r of requests) {
-    const url = new URL(r.url())
-    // The kubeconfig is saved from a blob: URL.
-    if (url.protocol === 'blob:') continue
-    expect(url.pathname, r.url()).toMatch(allowed)
-    expect(await r.headerValue('authorization'), r.url()).toBeNull()
-  }
+  await expectConsoleRequests(requests, { allowed })
   expect(requests.some((r) => new URL(r.url()).pathname.startsWith('/connectgateway/v1/'))).toBe(
     true,
   )
