@@ -63,6 +63,31 @@ type Info struct {
 	Version  string
 	Arch     string // GOARCH-style
 	Rootless bool
+	// OS is the runtime's operating system ("Docker Desktop", "OrbStack",
+	// "Ubuntu 24.04 LTS" for Colima) and Kernel its kernel version: on a
+	// VM runtime, the VM's.
+	OS     string
+	Kernel string
+}
+
+// String names the runtime for messages, e.g. "docker 27.3.1 (Docker
+// Desktop, kernel 6.10.14-linuxkit)".
+func (i Info) String() string {
+	s := i.Name
+	if i.Version != "" {
+		s += " " + i.Version
+	}
+	var d []string
+	if i.OS != "" {
+		d = append(d, i.OS)
+	}
+	if i.Kernel != "" {
+		d = append(d, "kernel "+i.Kernel)
+	}
+	if len(d) > 0 {
+		s += " (" + strings.Join(d, ", ") + ")"
+	}
+	return s
 }
 
 // New returns a client for endpoint ("unix:///path" or "tcp://host:port").
@@ -166,8 +191,13 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 			in.Name = "podman"
 		}
 	}
-	var info struct{ SecurityOptions []string }
+	var info struct {
+		SecurityOptions []string
+		OperatingSystem string
+		KernelVersion   string
+	}
 	if err := c.do(ctx, http.MethodGet, "/info", nil, nil, &info); err == nil {
+		in.OS, in.Kernel = info.OperatingSystem, info.KernelVersion
 		for _, o := range info.SecurityOptions {
 			if strings.Contains(o, "rootless") {
 				in.Rootless = true

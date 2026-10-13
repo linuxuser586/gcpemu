@@ -89,6 +89,8 @@ type nodeConfig struct {
 	// gateway's Declared address, sourced from IP (ADR 0004).
 	VPC *emu.SubnetNet `json:"vpc,omitempty"`
 	IP  string         `json:"ip,omitempty"`
+	// Runtime names the container runtime, for errors about its kernel.
+	Runtime string `json:"runtime,omitempty"`
 }
 
 func init() { agent.Register(nodeAgentName, runNodeAgent) }
@@ -207,7 +209,7 @@ func setupNodeNetwork(cfg nodeConfig) error {
 			routes, privateVia = append(routes, private...), ""
 		}
 		if out, err := exec.Command("sh", "-c", cfg.VPC.AliasScript(cfg.IP, cip, routes...)).CombinedOutput(); err != nil {
-			return fmt.Errorf("aliasing %s: %v: %s", cfg.IP, err, out)
+			return fmt.Errorf("aliasing %s: %w", cfg.IP, cfg.VPC.AliasError(cfg.Runtime, string(out), fmt.Errorf("%v: %s", err, out)))
 		}
 	}
 	if defaultVia != "" {

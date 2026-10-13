@@ -141,6 +141,19 @@ and why. Everything the emulator creates is labelled
 `gcpemu.instance=<id>`; containers are removed on `stop`, and with `--data-dir` the volumes
 holding Postgres and Kubernetes state are kept so resources survive a restart.
 
+When a subnetwork's range overlaps another network on the host, its container network runs on a
+free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
+(a Translated network, ADR 0004). That needs VLAN (8021q) support in the runtime's kernel, which on
+macOS is the VM's kernel. Without it, only the Translated network fails, with an error naming the
+runtime; give the subnetwork a range that doesn't overlap, and everything else keeps working.
+
+| Runtime | VLAN (8021q) support |
+| --- | --- |
+| Docker Desktop | not yet checked |
+| Colima | not yet checked |
+| OrbStack | not yet checked |
+| Podman machine | not yet checked |
+
 The emulator copies a static linux gcpemu binary into containers as a Sidecar agent, for the
 runtime's architecture. On a linux host of that architecture it's its own executable. Otherwise
 it uses `GCPEMU_AGENT_BINARY`, then `gcpemu-linux-<arch>` next to the executable, then the copy
