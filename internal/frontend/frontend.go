@@ -120,7 +120,7 @@ func (f *Frontend) Serves(name string) bool { return Serves(f.Hosts(), name) }
 func (f *Frontend) Start() error {
 	l, err := f.env.ListenTCP(f.env.Config.Bind, f.env.Config.Port(Endpoint))
 	if err != nil {
-		return fmt.Errorf("frontend listen %s: %w", net.JoinHostPort(f.env.Config.Bind, strconv.Itoa(f.env.Config.Port(Endpoint))), err)
+		return fmt.Errorf("Google front end listen %s: %w", net.JoinHostPort(f.env.Config.Bind, strconv.Itoa(f.env.Config.Port(Endpoint))), err)
 	}
 	f.mu.Lock()
 	f.ln = l
@@ -203,7 +203,7 @@ func (f *Frontend) TLSConfig() *tls.Config {
 // certificate issues (cached) certificates for served names.
 func (f *Frontend) certificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if f.env.CA == nil {
-		return nil, errors.New("frontend: no certificate authority")
+		return nil, errors.New("Google front end: no certificate authority")
 	}
 	name := Normalize(hello.ServerName)
 	if name == "" {
@@ -218,7 +218,7 @@ func (f *Frontend) certificate(hello *tls.ClientHelloInfo) (*tls.Certificate, er
 		return f.env.CA.ServerCert(names...)
 	}
 	if !f.Serves(name) {
-		return nil, fmt.Errorf("frontend: %s is not served by this emulator", name)
+		return nil, fmt.Errorf("Google front end: %s is not served by this emulator", name)
 	}
 	return f.env.CA.ServerCert(name)
 }
@@ -258,7 +258,7 @@ func (f *Frontend) handle(raw net.Conn) {
 	err := tc.HandshakeContext(ctx)
 	cancel()
 	if err != nil {
-		f.env.Log.Debug("frontend handshake failed", "remote", raw.RemoteAddr().String(), "err", err)
+		f.env.Log.Debug("Google front end: handshake failed", "remote", raw.RemoteAddr().String(), "err", err)
 		return
 	}
 	target := f.backend(tc.ConnectionState().ServerName)
@@ -267,7 +267,7 @@ func (f *Frontend) handle(raw net.Conn) {
 	}
 	up, err := net.DialTimeout("tcp", target, 5*time.Second)
 	if err != nil {
-		f.env.Log.Warn("frontend: backend unreachable", "target", target, "err", err)
+		f.env.Log.Warn("Google front end: backend unreachable", "target", target, "err", err)
 		return
 	}
 	if !f.track(up, true) {

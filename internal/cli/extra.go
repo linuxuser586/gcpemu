@@ -64,13 +64,13 @@ func (o *rootOpts) tofuProviderCmd() *cobra.Command {
 		Short: "Print an OpenTofu provider \"google\" block pointing at the instance",
 		Long: `Print an OpenTofu provider "google" block pointing at the instance.
 
---beta also prints a provider "google-beta" block with the same endpoints,
-container's at /container/v1beta1/. It is opt-in because the block makes
+--beta also prints a provider "google-beta" block with the same Endpoint
+overrides, container's at /container/v1beta1/. It is opt-in because the block makes
 OpenTofu require the hashicorp/google-beta provider.
 
 The blocks set universe_domain = "gcpemu.invalid" so the provider skips its
-caller-email lookup at openidconnect.googleapis.com, which no endpoint
-setting covers. Providers older than 7.2 ignore it for that lookup and
+caller-email lookup at openidconnect.googleapis.com, which no Endpoint
+override covers. Providers older than 7.2 ignore it for that lookup and
 still call Google on every run, or stall without DNS. Upgrade them, or set
 HTTPS_PROXY to an address that refuses connections.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -142,7 +142,7 @@ func (o *rootOpts) faultCmd() *cobra.Command {
 	}
 	f := add.Flags()
 	f.StringVar(&r.ID, "id", "", "rule ID (default generated)")
-	f.StringVar(&r.Service, "service", "", "service name")
+	f.StringVar(&r.Service, "service", "", "Service ID")
 	f.StringVar(&r.Method, "method", "", "regexp on method (\"GET /storage/v1/b\" or \"/google.pubsub.v1.Publisher/Publish\")")
 	f.StringVar(&r.Resource, "resource", "", "regexp on request path")
 	f.StringVar(&r.Code, "code", "", "error code name, e.g. UNAVAILABLE")

@@ -6,13 +6,13 @@ Oct 7, 2026 · @Barry
 
 ### 1.1 Purpose
 
-This SRS defines the requirements for `gcpemu`, a single Go binary that emulates eleven Google Cloud services well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for endpoint configuration, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
+This SRS defines the requirements for `gcpemu`, a single Go binary that emulates eleven Google Cloud Products well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for Endpoint overrides, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
 
 ### 1.2 Scope
 
-In scope are the control-plane APIs and a working data plane for these services:
+In scope are the control-plane APIs and a working data plane for these Products:
 
-| Service | GCP API | Emulated data plane |
+| Product | GCP API | Emulated data plane |
 | --- | --- | --- |
 | IAM | `iam.googleapis.com`, `iamcredentials.googleapis.com`, `sts.googleapis.com`, resource `getIamPolicy`/`setIamPolicy` | Token issuance, policy evaluation, metadata server |
 | Cloud DNS | `dns.googleapis.com` v1 | Authoritative DNS server |
@@ -23,12 +23,12 @@ In scope are the control-plane APIs and a working data plane for these services:
 | GKE | `container.googleapis.com` v1 | Real Kubernetes clusters running containers |
 | Application Load Balancer | `compute.googleapis.com` v1 (forwarding rules, proxies, URL maps, backend services/buckets, health checks, NEGs, SSL certs) | In-process L7 proxy |
 | Cloud CDN | Cache settings on backend services and buckets; `urlMaps.invalidateCache` | HTTP cache in the L7 proxy |
-| Cloud NAT | `compute.googleapis.com` v1 routers and NAT configs | Egress gateway for cluster workloads |
+| Cloud NAT | `compute.googleapis.com` v1 routers and NAT configs | NAT egress proxy for cluster workloads |
 | Secret Manager | `secretmanager.googleapis.com` v1 (gRPC and REST), global and regional endpoints | Secret payload store with Pub/Sub event notifications and Cloud SQL credential rotation |
 
-Supporting resources those services depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, long-running operations) are emulated to the degree the eleven services need them. A React web console embedded in the binary lets users inspect and operate all eleven services from a browser.
+Supporting resources those Products depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, Operations) are emulated to the degree the eleven Products need them. A React web console embedded in the binary lets users inspect and operate all eleven Products from a browser.
 
-Out of scope: production use, performance or SLA parity with GCP, billing, real global anycast, and every service not listed. Section 10 gives the full exclusions list.
+Out of scope: production use, performance or SLA parity with GCP, billing, real global anycast, and every Google Cloud product not listed. Section 10 gives the full exclusions list.
 
 ### 1.3 Definitions
 
@@ -40,6 +40,8 @@ Out of scope: production use, performance or SLA parity with GCP, billing, real 
 | Endpoint override | Pointing a client at the emulator through an env var, provider setting or SDK option instead of `*.googleapis.com` |
 | Host mode | Optional mode where the emulator answers on real Google hostnames via local DNS and a locally trusted CA |
 | Instance | One running emulator process and its state directory |
+| Product | A GCP product the emulator promises to cover; the eleven are listed in 1.2 |
+| Service | An independently enabled unit of emulation that implements all or part of a Product, named by its Service ID (`gcs`, `sql`, `gke`, …) |
 
 ### 1.4 Requirement conventions
 
@@ -63,15 +65,15 @@ Today a GCP stack of GKE, a global external Application Load Balancer with Cloud
 | User | Goal | Typical use |
 | --- | --- | --- |
 | Application developer | Run the whole app locally against "GCP" | `gcpemu start`, then `go run`, `kubectl apply`, browser through the local LB |
-| Infrastructure engineer | Test OpenTofu modules without a cloud bill or wait | `tofu apply` with custom endpoints, inspect resources, `tofu destroy` |
+| Infrastructure engineer | Test OpenTofu modules without a cloud bill or wait | `tofu apply` with Endpoint overrides, inspect resources, `tofu destroy` |
 | CI pipeline | Hermetic integration and end-to-end tests on every PR | Start detached, seed, run tests, collect logs, exit |
-| Test author | Exercise failure paths | Fault injection, LRO latency, IAM deny |
+| Test author | Exercise failure paths | Fault injection, Operation latency, IAM deny |
 
 ### 2.3 Operating environment
 
 | Item | Requirement |
 | --- | --- |
-| Host OS | Linux (amd64, arm64) primary; macOS (arm64, amd64) secondary, with every Service including GKE but not host mode (NFR-PORT-003); Windows via WSL2 only |
+| Host OS | Linux (amd64, arm64) primary; macOS (arm64, amd64) secondary, with every Service including GKE but not Host mode (NFR-PORT-003); Windows via WSL2 only |
 | CI | GitHub Actions `ubuntu-24.04` and `ubuntu-24.04-arm` hosted runners; any Linux CI with Docker. Hosted `macos-*` runners have no container runtime, so only the in-process services run there |
 | Container runtime | Required only for GKE and Cloud SQL: Docker Engine ≥ 24, Podman ≥ 4.9, or containerd ≥ 1.7. All other services run with no runtime |
 | Privileges | The emulator itself runs unprivileged; GKE needs a runtime that can run privileged containers (the nodes), which the runtime grants, also when the emulator runs in a container with the runtime's socket |
@@ -82,40 +84,40 @@ Today a GCP stack of GKE, a global external Application Load Balancer with Cloud
 1. Distributed as one statically linked Go binary per OS/arch; no installer, no runtime other than the container runtime above. The React web console is compiled into the binary, so Node.js is needed only to build it.
 2. Implemented in Go; third-party dependencies limited to permissive, foundation- or community-governed licenses (Apache-2.0, MIT, BSD, MPL-2.0).
 3. Container images the binary launches (Kubernetes node, PostgreSQL) are multi-arch (amd64 + arm64) and pinned by digest in the release.
-4. API resource shapes, field names, error codes and LRO semantics follow the public GCP API definitions; no invented fields in public APIs.
+4. API resource shapes, field names, error codes and Operation semantics follow the public GCP API definitions; no invented fields in public APIs.
 5. No phone-home telemetry.
 
 ### 2.5 Assumptions and dependencies
 
-- Users configure clients with endpoint overrides; host mode is optional convenience, not a prerequisite.
+- Users configure clients with Endpoint overrides; Host mode is optional convenience, not a prerequisite.
 - Users accept that GKE and Cloud SQL run real Kubernetes and PostgreSQL in containers, so those two services cost seconds to start and hundreds of MB of RAM.
 - GCP API discovery documents and protobufs remain publicly available for code generation.
 
 ## 3. System architecture
 
-`gcpemu` is one process: a shared API gateway, one module per service, the data planes those modules configure, and one state store. It reaches outside itself only to run Kubernetes nodes and PostgreSQL in the host's container runtime.
+`gcpemu` is one process: a shared API gateway, one Go package per Service, the data planes those Services configure, and one state store. It reaches outside itself only to run Kubernetes nodes and PostgreSQL in the host's container runtime.
 
 &#91;embedded content: gcpemu architecture · one process, one external dependency\]
 
-Service modules create and manage the GKE and Cloud SQL containers; the data planes carry live traffic to and from them (LB to NEG endpoints, registry pulls, metadata tokens, Postgres connections).
+Services create and manage the GKE and Cloud SQL containers; the data planes carry live traffic to and from them (LB to NEG endpoints, registry pulls, metadata tokens, Postgres connections).
 
 ### 3.1 Components
 
 | Component | Responsibility |
 | --- | --- |
-| Control-plane gateway | Terminates REST and gRPC, authenticates the caller, routes to a service module, records the request log |
-| Service modules | One Go package per API: validation, resource state machine, LROs, IAM permission checks; generated types from discovery docs/protos |
+| API gateway | Terminates REST and gRPC, authenticates the caller, routes to a Service, records the request log |
+| Services | One Go package per Service: validation, resource state machine, Operations, IAM permission checks; generated types from discovery docs/protos |
 | Policy engine | Shared IAM evaluation used by every module and data plane |
-| Data planes | L7 proxy with CDN cache (one listener per forwarding rule), DNS server, OCI registry, Pub/Sub broker, metadata server, NAT egress gateway, Cloud SQL connector endpoint |
+| Data planes | L7 proxy with CDN cache (one listener per forwarding rule), DNS server, OCI registry, Pub/Sub broker, metadata server, NAT egress proxy, Cloud SQL connector listener |
 | Runtime driver | Talks to Docker, Podman or containerd to create, label, start, stop and reclaim node and Postgres containers |
 | State store | Embedded pure-Go KV for resources; files under the data dir for objects, blobs, caches and volumes |
-| Web console | React SPA embedded in the binary, served by the gateway at /console; uses the public APIs and the admin API's event stream |
+| Web console | React SPA embedded in the binary, served by the API gateway at /console; uses the public APIs and the admin API's event stream |
 
 ### 3.2 Default ports
 
 | Port | Use |
 | --- | --- |
-| 4510 | Control-plane gateway (all APIs, REST and gRPC) |
+| 4510 | API gateway (all APIs, REST and gRPC) |
 | 4443 | Cloud Storage (for `STORAGE_EMULATOR_HOST`) |
 | 8085 | Pub/Sub gRPC (for `PUBSUB_EMULATOR_HOST`) |
 | 5000 | Artifact Registry (OCI) |
@@ -124,11 +126,11 @@ Service modules create and manage the GKE and Cloud SQL containers; the data pla
 | 54320+ | Cloud SQL instance public IPs, one per instance |
 | 127.0.0.x:80/443 or 18080+ | LB forwarding rules |
 
-Every port is configurable and can be set to 0 (FR-CORE-042). The web console has no port of its own; it lives at /console on the gateway port.
+Every port is configurable and can be set to 0 (FR-CORE-042). The web console has no port of its own; it lives at /console on the API gateway port.
 
 ### 3.3 Networking model
 
-Each instance creates one container network (`gcpemu-<instance>`). VPC subnetworks map to address ranges on it, so GKE node, pod and Cloud SQL private IPs are real, routable addresses. The binary is reachable from that network at a gateway address; in-cluster DNS resolves `*.googleapis.com`, `*.pkg.dev` and `metadata.google.internal` to it, and 169.254.169.254 is redirected to the metadata server. Private-node egress is routed through the NAT gateway data plane, which decides per Cloud NAT config whether to forward or drop.
+Each instance creates one container network (`gcpemu-<instance>`). VPC subnetworks map to address ranges on it, so GKE node, pod and Cloud SQL private IPs are real, routable addresses. The binary is reachable from that network at an address of its own; in-cluster DNS resolves `*.googleapis.com`, `*.pkg.dev` and `metadata.google.internal` to it, and 169.254.169.254 is redirected to the metadata server. Private-node egress is routed through the NAT egress proxy, which decides per Cloud NAT config whether to forward or drop.
 
 ## 4. Functional requirements: core platform
 
@@ -150,7 +152,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | --- | --- | --- |
 | FR-CORE-010 | Config precedence: flags > env (`GCPEMU_*`) > `gcpemu.yaml` > defaults. | M |
 | FR-CORE-011 | A seed file (YAML) declares projects and resources (buckets + objects from local paths, topics, subscriptions, DNS zones and records, service accounts, IAM bindings, AR repositories, SQL instances with init SQL). `start --seed file` applies it idempotently before reporting ready. | M |
-| FR-CORE-012 | `gcpemu snapshot save NAME` / `restore NAME` capture and restore all service state, including GCS objects and Postgres data, for fast test fixtures. | S |
+| FR-CORE-012 | State snapshots: `gcpemu snapshot save NAME` / `restore NAME` capture and restore all of an Instance's state, including GCS objects and Postgres data, for fast test fixtures. | S |
 | FR-CORE-013 | `gcpemu export` writes current resources as seed YAML. | C |
 
 ### 4.3 Projects, locations and resource model
@@ -159,8 +161,8 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | --- | --- | --- |
 | FR-CORE-020 | Any project ID is accepted and auto-created on first use; `--strict-projects` requires projects to be declared. Project number is derived deterministically from the ID. | M |
 | FR-CORE-021 | Regions and zones are validated against an embedded list of real GCP locations; invalid locations return the same error GCP returns. | M |
-| FR-CORE-022 | Resource names, self-links, IDs, etags, fingerprints, `creationTimestamp` and `selfLink` formats match GCP; IDs are deterministic when `--deterministic` is set (for golden-file tests). | M |
-| FR-CORE-023 | Mutating calls that are long-running in GCP return `Operation` resources (compute, container, sqladmin, artifactregistry, dns changes) with correct polling and `wait` semantics. LRO duration is `instant` by default and configurable per service (`--lro-latency gke=20s`). | M |
+| FR-CORE-022 | Resource names, self-links, IDs, etags, fingerprints, `creationTimestamp` and `selfLink` formats match GCP; IDs are reproducible in a Deterministic Instance (`--deterministic`, for golden-file tests). | M |
+| FR-CORE-023 | Mutating calls that are long-running in GCP return `Operation` resources (compute, container, sqladmin, artifactregistry, dns changes) with correct polling and `wait` semantics. Operation latency is zero by default and configurable per Service ID (`--lro-latency gke=20s`). | M |
 | FR-CORE-024 | Field validation, required fields, immutable fields, `updateMask`/`fieldMask` handling and pagination (`pageToken`, `maxResults`/`pageSize`) follow each API's spec. | M |
 | FR-CORE-025 | Errors use GCP's status codes and the `google.rpc.Status` / JSON error envelope with `ErrorInfo` reason and domain. | M |
 | FR-CORE-026 | Resource-in-use rules are enforced (e.g. cannot delete a backend service referenced by a URL map; cannot delete a non-empty bucket). | M |
@@ -174,16 +176,16 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | FR-CORE-032 | Control-plane state is stored in an embedded pure-Go store (no cgo). Writes are crash-safe. | M |
 | FR-CORE-033 | Multiple instances can run side by side on one host with distinct data dirs and ports. | M |
 
-### 4.5 API surface and endpoints
+### 4.5 API surface and Service endpoints
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| FR-CORE-040 | One gateway port (default 4510) serves every control-plane API over HTTP/1.1 REST and gRPC (HTTP/2, h2c and TLS), routing by path and `:authority`/`Host`. | M |
+| FR-CORE-040 | One API gateway port (default 4510) serves every control-plane API over HTTP/1.1 REST and gRPC (HTTP/2, h2c and TLS), routing by path and `:authority`/`Host`. | M |
 | FR-CORE-041 | Per-service ports are also available for clients that cannot set a path prefix (e.g. `PUBSUB_EMULATOR_HOST=localhost:8085`, GCS on 4443). | M |
 | FR-CORE-042 | `--port 0` and `--port-range` allocate free ports; chosen ports are written to `<data-dir>/endpoints.json` and printed by `gcpemu env`. | M |
 | FR-CORE-043 | Host mode (`--host-mode`) serves real hostnames (`storage.googleapis.com`, `REGION-docker.pkg.dev`, …) via the emulator's DNS and a local CA, so unmodified clients work once the CA is trusted. | S |
 | FR-CORE-044 | Listeners bind to 127.0.0.1 by default; `--bind` widens it with a warning. | M |
-| FR-CORE-045 | An admin API (`/_emu/…`) exposes health, readiness per service, resource dumps, request log, fault injection, reset, and a server-sent events stream of resource, LRO and request-log changes for the web console. | M |
+| FR-CORE-045 | An admin API (`/_emu/…`) exposes health, readiness per Service, resource dumps, request log, fault injection, reset, and a server-sent events stream of resource, Operation and request-log changes for the web console. | M |
 
 ### 4.6 Authentication of API callers
 
@@ -199,7 +201,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | --- | --- | --- |
 | FR-CORE-060 | Rules can inject an error code, latency or dropped connection by service, method, resource name pattern and probability or count, via admin API, CLI, web console and seed file. | S |
 | FR-CORE-061 | Every API call and data-plane request is logged as structured JSON (method, principal, resource, status, latency); `--log-format text` for humans. | M |
-| FR-CORE-062 | Prometheus metrics endpoint for request counts and latencies per service. | C |
+| FR-CORE-062 | Prometheus metrics for request counts and latencies per Service. | C |
 | FR-CORE-063 | A React web console embedded in the binary inspects and operates every service; requirements in 4.8. | M |
 
 ### 4.8 Web console
@@ -211,40 +213,40 @@ The web console is a React single-page app compiled into the binary and served a
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-UI-001 | Built with React and TypeScript (Vite build), embedded with `go:embed`; Node.js is needed only at build time. All assets, fonts and icons are bundled, so the console works fully offline. | M |
-| FR-UI-002 | Served on the gateway port under `/console`; `gcpemu console` opens it in the default browser; `--console=false` disables it. | M |
-| FR-UI-003 | Calls only public GCP API endpoints and the admin API through the gateway; no console-private backend endpoints. | M |
+| FR-UI-002 | Served on the API gateway port under `/console`; `gcpemu console` opens it in the default browser; `--console=false` disables it. | M |
+| FR-UI-003 | Calls only public GCP APIs and the admin API through the API gateway; no console-private backend APIs. | M |
 | FR-UI-004 | Acts as the default principal; a principal switcher lets the user act as any user or service account to see what IAM allows. | M |
 | FR-UI-005 | Global project switcher, location filter and search across resource names; every view has a shareable deep link. | M |
-| FR-UI-006 | Live updates without manual refresh, via a server-sent events stream on the admin API (`/_emu/v1/events`) carrying resource changes, LRO progress and request-log entries. | M |
+| FR-UI-006 | Live updates without manual refresh, via a server-sent events stream on the admin API (`/_emu/v1/events`) carrying resource changes, Operation progress and request-log entries. | M |
 | FR-UI-007 | Light and dark themes following the OS; keyboard navigation; WCAG 2.1 AA contrast and labels. | S |
 | FR-UI-008 | Supports the latest two versions of Chrome, Firefox, Safari and Edge. | M |
-| FR-UI-009 | When `--bind` exposes the gateway beyond loopback, the admin API and console require an admin token printed at startup. | M |
+| FR-UI-009 | When `--bind` exposes the API gateway beyond loopback, the admin API and console require an admin token printed at startup. | M |
 
 #### 4.8.2 Cross-service views
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| FR-UI-010 | Dashboard: per-service readiness with failure reason, endpoint and port map, container runtime status, resource counts, and a copy button for `gcpemu env` output. | M |
+| FR-UI-010 | Dashboard: per-Service readiness with failure reason, Service endpoint and port map, container runtime status, resource counts, and a copy button for `gcpemu env` output. | M |
 | FR-UI-011 | Every resource type at **M** priority in Section 5 can be listed, viewed, created, edited and deleted. Forms mirror API fields with the API's validation messages; a raw JSON editor covers any field the form omits. | M |
-| FR-UI-012 | Operations view: all LROs with live status, duration and the resulting resource or error. | M |
+| FR-UI-012 | Operations view: all Operations with live status, duration and the resulting resource or error. | M |
 | FR-UI-013 | Request log: live tail with filters for service, method, principal, status and resource; expandable request and response bodies. | M |
-| FR-UI-014 | IAM audit view: every call audit mode would have denied, with the missing permission, the smallest predefined role that grants it, and a one-click grant. | M |
+| FR-UI-014 | IAM audit view: every call that IAM enforcement level `audit` allowed but `enforce` would have denied, with the missing permission, the smallest predefined role that grants it, and a one-click grant. | M |
 | FR-UI-015 | Any resource can be copied as a `gcloud` command, `curl` request or OpenTofu resource block. | S |
 | FR-UI-016 | Fault injection rules: create, enable, disable and see hit counts. | S |
-| FR-UI-017 | Snapshots, reset and seed import/export. | S |
+| FR-UI-017 | State snapshots, reset and seed import/export. | S |
 
 #### 4.8.3 Service views
 
 | Service | Shows | Actions | Pri |
 | --- | --- | --- | --- |
-| IAM | Service accounts, keys, custom and predefined roles, policies on any resource, enforcement mode | Create SA, create and download key, edit bindings, switch mode, policy simulator (`testIamPermissions` as any principal) | M |
+| IAM | Service accounts, keys, custom and predefined roles, policies on any resource, IAM enforcement level | Create SA, create and download key, edit bindings, switch enforcement level, policy simulator (`testIamPermissions` as any principal) | M |
 | Cloud DNS | Zones, record sets, network bindings | CRUD records through `changes`; built-in query box that resolves a name against the emulator's DNS server | M |
 | Artifact Registry | Repositories, images, tags, digests, per-arch manifests, sizes | Delete tag or digest; copy pull command | M |
 | Cloud Storage | Bucket browser by prefix, object metadata, generations, notifications | Drag-and-drop upload, download, delete, restore a generation, generate a V4 signed URL | M |
 | Pub/Sub | Topics, subscriptions, backlog, oldest unacked age, dead-letter counts | Publish with attributes and ordering key, pull and ack, peek without ack, seek, purge | M |
 | Cloud SQL | Instances, databases, users, flags, connection names and strings | Start, stop, restart; SQL query runner with read-only default; backups and restore | M |
 | GKE | Clusters, node pools, nodes, namespaces, workloads and pod status, NEGs | Download kubeconfig, resize node pool, view pod logs | M |
-| Load Balancer | Forwarding rules with local listener addresses, proxies, URL maps rendered as a route tree, backend health per endpoint, cert status | Edit URL map; "test a URL" shows which route and backend would serve a given host, path and headers | M |
+| Load Balancer | Forwarding rules with local listener addresses, proxies, URL maps rendered as a route tree, backend health per network endpoint, cert status | Edit URL map; "test a URL" shows which route and backend would serve a given host, path and headers | M |
 | Cloud CDN | Cache settings per backend, hit ratio, cached entries and sizes | Invalidate a path, purge all | M |
 | Cloud NAT | Routers, NAT configs, covered subnets, port usage, translation log | Toggle offline sink | S |
 | Secret Manager | Global and regional secrets, labels, expiry, rotation and topics; versions with state and aliases | CRUD secrets; add a version; reveal a payload (masked by default); enable, disable and destroy versions | M |
@@ -263,14 +265,14 @@ The web console is a React single-page app compiled into the binary and served a
 
 ### 5.1 IAM
 
-IAM is the identity backbone every other service calls; enforcement defaults to audit mode, so missing roles surface in the logs without blocking a first run.
+IAM is the identity backbone every other service calls; the IAM enforcement level defaults to audit, so missing roles surface in the logs without blocking a first run.
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-IAM-001 | Service accounts: create, get, list, patch, disable/enable, delete, undelete; keys: create (JSON, RSA-2048), list, delete, upload. | M |
-| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the eleven services, plus project-level custom roles (create, patch, delete, undelete). | M |
+| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the eleven Products, plus project-level custom roles (create, patch, delete, undelete). | M |
 | FR-IAM-003 | `getIamPolicy`, `setIamPolicy`, `testIamPermissions` on projects and on every resource type GCP supports them on (buckets, topics, subscriptions, AR repositories, service accounts, clusters via project). Etag concurrency enforced. | M |
-| FR-IAM-004 | Enforcement modes: `off` (allow all), `audit` (allow, log every call that real IAM would deny with the missing permission), `enforce` (deny with `PERMISSION_DENIED`). Default mode is audit. Each API method maps to the permission GCP checks. | M |
+| FR-IAM-004 | IAM enforcement levels: `off` (allow all), `audit` (allow, log every call that real IAM would deny with the missing permission), `enforce` (deny with `PERMISSION_DENIED`). The default level is audit. Each API method maps to the permission GCP checks. | M |
 | FR-IAM-005 | IAM Conditions on bindings, evaluating `request.time`, `resource.name` and `resource.type` CEL expressions. | S |
 | FR-IAM-006 | OAuth2 token endpoint for SA keys (JWT bearer grant) and user ADC (refresh-token grant); tokens are opaque, map to a principal, expire after 1 h. | M |
 | FR-IAM-007 | IAM Credentials API: `generateAccessToken`, `generateIdToken` (signed JWTs verifiable against the emulator's JWKS), `signBlob`, `signJwt`, with impersonation chains checked against `roles/iam.serviceAccountTokenCreator`. | M |
@@ -297,7 +299,7 @@ IAM is the identity backbone every other service calls; enforcement defaults to 
 | FR-AR-002 | An OCI Distribution v1.1 registry serves `LOCATION-docker.pkg.dev/PROJECT/REPO/IMAGE`: push, pull, chunked and monolithic uploads, cross-repo mount, manifest lists and OCI indexes (multi-arch), referrers API, tag list, delete. | M |
 | FR-AR-003 | Registry auth accepts `oauth2accesstoken` + emulator bearer token and `_json_key`; `gcloud auth configure-docker` and `docker-credential-gcr` patterns work against the emulator. Anonymous pull allowed when IAM is `off`. | M |
 | FR-AR-004 | Packages, versions, tags and docker images are listable through the AR API and agree with registry contents. | M |
-| FR-AR-005 | GKE nodes in the same instance pull from the registry with no extra config, including in host mode and port-mapped mode. | M |
+| FR-AR-005 | GKE nodes in the same instance pull from the registry with no extra config, both in Host mode and without it. | M |
 | FR-AR-006 | Remote repositories (pull-through cache of Docker Hub) and virtual repositories. | S |
 | FR-AR-007 | Cleanup policies (dry-run and delete) evaluated on demand. | C |
 | FR-AR-008 | Non-Docker formats (npm, Go, Python, generic). | C |
@@ -328,7 +330,7 @@ IAM is the identity backbone every other service calls; enforcement defaults to 
 | FR-PS-005 | Subscription filters (attribute filter syntax). | M |
 | FR-PS-006 | Push subscriptions to any URL, including GKE services via the LB or cluster DNS, with OIDC tokens signed by the emulator for the configured SA and audience; wrapped and unwrapped payloads. | M |
 | FR-PS-007 | Exactly-once delivery semantics (ack results). | S |
-| FR-PS-008 | Snapshots and seek (to time and snapshot); message retention and replay of acked messages. | S |
+| FR-PS-008 | Pub/Sub snapshots and seek (to a time or a snapshot); message retention and replay of acked messages. | S |
 | FR-PS-009 | Schemas (Avro, Protobuf) with publish-time validation. | S |
 | FR-PS-010 | BigQuery and Cloud Storage subscriptions. | C |
 
@@ -340,7 +342,7 @@ Each instance is a real PostgreSQL server in a container, so SQL behaviour is ex
 | --- | --- | --- |
 | FR-SQL-001 | Instances: insert, get, list, patch, delete, restart, stop/start (`activationPolicy`) for `POSTGRES_14` to `POSTGRES_18`; the major version selects the container image. Tier, disk size and availability type are stored and reported, not enforced, but tier and edition must agree as in GCP: an unset edition means Enterprise Plus from `POSTGRES_16`, which accepts only `db-perf-optimized-*` tiers. | M |
 | FR-SQL-002 | Databases and users: CRUD; built-in users get passwords; `postgres` superuser behaves like Cloud SQL's `cloudsqlsuperuser` membership model. | M |
-| FR-SQL-003 | Database flags: the Cloud SQL allow-list for PostgreSQL is validated and applied as server settings; restart-required flags trigger a restart LRO. | M |
+| FR-SQL-003 | Database flags: the Cloud SQL allow-list for PostgreSQL is validated and applied as server settings; restart-required flags trigger a restart Operation. | M |
 | FR-SQL-004 | Connectivity: public IP mapped to a host port (reported as `ipAddresses`); private IP reachable from GKE pods on the bound VPC; authorized networks enforced on the public path. | M |
 | FR-SQL-005 | Cloud SQL Auth Proxy and the Go connector (`cloud.google.com/go/cloudsqlconn`) work: the emulator implements `connectSettings` and `generateEphemeralCert` and terminates the connector's TLS on the instance's server-side proxy port (3307). | M |
 | FR-SQL-006 | IAM database authentication: `CLOUD_IAM_USER` and `CLOUD_IAM_SERVICE_ACCOUNT` users log in with an emulator access token as password, checked for `roles/cloudsql.instanceUser`. | M |
@@ -362,7 +364,7 @@ Each GKE cluster is a real, CNCF-conformant Kubernetes cluster (a k3s-class dist
 | FR-GKE-005 | Workload Identity Federation for GKE: `workloadPool = PROJECT.svc.id.goog`; pods whose KSA is annotated with `iam.gke.io/gcp-service-account` get that GSA's tokens from the metadata server, subject to `roles/iam.workloadIdentityUser`. | M |
 | FR-GKE-006 | Image pulls from emulated Artifact Registry and from public registries; node-level image cache persists across cluster recreates in the same data dir. | M |
 | FR-GKE-007 | Private clusters: nodes have no direct egress; outbound internet only via Cloud NAT (5.10) when configured. | M |
-| FR-GKE-008 | Container-native load balancing: Services annotated `cloud.google.com/neg` produce standalone zonal NEGs (`GCE_VM_IP_PORT`) visible in the compute API, with endpoints kept in sync with ready pods. | M |
+| FR-GKE-008 | Container-native load balancing: Services annotated `cloud.google.com/neg` produce standalone zonal NEGs (`GCE_VM_IP_PORT`) visible in the compute API, with network endpoints kept in sync with ready pods. | M |
 | FR-GKE-009 | Istio (or any mesh) can be installed with standard Helm charts; the cluster supports `LoadBalancer`-type Services via an internal L4 allocator. | M |
 | FR-GKE-010 | GKE Ingress and Gateway API controllers (`gke-l7-global-external-managed`) that create LB resources from Kubernetes objects. | S |
 | FR-GKE-011 | Network policy enforcement (Dataplane V2 semantics). | S |
@@ -381,9 +383,9 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | FR-LB-004 | TLS termination with self-managed certs, SNI selection across multiple certs and Certificate Manager certificate maps; Google-managed certs issued by the emulator's CA once DNS for the domain points at the forwarding rule (`PROVISIONING` → `ACTIVE`). | M |
 | FR-LB-005 | Backend protocols HTTP, HTTPS and HTTP/2 to NEG endpoints and instance groups; HTTP/1.1, HTTP/2 and WebSocket from clients; gRPC passthrough. | M |
 | FR-LB-006 | Backend mTLS: the LB presents a client certificate to backends as configured by the backend authentication resources defined in the current Network Security and Certificate Manager protos in googleapis/googleapis on GitHub (client certificate plus trust config), and validates the backend's server certificate against that trust config. An Istio ingress gateway with `MUTUAL` TLS must accept the LB and reject other clients. | M |
-| FR-LB-007 | Health checks probe endpoints on their configured interval and thresholds; unhealthy endpoints are drained; `getHealth` reports per-endpoint state. | M |
+| FR-LB-007 | Health checks probe network endpoints on their configured interval and thresholds; unhealthy endpoints are drained; `getHealth` reports per-endpoint state. | M |
 | FR-LB-008 | Session affinity, locality LB policy (round robin, least request), timeouts, connection draining, retry policy, outlier detection, custom request/response headers including `{client_cert_*}` and `{cdn_cache_status}` variables. | S |
-| FR-LB-009 | Frontend mTLS (client cert validation at the LB via server TLS policy). | S |
+| FR-LB-009 | LB frontend mTLS (client cert validation at the LB via server TLS policy). | S |
 | FR-LB-010 | Access logs per request in Cloud Logging `httpRequest` JSON shape, including `statusDetails` and backend latency. | M |
 | FR-LB-011 | Cloud Armor security policies. | C |
 
@@ -395,7 +397,7 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | FR-CDN-002 | Cache modes `CACHE_ALL_STATIC`, `USE_ORIGIN_HEADERS`, `FORCE_CACHE_ALL`; `defaultTtl`, `maxTtl`, `clientTtl`; static content-type list matches GCP's; `Cache-Control`, `Expires`, `Vary`, `Set-Cookie` and `Authorization` handling follow Cloud CDN rules. | M |
 | FR-CDN-003 | Cache key policy: include/exclude protocol, host, query string (allow/deny lists), named headers and cookies. | M |
 | FR-CDN-004 | Responses carry `Age`; `{cdn_cache_status}` header variable yields `hit`, `miss`, `revalidated`, `uncacheable`. Byte-range requests and conditional revalidation (`If-None-Match`, `If-Modified-Since`) supported. | M |
-| FR-CDN-005 | `urlMaps.invalidateCache` by host and path (with `/*` wildcards) as an LRO; invalidation effective before the LRO completes. | M |
+| FR-CDN-005 | `urlMaps.invalidateCache` by host and path (with `/*` wildcards) as an Operation; invalidation effective before the Operation completes. | M |
 | FR-CDN-006 | Negative caching with per-status TTLs; serve-while-stale; request coalescing. | S |
 | FR-CDN-007 | Signed URLs and signed cookies with signing keys on backend services/buckets. | S |
 | FR-CDN-008 | Cache size limit (default 1 GiB) with LRU eviction; `gcpemu cdn purge` clears all. | M |
@@ -406,9 +408,9 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | --- | --- | --- |
 | FR-NAT-001 | Cloud Routers and their `nats[]`: create, get, list, patch, delete; source subnetwork ranges (`ALL_SUBNETWORKS_ALL_IP_RANGES`, list of subnetworks), NAT IP allocation (`AUTO_ONLY` or reserved addresses). | M |
 | FR-NAT-002 | Egress enforcement: workloads in private GKE nodes reach the internet only if a NAT covers their subnet and region; otherwise connections fail as on GCP (timeout, configurable to immediate reject for fast tests). | M |
-| FR-NAT-003 | Allowed egress is routed through an emulator egress gateway that applies `minPortsPerVm`, dynamic port allocation and endpoint-independent mapping limits, and reports port usage via `getNatMappingInfo` and `getRouterStatus`. | S |
+| FR-NAT-003 | Allowed egress is routed through the NAT egress proxy, which applies `minPortsPerVm`, dynamic port allocation and endpoint-independent mapping limits, and reports port usage via `getNatMappingInfo` and `getRouterStatus`. | S |
 | FR-NAT-004 | NAT logging (`TRANSLATIONS_ONLY`, `ERRORS_ONLY`, `ALL`) in Cloud Logging JSON shape. | S |
-| FR-NAT-005 | `--offline` mode: NAT-allowed egress is redirected to a sink that records the attempt and returns a configurable response, so tests never hit the internet. | S |
+| FR-NAT-005 | With `--offline`, NAT-allowed egress is redirected to a sink that records the attempt and returns a configurable response, so tests never hit the internet. | S |
 | FR-NAT-006 | NAT rules (per-destination NAT IP selection). | C |
 
 ### 5.11 Secret Manager
@@ -434,28 +436,28 @@ The emulator's value is in the seams: each row below is a path that must work en
 | FR-INT-004 | DNS → LB | An A record pointing at a global address resolves to that forwarding rule's local listener; `curl https://app.example.test` works with the emulator CA trusted. | M |
 | FR-INT-005 | DNS ↔ GKE | Cluster CoreDNS forwards to emulated Cloud DNS for private zones; cluster-internal names stay local. | M |
 | FR-INT-006 | GKE → Artifact Registry | Pods reference `LOCATION-docker.pkg.dev/...` images; pulls authenticate as the node SA. | M |
-| FR-INT-007 | GKE → GCS, Pub/Sub, Cloud SQL via Workload Identity | Unmodified Go client libraries in pods obtain GSA tokens from the metadata server and reach emulated services by real hostname (in-cluster DNS rewrite) with no endpoint config in the app. | M |
+| FR-INT-007 | GKE → GCS, Pub/Sub, Cloud SQL via Workload Identity | Unmodified Go client libraries in pods obtain GSA tokens from the metadata server and reach emulated Services by real hostname (in-cluster DNS rewrite) with no Endpoint override in the app. | M |
 | FR-INT-008 | GKE → Cloud SQL private IP | Pods connect to an instance's private IP directly or via the Cloud SQL connector with IAM auth. | M |
 | FR-INT-009 | GKE → internet via NAT | Private cluster egress allowed only through a configured NAT (FR-NAT-002). | M |
 | FR-INT-010 | GCS → Pub/Sub | Bucket notifications publish to topics (FR-GCS-007). | M |
 | FR-INT-011 | Pub/Sub → GKE push | Push subscription to a service URL via the LB, with OIDC token verifiable by the app. | M |
-| FR-INT-012 | IAM everywhere | In `enforce` mode, every service checks the caller's permissions through one shared policy engine; `audit` mode output lists exactly the roles a workload is missing. | M |
+| FR-INT-012 | IAM everywhere | At IAM enforcement level `enforce`, every Service checks the caller's permissions through one shared policy engine; at `audit` the log lists exactly the roles a workload is missing. | M |
 | FR-INT-013 | Cloud SQL ↔ GCS | Import/export dumps (FR-SQL-009). | S |
 
 ## 7. External interface requirements
 
-The compatibility bar is the client, not the spec: a requirement is met when the listed client works against the emulator with only endpoint configuration.
+The compatibility bar is the client, not the spec: a requirement is met when the listed client works against the emulator with only Endpoint overrides.
 
 ### 7.1 Client compatibility matrix
 
 | ID | Client | How it is pointed at the emulator | Must work for | Pri |
 | --- | --- | --- | --- | --- |
-| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the eleven services, including `plan` with no diff after `apply` and clean `destroy` | M |
-| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector | M |
+| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the eleven Products, including `plan` with no diff after `apply` and clean `destroy` | M |
+| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or Host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector | M |
 | IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `secrets`, `container`, `compute` (LB, routers, NEGs), `dns`, `artifacts`, `sql`, `iam` command groups | M |
 | IF-004 | `kubectl`, Helm, `istioctl` | Kubeconfig from `get-credentials` | Standard cluster operations | M |
 | IF-005 | Docker, Podman, `crane`, `ko` | Registry host from `gcpemu env`; credential helper | Push and pull multi-arch images | M |
-| IF-006 | `psql`, pgx, Cloud SQL Auth Proxy v2 | Host port or proxy with emulator endpoint | Connect, IAM auth | M |
+| IF-006 | `psql`, pgx, Cloud SQL Auth Proxy v2 | Host port, or proxy pointed at the emulator | Connect, IAM auth | M |
 | IF-007 | `gsutil`/`gcloud storage`, S3 clients via XML API | Endpoint override | Copy, sync, signed URLs | S |
 | IF-008 | Client libraries in Node, Python, Java | Endpoint override / emulator env vars | Storage and Pub/Sub at minimum | S |
 | IF-009 | `dig`, browsers, `curl` | Emulated DNS port; local CA trusted | Name resolution and HTTPS through the LB | M |
@@ -489,7 +491,7 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | NFR-PERF-002 | Cloud SQL instance insert to `RUNNABLE` | ≤ 10 s | M |
 | NFR-PERF-003 | GKE cluster create to `RUNNING` with 1 node pool of 1 node | ≤ 60 s | M |
 | NFR-PERF-004 | Idle RSS of the binary, all non-container services | ≤ 150 MB | M |
-| NFR-PERF-005 | Control-plane API p99 latency (non-LRO calls, instant mode) | ≤ 20 ms | M |
+| NFR-PERF-005 | Control-plane API p99 latency (calls that return no Operation, no Operation latency) | ≤ 20 ms | M |
 | NFR-PERF-006 | Pub/Sub publish-to-pull throughput, 1 KB messages | ≥ 10,000 msg/s | S |
 | NFR-PERF-007 | LB + CDN cache hit p99 added latency | ≤ 2 ms | S |
 | NFR-PERF-008 | LB throughput, cache miss to a local backend | ≥ 5,000 req/s | S |
@@ -501,15 +503,15 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | --- | --- | --- |
 | NFR-PORT-001 | Release builds for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, built with `CGO_ENABLED=0`. | M |
 | NFR-PORT-002 | Identical behaviour on amd64 and arm64; GKE nodes and Cloud SQL run native-arch images. | M |
-| NFR-PORT-003 | On macOS every service, GKE included, runs on the user's VM runtime (Docker Desktop and Colima verified each release; OrbStack and Podman machine best-effort) through the VM relay (ADR 0005). Fidelity levels are the same as on Linux; only addresses differ: host clients get 127.0.0.1 and a port the emulator serves for the GKE endpoint, LB forwarding rules and `LoadBalancer` Services. Each Cloud SQL instance gets its own 127.0.0.x:3307 when loopback aliases are installed; without them only one instance is reachable, on 127.0.0.1:3307. Translated networks (ADR 0004) need VLAN support in the VM kernel and fail with a clear message without it. Host mode is Linux-only; on macOS it fails at start with a clear message. | S |
+| NFR-PORT-003 | On macOS every Service, GKE included, runs on the user's VM runtime (Docker Desktop and Colima verified each release; OrbStack and Podman machine best-effort) through the VM relay (ADR 0005). Fidelity levels are the same as on Linux; only addresses differ: host clients get 127.0.0.1 and a port the emulator serves for the GKE endpoint, LB forwarding rules and `LoadBalancer` Services. Each Cloud SQL instance gets its own 127.0.0.x:3307 when loopback aliases are installed; without them only one instance is reachable, on 127.0.0.1:3307. Translated networks (ADR 0004) need VLAN support in the VM kernel and fail with a clear message without it. Host mode is Linux-only; on macOS it fails at start with a clear message. | S |
 | NFR-PORT-004 | Also published as a multi-arch OCI image for CI systems that prefer service containers. Every service runs from the image, unprivileged; Cloud SQL, GKE and Cloud NAT need the host's runtime socket mounted (with its group) and are skipped without it (ADR 0003). | S |
 
 ### 8.3 Reliability and determinism
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| NFR-REL-001 | No data loss in `--data-dir` mode on SIGKILL for acknowledged writes (GCS objects, Pub/Sub publishes, control-plane mutations). | M |
-| NFR-REL-002 | `--deterministic` makes IDs, generated names, timestamps (from a fake clock) and LRO ordering reproducible run to run. | S |
+| NFR-REL-001 | No data loss in a Persistent Instance (`--data-dir`) on SIGKILL for acknowledged writes (GCS objects, Pub/Sub publishes, control-plane mutations). | M |
+| NFR-REL-002 | `--deterministic` makes IDs, generated names, timestamps (from a fake clock) and Operation ordering reproducible run to run, giving a Deterministic Instance. | S |
 | NFR-REL-003 | A failed service does not take down others; it reports not-ready with a reason. | M |
 | NFR-REL-004 | 24 h soak with continuous traffic shows no unbounded memory growth. | S |
 
@@ -518,7 +520,7 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | NFR-SEC-001 | Loopback-only by default; startup refuses `--bind 0.0.0.0` without `--i-understand-this-is-insecure` when IAM is `off`. | M |
-| NFR-SEC-002 | The emulator never calls real Google endpoints or uses real Google credentials; real ADC files are ignored unless explicitly pointed at the emulator. | M |
+| NFR-SEC-002 | The emulator never calls real Google hosts or uses real Google credentials; real ADC files are ignored unless explicitly pointed at the emulator. | M |
 | NFR-SEC-003 | Keys, tokens and the CA are generated locally, stored with 0600 permissions, and scoped to one data dir. | M |
 | NFR-SEC-004 | Containers it launches carry instance labels and run with the least privilege the workload allows (only GKE nodes are privileged). | M |
 | NFR-SEC-005 | Releases are signed (Sigstore/cosign) with SBOM and SLSA provenance. | S |
@@ -528,7 +530,7 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | NFR-MNT-001 | API stubs, request/response types and validation are generated from the current protos in googleapis/googleapis on GitHub (pinned per release) and Google's discovery documents; a version bump regenerates them. | M |
-| NFR-MNT-002 | Each service is an isolated Go package behind a common service interface (register routes, start, stop, ready, snapshot). | M |
+| NFR-MNT-002 | Each Service is an isolated Go package behind a common Service interface (register routes, start, stop, ready, State snapshot). | M |
 | NFR-MNT-003 | ≥ 80% line coverage on control-plane packages; a nightly job runs the conformance suite (Section 11) against real GCP to detect drift. | S |
 | NFR-MNT-004 | Licensed Apache-2.0. | M |
 
@@ -602,7 +604,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 
 ## 11. Verification, acceptance and open questions
 
-v1.0 is accepted when every **M** requirement has a passing automated test and the reference stack below runs green in CI on both architectures.
+v1.0 is accepted when every **M** requirement has a passing automated test and the Reference stack below runs green in CI on both architectures.
 
 ### 11.1 Verification methods
 
@@ -622,8 +624,8 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 1. `tofu apply` creates a VPC, subnet, Cloud Router + NAT, a private GKE cluster with Workload Identity, an AR Docker repo, a GCS bucket with static assets, a Pub/Sub topic + push subscription, a Cloud SQL Postgres 16 instance with an IAM SA user, a Cloud DNS zone, and a global external ALB with Cloud CDN, a backend bucket, a NEG backend service and backend mTLS.
 2. A multi-arch Go API image is built and pushed to AR; Istio and the app are installed; the Istio ingress gateway requires mTLS from the LB.
 3. `curl https://app.example.test/` returns the static page from the bucket; the second request reports `hit` via `{cdn_cache_status}`.
-4. `curl https://app.example.test/api/health` reaches the Go service through LB → Istio; a direct request to the gateway without the LB client cert is refused.
-5. The service writes an object to GCS, inserts a row in Cloud SQL via the Go connector with IAM auth, and publishes a message, all using Workload Identity and no endpoint config in the app.
+4. `curl https://app.example.test/api/health` reaches the Go service through LB → Istio; a direct request to the Istio ingress gateway without the LB client cert is refused.
+5. The service writes an object to GCS, inserts a row in Cloud SQL via the Go connector with IAM auth, and publishes a message, all using Workload Identity and no Endpoint override in the app.
 6. The bucket notification and push subscription deliver to the service with a verifiable OIDC token.
 7. An outbound request from a pod succeeds; after deleting the NAT it fails.
 8. With IAM set to `enforce`, removing `roles/storage.objectAdmin` from the GSA makes step 5 fail with `PERMISSION_DENIED`.
@@ -637,7 +639,7 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | Product name | Keep `gcpemu` |
 | Kubernetes distribution | Each cluster's control plane in its own container (simpler; \~150 MB more RAM per cluster accepted) |
 | Cloud SQL without a container runtime | No: containers only |
-| IAM default mode | `audit` |
+| Default IAM enforcement level | `audit` |
 | Backend mTLS API surface | Follow the current googleapis/googleapis protos on GitHub |
 | GKE on macOS | Supported in v1.0 through the VM relay (ADR 0005) |
 | Autopilot | Excluded from v1.0 |
@@ -649,6 +651,6 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | M1 | Core, IAM, GCS, Pub/Sub, DNS, AR | Go libs, gcloud and OpenTofu tests green |
 | M2 | Cloud SQL, GKE, NAT | Workload Identity and private cluster tests green |
 | M3 | ALB, CDN, backend mTLS, NEGs | Reference stack steps 1–4 and 9 green |
-| v1.0 | All | Full reference stack on both arches; all **M** requirements tested |
+| v1.0 | All | Full Reference stack on both arches; all **M** requirements tested |
 
 The web console ships with each milestone: the shell, dashboard, request log and IAM views in M1, then each service's view in the milestone that delivers the service.

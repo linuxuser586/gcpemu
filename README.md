@@ -1,27 +1,27 @@
 # gcpemu
 
-A single Go binary that emulates Google Cloud services on a workstation or in CI, so the
+A single Go binary that emulates a subset of Google Cloud's Products on a workstation or in CI, so the
 same OpenTofu modules, client SDKs and application code that target GCP run unmodified
-except for endpoint configuration. See [the SRS](GCP%20Local%20Emulator%20Software.md).
+except for Endpoint overrides. See [the SRS](GCP%20Local%20Emulator%20Software.md).
 
 ## Status
 
 Milestones **M1** (core, IAM, Cloud Storage, Pub/Sub, Cloud DNS, Artifact Registry),
 **M2** (compute networking, Cloud SQL, GKE, Cloud NAT) and **M3** (Application Load Balancer,
-Cloud CDN, backend mTLS, Certificate Manager, host mode) are implemented. The full SRS 11.2
-reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
+Cloud CDN, backend mTLS, Certificate Manager, Host mode) are implemented. The full SRS 11.2
+Reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 
-| Service | Package | Highlights |
+| Area | Package | Highlights |
 | --- | --- | --- |
-| Core | `internal/…` | CLI, gateway (REST + gRPC on one port), admin API, store (memory/bbolt), seed files, fault injection, request log |
+| Core | `internal/…` | CLI, API gateway (REST + gRPC on one port), admin API, store (memory/bbolt), seed files, fault injection, request log |
 | IAM | `services/iam` | Service accounts and keys, roles, policies with conditions, audit/enforce, OAuth2 token endpoint, IAM Credentials, metadata server, STS/WIF (OIDC exchange; AWS and SAML providers managed only), Service Usage (enabled APIs per project) |
 | Cloud Storage | `services/gcs` | JSON + XML APIs, resumable uploads, generations/preconditions, checksums, V4 signed URLs, notifications, lifecycle, HMAC, legacy ACLs, managed folders with IAM |
 | Pub/Sub | `services/pubsub` | gRPC + REST, streaming pull, ordering, DLQ, filters, push with OIDC, exactly-once, snapshots/seek, schemas |
 | Secret Manager | `services/secrets` | gRPC + REST, global and regional secrets, versions and aliases, IAM, expiry and delayed destruction on the Emulator clock, Pub/Sub event notifications, managed rotation of Cloud SQL passwords |
 | Cloud DNS | `services/dns` | Zones, record sets, changes, zone IAM policies; server policies (recorded); response policies applied to bound VPC networks; authoritative UDP/TCP server with forwarding |
-| Artifact Registry | `services/ar` | Repositories API with LROs; OCI Distribution v1.1 registry with referrers; pull-through cache, remote and virtual repositories |
+| Artifact Registry | `services/ar` | Repositories API with Operations; OCI Distribution v1.1 registry with referrers; pull-through cache, remote and virtual repositories |
 | Compute networking | `services/compute` | Networks, subnetworks, firewalls, routes, addresses, routers, zonal/regional/global NEGs, operations; servicenetworking; subnetworks realised as container networks; VPC peering (recorded) |
-| Cloud NAT | `services/compute`, `services/nat` | Router NAT configs drive an egress gateway container; drop/reject, logging, offline sink |
+| Cloud NAT | `services/compute`, `services/nat` | Router NAT configs drive the NAT egress proxy container; drop/reject, logging, offline sink |
 | Cloud SQL | `services/sql` | sqladmin v1beta4/v1 over real PostgreSQL 14–18 containers; connector (3307), IAM DB auth, authorized networks, private IP, backups, import/export, `executeSql` (Data API) |
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
@@ -35,7 +35,7 @@ make build
 bin/gcpemu start --detach --services gcs,pubsub --seed seed.yaml
 eval "$(bin/gcpemu env)"       # STORAGE_EMULATOR_HOST, PUBSUB_EMULATOR_HOST, GCE_METADATA_HOST, …
 bin/gcpemu status
-bin/gcpemu tofu-provider --project my-project   # provider "google" block with custom endpoints
+bin/gcpemu tofu-provider --project my-project   # provider "google" block with Endpoint overrides
                                                 # (--beta adds a "google-beta" block)
 bin/gcpemu console              # the Web console in the default browser
 bin/gcpemu stop
@@ -59,7 +59,7 @@ and the public GCP APIs are governed by IAM as usual.
 
 ### Web console
 
-The gateway serves a browser console at `http://127.0.0.1:4510/console/`; `gcpemu console`
+The API gateway serves the Web console at `http://127.0.0.1:4510/console/`; `gcpemu console`
 opens it. It calls only the public APIs and the admin API, as the default principal, and
 works offline. `--console=false` turns it off; under `CI=true` it is off unless `--console`
 is passed. `make build` builds it when
@@ -74,7 +74,7 @@ Its Load Balancer view reads each forwarding rule's local listener from
 `GET /_emu/v1/lb/listeners`, and "test a URL" asks `POST /_emu/v1/lb/route` which route and
 backend of a URL map would serve a host, path and headers, without sending the request.
 Its traffic tab (`/console/lb/traffic`, filtered by `?host=` and `?path=`) traces each request
-live from the request log, whose `lb` entries carry the matched route, backend, endpoint, cache
+live from the request log, whose `lb` entries carry the matched route, backend, network endpoint, cache
 status and backend latency; it shows the newest 500 that match.
 Its Cloud CDN view treats a backend service or bucket with `enableCdn` as an origin: adding,
 editing and removing one patches its `cdnPolicy` and `enableCdn`, and invalidation is
@@ -83,7 +83,7 @@ editing and removing one patches its `cdnPolicy` and `enableCdn`, and invalidati
 hit and miss totals survive a purge and are cleared by `gcpemu reset`.
 Its Artifact Registry view lists repositories in every location by asking each one in turn, as
 the API lists one location at a time. Deleting a digest deletes the tags on it too
-(`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when host mode is
+(`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when Host mode is
 ready and the registry port (`127.0.0.1:5000/LOCATION-docker.pkg.dev/...`) otherwise.
 Its Cloud DNS view edits record sets only through `changes.create` (an edit deletes and re-adds
 the record set in one change), and deleting a zone first deletes its record sets in one change.
@@ -108,11 +108,11 @@ Project owning the resource. Grant binds that role on that Project through its `
 The log lives in memory until the Instance stops or is reset; `DELETE /_emu/v1/iam/denials`
 clears it.
 
-### Endpoints
+### Service endpoints
 
-All control-plane APIs are served by the gateway (default `127.0.0.1:4510`), under
+All Control plane APIs are served by the API gateway (default `127.0.0.1:4510`), under
 `/<api>/` (for example `/pubsub/v1/…`, `/iam/v1/…`) and at their native root paths where
-unambiguous (`/storage/v1/`, `/dns/v1/`, `/compute/v1/`, `/sql/v1beta4/`). Per-service ports:
+unambiguous (`/storage/v1/`, `/dns/v1/`, `/compute/v1/`, `/sql/v1beta4/`). Per-Service ports:
 GCS 4443, Pub/Sub 8085, registry 5000, DNS 5353 (UDP+TCP), metadata 8988, Cloud SQL host ports
 54320+. `gcpemu env` also exports `KUBECONFIG` for GKE clusters. `--port name=0` picks a free port for one
 listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports included);
@@ -121,7 +121,7 @@ listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports incl
 
 To reach a load balancer from another device (say, a phone on the LAN), pass
 `--lb-bind <address>` (repeatable; `lbBind` / `GCPEMU_LB_BIND`). Every forwarding rule is then
-also served on `<address>:<its port>`, while the admin API, the gateway and every other data
+also served on `<address>:<its port>`, while the admin API, the API gateway and every other Data
 plane stay on `--bind`. Nothing else is exposed, so `--lb-bind` doesn't need
 `--i-understand-this-is-insecure`. The emulator binds the port itself when it can. When the port is
 privileged (`net.ipv4.ip_unprivileged_port_start` above it), a labelled `gcpemu-<id>-lb-lan`
@@ -165,8 +165,8 @@ NAT, so they need one, and the backend sees the NAT's address (ADR 0007).
 
 ### Real hostnames: GKE pods and host mode
 
-The emulator includes a "Google frontend" (endpoint `frontend`, a dynamic port unless you pass
-`--port frontend=N`). It terminates TLS for the real hostnames the gateway serves
+The emulator includes a Google front end (Service endpoint `frontend`, a dynamic port unless you
+pass `--port frontend=N`). It terminates TLS for the real hostnames the API gateway serves
 (`storage.googleapis.com`, `pubsub.googleapis.com`, `sqladmin.googleapis.com`,
 `iamcredentials.googleapis.com`, `oauth2.googleapis.com`, …) and for every
 `LOCATION-docker.pkg.dev`. Certificates come from the instance CA (`<data-dir>/ca.pem`). It then
@@ -174,12 +174,12 @@ passes HTTP/1.1, HTTP/2 and gRPC through to the emulator unchanged. APIs the emu
 serve (`logging.googleapis.com`, …) are never redirected.
 
 **GKE pods** use real hostnames automatically. Each node answers DNS for the served names with
-169.254.169.254 and relays port 443 there to the frontend. A mutating admission webhook mounts a
+169.254.169.254 and relays port 443 there to the Google front end. A mutating admission webhook mounts a
 bundle of the host's system roots plus the emulator CA at `/etc/ssl/certs/ca-certificates.crt`
 and `/etc/gcpemu/certs/`. It also sets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
 `NODE_EXTRA_CA_CERTS` and `GCE_METADATA_HOST`. Unmodified Go, Python, Java and Node clients get
-Workload Identity tokens from the metadata server and reach the emulated services without any
-endpoint configuration. To opt a namespace or a pod out, label it `gcpemu.dev/inject=disabled`;
+Workload Identity tokens from the metadata server and reach the emulated Services without any
+Endpoint override. To opt a namespace or a pod out, label it `gcpemu.dev/inject=disabled`;
 `kube-system` is always skipped. Nodes also trust the CA in their own system store.
 
 **Host mode** (`gcpemu start --host-mode`, Linux) does the same for host processes without
@@ -211,13 +211,13 @@ CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the h
 ### Configuration
 
 Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. `CI=true` implies `--ephemeral`,
-JSON logs and no Web console. IAM runs in `audit` mode by default (`--iam-mode off|audit|enforce`);
+JSON logs and no Web console. The IAM enforcement level is `audit` by default (`--iam-mode off|audit|enforce`);
 `PUT /_emu/v1/iam/enforcement` with `{"level":"enforce"}` switches it while the Instance runs.
 
 ### Seed files
 
-Top-level keys are `projects`, `faults` and service names (`iam`, `compute`, `gcs`, `pubsub`,
-`dns`, `ar`, `sql`, `gke`). Each service documents its section in its `seed.go`.
+Top-level keys are `projects`, `faults` and Service IDs (`iam`, `compute`, `gcs`, `pubsub`,
+`dns`, `ar`, `sql`, `gke`). Each Service documents its section in its `seed.go`.
 
 ### Go tests
 
@@ -253,7 +253,7 @@ docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 \
 docker exec gcpemu /gcpemu status
 ```
 
-The image binds `0.0.0.0` with IAM in audit mode, keeps state in `/data` (mount a volume to
+The image binds `0.0.0.0` at IAM enforcement level audit, keeps state in `/data` (mount a volume to
 keep it across containers, or set `GCPEMU_EPHEMERAL=true`), and reports healthy once every
 Service is ready (`gcpemu status --ready`). Because it is not bound to loopback, the admin API
 and the Web console need the admin token (see "Binding beyond loopback"): `docker logs gcpemu`
@@ -299,9 +299,9 @@ env:
 
 ### Reference stack (SRS 11.2)
 
-`e2e/` is the acceptance test of the whole emulator: one OpenTofu root module
+`e2e/` holds the Reference stack, the final acceptance test of the whole emulator: one OpenTofu root module
 (`e2e/stack/`), a Go API (`e2e/app/`) and `TestReferenceStack`, which drives them against an
-in-process emulator with IAM in `enforce` mode:
+in-process emulator at IAM enforcement level `enforce`:
 
 1. `tofu apply` creates a VPC and subnet (pod/service ranges), Cloud Router + NAT, a private
    GKE cluster with Workload Identity and a node pool, an Artifact Registry repo, buckets
@@ -312,12 +312,12 @@ in-process emulator with IAM in `enforce` mode:
    right after must be empty;
 2. the app is built for amd64 and arm64 FROM scratch and pushed to AR, Istio is installed from
    its Helm charts (its ingress gateway requires the LB's client certificate), the app is deployed
-   and a second apply (`api_neg_name`) adds the gateway's GKE NEG to the load balancer;
+   and a second apply (`api_neg_name`) adds the ingress gateway's GKE NEG to the load balancer;
 3. `https://app.example.test/` (emulated DNS, emulator CA; Go client and curl) serves the
    bucket's page and the second request reports `X-Cache-Status: hit`;
 4. `/api/health` goes LB → Istio → app; a client without the LB certificate is refused;
 5. `/api/work` writes to GCS, inserts into Cloud SQL (Go connector, IAM auth) and publishes,
-   using Workload Identity and no endpoint configuration;
+   using Workload Identity and no Endpoint override;
 6. the bucket notification and the message arrive by push with a verified OIDC token; the
    pod then calls `https://app.example.test/api/health` itself, through Cloud NAT;
 7. the pod reaches the internet through Cloud NAT, and neither the internet nor the load
@@ -340,8 +340,8 @@ With `emulator_gateway` empty the module targets real GCP (set `project` and `do
 
 ### Client compatibility (SRS 7.1)
 
-`make compat` runs the real clients against a detached instance with only endpoint
-configuration: `gcloud` (storage, pubsub, secrets, iam, dns, compute load balancing and NAT, artifacts,
+`make compat` runs the real clients against a detached instance with only Endpoint
+overrides: `gcloud` (storage, pubsub, secrets, iam, dns, compute load balancing and NAT, artifacts,
 sql, container), `kubectl` through `gke-gcloud-auth-plugin`, Helm, Docker, `crane`, `ko`, `psql`,
 the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. gcloud (with the
 `gke-gcloud-auth-plugin` component), kubectl, dig and Docker come from `PATH`; Helm, crane, ko
@@ -377,14 +377,14 @@ from the provider block, and fails unless the guard refuses `dns.gcpemu.invalid`
 stack's OpenTofu runs use the same guard.
 
 `gcpemu tofu-provider --beta` also prints a `provider "google-beta"` block for modules that use
-`provider = google-beta`. It has the same endpoints, except that container's is
+`provider = google-beta`. It has the same Endpoint overrides, except that container's is
 `/container/v1beta1/`. It is opt-in because a `google-beta` block makes OpenTofu require the
 `hashicorp/google-beta` provider.
 
 Both blocks set `universe_domain = "gcpemu.invalid"`. Without it, the provider looks up the
-caller's email at `openidconnect.googleapis.com` every time it is configured. No endpoint
-setting covers that URL, so each run calls Google, or stalls for about 10 minutes when there is no DNS.
-An API that the block gives no endpoint is addressed as `<api>.gcpemu.invalid`, which never
+caller's email at `openidconnect.googleapis.com` every time it is configured. No Endpoint
+override covers that URL, so each run calls Google, or stalls for about 10 minutes when there is no DNS.
+An API that the block gives no Endpoint override is addressed as `<api>.gcpemu.invalid`, which never
 resolves, so the call fails instead of reaching Google. Providers older than 7.2 still make the
 lookup. Upgrade them, or set `HTTPS_PROXY` to an address that refuses connections.
 
@@ -413,7 +413,7 @@ with stored credentials.
 ## Development
 
 ```sh
-make agent         # bin/gcpemu-linux-<arch> for the container runtime (needed off linux)
+make agent         # the Sidecar agent, bin/gcpemu-linux-<arch> (needed off linux)
 make vet race      # gofmt, vet, tests with -race
 make release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
 make cross         # the same binaries without building the console (no Node.js)
@@ -428,20 +428,20 @@ The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` em
 
 ```sh
 bin/gcpemu start                       # in one terminal
-cd console && pnpm install && pnpm dev # /console/ with hot reload; other paths go to the gateway
+cd console && pnpm install && pnpm dev # /console/ with hot reload; other paths go to the API gateway
                                        # (GCPEMU_GATEWAY, default 127.0.0.1:4510)
 pnpm lint && pnpm typecheck && pnpm test
 pnpm gen:api                           # after editing internal/admin/openapi.yaml
 make console-e2e                       # Playwright on Chromium, Firefox and WebKit
 ```
 
-Each service is an isolated package implementing `emu.Service`
+Each Service is an isolated package implementing `emu.Service`
 (`internal/emu/emu.go`); cross-service contracts live in `internal/emu/xservice.go`.
 
 API route tables and field-behaviour validation (REQUIRED, OUTPUT_ONLY, IMMUTABLE) are
 generated into `internal/apidef` from the googleapis commit pinned in
 `internal/apidef/apis.yaml` and from the discovery documents of the `google.golang.org/api`
-version in `go.mod`. gRPC services get REST through `internal/transcode`, and the gateway
+version in `go.mod`. gRPC services get REST through `internal/transcode`, and the API gateway
 checks every gRPC request against the generated tables. After a version bump, regenerate:
 
 ```sh

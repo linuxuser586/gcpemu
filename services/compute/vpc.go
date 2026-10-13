@@ -358,7 +358,7 @@ func (s *Service) createBridge(ctx context.Context, rt *runtime.Manager, name, r
 		_, err := rt.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: subnet, Gateway: gw, Labels: labels, Options: opts})
 		if err != nil && opts != nil && !isOverlap(err) && !isExists(err) {
 			// Runtimes that do not know the Docker bridge options (Podman).
-			s.env.Log.Warn("compute: runtime rejected bridge options; NAT isolation relies on the egress gateway route only", "network", name, "err", err)
+			s.env.Log.Warn("compute: runtime rejected bridge options; NAT isolation relies on the NAT egress proxy route only", "network", name, "err", err)
 			opts = nil
 			_, err = rt.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: subnet, Gateway: gw, Labels: labels})
 		}

@@ -76,7 +76,7 @@ func (s *Service) probe(ctx context.Context) error {
 	if s.env.Containers == nil {
 		err = fmt.Errorf("nat: no container runtime support in this build")
 	} else if _, rerr := s.env.Containers.Runtime(ctx); rerr != nil {
-		err = fmt.Errorf("nat: egress gateway needs a container runtime: %w", rerr)
+		err = fmt.Errorf("nat: NAT egress proxy needs a container runtime: %w", rerr)
 	}
 	s.mu.Lock()
 	s.checked, s.err = time.Now(), err

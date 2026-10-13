@@ -70,7 +70,7 @@ func (s *Service) installCAInjector(ctx context.Context, d *deps, key string) {
 	}
 	fe, err := d.np.Addr(ctx, frontend.Endpoint)
 	if err != nil {
-		s.env.Log.Debug("gke: no frontend; pods will not trust the emulator CA", "err", err)
+		s.env.Log.Debug("gke: no Google front end; pods will not trust the emulator CA", "err", err)
 		return
 	}
 	rec, err := s.loadKey(key)
