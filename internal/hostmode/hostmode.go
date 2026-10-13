@@ -232,7 +232,7 @@ func (m *Manager) run(ctx context.Context) (Status, error) {
 	if err := rt.EnsureImage(ctx, Image, m.env.Config.Offline); err != nil {
 		return Status{}, fmt.Errorf("host mode image %s: %w", Image, err)
 	}
-	bin, err := agent.Binary()
+	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
 		return Status{}, err
 	}

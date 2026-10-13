@@ -139,8 +139,15 @@ context other than `default` names a runtime that doesn't respond, start fails r
 another one, so `gcpemu` and `docker` always agree. `gcpemu doctor` shows the runtime it picked
 and why. Everything the emulator creates is labelled
 `gcpemu.instance=<id>`; containers are removed on `stop`, and with `--data-dir` the volumes
-holding Postgres and Kubernetes state are kept so resources survive a restart. The emulator
-copies its own (static) binary into containers as an in-container agent. GKE is Linux-only.
+holding Postgres and Kubernetes state are kept so resources survive a restart.
+
+The emulator copies a static linux gcpemu binary into containers as a Sidecar agent, for the
+runtime's architecture. On a linux host of that architecture it's its own executable. Otherwise
+it uses `GCPEMU_AGENT_BINARY`, then `gcpemu-linux-<arch>` next to the executable, then the copy
+cached in the instance directory under `agent/<version>/linux-<arch>/`. A release build (`vX.Y.Z`)
+with none of these copies it out of the published image of the same version (`ghcr.io`, then
+Docker Hub) and caches it. A dev build needs `make agent` instead. A binary for the wrong
+architecture fails the start with an error naming both. GKE is Linux-only.
 
 Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress immediately
 instead of timing out; with `--offline` (or the offline sink switched on from the Web console),
@@ -406,6 +413,7 @@ with stored credentials.
 ## Development
 
 ```sh
+make agent         # bin/gcpemu-linux-<arch> for the container runtime (needed off linux)
 make vet race      # gofmt, vet, tests with -race
 make release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
 make cross         # the same binaries without building the console (no Node.js)

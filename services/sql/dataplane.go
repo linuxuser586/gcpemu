@@ -157,7 +157,7 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	if err != nil {
 		return err
 	}
-	bin, err := agent.Binary()
+	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
 		return err
 	}

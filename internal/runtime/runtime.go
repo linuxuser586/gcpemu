@@ -197,10 +197,18 @@ func (c *Client) EnsureImage(ctx context.Context, ref string, offline bool) erro
 	if offline {
 		return fmt.Errorf("image %s is not present and --offline is set (pull it or use `gcpemu images load`)", ref)
 	}
+	return c.pull(ctx, ref, "")
+}
+
+// pull pulls ref, for platform ("linux/arm64") when it is set.
+func (c *Client) pull(ctx context.Context, ref, platform string) error {
 	name, tag := splitRef(ref)
 	q := url.Values{"fromImage": {name}}
 	if tag != "" {
 		q.Set("tag", tag)
+	}
+	if platform != "" {
+		q.Set("platform", platform)
 	}
 	resp, err := c.raw(ctx, http.MethodPost, "/images/create", q, nil, "")
 	if err != nil {
@@ -662,6 +670,9 @@ type ContainerSpec struct {
 	Memory int64
 	// Init runs a tiny init as PID 1 to reap zombies.
 	Init bool
+	// Platform picks the image variant ("linux/arm64"); "" lets the
+	// runtime choose.
+	Platform string
 }
 
 // Container is an inspected container.
@@ -743,7 +754,11 @@ func (c *Client) CreateContainer(ctx context.Context, s ContainerSpec) (string, 
 	var out struct {
 		ID string `json:"Id"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/containers/create", url.Values{"name": {s.Name}}, body, &out); err != nil {
+	q := url.Values{"name": {s.Name}}
+	if s.Platform != "" {
+		q.Set("platform", s.Platform)
+	}
+	if err := c.do(ctx, http.MethodPost, "/containers/create", q, body, &out); err != nil {
 		return "", fmt.Errorf("create container %s: %w", s.Name, err)
 	}
 	for _, a := range s.Networks[min(1, len(s.Networks)):] {

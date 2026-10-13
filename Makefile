@@ -17,7 +17,7 @@ LDFLAGS := -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version=$(V
 CONSOLE_PLACEHOLDER := console/dist/index.html
 restore-placeholder = git checkout -- $(CONSOLE_PLACEHOLDER) 2>/dev/null || true
 
-.PHONY: build test race vet lint release cross console console-e2e e2e compat tofu action generate
+.PHONY: build agent test race vet lint release cross console console-e2e e2e compat tofu action generate
 # Builds the console first when pnpm is on PATH; without it the binary
 # embeds the "console not built" placeholder.
 build:
@@ -28,6 +28,16 @@ build:
 	fi
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu$(EXE) ./cmd/gcpemu
 	@$(restore-placeholder)
+
+# ADR 0005: the linux binary that Managed containers run, next to
+# bin/gcpemu, for the container runtime's architecture (the host's when
+# docker doesn't answer). Needed when the host isn't linux on that
+# architecture and the build isn't a release (vX.Y.Z).
+agent:
+	@arch=$$(docker version --format '{{.Server.Arch}}' 2>/dev/null); \
+	[ -n "$$arch" ] || arch=$$(go env GOARCH); \
+	echo "building linux/$$arch"; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o bin/gcpemu-linux-$$arch ./cmd/gcpemu
 
 console:
 	cd console && pnpm install --frozen-lockfile && pnpm build

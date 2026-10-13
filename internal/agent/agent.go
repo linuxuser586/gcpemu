@@ -6,7 +6,6 @@ package agent
 
 import (
 	"context"
-	"debug/elf"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,7 +21,7 @@ import (
 const EnvVar = "GCPEMU_AGENT"
 
 // BinaryEnv overrides the binary copied into containers (tests set it to a
-// CGO_ENABLED=0 build of ./cmd/gcpemu).
+// CGO_ENABLED=0 build of ./cmd/gcpemu). See Resolver.
 const BinaryEnv = "GCPEMU_AGENT_BINARY"
 
 // ContainerPath is where the binary is placed inside containers.
@@ -75,55 +74,17 @@ func Main() {
 	os.Exit(0)
 }
 
-var (
-	binOnce sync.Once
-	binPath string
-	binErr  error
-)
-
-// Binary returns the path of a static linux binary of gcpemu for the host
-// architecture, suitable for copying into containers.
-func Binary() (string, error) {
-	binOnce.Do(func() {
-		if p := os.Getenv(BinaryEnv); p != "" {
-			binPath = p
-			return
-		}
-		if runtime.GOOS != "linux" {
-			binErr = fmt.Errorf("in-container agents need a linux gcpemu binary; set %s", BinaryEnv)
-			return
-		}
-		binPath, binErr = os.Executable()
-		if binErr == nil && dynamic(binPath) {
-			binErr = fmt.Errorf("%s is dynamically linked, so it can't run as an agent in containers; build gcpemu with CGO_ENABLED=0 (as `make build` does) or set %s to a static build", binPath, BinaryEnv)
-		}
-	})
-	return binPath, binErr
-}
-
-// dynamic reports whether the ELF executable at path needs a dynamic
-// loader (it has a PT_INTERP program header).
-func dynamic(path string) bool {
-	f, err := elf.Open(path)
-	if err != nil {
-		return false
+// BuildForTests compiles ./cmd/gcpemu for linux/arch with CGO_ENABLED=0
+// into dir (once per process) and sets GCPEMU_AGENT_BINARY. moduleRoot is
+// the repository root; arch is the runtime's, or "" for the host's.
+func BuildForTests(moduleRoot, dir, arch string) (string, error) {
+	if arch == "" {
+		arch = runtime.GOARCH
 	}
-	defer f.Close()
-	for _, p := range f.Progs {
-		if p.Type == elf.PT_INTERP {
-			return true
-		}
-	}
-	return false
-}
-
-// BuildForTests compiles ./cmd/gcpemu with CGO_ENABLED=0 into dir (once per
-// process) and sets GCPEMU_AGENT_BINARY. moduleRoot is the repository root.
-func BuildForTests(moduleRoot, dir string) (string, error) {
-	out := filepath.Join(dir, "gcpemu-agent")
+	out := filepath.Join(dir, "gcpemu-agent-"+arch)
 	cmd := exec.Command("go", "build", "-o", out, "./cmd/gcpemu")
 	cmd.Dir = moduleRoot
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("build agent binary: %v\n%s", err, b)
 	}

@@ -426,7 +426,11 @@ func negService(name string, port int) map[string]any {
 // LOCATION-docker.pkg.dev reference.
 func pushEchoImage(t *testing.T, inst *emutest.Instance) string {
 	t.Helper()
-	bin, err := agent.Binary()
+	rt, err := inst.Env.Containers.Runtime(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, err := rt.AgentBinary(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
