@@ -45,6 +45,8 @@ jobs:
   # ADR 0005: the VM relay path, forced on Linux, where a container
   # runtime is available (hosted macOS runners have none).
   vm-relay:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -332,7 +334,7 @@ jobs:
   # job was skipped.
   ci-ok:
     if: always()
-    needs: [changes, test, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf]
+    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf]
     runs-on: ubuntu-24.04
     steps:
       - env:

@@ -92,6 +92,20 @@ func (c *containers) DialContext(ctx context.Context, network, addr string) (net
 	return d.DialContext(ctx, network, addr)
 }
 
+// RelayIP implements emu.Containers.
+func (c *containers) RelayIP() string {
+	c.mu.Lock()
+	plane := c.plane
+	c.mu.Unlock()
+	if plane == nil {
+		return ""
+	}
+	if r := plane.Relay(); r != nil {
+		return r.IP()
+	}
+	return ""
+}
+
 // reset removes the VM relay (Instance.Reset); it starts again when next
 // needed.
 func (c *containers) reset(ctx context.Context) error {

@@ -288,4 +288,8 @@ type Containers interface {
 	// dials directly until a service has used the netplane, since no
 	// container can be running before then.
 	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	// RelayIP is the VM relay's address on the services network, at which
+	// containers reach emulator endpoints (netplane.Plane.Addr), or ""
+	// when no relay runs.
+	RelayIP() string
 }

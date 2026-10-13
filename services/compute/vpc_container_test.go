@@ -3,8 +3,10 @@ package compute_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
+	"github.com/linuxuser586/gcpemu/services/compute"
 )
 
 const probeImage = "rancher/k3s:v1.36.5-k3s1"
@@ -259,6 +262,17 @@ func net2(cidr string, ips ...string) bool {
 func TestOfflineSink(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	// Offline, the images must already be present: pull them first, as
+	// a fresh runner may not have run anything that does.
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, img := range append(slices.Collect(maps.Values(compute.Images)), probeImage) {
+		if err := cl.EnsureImage(context.Background(), img, false); err != nil {
+			t.Fatal(err)
+		}
+	}
 	inst, c, _ := newClients(t, func(cfg *config.Config) {
 		cfg.Offline = true
 		cfg.NATSinkResponse = "418:offline sink"
