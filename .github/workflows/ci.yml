@@ -118,7 +118,7 @@ jobs:
       - run: docker events --filter type=container --filter event=die --filter event=oom --filter event=kill --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' > "$RUNNER_TEMP/container-events.log" &
       - run: make console-e2e
       - name: Container ends and OOM kills
-        if: always()
+        if: failure()
         run: |
           cat "$RUNNER_TEMP/container-events.log"
           sudo dmesg | grep -iE 'oom|killed process' || true
