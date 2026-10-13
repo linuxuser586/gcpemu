@@ -110,7 +110,7 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) 
 	if err := rt.EnsureImage(ctx, Image, rt.Offline); err != nil {
 		return nil, fmt.Errorf("VM relay image %s: %w", Image, err)
 	}
-	bin, err := agent.Binary()
+	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
 		return nil, err
 	}

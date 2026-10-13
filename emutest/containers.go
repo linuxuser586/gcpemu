@@ -37,7 +37,8 @@ func RequireRuntime(t testing.TB) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := cl.Info(ctx); err != nil {
+	info, err := cl.Info(ctx)
+	if err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
 	}
 	agentOnce.Do(func() {
@@ -62,7 +63,7 @@ func RequireRuntime(t testing.TB) {
 			agentErr = err
 			return
 		}
-		_, agentErr = agent.BuildForTests(root, dir)
+		_, agentErr = agent.BuildForTests(root, dir, info.Arch)
 	})
 	if agentErr != nil {
 		t.Fatalf("emutest: %v", agentErr)

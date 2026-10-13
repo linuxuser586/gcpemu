@@ -250,7 +250,7 @@ func (r *lanRelay) ensureLocked(ctx context.Context) error {
 	if err := rt.EnsureImage(ctx, edgeImage, env.Config.Offline); err != nil {
 		return fmt.Errorf("lb-lan image %s: %w", edgeImage, err)
 	}
-	bin, err := agent.Binary()
+	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
 		return err
 	}

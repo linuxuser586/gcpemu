@@ -213,7 +213,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 	if err := rt.EnsureImage(ctx, natImage, g.s.env.Config.Offline); err != nil {
 		return apierr.FailedPrecondition("NAT gateway image %s: %v", natImage, err)
 	}
-	bin, err := agent.Binary()
+	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
 		return apierr.FailedPrecondition("NAT gateway agent: %v", err)
 	}

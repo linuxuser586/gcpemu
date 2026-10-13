@@ -296,7 +296,7 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	if err := rt.EnsureImage(ctx, edgeImage, e.env().Config.Offline); err != nil {
 		return fmt.Errorf("lb-edge image %s: %w", edgeImage, err)
 	}
-	bin, err := agent.Binary()
+	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
 		return err
 	}

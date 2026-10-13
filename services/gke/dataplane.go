@@ -653,7 +653,7 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	if err != nil {
 		s.env.Log.Warn("gke: node image preload unavailable; nodes will pull system images", "err", err)
 	}
-	bin, err := agent.Binary()
+	bin, err := d.rt.AgentBinary(ctx)
 	if err != nil {
 		return apierr.FailedPrecondition("GKE nodes need a linux gcpemu binary: %v", err)
 	}

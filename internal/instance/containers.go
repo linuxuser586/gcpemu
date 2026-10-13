@@ -3,10 +3,12 @@ package instance
 import (
 	"context"
 	"net"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
@@ -46,6 +48,10 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 		Client: cl, Info: info, InstanceID: c.in.ID, Instance: c.in.Config.Instance,
 		Offline: c.in.Config.Offline, Ephemeral: c.in.Config.Ephemeral,
 		Log: c.in.Env.Log.With("component", "runtime"), Reserved: c.reservedAddrs,
+		Agent: &agent.Resolver{
+			Arch: info.Arch, Version: Version, CacheDir: filepath.Join(c.in.Dir, "agent"),
+			Offline: c.in.Config.Offline, Images: cl,
+		},
 	}
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/agent"
 )
 
 // Manager scopes runtime objects to one emulator instance: it names and
@@ -28,8 +30,23 @@ type Manager struct {
 	// recorded and ask for again when their containers are recreated (a
 	// Cloud SQL instance's public IP). See CreateContainer.
 	Reserved func() []string
+	// Agent finds the linux gcpemu binary for Managed containers; nil
+	// resolves without the cache or the published image (AgentBinary).
+	Agent *agent.Resolver
 
-	addrMu sync.Mutex
+	addrMu    sync.Mutex
+	agentOnce sync.Once
+}
+
+// AgentBinary returns the path of a static linux gcpemu binary for the
+// runtime's architecture, to copy into Managed containers.
+func (m *Manager) AgentBinary(ctx context.Context) (string, error) {
+	m.agentOnce.Do(func() {
+		if m.Agent == nil {
+			m.Agent = &agent.Resolver{Arch: m.Info.Arch}
+		}
+	})
+	return m.Agent.Binary(ctx)
 }
 
 // CreateContainer creates a container like Client.CreateContainer, except
