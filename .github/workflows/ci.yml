@@ -2,14 +2,33 @@ name: ci
 on:
   push:
     branches: [main]
-    paths-ignore: &docs
-      - "**.md"
-      - "docs/**"
   pull_request:
-    paths-ignore: *docs
 
 jobs:
+  # Docs-only changes skip every job below rather than the whole workflow,
+  # so ci-ok still reports and a docs-only PR can merge.
+  changes:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - "**"
+              - "!**/*.md"
+              - "!docs/**"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
@@ -26,6 +45,8 @@ jobs:
   # FR-UI-001/020: the Web console's lint, types, unit tests, build and
   # bundle budget, and admin API types generated from openapi.yaml.
   console:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -56,6 +77,8 @@ jobs:
   # FR-UI-023: Playwright on Chromium, Firefox and WebKit against a binary
   # with the real console. The runner's Docker backs the GKE view's clusters.
   console-e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -85,6 +108,8 @@ jobs:
   # SRS 11.2: v1.0 is accepted when the reference stack runs green on both
   # architectures within 10 minutes (the test enforces the budget).
   e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +137,8 @@ jobs:
 
   # SRS 7.1: real clients against a detached instance.
   compat:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -136,6 +163,8 @@ jobs:
   # SRS 11.1 / IF-001: apply → plan (no diff) → destroy of every supported
   # resource type, with each provider at its current and previous minor.
   tofu:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -169,6 +198,8 @@ jobs:
   # FR-CI-001/002: the setup-gcpemu action, with this commit's binary
   # served as release v0.0.0-selftest.
   action:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -253,6 +284,8 @@ jobs:
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
   perf:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -278,3 +311,22 @@ jobs:
           go test -p 1 -count=1 -timeout 25m -v
           ./cmd/gcpemu ./services/gcs ./services/pubsub ./services/lb ./services/cdn ./services/sql ./services/gke
           -run 'TestColdStartAndIdleRSS|TestControlPlaneP99|TestBinarySize|TestThroughputTarget|TestPublishPullTarget|TestPerformanceTargets|TestHitLatencyP99|TestInstanceLifecycle|TestGKE$'
+
+  # The only required check: the matrix legs above report unexpanded names
+  # when skipped, so the ruleset requires this job instead. It passes when
+  # every job ran green, or when the change touched docs alone and every
+  # job was skipped.
+  ci-ok:
+    if: always()
+    needs: [changes, test, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          changes=$(jq -r .changes.result <<<"$NEEDS")
+          test "$changes" = success || { echo "::error::changes: $changes"; exit 1; }
+          want=skipped
+          test "$(jq -r .changes.outputs.code <<<"$NEEDS")" = true && want=success
+          bad=$(jq -r --arg want "$want" 'del(.changes) | to_entries[] | select(.value.result != $want) | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          test -z "$bad" || { echo "::error::want every job $want, got:"; echo "$bad"; exit 1; }
