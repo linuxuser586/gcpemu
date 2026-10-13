@@ -16,6 +16,11 @@ const (
 	nsChanges = "dns/changes" // project/zone/%012d → changeRec
 	nsOps     = "dns/ops"     // project/zone/%012d → dnsv1.Operation
 	nsMeta    = "dns/meta"    // "gen" → generation token of the last commit
+
+	nsPolicies     = "dns/policies"     // project/policy → dnsv1.Policy
+	nsRespPolicies = "dns/respPolicies" // project/policy → dnsv1.ResponsePolicy
+	nsRespRules    = "dns/respRules"    // project/policy/rule → dnsv1.ResponsePolicyRule
+	nsIAM          = "dns/iam"          // zone resource → policy JSON, without the iam service
 )
 
 // Resource kinds as returned by Cloud DNS.
@@ -33,6 +38,18 @@ const (
 	kindLogging    = "dns#managedZoneCloudLoggingConfig"
 	kindProject    = "dns#project"
 	kindQuota      = "dns#quota"
+
+	kindPolicy        = "dns#policy"
+	kindPolicyList    = "dns#policiesListResponse"
+	kindPolicyNet     = "dns#policyNetwork"
+	kindPolicyANS     = "dns#policyAlternativeNameServerConfig"
+	kindPolicyTarget  = "dns#policyAlternativeNameServerConfigTargetNameServer"
+	kindPolicyDNS64   = "dns#policyDns64Config"
+	kindPolicyScope   = "dns#policyDns64ConfigScope"
+	kindRespPolicy    = "dns#responsePolicy"
+	kindRespPolicyNet = "dns#responsePolicyNetwork"
+	kindRespPolicyGKE = "dns#responsePolicyGKECluster"
+	kindRespRule      = "dns#responsePolicyRule"
 )
 
 // Default SOA/NS parameters of a new zone (as Cloud DNS creates them).

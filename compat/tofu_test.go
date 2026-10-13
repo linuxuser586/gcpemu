@@ -55,6 +55,9 @@ var resourceTypes = map[string][]string{
 	},
 	"dns": {
 		"google_dns_managed_zone", "google_dns_record_set", "google_compute_network",
+		"google_dns_policy", "google_dns_response_policy", "google_dns_response_policy_rule",
+		"google_dns_managed_zone_iam_member", "google_dns_managed_zone_iam_binding", "google_dns_managed_zone_iam_policy",
+		"google_service_account",
 	},
 	"network": {
 		"google_compute_network", "google_compute_subnetwork", "google_compute_firewall", "google_compute_route",

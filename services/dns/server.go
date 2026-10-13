@@ -17,7 +17,8 @@ import (
 // every client. A private zone is served only to queries from the VPC
 // networks it is bound to, which GKE node DNS relays name in an EDNS0
 // option (frontend.NetworkOption, FR-INT-005); there it wins over a public
-// zone with the same name. Host queries and Resolve see public zones only.
+// zone with the same name. On a network a response policy is bound to, its
+// rules win over every zone (FR-DNS-006). Host queries and Resolve see public zones only.
 // Names outside every visible zone are forwarded to the host resolver
 // unless --dns-no-forward is set, in which case the answer is REFUSED.
 
@@ -113,7 +114,10 @@ func (s *Service) logQuery(w mdns.ResponseWriter, req, resp *mdns.Msg, network s
 	if len(req.Question) == 1 {
 		q := req.Question[0]
 		e.Method += mdns.TypeToString[q.Qtype] + " " + q.Name
-		if z := s.currentIndex().findZone(strings.ToLower(mdns.Fqdn(q.Name)), network); z != nil {
+		ix, name := s.currentIndex(), strings.ToLower(mdns.Fqdn(q.Name))
+		if rule := ix.findRule(name, network); rule != nil {
+			e.Resource = rule.policy
+		} else if z := ix.findZone(name, network); z != nil {
 			e.Resource = "projects/" + z.project + "/managedZones/" + z.name
 		}
 	} else {
@@ -149,20 +153,32 @@ func (s *Service) answer(ctx context.Context, network string, q mdns.Question) *
 	return m
 }
 
-// answerZones resolves q against the zones visible on network, chasing
-// CNAMEs across them and forwarding names outside them.
+// answerZones resolves q against the response policy rules and zones
+// visible on network, chasing CNAMEs across them and forwarding names
+// outside them.
 func (s *Service) answerZones(ctx context.Context, network string, q mdns.Question) *mdns.Msg {
 	ix := s.currentIndex()
 	out := new(mdns.Msg)
 	name := strings.ToLower(mdns.Fqdn(q.Name))
-	z := ix.findZone(name, network)
-	if z == nil {
-		return s.forward(ctx, mdns.Question{Name: q.Name, Qtype: q.Qtype, Qclass: mdns.ClassINET})
-	}
-	out.Authoritative = true
 	seen := map[string]bool{}
 	for hop := 0; ; hop++ {
-		r := z.lookup(name, q.Qtype)
+		var r lookupResult
+		if rule := ix.findRule(name, network); rule != nil {
+			// Response policy rules win over every zone.
+			r = rule.lookup(name, q.Qtype)
+		} else if z := ix.findZone(name, network); z != nil {
+			r = z.lookup(name, q.Qtype)
+		} else if hop == 0 {
+			return s.forward(ctx, mdns.Question{Name: q.Name, Qtype: q.Qtype, Qclass: mdns.ClassINET})
+		} else {
+			// Out-of-zone target: complete the chain via the host resolver.
+			if f := s.forward(ctx, mdns.Question{Name: name, Qtype: q.Qtype, Qclass: mdns.ClassINET}); f.Rcode != mdns.RcodeRefused {
+				out.Answer = append(out.Answer, f.Answer...)
+				out.Ns, out.Extra, out.Rcode = nil, nil, f.Rcode
+			}
+			return out
+		}
+		out.Authoritative = true
 		out.Answer = append(out.Answer, r.answer...)
 		out.Ns, out.Extra, out.Rcode = r.ns, r.extra, r.rcode
 		if r.referral {
@@ -178,17 +194,6 @@ func (s *Service) answerZones(ctx context.Context, network string, q mdns.Questi
 			return out
 		}
 		name = target
-		if z = ix.findZone(name, network); z == nil {
-			// Out-of-zone target: complete the chain via the host resolver.
-			if f := s.forward(ctx, mdns.Question{Name: target, Qtype: q.Qtype, Qclass: mdns.ClassINET}); f.Rcode != mdns.RcodeRefused {
-				out.Answer = append(out.Answer, f.Answer...)
-				out.Ns, out.Extra, out.Rcode = nil, nil, f.Rcode
-			}
-			return out
-		}
-		// The chain continues in a zone we serve; clear the authority of
-		// the intermediate step.
-		out.Ns, out.Extra = nil, nil
 	}
 }
 

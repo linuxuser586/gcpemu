@@ -1,7 +1,9 @@
 // Package dns emulates Cloud DNS (SRS 5.2): the dns.googleapis.com v1 REST
-// control plane (managed zones, record sets, changes; FR-DNS-001/002) and an
+// control plane (managed zones, record sets, changes; FR-DNS-001/002; zone
+// IAM policies, FR-IAM-003; server and response policies, FR-DNS-006) and an
 // authoritative DNS data plane on UDP and TCP that answers from the stored
-// zones and forwards other names to the host resolver (FR-DNS-003/004).
+// zones and response policies and forwards other names to the host resolver
+// (FR-DNS-003/004).
 package dns
 
 import (
@@ -139,7 +141,10 @@ func (s *Service) Ready() error {
 
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
-	return store.Counts(s.env.Store, map[string]string{"managedZones": nsZones, "resourceRecordSets": nsRRSets})
+	return store.Counts(s.env.Store, map[string]string{
+		"managedZones": nsZones, "resourceRecordSets": nsRRSets, "policies": nsPolicies,
+		"responsePolicies": nsRespPolicies, "responsePolicyRules": nsRespRules,
+	})
 }
 
 // Reset drops the in-memory query index; it is rebuilt from the store on

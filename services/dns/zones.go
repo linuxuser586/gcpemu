@@ -67,6 +67,22 @@ func (s *Service) zoneFor(r *http.Request, perm string) (*zoneRec, error) {
 
 var networkRE = regexp.MustCompile(`(?:^|/)projects/([^/]+)/global/networks/([^/]+)$`)
 
+// networkURL validates a network reference (field names it in errors) and
+// returns it as the full URL Cloud DNS reports. With perm it also checks
+// the caller in ctx holds perm on the network.
+func (s *Service) networkURL(ctx context.Context, field, ref, perm string) (string, error) {
+	m := networkRE.FindStringSubmatch(ref)
+	if m == nil {
+		return "", errInvalid(field, ref)
+	}
+	if perm != "" {
+		if err := s.env.Auth.Check(ctx, perm, "//compute.googleapis.com/projects/"+m[1]+"/global/networks/"+m[2]); err != nil {
+			return "", err
+		}
+	}
+	return "https://www.googleapis.com/compute/v1/projects/" + m[1] + "/global/networks/" + m[2], nil
+}
+
 // normalizeZone validates a zone's mutable fields and fills defaults. With
 // checkIAM it also checks the caller in ctx may bind the zone's networks.
 func (s *Service) normalizeZone(ctx context.Context, z *dnsv1.ManagedZone, checkIAM bool) error {
@@ -91,19 +107,17 @@ func (s *Service) normalizeZone(ctx context.Context, z *dnsv1.ManagedZone, check
 			return apierr.InvalidArgument("Invalid value for 'entity.managedZone.privateVisibilityConfig': a public zone cannot have private visibility config.")
 		}
 		z.PrivateVisibilityConfig.Kind = kindPVC
+		perm := ""
+		if checkIAM {
+			perm = "dns.networks.bindPrivateDNSZone"
+		}
 		for i, n := range z.PrivateVisibilityConfig.Networks {
-			m := networkRE.FindStringSubmatch(n.NetworkUrl)
-			if m == nil {
-				return errInvalid("entity.managedZone.privateVisibilityConfig.networks["+strconv.Itoa(i)+"].networkUrl", n.NetworkUrl)
-			}
-			if checkIAM {
-				if err := s.env.Auth.Check(ctx, "dns.networks.bindPrivateDNSZone",
-					"//compute.googleapis.com/projects/"+m[1]+"/global/networks/"+m[2]); err != nil {
-					return err
-				}
+			u, err := s.networkURL(ctx, "entity.managedZone.privateVisibilityConfig.networks["+strconv.Itoa(i)+"].networkUrl", n.NetworkUrl, perm)
+			if err != nil {
+				return err
 			}
 			n.Kind = kindPVCNet
-			n.NetworkUrl = "https://www.googleapis.com/compute/v1/projects/" + m[1] + "/global/networks/" + m[2]
+			n.NetworkUrl = u
 		}
 	}
 	if z.CloudLoggingConfig == nil {
@@ -340,7 +354,7 @@ func (s *Service) deleteZone(w http.ResponseWriter, r *http.Request) {
 // otherwise it fails with containerNotEmpty as Cloud DNS does.
 func (s *Service) DeleteZone(proj, name string) error {
 	zk := zoneKey(proj, name)
-	return s.update(func(tx store.Tx) error {
+	err := s.update(func(tx store.Tx) error {
 		zr, err := loadZone(tx, proj, name)
 		if err != nil {
 			return err
@@ -372,8 +386,15 @@ func (s *Service) DeleteZone(proj, name string) error {
 				return err
 			}
 		}
+		if err := tx.Delete(nsIAM, zoneResource(proj, name)); err != nil {
+			return err
+		}
 		return tx.Delete(nsZones, zk)
 	})
+	if err == nil {
+		s.deleteZonePolicy(context.Background(), zoneResource(proj, name))
+	}
+	return err
 }
 
 // Zone operations (minimal: patch/update record done UPDATE operations).

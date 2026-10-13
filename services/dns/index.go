@@ -17,6 +17,28 @@ type index struct {
 	// zones maps a lower-case origin to the zones serving it, private
 	// zones first, then by project/name.
 	zones map[string][]*zoneIdx
+	// rules maps a bound network, then a lower-case rule DNS name, to the
+	// response policy rule answering it there (the first policy by
+	// project/name wins a name).
+	rules map[string]map[string]*ruleIdx
+}
+
+// ruleIdx is a response policy rule: it bypasses the policy or answers
+// from local data owned by its DNS name.
+type ruleIdx struct {
+	policy string // "projects/P/responsePolicies/RP"
+	bypass bool
+	data   *zoneIdx // origin is the rule's DNS name
+}
+
+// lookup answers qname, which the rule matches, from the local data;
+// a wildcard rule's records take the query name.
+func (r *ruleIdx) lookup(qname string, qtype uint16) lookupResult {
+	owner := ""
+	if qname != r.data.origin {
+		owner = qname
+	}
+	return r.data.fromSets(r.data.names[r.data.origin], qname, qtype, owner)
 }
 
 type zoneIdx struct {
@@ -63,8 +85,9 @@ func (s *Service) currentIndex() *index {
 }
 
 func (s *Service) buildIndex() *index {
-	ix := &index{zones: map[string][]*zoneIdx{}}
+	ix := &index{zones: map[string][]*zoneIdx{}, rules: map[string]map[string]*ruleIdx{}}
 	_ = s.env.Store.View(func(tx store.Tx) error {
+		ix.addResponsePolicies(tx)
 		zones, _ := store.ListJSON[zoneRec](tx, nsZones, "")
 		for _, zr := range zones {
 			z := zr.Zone
@@ -102,6 +125,59 @@ func (s *Service) buildIndex() *index {
 		})
 	}
 	return ix
+}
+
+// addResponsePolicies indexes the rules of every response policy under
+// each network it is bound to.
+func (ix *index) addResponsePolicies(tx store.Tx) {
+	tx.Scan(nsRespPolicies, "", func(pk string, b []byte) bool {
+		var p dnsv1.ResponsePolicy
+		if json.Unmarshal(b, &p) != nil || len(p.Networks) == 0 {
+			return true
+		}
+		proj, _, _ := strings.Cut(pk, "/")
+		res := "projects/" + proj + "/responsePolicies/" + p.ResponsePolicyName
+		rules, _ := store.ListJSON[dnsv1.ResponsePolicyRule](tx, nsRespRules, pk+"/")
+		for _, n := range p.Networks {
+			net := normalizeNetwork(n.NetworkUrl)
+			if ix.rules[net] == nil {
+				ix.rules[net] = map[string]*ruleIdx{}
+			}
+			for _, rl := range rules {
+				name := strings.ToLower(rl.DnsName)
+				if _, ok := ix.rules[net][name]; ok {
+					continue
+				}
+				ri := &ruleIdx{policy: res, bypass: rl.Behavior == behaviorBypass,
+					data: &zoneIdx{origin: name, names: map[string]map[uint16]*rrsetIdx{}}}
+				if rl.LocalData != nil {
+					for _, rs := range rl.LocalData.LocalDatas {
+						ri.data.add(rs)
+					}
+				}
+				ix.rules[net][name] = ri
+			}
+		}
+		return true
+	})
+}
+
+// findRule returns the response policy rule that answers name on network:
+// an exact rule, else the most specific wildcard rule above it, unless
+// that rule bypasses the policy.
+func (ix *index) findRule(name, network string) *ruleIdx {
+	rules := ix.rules[network]
+	if len(rules) == 0 {
+		return nil
+	}
+	r := rules[name]
+	for n := parent(name); r == nil && n != ""; n = parent(n) {
+		r = rules["*."+n]
+	}
+	if r == nil || r.bypass {
+		return nil
+	}
+	return r
 }
 
 func (z *zoneIdx) add(rs *dnsv1.ResourceRecordSet) {
