@@ -23,6 +23,7 @@ export const RECONNECT_MS = 1000
 const RESOURCES: QueryKey = ['admin', 'resources']
 const OPERATIONS: QueryKey = ['admin', 'operations']
 const REQUESTS: QueryKey = ['admin', 'requests']
+const IAM_DENIALS: QueryKey = ['iam', 'denials']
 
 /**
  * staleKeys returns the query key prefixes an event makes stale, or 'all'.
@@ -40,6 +41,8 @@ export function staleKeys(type: string, data: unknown): QueryKey[] | 'all' {
       const { service } = data as OperationChange
       return [OPERATIONS, [service]]
     }
+    case 'iamDenial':
+      return [IAM_DENIALS]
     case 'reset':
     case 'gap':
       return 'all'
@@ -63,7 +66,7 @@ export interface EventsOptions {
   url?: string
 }
 
-const TYPES = ['resource', 'operation', 'request', 'reset', 'gap'] as const
+const TYPES = ['resource', 'operation', 'request', 'iamDenial', 'reset', 'gap'] as const
 
 /**
  * connectEvents keeps client in step with the Instance and returns a

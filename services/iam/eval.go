@@ -230,3 +230,57 @@ func gkeWorkloadMember(m string) (pool, ns, ksa string, ok bool) {
 	}
 	return "", "", "", false
 }
+
+// smallestRoles caches smallestRole by permission.
+var smallestRoles sync.Map
+
+// smallestRole returns the predefined role with the fewest permissions
+// that grants perm (FR-UI-014), ties going to the first by name. Basic
+// roles, roles at the DEPRECATED or DISABLED stage, and Cloud Storage's
+// legacy roles (which GCP grants only on buckets, not on the Project the
+// advice binds them on) count only when nothing else grants perm.
+func (c *catalogue) smallestRole(perm string) *predefinedRole {
+	if r, ok := smallestRoles.Load(perm); ok {
+		return r.(*predefinedRole)
+	}
+	var best, fallback *predefinedRole
+	smaller := func(a, b *predefinedRole) bool { return b == nil || len(a.Permissions) < len(b.Permissions) }
+	for _, name := range c.names {
+		r := c.roles[name]
+		if !r.has(perm) {
+			continue
+		}
+		if r.basic != "" || r.Stage == "DEPRECATED" || r.Stage == "DISABLED" || strings.HasPrefix(r.Name, "roles/storage.legacy") {
+			if smaller(r, fallback) {
+				fallback = r
+			}
+		} else if smaller(r, best) {
+			best = r
+		}
+	}
+	if best == nil {
+		best = fallback
+	}
+	if best != nil && c == builtin() {
+		smallestRoles.Store(perm, best)
+	}
+	return best
+}
+
+// AdviseGrant implements emu.DenialAdvisor: the smallest predefined role
+// granting perm, and the Project whose policy applies to resource.
+func (s *Service) AdviseGrant(ctx context.Context, perm, resource string) (role, title, projectID string) {
+	if r := s.cat.smallestRole(perm); r != nil {
+		role, title = r.Name, r.Title
+	}
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		for _, res := range s.policyChain(tx, resource) {
+			if id, ok := strings.CutPrefix(res, projectResource("")); ok && !strings.Contains(id, "/") {
+				projectID = id
+				return nil
+			}
+		}
+		return nil
+	})
+	return role, title, projectID
+}

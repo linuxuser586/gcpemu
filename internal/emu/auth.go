@@ -39,10 +39,13 @@ func PrincipalFrom(ctx context.Context) Principal {
 
 // CallInfo collects what the request log reports about a call beyond its
 // method and status (FR-CORE-061): the resource whose permission was
-// checked first.
+// checked first. It also carries the call's Service and method, for the
+// denial log.
 type CallInfo struct {
 	mu       sync.Mutex
 	resource string
+	service  string
+	method   string
 }
 
 type callInfoKey struct{}
@@ -64,6 +67,25 @@ func NoteResource(ctx context.Context, resource string) {
 		ci.resource = resource
 	}
 	ci.mu.Unlock()
+}
+
+// SetCall records the Service and method of the call, as the Request log
+// names them.
+func (ci *CallInfo) SetCall(service, method string) {
+	ci.mu.Lock()
+	ci.service, ci.method = service, method
+	ci.mu.Unlock()
+}
+
+// callOf returns the Service and method recorded for the call in ctx.
+func callOf(ctx context.Context) (service, method string) {
+	ci, _ := ctx.Value(callInfoKey{}).(*CallInfo)
+	if ci == nil {
+		return "", ""
+	}
+	ci.mu.Lock()
+	defer ci.mu.Unlock()
+	return ci.service, ci.method
 }
 
 // Resource returns the recorded resource.
@@ -100,12 +122,14 @@ type PolicyEvaluator interface {
 
 // PolicyAuthorizer implements Authorizer using pluggable authenticator and
 // evaluator, applying the configured mode. The mode starts as configured
-// and can be switched while the Instance runs (SetMode).
+// and can be switched while the Instance runs (SetMode). It keeps a log
+// of the calls it would deny (Denials).
 type PolicyAuthorizer struct {
-	mode  atomic.Value // string
-	log   *slog.Logger
-	authn Authenticator
-	eval  PolicyEvaluator
+	mode    atomic.Value // string
+	log     *slog.Logger
+	authn   Authenticator
+	eval    PolicyEvaluator
+	denials denialLog
 }
 
 // NewPolicyAuthorizer returns an authorizer that allows everything until an
@@ -143,6 +167,7 @@ func (a *PolicyAuthorizer) Check(ctx context.Context, permission, resource strin
 	if a.eval.Allowed(ctx, p, permission, resource) {
 		return nil
 	}
+	a.denials.add(ctx, p, permission, resource, mode)
 	if mode == config.IAMAudit {
 		a.log.Warn("iam audit: would deny", "principal", string(p), "permission", permission, "resource", resource)
 		return nil

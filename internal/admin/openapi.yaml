@@ -106,6 +106,41 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/IamEnforcement" }
         "400": { $ref: "#/components/responses/Error" }
+  /_emu/v1/iam/denials:
+    get:
+      summary: Calls the audit IAM enforcement level would deny, most recently denied first (FR-UI-014).
+      operationId: iamDenials
+      description: >-
+        Every call IAM found the caller lacking a permission for since the
+        Instance started or was reset, whether it was allowed (audit) or
+        failed (enforce). Calls by one Principal for one permission on one
+        resource are one IamDenial. Each carries the smallest predefined
+        role granting the permission, the Project whose policy a binding
+        of that role belongs in, and whether the Principal now holds the
+        permission. The `iamDenial` events of /_emu/v1/events report new
+        denied calls.
+      parameters:
+        - name: project
+          in: query
+          description: Only denials of resources in this Project.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The denials.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [denials]
+                properties:
+                  denials:
+                    type: array
+                    items: { $ref: "#/components/schemas/IamDenial" }
+    delete:
+      summary: Forget every IAM denial (Web console IAM audit view).
+      operationId: clearIamDenials
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
   /_emu/v1/endpoints:
     get:
       summary: Listener addresses by endpoint name (as in endpoints.json).
@@ -192,7 +227,7 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
   /_emu/v1/events:
     get:
-      summary: Server-sent stream of resource changes, Operation progress and Request log entries (FR-UI-006).
+      summary: Server-sent stream of resource changes, Operation progress, Request log entries and IAM denials (FR-UI-006).
       operationId: events
       description: |
         A `text/event-stream` that stays open. Each event has an `id`, an
@@ -204,6 +239,9 @@ paths:
           Service (including Cloud DNS changes) is created, progresses,
           completes or is deleted.
         - `request`: a RequestEntry, sent for every Request log entry.
+        - `iamDenial`: an IamDenial without its role, Project and granted
+          fields, sent for every call the audit IAM enforcement level
+          would deny.
         - `reset`: `{}`; all state was replaced (`gcpemu reset`). Refetch
           everything.
         - `gap`: `{}`; only sent first on a resumed stream whose missed
@@ -670,6 +708,27 @@ components:
       required: [level]
       properties:
         level: { type: string, enum: ["off", audit, enforce] }
+    IamDenial:
+      type: object
+      required: [id, principal, permission, resource, level, count, firstTime, lastTime, granted]
+      properties:
+        id: { type: string, description: Stable for the Principal, permission and resource. }
+        principal: { type: string, description: "The caller, e.g. serviceAccount:EMAIL." }
+        permission: { type: string, description: The permission the caller lacked. }
+        resource: { type: string, description: The full resource name the permission was checked on. }
+        service: { type: string, description: The Service ID of the latest denied call. }
+        method: { type: string, description: The latest denied call's method, as the Request log names it. }
+        level:
+          type: string
+          enum: [audit, enforce]
+          description: The IAM enforcement level of the latest denied call; under enforce it failed with PERMISSION_DENIED.
+        count: { type: integer, description: How many calls were denied. }
+        firstTime: { type: string, format: date-time }
+        lastTime: { type: string, format: date-time }
+        role: { type: string, description: "The smallest predefined role granting the permission, e.g. roles/storage.objectViewer." }
+        roleTitle: { type: string }
+        project: { type: string, description: The ID of the Project owning the resource, where a binding of the role grants the permission. }
+        granted: { type: boolean, description: The Principal now holds the permission on the resource. }
     Info:
       type: object
       required: [instance, id, pid, version, dir, ephemeral, iamMode, strictProjects, console, services, endpoints, runtime]

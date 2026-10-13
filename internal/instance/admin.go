@@ -64,6 +64,19 @@ func newAdmin(in *Instance) http.Handler {
 		writeJSON(w, http.StatusOK, enforcement{Level: in.Env.Auth.Mode()})
 	})
 	mux.HandleFunc("PUT /_emu/v1/iam/enforcement", in.setEnforcement)
+	mux.HandleFunc("GET /_emu/v1/iam/denials", func(w http.ResponseWriter, r *http.Request) {
+		denials := []emu.Denial{}
+		if a, ok := in.Env.Auth.(*emu.PolicyAuthorizer); ok {
+			denials = a.Denials(r.Context(), r.URL.Query().Get("project"))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"denials": denials})
+	})
+	mux.HandleFunc("DELETE /_emu/v1/iam/denials", func(w http.ResponseWriter, r *http.Request) {
+		if a, ok := in.Env.Auth.(*emu.PolicyAuthorizer); ok {
+			a.ClearDenials()
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+	})
 	mux.HandleFunc("GET /_emu/v1/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, in.Env.Endpoints.All())
 	})

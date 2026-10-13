@@ -69,6 +69,9 @@ it('maps events to query keys', () => {
     ['admin', 'operations'],
     ['sql'],
   ])
+  expect(staleKeys('iamDenial', { id: 'd1', permission: 'storage.buckets.get' })).toEqual([
+    ['iam', 'denials'],
+  ])
   expect(staleKeys('reset', {})).toBe('all')
   expect(staleKeys('gap', {})).toBe('all')
   expect(staleKeys('request', {})).toEqual([])

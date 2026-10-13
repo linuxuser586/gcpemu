@@ -1,6 +1,6 @@
 // Package events is the Instance's change feed, served as server-sent
 // events at /_emu/v1/events (FR-CORE-045, FR-UI-006): resource changes,
-// Operation progress and Request log entries.
+// Operation progress, Request log entries and IAM denials.
 //
 // A Hub numbers every event and keeps the most recent ones so that a
 // client reconnecting with Last-Event-ID receives what it missed. When it
@@ -25,6 +25,9 @@ const (
 	Operation = "operation"
 	// Request is a Request log entry (reqlog.Entry).
 	Request = "request"
+	// IAMDenial is a call the audit IAM enforcement level would deny
+	// (emu.Denial), without its advice.
+	IAMDenial = "iamDenial"
 	// Reset says all state was replaced (Reset or State snapshot restore).
 	Reset = "reset"
 	// Gap says events were missed and cannot be replayed. Only Subscribe

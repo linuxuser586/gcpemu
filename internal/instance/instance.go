@@ -136,6 +136,8 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	in.Events = events.NewHub(4096)
 	in.Log = reqlog.New(2000, logger.With("component", "request"))
 	in.Log.OnAdd(func(e reqlog.Entry) { in.Events.Publish(events.Request, e) })
+	authz := emu.NewPolicyAuthorizer(cfg.IAMMode, logger.With("component", "iam"))
+	authz.OnDeny(func(d emu.Denial) { in.Events.Publish(events.IAMDenial, d) })
 	env := &emu.Env{
 		Config:    cfg,
 		Store:     store.Observe(st, events.StoreObserver(in.Events)),
@@ -143,7 +145,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 		IDs:       emu.NewIDs(cfg.Deterministic),
 		Log:       logger,
 		DataDir:   dataDir,
-		Auth:      emu.NewPolicyAuthorizer(cfg.IAMMode, logger.With("component", "iam")),
+		Auth:      authz,
 		Endpoints: emu.NewEndpoints(),
 	}
 	env.RequestLog = in.Log
@@ -448,6 +450,9 @@ func (in *Instance) Reset(ctx context.Context) error {
 	}
 	errs = append(errs, in.Env.Store.Reset())
 	in.Log.Clear()
+	if a, ok := in.Env.Auth.(*emu.PolicyAuthorizer); ok {
+		a.ClearDenials()
+	}
 	return errors.Join(errs...)
 }
 

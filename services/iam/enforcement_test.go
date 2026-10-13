@@ -140,3 +140,95 @@ func TestRefreshGrantDisabledAccount(t *testing.T) {
 		t.Fatalf("disabled account: want 400, got %d", code)
 	}
 }
+
+// TestDenials is the admin API's /_emu/v1/iam/denials (FR-IAM-004,
+// FR-UI-014): calls the audit level would deny are logged once per
+// Principal, permission and resource, with the smallest predefined role
+// and the Project to bind it on; a binding of that role marks them
+// granted; and they can be filtered by Project and cleared.
+func TestDenials(t *testing.T) {
+	inst := startIAM(t)
+	base := inst.GatewayURL()
+	denials := func(q string) []map[string]any {
+		t.Helper()
+		code, out := call(t, http.MethodGet, base+"/_emu/v1/iam/denials"+q, "", nil)
+		if code != 200 {
+			t.Fatalf("GET denials: %d %v", code, out)
+		}
+		var ds []map[string]any
+		for _, d := range out["denials"].([]any) {
+			ds = append(ds, d.(map[string]any))
+		}
+		return ds
+	}
+	if ds := denials(""); len(ds) != 0 {
+		t.Fatalf("denials before any call: %v", ds)
+	}
+
+	const who = "user:nobody@example.com"
+	_, tok := refreshToken(t, inst, who)
+	policy := base + "/cloudresourcemanager/v1/projects/" + testProject + ":getIamPolicy"
+	for range 2 {
+		if code, out := call(t, http.MethodPost, policy, tok, map[string]any{}); code != 200 {
+			t.Fatalf("audit: %d %v", code, out)
+		}
+	}
+	ds := denials("")
+	if len(ds) != 1 {
+		t.Fatalf("denials = %v, want one", ds)
+	}
+	d := ds[0]
+	for k, want := range map[string]any{
+		"principal":  who,
+		"permission": "resourcemanager.projects.getIamPolicy",
+		"resource":   "//cloudresourcemanager.googleapis.com/projects/" + testProject,
+		"service":    "iam",
+		"method":     "POST /v1/projects/" + testProject + ":getIamPolicy",
+		"level":      "audit",
+		"count":      2.0,
+		"role":       "roles/browser",
+		"roleTitle":  "Browser",
+		"project":    testProject,
+		"granted":    false,
+	} {
+		if d[k] != want {
+			t.Errorf("denial %s = %v, want %v", k, d[k], want)
+		}
+	}
+	if ds := denials("?project=other"); len(ds) != 0 {
+		t.Errorf("denials of Project other = %v", ds)
+	}
+
+	// Under enforce the call fails, and the denial says so.
+	if code, _ := call(t, http.MethodPut, base+"/_emu/v1/iam/enforcement", "", map[string]string{"level": "enforce"}); code != 200 {
+		t.Fatal("PUT enforce")
+	}
+	if code, _ := call(t, http.MethodPost, policy, tok, map[string]any{}); code != 403 {
+		t.Fatalf("enforce: want 403, got %d", code)
+	}
+	if d := denials("")[0]; d["level"] != "enforce" || d["count"] != 3.0 {
+		t.Errorf("after enforce: level %v, count %v", d["level"], d["count"])
+	}
+
+	// The one-click grant: a Project binding of the advised role.
+	_, pol := call(t, http.MethodPost, policy, "", map[string]any{})
+	bindings, _ := pol["bindings"].([]any)
+	bindings = append(bindings, map[string]any{"role": "roles/browser", "members": []string{who}})
+	set := base + "/cloudresourcemanager/v1/projects/" + testProject + ":setIamPolicy"
+	if code, out := call(t, http.MethodPost, set, "", map[string]any{"policy": map[string]any{"bindings": bindings, "etag": pol["etag"]}}); code != 200 {
+		t.Fatalf("setIamPolicy: %d %v", code, out)
+	}
+	if d := denials("")[0]; d["granted"] != true {
+		t.Errorf("after the grant: granted = %v", d["granted"])
+	}
+	if code, out := call(t, http.MethodPost, policy, tok, map[string]any{}); code != 200 {
+		t.Fatalf("enforce after the grant: %d %v", code, out)
+	}
+
+	if code, _ := call(t, http.MethodDelete, base+"/_emu/v1/iam/denials", "", nil); code != 200 {
+		t.Fatal("DELETE denials")
+	}
+	if ds := denials(""); len(ds) != 0 {
+		t.Errorf("denials after DELETE: %v", ds)
+	}
+}

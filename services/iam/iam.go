@@ -41,6 +41,7 @@ var (
 	_ emu.IAMResourceParents  = (*Service)(nil)
 	_ emu.IAMPermissionTester = (*Service)(nil)
 	_ emu.PolicyEvaluator     = (*Service)(nil)
+	_ emu.DenialAdvisor       = (*Service)(nil)
 	_ emu.Authenticator       = (*Service)(nil)
 	_ emu.Seeder              = (*Service)(nil)
 	_ emu.EnvVarer            = (*Service)(nil)

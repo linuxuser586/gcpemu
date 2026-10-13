@@ -7,7 +7,14 @@ import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
-import type { Policy, Role, ServiceAccount, ServiceAccountKey } from './api'
+import {
+  withMember,
+  type Denial,
+  type Policy,
+  type Role,
+  type ServiceAccount,
+  type ServiceAccountKey,
+} from './api'
 import { patchBody as rolePatchBody, roleMask } from './RoleForm'
 import { patchBody as accountPatchBody } from './ServiceAccountForm'
 
@@ -24,6 +31,7 @@ let keys: Record<string, ServiceAccountKey[]> = {}
 let custom: Role[] = []
 let policies: Record<string, Policy> = {}
 let tokens: Record<string, string> = {}
+let denials: Denial[] = []
 let etag = 0
 let requests: {
   method: string
@@ -63,6 +71,8 @@ const UNIVERSE = [
   'pubsub.topics.publish',
 ]
 
+const LEVEL_AUDIT = 'Audit: calls IAM would deny are allowed and logged.'
+
 const err = (code: number, status: string, message: string) =>
   HttpResponse.json({ error: { code, status, message } }, { status: code })
 
@@ -76,6 +86,20 @@ const account = (id: string, over: Partial<ServiceAccount> = {}): ServiceAccount
     ...over,
   }
 }
+
+const denial = (over: Partial<Denial>): Denial => ({
+  id: 'd',
+  principal: 'user:someone@example.com',
+  permission: 'storage.buckets.get',
+  resource: '//storage.googleapis.com/projects/_/buckets/b',
+  level: 'audit',
+  count: 1,
+  firstTime: '2026-10-13T10:00:00Z',
+  lastTime: '2026-10-13T11:00:00Z',
+  project: P,
+  granted: false,
+  ...over,
+})
 
 const policyOf = (key: string): Policy => policies[key] ?? { version: 1, etag: 'ACAB' }
 
@@ -184,7 +208,67 @@ beforeEach(() => {
     },
   }
 
+  denials = [
+    denial({
+      id: 'd1',
+      principal: `serviceAccount:${SA}`,
+      permission: 'pubsub.topics.publish',
+      resource: `//pubsub.googleapis.com/projects/${P}/topics/orders`,
+      service: 'pubsub',
+      method: `POST /v1/projects/${P}/topics/orders:publish`,
+      count: 2,
+      role: 'roles/pubsub.publisher',
+      roleTitle: 'Pub/Sub Publisher',
+    }),
+    denial({
+      id: 'd2',
+      principal: 'user:bob@example.com',
+      permission: 'storage.buckets.get',
+      resource: '//storage.googleapis.com/projects/_/buckets/assets',
+      service: 'gcs',
+      method: 'GET /storage/v1/b/assets',
+      level: 'enforce',
+      role: 'roles/viewer',
+      roleTitle: 'Viewer',
+    }),
+    denial({
+      id: 'd3',
+      principal: 'user:carol@example.com',
+      permission: 'storage.objects.get',
+      resource: '//storage.googleapis.com/projects/_/buckets/elsewhere/objects/o',
+      project: 'other-project',
+      role: 'roles/storage.objectViewer',
+    }),
+  ]
+
   server.use(
+    http.get('*/_emu/v1/iam/denials', ({ request }) => {
+      const project = new URL(request.url).searchParams.get('project')
+      requests.push({
+        method: 'GET',
+        path: '/_emu/v1/iam/denials',
+        search: new URL(request.url).searchParams,
+        body: undefined,
+        auth: null,
+      })
+      return HttpResponse.json({
+        denials: denials
+          .filter((d) => !project || d.project === project)
+          .map((d) => ({
+            ...d,
+            granted:
+              d.project === P &&
+              !!policyOf('project').bindings?.some(
+                (b) => b.role === d.role && !b.condition && b.members?.includes(d.principal),
+              ),
+          })),
+      })
+    }),
+    http.delete('*/_emu/v1/iam/denials', async ({ request }) => {
+      await record(request, '/_emu/v1/iam/denials')
+      denials = []
+      return HttpResponse.json({ status: 'cleared' })
+    }),
     http.put('*/_emu/v1/iam/enforcement', async ({ request }) => {
       const { body } = await record(request, '/_emu/v1/iam/enforcement')
       fake.info.iamMode = (body as { level: typeof fake.info.iamMode }).level
@@ -839,4 +923,133 @@ it('writes only the changed fields of a service account and a role', () => {
   )
   expect(body).toEqual({ etag: 'e', title: 'T2', stage: 'BETA' })
   expect(roleMask(body)).toEqual(['title', 'stage'])
+})
+
+it('lists the calls IAM would deny and grants the smallest role in one click', async () => {
+  const user = userEvent.setup()
+  renderApp('/iam/audit')
+  expect(await screen.findByRole('heading', { name: 'IAM audit' })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Audit' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByRole('note')).toHaveTextContent(LEVEL_AUDIT)
+  expect(await screen.findByText('3 denied calls; 3 still missing.')).toBeInTheDocument()
+  const table = screen.getByRole('table', { name: 'Denied calls' })
+  const [publish, bucket, other] = within(table).getAllByTestId('denial')
+  expect(publish).toHaveTextContent(`serviceAccount:${SA}`)
+  expect(publish).toHaveTextContent('pubsub.topics.publish')
+  expect(publish).toHaveTextContent(`//pubsub.googleapis.com/projects/${P}/topics/orders`)
+  expect(publish).toHaveTextContent(`POST /v1/projects/${P}/topics/orders:publish`)
+  expect(publish).toHaveTextContent('Allowed by audit')
+  expect(publish).toHaveTextContent('2 times')
+  expect(within(publish!).getByRole('link', { name: /roles\/pubsub\.publisher/ })).toHaveAttribute(
+    'href',
+    '/iam/roles/pubsub.publisher',
+  )
+  expect(bucket).toHaveTextContent('Failed')
+  expect(other).toHaveTextContent('Policy of other-project')
+
+  await user.click(
+    within(publish!).getByRole('button', {
+      name: `Grant roles/pubsub.publisher to serviceAccount:${SA} on Project ${P}`,
+    }),
+  )
+  expect(
+    await screen.findByText(
+      `Granted roles/pubsub.publisher to serviceAccount:${SA} on Project ${P}.`,
+    ),
+  ).toBeInTheDocument()
+  await waitFor(() => expect(publish).toHaveTextContent('Granted'))
+  expect(within(publish!).queryByRole('button', { name: /^Grant/ })).not.toBeInTheDocument()
+  expect(sent('POST', /^crm:setIamPolicy$/)[0]!.body).toEqual({
+    policy: {
+      version: 1,
+      etag: 'p1',
+      bindings: [
+        policies.project!.bindings![0],
+        { role: 'roles/pubsub.publisher', members: [`serviceAccount:${SA}`] },
+      ],
+    },
+  })
+
+  // A role the Project already binds gains the member.
+  await user.click(
+    within(bucket!).getByRole('button', {
+      name: `Grant roles/viewer to user:bob@example.com on Project ${P}`,
+    }),
+  )
+  await waitFor(() => expect(bucket).toHaveTextContent('Granted'))
+  expect(policies.project!.bindings![0]!.members).toEqual([
+    `serviceAccount:${SA}`,
+    'user:alice@example.com',
+    'user:bob@example.com',
+  ])
+  expect(screen.getByText('3 denied calls; 1 still missing.')).toBeInTheDocument()
+})
+
+it('filters denied calls by text, status and Project, and clears them', async () => {
+  const user = userEvent.setup()
+  const { router, queryClient } = renderApp('/iam/audit')
+  const rows = () =>
+    within(screen.getByRole('table', { name: 'Denied calls' })).getAllByTestId('denial')
+  await screen.findByRole('table', { name: 'Denied calls' })
+  expect(rows()).toHaveLength(3)
+
+  await user.type(screen.getByLabelText('Filter'), 'storage')
+  expect(rows()).toHaveLength(2)
+  await waitFor(() => expect(router.state.location.search).toContain('q=storage'))
+  await user.clear(screen.getByLabelText('Filter'))
+  await user.type(screen.getByLabelText('Filter'), 'nothing-like-this')
+  expect(screen.getByText('No denied calls match the filter.')).toBeInTheDocument()
+  await user.clear(screen.getByLabelText('Filter'))
+
+  // A grant made elsewhere; the event bridge would mark the denials stale.
+  policies.project!.bindings!.push({ role: 'roles/viewer', members: ['user:bob@example.com'] })
+  await queryClient.invalidateQueries({ queryKey: ['iam', 'denials'] })
+  await router.navigate('/iam/audit?status=granted')
+  await waitFor(() => expect(rows()).toHaveLength(1))
+  expect(screen.getByLabelText('Status')).toHaveValue('granted')
+  await user.selectOptions(screen.getByLabelText('Status'), 'missing')
+  await waitFor(() => expect(rows()).toHaveLength(2))
+  expect(router.state.location.search).toContain('status=missing')
+
+  await router.navigate(`/iam/audit?project=${P}`)
+  expect(await screen.findByText(/on resources of Project/)).toBeInTheDocument()
+  expect(await screen.findByText(/^2 denied calls/)).toBeInTheDocument()
+  expect(
+    sent('GET', /iam\/denials$/)
+      .at(-1)!
+      .search.get('project'),
+  ).toBe(P)
+
+  await user.click(screen.getByRole('button', { name: 'Clear' }))
+  const dialog = await screen.findByRole('dialog')
+  await user.click(within(dialog).getByRole('button', { name: 'Clear' }))
+  expect(await screen.findByText('No denied calls yet.')).toBeInTheDocument()
+  expect(sent('DELETE', /iam\/denials$/)).toHaveLength(1)
+})
+
+it('says that IAM off logs no denied calls', async () => {
+  fake.info.iamMode = 'off'
+  denials = []
+  renderApp('/iam/audit')
+  expect(await screen.findByRole('note')).toHaveTextContent(/IAM is off: calls are not checked/)
+  expect(await screen.findByText('No denied calls yet.')).toBeInTheDocument()
+})
+
+it('adds a member to a role’s unconditional binding, or a new binding', () => {
+  const policy: Policy = {
+    etag: 'e',
+    bindings: [
+      { role: 'roles/viewer', members: ['user:a@x'], condition: { expression: 'true' } },
+      { role: 'roles/editor', members: ['user:b@x'] },
+    ],
+  }
+  expect(withMember(policy, 'roles/editor', 'user:c@x').bindings![1]).toEqual({
+    role: 'roles/editor',
+    members: ['user:b@x', 'user:c@x'],
+  })
+  expect(withMember(policy, 'roles/editor', 'user:b@x').bindings).toEqual(policy.bindings)
+  expect(withMember(policy, 'roles/viewer', 'user:c@x').bindings![2]).toEqual({
+    role: 'roles/viewer',
+    members: ['user:c@x'],
+  })
 })
