@@ -191,9 +191,10 @@ and containerd's per-registry trust for every `LOCATION-docker.pkg.dev`, and, wi
 and flatpak Firefox profile. `gcpemu ca rotate` replaces it in those databases, and `gcpemu
 doctor` reports where it is trusted. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
-holds the system roots plus the emulator CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To
-test without changing the host, use `curl --resolve storage.googleapis.com:443:<ip> --cacert
-"$GCPEMU_CA_FILE" …`, or give Go clients a `net.Resolver` that dials `<ip>:53`.
+holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator
+CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the host, use `curl
+--resolve storage.googleapis.com:443:<ip> --cacert "$GCPEMU_CA_FILE" …`, or give Go clients a
+`net.Resolver` that dials `<ip>:53`.
 
 ### Configuration
 

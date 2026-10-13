@@ -14,34 +14,17 @@ import (
 // BundleFile is the combined bundle's name in the instance directory.
 const BundleFile = "ca-bundle.pem"
 
-// systemFiles are the well-known Linux bundle locations, in the order Go's
-// crypto/x509 probes them.
-var systemFiles = []string{
-	"/etc/ssl/certs/ca-certificates.crt",                // Debian/Ubuntu/Gentoo, Alpine
-	"/etc/pki/tls/certs/ca-bundle.crt",                  // Fedora/RHEL 6
-	"/etc/ssl/ca-bundle.pem",                            // OpenSUSE
-	"/etc/pki/tls/cacert.pem",                           // OpenELEC
-	"/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // CentOS/RHEL 7
-	"/etc/ssl/cert.pem",                                 // Alpine, macOS
-}
-
 var (
 	rootsOnce sync.Once
 	roots     []byte
 )
 
 // SystemRoots returns the host's system root bundle (PEM), or nil when
-// none is found. SSL_CERT_FILE is ignored so that a bundle produced by
+// none is found: a bundle file on Linux and macOS, the ROOT certificate
+// store on Windows. SSL_CERT_FILE is ignored so that a bundle produced by
 // `gcpemu env --trust` is never folded into itself.
 func SystemRoots() []byte {
-	rootsOnce.Do(func() {
-		for _, f := range systemFiles {
-			if b, err := os.ReadFile(f); err == nil && len(b) > 0 {
-				roots = b
-				return
-			}
-		}
-	})
+	rootsOnce.Do(func() { roots = systemRoots() })
 	return roots
 }
 
