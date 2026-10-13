@@ -207,7 +207,15 @@ func (f *Frontend) certificate(hello *tls.ClientHelloInfo) (*tls.Certificate, er
 	}
 	name := Normalize(hello.ServerName)
 	if name == "" {
-		return f.env.CA.ServerCert(ipNames()...)
+		names := ipNames()
+		// Containers reach the frontend at the VM relay's address, which
+		// is not the host's (ADR 0005).
+		if c := f.env.Containers; c != nil {
+			if ip := c.RelayIP(); ip != "" {
+				names = append(names, ip)
+			}
+		}
+		return f.env.CA.ServerCert(names...)
 	}
 	if !f.Serves(name) {
 		return nil, fmt.Errorf("frontend: %s is not served by this emulator", name)

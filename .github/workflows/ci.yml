@@ -42,6 +42,22 @@ jobs:
       - run: make race
       - run: make cross
 
+  # ADR 0005: the VM relay path, forced on Linux, where a container
+  # runtime is available (hosted macOS runners have none).
+  vm-relay:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GCPEMU_VM_RELAY: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test -count=1 -timeout 35m ./internal/vmrelay ./internal/netplane ./services/sql ./services/compute ./services/lb
+
   # FR-UI-001/020: the Web console's lint, types, unit tests, build and
   # bundle budget, and admin API types generated from openapi.yaml.
   console:
@@ -98,7 +114,15 @@ jobs:
         working-directory: console
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
         working-directory: console
+      # The Instance removes its containers on exit, so record how they end.
+      - run: docker events --filter type=container --filter event=die --filter event=oom --filter event=kill --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' > "$RUNNER_TEMP/container-events.log" &
       - run: make console-e2e
+      - name: Container ends and OOM kills
+        if: failure()
+        run: |
+          cat "$RUNNER_TEMP/container-events.log"
+          sudo dmesg | grep -iE 'oom|killed process' || true
+          free -m
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -318,7 +342,7 @@ jobs:
   # job was skipped.
   ci-ok:
     if: always()
-    needs: [changes, test, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf]
+    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf]
     runs-on: ubuntu-24.04
     steps:
       - env:

@@ -287,11 +287,11 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	if err := aliasPrivateIP(ctx, rt, rec, id); err != nil {
 		return err
 	}
-	addr, err := s.readyAddr(ctx, rt, svc.Name, id, hostPort)
+	addr, err := s.readyAddr(ctx, rt, plane, svc.Name, id, hostPort)
 	if err != nil {
 		return err
 	}
-	if err := s.waitReady(ctx, rt, id, addr); err != nil {
+	if err := s.waitReady(ctx, rt, plane, id, addr); err != nil {
 		return err
 	}
 	return s.updateRecord(project, name, func(r *instanceRecord) error {
@@ -317,13 +317,13 @@ func ipMappings(rec *instanceRecord) []*sqladmin.IpMapping {
 	return out
 }
 
-// waitReady polls the published port with an SSLRequest until the agent
+// waitReady polls addr (readyAddr) with an SSLRequest until the agent
 // (which listens only once PostgreSQL is up) answers.
-func (s *Service) waitReady(ctx context.Context, rt *runtime.Manager, id, addr string) error {
+func (s *Service) waitReady(ctx context.Context, rt *runtime.Manager, plane *netplane.Plane, id, addr string) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
 	for i := 0; ; i++ {
-		if probe(addr) {
+		if probe(ctx, plane, addr) {
 			return nil
 		}
 		if i%10 == 9 {
@@ -346,8 +346,10 @@ func (s *Service) waitReady(ctx context.Context, rt *runtime.Manager, id, addr s
 }
 
 // probe sends an SSLRequest and reports whether a protocol answer came back.
-func probe(addr string) bool {
-	c, err := net.DialTimeout("tcp", addr, time.Second)
+func probe(ctx context.Context, plane *netplane.Plane, addr string) bool {
+	dctx, cancel := context.WithTimeout(ctx, time.Second)
+	c, err := plane.DialContext(dctx, "tcp", addr)
+	cancel()
 	if err != nil {
 		return false
 	}
@@ -404,11 +406,11 @@ func (s *Service) restartContainer(ctx context.Context, project, name string) er
 	if err != nil {
 		return err
 	}
-	addr, err := s.readyAddr(ctx, rt, svc.Name, cname, rec.HostPort)
+	addr, err := s.readyAddr(ctx, rt, plane, svc.Name, cname, rec.HostPort)
 	if err != nil {
 		return err
 	}
-	return s.waitReady(ctx, rt, cname, addr)
+	return s.waitReady(ctx, rt, plane, cname, addr)
 }
 
 // aliasPrivateIP gives a running container on a Translated private
@@ -432,10 +434,10 @@ func aliasPrivateIP(ctx context.Context, rt *runtime.Manager, rec *instanceRecor
 }
 
 // readyAddr is where the emulator probes an instance's PostgreSQL: the
-// published host port, or inside a container (ADR 0003) the container's
-// address on the services network.
-func (s *Service) readyAddr(ctx context.Context, rt *runtime.Manager, svcNet, id string, hostPort int) (string, error) {
-	if rt.Self() == "" {
+// published host port, or inside a container (ADR 0003) or through the VM
+// relay (ADR 0005) the container's address on the services network.
+func (s *Service) readyAddr(ctx context.Context, rt *runtime.Manager, plane *netplane.Plane, svcNet, id string, hostPort int) (string, error) {
+	if rt.Self() == "" && plane.Relay() == nil {
 		return net.JoinHostPort(s.hostIP(), strconv.Itoa(hostPort)), nil
 	}
 	c, err := rt.InspectContainer(ctx, id)

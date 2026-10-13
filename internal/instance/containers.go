@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -77,6 +78,44 @@ func (c *containers) Netplane(ctx context.Context) (*netplane.Plane, error) {
 		c.plane = netplane.New(rt, c.in.Env.Endpoints.All, c.in.Env.Log.With("component", "netplane"))
 	}
 	return c.plane, nil
+}
+
+// DialContext implements emu.Containers.
+func (c *containers) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	c.mu.Lock()
+	plane := c.plane
+	c.mu.Unlock()
+	if plane != nil {
+		return plane.DialContext(ctx, network, addr)
+	}
+	d := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return d.DialContext(ctx, network, addr)
+}
+
+// RelayIP implements emu.Containers.
+func (c *containers) RelayIP() string {
+	c.mu.Lock()
+	plane := c.plane
+	c.mu.Unlock()
+	if plane == nil {
+		return ""
+	}
+	if r := plane.Relay(); r != nil {
+		return r.IP()
+	}
+	return ""
+}
+
+// reset removes the VM relay (Instance.Reset); it starts again when next
+// needed.
+func (c *containers) reset(ctx context.Context) error {
+	c.mu.Lock()
+	plane := c.plane
+	c.mu.Unlock()
+	if plane == nil {
+		return nil
+	}
+	return plane.Reset(ctx)
 }
 
 // shutdown removes the instance's containers (and, for ephemeral instances,

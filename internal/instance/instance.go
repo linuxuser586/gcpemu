@@ -448,6 +448,7 @@ func (in *Instance) Reset(ctx context.Context) error {
 			errs = append(errs, r.Reset(ctx))
 		}
 	}
+	errs = append(errs, in.containers.reset(ctx))
 	errs = append(errs, in.Env.Store.Reset())
 	in.Log.Clear()
 	if a, ok := in.Env.Auth.(*emu.PolicyAuthorizer); ok {

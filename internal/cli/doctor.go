@@ -16,12 +16,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
 
 // doctorCmd implements FR-CORE-007: check the host and print fixes.
@@ -58,6 +61,10 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			rt := detectRuntime()
 			report(rt != "", "container runtime "+orNone(rt),
 				"install Docker Engine >= 24, Podman >= 4.9 or containerd >= 1.7 (needed only for GKE and Cloud SQL)")
+
+			if rt != "" {
+				checkVMRelay(cmd.Context(), out)
+			}
 
 			_, running := readEndpoints(cfg)
 			if running == nil {
@@ -117,6 +124,31 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// checkVMRelay prints whether an Instance started now uses the VM relay
+// (ADR 0005), and why. Its services network does not exist before it
+// starts, so the runtime's default bridge network stands in for it.
+func checkVMRelay(ctx context.Context, out io.Writer) {
+	cl, err := emuruntime.Detect()
+	if err != nil {
+		fmt.Fprintf(out, "[--  ] VM relay: undetermined (%v)\n", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	gw := ""
+	for _, name := range []string{"bridge", "podman"} {
+		if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
+			gw = n.Gateway
+			break
+		}
+	}
+	if gw == "" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
+		fmt.Fprintln(out, "[--  ] VM relay: undetermined (no default bridge network to probe)")
+		return
+	}
+	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", vmrelay.Decide(cl.Self() != "", gw))
 }
 
 // checkDNSUDP checks the UDP side of the DNS port. An mDNS daemon (avahi,

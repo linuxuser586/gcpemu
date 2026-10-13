@@ -46,8 +46,18 @@ func TestServicesNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(addr, svc.Gateway+":") {
-		t.Fatalf("forwarder %s not on gateway %s", addr, svc.Gateway)
+	// Without the VM relay nothing changes: no relay container, the
+	// forwarder on the gateway (ADR 0005).
+	if d, _ := p.RelayDecision(); !d.On {
+		if !strings.HasPrefix(addr, svc.Gateway+":") {
+			t.Fatalf("forwarder %s not on gateway %s", addr, svc.Gateway)
+		}
+		cts, err := m.ListContainers(ctx, m.Labels("core", "vmrelay", ""))
+		if err != nil || len(cts) != 0 || p.Relay() != nil {
+			t.Fatalf("relay containers %v (%v) with the relay %s", cts, err, d)
+		}
+	} else if r := p.Relay(); r == nil || !strings.HasPrefix(addr, r.IP()+":") {
+		t.Fatalf("relay %s: endpoint at %s, not on the relay", d, addr)
 	}
 	const img = "rancher/k3s:v1.36.5-k3s1"
 	if err := m.EnsureImage(ctx, img, false); err != nil {

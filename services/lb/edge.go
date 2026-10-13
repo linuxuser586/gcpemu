@@ -83,6 +83,9 @@ type edge struct {
 	// idleSince is when the edge last became unused (no forwarding rule
 	// mapped, no pod endpoints); it is removed after edgeIdleGrace.
 	idleSince time.Time
+
+	ctlOnce sync.Once
+	ctl     *http.Client
 }
 
 // edgeIdleGrace is how long an unused edge container is kept (so that a
@@ -96,6 +99,15 @@ func newEdge(d *dataplane) *edge {
 }
 
 func (e *edge) env() *emu.Env { return e.d.s.env }
+
+// control returns the client for the edge's control port, which it
+// reaches through the ContainerDialer.
+func (e *edge) control() *http.Client {
+	e.ctlOnce.Do(func() {
+		e.ctl = &http.Client{Transport: &http.Transport{DialContext: e.env().Containers.DialContext, MaxIdleConnsPerHost: 2, IdleConnTimeout: 30 * time.Second}}
+	})
+	return e.ctl
+}
 
 // available reports whether a container runtime can run the edge.
 func (e *edge) available(ctx context.Context) bool {
@@ -203,8 +215,9 @@ func (e *edge) dial(ctx context.Context, addr string) (net.Conn, error) {
 	if ip == "" {
 		return nil, errors.New("lb-edge relay is not running")
 	}
-	dl := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	c, err := dl.DialContext(ctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(edgeRelayPort)))
+	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	c, err := e.env().Containers.DialContext(dctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(edgeRelayPort)))
+	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +349,7 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	// Wait for the control port.
 	for {
 		req, _ := http.NewRequestWithContext(wctx, http.MethodGet, "http://"+net.JoinHostPort(e.ip, strconv.Itoa(edgeControlPort))+"/healthz", nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := e.control().Do(req)
 		if err == nil {
 			resp.Body.Close()
 			break
@@ -395,7 +408,7 @@ func (e *edge) pushLocked(ctx context.Context) error {
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+net.JoinHostPort(e.ip, strconv.Itoa(edgeControlPort))+"/config", bytes.NewReader(body))
 	req.Header.Set(edgeTokenHeader, e.token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.control().Do(req)
 	if err != nil {
 		return err
 	}

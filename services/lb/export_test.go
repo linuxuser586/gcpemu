@@ -39,3 +39,9 @@ func JoinSubnetwork(ctx context.Context, svc emu.Service, subnetwork string) (st
 	}
 	return c.IPs[sn.Name], nil
 }
+
+// The edge container's ports, which the VM relay's stream counts name.
+const (
+	EdgeControlPort = edgeControlPort
+	EdgeRelayPort   = edgeRelayPort
+)

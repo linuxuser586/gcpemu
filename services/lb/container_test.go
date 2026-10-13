@@ -266,6 +266,12 @@ func TestGKEBackends(t *testing.T) {
 			t.Errorf("health status %+v", hs)
 		}
 	}
+	// Under the VM relay (ADR 0005), the edge's control, its data path
+	// (which health checks to pods also take) and its ingress went
+	// through it.
+	emutest.RequireRelayStream(t, inst, "the edge control port", fmt.Sprintf(":%d", lb.EdgeControlPort))
+	emutest.RequireRelayStream(t, inst, "edge data and health checks", fmt.Sprintf(":%d", lb.EdgeRelayPort))
+	emutest.RequireRelayStream(t, inst, "the edge ingress", "lb-edge-in")
 }
 
 func eventually(t *testing.T, timeout time.Duration, what string, cond func() bool) {

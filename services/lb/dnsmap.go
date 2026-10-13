@@ -35,11 +35,16 @@ func (d *dataplane) dnsAddress(ip net.IP, network string) net.IP {
 
 // dialContext connects to a backend endpoint: through the lb-edge relay
 // for addresses only reachable inside container networks (GKE pod IPs),
-// directly otherwise.
+// through the ContainerDialer otherwise.
 func (d *dataplane) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, _, _ := net.SplitHostPort(addr)
 	if !d.s.options().DirectDial && d.edge != nil && d.edge.covers(host) {
 		return d.edge.dial(ctx, addr)
+	}
+	if c := d.s.env.Containers; c != nil {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		return c.DialContext(ctx, network, addr)
 	}
 	dl := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	return dl.DialContext(ctx, network, addr)

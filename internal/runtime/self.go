@@ -76,25 +76,87 @@ func (c *Client) AttachSelf(ctx context.Context, network string) error {
 	if c.self == "" {
 		return nil
 	}
-	// GCP reserves the second-to-last address of a subnet, so no resource
-	// the emulator places on a VPC subnetwork can take it.
-	ip := ""
-	if n, err := c.InspectNetwork(ctx, network); err == nil {
-		ip = secondToLast(n.Subnet)
-	}
-	err := c.Connect(ctx, network, c.self, ip)
-	if err != nil && ip != "" && !alreadyConnected(err) {
-		err = c.Connect(ctx, network, c.self, "")
-	}
-	if alreadyConnected(err) {
+	_, err := c.attach(ctx, network, c.self, true)
+	return err
+}
+
+// SetMember makes container join every network the client creates from
+// now on, as the emulator's own container does, and leave each network
+// before it is removed. joined is called with true after each join and
+// with false before each removal. The VM relay (ADR 0005) is the member;
+// "" ends membership.
+func (c *Client) SetMember(container string, joined func(n Network, in bool)) {
+	c.memberMu.Lock()
+	defer c.memberMu.Unlock()
+	c.member, c.joined = container, joined
+}
+
+// AttachMember connects the member container (SetMember) to network; it is
+// a no-op without a member and when already connected. With reserved, it
+// takes the subnet's second-to-last address as AttachSelf does. Without,
+// it takes the highest free address below that one: on a VPC subnetwork
+// the second-to-last address is the egress gateway's, and compute hands
+// out addresses from the bottom, possibly before their containers start,
+// and none that a container holds (#146).
+func (c *Client) AttachMember(ctx context.Context, network string, reserved bool) error {
+	c.memberMu.Lock()
+	member, joined := c.member, c.joined
+	c.memberMu.Unlock()
+	if member == "" {
 		return nil
 	}
-	return err
+	n, err := c.attach(ctx, network, member, reserved)
+	if err != nil {
+		return err
+	}
+	joined(n, true)
+	return nil
+}
+
+// attach connects container to network, with reserved at the subnet's
+// second-to-last address when it is free: GCP reserves that address, so
+// no resource the emulator places on a VPC subnetwork can take it.
+func (c *Client) attach(ctx context.Context, network, container string, reserved bool) (Network, error) {
+	n, ierr := c.InspectNetwork(ctx, network)
+	ip := ""
+	if ierr == nil && reserved {
+		ip = secondToLast(n.Subnet)
+	} else if ierr == nil {
+		ip = c.highestFree(ctx, n)
+	}
+	err := c.Connect(ctx, network, container, ip)
+	if err != nil && ip != "" && !alreadyConnected(err) {
+		err = c.Connect(ctx, network, container, "")
+	}
+	if alreadyConnected(err) {
+		err = nil
+	}
+	return n, err
 }
 
 func alreadyConnected(err error) bool {
 	var ae *apiError
 	return errors.As(err, &ae) && (ae.Status == http.StatusConflict || strings.Contains(ae.Message, "already exists"))
+}
+
+// highestFree returns the highest address of n below its second-to-last
+// one that no container holds and that is not the gateway, or "".
+func (c *Client) highestFree(ctx context.Context, n Network) string {
+	top, err := netip.ParseAddr(secondToLast(n.Subnet))
+	if err != nil {
+		return ""
+	}
+	p, _ := netip.ParsePrefix(n.Subnet)
+	held, err := c.NetworkAddrs(ctx, n.Name)
+	if err != nil {
+		return ""
+	}
+	for a := top.Prev(); a.IsValid() && p.Contains(a) && a != p.Masked().Addr(); a = a.Prev() {
+		if !held[a.String()] && a.String() != n.Gateway {
+			return a.String()
+		}
+	}
+	return ""
 }
 
 // secondToLast returns the second-to-last address of an IPv4 subnet.
