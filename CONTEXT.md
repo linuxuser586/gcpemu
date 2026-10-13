@@ -119,6 +119,13 @@ The Principal assumed for requests that carry no credentials.
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.
 
+**Admin API**:
+The emulator-specific API under `/_emu/` for inspecting and operating an Instance (health, reset, fault injection, the request log and the like). It is the only interface not modelled on GCP, and the Web console is one of its clients.
+
+**Admin token**:
+A secret generated at each start that every Admin API and Web console request must present when the API gateway is bound beyond loopback. Public GCP APIs never need it, because IAM governs those.
+_Avoid_: session token, console token
+
 **IAM enforcement level**:
 Whether an Instance ignores IAM (off), logs denials but allows them (audit), or rejects them (enforce). Audit is the default.
 _Avoid_: IAM mode
