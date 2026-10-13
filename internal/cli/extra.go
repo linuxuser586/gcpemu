@@ -189,7 +189,7 @@ func (o *rootOpts) adminCall(cmd *cobra.Command, method, path string, body []byt
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, c.base+path, rd)
+	req, err := c.newRequest(method, path, rd)
 	if err != nil {
 		return err
 	}

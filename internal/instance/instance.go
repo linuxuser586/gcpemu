@@ -4,6 +4,8 @@ package instance
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +50,9 @@ const (
 	LogFile       = "gcpemu.log"
 	StateFile     = "state.db"
 	IDFile        = "instance-id"
+	// AdminTokenFile holds the Admin token while an Instance bound beyond
+	// loopback runs (FR-UI-009); CLI commands read it from there.
+	AdminTokenFile = "admin-token"
 )
 
 // Instance is a running emulator.
@@ -77,6 +82,8 @@ type Instance struct {
 
 	// consoleServed reports whether the gateway serves the Web console.
 	consoleServed bool
+	// adminToken is the Admin token, "" on a loopback bind (FR-UI-009).
+	adminToken string
 }
 
 // New builds an instance from cfg using factories for available services.
@@ -149,6 +156,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	in.containers = &containers{in: in}
 	env.Containers = in.containers
 	in.gw = gateway.New(env, in.Log)
+	if err := in.setupAdminToken(); err != nil {
+		return nil, err
+	}
 	env.Middleware = in.gw.Middleware
 	env.GRPCOptions = in.gw.GRPCOptions
 	in.fe = frontend.New(env, in.gw.Hosts)
@@ -263,15 +273,9 @@ func (in *Instance) Start(ctx context.Context) error {
 }
 
 // mountConsole serves the Web console on the gateway unless it is turned
-// off (--console=false, or CI=true without --console; FR-CI-003). It is
-// not served beyond loopback: it has no session token yet (FR-UI-009).
+// off (--console=false, or CI=true without --console; FR-CI-003).
 func (in *Instance) mountConsole() {
-	switch {
-	case !in.Config.ConsoleEnabled():
-		return
-	case !config.IsLoopback(in.Config.Bind):
-		in.Env.Log.Warn("Web console not served: the gateway is bound beyond loopback and the console has no session token yet; bind to 127.0.0.1 to use it",
-			"bind", in.Config.Bind)
+	if !in.Config.ConsoleEnabled() {
 		return
 	}
 	if !console.Built {
@@ -280,6 +284,39 @@ func (in *Instance) mountConsole() {
 	in.gw.HandleConsole(webconsole.Handler(console.FS))
 	in.consoleServed = true
 }
+
+// setupAdminToken guards the Admin API and the Web console with an Admin
+// token when the gateway is bound beyond loopback (FR-UI-009, ADR 0006):
+// GCPEMU_ADMIN_TOKEN, or a random one, written 0600 to the instance dir.
+// On loopback it removes any token file a previous run left behind.
+func (in *Instance) setupAdminToken() error {
+	path := filepath.Join(in.Dir, AdminTokenFile)
+	if config.IsLoopback(in.Config.Bind) {
+		_ = os.Remove(path)
+		return nil
+	}
+	tok := in.Config.AdminToken
+	if tok == "" {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return fmt.Errorf("admin token: %w", err)
+		}
+		tok = base64.RawURLEncoding.EncodeToString(b)
+	}
+	if err := writeAtomic(path, []byte(tok)); err != nil {
+		return fmt.Errorf("admin token: %w", err)
+	}
+	in.adminToken = tok
+	in.gw.SetAdminToken(tok)
+	return nil
+}
+
+// AdminToken returns the Admin token, or "" when the gateway is bound to
+// loopback and none is needed (FR-UI-009).
+func (in *Instance) AdminToken() string { return in.adminToken }
+
+// ConsoleServed reports whether the gateway serves the Web console.
+func (in *Instance) ConsoleServed() bool { return in.consoleServed }
 
 func (in *Instance) writeRuntimeFiles() error {
 	b, _ := json.MarshalIndent(in.Env.Endpoints.All(), "", "  ")
@@ -451,6 +488,9 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		errs = append(errs, in.Env.Store.Close())
 		_ = os.Remove(filepath.Join(in.Dir, PIDFile))
 		_ = os.Remove(filepath.Join(in.Dir, EndpointsFile))
+		if in.adminToken != "" {
+			_ = os.Remove(filepath.Join(in.Dir, AdminTokenFile))
+		}
 		if in.tmpDir != "" {
 			_ = os.RemoveAll(in.tmpDir)
 		}

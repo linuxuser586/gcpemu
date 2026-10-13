@@ -65,6 +65,11 @@ async function run() {
 
   // GITHUB_ENV unset: env prints KEY=value lines instead of appending.
   const env = parseEnv(await output(bin, ['env', '--shell', 'github', '--instance', instance, '--data-dir', dataDir], { GITHUB_ENV: '' }))
+  // Present only when the gateway is bound beyond loopback (FR-UI-009).
+  if (env.GCPEMU_ADMIN_TOKEN) {
+    core.setSecret(env.GCPEMU_ADMIN_TOKEN)
+    core.saveState('adminToken', env.GCPEMU_ADMIN_TOKEN)
+  }
   for (const [k, v] of Object.entries(env)) core.exportVariable(k, v)
   core.setOutput('gateway', env.GCPEMU_GATEWAY || '')
   core.saveState('gateway', env.GCPEMU_GATEWAY || '')

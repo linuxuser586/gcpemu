@@ -42,6 +42,7 @@ type Gateway struct {
 	hosts      map[string]http.Handler // Host → handler (host mode)
 	grpcOwners map[string]string       // gRPC service name → emu service
 	srv        *http.Server
+	adminToken string // see SetAdminToken
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -279,11 +280,12 @@ func (g *Gateway) Hosts() []string {
 	return out
 }
 
-// HandleAdmin mounts the admin API (unauthenticated, not request-logged).
+// HandleAdmin mounts the admin API (not request-logged; only the Admin
+// token guards it, see SetAdminToken).
 func (g *Gateway) HandleAdmin(h http.Handler) { g.mux.Handle("/_emu/", h) }
 
 // HandleConsole mounts the Web console at /console and /console/
-// (unauthenticated, not request-logged; FR-UI-002).
+// (not request-logged; FR-UI-002). Only the Admin token guards it.
 func (g *Gateway) HandleConsole(h http.Handler) {
 	g.mux.Handle("/console", h)
 	g.mux.Handle("/console/", h)
@@ -304,6 +306,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.mu.RUnlock()
 	if ok {
 		h.ServeHTTP(w, r)
+		return
+	}
+	if !g.checkAdmin(w, r) {
 		return
 	}
 	g.mux.ServeHTTP(w, r)

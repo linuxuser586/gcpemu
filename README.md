@@ -42,15 +42,27 @@ bin/gcpemu stop
 ```
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
-`fault add|list|clear`, `doctor`, `version`, and `admin openapi` (the OpenAPI document of the
-`/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`).
+`fault add|list|clear`, `doctor`, `version`, `admin openapi` (the OpenAPI document of the
+`/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
+
+### Binding beyond loopback
+
+`--bind` (e.g. `0.0.0.0`) exposes every listener beyond this host, with a warning, and is
+refused with IAM `off` unless `--i-understand-this-is-insecure` is passed. The admin API
+(`/_emu/`) and the Web console then need an admin token (`docs/adr/0006-admin-token-guards-admin-api.md`):
+a random one per start, or `GCPEMU_ADMIN_TOKEN` (at least 32 characters). `gcpemu start`
+prints the console URL with the token on stderr, and opening it swaps the token for a cookie;
+scripts send it in the `X-Gcpemu-Admin-Token` header. `gcpemu` commands on the same host
+read it from the instance directory, `gcpemu admin token` prints it, and `gcpemu env`
+exports it as `GCPEMU_ADMIN_TOKEN`. `GET /_emu/v1/health` and `/ready` stay open for probes,
+and the public GCP APIs are governed by IAM as usual.
 
 ### Web console
 
 The gateway serves a browser console at `http://127.0.0.1:4510/console/`; `gcpemu console`
 opens it. It calls only the public APIs and the admin API, as the default principal, and
 works offline. `--console=false` turns it off; under `CI=true` it is off unless `--console`
-is passed, and it is not served when `--bind` is beyond loopback. `make build` builds it when
+is passed. `make build` builds it when
 `pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
 It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gateway
 (`/connectgateway/v1/projects/P/locations/L/gkeMemberships/CLUSTER/...`, see
@@ -218,8 +230,10 @@ docker exec gcpemu /gcpemu status
 
 The image binds `0.0.0.0` with IAM in audit mode, keeps state in `/data` (mount a volume to
 keep it across containers, or set `GCPEMU_EPHEMERAL=true`), and reports healthy once every
-Service is ready (`gcpemu status --ready`). The Web console is not served, because the emulator
-is not bound to loopback. Load balancer forwarding rules listen on their own ports, so publish
+Service is ready (`gcpemu status --ready`). Because it is not bound to loopback, the admin API
+and the Web console need the admin token (see "Binding beyond loopback"): `docker logs gcpemu`
+shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints it, and
+`-e GCPEMU_ADMIN_TOKEN=...` sets it. Load balancer forwarding rules listen on their own ports, so publish
 those with extra `-p` flags.
 
 Cloud SQL, GKE and Cloud NAT start containers of their own, so they need the host's Docker

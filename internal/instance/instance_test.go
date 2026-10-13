@@ -18,6 +18,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
+	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -369,7 +370,7 @@ func TestConsole(t *testing.T) {
 		{"--console=false", "", &off, "127.0.0.1", false},
 		{"CI", "true", nil, "127.0.0.1", false},
 		{"CI --console", "true", &on, "127.0.0.1", true},
-		{"beyond loopback", "", nil, "0.0.0.0", false},
+		{"beyond loopback", "", nil, "0.0.0.0", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CI", tc.ci)
@@ -393,17 +394,13 @@ func TestConsole(t *testing.T) {
 			defer in.Shutdown(ctx)
 			_, port, _ := net.SplitHostPort(in.Env.Endpoints.Get("gateway"))
 			base := "http://127.0.0.1:" + port
-			resp, err := http.Get(base + "/console/gcs/buckets?project=p1")
-			if err != nil {
-				t.Fatal(err)
+			var h http.Header
+			if tok := in.AdminToken(); tok != "" { // beyond loopback (FR-UI-009)
+				h = http.Header{gateway.AdminTokenHeader: {tok}}
 			}
-			b, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if served := resp.StatusCode == 200 && strings.Contains(string(b), "<html"); served != tc.served {
+			resp, b := call(t, http.DefaultClient, http.MethodGet, base+"/console/gcs/buckets?project=p1", h)
+			if served := resp.StatusCode == 200 && strings.Contains(b, "<html"); served != tc.served {
 				t.Errorf("console served = %v (%d), want %v", served, resp.StatusCode, tc.served)
-			}
-			if tc.bind != "127.0.0.1" && !strings.Contains(log.String(), "Web console not served") {
-				t.Errorf("no warning for bind %s:\n%s", tc.bind, log.String())
 			}
 
 			var info struct {
@@ -414,7 +411,7 @@ func TestConsole(t *testing.T) {
 					Error     string
 				}
 			}
-			getJSON(t, base+"/_emu/v1/info", &info)
+			getJSON(t, base+"/_emu/v1/info", h, &info)
 			if info.Console != tc.served {
 				t.Errorf("info.console = %v, want %v", info.Console, tc.served)
 			}
@@ -422,7 +419,7 @@ func TestConsole(t *testing.T) {
 				t.Errorf("info.runtime = %+v", info.Runtime)
 			}
 			var counts map[string]map[string]int
-			getJSON(t, base+"/_emu/v1/resources/counts", &counts)
+			getJSON(t, base+"/_emu/v1/resources/counts", h, &counts)
 			if counts["dns"]["managedZones"] != 2 {
 				t.Errorf("counts = %v", counts)
 			}
@@ -456,6 +453,7 @@ func TestEnforcementBeyondLoopback(t *testing.T) {
 			defer in.Shutdown(ctx)
 			_, port, _ := net.SplitHostPort(in.Env.Endpoints.Get("gateway"))
 			req, _ := http.NewRequest(http.MethodPut, "http://127.0.0.1:"+port+"/_emu/v1/iam/enforcement", strings.NewReader(`{"level":"off"}`))
+			req.Header.Set(gateway.AdminTokenHeader, in.AdminToken())
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatal(err)
@@ -473,15 +471,12 @@ func TestEnforcementBeyondLoopback(t *testing.T) {
 	}
 }
 
-func getJSON(t *testing.T, url string, v any) {
+// getJSON decodes a GET of url, sent with headers h (may be nil), into v.
+func getJSON(t *testing.T, url string, h http.Header, v any) {
 	t.Helper()
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
-		t.Fatalf("%s: %v", url, err)
+	resp, b := call(t, http.DefaultClient, http.MethodGet, url, h)
+	if err := json.Unmarshal([]byte(b), v); err != nil {
+		t.Fatalf("%s: %d %v", url, resp.StatusCode, err)
 	}
 }
 
@@ -606,7 +601,7 @@ func TestOperations(t *testing.T) {
 
 	names := func(query string) []string {
 		var got struct{ Operations []emu.OperationInfo }
-		getJSON(t, base+"/_emu/v1/operations"+query, &got)
+		getJSON(t, base+"/_emu/v1/operations"+query, nil, &got)
 		out := []string{}
 		for _, op := range got.Operations {
 			out = append(out, op.Service+" "+op.Name)
@@ -629,7 +624,7 @@ func TestOperations(t *testing.T) {
 	}
 
 	var raw struct{ Operations []map[string]any }
-	getJSON(t, base+"/_emu/v1/operations?service=compute&project=p1", &raw)
+	getJSON(t, base+"/_emu/v1/operations?service=compute&project=p1", nil, &raw)
 	if op := raw.Operations[0]; op["done"] != true || op["endTime"] != nil ||
 		op["error"].(map[string]any)["code"] != "RESOURCE_ALREADY_EXISTS" {
 		t.Errorf("wire form = %v", op)

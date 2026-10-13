@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 )
 
@@ -174,6 +175,9 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 		_ = in.Shutdown(context.Background())
 		return err
 	}
+	if os.Getenv("GCPEMU_DETACHED") != "1" { // the parent prints it instead
+		printAdminToken(os.Stderr, cfg, in.Env.Endpoints.Get("gateway"), in.AdminToken(), in.ConsoleServed())
+	}
 	if cfg.Seed != "" {
 		if err := in.ApplySeed(ctx, cfg.Seed); err != nil {
 			_ = in.Shutdown(context.Background())
@@ -258,6 +262,9 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		}
 		if code, _, err := c.do(http.MethodGet, "/_emu/v1/ready"); err == nil && code == http.StatusOK {
 			fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q ready (pid %d, gateway %s)\n", cfg.Instance, child.Process.Pid, c.base)
+			if c.token != "" {
+				printAdminToken(cmd.ErrOrStderr(), cfg, strings.TrimPrefix(c.base, "http://"), c.token, cfg.ConsoleEnabled())
+			}
 			_ = child.Process.Release()
 			return nil
 		}
@@ -268,6 +275,31 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		reasons = logTail(logPath, logStart, 20)
 	}
 	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
+}
+
+// printAdminToken tells the user how to reach the Admin API and the Web
+// console when the API gateway is bound beyond loopback (FR-UI-009). It
+// writes to the terminal, never to the log, and does not repeat a token
+// the user set in GCPEMU_ADMIN_TOKEN.
+func printAdminToken(w io.Writer, cfg *config.Config, gw, token string, console bool) {
+	if token == "" {
+		return
+	}
+	shown := token
+	if cfg.AdminToken != "" {
+		shown = ""
+	}
+	switch {
+	case console:
+		fmt.Fprintf(w, "Web console: %s\n", consoleURL(gw, shown))
+	case shown != "":
+		fmt.Fprintf(w, "Admin token: %s\n", shown)
+	}
+	if shown == "" {
+		fmt.Fprintf(w, "The admin API and Web console need the admin token from GCPEMU_ADMIN_TOKEN (header %s).\n", gateway.AdminTokenHeader)
+	} else {
+		fmt.Fprintf(w, "The admin API needs this admin token in the %s header; `gcpemu admin token` prints it.\n", gateway.AdminTokenHeader)
+	}
 }
 
 // detachExe is the binary `start --detach` runs (a variable for tests).
