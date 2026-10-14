@@ -15,6 +15,7 @@ import (
 
 	computev1 "google.golang.org/api/compute/v1"
 
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/services/cdn"
 	"github.com/linuxuser586/gcpemu/services/lb/urlmap"
 )
@@ -30,6 +31,7 @@ type reqState struct {
 	fe         *frontend
 	req        *http.Request
 	start      time.Time
+	sw         clock.Stopwatch // times the request; start is for timestamps
 	clientIP   string
 	clientPort string
 	certErr    string
@@ -152,7 +154,7 @@ func (d *dataplane) handler(key string) http.Handler {
 			http.Error(w, "no forwarding rule", http.StatusServiceUnavailable)
 			return
 		}
-		rs := &reqState{fe: fe, req: r, start: time.Now()}
+		rs := &reqState{fe: fe, req: r, start: time.Now(), sw: clock.StartStopwatch()}
 		rs.clientIP, rs.clientPort, _ = net.SplitHostPort(r.RemoteAddr)
 		rw := &respWriter{ResponseWriter: w, rs: rs}
 		d.serve(cfg, fe, rw, r, rs)

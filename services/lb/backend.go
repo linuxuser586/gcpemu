@@ -23,6 +23,7 @@ import (
 
 	computev1 "google.golang.org/api/compute/v1"
 
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -417,13 +418,13 @@ func (b *backendSvc) RoundTrip(req *http.Request) (*http.Response, error) {
 			out = out.WithContext(ctx)
 		}
 		ep.inflight.Add(1)
-		t0 := time.Now()
+		sw := clock.StartStopwatch()
 		b.mu.Lock()
 		t := b.transport
 		b.mu.Unlock()
 		resp, err := t.RoundTrip(out)
 		if rs != nil {
-			rs.backend, rs.bLat = ep.addr, time.Since(t0)
+			rs.backend, rs.bLat = ep.addr, sw.Elapsed()
 		}
 		retry := false
 		if err != nil {

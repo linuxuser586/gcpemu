@@ -237,8 +237,11 @@ func TestAccessLogFields(t *testing.T) {
 		t.Errorf("httpRequest = %v", h)
 	}
 	p := l.JSONPayload
+	// The origin's 20ms sleep is timed on Go's monotonic clock, which on
+	// Windows ticks every ~0.5ms; the backend latency is timed at higher
+	// resolution and can read just under 20ms (#206).
 	bl, _ := strconv.ParseFloat(strings.TrimSuffix(fmt.Sprint(p["backendLatency"]), "s"), 64)
-	if p["statusDetails"] != "response_sent_by_backend" || bl < 0.02 || p["@type"] != "type.googleapis.com/google.cloud.loadbalancing.type.LoadBalancerLogEntry" {
+	if p["statusDetails"] != "response_sent_by_backend" || bl < 0.019 || p["@type"] != "type.googleapis.com/google.cloud.loadbalancing.type.LoadBalancerLogEntry" {
 		t.Errorf("jsonPayload = %v", p)
 	}
 	if l.Resource.Type != "http_load_balancer" || l.Resource.Labels["backend_service_name"] != "svc" || l.Resource.Labels["url_map_name"] != "map" {

@@ -2,10 +2,10 @@ package lb
 
 import (
 	"net/http"
-	"time"
 
 	computev1 "google.golang.org/api/compute/v1"
 
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/services/gcs"
 )
 
@@ -22,9 +22,9 @@ func (d *dataplane) bucketHandler(rs *reqState, b *computev1.BackendBucket) http
 			http.Error(w, "Cloud Storage is not running", http.StatusBadGateway)
 			return
 		}
-		t0 := time.Now()
+		sw := clock.StartStopwatch()
 		g.ServeObject(w, r, b.BucketName, r.URL.Path)
-		rs.bLat = time.Since(t0)
+		rs.bLat = sw.Elapsed()
 		rs.backend = "storage.googleapis.com/" + b.BucketName
 		rs.details = "response_sent_by_backend"
 	})
