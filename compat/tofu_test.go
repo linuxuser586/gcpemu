@@ -34,7 +34,7 @@ var resourceTypes = map[string][]string{
 		"google_service_account_iam_member", "google_service_account_iam_binding", "google_service_account_iam_policy",
 		"google_project_iam_custom_role", "google_project_iam_member", "google_project_iam_binding",
 		"google_iam_workload_identity_pool", "google_iam_workload_identity_pool_provider",
-		"google_project_service",
+		"google_project_service", "google_iam_deny_policy",
 	},
 	"storage": {
 		"google_storage_bucket", "google_storage_bucket_object",

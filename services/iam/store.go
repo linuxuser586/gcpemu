@@ -24,6 +24,9 @@ const (
 	nsRoles    = "iam/roles"               // projects/P/roles/R → iamv1.Role
 	nsTokens   = "iam/tokens"              // access token → tokenRecord
 	nsProjects = "core/projects"           // owned by emu (FR-CORE-020)
+
+	// ATTACHMENT/denypolicies/ID → protojson iampb.Policy (deny.go)
+	nsDenyPolicies = "iam/denypolicies"
 )
 
 // saEtag is the etag GCP reports on service accounts.

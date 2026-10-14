@@ -22,6 +22,8 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	// google provider >= 7 manages service accounts through the "IAM beta"
 	// product (same base path, separate setting).
 	{"iam_beta_custom_endpoint", "iam", "/iam/v1/"},
+	// google_iam_deny_policy (IAM v2, #184).
+	{"iam2_custom_endpoint", "iam", "/iam/v2/"},
 	{"iam_credentials_custom_endpoint", "iam", "/iamcredentials/v1/"},
 	{"resource_manager_custom_endpoint", "iam", "/cloudresourcemanager/v1/"},
 	{"resource_manager_v3_custom_endpoint", "iam", "/cloudresourcemanager/v3/"},

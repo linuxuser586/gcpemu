@@ -1,7 +1,8 @@
 // Package iam emulates Identity and Access Management (SRS 5.1): service
 // accounts and keys, predefined and custom roles, IAM policies on projects
 // and resources with a shared policy evaluator, OAuth2 token issuance, the
-// IAM Credentials API and a GCE-compatible metadata server. It also
+// IAM Credentials API, IAM v2 deny policies and a GCE-compatible metadata
+// server. It also
 // provides the emulator's authenticator (FR-CORE-050..052).
 package iam
 
@@ -12,10 +13,12 @@ import (
 	"net/http"
 	"sync"
 
+	iampb "cloud.google.com/go/iam/apiv2/iampb"
 	credentialspb "cloud.google.com/go/iam/credentials/apiv1/credentialspb"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -23,6 +26,7 @@ import (
 type Service struct {
 	env *emu.Env
 	cat *catalogue
+	ops *lro.Manager // deny policy operations
 
 	signer *signingKey // emulator OIDC signing key
 
@@ -41,6 +45,7 @@ var (
 	_ emu.IAMResourceParents  = (*Service)(nil)
 	_ emu.IAMPermissionTester = (*Service)(nil)
 	_ emu.PolicyEvaluator     = (*Service)(nil)
+	_ emu.DenyEvaluator       = (*Service)(nil)
 	_ emu.DenialAdvisor       = (*Service)(nil)
 	_ emu.Authenticator       = (*Service)(nil)
 	_ emu.Seeder              = (*Service)(nil)
@@ -51,7 +56,7 @@ var (
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {
-	return &Service{env: env, cat: builtin(), tokCache: map[string]cachedToken{}}
+	return &Service{env: env, cat: builtin(), ops: lro.NewManager(env, "iam"), tokCache: map[string]cachedToken{}}
 }
 
 func (s *Service) Name() string { return "iam" }
@@ -82,6 +87,8 @@ func (s *Service) Register(r emu.Router) error {
 	r.Handle("/service_accounts/v1/metadata/", http.HandlerFunc(s.serveX509))
 	r.Handle("GET /.well-known/openid-configuration", http.HandlerFunc(s.serveDiscovery))
 	credentialspb.RegisterIAMCredentialsServer(r.GRPC(), &credentialsServer{s: s})
+	iampb.RegisterPoliciesServer(r.GRPC(), &policiesServer{s: s})
+	s.ops.Register(r)
 	return nil
 }
 
@@ -109,6 +116,7 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) Stop(ctx context.Context) error {
+	s.ops.Close()
 	s.mu.Lock()
 	srv := s.metaSrv
 	s.metaSrv, s.started = nil, false
@@ -133,6 +141,7 @@ func (s *Service) ResourceCounts() map[string]int {
 	out := store.Counts(s.env.Store, map[string]string{
 		"serviceAccounts": nsAccounts, "serviceAccountKeys": nsKeys, "roles": nsRoles,
 		"workloadIdentityPools": nsPools, "workloadIdentityPoolProviders": nsProviders,
+		"denyPolicies": nsDenyPolicies,
 	})
 	out["projects"] = len(s.knownProjects())
 	return out

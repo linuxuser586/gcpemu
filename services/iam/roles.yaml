@@ -18,6 +18,7 @@ permissions:
     - "serviceAccounts: actAs create delete disable enable get getAccessToken getIamPolicy getOpenIdToken implicitDelegation list setIamPolicy signBlob signJwt undelete update"
     - "serviceAccountKeys: create delete disable enable get list"
     - "roles: create delete get list undelete update"
+    - "denypolicies: create delete get list update"
     - "workloadIdentityPools: create delete get list undelete update"
     - "workloadIdentityPoolProviders: create delete get list undelete update"
     - "googleapis: create"
@@ -238,6 +239,14 @@ roles:
     title: Security Reviewer
     description: Security reviewer role, with permissions to get any IAM policy.
     permissions: ["*.getIamPolicy", iam.roles.get, iam.roles.list, iam.serviceAccountKeys.list, iam.serviceAccounts.list, resourcemanager.projects.get]
+  - name: roles/iam.denyAdmin
+    title: Deny Admin
+    description: Access to create, update and delete deny policies.
+    permissions: [iam.denypolicies.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/iam.denyReviewer
+    title: Deny Reviewer
+    description: Access to view deny policies.
+    permissions: [iam.denypolicies.get, iam.denypolicies.list]
   - name: roles/iam.workloadIdentityPoolAdmin
     title: IAM Workload Identity Pool Admin
     description: Full control over workload identity pools and providers.

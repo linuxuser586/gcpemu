@@ -32,7 +32,7 @@ func TestDenialLog(t *testing.T) {
 	if d := ds[0]; d.Permission != "storage.buckets.get" || d.Count != 2 || d.Service != "gcs" || d.Method != "GET /storage/v1/b/b" || d.Level != "audit" {
 		t.Errorf("latest denial = %+v", d)
 	}
-	if ds[0].ID != denialID("user:a@example.com", "storage.buckets.get", "//storage.googleapis.com/projects/_/buckets/b") {
+	if ds[0].ID != denialID("user:a@example.com", "storage.buckets.get", "//storage.googleapis.com/projects/_/buckets/b", "") {
 		t.Errorf("ID %s is not stable", ds[0].ID)
 	}
 
