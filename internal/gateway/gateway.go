@@ -27,6 +27,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apidef"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
@@ -76,6 +77,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
 			start := time.Now()
+			timer := clock.StartStopwatch()
 			ctx, ci := emu.WithCallInfo(ctx)
 			ci.SetCall(owner(info.FullMethod), info.FullMethod)
 			ctx, err = g.authGRPC(ctx)
@@ -98,12 +100,13 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 					resp, err = h(ctx, req)
 				}()
 			}
-			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err,
+			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, timer, err,
 				&reqlog.Bodies{Request: grpcBody(req), Response: grpcBody(resp)})
 			return resp, toGRPC(err)
 		}),
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
 			start := time.Now()
+			timer := clock.StartStopwatch()
 			ctx, ci := emu.WithCallInfo(ss.Context())
 			ci.SetCall(owner(info.FullMethod), info.FullMethod)
 			ctx, err := g.authGRPC(ctx)
@@ -113,7 +116,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 			if err == nil {
 				err = h(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
 			}
-			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err, nil)
+			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, timer, err, nil)
 			return toGRPC(err)
 		}),
 	}
@@ -169,12 +172,12 @@ func (g *Gateway) grpcOwner(full string) string {
 	return g.grpcOwners[svc]
 }
 
-func (g *Gateway) logGRPC(ctx context.Context, ci *emu.CallInfo, service, method string, start time.Time, err error, bodies *reqlog.Bodies) {
+func (g *Gateway) logGRPC(ctx context.Context, ci *emu.CallInfo, service, method string, start time.Time, timer clock.Stopwatch, err error, bodies *reqlog.Bodies) {
 	code := status.Code(toGRPC(err))
 	g.log.Add(reqlog.Entry{
 		Time: start, Service: service, Protocol: "grpc", Method: method, Resource: ci.Resource(),
 		Principal: string(emu.PrincipalFrom(ctx)), Status: int(code),
-		Code: apierr.CodeName(code), LatencyMS: ms(time.Since(start)), Bodies: bodies,
+		Code: apierr.CodeName(code), LatencyMS: ms(timer.Elapsed()), Bodies: bodies,
 	})
 }
 
@@ -337,6 +340,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		timer := clock.StartStopwatch()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		var reqBody reqlog.Capture
 		if r.Body != nil && r.Body != http.NoBody {
@@ -381,7 +385,7 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 		g.log.Add(reqlog.Entry{
 			Time: start, Service: service, Protocol: "http",
 			Method: r.Method + " " + r.URL.Path, Resource: ci.Resource(), Principal: string(p),
-			Status: sw.status, LatencyMS: ms(time.Since(start)),
+			Status: sw.status, LatencyMS: ms(timer.Elapsed()),
 			Bodies: &reqlog.Bodies{
 				Request:  reqBody.Body(r.Header.Get("Content-Type")),
 				Response: sw.body.Body(sw.Header().Get("Content-Type")),

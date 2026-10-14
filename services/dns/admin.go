@@ -9,6 +9,7 @@ import (
 
 	mdns "github.com/miekg/dns"
 
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 )
 
@@ -100,7 +101,7 @@ func (s *Service) serveQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	start := time.Now()
+	timer := clock.StartStopwatch()
 	resp, err := exchange(ctx, m, server)
 	if err != nil {
 		adminError(w, http.StatusBadGateway, "query "+server+": "+err.Error())
@@ -114,7 +115,7 @@ func (s *Service) serveQuery(w http.ResponseWriter, r *http.Request) {
 		Answer:             queryRRs(resp.Answer),
 		Authority:          queryRRs(resp.Ns),
 		Additional:         queryRRs(resp.Extra),
-		LatencyMS:          float64(time.Since(start).Microseconds()) / 1000,
+		LatencyMS:          float64(timer.Elapsed().Microseconds()) / 1000,
 	}
 	if z := s.currentIndex().findZone(strings.ToLower(name), network); z != nil {
 		out.Zone = "projects/" + z.project + "/managedZones/" + z.name
