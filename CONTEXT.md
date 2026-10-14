@@ -94,7 +94,7 @@ The Managed container through which an Instance on a VM runtime reaches its othe
 _Avoid_: bridge container, tunnel
 
 **Loopback alias**:
-An extra `127.0.0.x` address on the host's loopback interface. Linux has every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist.
+An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist.
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
 **State snapshot**:
