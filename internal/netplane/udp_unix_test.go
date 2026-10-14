@@ -1,3 +1,5 @@
+//go:build unix
+
 package netplane
 
 import (
@@ -11,8 +13,12 @@ import (
 	"time"
 )
 
-// mdnsHolder binds 0.0.0.0:port with SO_REUSEADDR, as avahi-daemon,
-// systemd-resolved and browsers do for mDNS on 5353.
+// mdnsHolder binds 0.0.0.0:port and, where the host has IPv6, [::]:port,
+// each with SO_REUSEADDR, as avahi-daemon, systemd-resolved, mDNSResponder
+// and browsers do for mDNS on 5353. It returns the IPv4 socket. The IPv6
+// socket matters on macOS, which keeps the IPv4 and IPv6 port spaces
+// apart: without it a dual-stack wildcard bind would succeed beside the
+// IPv4 socket (issue #262).
 func mdnsHolder(t *testing.T, port string) net.PacketConn {
 	t.Helper()
 	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
@@ -27,6 +33,16 @@ func mdnsHolder(t *testing.T, port string) net.PacketConn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pc.Close() })
+	pc6, err := lc.ListenPacket(context.Background(), "udp6", "[::]:"+port)
+	switch {
+	case err == nil:
+		t.Cleanup(func() { pc6.Close() })
+	case errors.Is(err, syscall.EADDRNOTAVAIL), errors.Is(err, syscall.EAFNOSUPPORT):
+		// No IPv6 (as in some CI containers): a wildcard bind is IPv4-only
+		// and clashes with the IPv4 socket.
+	default:
+		t.Fatal(err)
+	}
 	return pc
 }
 
