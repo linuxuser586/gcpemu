@@ -21,7 +21,8 @@ import (
 // like gcloud's (gke_PROJECT_LOCATION_NAME) and authenticating with the
 // cluster's admin client certificate, so kubectl works without gcloud.
 // GET /container/_emu/kubeconfig?cluster=projects/P/locations/L/clusters/C
-// returns the same for one cluster. `gcloud container clusters
+// returns the same for one cluster, and lan=true points either at a
+// --gke-bind address instead (lan.go). `gcloud container clusters
 // get-credentials` produces the GKE-style kubeconfig (endpoint, CA and
 // gke-gcloud-auth-plugin) instead, which authenticates with emulator IAM
 // tokens.
@@ -51,8 +52,9 @@ func contextName(projectID, location, name string) string {
 	return "gke_" + projectID + "_" + location + "_" + name
 }
 
-// buildKubeconfig renders a kubeconfig for the clusters matching keep.
-func (s *Service) buildKubeconfig(keep func(*clusterRecord) bool) []byte {
+// buildKubeconfig renders a kubeconfig for the clusters matching keep,
+// pointing at the --gke-bind address lan when it is set (lan.go).
+func (s *Service) buildKubeconfig(keep func(*clusterRecord) bool, lan string) []byte {
 	var recs []*clusterRecord
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		recs = listClusters(tx, "")
@@ -71,13 +73,17 @@ func (s *Service) buildKubeconfig(keep func(*clusterRecord) bool) []byte {
 		rt := s.rtFor(rec.key())
 		rt.mu.Lock()
 		creds := rt.creds
+		lanAddr, onLAN := rt.lanServer(lan)
 		rt.mu.Unlock()
-		if len(creds.Cert) == 0 || c.Endpoint == "" {
+		if len(creds.Cert) == 0 || c.Endpoint == "" || (lan != "" && !onLAN) {
 			continue
 		}
 		name := contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name)
 		server := "https://" + c.Endpoint
-		if rec.Int.APIHostPort != 0 {
+		switch {
+		case lan != "":
+			server = "https://" + lanAddr
+		case rec.Int.APIHostPort != 0:
 			server = "https://127.0.0.1:" + strconv.Itoa(rec.Int.APIHostPort)
 		}
 		kc.Clusters = append(kc.Clusters, kcNamed{Name: name, Cluster: map[string]any{
@@ -102,15 +108,21 @@ func (s *Service) writeKubeconfig() {
 		return
 	}
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, s.buildKubeconfig(nil), 0o600); err != nil {
+	if err := os.WriteFile(tmp, s.buildKubeconfig(nil, ""), 0o600); err != nil {
 		return
 	}
 	_ = os.Rename(tmp, p)
+	s.writeLANKubeconfig()
 }
 
-// serveKubeconfig serves GET /_emu/kubeconfig[?cluster=NAME].
+// serveKubeconfig serves GET /_emu/kubeconfig[?cluster=NAME][&lan=true|ADDRESS].
 func (s *Service) serveKubeconfig(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("cluster")
+	lan, err := s.lanAddress(r.URL.Query().Get("lan"))
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	var keep func(*clusterRecord) bool
 	if name != "" {
 		ref, err := parseRef(name, "", "", "", "", 1)
@@ -132,7 +144,7 @@ func (s *Service) serveKubeconfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/yaml")
-	_, _ = w.Write(s.buildKubeconfig(keep))
+	_, _ = w.Write(s.buildKubeconfig(keep, lan))
 }
 
 // clusterJWKS returns the cluster's service account token signing keys

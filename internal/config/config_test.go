@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,6 +125,28 @@ func TestValidate(t *testing.T) {
 		if err := c.Validate(); err == nil {
 			t.Errorf("--lb-bind %s: expected an error", bad)
 		}
+	}
+
+	// --gke-bind and --ar-bind require authentication there, so they
+	// need no insecure flag either, and take the same addresses.
+	c = Defaults()
+	c.IAMMode = IAMOff
+	c.GKEBind = []string{"192.168.1.20"}
+	c.ARBind = []string{"192.168.1.20", "fd00::1"}
+	if err := c.Validate(); err != nil {
+		t.Error(err)
+	}
+	c.ARBind = nil
+	for _, bad := range []string{"0.0.0.0", "lan.example"} {
+		c.GKEBind = []string{bad}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "--gke-bind") {
+			t.Errorf("--gke-bind %s: err = %v", bad, err)
+		}
+	}
+	c.GKEBind = nil
+	c.ARBind = []string{"::"}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "--ar-bind") {
+		t.Errorf("--ar-bind ::: err = %v", err)
 	}
 }
 

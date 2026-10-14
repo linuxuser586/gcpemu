@@ -174,6 +174,30 @@ port below 1024 listens on the wildcard address, which serves only loopback and 
 addresses. If two forwarding rules share a port, only one gets the address. `gcpemu status` lists each rule's addresses as
 `lb-lan:<name>`, and `gcpemu doctor` checks the addresses before start and lists them while running.
 
+To manage GKE clusters and push images from another machine (say, Argo CD and BuildKit in
+another cluster on the LAN), pass `--gke-bind <address>` and `--ar-bind <address>` (both
+repeatable; `gkeBind` / `GCPEMU_GKE_BIND`, `arBind` / `GCPEMU_AR_BIND`). As with `--lb-bind`,
+the admin API and every other listener stay on `--bind`, and neither flag needs
+`--i-understand-this-is-insecure` (`docs/adr/0011-lan-binding-requires-credentials.md`).
+
+- `--gke-bind`: each cluster's Kubernetes API is also served on `<address>:<a port of its own>`,
+  kept across restarts, and the API server's certificate covers the address.
+  `<data-dir>/kubeconfig-lan` points at the first address with the cluster's admin client
+  certificate, and `GET /container/_emu/kubeconfig?cluster=…&lan=true` (or `lan=<address>`)
+  returns the same for one cluster. Service account tokens and emulator IAM access tokens work
+  too. Anonymous requests are refused, and an unknown bearer token no longer maps to the
+  default principal at any IAM enforcement level, on loopback as well.
+- `--ar-bind`: the registry is also served on `<address>:<the registry's port>`, falling back
+  to a free port when that one is taken. It serves TLS with a certificate from the instance CA,
+  so clients trust `<data-dir>/ca.pem` (for docker, as
+  `/etc/docker/certs.d/<address>:<port>/ca.crt`). Every request needs credentials, whatever the
+  IAM enforcement level: `docker login -u oauth2accesstoken -p <access token>`, or `-u _json_key`
+  with a service account key for a long-lived one such as BuildKit's. IAM permissions are then
+  checked as on loopback. Clients are challenged for Basic credentials, because crane and ko
+  refuse a token realm on a private IP address.
+
+`gcpemu status` lists the addresses as `gke-lan:<context>` and `ar-lan`.
+
 ### Container runtime
 
 Cloud SQL, GKE and Cloud NAT need Docker Engine (>= 24) or Podman (>= 4.9, Docker-compatible

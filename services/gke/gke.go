@@ -196,7 +196,7 @@ func (s *Service) Stop(ctx context.Context) error {
 	s.cancel()
 	s.mu.Lock()
 	for _, rt := range s.clusters {
-		rt.stop()
+		s.stopRT(rt)
 	}
 	s.mu.Unlock()
 	done := make(chan struct{})
@@ -234,7 +234,7 @@ func (s *Service) Reset(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	for _, rt := range s.clusters {
-		rt.stop()
+		s.stopRT(rt)
 	}
 	s.clusters = map[string]*clusterRT{}
 	s.byID = map[string]string{}

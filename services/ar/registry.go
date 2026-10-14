@@ -256,6 +256,11 @@ func (s *Service) authorize(w http.ResponseWriter, r *http.Request, t *target, p
 
 // challenge writes 401 with a Bearer challenge pointing at /v2/token.
 func (s *Service) challenge(w http.ResponseWriter, r *http.Request, name, action string) {
+	if isLAN(r.Context()) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="gcpemu"`)
+		writeRegError(w, regErr(http.StatusUnauthorized, "UNAUTHORIZED", "authentication required"))
+		return
+	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

@@ -54,6 +54,9 @@ type clusterInternal struct {
 	// 0003), or served by the emulator on a VM runtime (ADR 0005); the
 	// kubeconfig then uses it.
 	APIHostPort int `json:"apiHostPort,omitempty"`
+	// LANPort is the port on the --gke-bind addresses at which the
+	// emulator serves the API server (lan.go).
+	LANPort int `json:"lanPort,omitempty"`
 	// PodCIDR / ServiceCIDR are the ranges k3s runs with.
 	PodCIDR     string       `json:"podCidr"`
 	ServiceCIDR string       `json:"serviceCidr"`

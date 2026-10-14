@@ -47,8 +47,8 @@ func (s *Service) withRegistryAuth(next http.Handler) http.Handler {
 }
 
 // basicToToken validates Basic credentials and returns a bearer token for
-// them. Invalid credentials are rejected only when IAM is enforcing;
-// otherwise they fall back to anonymous access.
+// them. Invalid credentials are rejected only when authentication is
+// required (authRequired); otherwise they fall back to anonymous access.
 func (s *Service) basicToToken(ctx context.Context, user, pass string) (string, error) {
 	switch {
 	case accessTokenUsers[user]:
@@ -68,7 +68,7 @@ func (s *Service) basicToToken(ctx context.Context, user, pass string) (string, 
 			return tok, nil
 		}
 	}
-	if s.enforcing() {
+	if s.authRequired(ctx) {
 		return "", errBadCredentials
 	}
 	return anonymousToken, nil
@@ -146,7 +146,7 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if tok == "" {
-		if s.enforcing() {
+		if s.authRequired(r.Context()) {
 			writeRegError(w, regErr(http.StatusUnauthorized, "UNAUTHORIZED", "authentication required"))
 			return
 		}

@@ -36,6 +36,8 @@ var flagFields = map[string]string{
 	"bind":                          "Bind",
 	"i-understand-this-is-insecure": "Insecure",
 	"lb-bind":                       "LBBind",
+	"gke-bind":                      "GKEBind",
+	"ar-bind":                       "ARBind",
 	"port":                          "Ports",
 	"port-range":                    "PortRange",
 	"iam-mode":                      "IAMMode",
@@ -139,6 +141,8 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.StringVar(&o.flags.Bind, "bind", "127.0.0.1", "address to bind listeners to")
 	f.BoolVar(&o.flags.Insecure, "i-understand-this-is-insecure", false, "allow non-loopback bind with IAM off")
 	f.StringSliceVar(&o.flags.LBBind, "lb-bind", nil, "also serve the load balancer's forwarding rules on this address (repeatable), e.g. a LAN IP; nothing else is exposed")
+	f.StringSliceVar(&o.flags.GKEBind, "gke-bind", nil, "also serve every GKE cluster's Kubernetes API on this address (repeatable), e.g. a LAN IP; it then accepts only real credentials")
+	f.StringSliceVar(&o.flags.ARBind, "ar-bind", nil, "also serve the Artifact Registry registry on this address (repeatable), e.g. a LAN IP, over TLS and to authenticated callers only")
 	f.StringSliceVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443; a bare 0 makes every listener pick a free port")
 	f.StringVar(&o.flags.PortRange, "port-range", "", "LO-HI range that free ports are picked from, e.g. 20000-20999")
 	f.StringVar(&o.flags.IAMMode, "iam-mode", config.IAMAudit, "IAM enforcement level: off, audit, enforce")

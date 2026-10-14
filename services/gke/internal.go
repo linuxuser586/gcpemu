@@ -20,7 +20,7 @@ import (
 //	POST /_emu/hooks/{clusterId}/{secret}/admit   CA injection admission webhook (via the frontend, HTTPS)
 //	GET  /_emu/node/{clusterId}/{secret}/{node}/token        node SA token
 //	*    /_emu/node/{clusterId}/{secret}/{node}/md/{ip}/...  metadata server
-//	GET  /_emu/kubeconfig[?cluster=projects/P/locations/L/clusters/C]
+//	GET  /_emu/kubeconfig[?cluster=projects/P/locations/L/clusters/C][&lan=true|ADDRESS]
 //
 // Hook and node URLs carry the cluster's secret; the kubeconfig endpoint
 // requires container.clusters.getCredentials.
@@ -112,7 +112,8 @@ type tokenReview struct {
 // serveTokenReview maps an emulator IAM access token to its principal's
 // email, which is the Kubernetes user name on GKE. Outside enforce mode an
 // unknown token maps to the default principal, as on the gateway
-// (FR-CORE-050/051).
+// (FR-CORE-050/051), unless the API servers are served beyond loopback
+// (--gke-bind, lan.go).
 func (s *Service) serveTokenReview(w http.ResponseWriter, r *http.Request, key string) {
 	var tr tokenReview
 	if err := json.NewDecoder(r.Body).Decode(&tr); err != nil {
@@ -120,7 +121,7 @@ func (s *Service) serveTokenReview(w http.ResponseWriter, r *http.Request, key s
 		return
 	}
 	p, ok := s.env.Auth.Authenticate(r.Context(), tr.Spec.Token)
-	if !ok && s.env.Auth.Mode() != config.IAMEnforce && tr.Spec.Token != "" {
+	if !ok && s.env.Auth.Mode() != config.IAMEnforce && !s.lanStrict() && tr.Spec.Token != "" {
 		p, ok = emu.Principal(s.env.Config.DefaultPrincipal), true
 	}
 	tr.Status.Audiences = tr.Spec.Audiences
