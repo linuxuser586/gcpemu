@@ -785,10 +785,13 @@ components:
       type: object
       required: [id, principal, permission, resource, level, count, firstTime, lastTime, granted]
       properties:
-        id: { type: string, description: Stable for the Principal, permission and resource. }
+        id: { type: string, description: "Stable for the Principal, permission, resource and deny policy." }
         principal: { type: string, description: "The caller, e.g. serviceAccount:EMAIL." }
         permission: { type: string, description: The permission the caller lacked. }
         resource: { type: string, description: The full resource name the permission was checked on. }
+        denyPolicy:
+          type: string
+          description: "The IAM v2 deny policy that refused the permission, e.g. policies/cloudresourcemanager.googleapis.com%2Fprojects%2F123/denypolicies/no-destroy. Absent when no allow policy granted it."
         service: { type: string, description: The Service ID of the latest denied call. }
         method: { type: string, description: The latest denied call's method, as the Request log names it. }
         level:
@@ -798,10 +801,10 @@ components:
         count: { type: integer, description: How many calls were denied. }
         firstTime: { type: string, format: date-time }
         lastTime: { type: string, format: date-time }
-        role: { type: string, description: "The smallest predefined role granting the permission, e.g. roles/storage.objectViewer." }
+        role: { type: string, description: "The smallest predefined role granting the permission, e.g. roles/storage.objectViewer. Absent for a deny policy's denial, which no grant overrides." }
         roleTitle: { type: string }
         project: { type: string, description: The ID of the Project owning the resource, where a binding of the role grants the permission. }
-        granted: { type: boolean, description: The Principal now holds the permission on the resource. }
+        granted: { type: boolean, description: "The Principal now holds the permission on the resource, and no deny policy refuses it." }
     Info:
       type: object
       required: [instance, id, pid, version, dir, ephemeral, iamMode, strictProjects, console, services, endpoints, runtime]

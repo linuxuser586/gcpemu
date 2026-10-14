@@ -193,6 +193,10 @@ One immutable payload of a Secret Manager secret, which can be enabled, disabled
 **Secret sync**:
 GKE's copying of Secret versions into Kubernetes Secrets inside a cluster.
 
+**Deny policy**:
+An IAM v2 policy attached to a Project (or a folder or organization) that refuses the permissions it names to the Principals it names before any allow policy is consulted, so no role grants them back. It binds the Default principal too.
+_Avoid_: deny rule (one rule inside a Deny policy)
+
 **Strict projects**:
 An Instance setting under which referencing a Project that does not exist is an error instead of creating it.
 

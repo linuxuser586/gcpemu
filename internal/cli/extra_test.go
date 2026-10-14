@@ -22,6 +22,17 @@ func TestProviderEndpointsIAMBeta(t *testing.T) {
 	t.Fatal("tofu-provider does not set iam_beta_custom_endpoint")
 }
 
+// google_iam_deny_policy calls IAM v2; without the setting tofu would call
+// iam.googleapis.com (#184).
+func TestProviderEndpointsIAM2(t *testing.T) {
+	for _, e := range providerEndpoints {
+		if e.setting == "iam2_custom_endpoint" && e.service == "iam" && e.path == "/iam/v2/" {
+			return
+		}
+	}
+	t.Fatal("tofu-provider does not set iam2_custom_endpoint")
+}
+
 // data "google_project" reads billing info; without the setting tofu
 // would call cloudbilling.googleapis.com (#130).
 func TestProviderEndpointsCloudBilling(t *testing.T) {

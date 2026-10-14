@@ -29,10 +29,10 @@ import { LEVELS, rolePath } from './IamLayout'
 
 export type DenialStatus = 'missing' | 'granted'
 
-/** denialMatches reports whether q (lower case) is in a denial's Principal, permission, resource or role. */
+/** denialMatches reports whether q (lower case) is in a denial's Principal, permission, resource, role or deny policy. */
 export const denialMatches = (d: Denial, q: string) =>
-  [d.principal, d.permission, d.resource, d.role ?? '', d.method ?? ''].some((s) =>
-    s.toLowerCase().includes(q),
+  [d.principal, d.permission, d.resource, d.role, d.method, d.denyPolicy].some((s) =>
+    (s ?? '').toLowerCase().includes(q),
   )
 
 function formatTime(iso: string): string {
@@ -227,7 +227,12 @@ function DenialRow({ d }: { d: Denial }) {
         </div>
       </TableCell>
       <TableCell className="text-xs">
-        {d.role ? (
+        {d.denyPolicy ? (
+          <span>
+            <span className="text-muted-foreground">Refused by deny policy </span>
+            <span className="font-mono break-all">{d.denyPolicy}</span>
+          </span>
+        ) : d.role ? (
           <Link className="text-primary underline-offset-4 hover:underline" to={rolePath(d.role)}>
             <span className="font-mono">{d.role}</span>
             {d.roleTitle && <span className="block text-muted-foreground">{d.roleTitle}</span>}

@@ -11,15 +11,19 @@ import (
 )
 
 // Denial is a call that the audit IAM enforcement level would deny
-// (FR-IAM-004, FR-UI-014): a Principal lacking a permission on a resource.
-// Calls by the same Principal, for the same permission on the same
-// resource, are one Denial.
+// (FR-IAM-004, FR-UI-014): a Principal lacking a permission on a resource,
+// or refused it by a deny policy (FR-IAM-010). Calls by the same
+// Principal, for the same permission on the same resource, refused by the
+// same deny policy or by none, are one Denial.
 type Denial struct {
 	// ID is stable for the Principal, permission and resource.
 	ID         string `json:"id"`
 	Principal  string `json:"principal"`
 	Permission string `json:"permission"`
 	Resource   string `json:"resource"`
+	// DenyPolicy names the deny policy that refused the call; it is empty
+	// when no allow policy granted the permission.
+	DenyPolicy string `json:"denyPolicy,omitempty"`
 	// Service and Method are the latest denied call's, as the Request log
 	// names them.
 	Service string `json:"service,omitempty"`
@@ -33,11 +37,13 @@ type Denial struct {
 	// Role is the smallest predefined role granting Permission, and
 	// RoleTitle its title; Project is the Project owning Resource, where
 	// a binding of Role grants it. They and Granted are worked out when
-	// the Denial is read.
+	// the Denial is read. A deny policy's Denial has no Role, since no
+	// grant overrides a deny.
 	Role      string `json:"role,omitempty"`
 	RoleTitle string `json:"roleTitle,omitempty"`
 	Project   string `json:"project,omitempty"`
-	// Granted reports that the Principal now holds Permission on Resource.
+	// Granted reports that the Principal now holds Permission on Resource,
+	// with no deny policy refusing it.
 	Granted bool `json:"granted"`
 
 	seq uint64 // of the latest denied call
@@ -64,15 +70,20 @@ type denialLog struct {
 	onDeny func(Denial)
 }
 
-// denialID is the ID of the Denial of permission on resource to p.
-func denialID(p Principal, permission, resource string) string {
-	h := sha256.Sum256([]byte(string(p) + "\x00" + permission + "\x00" + resource))
+// denialID is the ID of the Denial of permission on resource to p, by
+// denyPolicy when it is not empty.
+func denialID(p Principal, permission, resource, denyPolicy string) string {
+	key := string(p) + "\x00" + permission + "\x00" + resource
+	if denyPolicy != "" {
+		key += "\x00" + denyPolicy
+	}
+	h := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(h[:8])
 }
 
-// add records a denied call.
-func (l *denialLog) add(ctx context.Context, p Principal, permission, resource, level string) {
-	id := denialID(p, permission, resource)
+// add records a denied call, refused by denyPolicy when it is not empty.
+func (l *denialLog) add(ctx context.Context, p Principal, permission, resource, denyPolicy, level string) {
+	id := denialID(p, permission, resource, denyPolicy)
 	service, method := callOf(ctx)
 	now := time.Now()
 	l.mu.Lock()
@@ -84,7 +95,7 @@ func (l *denialLog) add(ctx context.Context, p Principal, permission, resource, 
 		if len(l.byID) >= denialsKept {
 			l.evictOldest()
 		}
-		d = &Denial{ID: id, Principal: string(p), Permission: permission, Resource: resource, FirstTime: now}
+		d = &Denial{ID: id, Principal: string(p), Permission: permission, Resource: resource, DenyPolicy: denyPolicy, FirstTime: now}
 		l.byID[id] = d
 	}
 	l.seq++
@@ -140,15 +151,23 @@ func (a *PolicyAuthorizer) Denials(ctx context.Context, project string) []Denial
 	all := a.denials.list()
 	out := all[:0]
 	advisor, _ := a.eval.(DenialAdvisor)
+	denier, _ := a.eval.(DenyEvaluator)
 	for _, d := range all {
 		if advisor != nil {
 			d.Role, d.RoleTitle, d.Project = advisor.AdviseGrant(ctx, d.Permission, d.Resource)
+			if d.DenyPolicy != "" {
+				d.Role, d.RoleTitle = "", ""
+			}
 		}
 		if project != "" && d.Project != project {
 			continue
 		}
 		if a.eval != nil {
 			d.Granted = a.eval.Allowed(ctx, Principal(d.Principal), d.Permission, d.Resource)
+		}
+		if d.Granted && denier != nil {
+			_, denied := denier.Denied(ctx, Principal(d.Principal), d.Permission, d.Resource)
+			d.Granted = !denied
 		}
 		out = append(out, d)
 	}

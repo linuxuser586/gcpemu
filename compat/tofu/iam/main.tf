@@ -130,3 +130,21 @@ resource "google_project_service" "kms" {
 resource "google_project_service" "logging" {
   service = "logging.googleapis.com"
 }
+
+# IAM v2: a deny policy guarding Secret versions against destruction, as
+# polyappic's secret store guards its seal and backup keys (#184). The
+# acceptance runs at IAM enforcement level audit, so other modules' destroys
+# still go through.
+resource "google_iam_deny_policy" "no_destroy" {
+  parent       = urlencode("cloudresourcemanager.googleapis.com/projects/${var.project}")
+  name         = "tf-no-destroy"
+  display_name = "No Secret version destruction"
+  rules {
+    description = "only breakglass destroys Secret versions"
+    deny_rule {
+      denied_principals    = ["principalSet://goog/public:all"]
+      exception_principals = ["principal://goog/subject/breakglass@example.com"]
+      denied_permissions   = ["secretmanager.googleapis.com/versions.destroy"]
+    }
+  }
+}
