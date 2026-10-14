@@ -228,7 +228,8 @@ load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). 
 or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,
 so the emulator serves them instead: on a loopback address, reported as the Service's ingress
 and by `gcpemu env` as `GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the
-Service's node port. Only TCP ports are served.
+Service's node port. Only TCP ports are served. When the emulator itself runs in a container, see
+"Container image".
 
 Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
 them with the forwarding rule's own IP (host clients still get the local listener), and the
@@ -359,6 +360,10 @@ Docker daemon, not from the emulator's container. From the host:
 - `GET /container/_emu/kubeconfig?cluster=projects/P/locations/L/clusters/C` returns a
   kubeconfig whose server is the cluster's API published on `127.0.0.1`; the Connect gateway
   (`/connectgateway/v1/...`) works through the API gateway port.
+- A GKE `LoadBalancer` Service's ingress is a node address that a Linux host reaches directly:
+  servicelb's on an ordinary network, and on a Translated network every Ready node's
+  Fallback-range address, served by the cluster itself (`gcpemu env` prints the first). On a VM
+  runtime the host can't reach them yet (#280).
 - Use `--ephemeral` (or a volume on `/data`): stopping an ephemeral instance removes all of its
   containers, networks and volumes, while a persistent one keeps them for its next start. As a GitHub Actions service container (the job waits for the health check):
 

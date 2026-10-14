@@ -36,13 +36,21 @@ import (
 // load balancer ingress, and each port as endpoint
 // "gke:<cluster>/<namespace>/<service>/<port>", which `gcpemu env` prints
 // and the Web console shows. Only TCP ports with a node port are served.
+//
+// A Containerized Instance (ADR 0003) has no host loopback to listen on:
+// its own is the container's (#276). On a Translated network it reports
+// its Ready nodes' Fallback-range addresses as the ingress instead, which
+// a Linux host routes to, and opens no listener: kube-proxy on every node
+// serves a LoadBalancer Service's ingress IPs on the Service's ports.
+// The endpoints then hold the first of them.
 
 const lbEndpointPrefix = "gke:"
 
 // lbService is the host side of one LoadBalancer Service.
 type lbService struct {
 	sig       string // the ports it serves, to notice changes
-	ip        string
+	ip        string // its loopback address; "" when the nodes serve it
+	ingress   []string
 	endpoints []string
 	ex        []*netplane.Exposed
 }
@@ -65,6 +73,9 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	if err != nil {
 		return
 	}
+	// Inside a container the VM relay is off, so HostLB means a
+	// Translated network.
+	byNodes := np.Runtime().Self() != ""
 	lbs := map[string]*lbService{}
 	defer func() {
 		for id, l := range lbs {
@@ -74,7 +85,7 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	t := time.NewTicker(negInterval)
 	defer t.Stop()
 	for {
-		if err := s.syncLBServices(ctx, np, key, lbs); err != nil && ctx.Err() == nil {
+		if err := s.syncLBServices(ctx, np, key, byNodes, lbs); err != nil && ctx.Err() == nil {
 			s.env.Log.Debug("gke: LoadBalancer Service sync", "cluster", key, "err", err)
 		}
 		select {
@@ -86,8 +97,9 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 }
 
 // syncLBServices reconciles the host listeners of a cluster's
-// LoadBalancer Services, keyed by namespace/name in lbs.
-func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key string, lbs map[string]*lbService) error {
+// LoadBalancer Services, keyed by namespace/name in lbs, or with byNodes
+// their ingress at the nodes' Fallback-range addresses.
+func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key string, byNodes bool, lbs map[string]*lbService) error {
 	kc, err := s.kube(key)
 	if err != nil {
 		return err
@@ -95,6 +107,25 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 	var svcs kubeList[kubeService]
 	if err := kc.get(ctx, "/api/v1/services", &svcs); err != nil {
 		return err
+	}
+	var nodeIPs []string
+	if byNodes {
+		rec, err := s.loadKey(key)
+		if err != nil {
+			return err
+		}
+		var nodes kubeList[kubeNode]
+		if err := kc.get(ctx, "/api/v1/nodes", &nodes); err != nil {
+			return err
+		}
+		ready := map[string]bool{}
+		for _, n := range nodes.Items {
+			ready[n.Metadata.Name] = n.ready()
+		}
+		// Until a node is Ready, keep what is reported.
+		if nodeIPs = nodeIngress(rec.Int.Nodes, ready); len(nodeIPs) == 0 {
+			return nil
+		}
 	}
 	seen := map[string]bool{}
 	var errs []error
@@ -110,7 +141,7 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 				ports = append(ports, lbPort{p.Port, p.NodePort})
 			}
 		}
-		sig := fmt.Sprint(ports)
+		sig := fmt.Sprint(ports, nodeIPs)
 		l := lbs[id]
 		if l == nil || l.sig != sig {
 			prev := ""
@@ -122,17 +153,30 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 			if len(ports) == 0 {
 				continue
 			}
-			if l, err = s.serveLB(np, key, id, ports, prev); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", id, err))
-				continue
+			if byNodes {
+				l = s.reportLB(key, id, ports, nodeIPs)
+				s.env.Log.Info("gke: LoadBalancer Service at its nodes", "cluster", key, "service", id, "ips", nodeIPs)
+			} else {
+				if l, err = s.serveLB(np, key, id, ports, prev); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", id, err))
+					continue
+				}
+				s.env.Log.Info("gke: LoadBalancer Service listening", "cluster", key, "service", id, "ip", l.ip)
 			}
 			l.sig = sig
 			lbs[id] = l
-			s.env.Log.Info("gke: LoadBalancer Service listening", "cluster", key, "service", id, "ip", l.ip)
 		}
 		ing := svc.Status.LoadBalancer.Ingress
-		if len(ing) != 1 || ing[0].IP != l.ip || ing[0].Hostname != "" {
-			patch := map[string]any{"status": map[string]any{"loadBalancer": map[string]any{"ingress": []map[string]string{{"ip": l.ip}}}}}
+		same := len(ing) == len(l.ingress)
+		for i := 0; same && i < len(ing); i++ {
+			same = ing[i].IP == l.ingress[i] && ing[i].Hostname == ""
+		}
+		if !same {
+			want := make([]map[string]string, len(l.ingress))
+			for i, ip := range l.ingress {
+				want[i] = map[string]string{"ip": ip}
+			}
+			patch := map[string]any{"status": map[string]any{"loadBalancer": map[string]any{"ingress": want}}}
 			if err := kc.mergePatch(ctx, "/api/v1/namespaces/"+svc.Metadata.Namespace+"/services/"+svc.Metadata.Name+"/status", patch); err != nil {
 				errs = append(errs, fmt.Errorf("%s: status: %w", id, err))
 			}
@@ -158,7 +202,7 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 	}
 	var errs []error
 	for _, ip := range cands {
-		l := &lbService{ip: ip}
+		l := &lbService{ip: ip, ingress: []string{ip}}
 		var err error
 		for _, p := range ports {
 			var ln net.Listener
@@ -169,7 +213,7 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 				break
 			}
 			l.ex = append(l.ex, np.Serve(ln, s.nodePorts(key, p.nodePort)))
-			ep := lbEndpointPrefix + key[strings.LastIndex(key, "/")+1:] + "/" + id + "/" + strconv.Itoa(p.port)
+			ep := lbEndpoint(key, id, p.port)
 			s.env.Endpoints.Set(ep, addr)
 			l.endpoints = append(l.endpoints, ep)
 		}
@@ -186,6 +230,36 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 		return nil, fmt.Errorf("serving it on %s: %w", loopback.Host, errors.Join(errs...))
 	}
 	return nil, fmt.Errorf("no free loopback address: %w", errors.Join(errs...))
+}
+
+// reportLB records a Service that its nodes serve at ips: no listener,
+// endpoints at the first of them.
+func (s *Service) reportLB(key, id string, ports []lbPort, ips []string) *lbService {
+	l := &lbService{ingress: ips}
+	for _, p := range ports {
+		ep := lbEndpoint(key, id, p.port)
+		s.env.Endpoints.Set(ep, net.JoinHostPort(ips[0], strconv.Itoa(p.port)))
+		l.endpoints = append(l.endpoints, ep)
+	}
+	return l
+}
+
+// lbEndpoint names the endpoint of a Service port of the cluster key.
+func lbEndpoint(key, id string, port int) string {
+	return lbEndpointPrefix + key[strings.LastIndex(key, "/")+1:] + "/" + id + "/" + strconv.Itoa(port)
+}
+
+// nodeIngress returns the sorted Fallback-range addresses of the Ready
+// nodes, at which a Containerized Instance's host reaches them.
+func nodeIngress(nodes []nodeRecord, ready map[string]bool) []string {
+	var out []string
+	for _, n := range nodes {
+		if ip := n.dialIP(); ready[n.Name] && ip != "" {
+			out = append(out, ip)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // closeLB stops serving a Service on the host.
