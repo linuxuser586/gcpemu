@@ -45,6 +45,28 @@ Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hos
 `fault add|list|enable|disable|clear`, `doctor`, `version`, `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
 
+### Windows
+
+Download `gcpemu-windows-amd64.exe` or `gcpemu-windows-arm64.exe` from a
+[release](https://github.com/linuxuser586/gcpemu/releases), check it against `SHA256SUMS`
+(`certutil -hashfile gcpemu-windows-amd64.exe SHA256`), and rename it to `gcpemu.exe` somewhere
+on `PATH`. No installer, zip or administrator rights are needed.
+
+Natively, every Service runs in-process except Cloud SQL, GKE and Cloud NAT, which need a
+container runtime that native Windows can't use (ADR 0008). Docker Desktop's networks live
+inside its WSL2 VM, where the host can't route, so `gcpemu.exe` ignores the runtime even when
+`DOCKER_HOST` is set. With the default Service list it skips those three and logs that they
+need WSL2. Naming one of them in `--services`, or passing `--host-mode`, fails at start. For
+those, run the Linux binary inside WSL2. The load balancer runs natively, and Windows has no
+privileged ports, so a forwarding rule binds its own port directly.
+
+State lives under `%LOCALAPPDATA%\gcpemu\<instance>` unless `XDG_STATE_HOME` or `--data-dir`
+says otherwise. Windows doesn't enforce file modes such as 0600, so the per-user ACL on that
+directory protects the CA key and the admin token.
+
+`gcpemu env` prints bash (the default), fish or GitHub Actions syntax, so run
+`eval "$(gcpemu env)"` from Git Bash.
+
 ### Binding beyond loopback
 
 `--bind` (e.g. `0.0.0.0`) exposes every listener beyond this host, with a warning, and is
@@ -139,7 +161,7 @@ addresses. If two forwarding rules share a port, only one gets the address. `gcp
 ### Container runtime
 
 Cloud SQL, GKE and Cloud NAT need Docker Engine (>= 24) or Podman (>= 4.9, Docker-compatible
-socket). On macOS, Docker Desktop, OrbStack, Colima and Podman machine work too. The emulator
+socket), and on Windows they need WSL2 (see "Windows" above). On macOS, Docker Desktop, OrbStack, Colima and Podman machine work too. The emulator
 uses `DOCKER_HOST` first, then the Docker context (`DOCKER_CONTEXT`, or the current context in
 `~/.docker/config.json`), then the first well-known socket that responds. If `DOCKER_HOST` or a
 context other than `default` names a runtime that doesn't respond, start fails rather than using
@@ -149,8 +171,8 @@ and why. Everything the emulator creates is labelled
 holding Postgres and Kubernetes state are kept so resources survive a restart.
 
 On a VM runtime, host clients reach Cloud SQL instances and forwarding rules on loopback
-addresses: a `127.0.0.x` of their own each. Linux has all of `127.0.0.0/8`, but macOS has only
-`127.0.0.1`, so there only one Cloud SQL instance is reachable and forwarding rules share
+addresses: a `127.0.0.x` of their own each. Linux and Windows route all of `127.0.0.0/8` to
+loopback, so they need no loopback aliases, but macOS has only `127.0.0.1`, so there only one Cloud SQL instance is reachable and forwarding rules share
 `127.0.0.1`: each on its own port, or a free one when an earlier rule holds it, as `gcpemu env`
 shows. That needs no container runtime. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
 a LaunchDaemon that adds them again at boot; `sudo gcpemu loopback uninstall` removes both.

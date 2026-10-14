@@ -73,8 +73,8 @@ Today a GCP stack of GKE, a global external Application Load Balancer with Cloud
 
 | Item | Requirement |
 | --- | --- |
-| Host OS | Linux (amd64, arm64) primary; macOS (arm64, amd64) secondary, with every Service including GKE but not Host mode (NFR-PORT-003); Windows via WSL2 only |
-| CI | GitHub Actions `ubuntu-24.04` and `ubuntu-24.04-arm` hosted runners; any Linux CI with Docker. Hosted `macos-*` runners have no container runtime, so only the in-process services run there |
+| Host OS | Linux (amd64, arm64) primary; macOS (arm64, amd64) secondary, with every Service including GKE but not Host mode (NFR-PORT-003); Windows (amd64, arm64) natively with every Service except Cloud SQL, GKE and Cloud NAT, which need WSL2 like Host mode (NFR-PORT-005, ADR 0008) |
+| CI | GitHub Actions `ubuntu-24.04` and `ubuntu-24.04-arm` hosted runners; any Linux CI with Docker. Hosted `macos-*` runners have no container runtime, and native Windows cannot use one, so only the in-process services run on `macos-*` and `windows-*` runners |
 | Container runtime | Required only for GKE and Cloud SQL: Docker Engine ≥ 24, Podman ≥ 4.9, or containerd ≥ 1.7. All other services run with no runtime |
 | Privileges | The emulator itself runs unprivileged; GKE needs a runtime that can run privileged containers (the nodes), which the runtime grants, also when the emulator runs in a container with the runtime's socket |
 | Network | Works fully offline once images are cached; internet needed only for first image pulls and for NAT egress tests |
@@ -379,7 +379,7 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-LB-001 | Resources: global addresses, global forwarding rules (`EXTERNAL_MANAGED`), target HTTP and HTTPS proxies, URL maps, backend services, backend buckets, health checks (HTTP, HTTPS, HTTP2, TCP), SSL certificates (self-managed and Google-managed), SSL policies, network endpoint groups. Regional external and internal ALB variants share the implementation. | M |
-| FR-LB-002 | Each forwarding rule's IP:port is mapped to a host listener (a 127.0.0.x loopback address where the host has them, as on Linux; otherwise 127.0.0.1 on the rule's own port, or a free port when that one is taken. On macOS a port below 1024 is bound on the wildcard address and serves only loopback and `--lb-bind` addresses); the mapping is reported by `gcpemu env`, the web console and the rule's status, and resolvable via emulated DNS A records. | M |
+| FR-LB-002 | Each forwarding rule's IP:port is mapped to a host listener (a 127.0.0.x loopback address where the host has them, as on Linux and Windows; otherwise 127.0.0.1 on the rule's own port, or a free port when that one is taken. On macOS a port below 1024 is bound on the wildcard address and serves only loopback and `--lb-bind` addresses); the mapping is reported by `gcpemu env`, the web console and the rule's status, and resolvable via emulated DNS A records. | M |
 | FR-LB-003 | URL map routing: host rules, path matchers, path rules, advanced route rules (header, query and prefix/full/regex matches, priority), URL rewrite, redirects (HTTPS, host, path, response code), weighted backend services, request and response header actions, default service. | M |
 | FR-LB-004 | TLS termination with self-managed certs, SNI selection across multiple certs and Certificate Manager certificate maps; Google-managed certs issued by the emulator's CA once DNS for the domain points at the forwarding rule (`PROVISIONING` → `ACTIVE`). | M |
 | FR-LB-005 | Backend protocols HTTP, HTTPS and HTTP/2 to NEG endpoints and instance groups; HTTP/1.1, HTTP/2 and WebSocket from clients; gRPC passthrough. | M |
@@ -502,10 +502,11 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| NFR-PORT-001 | Release builds for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, built with `CGO_ENABLED=0`. | M |
+| NFR-PORT-001 | Release builds for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, windows/amd64, windows/arm64, built with `CGO_ENABLED=0`. | M |
 | NFR-PORT-002 | Identical behaviour on amd64 and arm64; GKE nodes and Cloud SQL run native-arch images. | M |
 | NFR-PORT-003 | On macOS every Service, GKE included, runs on the user's VM runtime (Docker Desktop and Colima verified each release; OrbStack and Podman machine best-effort) through the VM relay (ADR 0005). Fidelity levels are the same as on Linux; only addresses differ: host clients get 127.0.0.1 and a port the emulator serves for the GKE endpoint, LB forwarding rules and `LoadBalancer` Services. Each Cloud SQL instance gets its own 127.0.0.x:3307 when loopback aliases are installed; without them only one instance is reachable, on 127.0.0.1:3307. Translated networks (ADR 0004) need VLAN support in the VM kernel and fail with a clear message without it. Host mode is Linux-only; on macOS it fails at start with a clear message. | S |
 | NFR-PORT-004 | Also published as a multi-arch OCI image for CI systems that prefer service containers. Every service runs from the image, unprivileged; Cloud SQL, GKE and Cloud NAT need the host's runtime socket mounted (with its group) and are skipped without it (ADR 0003). | S |
+| NFR-PORT-005 | On native Windows every Service runs in-process, the load balancer included, and the container runtime counts as unusable even when `DOCKER_HOST` is set (ADR 0008). With the default Service list, Cloud SQL, GKE and Cloud NAT are skipped with a message that they need WSL2; naming one of them, or `--host-mode`, fails at start with that message. 127.0.0.0/8 is all loopback there, so each forwarding rule gets its own 127.0.0.x without loopback aliases. State lives under `%LOCALAPPDATA%\gcpemu` unless `$XDG_STATE_HOME` is set; file modes are not enforced, and the directory's per-user ACL protects the CA key and the admin token. | S |
 
 ### 8.3 Reliability and determinism
 
