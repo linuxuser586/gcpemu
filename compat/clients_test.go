@@ -37,7 +37,7 @@ type emulator struct {
 func start(t *testing.T) *emulator {
 	t.Helper()
 	tmp := t.TempDir()
-	e := &emulator{bin: filepath.Join(tmp, "gcpemu"), dir: filepath.Join(tmp, "data"), guard: escapeguard.New(t)}
+	e := &emulator{bin: filepath.Join(tmp, exe("gcpemu")), dir: filepath.Join(tmp, "data"), guard: escapeguard.New(t)}
 	build := exec.Command("go", "build", "-o", e.bin, "../cmd/gcpemu")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -138,7 +138,8 @@ func (e *emulator) try(t *testing.T, bin string, args ...string) (string, error)
 func (e *emulator) exec(env []string, bin string, args ...string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	b := filepath.Base(bin)
+	// Without the extension Windows gives them: gcloud.cmd, python.exe.
+	b := strings.TrimSuffix(filepath.Base(bin), filepath.Ext(bin))
 	if b == "gcloud" || b == "python" {
 		env = append(slices.Clip(env), e.guard.Env()...)
 	}
@@ -367,7 +368,12 @@ func TestClients(t *testing.T) {
 			t.Fatalf("ko image index: %+v %v", idx, err)
 		}
 
-		// Docker: login with the gcloud token, push, pull.
+		// Docker: login with the gcloud token, push, pull. On native
+		// Windows the daemon is in the WSL2 VM, where the registry's
+		// loopback address is not the host's.
+		if err := emuruntime.Unusable(); err != nil {
+			t.Skipf("docker: %v", err)
+		}
 		docker := onPath(t, "docker")
 		dl := exec.Command(docker, "login", "-u", "oauth2accesstoken", "--password-stdin", reg)
 		dl.Env, dl.Stdin = e.env, strings.NewReader(tok)
