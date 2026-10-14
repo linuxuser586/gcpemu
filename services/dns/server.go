@@ -9,6 +9,7 @@ import (
 
 	mdns "github.com/miekg/dns"
 
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 )
@@ -53,6 +54,7 @@ func (s *Service) Resolve(ctx context.Context, name string, qtype uint16) ([]mdn
 // serveDNS is the miekg/dns handler for UDP and TCP.
 func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	start := time.Now()
+	timer := clock.StartStopwatch()
 	resp := new(mdns.Msg)
 	network := normalizeNetwork(frontend.Network(req))
 	switch {
@@ -93,7 +95,7 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 	}
 	// Log before replying, so a client that has its answer finds the
 	// query in the request log.
-	s.logQuery(w, req, resp, network, start)
+	s.logQuery(w, req, resp, network, start, timer)
 	if err := w.WriteMsg(resp); err != nil {
 		s.env.Log.Debug("dns write", "err", err)
 	}
@@ -102,10 +104,10 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 // logQuery adds a query to the request log (FR-CORE-061): the answering
 // zone as the resource and the client's VPC network, if any, as the
 // principal.
-func (s *Service) logQuery(w mdns.ResponseWriter, req, resp *mdns.Msg, network string, start time.Time) {
+func (s *Service) logQuery(w mdns.ResponseWriter, req, resp *mdns.Msg, network string, start time.Time, timer clock.Stopwatch) {
 	e := reqlog.Entry{Time: start, Service: "dns", Protocol: "dns", Principal: network,
 		Status: resp.Rcode, Code: mdns.RcodeToString[resp.Rcode],
-		LatencyMS: float64(time.Since(start).Microseconds()) / 1000}
+		LatencyMS: float64(timer.Elapsed().Microseconds()) / 1000}
 	if _, ok := w.RemoteAddr().(*net.TCPAddr); ok {
 		e.Method = "TCP "
 	} else {

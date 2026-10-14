@@ -14,6 +14,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -69,10 +70,11 @@ func (s *Service) agentLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := time.Now()
+	timer := clock.StartStopwatch()
 	resp := s.decideLogin(r.Context(), rec, &req)
 	e := reqlog.Entry{Time: start, Service: "sql", Protocol: "postgres", Method: "CONNECT " + req.Listener + " " + req.Remote,
 		Resource: "projects/" + project + "/instances/" + name, Principal: req.User, Code: "OK",
-		LatencyMS: float64(time.Since(start).Microseconds()) / 1000}
+		LatencyMS: float64(timer.Elapsed().Microseconds()) / 1000}
 	if resp.Action == proxy.ActionDeny {
 		s.env.Log.Info("sql: connection refused", "instance", project+":"+name, "user", req.User, "remote", req.Remote, "listener", req.Listener, "reason", resp.Message)
 		e.Status, e.Code = 1, resp.Code
