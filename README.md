@@ -283,6 +283,14 @@ Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress
 instead of timing out; with `--offline` (or the offline sink switched on from the Web console),
 NAT-allowed egress hits a sink that records the attempt and returns `natSinkResponse`
 (`GCPEMU_NAT_SINK_RESPONSE`, default `503:gcpemu offline: egress blocked`).
+Each workload a NAT serves gets a block of `minPortsPerVm` ports (default 64, 32 with dynamic
+port allocation) on ports 1024-65535 of the NAT's IPs, in address order; AUTO_ONLY NATs gain IPs
+as workloads join, and on MANUAL_ONLY a workload that doesn't fit gets no ports, so its egress is
+dropped and `getRouterStatus` reports `minExtraNatIpsNeeded`. NAT IPs are emulated: the NAT egress
+proxy translates onto the workload's port block on its own external address, reusing a port per
+destination; endpoint-independent mapping caps a workload's concurrent connections at its block,
+and dynamic port allocation lets it grow to `maxPortsPerVm`. Mapping info, status and NAT logs
+name the NAT IP the block stands for.
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,

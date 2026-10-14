@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -236,6 +237,9 @@ func (s *Service) validateRouter(tx store.Tx, path string, rt *computev1.Router)
 			if nat.EnableDynamicPortAllocation && m&(m-1) != 0 {
 				return errInvalidField(f+".minPortsPerVm", m, "Must be a power of two when dynamic port allocation is enabled.")
 			}
+		}
+		if nat.EnableDynamicPortAllocation && nat.EnableEndpointIndependentMapping {
+			return errInvalidField(f+".enableDynamicPortAllocation", true, "Dynamic port allocation cannot be enabled with endpoint-independent mapping.")
 		}
 		if nat.MaxPortsPerVm != 0 && !nat.EnableDynamicPortAllocation {
 			return errInvalidField(f+".maxPortsPerVm", nat.MaxPortsPerVm, "maxPortsPerVm can only be set with dynamic port allocation.")
@@ -515,7 +519,7 @@ func (s *Service) deleteRouter(w http.ResponseWriter, r *http.Request) {
 	reply(w, op, err)
 }
 
-// natVMs lists the workloads (IP owners) a NAT serves, by source IP.
+// natVMs lists the workloads (IP owners) a NAT serves, in address order.
 func (s *Service) natVMs(tx store.Tx, rt *computev1.Router, nat *computev1.RouterNat) []natVM {
 	p, region, _ := pathParts(relPath(rt.SelfLink))
 	var out []natVM
@@ -523,18 +527,22 @@ func (s *Service) natVMs(tx store.Tx, rt *computev1.Router, nat *computev1.Route
 		if relPath(sn.Network) != relPath(rt.Network) {
 			continue
 		}
-		if len(natRanges(nat, sn, sn.IpCidrRange)) == 0 {
-			continue
-		}
 		st, ok := get[vpcNet](tx, nsVPCNets, relPath(sn.SelfLink))
 		if !ok {
 			continue
 		}
+		ranges := natRanges(nat, sn, st.addrRange())
 		for _, a := range ownersOf(tx, st.Name) {
-			out = append(out, natVM{owner: a.owner, ip: a.ip})
+			if slices.ContainsFunc(ranges, func(c string) bool { return inCIDR(c, a.ip) }) {
+				out = append(out, natVM{owner: a.owner, ip: a.ip})
+			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ip < out[j].ip })
+	sort.Slice(out, func(i, j int) bool {
+		a, _ := parseIP(out[i].ip)
+		b, _ := parseIP(out[j].ip)
+		return a < b
+	})
 	return out
 }
 
@@ -556,75 +564,84 @@ func natIPs(tx store.Tx, routerP string, nat *computev1.RouterNat) []string {
 	return ips
 }
 
-// getRouterStatus reports NAT IPs and the number of VM endpoints with NAT
-// mappings (FR-NAT-003).
+// getRouterStatus reports each NAT's IPs, the VM endpoints it allocated
+// ports to and the NAT IPs the rest need (FR-NAT-003).
 func (s *Service) getRouterStatus(w http.ResponseWriter, r *http.Request) {
-	path, rt, err := s.loadRouter(r, "compute.routers.get")
+	_, rt, err := s.loadRouter(r, "compute.routers.get")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	// Reading the allocation tops up AUTO_ONLY NAT IPs, as GCP adds them
+	// while workloads join.
+	var ports []natPorts
+	err = s.env.Store.Update(func(tx store.Tx) error { ports, err = s.routerNatPorts(tx, rt); return err })
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
 	res := &computev1.RouterStatus{Network: rt.Network, BestRoutes: []*computev1.Route{}, BestRoutesForRouter: []*computev1.Route{}}
-	_ = s.env.Store.View(func(tx store.Tx) error {
-		for _, nat := range rt.Nats {
-			st := &computev1.RouterStatusNatStatus{Name: nat.Name}
-			ips := natIPs(tx, path, nat)
-			if nat.NatIpAllocateOption == "AUTO_ONLY" {
-				st.AutoAllocatedNatIps = ips
-			} else {
-				st.UserAllocatedNatIps = ips
-				for _, ref := range nat.NatIps {
-					st.UserAllocatedNatIpResources = append(st.UserAllocatedNatIpResources, ref)
-				}
-			}
-			st.NumVmEndpointsWithNatMappings = int64(len(s.natVMs(tx, rt, nat)))
-			st.ForceSendFields = []string{"NumVmEndpointsWithNatMappings", "MinExtraNatIpsNeeded"}
-			res.NatStatus = append(res.NatStatus, st)
+	for i, nat := range rt.Nats {
+		st := &computev1.RouterStatusNatStatus{Name: nat.Name}
+		if nat.NatIpAllocateOption == "AUTO_ONLY" {
+			st.AutoAllocatedNatIps = ports[i].ips
+		} else {
+			st.UserAllocatedNatIps = ports[i].ips
+			st.UserAllocatedNatIpResources = append(st.UserAllocatedNatIpResources, nat.NatIps...)
+			st.DrainUserAllocatedNatIps = ports[i].drain
 		}
-		return nil
-	})
+		for _, vm := range ports[i].vms {
+			if vm.port != nil {
+				st.NumVmEndpointsWithNatMappings++
+			}
+		}
+		st.MinExtraNatIpsNeeded = ports[i].extraIPs
+		st.ForceSendFields = []string{"NumVmEndpointsWithNatMappings", "MinExtraNatIpsNeeded"}
+		res.NatStatus = append(res.NatStatus, st)
+	}
 	writeJSON(w, http.StatusOK, &computev1.RouterStatusResponse{Kind: "compute#routerStatusResponse", Result: res})
 }
 
-// getNatMappingInfo lists per-VM NAT port ranges (FR-NAT-003). Each
-// workload holding an IP in a covered subnetwork gets minPortsPerVm ports
-// (default 64) on the NAT's first IP, allocated in IP order.
+// getNatMappingInfo lists each VM endpoint's NAT port blocks, active and
+// on drain IPs (FR-NAT-003); an endpoint the NAT IPs had no room for is
+// listed with none.
 func (s *Service) getNatMappingInfo(w http.ResponseWriter, r *http.Request) {
 	path, rt, err := s.loadRouter(r, "compute.routers.get")
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
+	var ports []natPorts
+	err = s.env.Store.Update(func(tx store.Tx) error { ports, err = s.routerNatPorts(tx, rt); return err })
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	natName := r.URL.Query().Get("natName")
 	var items []listItem
-	_ = s.env.Store.View(func(tx store.Tx) error {
-		for _, nat := range rt.Nats {
-			if natName != "" && nat.Name != natName {
-				continue
-			}
-			ips := natIPs(tx, path, nat)
-			per := nat.MinPortsPerVm
-			if per == 0 {
-				per = 64
-				if nat.EnableDynamicPortAllocation {
-					per = 32
-				}
-			}
-			for i, vm := range s.natVMs(tx, rt, nat) {
-				m := &computev1.VmEndpointNatMappingsInterfaceNatMappings{SourceVirtualIp: vm.ip, NumTotalNatPorts: per}
-				if len(ips) > 0 {
-					lo := 1024 + int64(i)*per
-					m.NatIpPortRanges = []string{fmt.Sprintf("%s:%d-%d", ips[0], lo, lo+per-1)}
-				}
-				m.ForceSendFields = []string{"NumTotalDrainNatPorts"}
-				items = append(items, listItem{key: nat.Name + "/" + vm.ip, v: &computev1.VmEndpointNatMappings{
-					InstanceName:         vm.owner,
-					InterfaceNatMappings: []*computev1.VmEndpointNatMappingsInterfaceNatMappings{m},
-				}})
-			}
+	for i, nat := range rt.Nats {
+		if natName != "" && nat.Name != natName {
+			continue
 		}
-		return nil
-	})
+		for _, vm := range ports[i].vms {
+			m := &computev1.VmEndpointNatMappingsInterfaceNatMappings{
+				SourceVirtualIp:      vm.ip,
+				NatIpPortRanges:      vm.active(),
+				DrainNatIpPortRanges: vm.drained(),
+				ForceSendFields:      []string{"NumTotalNatPorts", "NumTotalDrainNatPorts"},
+			}
+			if vm.port != nil {
+				m.NumTotalNatPorts = ports[i].perVM
+			}
+			if vm.drain != nil {
+				m.NumTotalDrainNatPorts = ports[i].perVM
+			}
+			items = append(items, listItem{key: nat.Name + "/" + vm.ip, v: &computev1.VmEndpointNatMappings{
+				InstanceName:         vm.owner,
+				InterfaceNatMappings: []*computev1.VmEndpointNatMappingsInterfaceNatMappings{m},
+			}})
+		}
+	}
 	q := r.URL.Query()
 	q.Del("natName")
 	r2 := r.Clone(r.Context())

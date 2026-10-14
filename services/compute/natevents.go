@@ -178,23 +178,30 @@ func (s *Service) logEgress(network string, ev natEvent, c *coverage, vm, subnet
 	case "dropped":
 		e.Status, e.Code = 1, "DROPPED"
 	default:
-		tr.NatIP, tr.NatPort = s.natIPOf(c, ev.NatIP), ev.NatPort
+		tr.NatIP, tr.NatPort = s.natIPOf(c, ev.Src, ev.NatIP), ev.NatPort
 	}
 	s.env.RequestLog.Add(e)
 }
 
-// natIPOf is the address a NAT translates to: its first active NAT IP,
-// else the gateway's own (seen) address.
-func (s *Service) natIPOf(c *coverage, seen string) string {
+// natIPOf is the address a NAT translates src to: the NAT IP of src's
+// port block (FR-NAT-003), else the NAT's first IP, else the gateway's
+// own (seen) address.
+func (s *Service) natIPOf(c *coverage, src, seen string) string {
 	natIP := seen
 	_ = s.env.Store.View(func(tx store.Tx) error {
-		if rt, ok := get[computev1.Router](tx, nsRouters, c.router); ok {
-			for _, nat := range rt.Nats {
-				if nat.Name == c.nat {
-					if ips := natIPs(tx, c.router, nat); len(ips) > 0 {
-						natIP = ips[0]
-					}
-				}
+		rt, ok := get[computev1.Router](tx, nsRouters, c.router)
+		if !ok {
+			return nil
+		}
+		for _, nat := range rt.Nats {
+			if nat.Name != c.nat {
+				continue
+			}
+			a := s.natAllocation(tx, rt, nat)
+			if ip := a.natIPOf(src); ip != "" {
+				natIP = ip
+			} else if len(a.ips) > 0 {
+				natIP = a.ips[0]
 			}
 		}
 		return nil
@@ -250,7 +257,7 @@ func (s *Service) logNatFlow(np string, ev natEvent, c *coverage, vm, subnet, st
 	}
 	// A dropped connection was never allocated a NAT IP and port.
 	if status != "DROPPED" {
-		conn["nat_ip"], conn["nat_port"] = s.natIPOf(c, ev.NatIP), ev.NatPort
+		conn["nat_ip"], conn["nat_port"] = s.natIPOf(c, ev.Src, ev.NatIP), ev.NatPort
 	}
 	payload := map[string]any{
 		"connection":        conn,
