@@ -1,14 +1,17 @@
 package gke
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -111,6 +114,7 @@ func TestLBNodeIngress(t *testing.T) {
 // Service.
 func TestLBServicesSync(t *testing.T) {
 	for _, byNodes := range []bool{true, false} {
+		mode := map[bool]lbMode{true: lbNodes, false: lbLoopback}[byNodes]
 		t.Run(map[bool]string{true: "containerized", false: "host"}[byNodes], func(t *testing.T) {
 			s := newUnitService(t)
 			rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0", HostLB: true,
@@ -164,7 +168,7 @@ func TestLBServicesSync(t *testing.T) {
 			np := netplane.New(nil, nil, s.env.Log)
 			lbs := map[string]*lbService{}
 			ctx := context.Background()
-			if err := s.syncLBServices(ctx, np, rec.key(), byNodes, lbs); err != nil {
+			if err := s.syncLBServices(ctx, np, rec.key(), mode, nil, lbs); err != nil {
 				t.Fatal(err)
 			}
 			l := lbs["default/web"]
@@ -197,7 +201,7 @@ func TestLBServicesSync(t *testing.T) {
 			mu.Lock()
 			svcs = `{"items":[]}`
 			mu.Unlock()
-			if err := s.syncLBServices(ctx, np, rec.key(), byNodes, lbs); err != nil {
+			if err := s.syncLBServices(ctx, np, rec.key(), mode, nil, lbs); err != nil {
 				t.Fatal(err)
 			}
 			if ep := s.env.Endpoints.Get("gke:c0/default/web/18276"); ep != "" || len(lbs) != 0 {
@@ -205,4 +209,184 @@ func TestLBServicesSync(t *testing.T) {
 			}
 		})
 	}
+}
+
+// On a VM runtime a Service port is served on a port the emulator's
+// container publishes (ADR 0012): the Service's own port when it is
+// published at the same host port, then the published ports of
+// --port-range from a hash of the name onwards; none when nothing is
+// published.
+func TestLBPublishedCandidates(t *testing.T) {
+	const name = "p/us-central1-a/c1/default/web/8081"
+	published := map[int]string{
+		8081: "127.0.0.1:8081", 9090: "127.0.0.1:19090", 4510: "127.0.0.1:4510",
+		20000: "127.0.0.1:20000", 20001: "127.0.0.1:20001", 20002: "127.0.0.1:20002", 20003: "127.0.0.1:30003",
+	}
+	got := publishedCandidates(name, 8081, published, 20000, 20004, true)
+	if len(got) != 5 || got[0] != 8081 {
+		t.Fatalf("candidates = %v, want 8081 then 20000-20003", got)
+	}
+	rest := slices.Clone(got[1:])
+	slices.Sort(rest)
+	if !slices.Equal(rest, []int{20000, 20001, 20002, 20003}) {
+		t.Errorf("range candidates = %v, want the published 20000-20003", got[1:])
+	}
+	if again := publishedCandidates(name, 8081, published, 20000, 20004, true); !slices.Equal(again, got) {
+		t.Errorf("candidates not stable: %v then %v", got, again)
+	}
+
+	// A Service port published at another host port is not its own.
+	if got := publishedCandidates(name, 9090, published, 20000, 20004, true); slices.Contains(got, 9090) || len(got) != 4 {
+		t.Errorf("port 9090 published as 19090: candidates = %v, want the range only", got)
+	}
+	// A Service port inside the range comes first, and once.
+	if got := publishedCandidates(name, 20002, published, 20000, 20004, true); got[0] != 20002 || len(got) != 4 {
+		t.Errorf("port in range: candidates = %v", got)
+	}
+	// Without --port-range only the Service's own port.
+	if got := publishedCandidates(name, 8081, published, 0, 0, false); !slices.Equal(got, []int{8081}) {
+		t.Errorf("no range: candidates = %v, want [8081]", got)
+	}
+	if got := publishedCandidates(name, 8082, published, 0, 0, false); len(got) != 0 {
+		t.Errorf("no range, port unpublished: candidates = %v, want none", got)
+	}
+	// A range that is not published gives nothing.
+	if got := publishedCandidates(name, 8082, published, 21000, 21999, true); len(got) != 0 {
+		t.Errorf("range unpublished: candidates = %v, want none", got)
+	}
+}
+
+// On a VM runtime (ADR 0012) a LoadBalancer Service is served on its
+// container's published ports and reports the host side: its own port
+// when published at the same host port, otherwise a free one of
+// --port-range. With none free its ingress stays empty and a warning
+// names what to publish; it is served once a port frees.
+func TestLBServicesPublished(t *testing.T) {
+	s := newUnitService(t)
+	var logs bytes.Buffer
+	var logMu sync.Mutex
+	s.env.Log = slog.New(slog.NewTextHandler(writerFunc(func(b []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return logs.Write(b)
+	}), nil))
+	publishedHost = "127.0.0.1"
+	t.Cleanup(func() { publishedHost = "" })
+	own, ranged := freePort(t), freePort(t)
+	s.env.Config.PortRange = fmt.Sprintf("%d-%d", ranged, ranged)
+	published := map[int]string{own: net.JoinHostPort("127.0.0.1", strconv.Itoa(own)), ranged: "127.0.0.1:40001"}
+
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0", HostLB: true,
+		Nodes: []nodeRecord{{Name: "n1", IP: "10.128.0.4", ContainerIP: "172.29.0.4"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: "c0"})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	item := func(name string, port, nodePort int) string {
+		return fmt.Sprintf(`{"metadata":{"namespace":"default","name":%q},"spec":{"type":"LoadBalancer","ports":[{"port":%d,"protocol":"TCP","nodePort":%d}]}}`, name, port, nodePort)
+	}
+	web, api, full := item("web", own, 30080), item("api", 8443, 30081), item("full", 18277, 30082)
+	svcs := `{"items":[` + web + `,` + api + `,` + full + `]}`
+	patched := map[string][]string{}
+	kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/services":
+			_, _ = io.WriteString(w, svcs)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/default/services/"):
+			var p struct {
+				Status struct {
+					LoadBalancer struct {
+						Ingress []struct{ IP string } `json:"ingress"`
+					} `json:"loadBalancer"`
+				} `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/namespaces/default/services/"), "/status")
+			patched[name] = []string{}
+			for _, i := range p.Status.LoadBalancer.Ingress {
+				patched[name] = append(patched[name], i.IP)
+			}
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			t.Errorf("unexpected kube request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer kube.Close()
+	s.rtFor(rec.key()).kube = &kubeClient{base: kube.URL, hc: kube.Client()}
+
+	np := netplane.New(nil, nil, s.env.Log)
+	lbs := map[string]*lbService{}
+	defer func() {
+		for id, l := range lbs {
+			s.closeLB(rec.key(), id, l)
+		}
+	}()
+	ctx := context.Background()
+	if err := s.syncLBServices(ctx, np, rec.key(), lbPublished, published, lbs); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if !slices.Equal(patched["web"], []string{"127.0.0.1"}) || !slices.Equal(patched["api"], []string{"127.0.0.1"}) {
+		t.Errorf("ingress web %v, api %v; want [127.0.0.1] each", patched["web"], patched["api"])
+	}
+	if got, ok := patched["full"]; ok {
+		t.Errorf("full: ingress patched to %v, want left empty", got)
+	}
+	mu.Unlock()
+	for ep, want := range map[string]string{
+		fmt.Sprintf("gke:c0/default/web/%d", own): published[own],
+		"gke:c0/default/api/8443":                 "127.0.0.1:40001",
+		"gke:c0/default/full/18277":               "",
+	} {
+		if got := s.env.Endpoints.Get(ep); got != want {
+			t.Errorf("endpoint %s = %q, want %q", ep, got, want)
+		}
+	}
+	warnings := func() int {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return strings.Count(logs.String(), "no free published port")
+	}
+	if n := warnings(); n != 1 || !strings.Contains(logs.String(), "--port-range") {
+		t.Errorf("%d warnings, want one naming --port-range:\n%s", n, logs.String())
+	}
+
+	// api goes; full takes its port, and warns no more.
+	mu.Lock()
+	svcs = `{"items":[` + web + `,` + full + `]}`
+	mu.Unlock()
+	if err := s.syncLBServices(ctx, np, rec.key(), lbPublished, published, lbs); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.env.Endpoints.Get("gke:c0/default/full/18277"); got != "127.0.0.1:40001" {
+		t.Errorf("after api went: full's endpoint = %q, want 127.0.0.1:40001", got)
+	}
+	mu.Lock()
+	if !slices.Equal(patched["full"], []string{"127.0.0.1"}) {
+		t.Errorf("full: ingress %v, want [127.0.0.1]", patched["full"])
+	}
+	mu.Unlock()
+	if n := warnings(); n != 1 {
+		t.Errorf("%d warnings after the retry, want still one", n)
+	}
+}
+
+// writerFunc is an io.Writer made of a function.
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
+
+// freePort returns a TCP port free on 127.0.0.1.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
 }

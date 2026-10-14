@@ -429,9 +429,38 @@ Docker daemon, not from the emulator's container. From the host:
 - A GKE `LoadBalancer` Service's ingress is a node address that a Linux host reaches directly:
   servicelb's on an ordinary network, and on a Translated network every Ready node's
   Fallback-range address, served by the cluster itself (`gcpemu env` prints the first). On a VM
-  runtime the host can't reach them yet (#280).
+  runtime, see below.
 - Use `--ephemeral` (or a volume on `/data`): stopping an ephemeral instance removes all of its
-  containers, networks and volumes, while a persistent one keeps them for its next start. As a GitHub Actions service container (the job waits for the health check):
+  containers, networks and volumes, while a persistent one keeps them for its next start.
+
+On a VM runtime (Docker Desktop, OrbStack, Colima, Podman machine) the host can't route to
+container addresses inside the VM, so the emulator serves each GKE `LoadBalancer` Service on a
+port its own container publishes (ADR 0012). Start it with `--port-range` and publish that range
+on the same container and host ports:
+
+```sh
+docker run -d --name gcpemu -p 127.0.0.1:4510:4510 -p 127.0.0.1:20000-20019:20000-20019 \
+  -v /var/run/docker.sock:/var/run/docker.sock --group-add 0 \
+  linuxuser586/gcpemu:0 start --ephemeral --port-range 20000-20019
+```
+
+A Service takes its own port when the container publishes it at the same host port
+(`-p 127.0.0.1:8080:8080`), and otherwise a free port of the range. Its ingress is the host IP
+of that binding (`127.0.0.1`), and the port appears only in `gcpemu env`
+(`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`) and the Web console. Only TCP ports are
+served. When no published port is free, the Service has no ingress and the emulator logs a
+warning saying what to publish. The Google front end's dynamic port stays out of the range here,
+so the range is left for Services.
+
+The emulator guesses from the runtime's info that it is on a VM runtime: Docker Desktop and
+OrbStack are recognized. Set `GCPEMU_VM_RUNTIME=true` (or `--vm-runtime true`) on Colima and
+Podman machine, or `false` to keep node addresses; the default is `auto`. `docker exec gcpemu
+/gcpemu doctor` prints the decision, warns when no `--port-range` port is published, and flags
+clusters last started under the other decision; restarting the emulator recreates their servers
+with the current one.
+On Docker Desktop the socket belongs to `root` inside the VM, hence `--group-add 0`.
+
+As a GitHub Actions service container (the job waits for the health check):
 
 ```yaml
 services:

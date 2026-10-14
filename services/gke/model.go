@@ -58,11 +58,13 @@ type clusterInternal struct {
 	// LANPort is the port on the --gke-bind addresses at which the
 	// emulator serves the API server (lan.go).
 	LANPort int `json:"lanPort,omitempty"`
-	// HostLB is set when the host cannot reach the nodes' addresses, on a
-	// VM runtime (ADR 0005) or a Translated network (ADR 0004): the
-	// cluster then runs without servicelb and the emulator serves its
-	// LoadBalancer Services on host listeners, or for a Containerized
-	// Instance reports its nodes' addresses (lbservices.go).
+	// HostLB is set when the host cannot reach the nodes' addresses, with
+	// the VM relay (ADR 0005), on a Translated network (ADR 0004) or for a
+	// Containerized Instance on a VM runtime (ADR 0012): the cluster then
+	// runs without servicelb and the emulator serves its LoadBalancer
+	// Services on host listeners or its container's published ports, or
+	// for a Containerized Instance off a VM runtime reports its nodes'
+	// addresses (lbservices.go).
 	HostLB bool `json:"hostLb,omitempty"`
 	// PodCIDR / ServiceCIDR are the ranges k3s runs with.
 	PodCIDR     string       `json:"podCidr"`

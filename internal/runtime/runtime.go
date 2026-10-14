@@ -35,6 +35,17 @@ const (
 	LabelResource = "gcpemu.resource" // owning resource name
 	LabelRole     = "gcpemu.role"     // e.g. "server", "node", "nat"
 	LabelDir      = "gcpemu.dir"      // absolute data dir of the instance
+	// LabelHostLB is on a GKE cluster's server container that runs
+	// without servicelb, and says why: HostLBRelay, HostLBTranslated or
+	// HostLBVM. `gcpemu doctor` reads it (ADR 0012).
+	LabelHostLB = "gcpemu.hostlb"
+)
+
+// LabelHostLB values.
+const (
+	HostLBRelay      = "vm-relay"
+	HostLBTranslated = "translated"
+	HostLBVM         = "vm-runtime"
 )
 
 // apiVersion is the Docker Engine API version used. 1.41 is served by
@@ -735,6 +746,8 @@ type Container struct {
 	IPs map[string]string
 	// Ports maps "5432/tcp" to the published host address.
 	Ports map[string]string
+	// Cmd is the command the container was created with.
+	Cmd []string
 }
 
 // CreateContainer creates (but does not start) a container.
@@ -866,6 +879,7 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (Container, er
 		Config struct {
 			Image  string
 			Labels map[string]string
+			Cmd    []string
 		}
 		State struct {
 			Status   string
@@ -883,7 +897,7 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (Container, er
 	ct := Container{
 		ID: v.ID, Name: strings.TrimPrefix(v.Name, "/"), Image: v.Config.Image, Labels: v.Config.Labels,
 		Running: v.State.Running, Status: v.State.Status, ExitCode: v.State.ExitCode,
-		IPs: map[string]string{}, Ports: map[string]string{},
+		IPs: map[string]string{}, Ports: map[string]string{}, Cmd: v.Config.Cmd,
 	}
 	for n, ep := range v.NetworkSettings.Networks {
 		ct.IPs[n] = ep.IPAddress

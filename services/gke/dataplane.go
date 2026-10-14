@@ -444,13 +444,27 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	// Inside a container, or on a VM runtime, the host cannot reach the
 	// cluster networks, so the API server is also served on the host's
 	// loopback: published by the runtime, or by the emulator through the
-	// VM relay. LoadBalancer Services are served on loopback in place of
-	// servicelb's node addresses (lbservices.go) on a VM runtime, and on a
+	// VM relay. The emulator serves LoadBalancer Services in place of
+	// servicelb's node addresses (lbservices.go) with the VM relay, on a
 	// Translated network, whose Declared addresses the host does not
-	// route (ADR 0004, #270).
+	// route (ADR 0004, #270), and for a Containerized Instance on a VM
+	// runtime (ADR 0012). The server's label records why, for doctor.
 	var ports []runtime.Port
 	relay := d.relay()
-	hostLB := relay || sn.Translated
+	why := ""
+	switch {
+	case relay:
+		why = runtime.HostLBRelay
+	case sn.Translated:
+		why = runtime.HostLBTranslated
+	case d.rt.VM.On:
+		why = runtime.HostLBVM
+	}
+	hostLB := why != ""
+	labels := s.labels(d, key, "server")
+	if hostLB {
+		labels[runtime.LabelHostLB] = why
+	}
 	if d.rt.Self() != "" || relay {
 		args = append(args, "--tls-san", loopback.Host)
 	}
@@ -465,7 +479,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		Image:    ver.Image,
 		Cmd:      args,
 		Env:      []string{"K3S_TOKEN=" + rec.Int.Token},
-		Labels:   s.labels(d, key, "server"),
+		Labels:   labels,
 		Hostname: trunc("gke-"+c.Name, 40) + "-cp",
 		Networks: nets,
 		Ports:    ports,

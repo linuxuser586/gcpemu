@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -72,7 +73,13 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				hasRuntime = rtErr == nil
 				if hasRuntime {
 					checkVMRelay(cmd.Context(), out, cl)
-					if info, err := cl.Info(cmd.Context()); err == nil {
+					info, infoErr := cl.Info(cmd.Context())
+					if cl.Self() != "" && infoErr != nil {
+						fmt.Fprintf(out, "[--  ] VM runtime: undetermined (cannot read the runtime's info: %v)\n", infoErr)
+					} else if cl.Self() != "" {
+						checkVMRuntime(cmd.Context(), out, cl, cfg, info)
+					}
+					if infoErr == nil {
 						checkRuntimeArch(out, runtime.GOOS, machineArch(), info.Arch)
 					}
 					found, err := findAbandoned(cmd.Context(), cl)
@@ -176,6 +183,109 @@ func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) {
 		return
 	}
 	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", vmrelay.Decide(cl.Self() != "", gw))
+}
+
+// checkVMRuntime prints, for a Containerized Instance, whether it treats
+// its runtime as a VM runtime and serves GKE LoadBalancer Services on its
+// published ports (ADR 0012), and flags clusters created otherwise.
+func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, cfg *config.Config, info emuruntime.Info) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	// `start` may have had the settings as flags, which doctor lacks and
+	// which win over env and file there.
+	setting, portRange := cfg.VMRuntime, cfg.PortRange
+	self, err := cl.InspectContainer(ctx, cl.Self())
+	if err == nil {
+		if v := startFlag(self.Cmd, "vm-runtime"); v != "" {
+			setting = v
+		}
+		if v := startFlag(self.Cmd, "port-range"); v != "" {
+			portRange = v
+		}
+	}
+	d := emuruntime.DecideVM(setting, true, info)
+	published, perr := cl.SelfPorts(ctx)
+	if err = errors.Join(err, perr); err != nil {
+		fmt.Fprintf(out, "[--  ] VM runtime: %s; cannot read this container's published ports: %v\n", d, err)
+	} else {
+		reportVMRuntime(out, d, portRange, published)
+	}
+	dir, err := filepath.Abs(cfg.InstanceDir())
+	if err != nil {
+		return
+	}
+	servers, err := cl.ListContainers(ctx, map[string]string{
+		emuruntime.LabelService: "gke", emuruntime.LabelRole: "server", emuruntime.LabelDir: dir,
+	})
+	if err != nil {
+		fmt.Fprintf(out, "[--  ] GKE clusters: cannot list them: %v\n", err)
+		return
+	}
+	reportServiceLB(out, d.On, servers)
+}
+
+// startFlag returns the value of --name in a container's command, as
+// "--name value" or "--name=value", or "".
+func startFlag(cmd []string, name string) string {
+	for i, a := range cmd {
+		if v, ok := strings.CutPrefix(a, "--"+name+"="); ok {
+			return v
+		}
+		if a == "--"+name && i+1 < len(cmd) {
+			return cmd[i+1]
+		}
+	}
+	return ""
+}
+
+// reportVMRuntime prints the VM-runtime decision d and, on a VM runtime,
+// how many ports of portRange the container publishes, warning when none.
+func reportVMRuntime(out io.Writer, d emuruntime.VMDecision, portRange string, published map[int]string) {
+	fmt.Fprintf(out, "[ok  ] VM runtime: %s\n", d)
+	if !d.On {
+		return
+	}
+	n := 0
+	c := config.Config{PortRange: portRange}
+	lo, hi, ranged, _ := c.ParsePortRange()
+	for p := range published {
+		if ranged && p >= lo && p <= hi {
+			n++
+		}
+	}
+	if n > 0 {
+		fmt.Fprintf(out, "[ok  ] VM runtime: %d --port-range port(s) published for GKE LoadBalancer Services\n", n)
+		return
+	}
+	fix := "start the image with --port-range 20000-20019 and publish it: -p 127.0.0.1:20000-20019:20000-20019"
+	if ranged {
+		fix = "publish the range: -p 127.0.0.1:" + portRange + ":" + portRange
+	}
+	fmt.Fprintln(out, "[WARN] VM runtime: no --port-range port is published, so the host cannot reach GKE LoadBalancer Services")
+	fmt.Fprintf(out, "       fix: %s\n", fix)
+}
+
+// reportServiceLB flags the GKE clusters (server containers) whose
+// servicelb setting does not match the VM-runtime decision vm: they were
+// last started under another decision. Starting the emulator recreates
+// their servers with the current one.
+func reportServiceLB(out io.Writer, vm bool, servers []emuruntime.Container) {
+	for _, ct := range servers {
+		off := false
+		for i := 1; i < len(ct.Cmd); i++ {
+			off = off || ct.Cmd[i-1] == "--disable" && ct.Cmd[i] == "servicelb"
+		}
+		name := ct.Labels[emuruntime.LabelResource]
+		switch {
+		case vm && !off:
+			fmt.Fprintf(out, "[WARN] GKE cluster %s runs servicelb, whose node addresses the host cannot reach on a VM runtime\n", name)
+		case !vm && ct.Labels[emuruntime.LabelHostLB] == emuruntime.HostLBVM:
+			fmt.Fprintf(out, "[WARN] GKE cluster %s was created for a VM runtime, without servicelb\n", name)
+		default:
+			continue
+		}
+		fmt.Fprintln(out, "       fix: restart the emulator with the "+emuruntime.VMRuntimeEnv+" setting you want; it recreates the cluster's server")
+	}
 }
 
 // checkLoopback reports whether the host has the 127.0.0.x loopback

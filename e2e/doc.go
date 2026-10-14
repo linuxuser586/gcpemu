@@ -13,6 +13,7 @@
 //
 // TestContainerizedLBIngress runs the emulator as its OCI image, with the
 // host's Docker socket, and checks that the host reaches GKE LoadBalancer
-// Services at their ingress (#276). It needs Linux, the docker CLI and
+// Services at their ingress (#276), on a VM runtime through the
+// container's published ports (#280). It needs the docker CLI and
 // GCPEMU_NET_TESTS=1 (the image's base is pulled).
 package e2e
