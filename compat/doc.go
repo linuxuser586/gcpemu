@@ -16,12 +16,14 @@
 // covers fails the step instead of reaching Google.
 //
 // The universe subtests (#215) probe the Python and Node client libraries
-// with an emulator-issued key, from the scripts in sdk/. They install
-// pinned library versions into the same cache with python3 -m venv and
-// npm, and skip when either is missing or the install fails.
-// The go-mtls subtest (#243) builds the Go probe in sdk/universego and
-// runs it behind the Escape guard, which names the host it dialed. The
-// node-mtls subtest (#246) does the same with sdk/universemtls.js.
+// with an emulator-issued key, and Python google-auth with the metadata
+// server (#244), from the scripts in sdk/. They install pinned library
+// versions into the same cache with python3 -m venv and npm, and skip when
+// either is missing or the install fails. The Python probes run behind the
+// Escape guard. The go-mtls subtest (#243) builds the Go probe in
+// sdk/universego and runs it behind the Escape guard, which names the host
+// it dialed. The node-mtls subtest (#246) does the same with
+// sdk/universemtls.js.
 //
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with

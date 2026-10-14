@@ -128,6 +128,12 @@ func (s *Service) signJwtFor(ctx context.Context, name string, delegates []strin
 // serveCredentials serves iamcredentials.googleapis.com v1 REST.
 func (s *Service) serveCredentials(w http.ResponseWriter, r *http.Request) {
 	rt := parseRoute(r.URL.Path)
+	if r.Method == http.MethodGet && allowedLocationsRoute(rt) {
+		// No account or pool has a Regional Access Boundary: Google's
+		// "no boundary" answer, which clients cache for six hours (#244).
+		writeJSON(w, map[string]any{"locations": []string{}, "encodedLocations": "0x0"})
+		return
+	}
 	c, ok := rt.match(rt.verb, "v1", "projects", "*", "serviceAccounts", "*")
 	if !ok || r.Method != http.MethodPost {
 		notFoundRoute(w, r)
@@ -197,6 +203,21 @@ func (s *Service) serveCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, out)
+}
+
+// allowedLocationsRoute reports whether rt is a Regional Access Boundary
+// lookup, for a service account or a workforce or workload identity pool.
+func allowedLocationsRoute(rt route) bool {
+	for _, p := range [][]string{
+		{"v1", "projects", "*", "serviceAccounts", "*", "allowedLocations"},
+		{"v1", "locations", "global", "workforcePools", "*", "allowedLocations"},
+		{"v1", "projects", "*", "locations", "global", "workloadIdentityPools", "*", "allowedLocations"},
+	} {
+		if _, ok := rt.match("", p...); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // credentialsServer is the gRPC google.iam.credentials.v1.IAMCredentials.
