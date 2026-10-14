@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -361,7 +362,10 @@ func privateNodes(c *containerpb.Cluster, np *containerpb.NodePool) bool {
 // ---- server ----
 
 // startServer (re)creates the control plane container running version and
-// waits for the API server.
+// waits for the API server. A cluster with a staged datastore (one restored
+// from a State snapshot) starts on a fresh volume holding it; the staged
+// archive is dropped once the server is up, so later restarts keep the
+// volume.
 func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.SubnetNet, version string) error {
 	rec, err := s.loadKey(key)
 	if err != nil {
@@ -384,6 +388,15 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	name := d.rt.Name("gke", shortID(c), "cp")
 	if err := d.rt.RemoveContainer(ctx, name, true); err != nil {
 		return err
+	}
+	staged, err := s.stagedDatastore(c.Id)
+	if err != nil {
+		return err
+	}
+	if staged != "" {
+		if err := d.rt.RemoveVolume(ctx, name); err != nil {
+			return err
+		}
 	}
 	if err := d.rt.CreateVolume(ctx, name, s.labels(d, key, "server")); err != nil {
 		return err
@@ -470,6 +483,11 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
 		return err
 	}
+	if staged != "" {
+		if err := writeDatastore(ctx, d.rt, id, staged); err != nil {
+			return err
+		}
+	}
 	if err := d.rt.StartContainer(ctx, id); err != nil {
 		return err
 	}
@@ -530,6 +548,11 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	rt.mu.Lock()
 	rt.kube, rt.creds = kc, creds
 	rt.mu.Unlock()
+	if staged != "" {
+		if err := os.Remove(staged); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
 	return s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		priv, pub := ip, extIP
 		if hostAPI != "" {
@@ -1268,7 +1291,7 @@ const annoUserLabels = "gcpemu.io/node-pool-labels"
 // ---- teardown ----
 
 // teardown deletes a cluster: NEGs, containers, volumes, addresses and
-// finally the record.
+// finally the record and any staged datastore.
 func (s *Service) teardown(ctx context.Context, key string) error {
 	if err := s.destroyDataPlane(ctx, key); err != nil {
 		var ae *apierr.Error
@@ -1289,6 +1312,9 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 	delete(s.byID, id)
 	s.mu.Unlock()
 	s.writeKubeconfig()
+	if p, _ := s.stagedDatastore(id); p != "" {
+		_ = os.Remove(p)
+	}
 	return err
 }
 

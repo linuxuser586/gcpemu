@@ -837,6 +837,16 @@ func (c *Client) RestartContainer(ctx context.Context, id string, timeout time.D
 		url.Values{"t": {strconv.Itoa(int(timeout.Seconds()))}}, nil, nil)
 }
 
+// PauseContainer freezes a running container's processes.
+func (c *Client) PauseContainer(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/pause", nil, nil, nil)
+}
+
+// UnpauseContainer resumes a paused container.
+func (c *Client) UnpauseContainer(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/unpause", nil, nil, nil)
+}
+
 // RemoveContainer deletes a container (with anonymous volumes); a missing
 // container is not an error.
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
@@ -957,12 +967,33 @@ func (c *Client) CopyTo(ctx context.Context, id, dir string, files []File) error
 		}()
 		pw.CloseWithError(err)
 	}()
+	return c.ArchiveTo(ctx, id, dir, pr)
+}
+
+// ArchiveTo extracts the tar stream r into dir inside the container (which
+// may be created but not started), volumes mounted there included.
+func (c *Client) ArchiveTo(ctx context.Context, id, dir string, r io.Reader) error {
 	resp, err := c.raw(ctx, http.MethodPut, "/containers/"+url.PathEscape(id)+"/archive",
-		url.Values{"path": {dir}}, pr, "application/x-tar")
+		url.Values{"path": {dir}}, r, "application/x-tar")
 	if err != nil {
 		return fmt.Errorf("copy to %s:%s: %w", id, dir, err)
 	}
 	resp.Body.Close()
+	return nil
+}
+
+// ArchiveFrom writes p (a file or a whole directory) inside the container
+// to w as a tar stream whose entries are named under p's base name.
+func (c *Client) ArchiveFrom(ctx context.Context, id, p string, w io.Writer) error {
+	resp, err := c.raw(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/archive",
+		url.Values{"path": {p}}, nil, "")
+	if err != nil {
+		return fmt.Errorf("copy from %s:%s: %w", id, p, err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("copy from %s:%s: %w", id, p, err)
+	}
 	return nil
 }
 

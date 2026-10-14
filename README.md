@@ -64,8 +64,10 @@ gcpemu snapshot restore clean   # instead of re-seeding
 Saving needs a quiet Instance: it fails while a Service is still starting, an Operation is
 running, a Cloud SQL instance is stopped, or clients keep changing state during the save.
 Restoring keeps configuration, Fault rules and the Emulator clock, which never goes back.
-GKE clusters are saved but the Kubernetes objects inside them are not: a restored cluster comes
-back with a fresh data plane.
+A RUNNING GKE cluster keeps its Kubernetes objects and its cluster CA: its k3s datastore is
+saved, and its nodes rejoin and pull their images again. PersistentVolume contents are not saved,
+so volumes come back empty, and a cluster that is not RUNNING at save time comes back with a fresh
+data plane.
 
 ### Windows
 

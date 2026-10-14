@@ -224,21 +224,8 @@ func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, map[string]string{"clusters": nsClusters})
 }
 
-// Snapshot implements emu.Snapshotter. Clusters are in the store; the
-// Kubernetes objects inside them are not saved yet, so a restored cluster
-// comes back with a fresh data plane, as a new one would.
-func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
-
-// Restore implements emu.Snapshotter: Reset tore the data planes down, and
-// the restored clusters are brought up again in the background, reporting
-// RECONCILING until they are back.
-func (s *Service) Restore(ctx context.Context, dir string) error {
-	s.recoverClusters()
-	return nil
-}
-
-// Reset tears down every cluster's containers and volumes; the store is
-// reset by the instance.
+// Reset tears down every cluster's containers and volumes and drops the
+// staged datastores; the store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {
 	var keys []string
 	_ = s.env.Store.View(func(tx store.Tx) error {
@@ -247,7 +234,7 @@ func (s *Service) Reset(ctx context.Context) error {
 		}
 		return nil
 	})
-	var errs []error
+	errs := []error{s.clearStaged()}
 	for _, k := range keys {
 		if err := s.destroyDataPlane(ctx, k); err != nil {
 			errs = append(errs, err)
