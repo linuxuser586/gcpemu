@@ -3,6 +3,7 @@ package lb
 import (
 	"context"
 	"errors"
+	"net"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
@@ -45,3 +46,29 @@ const (
 	EdgeControlPort = edgeControlPort
 	EdgeRelayPort   = edgeRelayPort
 )
+
+// SetSingleLoopback switches the data plane in or out of single-loopback
+// mode, which macOS without loopback aliases uses (call it before
+// creating forwarding rules).
+func SetSingleLoopback(svc emu.Service, on bool) {
+	d := svc.(*Service).dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.single = on
+}
+
+// SingleLoopback reports whether the data plane is in single-loopback mode.
+func SingleLoopback(svc emu.Service) bool {
+	d := svc.(*Service).dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.single
+}
+
+// MappedIP is the listener IP emulated DNS answers for a forwarding rule IP.
+func MappedIP(svc emu.Service, ip string) string {
+	if m := svc.(*Service).dp.mappedIP(net.ParseIP(ip)); m != nil {
+		return m.String()
+	}
+	return ""
+}

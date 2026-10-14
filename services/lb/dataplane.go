@@ -33,6 +33,7 @@ type dataplane struct {
 	mu        sync.Mutex
 	listeners map[string]*listener // by frontend key "ip:port"
 	loopX     map[string]int       // forwarding rule IP → 127.0.0.x
+	single    bool                 // single-loopback mode (listeners.go)
 	nextPort  int
 	backends  map[string]*backendSvc // by backend service path
 	ctx       context.Context
@@ -97,7 +98,11 @@ func (d *dataplane) start(ctx context.Context) {
 	d.mu.Lock()
 	d.ctx = ctx
 	d.closed = false
+	d.single = !loopbackAliases()
 	d.mu.Unlock()
+	if d.single {
+		d.s.env.Log.Info("lb: single-loopback mode: forwarding rules listen on 127.0.0.1 (127.0.0.2 not bindable)")
+	}
 	d.logs = newAccessLogger(d.s.env)
 	d.edge = newEdge(d)
 	go d.endpointLoop(ctx)

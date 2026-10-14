@@ -19,10 +19,15 @@ import (
 )
 
 // startLBBind starts an instance whose forwarding rules are also served on
-// 127.0.0.1 (--lb-bind; the rules' own listeners are on 127.0.0.x, x >= 2).
-func startLBBind(t *testing.T) *env {
+// the bind addresses (--lb-bind), by default 127.0.0.1 (the rules' own
+// listeners are on 127.0.0.x, x >= 2, or 127.0.0.1 too in single-loopback
+// mode).
+func startLBBind(t *testing.T, bind ...string) *env {
 	t.Helper()
-	inst := emutest.Start(t, []string{"lb", "cdn"}, func(c *config.Config) { c.LBBind = []string{"127.0.0.1"} })
+	if len(bind) == 0 {
+		bind = []string{"127.0.0.1"}
+	}
+	inst := emutest.Start(t, []string{"lb", "cdn"}, func(c *config.Config) { c.LBBind = bind })
 	svc, _ := inst.Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
 	c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())

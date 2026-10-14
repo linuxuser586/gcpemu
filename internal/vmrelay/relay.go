@@ -37,7 +37,10 @@ const Env = "GCPEMU_VM_RELAY"
 
 // Decision says whether an Instance uses the relay, and why.
 type Decision struct {
-	On     bool
+	On bool
+	// VM: the gateway cannot be bound, so the runtime runs in a VM, whose
+	// host network is not the host's.
+	VM     bool
 	Reason string
 }
 
@@ -56,17 +59,20 @@ func Decide(inContainer bool, gateway string) Decision {
 	if inContainer {
 		return Decision{Reason: "the emulator runs in a container"}
 	}
+	vm := true
+	if l, err := net.Listen("tcp", net.JoinHostPort(gateway, "0")); err == nil {
+		l.Close()
+		vm = false
+	}
 	switch strings.ToLower(os.Getenv(Env)) {
 	case "1", "true", "on":
-		return Decision{On: true, Reason: "forced by " + Env}
+		return Decision{On: true, VM: vm, Reason: "forced by " + Env}
 	case "0", "false", "off":
-		return Decision{Reason: "disabled by " + Env}
+		return Decision{VM: vm, Reason: "disabled by " + Env}
 	}
-	l, err := net.Listen("tcp", net.JoinHostPort(gateway, "0"))
-	if err != nil {
-		return Decision{On: true, Reason: "gateway " + gateway + " not bindable"}
+	if vm {
+		return Decision{On: true, VM: true, Reason: "gateway " + gateway + " not bindable"}
 	}
-	l.Close()
 	return Decision{Reason: "gateway " + gateway + " bindable"}
 }
 
