@@ -141,6 +141,16 @@ func (e *Env) ProjectByNumber(num string) (string, bool) {
 	return id, id != ""
 }
 
+// Projects returns the IDs of every Project the Instance knows, in order.
+func (e *Env) Projects() []string {
+	var ids []string
+	_ = e.Store.View(func(tx store.Tx) error {
+		tx.Scan(projectsNS, "", func(k string, _ []byte) bool { ids = append(ids, k); return true })
+		return nil
+	})
+	return ids
+}
+
 // DeclareProject records a project explicitly (seed files, config).
 func (e *Env) DeclareProject(id string) error {
 	return e.Store.Update(func(tx store.Tx) error {

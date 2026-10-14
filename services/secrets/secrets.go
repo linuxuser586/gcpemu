@@ -42,6 +42,7 @@ var (
 	_ emu.ClockObserver   = (*Service)(nil)
 	_ emu.ResourceCounter = (*Service)(nil)
 	_ emu.Seeder          = (*Service)(nil)
+	_ emu.SeedExporter    = (*Service)(nil)
 	_ emu.EnvVarer        = (*Service)(nil)
 )
 

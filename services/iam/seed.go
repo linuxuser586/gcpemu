@@ -1,6 +1,7 @@
 package iam
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	iamv1 "google.golang.org/api/iam/v1"
 	"google.golang.org/grpc/codes"
@@ -32,32 +34,40 @@ import (
 // keyFile (relative to the seed file) receives a JSON key the first time;
 // an existing file whose key is still registered is left alone.
 type seedSection struct {
-	Metadata *struct {
-		Project        string `yaml:"project"`
-		Zone           string `yaml:"zone"`
-		ServiceAccount string `yaml:"serviceAccount"`
-	} `yaml:"metadata"`
-	ServiceAccounts []struct {
-		Project     string `yaml:"project"`
-		AccountID   string `yaml:"accountId"`
-		DisplayName string `yaml:"displayName"`
-		Description string `yaml:"description"`
-		KeyFile     string `yaml:"keyFile"`
-	} `yaml:"serviceAccounts"`
-	CustomRoles []struct {
-		Project     string   `yaml:"project"`
-		RoleID      string   `yaml:"roleId"`
-		Title       string   `yaml:"title"`
-		Description string   `yaml:"description"`
-		Stage       string   `yaml:"stage"`
-		Permissions []string `yaml:"permissions"`
-	} `yaml:"customRoles"`
-	Bindings []struct {
-		Project  string   `yaml:"project"`
-		Resource string   `yaml:"resource"`
-		Role     string   `yaml:"role"`
-		Members  []string `yaml:"members"`
-	} `yaml:"bindings"`
+	Metadata        *seedMetadata    `yaml:"metadata,omitempty"`
+	ServiceAccounts []seedAccount    `yaml:"serviceAccounts,omitempty"`
+	CustomRoles     []seedCustomRole `yaml:"customRoles,omitempty"`
+	Bindings        []seedBinding    `yaml:"bindings,omitempty"`
+}
+
+type seedMetadata struct {
+	Project        string `yaml:"project"`
+	Zone           string `yaml:"zone"`
+	ServiceAccount string `yaml:"serviceAccount"`
+}
+
+type seedAccount struct {
+	Project     string `yaml:"project"`
+	AccountID   string `yaml:"accountId"`
+	DisplayName string `yaml:"displayName,omitempty"`
+	Description string `yaml:"description,omitempty"`
+	KeyFile     string `yaml:"keyFile,omitempty"`
+}
+
+type seedCustomRole struct {
+	Project     string   `yaml:"project"`
+	RoleID      string   `yaml:"roleId"`
+	Title       string   `yaml:"title,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	Stage       string   `yaml:"stage,omitempty"`
+	Permissions []string `yaml:"permissions,omitempty"`
+}
+
+type seedBinding struct {
+	Project  string   `yaml:"project,omitempty"`
+	Resource string   `yaml:"resource,omitempty"`
+	Role     string   `yaml:"role"`
+	Members  []string `yaml:"members"`
 }
 
 // ApplySeed implements emu.Seeder; it is idempotent.
@@ -132,6 +142,80 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 		}
 	}
 	return nil
+}
+
+// ExportSeed implements emu.SeedExporter: service accounts, custom roles
+// and the unconditional bindings of every stored policy. The metadata
+// settings live only in memory, keys cannot be declared without writing
+// fresh key material, and conditional bindings, audit configs, disabled
+// accounts and deleted roles have no seed form, so none are exported.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	var sec seedSection
+	err := s.env.Store.View(func(tx store.Tx) error {
+		accounts, err := store.ListJSON[*iamv1.ServiceAccount](tx, nsAccounts, "")
+		if err != nil {
+			return err
+		}
+		for _, sa := range accounts {
+			id, _, _ := strings.Cut(sa.Email, "@")
+			sec.ServiceAccounts = append(sec.ServiceAccounts, seedAccount{
+				Project: sa.ProjectId, AccountID: id, DisplayName: sa.DisplayName, Description: sa.Description,
+			})
+		}
+		roles, err := store.ListJSON[*iamv1.Role](tx, nsRoles, "projects/")
+		if err != nil {
+			return err
+		}
+		for _, r := range roles {
+			pid, id, ok := strings.Cut(strings.TrimPrefix(r.Name, "projects/"), "/roles/")
+			if !ok || r.Deleted {
+				continue
+			}
+			stage := r.Stage
+			if stage == "ALPHA" {
+				stage = ""
+			}
+			sec.CustomRoles = append(sec.CustomRoles, seedCustomRole{
+				Project: pid, RoleID: id, Title: r.Title, Description: r.Description,
+				Stage: stage, Permissions: r.IncludedPermissions,
+			})
+		}
+		tx.Scan(nsPolicies, "", func(res string, b []byte) bool {
+			var p iamv1.Policy
+			if json.Unmarshal(b, &p) != nil {
+				return true
+			}
+			for _, b := range p.Bindings {
+				if b.Condition != nil || len(b.Members) == 0 {
+					continue
+				}
+				sb := seedBinding{Resource: res, Role: b.Role, Members: b.Members}
+				if pid, ok := strings.CutPrefix(res, projectResource("")); ok {
+					sb.Project, sb.Resource = pid, ""
+				}
+				sec.Bindings = append(sec.Bindings, sb)
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(sec.ServiceAccounts)+len(sec.CustomRoles)+len(sec.Bindings) == 0 {
+		return nil, nil
+	}
+	slices.SortFunc(sec.ServiceAccounts, func(a, b seedAccount) int {
+		return cmp.Or(cmp.Compare(a.Project, b.Project), cmp.Compare(a.AccountID, b.AccountID))
+	})
+	slices.SortFunc(sec.CustomRoles, func(a, b seedCustomRole) int {
+		return cmp.Or(cmp.Compare(a.Project, b.Project), cmp.Compare(a.RoleID, b.RoleID))
+	})
+	// Project bindings first, then resource bindings, each by role.
+	slices.SortStableFunc(sec.Bindings, func(a, b seedBinding) int {
+		return cmp.Or(cmp.Compare(a.Resource, b.Resource), cmp.Compare(a.Project, b.Project), cmp.Compare(a.Role, b.Role))
+	})
+	return &sec, nil
 }
 
 func resolvePath(base, p string) string {

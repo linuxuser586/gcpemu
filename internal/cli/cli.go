@@ -79,7 +79,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 	pf.StringVar(&o.configFile, "config", "gcpemu.yaml", "config file")
 
 	root.AddCommand(o.startCmd(), o.stopCmd(), o.statusCmd(), o.resetCmd(), o.logsCmd(),
-		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.snapshotCmd(), o.tofuProviderCmd(), o.doctorCmd(),
+		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.snapshotCmd(), o.exportCmd(), o.tofuProviderCmd(), o.doctorCmd(),
 		o.cdnCmd(), o.consoleCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.caCmd())

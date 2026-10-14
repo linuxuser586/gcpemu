@@ -143,6 +143,9 @@ import { Instances } from '@/features/sql/Instances'
 import { Query } from '@/features/sql/Query'
 import { SqlLayout } from '@/features/sql/SqlLayout'
 import { CreateUser, EditUser, Users } from '@/features/sql/Users'
+import { snapshotsQuery } from '@/features/state/api'
+import { SaveSnapshot } from '@/features/state/SaveSnapshot'
+import { State } from '@/features/state/State'
 
 export const BASENAME = '/console'
 
@@ -196,6 +199,15 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           },
         },
         { path: 'faults/create', element: <CreateFault /> },
+        {
+          path: 'state',
+          element: <State />,
+          loader: async () => {
+            await Promise.allSettled([queryClient.ensureQueryData(snapshotsQuery())])
+            return null
+          },
+        },
+        { path: 'state/snapshots/save', element: <SaveSnapshot /> },
         {
           path: 'requests',
           element: <RequestLog />,

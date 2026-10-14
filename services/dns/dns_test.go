@@ -564,6 +564,79 @@ zones:
 	}
 }
 
+// TestSeedExportRoundTrip: a Seed file export applied to an emptied
+// Instance recreates the zones and their record sets and exports byte for
+// byte the same, without the SOA and default NS records (FR-CORE-013).
+func TestSeedExportRoundTrip(t *testing.T) {
+	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	ctx := context.Background()
+	seed := []byte(`
+dns:
+  zones:
+    - name: seeded
+      project: seed-proj
+      dnsName: seeded.test.
+      description: seeded zone
+      labels: {env: dev, team: web}
+      records:
+        - {name: www, type: A, rrdatas: [192.0.2.5, 192.0.2.6]}
+        - {name: "@", type: TXT, ttl: 60, rrdatas: ['"hi"']}
+        - {name: "@", type: MX, ttl: 3600, rrdatas: [10 mx.seeded.test.]}
+        - {name: sub, type: NS, ttl: 600, rrdatas: [ns1.elsewhere.test.]}
+    - name: priv
+      project: seed-proj
+      dnsName: priv.test.
+      networks: [default, projects/net-proj/global/networks/shared]
+      records:
+        - {name: db.priv.test., type: A, rrdatas: [10.0.0.5]}
+`)
+	if err := inst.ApplySeedData(ctx, seed, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(t, inst.GatewayURL()+"/")
+	if _, err := c.ResourceRecordSets.Create("seed-proj", "seeded", rrset("api.seeded.test.", "CNAME", 120, "www.seeded.test.")).Do(); err != nil {
+		t.Fatal(err)
+	}
+	first, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"name: api", "visibility: private", "- default", "- projects/net-proj/global/networks/shared", "name: '@'"} {
+		if !strings.Contains(string(first), want) {
+			t.Fatalf("export lacks %q:\n%s", want, first)
+		}
+	}
+	for _, unwanted := range []string{"SOA", "googledomains", "ttl: 300", "ttl: 21600"} {
+		if strings.Contains(string(first), unwanted) {
+			t.Fatalf("export has %q:\n%s", unwanted, first)
+		}
+	}
+	if err := inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+		t.Fatalf("apply export: %v\n%s", err, first)
+	}
+	second, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("round trip differs:\n%s\n---\n%s", first, second)
+	}
+	z, err := c.ManagedZones.Get("seed-proj", "seeded").Do()
+	if err != nil || z.Description != "seeded zone" || z.Labels["team"] != "web" {
+		t.Fatalf("zone: %v %+v", err, z)
+	}
+	rs, err := c.ResourceRecordSets.Get("seed-proj", "seeded", "api.seeded.test.", "CNAME").Do()
+	if err != nil || rs.Ttl != 120 || len(rs.Rrdatas) != 1 {
+		t.Fatalf("CNAME: %v %+v", err, rs)
+	}
+	if r := query(t, inst.Endpoint("dns"), "udp", "www.seeded.test.", mdns.TypeA); len(r.Answer) != 2 {
+		t.Fatalf("restored A: %v", r)
+	}
+}
+
 // TestPublicZoneEmptyPrivateVisibility: the OpenTofu provider sends
 // privateVisibilityConfig {"networks": []} for public zones; GCP accepts
 // and drops it, while a public zone with networks is rejected.

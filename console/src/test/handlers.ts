@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw'
 import type { Container, Info, Operation, Readiness, ResourceCounts } from '@/api/admin'
 import type { Project } from '@/api/queries'
 import type { FaultRule } from '@/features/faults/api'
+import type { Snapshot } from '@/features/state/api'
 
 // A fake Instance for component tests: tests mutate `fake` to shape what
 // /_emu/v1 and Resource Manager answer.
@@ -17,6 +18,10 @@ export interface Fake {
   projects: Project[]
   operations: Operation[]
   faults: FaultRule[]
+  snapshots: Snapshot[]
+  /** seeds are the seed files applied, in order. */
+  seeds: string[]
+  resets: number
 }
 
 export function defaultFake(): Fake {
@@ -115,6 +120,16 @@ export function defaultFake(): Fake {
       },
       { id: 'drop-all', drop: true, disabled: true, fired: 0 },
     ],
+    snapshots: [
+      {
+        name: 'clean',
+        createTime: '2026-10-08T11:00:00Z',
+        services: ['gcs', 'iam', 'pubsub'],
+        sizeBytes: 1536,
+      },
+    ],
+    seeds: [],
+    resets: 0,
   }
 }
 
@@ -168,6 +183,60 @@ export const handlers = [
     fake.faults = []
     return HttpResponse.json({ status: 'cleared' })
   }),
+  http.get('*/_emu/v1/snapshots', () => HttpResponse.json({ snapshots: fake.snapshots })),
+  http.post('*/_emu/v1/snapshots', async ({ request }) => {
+    const { name } = (await request.json()) as { name: string }
+    if (name === 'busy') {
+      return HttpResponse.json(
+        { error: 'Instance busy: Operation operation-1 of sql is running; wait for it to finish' },
+        { status: 409 },
+      )
+    }
+    const saved: Snapshot = {
+      name,
+      createTime: '2026-10-08T12:30:00Z',
+      services: fake.info.services ?? [],
+      sizeBytes: 2048,
+    }
+    fake.snapshots = [...fake.snapshots.filter((s) => s.name !== name), saved].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )
+    return HttpResponse.json(saved)
+  }),
+  http.post('*/_emu/v1/snapshots/:name/restore', ({ params }) =>
+    fake.snapshots.some((s) => s.name === params.name)
+      ? HttpResponse.json({ status: 'restored' })
+      : HttpResponse.json(
+          { error: `State snapshot not found: ${String(params.name)}` },
+          { status: 404 },
+        ),
+  ),
+  http.delete('*/_emu/v1/snapshots/:name', ({ params }) => {
+    fake.snapshots = fake.snapshots.filter((s) => s.name !== params.name)
+    return HttpResponse.json({ status: 'deleted' })
+  }),
+  http.post('*/_emu/v1/reset', () => {
+    fake.resets++
+    return HttpResponse.json({ status: 'reset' })
+  }),
+  http.post('*/_emu/v1/seed', async ({ request }) => {
+    const text = await request.text()
+    if (text.includes('nope:')) {
+      return HttpResponse.json(
+        { error: 'seed section "nope": service not running' },
+        { status: 400 },
+      )
+    }
+    fake.seeds = [...fake.seeds, text]
+    return HttpResponse.json({ status: 'seeded' })
+  }),
+  http.get(
+    '*/_emu/v1/seed',
+    () =>
+      new HttpResponse('projects:\n  - alpha-project\n', {
+        headers: { 'Content-Type': 'application/yaml' },
+      }),
+  ),
   http.get('*/cloudresourcemanager/v3/projects\\:search', () =>
     HttpResponse.json({ projects: fake.projects }),
   ),

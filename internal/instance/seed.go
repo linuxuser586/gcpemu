@@ -1,7 +1,9 @@
 package instance
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,11 +21,19 @@ func (in *Instance) ApplySeed(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	var doc map[string]yaml.Node
-	if err := yaml.Unmarshal(b, &doc); err != nil {
+	if err := in.ApplySeedData(ctx, b, filepath.Dir(path)); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	base := filepath.Dir(path)
+	return nil
+}
+
+// ApplySeedData applies a seed file's contents (an uploaded seed file);
+// relative paths in it resolve against base.
+func (in *Instance) ApplySeedData(ctx context.Context, b []byte, base string) error {
+	var doc map[string]yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return err
+	}
 	if err := in.applyCoreSeed(doc); err != nil {
 		return err
 	}
@@ -117,4 +127,67 @@ func (in *Instance) applyCoreSeed(doc map[string]yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+// ExportSeed writes the Instance's resources as a seed file (FR-CORE-013):
+// its Projects, every SeedExporter's section in Service start order, and
+// its Fault rules. Applying it to an empty Instance recreates them.
+func (in *Instance) ExportSeed(ctx context.Context) ([]byte, error) {
+	doc := &yaml.Node{Kind: yaml.MappingNode}
+	add := func(key string, v any) error {
+		var n yaml.Node
+		if err := n.Encode(v); err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+		doc.Content = append(doc.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key}, &n)
+		return nil
+	}
+	if ids := in.Env.Projects(); len(ids) > 0 {
+		if err := add("projects", ids); err != nil {
+			return nil, err
+		}
+	}
+	for _, s := range in.services {
+		ex, ok := s.(emu.SeedExporter)
+		if !ok {
+			continue
+		}
+		section, err := ex.ExportSeed(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", s.Name(), err)
+		}
+		if section == nil {
+			continue
+		}
+		if err := add(s.Name(), section); err != nil {
+			return nil, err
+		}
+	}
+	if rules := in.Faults().List(); len(rules) > 0 {
+		// Through JSON, whose tags leave out unset fields.
+		var out []map[string]any
+		b, err := json.Marshal(rules)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil, err
+		}
+		for _, r := range out {
+			delete(r, "fired")
+		}
+		if err := add("faults", out); err != nil {
+			return nil, err
+		}
+	}
+	if len(doc.Content) == 0 {
+		return []byte("{}\n"), nil
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), enc.Close()
 }

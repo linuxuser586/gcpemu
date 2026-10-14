@@ -1,13 +1,17 @@
 package dns
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	dnsv1 "google.golang.org/api/dns/v1"
 	"gopkg.in/yaml.v3"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -32,26 +36,28 @@ import (
 // Zones are created when absent; records are upserted (an existing rrset of
 // the same name and type is replaced), so applying a seed is idempotent.
 
+var _ emu.SeedExporter = (*Service)(nil)
+
 type seedSection struct {
-	Project string     `yaml:"project"`
+	Project string     `yaml:"project,omitempty"`
 	Zones   []seedZone `yaml:"zones"`
 }
 
 type seedZone struct {
 	Name        string            `yaml:"name"`
-	Project     string            `yaml:"project"`
+	Project     string            `yaml:"project,omitempty"`
 	DNSName     string            `yaml:"dnsName"`
-	Description string            `yaml:"description"`
-	Visibility  string            `yaml:"visibility"`
-	Networks    []string          `yaml:"networks"`
-	Labels      map[string]string `yaml:"labels"`
-	Records     []seedRecord      `yaml:"records"`
+	Description string            `yaml:"description,omitempty"`
+	Visibility  string            `yaml:"visibility,omitempty"`
+	Networks    []string          `yaml:"networks,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty"`
+	Records     []seedRecord      `yaml:"records,omitempty"`
 }
 
 type seedRecord struct {
 	Name    string   `yaml:"name"`
 	Type    string   `yaml:"type"`
-	TTL     int64    `yaml:"ttl"`
+	TTL     int64    `yaml:"ttl,omitempty"`
 	Rrdatas []string `yaml:"rrdatas"`
 }
 
@@ -78,6 +84,81 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 		}
 	}
 	return nil
+}
+
+// ExportSeed implements emu.SeedExporter: every managed zone with its
+// record sets. The SOA record (whose serial every change bumps) and an
+// apex NS record the zone was created with are left out, as creating the
+// zone makes them. Routing-policy record sets, TTLs of 0, forwarding,
+// peering, DNSSEC and logging configs, GKE cluster bindings, DNS policies
+// and response policies have no seed form and are not exported.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	var sec seedSection
+	err := s.env.Store.View(func(tx store.Tx) error {
+		zones, err := store.ListJSON[zoneRec](tx, nsZones, "")
+		if err != nil {
+			return err
+		}
+		for _, zr := range zones {
+			z := zr.Zone
+			sz := seedZone{Name: z.Name, Project: zr.Project, DNSName: z.DnsName, Description: z.Description, Labels: z.Labels}
+			if z.Visibility == visibilityPriv {
+				sz.Visibility = visibilityPriv
+			}
+			if pvc := z.PrivateVisibilityConfig; pvc != nil {
+				for _, n := range pvc.Networks {
+					ref := n.NetworkUrl
+					if m := networkRE.FindStringSubmatch(ref); m != nil {
+						ref = "projects/" + m[1] + "/global/networks/" + m[2]
+						if m[1] == zr.Project {
+							ref = m[2]
+						}
+					}
+					sz.Networks = append(sz.Networks, ref)
+				}
+			}
+			apexNS := apexRecords(z)[0]
+			tx.Scan(nsRRSets, zoneKey(zr.Project, z.Name)+"/", func(_ string, b []byte) bool {
+				var rs dnsv1.ResourceRecordSet
+				if json.Unmarshal(b, &rs) != nil || rs.RoutingPolicy != nil {
+					return true
+				}
+				if rs.Type == "SOA" || (rs.Type == "NS" && sameRRSet(&rs, apexNS)) {
+					return true
+				}
+				ttl := rs.Ttl
+				if ttl == 300 {
+					ttl = 0
+				}
+				sz.Records = append(sz.Records, seedRecord{Name: relName(rs.Name, z.DnsName), Type: rs.Type, TTL: ttl, Rrdatas: rs.Rrdatas})
+				return true
+			})
+			slices.SortFunc(sz.Records, func(a, b seedRecord) int {
+				return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Type, b.Type))
+			})
+			sec.Zones = append(sec.Zones, sz)
+		}
+		return nil
+	})
+	if err != nil || len(sec.Zones) == 0 {
+		return nil, err
+	}
+	slices.SortFunc(sec.Zones, func(a, b seedZone) int {
+		return cmp.Or(cmp.Compare(a.Project, b.Project), cmp.Compare(a.Name, b.Name))
+	})
+	return &sec, nil
+}
+
+// relName is absName's inverse: name relative to origin, "@" for the apex.
+func relName(name, origin string) string {
+	switch {
+	case strings.EqualFold(name, origin):
+		return "@"
+	case strings.HasSuffix(strings.ToLower(name), "."+strings.ToLower(origin)):
+		return name[:len(name)-len(origin)-1]
+	default:
+		return name
+	}
 }
 
 func mdnsFqdn(s string) string {

@@ -296,3 +296,70 @@ iam:
 		t.Fatalf("env vars: %v", env)
 	}
 }
+
+// A Seed file export applied to an emptied Instance recreates the IAM
+// resources and exports byte for byte the same (FR-CORE-013).
+func TestSeedExportRoundTrip(t *testing.T) {
+	inst := startIAM(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	seed := []byte(`
+iam:
+  serviceAccounts:
+    - {project: seeded-project, accountId: app-sa, displayName: App, description: The app, keyFile: keys/app.json}
+    - {project: other-project, accountId: worker-sa}
+  customRoles:
+    - {project: seeded-project, roleId: lister, title: Lister, description: Lists buckets, stage: GA, permissions: [storage.buckets.list]}
+    - {project: seeded-project, roleId: draft, title: Draft}
+  bindings:
+    - project: seeded-project
+      role: projects/seeded-project/roles/lister
+      members: [serviceAccount:app-sa@seeded-project.iam.gserviceaccount.com, user:dev@example.com]
+    - {project: other-project, role: roles/viewer, members: [group:ops@example.com]}
+    - resource: //iam.googleapis.com/projects/seeded-project/serviceAccounts/app-sa@seeded-project.iam.gserviceaccount.com
+      role: roles/iam.serviceAccountUser
+      members: [user:dev@example.com]
+`)
+	if err := inst.ApplySeedData(ctx, seed, dir); err != nil {
+		t.Fatal(err)
+	}
+	first, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"accountId: app-sa", "description: The app", "stage: GA", "roleId: draft", "group:ops@example.com", "resource: //iam.googleapis.com/projects/seeded-project/serviceAccounts/"} {
+		if !strings.Contains(string(first), want) {
+			t.Fatalf("export lacks %q:\n%s", want, first)
+		}
+	}
+	for _, unwanted := range []string{"keyFile", "ALPHA", "-compute@", "etag", "uniqueId"} {
+		if strings.Contains(string(first), unwanted) {
+			t.Fatalf("export has %q:\n%s", unwanted, first)
+		}
+	}
+	if err := inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.ApplySeedData(ctx, first, dir); err != nil {
+		t.Fatalf("apply export: %v\n%s", err, first)
+	}
+	second, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("round trip differs:\n%s\n---\n%s", first, second)
+	}
+	sa, err := iamClient(t, inst).Projects.ServiceAccounts.Get("projects/seeded-project/serviceAccounts/app-sa@seeded-project.iam.gserviceaccount.com").Do()
+	if err != nil || sa.DisplayName != "App" || sa.Description != "The app" {
+		t.Fatalf("service account: %v %+v", err, sa)
+	}
+	role, err := iamClient(t, inst).Projects.Roles.Get("projects/seeded-project/roles/lister").Do()
+	if err != nil || role.Stage != "GA" || len(role.IncludedPermissions) != 1 {
+		t.Fatalf("custom role: %v %+v", err, role)
+	}
+	pol, err := crmClient(t, inst).Projects.GetIamPolicy("seeded-project", &crmv1.GetIamPolicyRequest{}).Do()
+	if err != nil || len(pol.Bindings) != 1 || len(pol.Bindings[0].Members) != 2 {
+		t.Fatalf("project policy: %v %+v", err, pol)
+	}
+}

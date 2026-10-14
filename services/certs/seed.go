@@ -10,7 +10,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
+)
+
+var (
+	_ emu.Seeder       = (*Service)(nil)
+	_ emu.SeedExporter = (*Service)(nil)
 )
 
 // ApplySeed implements emu.Seeder (FR-CORE-011) for the "certs" section.
@@ -146,6 +152,112 @@ func (s *Service) seedOne(ctx context.Context, k *kind, item map[string]any, bas
 		return err
 	}
 	return s.upsert(ctx, k, n, in)
+}
+
+// seedEntry is one exported resource: its addressing keys, then its REST
+// JSON fields.
+type seedEntry struct {
+	Project        string         `yaml:"project"`
+	Location       string         `yaml:"location,omitempty"`
+	CertificateMap string         `yaml:"certificateMap,omitempty"`
+	ID             string         `yaml:"id"`
+	Fields         map[string]any `yaml:",inline"`
+}
+
+// seedFile is the exported "certs" section, its lists in seeding order.
+type seedFile struct {
+	TrustConfigs                 []seedEntry `yaml:"trustConfigs,omitempty"`
+	CertificateIssuanceConfigs   []seedEntry `yaml:"certificateIssuanceConfigs,omitempty"`
+	DNSAuthorizations            []seedEntry `yaml:"dnsAuthorizations,omitempty"`
+	Certificates                 []seedEntry `yaml:"certificates,omitempty"`
+	CertificateMaps              []seedEntry `yaml:"certificateMaps,omitempty"`
+	CertificateMapEntries        []seedEntry `yaml:"certificateMapEntries,omitempty"`
+	BackendAuthenticationConfigs []seedEntry `yaml:"backendAuthenticationConfigs,omitempty"`
+	ServerTLSPolicies            []seedEntry `yaml:"serverTlsPolicies,omitempty"`
+	ClientTLSPolicies            []seedEntry `yaml:"clientTlsPolicies,omitempty"`
+}
+
+// ExportSeed implements emu.SeedExporter (FR-CORE-013). Self-managed
+// certificates are written with their PEM chain and private key inline;
+// managed certificates are written as requested and are provisioned
+// again when applied. References within the resource's project and
+// location are shortened to bare IDs.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	var f seedFile
+	lists := map[*kind]*[]seedEntry{
+		kTrust: &f.TrustConfigs, kIssuance: &f.CertificateIssuanceConfigs, kDNSAuth: &f.DNSAuthorizations,
+		kCert: &f.Certificates, kMap: &f.CertificateMaps, kEntry: &f.CertificateMapEntries,
+		kBAC: &f.BackendAuthenticationConfigs, kServerTLS: &f.ServerTLSPolicies, kClientTLS: &f.ClientTLSPolicies,
+	}
+	n := 0
+	err := s.env.Store.View(func(tx store.Tx) error {
+		for k, list := range lists {
+			for _, o := range scanAll(tx, k) {
+				e, err := exportEntry(tx, k, o)
+				if err != nil {
+					return err
+				}
+				*list = append(*list, e)
+				n++
+			}
+		}
+		return nil
+	})
+	if err != nil || n == 0 {
+		return nil, err
+	}
+	return f, nil
+}
+
+// exportEntry converts a stored resource into its seed entry.
+func exportEntry(tx store.Tx, k *kind, o obj) (seedEntry, error) {
+	n, err := parseName(k, str(o["name"]))
+	if err != nil {
+		return seedEntry{}, err
+	}
+	e := seedEntry{Project: n.Project, CertificateMap: n.Parent, ID: n.ID, Fields: clone(o)}
+	if n.Location != "global" {
+		e.Location = n.Location
+	}
+	for _, f := range append([]string{"name", "createTime", "updateTime", "etag"}, k.output...) {
+		delete(e.Fields, f)
+	}
+	short := func(target *kind, ref string) string {
+		return strings.TrimPrefix(ref, "projects/"+n.Project+"/locations/"+n.Location+"/"+target.coll+"/")
+	}
+	shorten := func(path string, target *kind) {
+		switch v, _ := getPath(e.Fields, path); x := v.(type) {
+		case string:
+			setPath(e.Fields, path, short(target, x), true)
+		case []any:
+			for i, r := range x {
+				x[i] = short(target, str(r))
+			}
+		}
+	}
+	switch k {
+	case kCert:
+		for _, p := range []string{"managed.state", "managed.provisioningIssue", "managed.authorizationAttemptInfo"} {
+			setPath(e.Fields, p, nil, false)
+		}
+		shorten("managed.dnsAuthorizations", kDNSAuth)
+		shorten("managed.issuanceConfig", kIssuance)
+		if _, managed := o["managed"]; !managed {
+			var rec keyRecord
+			if err := store.GetJSON(tx, nsKeys, str(o["name"]), &rec); err != nil {
+				return seedEntry{}, fmt.Errorf("%s: private key: %w", o["name"], err)
+			}
+			e.Fields["selfManaged"] = map[string]any{"pemCertificate": rec.Chain, "pemPrivateKey": rec.Key}
+		}
+	case kEntry:
+		shorten("certificates", kCert)
+	case kBAC:
+		shorten("clientCertificate", kCert)
+		shorten("trustConfig", kTrust)
+	case kServerTLS:
+		shorten("mtlsPolicy.clientValidationTrustConfig", kTrust)
+	}
+	return e, nil
 }
 
 // readFiles replaces every "<key>File" entry with "<key>" set to the

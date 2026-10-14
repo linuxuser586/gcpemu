@@ -206,9 +206,22 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Export the Instance's resources as a seed file (`gcpemu export`, FR-CORE-013).
+         * @description Projects, each Service's resources and the Fault rules, as YAML
+         *     that applying to an empty Instance turns back into the same
+         *     resources. Server-assigned fields and data that lives only in a
+         *     data plane (Postgres rows, Kubernetes objects, Pub/Sub messages)
+         *     are left out.
+         */
+        get: operations["exportSeed"];
         put?: never;
-        /** Apply a seed file idempotently (FR-CORE-011). */
+        /**
+         * Apply a seed file idempotently (FR-CORE-011).
+         * @description Applies the seed file at `path` on the emulator host, or, without
+         *     `path`, the seed file in the request body (an upload, up to 64 MiB),
+         *     whose relative paths resolve against the instance dir.
+         */
         post: operations["seed"];
         delete?: never;
         options?: never;
@@ -1454,17 +1467,42 @@ export interface operations {
             500: components["responses"]["Error"];
         };
     };
-    seed: {
+    exportSeed: {
         parameters: {
-            query: {
-                /** @description Seed file path on the emulator host. */
-                path: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description The seed file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            500: components["responses"]["Error"];
+        };
+    };
+    seed: {
+        parameters: {
+            query?: {
+                /** @description Seed file path on the emulator host. */
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/yaml": string;
+            };
+        };
         responses: {
             200: components["responses"]["Status"];
             400: components["responses"]["Error"];

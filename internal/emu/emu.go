@@ -261,6 +261,18 @@ type Seeder interface {
 	ApplySeed(ctx context.Context, section *yaml.Node, baseDir string) error
 }
 
+// SeedExporter is implemented by Seeders that can write their resources
+// back as their seed section (FR-CORE-013, the Web console's Seed file
+// export). Applying the section to an empty Instance recreates the same
+// resources. Server-assigned fields (IDs, timestamps, etags) and data that
+// lives only in a data plane (Postgres rows, Kubernetes objects) are not
+// exported.
+type SeedExporter interface {
+	// ExportSeed returns the section, which is marshalled as YAML, or nil
+	// when the Service holds nothing to export.
+	ExportSeed(ctx context.Context) (any, error)
+}
+
 // InvalidUniverse is the Invalid universe (see CONTEXT.md): the universe
 // domain clients are given so that an API without an endpoint override is
 // addressed as <api>.gcpemu.invalid, which never resolves (RFC 6761), and

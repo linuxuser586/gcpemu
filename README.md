@@ -42,9 +42,9 @@ bin/gcpemu stop
 ```
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
-`fault add|list|enable|disable|clear`, `snapshot save|restore|list|delete`, `doctor`, `version`,
-`admin openapi` (the OpenAPI document of the `/_emu/v1/` admin API, also served at
-`/_emu/v1/openapi.yaml`), and `admin token`.
+`fault add|list|enable|disable|clear`, `snapshot save|restore|list|delete`, `export` (the
+resources as a seed file), `doctor`, `version`, `admin openapi` (the OpenAPI document of the
+`/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
 
 ### State snapshots
 
@@ -174,6 +174,13 @@ Its Request log view (`/console/requests`, filtered by `?service=`, `?method=`, 
 (`NOT_FOUND`). Expanding an entry reads `GET /_emu/v1/requests/ID`, which adds the request and
 response bodies. The Instance keeps the first 16 KiB of each API call's bodies, and a unary gRPC
 message as protojson, for as long as the entry stays among the last 2,000 it logs.
+Its State view (`/console/state`) saves, restores and deletes State snapshots, resets the
+Instance, applies a seed file chosen or pasted into it (`POST /_emu/v1/seed` with the YAML as
+the body, whose relative paths resolve against the instance dir), and downloads the Instance's
+resources as a seed file (`GET /_emu/v1/seed`, as `gcpemu export` prints). An exported seed file
+holds Projects, each Service's resources and the Fault rules, with GCS object content inline;
+server-assigned fields and data plane contents (Postgres rows, Kubernetes objects, Pub/Sub
+messages) are left out.
 
 ### Service endpoints
 
