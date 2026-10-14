@@ -20,7 +20,8 @@
 // pinned library versions into the same cache with python3 -m venv and
 // npm, and skip when either is missing or the install fails.
 // The go-mtls subtest (#243) builds the Go probe in sdk/universego and
-// runs it behind the Escape guard, which names the host it dialed.
+// runs it behind the Escape guard, which names the host it dialed. The
+// node-mtls subtest (#246) does the same with sdk/universemtls.js.
 //
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with
