@@ -8,6 +8,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import { decodePayload, encodePayload, type Secret, type SecretVersion } from './api'
+import { secretRecipe } from './copy'
 import { patchBody, updateMask } from './SecretForm'
 
 const P = 'alpha-project'
@@ -344,4 +345,124 @@ it('builds patch bodies and masks for every field', () => {
     'version_destroy_ttl',
     'version_aliases',
   ])
+})
+
+it('copies a secret as gcloud, curl and OpenTofu, without its versions', async () => {
+  const user = userEvent.setup()
+  renderApp(`/secrets/secrets/db-password?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy secret as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy secret as' })
+  expect(within(dialog).getByLabelText('gcloud for the secret')).toHaveTextContent(
+    [
+      'gcloud secrets create db-password \\',
+      `    --project=${P} \\`,
+      '    --replication-policy=automatic \\',
+      '    --labels=team=web',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the secret')
+  expect(curl).toHaveTextContent(
+    `curl '${location.origin}/secretmanager/v1/projects/${P}/secrets?secretId=db-password' \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"automatic": {}')
+  // Aliases name versions, which the copy does not create.
+  expect(curl).not.toHaveTextContent('versionAliases')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the secret')
+  expect(tofu).toHaveTextContent('resource "google_secret_manager_secret" "db-password" {')
+  expect(tofu).toHaveTextContent('replication { auto {} }')
+})
+
+it('copies a regional secret and a user-managed one', () => {
+  const regional = secretRecipe(
+    {
+      name: `${N}/locations/us-central1/secrets/app-db`,
+      annotations: { owner: 'platform' },
+      topics: [{ name: `projects/${P}/topics/events` }],
+      expireTime: '2030-01-01T00:00:00Z',
+      rotation: {
+        nextRotationTime: '2026-11-01T00:00:00Z',
+        rotationPeriod: '2592000s',
+        managedRotationStatus: { state: 'ACTIVE' },
+      },
+      versionDestroyTtl: '86400s',
+      etag: '"3"',
+    },
+    P,
+  )
+  expect(regional.gcloud).toBe(
+    [
+      'gcloud secrets create app-db \\',
+      `    --project=${P} \\`,
+      '    --location=us-central1 \\',
+      '    --set-annotations=owner=platform \\',
+      '    --expire-time=2030-01-01T00:00:00Z \\',
+      `    --topics=projects/${P}/topics/events \\`,
+      '    --next-rotation-time=2026-11-01T00:00:00Z \\',
+      '    --rotation-period=2592000s \\',
+      '    --version-destroy-ttl=86400s',
+    ].join('\n'),
+  )
+  expect(regional.rest).toEqual({
+    method: 'POST',
+    path: `/secretmanager/v1/projects/${P}/locations/us-central1/secrets?secretId=app-db`,
+    body: {
+      annotations: { owner: 'platform' },
+      topics: [{ name: `projects/${P}/topics/events` }],
+      expireTime: '2030-01-01T00:00:00Z',
+      rotation: { nextRotationTime: '2026-11-01T00:00:00Z', rotationPeriod: '2592000s' },
+      versionDestroyTtl: '86400s',
+    },
+  })
+  expect(regional.tofu).toBe(
+    [
+      'resource "google_secret_manager_regional_secret" "app-db" {',
+      `  project             = "${P}"`,
+      '  secret_id           = "app-db"',
+      '  location            = "us-central1"',
+      '  annotations         = { owner = "platform" }',
+      '  expire_time         = "2030-01-01T00:00:00Z"',
+      '  version_destroy_ttl = "86400s"',
+      '  topics {',
+      `    name = "projects/${P}/topics/events"`,
+      '  }',
+      '  rotation {',
+      '    next_rotation_time = "2026-11-01T00:00:00Z"',
+      '    rotation_period    = "2592000s"',
+      '  }',
+      '}',
+    ].join('\n'),
+  )
+
+  // Without a project the API's Project number names it.
+  const replicated = secretRecipe({
+    name: `${N}/secrets/r`,
+    replication: {
+      userManaged: { replicas: [{ location: 'us-east1' }, { location: 'us-west1' }] },
+    },
+    ttl: '60s',
+  })
+  expect(replicated.gcloud).toContain('--project=111111111111')
+  expect(replicated.gcloud).toContain(
+    '--replication-policy=user-managed \\\n    --locations=us-east1,us-west1',
+  )
+  expect(replicated.gcloud).toContain('--ttl=60s')
+  expect(replicated.tofu).toContain(
+    [
+      '  replication {',
+      '    user_managed {',
+      '      replicas {',
+      '        location = "us-east1"',
+      '      }',
+      '      replicas {',
+      '        location = "us-west1"',
+      '      }',
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
 })

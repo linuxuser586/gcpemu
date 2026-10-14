@@ -6,6 +6,7 @@ import { useParams } from 'react-router'
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { toast } from '@/lib/toast'
 
 import { customRoleQuery, deleteRole, predefinedRoleQuery, undeleteRole, type Role } from './api'
+import { customRoleRecipe } from './copy'
 import { ChooseProject, rolePath, useProject } from './IamLayout'
 
 /** PredefinedRolePage is one predefined role (roles/ID) and its permissions. */
@@ -62,6 +64,7 @@ export function CustomRolePage() {
           </Button>
         ) : (
           <>
+            <CopyAs what="role" recipe={() => customRoleRecipe(r)} />
             <Button variant="outline" asChild>
               <Link to={rolePath(name, 'edit')}>
                 <Pencil aria-hidden />

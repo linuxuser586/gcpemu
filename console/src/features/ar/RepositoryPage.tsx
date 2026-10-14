@@ -5,6 +5,7 @@ import { Outlet, useLocation, useOutletContext } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -33,6 +34,7 @@ import {
   type Repository,
 } from './api'
 import { ChooseProject, imagePath, repoPath, useRegistryHost, useRepoRef } from './ArLayout'
+import { repositoryRecipe } from './copy'
 import { MODE_LABEL } from './Repositories'
 
 const TABS = [
@@ -80,6 +82,7 @@ export function RepositoryPage() {
         </div>
         {r && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="repository" recipe={() => repositoryRecipe(r)} />
             <Button variant="outline" asChild>
               <Link to={repoPath(ref, 'edit')}>
                 <Pencil aria-hidden />

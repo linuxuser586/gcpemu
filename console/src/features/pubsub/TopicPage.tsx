@@ -5,6 +5,7 @@ import { Outlet, useOutletContext, useParams } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -19,6 +20,7 @@ import {
   topicSubscriptionsQuery,
   type Topic,
 } from './api'
+import { topicRecipe } from './copy'
 import { pairs } from './format'
 import { Publish } from './Publish'
 import { ChooseProject, Tabs, topicPath, useProject } from './PubSubLayout'
@@ -69,6 +71,7 @@ export function TopicPage() {
                 Create subscription
               </Link>
             </Button>
+            <CopyAs what="topic" recipe={() => topicRecipe(t)} />
             <Button variant="outline" asChild>
               <Link to={topicPath(topic, 'edit')}>
                 <Pencil aria-hidden />

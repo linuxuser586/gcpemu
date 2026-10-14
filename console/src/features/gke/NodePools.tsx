@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { errorMessage } from '@/api/errors'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { Button } from '@/components/ui/button'
@@ -35,6 +36,7 @@ import { toast } from '@/lib/toast'
 
 import { deleteNodePool, setNodePoolSize, type ClusterRef, type NodePool } from './api'
 import { useCluster } from './ClusterPage'
+import { nodePoolRecipe } from './copy'
 import { StatusBadge } from './format'
 import { clusterPath, useClusterRef } from './GkeLayout'
 import { NodesTable } from './Kube'
@@ -243,6 +245,7 @@ export function NodePoolPage() {
         </h2>
         <div className="flex flex-wrap gap-2">
           <ResizeDialog clusterRef={ref} pool={np} />
+          <CopyAs what="node pool" recipe={() => nodePoolRecipe(ref, np, c.locations)} />
           <Button variant="outline" size="sm" asChild>
             <Link to={`${base}/nodePools/${np.name}/edit`}>
               <Pencil aria-hidden />

@@ -5,6 +5,7 @@ import { Outlet, useOutletContext, useParams } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,6 +20,7 @@ import {
   subscriptionQuery,
   type Subscription,
 } from './api'
+import { subscriptionRecipe } from './copy'
 import { oldestAge, pairs } from './format'
 import { ChooseProject, Tabs, subscriptionPath, useProject } from './PubSubLayout'
 import { deliveryLabel, TopicLink } from './Subscriptions'
@@ -61,6 +63,7 @@ export function SubscriptionPage() {
         </div>
         {s && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="subscription" recipe={() => subscriptionRecipe(s)} />
             <Button variant="outline" asChild>
               <Link to={subscriptionPath(id, 'edit')}>
                 <Pencil aria-hidden />

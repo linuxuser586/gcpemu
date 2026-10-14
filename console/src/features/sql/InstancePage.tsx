@@ -8,6 +8,7 @@ import { envQuery } from '@/api/queries'
 import { Link, NavLink, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -24,6 +25,7 @@ import {
   setActivation,
   type DatabaseInstance,
 } from './api'
+import { instanceRecipe } from './copy'
 import { InstanceStateBadge, instancePath, useInstanceRef } from './SqlLayout'
 
 const TABS = [
@@ -127,6 +129,7 @@ export function InstancePage() {
               confirmLabel="Restart instance"
               onConfirm={() => restart.mutateAsync()}
             />
+            <CopyAs what="instance" recipe={() => instanceRecipe(i, ref.project)} />
             <Button variant="outline" asChild>
               <Link to={`${base}/edit`}>
                 <Pencil aria-hidden />

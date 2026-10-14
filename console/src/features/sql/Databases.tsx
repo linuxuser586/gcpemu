@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,7 @@ import {
   waitOperation,
   type Database,
 } from './api'
+import { databaseRecipe } from './copy'
 import { NotRunning, useInstance } from './InstancePage'
 import { instancePath, useInstanceRef } from './SqlLayout'
 
@@ -95,6 +97,12 @@ export function Databases() {
                   <TableCell className="font-mono">{d.collation ?? '—'}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
+                      <CopyAs
+                        what="database"
+                        name={d.name}
+                        size="sm"
+                        recipe={() => databaseRecipe(ref, d)}
+                      />
                       <Button variant="outline" size="sm" asChild>
                         <Link
                           to={`${base}/databases/${encodeURIComponent(d.name)}/edit`}

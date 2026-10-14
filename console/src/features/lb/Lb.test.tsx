@@ -1,15 +1,17 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { RequestEntry } from '@/api/admin'
 import { appendRequest } from '@/api/events'
+import type { RestCall } from '@/lib/copyAs'
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
-import type { LbListener, LbRoute, LbTrace, Resource } from './api'
+import type { Coll, LbListener, LbRoute, LbTrace, Ref, Resource } from './api'
+import { recipeFor } from './copy'
 
 const P = 'alpha-project'
 const API = `*/compute/v1/projects/${P}`
@@ -582,4 +584,525 @@ it('says when a Project has no load-balanced traffic yet', async () => {
   server.use(http.get('*/_emu/v1/requests', () => HttpResponse.json({ requests: [] })))
   renderApp(`/lb/traffic?project=${P}`)
   expect(await screen.findByText(/No requests to this Project/)).toBeVisible()
+})
+
+it('copies a backend service as gcloud commands, a request and an OpenTofu block', async () => {
+  const user = userEvent.setup()
+  renderApp(`/lb/global/backendServices/api?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy backend service as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy backend service as' })
+  const gcloud = [
+    'gcloud compute backend-services create api \\',
+    `    --project=${P} \\`,
+    '    --global \\',
+    '    --load-balancing-scheme=EXTERNAL_MANAGED \\',
+    '    --protocol=HTTP \\',
+    '    --health-checks=hc',
+    '',
+    'gcloud compute backend-services add-backend api \\',
+    `    --project=${P} \\`,
+    '    --global \\',
+    '    --network-endpoint-group=neg \\',
+    '    --network-endpoint-group-zone=us-central1-a \\',
+    '    --balancing-mode=RATE',
+  ].join('\n')
+  expect(within(dialog).getByLabelText('gcloud for the backend service')).toHaveTextContent(
+    gcloud,
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the backend service')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/compute/v1/projects/${P}/global/backendServices \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent(`"healthChecks": [ "projects/${P}/global/healthChecks/hc" ]`)
+  expect(curl).not.toHaveTextContent('selfLink')
+  expect(curl).not.toHaveTextContent('fingerprint')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the backend service')
+  expect(tofu).toHaveTextContent('resource "google_compute_backend_service" "api" {')
+  expect(tofu).toHaveTextContent(`health_checks = ["projects/${P}/global/healthChecks/hc"]`)
+  expect(tofu).toHaveTextContent(
+    `backend { group = "projects/${P}/zones/us-central1-a/networkEndpointGroups/neg" balancing_mode = "RATE" }`,
+  )
+})
+
+describe('Copy as', () => {
+  const ref = (coll: Coll, region = ''): Ref => ({ project: P, region, coll, name: 'x' })
+  const regional = (p: string) => link(`regions/us-east1/${p}`)
+
+  it('copies a global forwarding rule with a reserved address and labels', () => {
+    const r = recipeFor(
+      ref('forwardingRules'),
+      res('forwardingRules', 'web', {
+        IPAddress: link('global/addresses/web-ip'),
+        IPProtocol: 'TCP',
+        portRange: '443-443',
+        loadBalancingScheme: 'EXTERNAL_MANAGED',
+        target: link('global/targetHttpsProxies/web-https'),
+        labels: { env: 'dev' },
+        labelFingerprint: 'lf',
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute forwarding-rules create web \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --load-balancing-scheme=EXTERNAL_MANAGED \\',
+        '    --address=web-ip \\',
+        '    --ip-protocol=TCP \\',
+        '    --ports=443 \\',
+        '    --target-https-proxy=web-https',
+      ].join('\n'),
+      [
+        'gcloud compute forwarding-rules update web \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --update-labels=env=dev',
+      ].join('\n'),
+    ])
+    expect(r.rest).toEqual({
+      method: 'POST',
+      path: `/compute/v1/projects/${P}/global/forwardingRules`,
+      body: {
+        name: 'web',
+        IPAddress: `projects/${P}/global/addresses/web-ip`,
+        IPProtocol: 'TCP',
+        portRange: '443-443',
+        loadBalancingScheme: 'EXTERNAL_MANAGED',
+        target: `projects/${P}/global/targetHttpsProxies/web-https`,
+        labels: { env: 'dev' },
+      },
+    })
+    expect(r.tofu).toBe(
+      [
+        'resource "google_compute_global_forwarding_rule" "web" {',
+        `  project               = "${P}"`,
+        '  name                  = "web"',
+        `  ip_address            = "projects/${P}/global/addresses/web-ip"`,
+        '  ip_protocol           = "TCP"',
+        '  port_range            = "443"',
+        '  load_balancing_scheme = "EXTERNAL_MANAGED"',
+        `  target                = "projects/${P}/global/targetHttpsProxies/web-https"`,
+        '  labels                = { env = "dev" }',
+        '}',
+      ].join('\n'),
+    )
+  })
+
+  it('copies a regional internal forwarding rule', () => {
+    const r = recipeFor(
+      ref('forwardingRules', 'us-east1'),
+      res('forwardingRules', 'internal', {
+        selfLink: regional('forwardingRules/internal'),
+        region: link('regions/us-east1'),
+        IPAddress: '10.0.0.9',
+        portRange: '80-80',
+        loadBalancingScheme: 'INTERNAL_MANAGED',
+        network: link('global/networks/vpc'),
+        subnetwork: regional('subnetworks/sub'),
+        target: regional('targetHttpProxies/int-proxy'),
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute forwarding-rules create internal \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --load-balancing-scheme=INTERNAL_MANAGED \\',
+        '    --address=10.0.0.9 \\',
+        '    --ports=80 \\',
+        '    --network=vpc \\',
+        '    --subnet=sub \\',
+        '    --target-http-proxy=int-proxy \\',
+        '    --target-http-proxy-region=us-east1',
+      ].join('\n'),
+    ])
+    expect((r.rest as RestCall).path).toBe(
+      `/compute/v1/projects/${P}/regions/us-east1/forwardingRules`,
+    )
+    expect((r.rest as RestCall).body).not.toHaveProperty('region')
+    expect(r.tofu).toContain('resource "google_compute_forwarding_rule" "internal" {')
+    expect(r.tofu).toContain('  region                = "us-east1"')
+    expect(r.tofu).toContain(
+      `  subnetwork            = "projects/${P}/regions/us-east1/subnetworks/sub"`,
+    )
+  })
+
+  it('copies target proxies with regional certificates and policy', () => {
+    const http = recipeFor(
+      ref('targetHttpProxies'),
+      res('targetHttpProxies', 'web-proxy', { urlMap: link('global/urlMaps/web-map') }),
+    )
+    expect(http.gcloud).toEqual([
+      [
+        'gcloud compute target-http-proxies create web-proxy \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --url-map=web-map',
+      ].join('\n'),
+    ])
+    expect(http.tofu).toContain('resource "google_compute_target_http_proxy" "web-proxy" {')
+    expect(http.tofu).toContain(`  url_map = "projects/${P}/global/urlMaps/web-map"`)
+
+    const https = recipeFor(
+      ref('targetHttpsProxies', 'us-east1'),
+      res('targetHttpsProxies', 'rhttps', {
+        region: link('regions/us-east1'),
+        urlMap: regional('urlMaps/rmap'),
+        sslCertificates: [regional('sslCertificates/a'), regional('sslCertificates/b')],
+        sslPolicy: regional('sslPolicies/strict'),
+      }),
+    )
+    expect(https.gcloud).toEqual([
+      [
+        'gcloud compute target-https-proxies create rhttps \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --url-map=rmap \\',
+        '    --url-map-region=us-east1 \\',
+        '    --ssl-certificates=a,b \\',
+        '    --ssl-certificates-region=us-east1 \\',
+        '    --ssl-policy=strict \\',
+        '    --ssl-policy-region=us-east1',
+      ].join('\n'),
+    ])
+    expect(https.tofu).toContain('resource "google_compute_region_target_https_proxy" "rhttps" {')
+    expect(https.tofu).toContain(`ssl_policy = "projects/${P}/regions/us-east1/sslPolicies/strict"`)
+  })
+
+  it('creates a plain URL map and imports one with routing', () => {
+    const plain = recipeFor(
+      ref('urlMaps'),
+      res('urlMaps', 'grpc', { defaultService: link('global/backendBuckets/static') }),
+    )
+    expect(plain.gcloud).toEqual([
+      [
+        'gcloud compute url-maps create grpc \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --default-backend-bucket=static',
+      ].join('\n'),
+    ])
+
+    const r = recipeFor(ref('urlMaps'), state.urlMaps![0]!)
+    const body = {
+      name: 'web-map',
+      defaultService: `projects/${P}/global/backendBuckets/static`,
+      hostRules: [{ hosts: ['app.example.test'], pathMatcher: 'app' }],
+      pathMatchers: [
+        {
+          name: 'app',
+          defaultService: `projects/${P}/global/backendBuckets/static`,
+          pathRules: [{ paths: ['/api/*'], service: `projects/${P}/global/backendServices/api` }],
+          routeRules: [],
+        },
+      ],
+    }
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute url-maps import web-map \\',
+        `    --project=${P} \\`,
+        `    --global <<'EOF'`,
+        JSON.stringify(body, null, 2),
+        'EOF',
+      ].join('\n'),
+    ])
+    expect((r.rest as RestCall).body).toEqual(body)
+    expect(r.tofu).toBe(
+      [
+        'resource "google_compute_url_map" "web-map" {',
+        `  project         = "${P}"`,
+        '  name            = "web-map"',
+        `  default_service = "projects/${P}/global/backendBuckets/static"`,
+        '  host_rule {',
+        '    hosts        = ["app.example.test"]',
+        '    path_matcher = "app"',
+        '  }',
+        '  path_matcher {',
+        '    name            = "app"',
+        `    default_service = "projects/${P}/global/backendBuckets/static"`,
+        '    path_rule {',
+        '      paths   = ["/api/*"]',
+        `      service = "projects/${P}/global/backendServices/api"`,
+        '    }',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+  })
+
+  it('copies a regional backend service with CDN, headers, logging and a security policy', () => {
+    const r = recipeFor(
+      ref('backendServices', 'us-east1'),
+      res('backendServices', 'rapi', {
+        region: link('regions/us-east1'),
+        loadBalancingScheme: 'INTERNAL_MANAGED',
+        protocol: 'HTTP',
+        timeoutSec: 30,
+        healthChecks: [regional('healthChecks/rhc')],
+        connectionDraining: { drainingTimeoutSec: 10 },
+        enableCdn: true,
+        cdnPolicy: {
+          cacheMode: 'USE_ORIGIN_HEADERS',
+          cacheKeyPolicy: { includeProtocol: true, includeHost: false, includeQueryString: true },
+          signedUrlKeyNames: ['k'],
+        },
+        customResponseHeaders: ['X-Cache: {cdn_cache_status}'],
+        logConfig: { enable: true, sampleRate: 0.5 },
+        securityPolicy: link('global/securityPolicies/armor'),
+        backends: [
+          {
+            group: regional('networkEndpointGroups/rneg'),
+            balancingMode: 'RATE',
+            maxRatePerEndpoint: 50,
+            capacityScaler: 1,
+          },
+        ],
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute backend-services create rapi \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --load-balancing-scheme=INTERNAL_MANAGED \\',
+        '    --protocol=HTTP \\',
+        '    --timeout=30 \\',
+        '    --health-checks=rhc \\',
+        '    --health-checks-region=us-east1 \\',
+        '    --connection-draining-timeout=10 \\',
+        '    --enable-cdn \\',
+        '    --cache-mode=USE_ORIGIN_HEADERS \\',
+        '    --cache-key-include-protocol \\',
+        '    --no-cache-key-include-host \\',
+        '    --cache-key-include-query-string \\',
+        '    --enable-logging \\',
+        '    --logging-sample-rate=0.5 \\',
+        "    --custom-response-header='X-Cache: {cdn_cache_status}'",
+      ].join('\n'),
+      [
+        'gcloud compute backend-services add-backend rapi \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --network-endpoint-group=rneg \\',
+        '    --network-endpoint-group-region=us-east1 \\',
+        '    --balancing-mode=RATE \\',
+        '    --max-rate-per-endpoint=50 \\',
+        '    --capacity-scaler=1',
+      ].join('\n'),
+      [
+        'gcloud compute backend-services update rapi \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --security-policy=armor',
+      ].join('\n'),
+    ])
+    const body = (r.rest as RestCall).body as Record<string, unknown>
+    expect(body).not.toHaveProperty('securityPolicy')
+    expect(body.cdnPolicy).not.toHaveProperty('signedUrlKeyNames')
+    expect(r.tofu).toContain('resource "google_compute_region_backend_service" "rapi" {')
+    expect(r.tofu).toContain(
+      [
+        '  cdn_policy {',
+        '    cache_mode = "USE_ORIGIN_HEADERS"',
+        '    cache_key_policy {',
+        '      include_protocol     = true',
+        '      include_host         = false',
+        '      include_query_string = true',
+        '    }',
+        '  }',
+      ].join('\n'),
+    )
+    expect(r.tofu).toContain('  log_config {\n    enable      = true\n    sample_rate = 0.5\n  }')
+    expect(r.tofu).toContain('  backend {\n    group                 = ')
+    expect(r.tofu).toContain('connection_draining_timeout_sec = 10')
+    expect(r.tofu).toContain(
+      `security_policy                 = "projects/${P}/global/securityPolicies/armor"`,
+    )
+    expect(r.tofu).not.toContain('connection_draining {')
+  })
+
+  it('copies a backend bucket with negative caching', () => {
+    const r = recipeFor(
+      ref('backendBuckets'),
+      res('backendBuckets', 'static', {
+        bucketName: 'assets',
+        enableCdn: true,
+        cdnPolicy: {
+          cacheMode: 'CACHE_ALL_STATIC',
+          defaultTtl: 3600,
+          negativeCaching: true,
+          negativeCachingPolicy: [{ code: 404, ttl: 60 }],
+          bypassCacheOnRequestHeaders: [{ headerName: 'X-Debug' }],
+        },
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute backend-buckets create static \\',
+        `    --project=${P} \\`,
+        '    --gcs-bucket-name=assets \\',
+        '    --enable-cdn \\',
+        '    --cache-mode=CACHE_ALL_STATIC \\',
+        '    --default-ttl=3600 \\',
+        '    --negative-caching \\',
+        '    --negative-caching-policy=404=60 \\',
+        '    --bypass-cache-on-request-headers=X-Debug',
+      ].join('\n'),
+    ])
+    expect(r.tofu).toContain('resource "google_compute_backend_bucket" "static" {')
+    expect(r.tofu).toContain(
+      '    negative_caching_policy {\n      code = 404\n      ttl  = 60\n    }',
+    )
+    expect(r.tofu).toContain(
+      '    bypass_cache_on_request_headers {\n      header_name = "X-Debug"\n    }',
+    )
+  })
+
+  it('copies health checks by protocol', () => {
+    const http = recipeFor(ref('healthChecks'), {
+      ...state.healthChecks![0]!,
+      httpHealthCheck: { port: 8080, requestPath: '/healthz' },
+      timeoutSec: 5,
+      healthyThreshold: 2,
+    })
+    expect(http.gcloud).toEqual([
+      [
+        'gcloud compute health-checks create http hc \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --port=8080 \\',
+        '    --request-path=/healthz \\',
+        '    --check-interval=5 \\',
+        '    --timeout=5 \\',
+        '    --healthy-threshold=2',
+      ].join('\n'),
+    ])
+    expect(http.tofu).toBe(
+      [
+        'resource "google_compute_health_check" "hc" {',
+        `  project            = "${P}"`,
+        '  name               = "hc"',
+        '  check_interval_sec = 5',
+        '  timeout_sec        = 5',
+        '  healthy_threshold  = 2',
+        '  http_health_check {',
+        '    port         = 8080',
+        '    request_path = "/healthz"',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+
+    const tcp = recipeFor(
+      ref('healthChecks', 'us-east1'),
+      res('healthChecks', 'rtcp', {
+        region: link('regions/us-east1'),
+        type: 'TCP',
+        tcpHealthCheck: { portSpecification: 'USE_SERVING_PORT' },
+      }),
+    )
+    expect(tcp.gcloud).toEqual([
+      [
+        'gcloud compute health-checks create tcp rtcp \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --use-serving-port',
+      ].join('\n'),
+    ])
+    expect(tcp.tofu).toContain('resource "google_compute_region_health_check" "rtcp" {')
+    expect(tcp.tofu).toContain(
+      '  tcp_health_check {\n    port_specification = "USE_SERVING_PORT"\n  }',
+    )
+    expect(tcp.tofu).not.toContain('type')
+  })
+
+  it('copies certificates, leaving out the private key the API does not return', () => {
+    const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n'
+    const self = recipeFor(
+      ref('sslCertificates', 'us-east1'),
+      res('sslCertificates', 'rcert', {
+        region: link('regions/us-east1'),
+        type: 'SELF_MANAGED',
+        certificate: pem,
+        expireTime: '2027-01-01T00:00:00Z',
+        subjectAlternativeNames: ['a.example.test'],
+      }),
+    )
+    expect(self.gcloud).toEqual([
+      `cat > certificate.pem <<'EOF'\n${pem}EOF`,
+      [
+        '# The API does not return the private key: save it as private-key.pem.',
+        'gcloud compute ssl-certificates create rcert \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --certificate=certificate.pem \\',
+        '    --private-key=private-key.pem',
+      ].join('\n'),
+    ])
+    expect((self.rest as RestCall).body).toEqual({
+      name: 'rcert',
+      type: 'SELF_MANAGED',
+      certificate: pem,
+      privateKey: 'PRIVATE_KEY_PEM (the API does not return the private key)',
+    })
+    expect(self.tofu).toContain('resource "google_compute_region_ssl_certificate" "rcert" {')
+    expect(self.tofu).toContain('  private_key = file("private-key.pem")')
+
+    const managed = recipeFor(ref('sslCertificates'), state.sslCertificates![0]!)
+    expect(managed.gcloud).toEqual([
+      [
+        'gcloud compute ssl-certificates create managed \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --domains=app.example.test',
+      ].join('\n'),
+    ])
+    expect((managed.rest as RestCall).body).toEqual({
+      name: 'managed',
+      type: 'MANAGED',
+      managed: { domains: ['app.example.test'] },
+    })
+    expect(managed.tofu).toBe(
+      [
+        'resource "google_compute_managed_ssl_certificate" "managed" {',
+        `  project = "${P}"`,
+        '  name    = "managed"',
+        '  managed {',
+        '    domains = ["app.example.test"]',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+  })
+
+  it('copies a regional custom SSL policy', () => {
+    const r = recipeFor(
+      ref('sslPolicies', 'us-east1'),
+      res('sslPolicies', 'compat', {
+        region: link('regions/us-east1'),
+        profile: 'CUSTOM',
+        minTlsVersion: 'TLS_1_2',
+        customFeatures: ['TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256'],
+        enabledFeatures: ['TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256'],
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute ssl-policies create compat \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --profile=CUSTOM \\',
+        '    --min-tls-version=1.2 \\',
+        '    --custom-features=TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256',
+      ].join('\n'),
+    ])
+    expect((r.rest as RestCall).body).not.toHaveProperty('enabledFeatures')
+    expect(r.tofu).toContain('resource "google_compute_region_ssl_policy" "compat" {')
+    expect(r.tofu).toContain('  min_tls_version = "TLS_1_2"')
+  })
 })

@@ -5,6 +5,7 @@ import { useState, type ReactNode } from 'react'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono, type DetailRow } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -23,6 +24,7 @@ import {
   type Resource,
 } from './api'
 import { CertificateStatus } from './Certificates'
+import { recipeFor } from './copy'
 import { BackendHealth } from './Health'
 import { lbPath, listPath, RefLink, useLbRef } from './LbLayout'
 import { readValues, SPECS, type FieldSpec, type Values } from './spec'
@@ -72,6 +74,7 @@ export function ResourcePage() {
         </div>
         {r && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what={k.singular} recipe={() => recipeFor(ref, r)} />
             {k.editable && (
               <Button variant="outline" asChild>
                 <Link to={lbPath(ref, 'edit')}>

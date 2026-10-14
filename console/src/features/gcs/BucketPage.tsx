@@ -5,13 +5,16 @@ import { Outlet, useLocation, useOutletContext } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { useViewState } from '@/lib/viewState'
 
 import { bucketQuery, deleteBucket, type Bucket } from './api'
+import { bucketRecipe } from './copy'
 import { formatSeconds, time } from './format'
 import { bucketPath, useBucket } from './GcsLayout'
 
@@ -38,6 +41,7 @@ export function BucketPage() {
   const navigate = useCarriedNavigate()
   const qc = useQueryClient()
   const { pathname } = useLocation()
+  const [view] = useViewState()
   const del = useMutation({
     mutationFn: () => deleteBucket(name),
     onSuccess: () => {
@@ -70,6 +74,7 @@ export function BucketPage() {
         </div>
         {b && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="bucket" recipe={() => bucketRecipe(b, view.project ?? '')} />
             <Button variant="outline" asChild>
               <Link to={bucketPath(name, 'edit')}>
                 <Pencil aria-hidden />

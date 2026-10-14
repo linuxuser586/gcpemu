@@ -9,6 +9,7 @@ import { errorMessage } from '@/api/errors'
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { JsonView } from '@/components/resource/DetailList'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { parseBody, ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
@@ -37,6 +38,7 @@ import {
   type Policy,
   type ResourceRef,
 } from './api'
+import { policyRecipe } from './copy'
 import { rolePath, simulatorPath } from './IamLayout'
 
 // Bindings of any resource's IAM policy (FR-IAM-003, FR-UI-011): every
@@ -168,6 +170,7 @@ export function PolicyEditor({ r }: { r: ResourceRef }) {
           <CardTitle>Bindings</CardTitle>
           {policy && editing === undefined && (
             <div className="flex flex-wrap gap-2">
+              <CopyAs what="IAM policy" recipe={() => policyRecipe(r, policy)} />
               <Button variant="outline" asChild>
                 <Link to={simulatorPath('', r.kind, r.name)}>
                   <FlaskConical aria-hidden />

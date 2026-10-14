@@ -8,6 +8,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { Cluster, KubePod } from './api'
+import { clusterRecipe, nodePoolRecipe } from './copy'
 
 const P = 'alpha-project'
 const base = `/gke/locations/us-central1-a/clusters/web`
@@ -545,4 +546,219 @@ it('waits for a running cluster before reading Kubernetes', async () => {
   renderApp(`${base}/pods?project=${P}`)
   expect(await screen.findByText(/The cluster is PROVISIONING/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Download kubeconfig' })).toBeDisabled()
+})
+
+it('copies a cluster as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`${base}?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy cluster as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy cluster as' })
+  const gcloud = [
+    'gcloud container clusters create web \\',
+    `    --project=${P} \\`,
+    '    --location=us-central1-a \\',
+    '    --release-channel=regular \\',
+    '    --labels=team=web \\',
+    '    --num-nodes=1 \\',
+    '    --machine-type=e2-medium \\',
+    '    --node-labels=tier=a',
+  ].join('\n')
+  expect(within(dialog).getByLabelText('gcloud for the cluster')).toHaveTextContent(gcloud, {
+    normalizeWhitespace: false,
+  })
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the cluster')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/container/v1/projects/${P}/locations/us-central1-a/clusters \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"cluster": { "name": "web"')
+  expect(curl).not.toHaveTextContent('"endpoint"')
+  expect(curl).not.toHaveTextContent('"status"')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the cluster')
+  expect(tofu).toHaveTextContent('resource "google_container_cluster" "web" {')
+  expect(tofu).toHaveTextContent('resource "google_container_node_pool" "default-pool" {')
+  expect(tofu).toHaveTextContent('cluster = google_container_cluster.web.name')
+})
+
+it('copies a node pool from its page', async () => {
+  const user = userEvent.setup()
+  renderApp(`${base}/nodePools/default-pool?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy node pool as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy node pool as' })
+  const gcloud = [
+    'gcloud container node-pools create default-pool \\',
+    `    --project=${P} \\`,
+    '    --cluster=web \\',
+    '    --location=us-central1-a \\',
+    '    --node-version=1.36.5-gke.100 \\',
+    '    --num-nodes=1 \\',
+    '    --machine-type=e2-medium \\',
+    '    --node-labels=tier=a',
+  ].join('\n')
+  expect(within(dialog).getByLabelText('gcloud for the node pool')).toHaveTextContent(gcloud, {
+    normalizeWhitespace: false,
+  })
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the node pool')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/container/v1/projects/${P}/locations/us-central1-a/clusters/web/nodePools \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"nodePool": { "name": "default-pool"')
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  expect(within(dialog).getByLabelText('OpenTofu for the node pool')).toHaveTextContent(
+    'resource "google_container_node_pool" "default-pool" {',
+  )
+})
+
+it('copies a private cluster with several node pools', () => {
+  const c = {
+    ...cluster({
+      description: 'API servers',
+      locations: ['us-central1-a', 'us-central1-b'],
+      initialClusterVersion: '1.36.5-gke.100',
+      network: 'vpc',
+      subnetwork: 'nodes',
+      workloadIdentityConfig: { workloadPool: `${P}.svc.id.goog` },
+      privateClusterConfig: { enablePrivateNodes: true },
+      loggingService: undefined,
+      monitoringService: undefined,
+      nodePools: [
+        {
+          name: 'default-pool',
+          status: 'RUNNING',
+          initialNodeCount: 2,
+          config: {
+            machineType: 'e2-standard-4',
+            diskSizeGb: 50,
+            taints: [{ key: 'dedicated', value: 'api', effect: 'NO_SCHEDULE' }],
+          },
+          autoscaling: { enabled: true, minNodeCount: 1, maxNodeCount: 3 },
+        },
+        {
+          name: 'spot',
+          status: 'RUNNING',
+          initialNodeCount: 1,
+          locations: ['us-central1-b'],
+          config: { machineType: 'e2-small' },
+        },
+      ],
+    }),
+    // The default pool's legacy fields, which clusters.create refuses with nodePools.
+    initialNodeCount: 2,
+  } as Cluster
+  const r = clusterRecipe(P, c)
+  expect(r.gcloud).toEqual([
+    [
+      'gcloud container clusters create web \\',
+      `    --project=${P} \\`,
+      '    --location=us-central1-a \\',
+      '    --node-locations=us-central1-a,us-central1-b \\',
+      '    --cluster-version=1.36.5-gke.100 \\',
+      '    --release-channel=regular \\',
+      '    --network=vpc \\',
+      '    --subnetwork=nodes \\',
+      '    --labels=team=web \\',
+      `    --workload-pool=${P}.svc.id.goog \\`,
+      '    --enable-private-nodes \\',
+      '    --num-nodes=2 \\',
+      '    --machine-type=e2-standard-4 \\',
+      '    --disk-size=50 \\',
+      '    --node-taints=dedicated=api:NoSchedule \\',
+      '    --enable-autoscaling \\',
+      '    --min-nodes=1 \\',
+      '    --max-nodes=3',
+    ].join('\n'),
+    [
+      'gcloud container node-pools create spot \\',
+      `    --project=${P} \\`,
+      '    --cluster=web \\',
+      '    --location=us-central1-a \\',
+      '    --node-locations=us-central1-b \\',
+      '    --num-nodes=1 \\',
+      '    --machine-type=e2-small',
+    ].join('\n'),
+  ])
+  expect(r.rest).toEqual({
+    method: 'POST',
+    path: `/container/v1/projects/${P}/locations/us-central1-a/clusters`,
+    body: {
+      cluster: {
+        name: 'web',
+        description: 'API servers',
+        locations: ['us-central1-a', 'us-central1-b'],
+        initialClusterVersion: '1.36.5-gke.100',
+        network: 'vpc',
+        subnetwork: 'nodes',
+        releaseChannel: { channel: 'REGULAR' },
+        resourceLabels: { team: 'web' },
+        workloadIdentityConfig: { workloadPool: `${P}.svc.id.goog` },
+        privateClusterConfig: { enablePrivateNodes: true },
+        nodePools: [
+          {
+            name: 'default-pool',
+            initialNodeCount: 2,
+            config: c.nodePools![0]!.config,
+            autoscaling: { enabled: true, minNodeCount: 1, maxNodeCount: 3 },
+          },
+          {
+            name: 'spot',
+            initialNodeCount: 1,
+            locations: ['us-central1-b'],
+            config: { machineType: 'e2-small' },
+          },
+        ],
+      },
+    },
+  })
+  expect(r.tofu).toContain(
+    [
+      '  private_cluster_config {',
+      '    enable_private_nodes    = true',
+      '    enable_private_endpoint = false',
+      '  }',
+    ].join('\n'),
+  )
+  expect(r.tofu).toContain(
+    [
+      'resource "google_container_node_pool" "spot" {',
+      `  project            = "${P}"`,
+      '  name               = "spot"',
+      '  cluster            = google_container_cluster.web.name',
+      '  location           = "us-central1-a"',
+      '  node_locations     = ["us-central1-b"]',
+      '  initial_node_count = 1',
+      '  node_config {',
+      '    machine_type = "e2-small"',
+      '  }',
+      '}',
+    ].join('\n'),
+  )
+  // A standalone node pool names its cluster, and inherits its zones.
+  const pool = nodePoolRecipe(
+    { project: P, location: 'us-central1-a', cluster: 'web' },
+    c.nodePools![0]!,
+    c.locations,
+  )
+  expect(pool.tofu).toContain('  cluster            = "web"')
+  expect(pool.tofu).not.toContain('node_locations')
+  expect(pool.tofu).toContain(
+    [
+      '  autoscaling {',
+      '    min_node_count = 1',
+      '    max_node_count = 3',
+      '  }',
+      '  node_config {',
+      '    machine_type = "e2-standard-4"',
+      '    disk_size_gb = 50',
+      '    taint {',
+      '      key    = "dedicated"',
+      '      value  = "api"',
+      '      effect = "NO_SCHEDULE"',
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
 })

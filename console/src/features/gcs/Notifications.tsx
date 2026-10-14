@@ -9,6 +9,7 @@ import { infoQuery } from '@/api/queries'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
@@ -39,6 +40,7 @@ import {
   shortTopic,
   type Notification,
 } from './api'
+import { notificationRecipe } from './copy'
 import { bucketPath, useBucket } from './GcsLayout'
 
 // Pub/Sub notification configs (FR-GCS-007, FR-UI-011). The API creates,
@@ -139,18 +141,21 @@ export function NotificationPage() {
         <CardTitle>
           Notification <span className="font-mono">{n.id}</span>
         </CardTitle>
-        <ConfirmDialog
-          trigger={
-            <Button variant="outline" size="sm">
-              <Trash2 aria-hidden />
-              Delete
-            </Button>
-          }
-          title={`Delete notification ${n.id}?`}
-          description="The bucket stops publishing to its topic."
-          confirmLabel="Delete notification"
-          onConfirm={() => del.mutateAsync()}
-        />
+        <div className="flex flex-wrap gap-2">
+          <CopyAs what="notification" recipe={() => notificationRecipe(bucket, n)} />
+          <ConfirmDialog
+            trigger={
+              <Button variant="outline" size="sm">
+                <Trash2 aria-hidden />
+                Delete
+              </Button>
+            }
+            title={`Delete notification ${n.id}?`}
+            description="The bucket stops publishing to its topic."
+            confirmLabel="Delete notification"
+            onConfirm={() => del.mutateAsync()}
+          />
+        </div>
       </div>
       <DetailList
         label="Notification details"

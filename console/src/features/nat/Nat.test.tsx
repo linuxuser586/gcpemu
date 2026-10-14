@@ -10,6 +10,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import { coverage, natRanges, type NatSink, type Router, type Subnetwork } from './api'
+import { natRecipe, routerRecipe } from './copy'
 import { natBody, natValues } from './NatForm'
 
 const P = 'alpha-project'
@@ -581,4 +582,161 @@ it('says when there is no egress yet', async () => {
   log = []
   renderApp(`/nat/translations?project=${P}`)
   expect(await screen.findByText(/No egress from this Project yet/)).toBeVisible()
+})
+
+it('copies a NAT gateway as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`/nat/regions/us-central1/routers/edge/nats/nat-a?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy NAT gateway as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy NAT gateway as' })
+  expect(within(dialog).getByLabelText('gcloud for the NAT gateway')).toHaveTextContent(
+    [
+      'gcloud compute routers nats create nat-a \\',
+      `    --project=${P} \\`,
+      '    --region=us-central1 \\',
+      '    --router=edge \\',
+      '    --auto-allocate-nat-external-ips \\',
+      '    --nat-custom-subnet-ip-ranges=nodes:ALL \\',
+      '    --min-ports-per-vm=128 \\',
+      '    --enable-logging \\',
+      '    --log-filter=ERRORS_ONLY',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  // A NAT is created by patching its router's nats[].
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the NAT gateway')
+  expect(curl).toHaveTextContent(`curl ${location.origin}/compute/v1/${ROUTER} \\ -X PATCH`)
+  expect(curl).toHaveTextContent('"nats": [ { "name": "nat-a"')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the NAT gateway')
+  expect(tofu).toHaveTextContent('resource "google_compute_router_nat" "nat-a" {')
+  expect(tofu).toHaveTextContent('source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"')
+  expect(tofu).toHaveTextContent(
+    `subnetwork { name = "projects/${P}/regions/us-central1/subnetworks/nodes" source_ip_ranges_to_nat = ["ALL_IP_RANGES"] }`,
+  )
+  expect(tofu).toHaveTextContent('log_config { enable = true filter = "ERRORS_ONLY" }')
+})
+
+describe('Copy as', () => {
+  const ref = { project: P, region: 'us-central1', router: 'edge' }
+
+  it('copies a router with custom BGP advertisements, without its NATs', () => {
+    const r = routerRecipe(
+      {
+        ...routers[0]!,
+        description: 'Edge',
+        bgp: {
+          asn: 64514,
+          advertiseMode: 'CUSTOM',
+          advertisedGroups: ['ALL_SUBNETS'],
+          advertisedIpRanges: [{ range: '10.9.0.0/16' }],
+        },
+      },
+      ref,
+    )
+    expect(r.gcloud).toBe(
+      [
+        'gcloud compute routers create edge \\',
+        `    --project=${P} \\`,
+        '    --region=us-central1 \\',
+        '    --network=vpc \\',
+        '    --description=Edge \\',
+        '    --asn=64514 \\',
+        '    --advertisement-mode=CUSTOM \\',
+        '    --set-advertisement-groups=ALL_SUBNETS \\',
+        '    --set-advertisement-ranges=10.9.0.0/16',
+      ].join('\n'),
+    )
+    expect(r.rest).toEqual({
+      method: 'POST',
+      path: `/compute/v1/projects/${P}/regions/us-central1/routers`,
+      body: {
+        name: 'edge',
+        region: link('regions/us-central1'),
+        network: link('global/networks/vpc'),
+        description: 'Edge',
+        bgp: {
+          asn: 64514,
+          advertiseMode: 'CUSTOM',
+          advertisedGroups: ['ALL_SUBNETS'],
+          advertisedIpRanges: [{ range: '10.9.0.0/16' }],
+        },
+      },
+    })
+    expect(r.tofu).toBe(
+      [
+        'resource "google_compute_router" "edge" {',
+        `  project     = "${P}"`,
+        '  name        = "edge"',
+        '  region      = "us-central1"',
+        '  network     = "vpc"',
+        '  description = "Edge"',
+        '  bgp {',
+        '    asn               = 64514',
+        '    advertise_mode    = "CUSTOM"',
+        '    advertised_groups = ["ALL_SUBNETS"]',
+        '    advertised_ip_ranges {',
+        '      range = "10.9.0.0/16"',
+        '    }',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+  })
+
+  it('copies a manual NAT with chosen ranges and timeouts', () => {
+    const nat = {
+      name: 'nat-m',
+      natIpAllocateOption: 'MANUAL_ONLY' as const,
+      natIps: [link('regions/us-central1/addresses/ip-1')],
+      sourceSubnetworkIpRangesToNat: 'LIST_OF_SUBNETWORKS' as const,
+      subnetworks: [
+        {
+          name: link('regions/us-central1/subnetworks/nodes'),
+          sourceIpRangesToNat: [
+            'PRIMARY_IP_RANGE' as const,
+            'LIST_OF_SECONDARY_IP_RANGES' as const,
+          ],
+          secondaryIpRangeNames: ['pods'],
+        },
+      ],
+      enableDynamicPortAllocation: true,
+      udpIdleTimeoutSec: 60,
+    }
+    const r = natRecipe(routers[0]!, nat, ref)
+    expect(r.gcloud).toBe(
+      [
+        'gcloud compute routers nats create nat-m \\',
+        `    --project=${P} \\`,
+        '    --region=us-central1 \\',
+        '    --router=edge \\',
+        '    --nat-external-ip-pool=ip-1 \\',
+        '    --nat-custom-subnet-ip-ranges=nodes,nodes:pods \\',
+        '    --enable-dynamic-port-allocation \\',
+        '    --udp-idle-timeout=60s',
+      ].join('\n'),
+    )
+    // A NAT the router lacks is added to the ones it has.
+    expect(r.rest).toMatchObject({
+      method: 'PATCH',
+      body: { nats: [{ name: 'nat-a' }, { name: 'nat-m' }] },
+    })
+    expect(r.tofu).toContain(
+      `  nat_ips                            = ["projects/${P}/regions/us-central1/addresses/ip-1"]`,
+    )
+    expect(r.tofu).toContain('  udp_idle_timeout_sec               = 60')
+    expect(r.tofu).toContain(
+      [
+        '  subnetwork {',
+        `    name                     = "projects/${P}/regions/us-central1/subnetworks/nodes"`,
+        '    source_ip_ranges_to_nat  = ["PRIMARY_IP_RANGE", "LIST_OF_SECONDARY_IP_RANGES"]',
+        '    secondary_ip_range_names = ["pods"]',
+        '  }',
+      ].join('\n'),
+    )
+    expect(r.tofu).not.toContain('log_config')
+  })
 })

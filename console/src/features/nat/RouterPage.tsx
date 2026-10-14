@@ -4,6 +4,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -29,6 +30,7 @@ import {
   type RouterNat,
   type RouterRef,
 } from './api'
+import { routerRecipe } from './copy'
 import { natPage, routerPage, useRouterRef } from './NatLayout'
 
 /** natIps lists a NAT's active IPs from its router status. */
@@ -77,6 +79,7 @@ export function RouterPage() {
         </div>
         {r && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="router" recipe={() => routerRecipe(r, ref)} />
             <Button variant="outline" asChild>
               <Link to={routerPage(ref, 'edit')}>
                 <Pencil aria-hidden />

@@ -7,6 +7,7 @@ import { errorMessage } from '@/api/errors'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,6 +48,7 @@ import {
   uploadKey,
   type ServiceAccount,
 } from './api'
+import { serviceAccountRecipe } from './copy'
 import { accountPath, ChooseProject, simulatorPath, useAccount } from './IamLayout'
 import { PolicyEditor } from './PolicyEditor'
 import { AccountStatus } from './ServiceAccounts'
@@ -108,6 +110,7 @@ export function ServiceAccountPage() {
         </div>
         {sa && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="service account" recipe={() => serviceAccountRecipe(sa)} />
             <Button variant="outline" asChild>
               <Link to={accountPath(email, 'edit')}>
                 <Pencil aria-hidden />

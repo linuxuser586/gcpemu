@@ -8,6 +8,7 @@ import { ApiError } from '@/api/errors'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
@@ -35,6 +36,7 @@ import {
   restoreGeneration,
   type StorageObject,
 } from './api'
+import { objectRecipe } from './copy'
 import { baseName, formatBytes, parentPrefix, prefixCrumbs, time } from './format'
 import { browsePath, objectPath, useBucket, useObjectName } from './GcsLayout'
 import { SignedUrlDialog } from './SignedUrlDialog'
@@ -95,6 +97,7 @@ export function ObjectPage() {
               </a>
             </Button>
             <SignedUrlDialog bucket={bucket} object={name} />
+            <CopyAs what="object" recipe={() => objectRecipe(o)} />
             <Button variant="outline" asChild>
               <Link to={objectPath(bucket, name, 'edit')}>
                 <Pencil aria-hidden />

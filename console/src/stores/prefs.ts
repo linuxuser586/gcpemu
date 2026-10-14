@@ -7,6 +7,9 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 
 export type ThemePref = 'system' | 'light' | 'dark'
 
+/** CopyForm is a form Copy as writes a resource in (FR-UI-015). */
+export type CopyForm = 'gcloud' | 'curl' | 'tofu'
+
 interface Prefs {
   theme: ThemePref
   sidebarCollapsed: boolean
@@ -15,9 +18,12 @@ interface Prefs {
    * "serviceAccount:EMAIL", or '' for the Default principal (FR-UI-004).
    */
   principal: string
+  /** copyForm is the form Copy as last showed. */
+  copyForm: CopyForm
   setTheme: (theme: ThemePref) => void
   toggleSidebar: () => void
   setPrincipal: (principal: string) => void
+  setCopyForm: (copyForm: CopyForm) => void
 }
 
 export const usePrefs = create<Prefs>()(
@@ -26,17 +32,20 @@ export const usePrefs = create<Prefs>()(
       theme: 'system',
       sidebarCollapsed: false,
       principal: '',
+      copyForm: 'gcloud',
       setTheme: (theme) => set({ theme }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       setPrincipal: (principal) => set({ principal }),
+      setCopyForm: (copyForm) => set({ copyForm }),
     }),
     {
       name: 'gcpemu-console-prefs',
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ theme, sidebarCollapsed, principal }) => ({
+      partialize: ({ theme, sidebarCollapsed, principal, copyForm }) => ({
         theme,
         sidebarCollapsed,
         principal,
+        copyForm,
       }),
     },
   ),
