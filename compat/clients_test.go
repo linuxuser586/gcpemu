@@ -160,6 +160,18 @@ func contains(t *testing.T, what, out, want string) {
 	}
 }
 
+// longTempDir returns t.TempDir() without 8.3 short names (RUNNER~1 on
+// GitHub's Windows runners): under Python 3.12, gcloud storage cp
+// matches no file for a short-name path.
+func longTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -208,7 +220,8 @@ func TestClients(t *testing.T) {
 
 	t.Run("gcloud/storage", func(t *testing.T) {
 		g := gcloud(t)
-		f := filepath.Join(t.TempDir(), "hello.txt")
+		dir := longTempDir(t)
+		f := filepath.Join(dir, "hello.txt")
 		_ = os.WriteFile(f, []byte("hello compat\n"), 0o644)
 		// --location is required outside Google's universe.
 		e.run(t, g, "storage", "buckets", "create", "gs://compat-bucket", "--location=us-central1")
@@ -216,7 +229,7 @@ func TestClients(t *testing.T) {
 		contains(t, "storage ls", e.run(t, g, "storage", "ls", "gs://compat-bucket/dir/"), "gs://compat-bucket/dir/hello.txt")
 		contains(t, "storage cat", e.run(t, g, "storage", "cat", "gs://compat-bucket/dir/hello.txt"), "hello compat")
 		contains(t, "objects describe", e.run(t, g, "storage", "objects", "describe", "gs://compat-bucket/dir/hello.txt", "--format=value(size)"), "13")
-		dst := filepath.Join(t.TempDir(), "back.txt")
+		dst := filepath.Join(dir, "back.txt")
 		e.run(t, g, "storage", "cp", "gs://compat-bucket/dir/hello.txt", dst)
 		if b, _ := os.ReadFile(dst); string(b) != "hello compat\n" {
 			t.Fatalf("downloaded %q", b)
