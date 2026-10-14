@@ -658,8 +658,8 @@ func testNEG(t *testing.T, e *env) {
 	}
 
 	// LoadBalancer Services get an address from the in-cluster L4
-	// allocator (FR-GKE-009), or on a VM runtime a loopback address the
-	// emulator serves (ADR 0005), and are reachable from the host there.
+	// allocator (FR-GKE-009). On a VM runtime that is a loopback address
+	// the emulator serves (ADR 0005), at which the host reaches them.
 	e.mustKube("POST", "/api/v1/namespaces/default/services", map[string]any{
 		"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "web-lb"},
 		"spec": map[string]any{"type": "LoadBalancer", "selector": map[string]string{"app": "web"}, "ports": []map[string]any{{"port": 8081, "targetPort": 8080}}},
@@ -678,23 +678,21 @@ func testNEG(t *testing.T, e *env) {
 		ingress = lb.Status.LoadBalancer.Ingress[0].IP
 		return ingress != ""
 	})
-	addr := net.JoinHostPort(ingress, "8081")
 	if emutest.RelayStreams(t, e.inst) != nil {
-		ep := e.inst.Env.Endpoints.Get("gke:c1/default/web-lb/8081")
-		if h, _, _ := net.SplitHostPort(ep); h != ingress || !net.ParseIP(h).IsLoopback() {
-			t.Fatalf("on the VM relay: ingress %s, endpoint %q; want the endpoint on the ingress loopback address", ingress, ep)
+		addr := e.inst.Env.Endpoints.Get("gke:c1/default/web-lb/8081")
+		if h, _, _ := net.SplitHostPort(addr); h != ingress || !net.ParseIP(h).IsLoopback() {
+			t.Fatalf("on the VM relay: ingress %s, endpoint %q; want the endpoint on the ingress loopback address", ingress, addr)
 		}
-		addr = ep
+		eventually(t, 30*time.Second, "LoadBalancer Service reachable from the host at "+addr, func() bool {
+			resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
+			if err != nil {
+				return false
+			}
+			defer resp.Body.Close()
+			b, _ := io.ReadAll(resp.Body)
+			return strings.TrimSpace(string(b)) == "ok"
+		})
 	}
-	eventually(t, 30*time.Second, "LoadBalancer Service reachable from the host at "+addr, func() bool {
-		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
-		if err != nil {
-			return false
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		return strings.TrimSpace(string(b)) == "ok"
-	})
 
 	// Removing the annotation deletes the NEG.
 	e.mustKube("PATCH", "/api/v1/namespaces/default/services/web", `{"metadata":{"annotations":{"cloud.google.com/neg":null}}}`, nil)
