@@ -185,10 +185,11 @@ func checkLoopback(out io.Writer, aliases bool) {
 	fmt.Fprintf(out, "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `%s` lets more than one Cloud SQL instance run and gives each load balancer forwarding rule its own address\n", loopback.InstallHint)
 }
 
-// checkDNSUDP checks the UDP side of the DNS port. An mDNS daemon (avahi,
-// browsers) holds UDP 0.0.0.0:5353 on most Linux desktops; the emulator and
-// its services-network forwarder share the port on a specific address, so
-// that clash is a note, not a failure, unless the bind is the wildcard.
+// checkDNSUDP checks the UDP side of the DNS port. An mDNS daemon (avahi or
+// browsers on most Linux desktops, mDNSResponder on macOS) holds UDP
+// 0.0.0.0:5353; the emulator and its services-network forwarder share the
+// port on a specific address, so that clash is a note, not a failure, unless
+// the bind is the wildcard.
 func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port string) {
 	addr := net.JoinHostPort(host, port)
 	pc, err := net.ListenPacket("udp", addr)
@@ -200,7 +201,7 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 	pc, err = netplane.ListenUDP(context.Background(), host, port)
 	if err == nil {
 		pc.Close()
-		fmt.Fprintf(out, "[ok  ] port %s/udp (dns) shared with another socket on the wildcard address, likely mDNS (avahi-daemon or a browser); DNS answers still reach the emulator\n", addr)
+		fmt.Fprintf(out, "[ok  ] port %s/udp (dns) shared with another socket on the wildcard address, likely mDNS (avahi-daemon, mDNSResponder or a browser); DNS answers still reach the emulator\n", addr)
 		return
 	}
 	report(false, fmt.Sprintf("port %s/udp (dns) free", addr),
