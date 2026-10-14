@@ -53,7 +53,7 @@ func natTestService(t *testing.T, logCfg *computev1.RouterNatLogConfig) (*Servic
 			}); err != nil {
 				return err
 			}
-			if err := store.PutJSON(tx, nsVPCNets, sn.name, &vpcNet{
+			if err := store.PutJSON(tx, nsVPCNets, path, &vpcNet{
 				Name: "gcpemu-" + sn.name, Subnet: sn.cidr, Range: sn.cidr, Network: tNet, Region: sn.region, Subnetwork: path,
 			}); err != nil {
 				return err
@@ -71,7 +71,11 @@ func natTestService(t *testing.T, logCfg *computev1.RouterNatLogConfig) (*Servic
 		if err := store.PutJSON(tx, nsNatIPs, tRouter+"/nat", []string{"203.0.113.5"}); err != nil {
 			return err
 		}
-		return tx.Put(nsIPAlloc, "gcpemu-nodes/ip/10.0.0.2", []byte("projects/p/zones/us-central1-a/instances/vm-1"))
+		vm := "projects/p/zones/us-central1-a/instances/vm-1"
+		if err := tx.Put(nsIPAlloc, "gcpemu-nodes/ip/10.0.0.2", []byte(vm)); err != nil {
+			return err
+		}
+		return tx.Put(nsIPAlloc, "gcpemu-nodes/owner/"+vm, []byte("10.0.0.2"))
 	})
 	if err != nil {
 		t.Fatal(err)

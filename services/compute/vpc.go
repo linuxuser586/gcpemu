@@ -497,6 +497,10 @@ func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner strin
 		}
 		return apierr.New(8, "IP space of %s (%s) is exhausted.", net.SubnetworkName, rng).WithLegacy("ipSpaceExhausted")
 	})
+	if err == nil {
+		// The workload's NAT port block (FR-NAT-003).
+		s.networkChanged(relPath(net.NetworkName))
+	}
 	return ip, err
 }
 
@@ -529,7 +533,7 @@ func (s *Service) heldAddrs(ctx context.Context, name string) map[uint32]bool {
 func (s *Service) ReleaseIP(ctx context.Context, net emu.SubnetNet, owner string) error {
 	s.vpcMu.Lock()
 	defer s.vpcMu.Unlock()
-	return s.env.Store.Update(func(tx store.Tx) error {
+	err := s.env.Store.Update(func(tx store.Tx) error {
 		b, ok := tx.Get(nsIPAlloc, net.Name+"/owner/"+owner)
 		if !ok {
 			return nil
@@ -539,6 +543,11 @@ func (s *Service) ReleaseIP(ctx context.Context, net emu.SubnetNet, owner string
 		}
 		return tx.Delete(nsIPAlloc, net.Name+"/owner/"+owner)
 	})
+	if err == nil {
+		// Frees the workload's NAT port block.
+		s.networkChanged(relPath(net.NetworkName))
+	}
+	return err
 }
 
 func allocatedIPs(tx store.Tx, name string) map[uint32]bool {

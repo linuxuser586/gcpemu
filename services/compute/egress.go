@@ -473,6 +473,11 @@ func (s *Service) natCoverage(np string, nets []*vpcNet) []coverage {
 // are resolved inside the container from the addresses they carry.
 func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	cov := s.natCoverage(g.network, nets)
+	ports, err := s.natAllocations(g.network)
+	if err != nil {
+		return "", err
+	}
+	dropVMs, snatVMs, limitVMs := natPortRules(g, ports)
 	var b strings.Builder
 	b.WriteString("set -e\n")
 	fmt.Fprintf(&b, "ifc() { ip -o -4 addr show | awk -v a=\"$1\" '{split($4,x,\"/\"); if (x[1]==a) print $2}'; }\n")
@@ -489,6 +494,7 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	b.WriteString("iptables-restore --noflush <<EOF\n*filter\n:GCPEMU-FWD - [0:0]\n:GCPEMU-DROP - [0:0]\n-F GCPEMU-FWD\n-F GCPEMU-DROP\n")
 	b.WriteString("-A GCPEMU-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\n")
 	b.WriteString("-A GCPEMU-FWD ! -o $EXT -j ACCEPT\n")
+	b.WriteString(dropVMs)
 	for _, c := range cov {
 		fmt.Fprintf(&b, "-A GCPEMU-FWD -s %s -o $EXT -j ACCEPT\n", c.cidr)
 	}
@@ -500,6 +506,9 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 		b.WriteString("-A GCPEMU-DROP -j DROP\n")
 	}
 	b.WriteString("COMMIT\n*nat\n:GCPEMU-POST - [0:0]\n:GCPEMU-PRE - [0:0]\n-F GCPEMU-POST\n-F GCPEMU-PRE\n")
+	// Workloads are translated onto their port blocks (FR-NAT-003); the
+	// rest (other protocols) are masqueraded.
+	b.WriteString(snatVMs)
 	b.WriteString("-A GCPEMU-POST -o $EXT -j MASQUERADE\n")
 	// Intra-VPC traffic is source-NATed to the gateway so replies return
 	// through it regardless of the destination's default route.
@@ -525,6 +534,7 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 		}
 	}
 	b.WriteString("COMMIT\nEOF\n")
+	b.WriteString(limitVMs)
 	// Drop logging is best effort: a kernel without NFLOG still enforces.
 	fmt.Fprintf(&b, "iptables -I GCPEMU-DROP -m conntrack --ctstate NEW -j NFLOG --nflog-group %d 2>/dev/null || echo 'NFLOG unavailable: NAT drops are not logged' >&2\n", natDropGroup)
 	return b.String(), nil
