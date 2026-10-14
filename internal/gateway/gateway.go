@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/linuxuser586/gcpemu/internal/apidef"
@@ -96,7 +98,8 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 					resp, err = h(ctx, req)
 				}()
 			}
-			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err)
+			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err,
+				&reqlog.Bodies{Request: grpcBody(req), Response: grpcBody(resp)})
 			return resp, toGRPC(err)
 		}),
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
@@ -110,7 +113,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 			if err == nil {
 				err = h(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
 			}
-			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err)
+			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, err, nil)
 			return toGRPC(err)
 		}),
 	}
@@ -166,13 +169,27 @@ func (g *Gateway) grpcOwner(full string) string {
 	return g.grpcOwners[svc]
 }
 
-func (g *Gateway) logGRPC(ctx context.Context, ci *emu.CallInfo, service, method string, start time.Time, err error) {
+func (g *Gateway) logGRPC(ctx context.Context, ci *emu.CallInfo, service, method string, start time.Time, err error, bodies *reqlog.Bodies) {
 	code := status.Code(toGRPC(err))
 	g.log.Add(reqlog.Entry{
 		Time: start, Service: service, Protocol: "grpc", Method: method, Resource: ci.Resource(),
 		Principal: string(emu.PrincipalFrom(ctx)), Status: int(code),
-		Code: apierr.CodeName(code), LatencyMS: ms(time.Since(start)),
+		Code: apierr.CodeName(code), LatencyMS: ms(time.Since(start)), Bodies: bodies,
 	})
+}
+
+// grpcBody is a unary call's message for the Request log, as protojson
+// with its wire size; nil for no message.
+func grpcBody(m any) *reqlog.Body {
+	pm, ok := m.(proto.Message)
+	if !ok || pm == nil || !pm.ProtoReflect().IsValid() {
+		return nil
+	}
+	b, err := protojson.Marshal(pm)
+	if err != nil {
+		return nil
+	}
+	return reqlog.NewBody("application/json", b, int64(len(b)))
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
@@ -321,6 +338,10 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		var reqBody reqlog.Capture
+		if r.Body != nil && r.Body != http.NoBody {
+			r.Body = &teeBody{ReadCloser: r.Body, c: &reqBody}
+		}
 		ctx, ci := emu.WithCallInfo(r.Context())
 		ci.SetCall(service, r.Method+" "+r.URL.Path)
 		r = r.WithContext(ctx)
@@ -361,8 +382,24 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 			Time: start, Service: service, Protocol: "http",
 			Method: r.Method + " " + r.URL.Path, Resource: ci.Resource(), Principal: string(p),
 			Status: sw.status, LatencyMS: ms(time.Since(start)),
+			Bodies: &reqlog.Bodies{
+				Request:  reqBody.Body(r.Header.Get("Content-Type")),
+				Response: sw.body.Body(sw.Header().Get("Content-Type")),
+			},
 		})
 	})
+}
+
+// teeBody copies what the handler reads of a request body to c.
+type teeBody struct {
+	io.ReadCloser
+	c *reqlog.Capture
+}
+
+func (t *teeBody) Read(p []byte) (int, error) {
+	n, err := t.ReadCloser.Read(p)
+	_, _ = t.c.Write(p[:n])
+	return n, err
 }
 
 // injectHTTP applies a matching fault rule and reports whether the request
@@ -398,6 +435,7 @@ type statusWriter struct {
 	http.ResponseWriter
 	status int
 	wrote  bool
+	body   reqlog.Capture // what was written, for the Request log
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -409,7 +447,9 @@ func (w *statusWriter) WriteHeader(code int) {
 
 func (w *statusWriter) Write(b []byte) (int, error) {
 	w.wrote = true
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	_, _ = w.body.Write(b[:n])
+	return n, err
 }
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

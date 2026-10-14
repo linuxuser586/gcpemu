@@ -276,6 +276,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One request log entry with its request and response bodies (FR-UI-013).
+         * @description Entries listed by /_emu/v1/requests and sent on the event stream
+         *     leave out bodies; this returns them. Bodies are kept for API calls
+         *     through the gateway: an HTTP body as sent, a unary gRPC message as
+         *     protojson. Each keeps its first 16 KiB. 404 once the entry has
+         *     left the log.
+         */
+        get: operations["request"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/resources": {
         parameters: {
             query?: never;
@@ -885,6 +909,11 @@ export interface components {
             deleted?: boolean;
         };
         RequestEntry: {
+            /**
+             * Format: int64
+             * @description Numbers the entries of one Instance process from 1, in order.
+             */
+            id?: number;
             /** Format: date-time */
             time?: string;
             service?: string;
@@ -899,6 +928,25 @@ export interface components {
             latencyMs?: number;
             lb?: components["schemas"]["LbTrace"];
             nat?: components["schemas"]["NatTrace"];
+        };
+        RequestDetail: components["schemas"]["RequestEntry"] & {
+            requestBody?: components["schemas"]["RequestBody"];
+            responseBody?: components["schemas"]["RequestBody"];
+        };
+        /** @description The start of a request or response body. */
+        RequestBody: {
+            contentType?: string;
+            /**
+             * Format: int64
+             * @description The body's length in bytes.
+             */
+            size: number;
+            /** @description The first 16 KiB; absent when binary. */
+            text?: string;
+            /** @description Text is only the start of the body. */
+            truncated?: boolean;
+            /** @description The body is not UTF-8 text. */
+            binary?: boolean;
         };
         /** @description One connection the NAT egress proxy saw leave a VPC network (nat service; Web console Cloud NAT translation log): the entry's code is OK (translated), DROPPED (no Cloud NAT covers the source) or OFFLINE_SINK, and its resource the Cloud NAT gateway (projects/P/regions/R/routers/ROUTER/nats/NAT), or the network when no NAT covers the source. */
         NatTrace: {
@@ -1396,6 +1444,29 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestDetail"];
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
     resources: {

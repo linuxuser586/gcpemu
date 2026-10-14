@@ -24,7 +24,7 @@ import {
 } from './api'
 import { baseName, formatBytes, prefixCrumbs, time } from './format'
 import { browsePath, objectPath, useBucket } from './GcsLayout'
-import { VirtualRows } from './VirtualRows'
+import { VirtualRows } from '@/components/VirtualRows'
 
 export type Row = { kind: 'prefix'; prefix: string } | { kind: 'object'; object: StorageObject }
 

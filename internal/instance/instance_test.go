@@ -277,6 +277,87 @@ func TestRequestLogEntries(t *testing.T) {
 	}
 }
 
+// TestRequestBodies is FR-UI-013: an API call's request and response
+// bodies are kept with its Request log entry and read by its ID, but not
+// listed.
+func TestRequestBodies(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ephemeral = true
+	cfg.DataDir = t.TempDir()
+	cfg.Services = []string{"dns"}
+	cfg.Ports["gateway"] = 0
+	in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &echoSvc{} }}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := in.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer in.Shutdown(ctx)
+	base := "http://" + in.Env.Endpoints.Get("gateway")
+	resp, err := http.Post(base+"/dns/echo", "application/json", strings.NewReader(`{"name":"z"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	_, list := get("/_emu/v1/requests")
+	var listed struct {
+		Requests []map[string]any `json:"requests"`
+	}
+	if err := json.Unmarshal([]byte(list), &listed); err != nil || len(listed.Requests) != 1 {
+		t.Fatalf("requests = %s", list)
+	}
+	e := listed.Requests[0]
+	if e["id"] != 1.0 || e["requestBody"] != nil || e["responseBody"] != nil {
+		t.Errorf("listed entry = %v", e)
+	}
+	code, detail := get("/_emu/v1/requests/1")
+	var d struct {
+		Method       string
+		RequestBody  struct{ ContentType, Text string }
+		ResponseBody struct {
+			ContentType, Text string
+			Size              int64
+		}
+	}
+	if err := json.Unmarshal([]byte(detail), &d); err != nil || code != 200 {
+		t.Fatalf("detail: %d %s", code, detail)
+	}
+	if d.Method != "POST /echo" || d.RequestBody.Text != `{"name":"z"}` || d.RequestBody.ContentType != "application/json" ||
+		d.ResponseBody.Text != `{"echo":{"name":"z"}}` || d.ResponseBody.Size != 21 || d.ResponseBody.ContentType != "application/json" {
+		t.Errorf("detail = %s", detail)
+	}
+	for _, path := range []string{"/_emu/v1/requests/9", "/_emu/v1/requests/x"} {
+		if code, _ := get(path); code != 404 {
+			t.Errorf("%s: %d, want 404", path, code)
+		}
+	}
+}
+
+// echoSvc answers {"echo": BODY}.
+type echoSvc struct{ fakeSvc }
+
+func (e *echoSvc) Register(r emu.Router) error {
+	r.Mount("dns", nil, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		b, _ := io.ReadAll(req.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"echo":%s}`, b)
+	}))
+	return nil
+}
+
 // noteSvc checks one permission per request, as service modules do.
 type noteSvc struct{ fakeSvc }
 

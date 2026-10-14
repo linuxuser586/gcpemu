@@ -22,6 +22,7 @@ it('lists only enabled Services in the sidebar, carrying the view state', async 
   expect(links).toEqual([
     'Dashboard',
     'Operations',
+    'Request log',
     'Fault rules',
     'IAM & Resource Manager',
     'Pub/Sub',
