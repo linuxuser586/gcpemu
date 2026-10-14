@@ -102,7 +102,7 @@ func (s *store) open(e *entry) (io.ReadSeeker, func(), error) {
 	if body != nil || e.Size == 0 {
 		return bytes.NewReader(body), func() {}, nil
 	}
-	f, err := os.Open(filepath.Join(s.dir, file+".body"))
+	f, err := openBody(filepath.Join(s.dir, file+".body"))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -117,7 +117,7 @@ func (s *store) newBodyFile() (*os.File, error) {
 	if s.dir == "" {
 		return nil, fmt.Errorf("no disk tier")
 	}
-	return os.CreateTemp(s.dir, "fill-*.tmp")
+	return createSpill(s.dir)
 }
 
 // put inserts e (replacing any entry with the same ID) with its body given
