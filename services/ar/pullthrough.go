@@ -547,7 +547,7 @@ func (f *blobFetch) run(ctx context.Context, up upstreamRef) {
 		return
 	}
 	defer resp.Body.Close()
-	file, err := os.CreateTemp(filepath.Join(s.blobs.dir, "tmp"), "fetch-")
+	file, err := createFetchTemp(filepath.Join(s.blobs.dir, "tmp"))
 	if err != nil {
 		finish(err)
 		return
