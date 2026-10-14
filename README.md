@@ -60,8 +60,10 @@ and the public GCP APIs are governed by IAM as usual.
 ### Web console
 
 The API gateway serves the Web console at `http://127.0.0.1:4510/console/`; `gcpemu console`
-opens it. It calls only the public APIs and the admin API, as the default principal, and
-works offline. `--console=false` turns it off; under `CI=true` it is off unless `--console`
+opens it. It calls only the public APIs and the admin API, and works offline. It acts as
+the default principal until you pick another user or service account in the header's
+principal switcher, so the views show what IAM allows that principal (try it with
+`--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` it is off unless `--console`
 is passed. `make build` builds it when
 `pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
 It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gateway

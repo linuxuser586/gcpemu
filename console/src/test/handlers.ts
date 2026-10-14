@@ -171,6 +171,16 @@ export const handlers = [
   http.get('*/cloudresourcemanager/v3/projects\\:search', () =>
     HttpResponse.json({ projects: fake.projects }),
   ),
+  // The OAuth2 token endpoint names the token after the Principal.
+  http.post('*/oauth2/token', async ({ request }) => {
+    const form = new URLSearchParams(await request.text())
+    return HttpResponse.json({
+      access_token: `tok-${form.get('refresh_token')}`,
+      expires_in: 3600,
+      token_type: 'Bearer',
+    })
+  }),
+  http.get('*/iam/v1/projects/:project/serviceAccounts', () => HttpResponse.json({})),
   // The Cloud Storage view lists buckets on /gcs; tests of it add their own.
   http.get('*/storage/v1/b', () => HttpResponse.json({})),
 ]

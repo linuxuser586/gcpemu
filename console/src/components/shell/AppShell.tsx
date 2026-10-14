@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useApplyTheme } from '@/lib/theme'
 import { usePrefs } from '@/stores/prefs'
 
+import { PrincipalSwitcher } from './PrincipalSwitcher'
 import { ProjectSwitcher } from './ProjectSwitcher'
 import { Sidebar } from './Sidebar'
 import { ThemeToggle } from './ThemeToggle'
@@ -47,7 +48,8 @@ export function AppShell() {
         <div className="ml-4">
           <ProjectSwitcher />
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <PrincipalSwitcher />
           <ThemeToggle />
         </div>
       </header>
