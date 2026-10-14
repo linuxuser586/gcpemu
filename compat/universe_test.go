@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -255,6 +256,37 @@ func testUniverse(t *testing.T, e *emulator) {
 			out, escaped, _ := e.exec(append(env, e.guard.Env()...), bin, project)
 			if !slices.Equal(escaped, []string{c.want}) {
 				t.Errorf("%s: the Escape guard refused %v, want [%s]; the probe said: %s", c.name, escaped, c.want, out)
+			}
+		}
+	})
+
+	// #246: unlike Go, google-gax builds the mTLS host by replacing
+	// googleapis.com in a service path made from the universe, so in the
+	// Invalid universe "always" changes nothing and the client stays on
+	// the unresolvable host.
+	t.Run("node-mtls", func(t *testing.T) {
+		node, modules := nodeLibs(t)
+		key := emulatorKey(t, e, "universe-node-mtls")
+		for _, c := range []struct {
+			name    string
+			set     map[string]string
+			want    string   // in the probe's error
+			refused []string // by the Escape guard
+		}{
+			{"gcpemu-env", nil, "", []string{noOverride}},
+			{"always", map[string]string{"GOOGLE_API_USE_MTLS_ENDPOINT": "always"}, "", []string{noOverride}},
+			// gax refuses before it dials.
+			{"client-certificate", map[string]string{"GOOGLE_API_USE_CLIENT_CERTIFICATE": "true"}, "mTLS is not supported outside of googleapis.com universe domain", nil},
+		} {
+			set := map[string]string{"GOOGLE_APPLICATION_CREDENTIALS": key, "NODE_PATH": modules}
+			maps.Copy(set, c.set)
+			env := withEnv(e.env, set, "PUBSUB_EMULATOR_HOST", "CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB")
+			out, escaped, _ := e.exec(append(env, e.guard.Env()...), node, "sdk/universemtls.js", project, c.name)
+			if !slices.Equal(escaped, c.refused) {
+				t.Errorf("%s: the Escape guard refused %v, want %v; the probe said: %s", c.name, escaped, c.refused, out)
+			}
+			if !strings.Contains(out, "pubsub-no-override ERR") || !strings.Contains(out, c.want) {
+				t.Errorf("%s: want an error containing %q, the probe said: %s", c.name, c.want, out)
 			}
 		}
 	})

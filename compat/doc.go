@@ -22,7 +22,8 @@
 // either is missing or the install fails. The Python probes run behind the
 // Escape guard. The go-mtls subtest (#243) builds the Go probe in
 // sdk/universego and runs it behind the Escape guard, which names the host
-// it dialed.
+// it dialed. The node-mtls subtest (#246) does the same with
+// sdk/universemtls.js.
 //
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with

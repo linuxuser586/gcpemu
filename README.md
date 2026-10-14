@@ -440,9 +440,11 @@ and Node Cloud Storage clients ignore the variable, so they still need `STORAGE_
 `gcpemu env` also sets `GOOGLE_API_USE_MTLS_ENDPOINT=never`, which `--no-universe` keeps. In
 `always` mode, or when a client certificate is found, a Go client dials a hard-coded
 `<api>.mtls.googleapis.com`, which the universe does not change. If you set
-`GOOGLE_API_USE_MTLS_ENDPOINT=always` after `eval "$(gcpemu env)"`, an API with no endpoint
-override reaches Google. The Python client libraries refuse mTLS outside Google's universe, so
-they fail instead.
+`GOOGLE_API_USE_MTLS_ENDPOINT=always` after `eval "$(gcpemu env)"`, a Go client for an API with no
+endpoint override reaches Google. The Python client libraries refuse mTLS outside Google's
+universe, so they fail instead. The Node client libraries build the mTLS host from the universe,
+so in `always` mode they stay on the unresolvable `<api>.gcpemu.invalid`, and with
+`GOOGLE_API_USE_CLIENT_CERTIFICATE=true` they refuse mTLS outside Google's universe.
 
 Service-account keys the emulator issues say `"universe_domain": "gcpemu.invalid"`. A Go client
 that loads one needs `GOOGLE_CLOUD_UNIVERSE_DOMAIN=gcpemu.invalid`, even outside a `gcpemu env`
