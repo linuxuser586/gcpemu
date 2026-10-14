@@ -37,7 +37,7 @@ type emulator struct {
 func start(t *testing.T) *emulator {
 	t.Helper()
 	tmp := t.TempDir()
-	e := &emulator{bin: filepath.Join(tmp, "gcpemu"), dir: filepath.Join(tmp, "data"), guard: escapeguard.New(t)}
+	e := &emulator{bin: filepath.Join(tmp, exe("gcpemu")), dir: filepath.Join(tmp, "data"), guard: escapeguard.New(t)}
 	build := exec.Command("go", "build", "-o", e.bin, "../cmd/gcpemu")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -138,7 +138,8 @@ func (e *emulator) try(t *testing.T, bin string, args ...string) (string, error)
 func (e *emulator) exec(env []string, bin string, args ...string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	b := filepath.Base(bin)
+	// Without the extension Windows gives them: gcloud.cmd, python.exe.
+	b := strings.TrimSuffix(filepath.Base(bin), filepath.Ext(bin))
 	if b == "gcloud" || b == "python" {
 		env = append(slices.Clip(env), e.guard.Env()...)
 	}
@@ -157,6 +158,18 @@ func contains(t *testing.T, what, out, want string) {
 	if !strings.Contains(out, want) {
 		t.Fatalf("%s: %q not in output:\n%s", what, want, out)
 	}
+}
+
+// longTempDir returns t.TempDir() without 8.3 short names (RUNNER~1 on
+// GitHub's Windows runners): under Python 3.12, gcloud storage cp
+// matches no file for a short-name path.
+func longTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
 
 func freePort(t *testing.T) int {
@@ -207,7 +220,8 @@ func TestClients(t *testing.T) {
 
 	t.Run("gcloud/storage", func(t *testing.T) {
 		g := gcloud(t)
-		f := filepath.Join(t.TempDir(), "hello.txt")
+		dir := longTempDir(t)
+		f := filepath.Join(dir, "hello.txt")
 		_ = os.WriteFile(f, []byte("hello compat\n"), 0o644)
 		// --location is required outside Google's universe.
 		e.run(t, g, "storage", "buckets", "create", "gs://compat-bucket", "--location=us-central1")
@@ -215,7 +229,7 @@ func TestClients(t *testing.T) {
 		contains(t, "storage ls", e.run(t, g, "storage", "ls", "gs://compat-bucket/dir/"), "gs://compat-bucket/dir/hello.txt")
 		contains(t, "storage cat", e.run(t, g, "storage", "cat", "gs://compat-bucket/dir/hello.txt"), "hello compat")
 		contains(t, "objects describe", e.run(t, g, "storage", "objects", "describe", "gs://compat-bucket/dir/hello.txt", "--format=value(size)"), "13")
-		dst := filepath.Join(t.TempDir(), "back.txt")
+		dst := filepath.Join(dir, "back.txt")
 		e.run(t, g, "storage", "cp", "gs://compat-bucket/dir/hello.txt", dst)
 		if b, _ := os.ReadFile(dst); string(b) != "hello compat\n" {
 			t.Fatalf("downloaded %q", b)
@@ -367,7 +381,12 @@ func TestClients(t *testing.T) {
 			t.Fatalf("ko image index: %+v %v", idx, err)
 		}
 
-		// Docker: login with the gcloud token, push, pull.
+		// Docker: login with the gcloud token, push, pull. On native
+		// Windows the daemon is in the WSL2 VM, where the registry's
+		// loopback address is not the host's.
+		if err := emuruntime.Unusable(); err != nil {
+			t.Skipf("docker: %v", err)
+		}
 		docker := onPath(t, "docker")
 		dl := exec.Command(docker, "login", "-u", "oauth2accesstoken", "--password-stdin", reg)
 		dl.Env, dl.Stdin = e.env, strings.NewReader(tok)

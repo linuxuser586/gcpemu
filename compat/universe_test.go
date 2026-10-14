@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -40,9 +41,13 @@ func pinDir(t *testing.T, kind string, pins []string) string {
 // creating the virtual environment once, or skips the test.
 func pythonLibs(t *testing.T) string {
 	t.Helper()
-	py := onPath(t, "python3")
+	py, bin := "python3", filepath.Join("bin", "python")
+	if goruntime.GOOS == "windows" {
+		py, bin = "python", filepath.Join("Scripts", "python.exe")
+	}
+	py = onPath(t, py)
 	dir := pinDir(t, "python", pythonPins)
-	bin := filepath.Join(dir, "bin", "python")
+	bin = filepath.Join(dir, bin)
 	if _, err := os.Stat(filepath.Join(dir, ".done")); err == nil {
 		return bin
 	}
@@ -240,7 +245,7 @@ func testUniverse(t *testing.T, e *emulator) {
 		if got := e.vars["GOOGLE_API_USE_MTLS_ENDPOINT"]; got != "never" {
 			t.Fatalf("gcpemu env: GOOGLE_API_USE_MTLS_ENDPOINT=%q, want never", got)
 		}
-		bin := filepath.Join(t.TempDir(), "universego")
+		bin := filepath.Join(t.TempDir(), exe("universego"))
 		if out, err := exec.Command("go", "build", "-tags", "compat", "-o", bin, "./sdk/universego").CombinedOutput(); err != nil {
 			t.Fatalf("go build: %v\n%s", err, out)
 		}
