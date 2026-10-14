@@ -2,6 +2,7 @@ package cdn
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1003,5 +1004,31 @@ func TestStaleOnLargeError(t *testing.T) {
 	}
 	if w, st := do(c, b, o, get("http://h/x")); st != StatusHit || w.Body.String() != "good" {
 		t.Fatalf("%s %q", st, w.Body.String())
+	}
+}
+
+func TestEvictWhileReading(t *testing.T) {
+	dir := t.TempDir()
+	c, _ := newCache(t, dir, 0)
+	body := strings.Repeat("R", memObjectMax+10)
+	o := &origin{serve: static(200, body, "Content-Type", "image/png", "Cache-Control", "max-age=3600")}
+	do(c, svc(""), o, get("http://h/r"))
+	e := c.st.lru.Front().Value.(*entry)
+	if e.File == "" || e.body != nil {
+		t.Fatal("entry not on disk only")
+	}
+	rd, closeFn, err := c.st.open(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Invalidating removes the files while the reader holds the body open.
+	c.Invalidate(nil, "", "/*", nil)
+	b, err := io.ReadAll(rd)
+	closeFn()
+	if err != nil || string(b) != body {
+		t.Fatalf("read after evict: %v len %d", err, len(b))
+	}
+	if des, _ := os.ReadDir(dir); len(des) != 0 {
+		t.Errorf("files left after evict: %d", len(des))
 	}
 }
