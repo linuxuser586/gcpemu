@@ -2,8 +2,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { admin, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
-import { toApiError } from '@/api/errors'
-import { gcpFetch, origin, send } from '@/api/fetch'
+import { gcpFetch } from '@/api/fetch'
 
 // The IAM view's reads and writes: service accounts, keys and roles
 // through iam/v1 REST, policies through each resource's own API, the
@@ -99,8 +98,7 @@ export const PERMISSION = /^[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$/
 export const MEMBER =
   /^(allUsers|allAuthenticatedUsers|(user|serviceAccount|group|domain|projectOwner|projectEditor|projectViewer|principal|principalSet):.+|deleted:(user|serviceAccount|group):.+)$/
 
-/** PRINCIPAL is what the policy simulator can act as: a user or a service account. */
-export const PRINCIPAL = /^(user|serviceAccount):[^\s@]+@[^\s@]+$/
+export { PRINCIPAL } from '@/api/tokens'
 
 // ---- IAM enforcement level (admin API) ----
 
@@ -641,42 +639,4 @@ export async function testPermissions(
 
 // ---- tokens for the policy simulator ----
 
-/**
- * mintToken gets an access token for principal from the Instance's OAuth2
- * token endpoint, through the refresh token grant that user ADC uses: the
- * emulator takes "user:EMAIL" or "serviceAccount:EMAIL" as the refresh
- * token and issues a token for that Principal.
- */
-export async function mintToken(principal: string): Promise<string> {
-  const res = await send(
-    new Request(new URL('/oauth2/token', origin()), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: principal }),
-      credentials: 'omit',
-    }),
-  )
-  const body = (await res.json().catch(() => ({}))) as {
-    access_token?: string
-    error?: string
-    error_description?: string
-  }
-  if (!res.ok || !body.access_token) {
-    throw toApiError(res.status, {
-      error: { message: body.error_description ?? body.error ?? `HTTP ${res.status}` },
-    })
-  }
-  return body.access_token
-}
-
-/** revokeToken revokes a token the simulator no longer needs. */
-export async function revokeToken(token: string): Promise<void> {
-  await send(
-    new Request(new URL('/oauth2/revoke', origin()), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token }),
-      credentials: 'omit',
-    }),
-  ).catch(() => undefined)
-}
+export { mintToken, revokeToken } from '@/api/tokens'

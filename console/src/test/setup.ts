@@ -4,6 +4,9 @@ import { cleanup, configure } from '@testing-library/react'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 
+import { clearTokens } from '@/api/tokens'
+import { usePrefs } from '@/stores/prefs'
+
 import { handlers, resetFake } from './handlers'
 
 // The default 1 s for findBy* is tight on a loaded CI runner.
@@ -17,6 +20,8 @@ afterEach(() => {
   server.resetHandlers()
   resetFake()
   localStorage.clear()
+  usePrefs.setState({ principal: '' })
+  clearTokens()
 })
 afterAll(() => server.close())
 

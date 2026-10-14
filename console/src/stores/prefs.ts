@@ -10,8 +10,14 @@ export type ThemePref = 'system' | 'light' | 'dark'
 interface Prefs {
   theme: ThemePref
   sidebarCollapsed: boolean
+  /**
+   * principal is who the console acts as, "user:EMAIL" or
+   * "serviceAccount:EMAIL", or '' for the Default principal (FR-UI-004).
+   */
+  principal: string
   setTheme: (theme: ThemePref) => void
   toggleSidebar: () => void
+  setPrincipal: (principal: string) => void
 }
 
 export const usePrefs = create<Prefs>()(
@@ -19,13 +25,19 @@ export const usePrefs = create<Prefs>()(
     (set) => ({
       theme: 'system',
       sidebarCollapsed: false,
+      principal: '',
       setTheme: (theme) => set({ theme }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      setPrincipal: (principal) => set({ principal }),
     }),
     {
       name: 'gcpemu-console-prefs',
       storage: createJSONStorage(() => localStorage),
-      partialize: ({ theme, sidebarCollapsed }) => ({ theme, sidebarCollapsed }),
+      partialize: ({ theme, sidebarCollapsed, principal }) => ({
+        theme,
+        sidebarCollapsed,
+        principal,
+      }),
     },
   ),
 )

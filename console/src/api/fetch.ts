@@ -1,7 +1,12 @@
-import { networkError, toApiError } from './errors'
+import { usePrefs } from '@/stores/prefs'
 
-// Requests carry no credentials, so the gateway attributes them to the
-// Instance's Default principal (FR-UI-004).
+import { networkError, toApiError } from './errors'
+import { forgetToken, tokenFor } from './tokens'
+
+// Public API requests act as the Principal chosen in the Principal
+// switcher, carrying an access token for it. With none chosen they carry
+// no credentials, so the gateway attributes them to the Instance's
+// Default principal (FR-UI-004).
 
 /** origin is where the console was served from: the API gateway. */
 export const origin = () => globalThis.location.origin
@@ -15,6 +20,34 @@ export async function send(input: Request): Promise<Response> {
   }
 }
 
+export interface GcpInit extends RequestInit {
+  /**
+   * principal overrides the switcher's Principal for this request; ''
+   * sends no credentials, so the request runs as the Default principal.
+   */
+  principal?: string
+}
+
+/**
+ * sendAs sends a public API request as the chosen Principal. A request
+ * that sets its own Authorization header keeps it. When the gateway
+ * refuses a cached token (the Emulator clock moved past it, or a Reset
+ * dropped it), it mints a fresh one and tries once more.
+ */
+export async function sendAs(path: string, init: GcpInit = {}): Promise<Response> {
+  const { principal = usePrefs.getState().principal, ...rest } = init
+  const headers = new Headers(rest.headers)
+  const url = new URL(path, origin())
+  const go = () => send(new Request(url, { ...rest, headers, credentials: 'omit' }))
+  if (!principal || headers.has('Authorization')) return go()
+  headers.set('Authorization', `Bearer ${await tokenFor(principal)}`)
+  const res = await go()
+  if (res.status !== 401) return res
+  forgetToken(principal)
+  headers.set('Authorization', `Bearer ${await tokenFor(principal)}`)
+  return go()
+}
+
 async function readBody(res: Response): Promise<unknown> {
   const text = await res.text()
   if (!text) return undefined
@@ -26,12 +59,10 @@ async function readBody(res: Response): Promise<unknown> {
 }
 
 /** gcpFetch calls a public GCP API on the gateway, e.g. "/storage/v1/b". */
-export async function gcpFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function gcpFetch<T>(path: string, init?: GcpInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (init?.body !== undefined) headers.set('Content-Type', 'application/json')
-  const res = await send(
-    new Request(new URL(path, origin()), { ...init, headers, credentials: 'omit' }),
-  )
+  const res = await sendAs(path, { ...init, headers })
   const body = await readBody(res)
   if (!res.ok) throw toApiError(res.status, body)
   return body as T
@@ -42,7 +73,7 @@ export async function gcpFetch<T>(path: string, init?: RequestInit): Promise<T> 
  * log through the Connect gateway.
  */
 export async function gcpText(path: string): Promise<string> {
-  const res = await send(new Request(new URL(path, origin()), { credentials: 'omit' }))
+  const res = await sendAs(path)
   if (!res.ok) throw toApiError(res.status, await readBody(res))
   return res.text()
 }

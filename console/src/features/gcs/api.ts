@@ -1,7 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 
 import { toApiError } from '@/api/errors'
-import { gcpFetch, origin, send } from '@/api/fetch'
+import { gcpFetch, sendAs } from '@/api/fetch'
 
 // The Cloud Storage view's reads and writes, all through the JSON API
 // (storage/v1), plus IAM Credentials signBlob for V4 signed URLs
@@ -238,19 +238,16 @@ export function downloadUrl(bucket: string, name: string, generation?: string) {
 }
 
 /**
- * uploadObject creates an object from a file with a media upload. It
- * sends no credentials, like every console request (FR-UI-004).
+ * uploadObject creates an object from a file with a media upload, as the
+ * chosen Principal like every console request (FR-UI-004).
  */
 export async function uploadObject(bucket: string, name: string, file: Blob) {
   const q = new URLSearchParams({ uploadType: 'media', name })
-  const res = await send(
-    new Request(new URL(`/upload${bucketPath(bucket)}/o?${q}`, origin()), {
-      method: 'POST',
-      body: file,
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-      credentials: 'omit',
-    }),
-  )
+  const res = await sendAs(`/upload${bucketPath(bucket)}/o?${q}`, {
+    method: 'POST',
+    body: file,
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+  })
   const text = await res.text()
   let body: unknown = text
   try {
