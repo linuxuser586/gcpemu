@@ -159,6 +159,35 @@ func TestCredentialsREST(t *testing.T) {
 	}
 }
 
+// TestAllowedLocations covers the Regional Access Boundary lookup that
+// Python google-auth sends for service accounts and identity pools (#244):
+// every one answers with Google's "no boundary".
+func TestAllowedLocations(t *testing.T) {
+	inst := startIAM(t)
+	base := inst.GatewayURL() + "/iamcredentials/v1/"
+	for _, p := range []string{
+		"projects/-/serviceAccounts/sa@test-project.iam.gserviceaccount.com/allowedLocations",
+		"locations/global/workforcePools/pool/allowedLocations",
+		"projects/123/locations/global/workloadIdentityPools/pool/allowedLocations",
+	} {
+		got := fetchJSON[struct {
+			Locations        []string
+			EncodedLocations string
+		}](t, base+p)
+		if got.Locations == nil || len(got.Locations) != 0 || got.EncodedLocations != "0x0" {
+			t.Errorf("%s: %+v", p, got)
+		}
+	}
+	resp, err := http.Post(base+"projects/-/serviceAccounts/sa@test-project.iam.gserviceaccount.com/allowedLocations", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("POST allowedLocations: %s, want 404", resp.Status)
+	}
+}
+
 // grant adds a binding to a service account's policy.
 func grant(t *testing.T, c *iamv1.Service, sa *iamv1.ServiceAccount, role, member string) {
 	t.Helper()

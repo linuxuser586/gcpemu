@@ -52,7 +52,7 @@ A request that a client configured against an Instance still sends to a real Goo
 _Avoid_: leak, outbound call
 
 **Invalid universe**:
-The universe domain `gcpemu.invalid` that the emulator gives clients, so that an API with no Endpoint override goes to a host that can never resolve and fails loudly instead of becoming an Escaped request. It does not reach hosts a client hard-codes outside any universe, such as mTLS endpoints. Service-account keys the emulator issues belong to it, and gcloud refuses credentials stored for real Google.
+The universe domain `gcpemu.invalid` that the emulator gives clients, so that an API with no Endpoint override goes to a host that can never resolve and fails loudly instead of becoming an Escaped request. It does not reach hosts a client hard-codes outside any universe, such as mTLS endpoints. Service-account keys the emulator issues and the metadata server that host processes use belong to it, and gcloud refuses credentials stored for real Google.
 _Avoid_: fake universe, emulator universe
 
 **API gateway**:

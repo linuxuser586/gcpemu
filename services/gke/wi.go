@@ -82,6 +82,8 @@ func (s *Service) serveMetadata(w http.ResponseWriter, r *http.Request, key, nod
 			"cluster-location": c.Location,
 			"cluster-uid":      c.Id,
 		},
+		// Pods reach real hostnames through the Google front end.
+		Universe: iam.GoogleUniverse,
 	}
 	// Rewrite the request onto the metadata handler's path space.
 	r2 := r.Clone(r.Context())
