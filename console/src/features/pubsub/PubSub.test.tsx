@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
@@ -9,6 +9,7 @@ import { server } from '@/test/setup'
 
 import { decodePayload, encodePayload } from '../secrets/api'
 import type { ReceivedMessage, Subscription, SubscriptionStats, Topic } from './api'
+import { subscriptionRecipe, topicRecipe } from './copy'
 import { formatAge } from './format'
 import { editValues, patchBody } from './SubscriptionForm'
 
@@ -449,6 +450,107 @@ it('shows the configuration and deletes a subscription', async () => {
   )
   await waitFor(() => expect(router.state.location.pathname).toBe('/pubsub/subscriptions'))
   expect(sent('DELETE', /subscriptions\/orders-worker$/)).toHaveLength(1)
+})
+
+it('copies a subscription as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  const write = vi.spyOn(navigator.clipboard, 'writeText')
+  renderApp(`/pubsub/subscriptions/orders-worker?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy subscription as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy subscription as' })
+  const gcloud = [
+    'gcloud pubsub subscriptions create orders-worker \\',
+    `    --project=${P} \\`,
+    `    --topic=${T('orders')} \\`,
+    '    --ack-deadline=30 \\',
+    '    --message-retention-duration=604800s \\',
+    '    --labels=tier=gold \\',
+    '    --expiration-period=2678400s \\',
+    `    --dead-letter-topic=${T('orders-dlq')} \\`,
+    '    --max-delivery-attempts=5',
+  ].join('\n')
+  expect(within(dialog).getByLabelText('gcloud for the subscription')).toHaveTextContent(gcloud, {
+    normalizeWhitespace: false,
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Copy' }))
+  expect(write).toHaveBeenCalledWith(gcloud)
+  expect(await within(dialog).findByRole('button', { name: 'Copied' })).toBeInTheDocument()
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the subscription')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/pubsub/v1/${S('orders-worker')} \\ -X PUT`,
+  )
+  expect(curl).toHaveTextContent('"maxDeliveryAttempts": 5')
+  expect(curl).not.toHaveTextContent('"name"')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the subscription')
+  expect(tofu).toHaveTextContent('resource "google_pubsub_subscription" "orders-worker" {')
+  expect(tofu).toHaveTextContent(`topic = "${T('orders')}"`)
+  expect(tofu).toHaveTextContent('dead_letter_policy { dead_letter_topic')
+  // A pull subscription has an empty pushConfig: no push_config block.
+  expect(tofu).not.toHaveTextContent('push_config')
+
+  // The form chosen last is the one the next resource opens on.
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByRole('button', { name: 'Copy subscription as' }))
+  expect(await screen.findByRole('tab', { name: 'OpenTofu' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+})
+
+it('copies a push subscription with its OIDC token', () => {
+  const r = subscriptionRecipe({
+    name: S('p'),
+    topic: T('orders'),
+    pushConfig: {
+      pushEndpoint: 'https://example.com/push',
+      oidcToken: { serviceAccountEmail: 'sa@p.iam.gserviceaccount.com' },
+      noWrapper: { writeMetadata: true },
+    },
+    expirationPolicy: {},
+  })
+  expect(r.gcloud).toContain('--expiration-period=never')
+  expect(r.gcloud).toContain('--push-auth-service-account=sa@p.iam.gserviceaccount.com')
+  expect(r.gcloud).toContain('--push-no-wrapper \\\n    --push-no-wrapper-write-metadata')
+  expect(r.tofu).toContain(
+    [
+      '  expiration_policy {',
+      '    ttl = ""',
+      '  }',
+      '  push_config {',
+      '    push_endpoint = "https://example.com/push"',
+      '    oidc_token {',
+      '      service_account_email = "sa@p.iam.gserviceaccount.com"',
+      '    }',
+      '    no_wrapper {',
+      '      write_metadata = true',
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
+})
+
+it('copies a topic with its schema', () => {
+  const r = topicRecipe({
+    name: T('t'),
+    schemaSettings: { schema: `projects/${P}/schemas/s`, encoding: 'JSON' },
+  })
+  expect(r.gcloud).toBe(
+    [
+      'gcloud pubsub topics create t \\',
+      `    --project=${P} \\`,
+      `    --schema=projects/${P}/schemas/s \\`,
+      '    --message-encoding=json',
+    ].join('\n'),
+  )
+  expect(r.rest).toEqual({
+    method: 'PUT',
+    path: `/pubsub/v1/${T('t')}`,
+    body: { schemaSettings: { schema: `projects/${P}/schemas/s`, encoding: 'JSON' } },
+  })
 })
 
 it('builds subscription patch bodies per field', () => {

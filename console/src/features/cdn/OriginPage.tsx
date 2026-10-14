@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono, type DetailRow } from '@/components/resource/DetailList'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,6 +30,7 @@ import {
   text,
   type Resource,
 } from '../lb/api'
+import { recipeFor } from '../lb/copy'
 import { lbPath } from '../lb/LbLayout'
 import {
   bytes,
@@ -93,26 +95,31 @@ export function OriginPage() {
             <span className="font-mono">{ref.name}</span>
           </h1>
         </div>
-        {r && isOrigin(r) && (
+        {r && (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" asChild>
-              <Link to={originPath(ref, 'edit')}>
-                <Pencil aria-hidden />
-                Edit cache settings
-              </Link>
-            </Button>
-            <ConfirmDialog
-              trigger={
-                <Button variant="outline">
-                  <Power aria-hidden />
-                  Remove origin
+            <CopyAs what={kindName(ref.coll)} recipe={() => recipeFor(ref, r)} />
+            {isOrigin(r) && (
+              <>
+                <Button variant="outline" asChild>
+                  <Link to={originPath(ref, 'edit')}>
+                    <Pencil aria-hidden />
+                    Edit cache settings
+                  </Link>
                 </Button>
-              }
-              title={`Turn Cloud CDN off for ${ref.name}?`}
-              description={`The ${kindName(ref.coll)} keeps serving through the load balancer, uncached; its cache settings are kept. Its cached entries are no longer served.`}
-              confirmLabel="Remove origin"
-              onConfirm={() => remove.mutateAsync()}
-            />
+                <ConfirmDialog
+                  trigger={
+                    <Button variant="outline">
+                      <Power aria-hidden />
+                      Remove origin
+                    </Button>
+                  }
+                  title={`Turn Cloud CDN off for ${ref.name}?`}
+                  description={`The ${kindName(ref.coll)} keeps serving through the load balancer, uncached; its cache settings are kept. Its cached entries are no longer served.`}
+                  confirmLabel="Remove origin"
+                  onConfirm={() => remove.mutateAsync()}
+                />
+              </>
+            )}
           </div>
         )}
       </div>

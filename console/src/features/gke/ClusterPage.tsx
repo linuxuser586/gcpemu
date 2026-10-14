@@ -5,6 +5,7 @@ import { Outlet, useOutletContext } from 'react-router'
 import { Link, NavLink, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -12,6 +13,7 @@ import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 import { clusterQuery, deleteCluster, isRunning, type Cluster } from './api'
+import { clusterRecipe } from './copy'
 import { ClusterStatusBadge } from './format'
 import { clusterPath, useClusterRef } from './GkeLayout'
 import { buildKubeconfig, contextName, downloadText } from './kubeconfig'
@@ -79,6 +81,7 @@ export function ClusterPage() {
               <Download aria-hidden />
               Download kubeconfig
             </Button>
+            <CopyAs what="cluster" recipe={() => clusterRecipe(ref.project, c)} />
             <Button variant="outline" asChild>
               <Link to={`${base}/edit`}>
                 <Pencil aria-hidden />

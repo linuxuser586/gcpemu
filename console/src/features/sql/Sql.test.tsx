@@ -8,6 +8,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { BackupRun, Database, DatabaseInstance, ExecuteSqlResponse, User } from './api'
+import { databaseRecipe, instanceRecipe, userRecipe } from './copy'
 
 const P = 'alpha-project'
 const API = `*/sqladmin/v1/projects/${P}`
@@ -495,4 +496,192 @@ it('takes, restores and lists backups', async () => {
       restoreBackupContext: { backupRunId: '1700000000000', instanceId: 'main', project: P },
     },
   })
+})
+
+it('copies an instance as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`${base}?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy instance as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy instance as' })
+  const gcloud = [
+    'gcloud sql instances create main \\',
+    `    --project=${P} \\`,
+    '    --database-version=POSTGRES_17 \\',
+    '    --tier=db-custom-1-3840 \\',
+    '    --edition=enterprise \\',
+    '    --region=us-central1 \\',
+    '    --availability-type=zonal \\',
+    '    --storage-size=10GB \\',
+    '    --database-flags=work_mem=8192 \\',
+    '    --labels=team=db \\',
+    '    --ssl-mode=ALLOW_UNENCRYPTED_AND_ENCRYPTED \\',
+    '    --no-backup \\',
+    '    --data-api-access=ALLOW_DATA_API',
+  ].join('\n')
+  expect(within(dialog).getByLabelText('gcloud for the instance')).toHaveTextContent(gcloud, {
+    normalizeWhitespace: false,
+  })
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the instance')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/sqladmin/v1/projects/${P}/instances \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"tier": "db-custom-1-3840"')
+  expect(curl).not.toHaveTextContent('connectionName')
+  expect(curl).not.toHaveTextContent('"state"')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the instance')
+  expect(tofu).toHaveTextContent('resource "google_sql_database_instance" "main" {')
+  expect(tofu).toHaveTextContent('database_flags { name = "work_mem" value = "8192" }')
+})
+
+it('copies a database from its row', async () => {
+  const user = userEvent.setup()
+  renderApp(`${base}/databases?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy database postgres as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy database as' })
+  const gcloud = [
+    'gcloud sql databases create postgres \\',
+    `    --project=${P} \\`,
+    '    --instance=main \\',
+    '    --charset=UTF8 \\',
+    '    --collation=en_US.UTF8',
+  ].join('\n')
+  expect(within(dialog).getByLabelText('gcloud for the database')).toHaveTextContent(gcloud, {
+    normalizeWhitespace: false,
+  })
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  expect(within(dialog).getByLabelText('curl for the database')).toHaveTextContent(
+    `curl ${location.origin}/sqladmin/v1/projects/${P}/instances/main/databases \\ -X POST`,
+  )
+})
+
+it('copies a user from its row', async () => {
+  const user = userEvent.setup()
+  renderApp(`${base}/users?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy user postgres as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy user as' })
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  expect(within(dialog).getByLabelText('OpenTofu for the user')).toHaveTextContent(
+    'resource "google_sql_user" "postgres" {',
+  )
+})
+
+it('copies an instance’s private IP, networks and backups', () => {
+  const r = instanceRecipe(
+    instance({
+      settings: {
+        tier: 'db-perf-optimized-N-2',
+        edition: 'ENTERPRISE_PLUS',
+        activationPolicy: 'NEVER',
+        dataDiskType: 'PD_SSD',
+        deletionProtectionEnabled: true,
+        settingsVersion: '3',
+        ipConfiguration: {
+          ipv4Enabled: false,
+          privateNetwork: `projects/${P}/global/networks/vpc`,
+          authorizedNetworks: [
+            { name: 'office', value: '10.0.0.0/8' },
+            { value: '192.168.0.0/16' },
+          ],
+        },
+        backupConfiguration: { enabled: true, startTime: '03:00' },
+      },
+    }),
+  )
+  expect(r.gcloud).toBe(
+    [
+      'gcloud sql instances create main \\',
+      `    --project=${P} \\`,
+      '    --database-version=POSTGRES_17 \\',
+      '    --tier=db-perf-optimized-N-2 \\',
+      '    --edition=enterprise-plus \\',
+      '    --region=us-central1 \\',
+      '    --storage-type=SSD \\',
+      '    --activation-policy=never \\',
+      '    --no-assign-ip \\',
+      `    --network=projects/${P}/global/networks/vpc \\`,
+      '    --authorized-networks=10.0.0.0/8,192.168.0.0/16 \\',
+      '    --backup-start-time=03:00 \\',
+      '    --deletion-protection',
+    ].join('\n'),
+  )
+  expect(r.rest).toMatchObject({ method: 'POST', path: `/sqladmin/v1/projects/${P}/instances` })
+  const body = (r.rest as { body: DatabaseInstance }).body
+  expect(body.settings).not.toHaveProperty('settingsVersion')
+  expect(body).not.toHaveProperty('gceZone')
+  expect(r.tofu).toContain(
+    [
+      '  settings {',
+      '    tier                        = "db-perf-optimized-N-2"',
+      '    edition                     = "ENTERPRISE_PLUS"',
+      '    activation_policy           = "NEVER"',
+      '    disk_type                   = "PD_SSD"',
+      '    deletion_protection_enabled = true',
+      '    ip_configuration {',
+      '      ipv4_enabled    = false',
+      `      private_network = "projects/${P}/global/networks/vpc"`,
+      '      authorized_networks {',
+      '        name  = "office"',
+      '        value = "10.0.0.0/8"',
+      '      }',
+      '      authorized_networks {',
+      '        value = "192.168.0.0/16"',
+      '      }',
+      '    }',
+      '    backup_configuration {',
+      '      enabled    = true',
+      '      start_time = "03:00"',
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
+})
+
+it('copies users without a password, and IAM users with their type', () => {
+  const ref = { project: P, instance: 'main' }
+  const builtIn = userRecipe(ref, { name: 'alice', etag: 'e' })
+  expect(builtIn.gcloud).toBe(
+    [
+      '# The API does not return passwords: add one to log in with it.',
+      'gcloud sql users create alice \\',
+      `    --project=${P} \\`,
+      '    --instance=main',
+    ].join('\n'),
+  )
+  expect(builtIn.rest).toEqual({
+    method: 'POST',
+    path: `/sqladmin/v1/projects/${P}/instances/main/users`,
+    body: { name: 'alice' },
+  })
+  const iam = userRecipe(ref, { name: 'sa@p.iam', type: 'CLOUD_IAM_SERVICE_ACCOUNT' })
+  expect(iam.gcloud).toBe(
+    [
+      'gcloud sql users create sa@p.iam \\',
+      `    --project=${P} \\`,
+      '    --instance=main \\',
+      '    --type=cloud_iam_service_account',
+    ].join('\n'),
+  )
+  expect(iam.tofu).toBe(
+    [
+      'resource "google_sql_user" "sa_p_iam" {',
+      `  project  = "${P}"`,
+      '  name     = "sa@p.iam"',
+      '  instance = "main"',
+      '  type     = "CLOUD_IAM_SERVICE_ACCOUNT"',
+      '}',
+    ].join('\n'),
+  )
+  expect(databaseRecipe(ref, { name: 'app' }).tofu).toBe(
+    [
+      'resource "google_sql_database" "app" {',
+      `  project  = "${P}"`,
+      '  name     = "app"',
+      '  instance = "main"',
+      '}',
+    ].join('\n'),
+  )
 })

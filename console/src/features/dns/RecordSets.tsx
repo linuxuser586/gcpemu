@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -26,6 +27,7 @@ import {
   zoneNetworks,
   type ResourceRecordSet,
 } from './api'
+import { rrsetRecipe } from './copy'
 import { queryPath, rrsetPath, useZoneRef, zonePath } from './DnsLayout'
 import { useZone } from './ZonePage'
 
@@ -170,6 +172,12 @@ export function RecordSets() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
+                      <CopyAs
+                        what="record set"
+                        name={label}
+                        size="icon"
+                        recipe={() => rrsetRecipe(rs, ref)}
+                      />
                       <Button variant="ghost" size="icon" asChild>
                         <Link
                           to={queryPath(rs.name, rs.type, network)}

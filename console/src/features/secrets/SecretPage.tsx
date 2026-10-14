@@ -5,6 +5,7 @@ import { Outlet, useLocation, useOutletContext } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -13,6 +14,7 @@ import { cn } from '@/lib/utils'
 
 import { formatSeconds, time } from '../gcs/format'
 import { deleteSecret, rotateSecret, seconds, secretQuery, versionId, type Secret } from './api'
+import { secretRecipe } from './copy'
 import { replicationLabel } from './Secrets'
 import { ChooseProject, listPath, locationLabel, secretPath, useSecretRef } from './SecretsLayout'
 
@@ -71,6 +73,7 @@ export function SecretPage() {
         </div>
         {s && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="secret" recipe={() => secretRecipe(s, ref.project)} />
             {isManaged(s) && s.rotation?.managedRotationStatus && (
               <Button variant="outline" disabled={rotate.isPending} onClick={() => rotate.mutate()}>
                 <RefreshCw aria-hidden />

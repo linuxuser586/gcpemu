@@ -8,6 +8,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { DockerImage, Repository } from './api'
+import { repositoryRecipe } from './copy'
 import { imageDigests } from './ImagePage'
 import { patchBody, updateMask } from './RepositoryForm'
 
@@ -452,4 +453,120 @@ it('nests an index’s manifests under it unless they are tagged', () => {
   expect(top.map((i) => i.name.slice(-1))).toEqual(['1'])
   images[1]!.tags = ['amd64']
   expect(imageDigests(images, 'app').top).toHaveLength(2)
+})
+
+it('copies a repository as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`/ar/locations/us-central1/repositories/images?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy repository as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy repository as' })
+  expect(within(dialog).getByLabelText('gcloud for the repository')).toHaveTextContent(
+    [
+      'gcloud artifacts repositories create images \\',
+      `    --project=${P} \\`,
+      '    --location=us-central1 \\',
+      '    --repository-format=docker \\',
+      "    --description='App images' \\",
+      '    --labels=team=web',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the repository')
+  expect(curl).toHaveTextContent(
+    `curl '${location.origin}/artifactregistry/v1/${US}/repositories?repositoryId=images' \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"format": "DOCKER"')
+  expect(curl).not.toHaveTextContent('registryUri')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the repository')
+  expect(tofu).toHaveTextContent('resource "google_artifact_registry_repository" "images" {')
+  expect(tofu).toHaveTextContent('repository_id = "images"')
+})
+
+it('copies remote and virtual repositories with cleanup policies', () => {
+  const hub = repositoryRecipe({
+    name: `projects/${P}/locations/europe-west1/repositories/hub`,
+    format: 'DOCKER',
+    mode: 'REMOTE_REPOSITORY',
+    remoteRepositoryConfig: {
+      description: 'Docker Hub',
+      dockerRepository: { publicRepository: 'DOCKER_HUB' },
+    },
+    cleanupPolicyDryRun: true,
+    cleanupPolicies: {
+      'keep-recent': { id: 'keep-recent', action: 'KEEP', mostRecentVersions: { keepCount: 5 } },
+    },
+  })
+  expect(hub.gcloud).toBe(
+    [
+      'gcloud artifacts repositories create hub \\',
+      `    --project=${P} \\`,
+      '    --location=europe-west1 \\',
+      '    --repository-format=docker \\',
+      '    --mode=remote-repository \\',
+      "    --remote-repo-config-desc='Docker Hub' \\",
+      '    --remote-docker-repo=DOCKER-HUB',
+    ].join('\n'),
+  )
+  expect(hub.tofu).toBe(
+    [
+      'resource "google_artifact_registry_repository" "hub" {',
+      `  project                = "${P}"`,
+      '  location               = "europe-west1"',
+      '  repository_id          = "hub"',
+      '  format                 = "DOCKER"',
+      '  mode                   = "REMOTE_REPOSITORY"',
+      '  cleanup_policy_dry_run = true',
+      '  cleanup_policies {',
+      '    id     = "keep-recent"',
+      '    action = "KEEP"',
+      '    most_recent_versions {',
+      '      keep_count = 5',
+      '    }',
+      '  }',
+      '  remote_repository_config {',
+      '    description = "Docker Hub"',
+      '    docker_repository {',
+      '      public_repository = "DOCKER_HUB"',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n'),
+  )
+
+  const virtual = repositoryRecipe({
+    name: `${US}/repositories/all`,
+    format: 'DOCKER',
+    mode: 'VIRTUAL_REPOSITORY',
+    virtualRepositoryConfig: {
+      upstreamPolicies: [{ id: 'images', repository: REPO, priority: 100 }],
+    },
+    createTime: '2026-10-01T10:00:00Z',
+  })
+  expect(virtual.gcloud).toContain('--mode=virtual-repository')
+  expect(virtual.rest).toEqual({
+    method: 'POST',
+    path: `/artifactregistry/v1/${US}/repositories?repositoryId=all`,
+    body: {
+      format: 'DOCKER',
+      mode: 'VIRTUAL_REPOSITORY',
+      virtualRepositoryConfig: {
+        upstreamPolicies: [{ id: 'images', repository: REPO, priority: 100 }],
+      },
+    },
+  })
+  expect(virtual.tofu).toContain(
+    [
+      '  virtual_repository_config {',
+      '    upstream_policies {',
+      '      id         = "images"',
+      `      repository = "${REPO}"`,
+      '      priority   = 100',
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
 })

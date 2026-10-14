@@ -20,7 +20,7 @@ afterEach(() => {
   server.resetHandlers()
   resetFake()
   localStorage.clear()
-  usePrefs.setState({ principal: '' })
+  usePrefs.setState({ principal: '', copyForm: 'gcloud' })
   clearTokens()
 })
 afterAll(() => server.close())

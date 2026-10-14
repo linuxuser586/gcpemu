@@ -8,6 +8,7 @@ import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { Resource } from '../lb/api'
+import { recipeFor } from '../lb/copy'
 import type { CdnBackend, CdnEntry } from './api'
 
 const P = 'alpha-project'
@@ -356,4 +357,77 @@ it('removes an origin by turning Cloud CDN off', async () => {
       body: { enableCdn: false, fingerprint: 'fp-static' },
     },
   ])
+})
+
+it('copies an origin as gcloud, a request and an OpenTofu block', async () => {
+  const user = userEvent.setup()
+  renderApp(`/cdn/global/backendBuckets/static?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy backend bucket as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy backend bucket as' })
+  expect(within(dialog).getByLabelText('gcloud for the backend bucket')).toHaveTextContent(
+    [
+      'gcloud compute backend-buckets create static \\',
+      `    --project=${P} \\`,
+      '    --gcs-bucket-name=assets \\',
+      '    --enable-cdn \\',
+      '    --cache-mode=FORCE_CACHE_ALL \\',
+      '    --default-ttl=60 \\',
+      '    --client-ttl=60',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the backend bucket')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/compute/v1/projects/${P}/global/backendBuckets \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"cacheMode": "FORCE_CACHE_ALL"')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the backend bucket')
+  expect(tofu).toHaveTextContent('resource "google_compute_backend_bucket" "static" {')
+  expect(tofu).toHaveTextContent(
+    'cdn_policy { cache_mode = "FORCE_CACHE_ALL" default_ttl = 60 client_ttl = 60 }',
+  )
+})
+
+it('copies a backend Cloud CDN is off for', async () => {
+  const user = userEvent.setup()
+  renderApp(`/cdn/global/backendServices/plain?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy backend service as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy backend service as' })
+  expect(within(dialog).getByLabelText('gcloud for the backend service')).toHaveTextContent(
+    'gcloud compute backend-services create plain \\',
+  )
+  expect(screen.queryByRole('button', { name: 'Remove origin' })).not.toBeInTheDocument()
+})
+
+it('copies a backend service’s cache key policy', () => {
+  const api = state.backendServices![0]!
+  const r = recipeFor({ project: P, region: '', coll: 'backendServices', name: 'api' }, api)
+  expect(r.gcloud).toEqual([
+    [
+      'gcloud compute backend-services create api \\',
+      `    --project=${P} \\`,
+      '    --global \\',
+      '    --enable-cdn \\',
+      '    --cache-mode=CACHE_ALL_STATIC \\',
+      '    --default-ttl=3600 \\',
+      '    --max-ttl=86400 \\',
+      '    --client-ttl=3600 \\',
+      '    --cache-key-include-protocol \\',
+      '    --cache-key-include-host \\',
+      '    --cache-key-include-query-string',
+    ].join('\n'),
+  ])
+  expect(r.tofu).toContain(
+    [
+      '    cache_key_policy {',
+      '      include_protocol     = true',
+      '      include_host         = true',
+      '      include_query_string = true',
+      '    }',
+    ].join('\n'),
+  )
 })

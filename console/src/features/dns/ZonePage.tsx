@@ -5,6 +5,7 @@ import { Outlet, useLocation, useOutletContext } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -22,6 +23,7 @@ import {
   zoneNetworks,
   type ManagedZone,
 } from './api'
+import { zoneRecipe } from './copy'
 import { ChooseProject, queryPath, useZoneRef, zonePath } from './DnsLayout'
 import { VisibilityBadge } from './Zones'
 
@@ -85,6 +87,7 @@ export function ZonePage() {
                 Query
               </Link>
             </Button>
+            <CopyAs what="zone" recipe={() => zoneRecipe(z, ref.project)} />
             <Button variant="outline" asChild>
               <Link to={`${base}/edit`}>
                 <Pencil aria-hidden />

@@ -5,6 +5,7 @@ import { useParams } from 'react-router'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
@@ -32,6 +33,7 @@ import {
   type RouterNat,
   type RouterRef,
 } from './api'
+import { natRecipe } from './copy'
 import { natPage, routerPage, useRouterRef } from './NatLayout'
 import { allocation, logging, natIps } from './RouterPage'
 import { TranslationLog } from './Translations'
@@ -82,6 +84,7 @@ export function NatPage() {
         </div>
         {nat && (
           <div className="flex flex-wrap gap-2">
+            <CopyAs what="NAT gateway" recipe={() => natRecipe(router!, nat, ref)} />
             <Button variant="outline" asChild>
               <Link to={natPage(ref, name, 'edit')}>
                 <Pencil aria-hidden />

@@ -32,6 +32,16 @@ export interface ManagedZone {
     gkeClusters?: { gkeClusterName: string }[]
   }
   labels?: Record<string, string>
+  dnssecConfig?: {
+    state?: string
+    nonExistence?: string
+    defaultKeySpecs?: { keyType?: string; algorithm?: string; keyLength?: number }[]
+  }
+  forwardingConfig?: {
+    targetNameServers?: { ipv4Address?: string; ipv6Address?: string; forwardingPath?: string }[]
+  }
+  peeringConfig?: { targetNetwork?: { networkUrl?: string } }
+  cloudLoggingConfig?: { enableLogging?: boolean }
 }
 
 export interface ResourceRecordSet {

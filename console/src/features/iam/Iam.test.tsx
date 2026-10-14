@@ -15,6 +15,7 @@ import {
   type ServiceAccount,
   type ServiceAccountKey,
 } from './api'
+import { conditionFlag, customRoleRecipe, policyRecipe, serviceAccountRecipe } from './copy'
 import { patchBody as rolePatchBody, roleMask } from './RoleForm'
 import { patchBody as accountPatchBody } from './ServiceAccountForm'
 
@@ -1052,4 +1053,182 @@ it('adds a member to a role’s unconditional binding, or a new binding', () => 
     role: 'roles/viewer',
     members: ['user:c@x'],
   })
+})
+
+it('copies a service account as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`/iam/serviceAccounts/${encodeURIComponent(SA)}?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy service account as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy service account as' })
+  expect(within(dialog).getByLabelText('gcloud for the service account')).toHaveTextContent(
+    [
+      'gcloud iam service-accounts create ci-bot \\',
+      `    --project=${P} \\`,
+      "    --display-name='CI bot' \\",
+      "    --description='Runs CI'",
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the service account')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/iam/v1/projects/${P}/serviceAccounts \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"accountId": "ci-bot"')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the service account')
+  expect(tofu).toHaveTextContent('resource "google_service_account" "ci-bot" {')
+  expect(tofu).toHaveTextContent('account_id = "ci-bot"')
+})
+
+it('copies a disabled service account and a custom role', () => {
+  const r = serviceAccountRecipe(account('web-app', { displayName: 'Web', disabled: true }))
+  const email = `web-app@${P}.iam.gserviceaccount.com`
+  expect(r.gcloud).toEqual([
+    [
+      'gcloud iam service-accounts create web-app \\',
+      `    --project=${P} \\`,
+      '    --display-name=Web',
+    ].join('\n'),
+    `gcloud iam service-accounts disable ${email} \\\n    --project=${P}`,
+  ])
+  expect(r.rest).toEqual([
+    {
+      method: 'POST',
+      path: `/iam/v1/projects/${P}/serviceAccounts`,
+      body: { accountId: 'web-app', serviceAccount: { displayName: 'Web' } },
+    },
+    { method: 'POST', path: `/iam/v1/projects/${P}/serviceAccounts/${email}:disable`, body: {} },
+  ])
+  expect(r.tofu).toContain('  disabled     = true')
+
+  const role = customRoleRecipe({
+    name: `projects/${P}/roles/bucketReader`,
+    title: 'Bucket reader',
+    stage: 'GA',
+    includedPermissions: ['storage.buckets.get', 'storage.objects.list'],
+    etag: 'r1',
+  })
+  expect(role.gcloud).toBe(
+    [
+      'gcloud iam roles create bucketReader \\',
+      `    --project=${P} \\`,
+      "    --title='Bucket reader' \\",
+      '    --permissions=storage.buckets.get,storage.objects.list \\',
+      '    --stage=GA',
+    ].join('\n'),
+  )
+  expect(role.rest).toEqual({
+    method: 'POST',
+    path: `/iam/v1/projects/${P}/roles`,
+    body: {
+      roleId: 'bucketReader',
+      role: {
+        title: 'Bucket reader',
+        stage: 'GA',
+        includedPermissions: ['storage.buckets.get', 'storage.objects.list'],
+      },
+    },
+  })
+  expect(role.tofu).toContain('resource "google_project_iam_custom_role" "bucketReader" {')
+})
+
+it('copies an IAM policy one binding at a time, with conditions', () => {
+  const expression = 'request.time < timestamp("2027-01-01T00:00:00Z")'
+  const policy: Policy = {
+    version: 3,
+    etag: 'e1',
+    bindings: [
+      { role: 'roles/viewer', members: ['user:a@x', 'group:g@x'] },
+      {
+        role: 'roles/viewer',
+        members: ['user:c@x'],
+        condition: { title: 'Until 2027', expression },
+      },
+    ],
+  }
+  const add = (member: string, condition: string) =>
+    [
+      `gcloud projects add-iam-policy-binding ${P} \\`,
+      `    --member=${member} \\`,
+      '    --role=roles/viewer \\',
+      `    --condition=${condition}`,
+    ].join('\n')
+  const r = policyRecipe({ project: P, kind: 'project', name: '' }, policy)
+  expect(r.gcloud).toEqual([
+    add('user:a@x', 'None'),
+    add('group:g@x', 'None'),
+    add('user:c@x', `'expression=${expression},title=Until 2027'`),
+  ])
+  expect(r.rest).toEqual({
+    method: 'POST',
+    path: `/cloudresourcemanager/v1/projects/${P}:setIamPolicy`,
+    body: { policy: { version: 3, bindings: policy.bindings } },
+  })
+  expect(r.tofu).toContain('resource "google_project_iam_binding" "viewer" {')
+  expect(r.tofu).toContain(
+    [
+      'resource "google_project_iam_binding" "viewer_2" {',
+      `  project = "${P}"`,
+      '  role    = "roles/viewer"',
+      '  members = ["user:c@x"]',
+      '  condition {',
+      '    title      = "Until 2027"',
+      '    expression = "request.time < timestamp(\\"2027-01-01T00:00:00Z\\")"',
+      '  }',
+      '}',
+    ].join('\n'),
+  )
+
+  // A bucket's policy is PUT to its /iam resource, without the API's own fields.
+  const b = policyRecipe(
+    { project: P, kind: 'bucket', name: 'assets' },
+    {
+      kind: 'storage#policy',
+      resourceId: 'projects/_/buckets/assets',
+      etag: 'e',
+      bindings: [{ role: 'roles/storage.admin', members: ['user:a@x'] }],
+    },
+  )
+  expect(b.gcloud).toEqual([
+    [
+      'gcloud storage buckets add-iam-policy-binding gs://assets \\',
+      '    --member=user:a@x \\',
+      '    --role=roles/storage.admin',
+    ].join('\n'),
+  ])
+  expect(b.rest).toEqual({
+    method: 'PUT',
+    path: '/storage/v1/b/assets/iam',
+    body: { bindings: [{ role: 'roles/storage.admin', members: ['user:a@x'] }] },
+  })
+  expect(b.tofu).toContain('resource "google_storage_bucket_iam_binding" "storage_admin" {')
+
+  // A regional secret's binding names its location.
+  const s = policyRecipe(
+    { project: P, kind: 'secret', name: 'us-central1/db' },
+    { bindings: [{ role: 'roles/secretmanager.secretAccessor', members: ['user:a@x'] }] },
+  )
+  expect(s.gcloud).toEqual([
+    [
+      'gcloud secrets add-iam-policy-binding db \\',
+      `    --project=${P} \\`,
+      '    --location=us-central1 \\',
+      '    --member=user:a@x \\',
+      '    --role=roles/secretmanager.secretAccessor',
+    ].join('\n'),
+  ])
+  expect(s.tofu).toContain('resource "google_secret_manager_regional_secret_iam_binding"')
+
+  // TLS policies have no per-binding command or resource; the request still copies.
+  const tls = policyRecipe({ project: P, kind: 'serverTlsPolicy', name: 'global/p' }, policy)
+  expect(tls.gcloud).toBeUndefined()
+  expect(tls.tofu).toBeUndefined()
+  expect(tls.rest).toMatchObject({ method: 'POST' })
+
+  expect(conditionFlag({ title: 't', expression: 'a in ["x", "y"]' })).toBe(
+    '^;^expression=a in ["x", "y"];title=t',
+  )
 })

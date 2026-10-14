@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
 import { Field, fieldAria } from '@/components/resource/Field'
 import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ import {
   waitOperation,
   type User,
 } from './api'
+import { userRecipe } from './copy'
 import { NotRunning, useInstance } from './InstancePage'
 import { instancePath, useInstanceRef } from './SqlLayout'
 
@@ -102,6 +104,12 @@ export function Users() {
                   <TableCell>{typeLabel(u.type)}</TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
+                      <CopyAs
+                        what="user"
+                        name={u.name}
+                        size="sm"
+                        recipe={() => userRecipe(ref, u)}
+                      />
                       {running && (u.type ?? 'BUILT_IN') === 'BUILT_IN' && (
                         <Button variant="outline" size="sm" asChild>
                           <Link

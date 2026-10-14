@@ -3,11 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, it } from 'vitest'
 
+import type { RestCall } from '@/lib/copyAs'
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { Change, DnsQueryResult, ManagedZone, ResourceRecordSet } from './api'
+import { rrsetRecipe, zoneRecipe } from './copy'
 import { fullName, shortName } from './RecordSetForm'
 import { networkUrls } from './ZoneForm'
 
@@ -477,4 +479,192 @@ it('names record sets within their zone', () => {
     NET('vpc-a'),
     'https://www.googleapis.com/compute/v1/projects/x/global/networks/y',
   ])
+})
+
+it('copies a private zone as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`/dns/zones/internal/overview?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy zone as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy zone as' })
+  await user.click(within(dialog).getByRole('tab', { name: 'gcloud' }))
+  expect(within(dialog).getByLabelText('gcloud for the zone')).toHaveTextContent(
+    [
+      'gcloud dns managed-zones create internal \\',
+      `    --project=${P} \\`,
+      '    --dns-name=corp.internal. \\',
+      "    --description='' \\",
+      '    --labels=team=net \\',
+      '    --visibility=private \\',
+      `    --networks=${NET('vpc-a')}`,
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the zone')
+  expect(curl).toHaveTextContent(
+    `curl ${location.origin}/dns/v1/projects/${P}/managedZones \\ -X POST`,
+  )
+  expect(curl).toHaveTextContent('"dnsName": "corp.internal."')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the zone')
+  expect(tofu).toHaveTextContent('resource "google_dns_managed_zone" "internal" {')
+  expect(tofu).toHaveTextContent('description = ""')
+  expect(tofu).toHaveTextContent(
+    `private_visibility_config { networks { network_url = "${NET('vpc-a')}" } }`,
+  )
+})
+
+it('copies a zone’s DNSSEC, forwarding and peering', () => {
+  const r = zoneRecipe(
+    {
+      name: 'z',
+      dnsName: 'z.test.',
+      description: 'd',
+      id: '1',
+      nameServers: ['ns.'],
+      visibility: 'private',
+      dnssecConfig: {
+        state: 'on',
+        nonExistence: 'nsec3',
+        defaultKeySpecs: [
+          { keyType: 'keySigning', algorithm: 'rsasha256', keyLength: 2048 },
+          { keyType: 'zoneSigning', algorithm: 'rsasha256', keyLength: 1024 },
+        ],
+      },
+      forwardingConfig: {
+        targetNameServers: [
+          { ipv4Address: '192.0.2.53' },
+          { ipv4Address: '192.0.2.54', forwardingPath: 'private' },
+        ],
+      },
+      peeringConfig: { targetNetwork: { networkUrl: NET('hub').replace(P, 'other') } },
+    },
+    P,
+  )
+  expect(r.gcloud).toBe(
+    [
+      'gcloud dns managed-zones create z \\',
+      `    --project=${P} \\`,
+      '    --dns-name=z.test. \\',
+      '    --description=d \\',
+      '    --visibility=private \\',
+      '    --dnssec-state=on \\',
+      '    --denial-of-existence=nsec3 \\',
+      '    --ksk-algorithm=rsasha256 \\',
+      '    --ksk-key-length=2048 \\',
+      '    --zsk-algorithm=rsasha256 \\',
+      '    --zsk-key-length=1024 \\',
+      '    --forwarding-targets=192.0.2.53 \\',
+      '    --private-forwarding-targets=192.0.2.54 \\',
+      '    --target-network=hub \\',
+      '    --target-project=other',
+    ].join('\n'),
+  )
+  expect((r.rest as RestCall).body).not.toHaveProperty('id')
+  expect((r.rest as RestCall).body).not.toHaveProperty('nameServers')
+  expect(r.tofu).toContain(
+    [
+      '  dnssec_config {',
+      '    state         = "on"',
+      '    non_existence = "nsec3"',
+      '    default_key_specs {',
+      '      algorithm  = "rsasha256"',
+      '      key_length = 2048',
+      '      key_type   = "keySigning"',
+      '    }',
+      '    default_key_specs {',
+      '      algorithm  = "rsasha256"',
+      '      key_length = 1024',
+      '      key_type   = "zoneSigning"',
+      '    }',
+      '  }',
+      '  forwarding_config {',
+      '    target_name_servers {',
+      '      ipv4_address = "192.0.2.53"',
+      '    }',
+      '    target_name_servers {',
+      '      ipv4_address    = "192.0.2.54"',
+      '      forwarding_path = "private"',
+      '    }',
+      '  }',
+      '  peering_config {',
+      '    target_network {',
+      `      network_url = "${NET('hub').replace(P, 'other')}"`,
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
+})
+
+it('copies a record set from its row', async () => {
+  const user = userEvent.setup()
+  renderApp(`/dns/zones/example?project=${P}`)
+  await user.click(
+    await screen.findByRole('button', { name: 'Copy record set www.example.com. (A) as' }),
+  )
+  const dialog = await screen.findByRole('dialog', { name: 'Copy record set as' })
+  await user.click(within(dialog).getByRole('tab', { name: 'gcloud' }))
+  expect(within(dialog).getByLabelText('gcloud for the record set')).toHaveTextContent(
+    [
+      'gcloud dns record-sets create www.example.com. \\',
+      `    --project=${P} \\`,
+      '    --zone=example \\',
+      '    --type=A \\',
+      '    --ttl=300 \\',
+      '    --rrdatas=192.0.2.10,192.0.2.11',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  expect(within(dialog).getByLabelText('curl for the record set')).toHaveTextContent(
+    `curl ${location.origin}/dns/v1/projects/${P}/managedZones/example/rrsets \\ -X POST`,
+  )
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  expect(within(dialog).getByLabelText('OpenTofu for the record set')).toHaveTextContent(
+    'resource "google_dns_record_set" "www_example_com-A" {',
+  )
+})
+
+it('copies a record set’s routing policy', () => {
+  const r = rrsetRecipe(
+    {
+      name: 'geo.example.com.',
+      type: 'A',
+      ttl: 60,
+      routingPolicy: {
+        wrr: {
+          items: [
+            { weight: 0.8, rrdatas: ['192.0.2.20'] },
+            { weight: 0.2, rrdatas: ['192.0.2.21', '192.0.2.22'] },
+          ],
+        },
+      },
+    },
+    { project: P, zone: 'example' },
+  )
+  expect(r.gcloud).toContain(
+    "--routing-policy-type=WRR \\\n    --routing-policy-data='0.8=192.0.2.20;0.2=192.0.2.21,192.0.2.22'",
+  )
+  expect(r.tofu).toContain(
+    [
+      '  routing_policy {',
+      '    wrr {',
+      '      weight  = 0.8',
+      '      rrdatas = ["192.0.2.20"]',
+      '    }',
+      '    wrr {',
+      '      weight  = 0.2',
+      '      rrdatas = ["192.0.2.21", "192.0.2.22"]',
+      '    }',
+      '  }',
+    ].join('\n'),
+  )
+  const txt = rrsetRecipe(
+    { name: 'example.com.', type: 'TXT', ttl: 300, rrdatas: ['"v=spf1 -all"'] },
+    { project: P, zone: 'example' },
+  )
+  expect(txt.gcloud).toContain(`--rrdatas='"v=spf1 -all"'`)
+  expect(txt.tofu).toContain('rrdatas      = ["\\"v=spf1 -all\\""]')
 })

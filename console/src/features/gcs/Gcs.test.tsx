@@ -3,11 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, it } from 'vitest'
 
+import type { RestCall } from '@/lib/copyAs'
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
 import type { Bucket, Notification, StorageObject } from './api'
+import { bucketRecipe, notificationRecipe, objectRecipe } from './copy'
 import { droppedFiles } from './ObjectBrowser'
 
 const P = 'alpha-project'
@@ -517,4 +519,236 @@ it('uploads dropped files whose entries cannot be read, as WebKit gives them', a
     files: [file],
   } as unknown as DataTransfer)
   expect(pending).toEqual([{ path: 'unbacked.txt', file }])
+})
+
+it('copies a bucket as gcloud, curl and OpenTofu', async () => {
+  const user = userEvent.setup()
+  renderApp(`/gcs/b/photos/configuration?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Copy bucket as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy bucket as' })
+  await user.click(within(dialog).getByRole('tab', { name: 'gcloud' }))
+  expect(within(dialog).getByLabelText('gcloud for the bucket')).toHaveTextContent(
+    [
+      'gcloud storage buckets create gs://photos \\',
+      `    --project=${P} \\`,
+      '    --location=US \\',
+      '    --default-storage-class=STANDARD \\',
+      '    --uniform-bucket-level-access',
+      '',
+      'gcloud storage buckets update gs://photos \\',
+      '    --versioning \\',
+      '    --update-labels=team=web,env=dev',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  const curl = within(dialog).getByLabelText('curl for the bucket')
+  expect(curl).toHaveTextContent(`curl '${location.origin}/storage/v1/b?project=${P}' \\ -X POST`)
+  expect(curl).toHaveTextContent('"name": "photos"')
+  expect(curl).not.toHaveTextContent('timeCreated')
+  expect(curl).not.toHaveTextContent('locationType')
+
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  const tofu = within(dialog).getByLabelText('OpenTofu for the bucket')
+  expect(tofu).toHaveTextContent('resource "google_storage_bucket" "photos" {')
+  expect(tofu).toHaveTextContent(`project = "${P}"`)
+  expect(tofu).toHaveTextContent('versioning { enabled = true }')
+})
+
+it('copies a bucket’s lifecycle, CORS and locked retention', () => {
+  const r = bucketRecipe(
+    {
+      name: 'b',
+      location: 'EU',
+      retentionPolicy: { retentionPeriod: '86400', isLocked: true, effectiveTime: 'x' },
+      softDeletePolicy: { retentionDurationSeconds: '0', effectiveTime: 'x' },
+      iamConfiguration: { publicAccessPrevention: 'enforced' },
+      website: { mainPageSuffix: 'index.html' },
+      cors: [{ origin: ['https://example.test'], method: ['GET'], maxAgeSeconds: 600 }],
+      lifecycle: {
+        rule: [
+          { action: { type: 'Delete' }, condition: { age: 30, isLive: false } },
+          {
+            action: { type: 'SetStorageClass', storageClass: 'COLDLINE' },
+            condition: { matchesPrefix: ['logs/'] },
+          },
+        ],
+      },
+    },
+    P,
+  )
+  const cmds = r.gcloud as string[]
+  expect(cmds[0]).toMatch(/^cat > cors\.json <<'EOF'\n\[/)
+  expect(cmds[1]).toContain('"rule": [')
+  expect(cmds[2]).toBe(
+    [
+      'gcloud storage buckets create gs://b \\',
+      `    --project=${P} \\`,
+      '    --location=EU \\',
+      '    --public-access-prevention \\',
+      '    --retention-period=86400s \\',
+      '    --soft-delete-duration=0s \\',
+      '    --lifecycle-file=lifecycle.json',
+    ].join('\n'),
+  )
+  expect(cmds[3]).toBe(
+    [
+      'gcloud storage buckets update gs://b \\',
+      '    --web-main-page-suffix=index.html \\',
+      '    --cors-file=cors.json',
+    ].join('\n'),
+  )
+  expect(cmds[4]).toBe('gcloud storage buckets update gs://b \\\n    --lock-retention-period')
+  expect((r.rest as RestCall).body).toMatchObject({
+    retentionPolicy: { retentionPeriod: '86400' },
+    softDeletePolicy: { retentionDurationSeconds: '0' },
+  })
+  expect(JSON.stringify((r.rest as RestCall).body)).not.toMatch(/effectiveTime|isLocked/)
+  expect(r.tofu).toContain(
+    [
+      '  lifecycle_rule {',
+      '    condition {',
+      '      age        = 30',
+      '      with_state = "ARCHIVED"',
+      '    }',
+      '    action {',
+      '      type = "Delete"',
+      '    }',
+      '  }',
+      '  lifecycle_rule {',
+      '    condition {',
+      '      matches_prefix = ["logs/"]',
+      '    }',
+      '    action {',
+      '      type          = "SetStorageClass"',
+      '      storage_class = "COLDLINE"',
+      '    }',
+      '  }',
+      '  retention_policy {',
+      '    retention_period = 86400',
+      '    is_locked        = true',
+      '  }',
+      '  soft_delete_policy {',
+      '    retention_duration_seconds = 0',
+      '  }',
+    ].join('\n'),
+  )
+  expect(r.tofu).toContain('public_access_prevention = "enforced"')
+  expect(r.tofu).toContain(
+    [
+      '  cors {',
+      '    origin          = ["https://example.test"]',
+      '    method          = ["GET"]',
+      '    max_age_seconds = 600',
+      '  }',
+    ].join('\n'),
+  )
+})
+
+it('copies an object as an upload of a local file', async () => {
+  const user = userEvent.setup()
+  renderApp(`/gcs/b/photos/o/cat.png?project=${P}`)
+  // The bucket's own Copy as comes first, in the page header above.
+  await screen.findByRole('link', { name: 'Download' })
+  await user.click(screen.getByRole('button', { name: 'Copy object as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy object as' })
+  await user.click(within(dialog).getByRole('tab', { name: 'gcloud' }))
+  expect(within(dialog).getByLabelText('gcloud for the object')).toHaveTextContent(
+    'gcloud storage cp ./cat.png gs://photos/cat.png \\\n    --content-type=image/png',
+    { normalizeWhitespace: false },
+  )
+  await user.click(within(dialog).getByRole('tab', { name: 'curl' }))
+  expect(within(dialog).getByLabelText('curl for the object')).toHaveTextContent(
+    `curl '${location.origin}/upload/storage/v1/b/photos/o?uploadType=media&name=cat.png' \\ -X POST \\ -H 'Content-Type: image/png' \\ --data-binary @./cat.png`,
+  )
+  await user.click(within(dialog).getByRole('tab', { name: 'OpenTofu' }))
+  expect(within(dialog).getByLabelText('OpenTofu for the object')).toHaveTextContent(
+    'resource "google_storage_bucket_object" "photos-cat_png" {',
+  )
+})
+
+it('copies an object’s metadata after its upload', () => {
+  const r = objectRecipe(
+    obj('a dir/b c.txt', '1', {
+      contentType: 'text/plain',
+      cacheControl: 'no-cache',
+      metadata: { k: 'v' },
+      temporaryHold: true,
+      storageClass: 'NEARLINE',
+    }),
+  )
+  expect(r.gcloud).toBe(
+    [
+      "gcloud storage cp './b c.txt' 'gs://photos/a dir/b c.txt' \\",
+      '    --content-type=text/plain \\',
+      '    --cache-control=no-cache \\',
+      '    --custom-metadata=k=v \\',
+      '    --storage-class=NEARLINE',
+    ].join('\n'),
+  )
+  expect(r.rest).toEqual([
+    {
+      method: 'POST',
+      path: '/upload/storage/v1/b/photos/o?uploadType=media&name=a+dir%2Fb+c.txt',
+      file: { path: './b c.txt', contentType: 'text/plain' },
+    },
+    {
+      method: 'PATCH',
+      path: '/storage/v1/b/photos/o/a%20dir%2Fb%20c.txt',
+      body: { cacheControl: 'no-cache', metadata: { k: 'v' }, temporaryHold: true },
+    },
+  ])
+  expect(r.tofu).toContain('source         = "./b c.txt"')
+  expect(r.tofu).toContain('temporary_hold = true')
+})
+
+it('copies a notification config', async () => {
+  const user = userEvent.setup()
+  notifications[0] = {
+    ...notifications[0]!,
+    object_name_prefix: 'in/',
+    custom_attributes: { origin: 'console' },
+    etag: '1',
+  }
+  renderApp(`/gcs/b/photos/notifications/1?project=${P}`)
+  await screen.findByRole('heading', { name: 'Notification 1' })
+  await user.click(screen.getByRole('button', { name: 'Copy notification as' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Copy notification as' })
+  await user.click(within(dialog).getByRole('tab', { name: 'gcloud' }))
+  expect(within(dialog).getByLabelText('gcloud for the notification')).toHaveTextContent(
+    [
+      'gcloud storage buckets notifications create gs://photos \\',
+      `    --topic=projects/${P}/topics/uploads \\`,
+      '    --event-types=OBJECT_FINALIZE \\',
+      '    --payload-format=json \\',
+      '    --object-prefix=in/ \\',
+      '    --custom-attributes=origin=console',
+    ].join('\n'),
+    { normalizeWhitespace: false },
+  )
+  const r = notificationRecipe('photos', notifications[0])
+  expect(r.rest).toEqual({
+    method: 'POST',
+    path: '/storage/v1/b/photos/notificationConfigs',
+    body: {
+      topic: `//pubsub.googleapis.com/projects/${P}/topics/uploads`,
+      event_types: ['OBJECT_FINALIZE'],
+      payload_format: 'JSON_API_V1',
+      object_name_prefix: 'in/',
+      custom_attributes: { origin: 'console' },
+    },
+  })
+  expect(r.tofu).toBe(
+    [
+      'resource "google_storage_notification" "photos-1" {',
+      '  bucket             = "photos"',
+      `  topic              = "projects/${P}/topics/uploads"`,
+      '  payload_format     = "JSON_API_V1"',
+      '  event_types        = ["OBJECT_FINALIZE"]',
+      '  object_name_prefix = "in/"',
+      '  custom_attributes  = { origin = "console" }',
+      '}',
+    ].join('\n'),
+  )
 })
