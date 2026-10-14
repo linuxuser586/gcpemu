@@ -34,6 +34,7 @@ const (
 	LabelService  = "gcpemu.service"  // owning service, e.g. "sql"
 	LabelResource = "gcpemu.resource" // owning resource name
 	LabelRole     = "gcpemu.role"     // e.g. "server", "node", "nat"
+	LabelDir      = "gcpemu.dir"      // absolute data dir of the instance
 )
 
 // apiVersion is the Docker Engine API version used. 1.41 is served by
@@ -623,14 +624,29 @@ func (c *Client) RemoveVolume(ctx context.Context, name string) error {
 	return err
 }
 
-// ListVolumes returns names of volumes carrying all the given labels.
-func (c *Client) ListVolumes(ctx context.Context, labels map[string]string) ([]string, error) {
-	var v struct{ Volumes []struct{ Name string } }
+// Volume is a listed volume.
+type Volume struct {
+	Name   string
+	Labels map[string]string
+}
+
+// Volumes returns volumes carrying all the given labels.
+func (c *Client) Volumes(ctx context.Context, labels map[string]string) ([]Volume, error) {
+	var v struct{ Volumes []Volume }
 	if err := c.do(ctx, http.MethodGet, "/volumes", url.Values{"filters": {labelFilter(labels)}}, nil, &v); err != nil {
 		return nil, err
 	}
+	return v.Volumes, nil
+}
+
+// ListVolumes returns names of volumes carrying all the given labels.
+func (c *Client) ListVolumes(ctx context.Context, labels map[string]string) ([]string, error) {
+	vs, err := c.Volumes(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
-	for _, vol := range v.Volumes {
+	for _, vol := range vs {
 		out = append(out, vol.Name)
 	}
 	return out, nil

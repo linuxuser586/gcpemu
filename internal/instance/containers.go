@@ -48,8 +48,12 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	if err != nil {
 		return nil, err // transient; retry next time
 	}
+	dir, err := filepath.Abs(c.in.Dir)
+	if err != nil {
+		dir = c.in.Dir
+	}
 	m := &runtime.Manager{
-		Client: cl, Info: info, InstanceID: c.in.ID, Instance: c.in.Config.Instance,
+		Client: cl, Info: info, InstanceID: c.in.ID, Instance: c.in.Config.Instance, Dir: dir,
 		Offline: c.in.Config.Offline, Ephemeral: c.in.Config.Ephemeral,
 		Log: c.in.Env.Log.With("component", "runtime"), Reserved: c.reservedAddrs,
 		Agent: &agent.Resolver{

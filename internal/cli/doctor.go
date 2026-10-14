@@ -23,6 +23,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
@@ -74,6 +75,8 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 					if info, err := cl.Info(cmd.Context()); err == nil {
 						checkRuntimeArch(out, runtime.GOOS, machineArch(), info.Arch)
 					}
+					found, err := findAbandoned(cmd.Context(), cl)
+					checkAbandoned(out, found, err)
 				}
 			}
 
@@ -422,4 +425,29 @@ func checkForeignCreds(out io.Writer, report func(bool, string, string)) {
 	if wk := wellKnownADC(); wk != "" {
 		fmt.Fprintf(out, "[--  ] gcloud's application-default credentials at %s go to real Google; `eval \"$(gcpemu env)\"` points ADC at an emulator key instead\n", wk)
 	}
+}
+
+// checkAbandoned is doctor's read-only report of Abandoned Instance IDs;
+// err is FindAbandoned's.
+func checkAbandoned(out io.Writer, found []instance.Abandoned, err error) {
+	if err != nil {
+		fmt.Fprintf(out, "[--  ] abandoned Instance IDs: cannot list runtime objects: %v\n", err)
+		return
+	}
+	if len(found) == 0 {
+		fmt.Fprintln(out, "[ok  ] no abandoned Instance IDs on the container runtime")
+		return
+	}
+	for _, a := range found {
+		fmt.Fprintf(out, "[WARN] abandoned Instance ID %s: %d container(s), %d network(s), %d volume(s)%s\n",
+			a.ID, len(a.Containers), len(a.Networks), len(a.Volumes), unverifiedNote(a))
+	}
+	fmt.Fprintln(out, "       fix: `gcpemu prune` lists and removes them; their networks can push new instances onto fallback ranges")
+}
+
+// findAbandoned is FindAbandoned with doctor's time limit.
+func findAbandoned(ctx context.Context, cl *emuruntime.Client) ([]instance.Abandoned, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return instance.FindAbandoned(ctx, cl, config.StateHome())
 }
