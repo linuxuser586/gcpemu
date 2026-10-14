@@ -112,6 +112,12 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if len(cfg.LBBind) > 0 {
 		logger.Info("load balancer forwarding rules are also served beyond loopback; nothing else is", "lbBind", cfg.LBBind)
 	}
+	if len(cfg.GKEBind) > 0 {
+		logger.Info("GKE clusters' Kubernetes APIs are also served beyond loopback, to real credentials only", "gkeBind", cfg.GKEBind)
+	}
+	if len(cfg.ARBind) > 0 {
+		logger.Info("the Artifact Registry registry is also served beyond loopback, over TLS to authenticated callers only", "arBind", cfg.ARBind)
+	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, holds: map[string]error{}, done: make(chan struct{})}
 	in.ID = instanceID(dir, cfg.Ephemeral)

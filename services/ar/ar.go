@@ -56,7 +56,8 @@
 // Bearer emulator tokens. Anonymous access is allowed when IAM is off or in
 // audit mode; in enforce mode credentials are required and
 // artifactregistry.repositories.downloadArtifacts / uploadArtifacts /
-// deleteArtifacts are checked on the repository.
+// deleteArtifacts are checked on the repository. The --ar-bind listeners
+// (lan.go) serve TLS and always require credentials.
 package ar
 
 import (
@@ -85,6 +86,7 @@ type Service struct {
 
 	mu      sync.Mutex
 	srv     *http.Server
+	lan     []*http.Server // --ar-bind listeners (lan.go)
 	conns   connTracker
 	ready   bool
 	uploads map[string]*upload
@@ -141,13 +143,15 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	srv := gateway.NewServer(s.withRegistryAuth(s.env.Middleware("ar", http.HandlerFunc(s.serveRegistry))), s.env.Log)
+	h := s.env.Middleware("ar", http.HandlerFunc(s.serveRegistry))
+	srv := gateway.NewServer(s.withRegistryAuth(h), s.env.Log)
 	srv.ConnState = s.conns.track
+	lan := s.startLAN(l.Addr().(*net.TCPAddr).Port, s.lanHandler(h))
 	s.mu.Lock()
 	if s.bgCtx.Err() != nil {
 		s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	}
-	s.srv, s.ready = srv, true
+	s.srv, s.lan, s.ready = srv, lan, true
 	s.mu.Unlock()
 	go func() {
 		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -161,10 +165,16 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context) error {
 	s.ops.Close()
 	s.mu.Lock()
-	srv := s.srv
-	s.srv, s.ready = nil, false
+	srv, lan := s.srv, s.lan
+	s.srv, s.lan, s.ready = nil, nil, false
 	s.bgCancel()
 	s.mu.Unlock()
+	for _, l := range lan {
+		_ = l.Close()
+	}
+	if lan != nil {
+		s.env.Endpoints.Delete("ar-lan")
+	}
 	if srv == nil {
 		return nil
 	}

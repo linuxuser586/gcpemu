@@ -54,9 +54,14 @@ type clusterRT struct {
 	syncs  sync.Map           // SecretSync UID → syncState
 	// api serves the API server on the host's 127.0.0.1 on a VM runtime.
 	api *netplane.Exposed
+	// lan serves it on the --gke-bind addresses (lan.go), at lanAddrs,
+	// recorded as endpoint lanName.
+	lan      []*netplane.Exposed
+	lanAddrs []string
+	lanName  string
 }
 
-func (rt *clusterRT) stop() {
+func (s *Service) stopRT(rt *clusterRT) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	if rt.cancel != nil {
@@ -64,6 +69,7 @@ func (rt *clusterRT) stop() {
 		rt.cancel = nil
 	}
 	rt.closeAPI()
+	s.closeLAN(rt)
 }
 
 // closeAPI stops serving the API server on the host. Callers hold rt.mu.
@@ -419,6 +425,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if rec.Int.ExternalIP != "" {
 		args = append(args, "--tls-san", rec.Int.ExternalIP)
 	}
+	args = append(args, s.lanSANs()...)
 	// Inside a container, or on a VM runtime, the host cannot reach the
 	// cluster networks, so the API server is also served on the host's
 	// loopback: published by the runtime, or by the emulator through the
@@ -497,8 +504,9 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		}
 		_, apiPort = netplane.HostPort(hostAPI)
 	}
+	lanPort := s.serveLAN(d, key, contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name), rec.Int.LANPort, net.JoinHostPort(dial, "443"))
 	if err := s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
-		rec.Int.ServerIP, rec.Int.ExternalIP, rec.Int.APIHostPort = ip, extIP, apiPort
+		rec.Int.ServerIP, rec.Int.ExternalIP, rec.Int.APIHostPort, rec.Int.LANPort = ip, extIP, apiPort, lanPort
 		rec.Int.HostLB = hostLB
 		return nil
 	}); err != nil {
@@ -1284,7 +1292,7 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 
 // destroyDataPlane removes everything a cluster runs.
 func (s *Service) destroyDataPlane(ctx context.Context, key string) error {
-	s.rtFor(key).stop()
+	s.stopRT(s.rtFor(key))
 	rec, err := s.loadKey(key)
 	if err != nil {
 		return nil

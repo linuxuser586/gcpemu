@@ -109,7 +109,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLBBind(out, report, cfg, running == nil, hasRuntime)
+			checkLANBind(out, report, cfg, running == nil, hasRuntime)
 			if runtime.GOOS == "darwin" {
 				checkLoopback(out, loopback.Aliases())
 			}
@@ -287,10 +287,11 @@ func osTrustsCA(der []byte) bool {
 	return false
 }
 
-// checkLBBind reports the --lb-bind addresses: those the running instance
-// serves forwarding rules on, otherwise whether the configured ones can be
-// bound (an address of this host; privileged ports need the lb-lan relay).
-func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime bool) {
+// checkLANBind reports the --lb-bind, --gke-bind and --ar-bind addresses:
+// what the running instance serves on them, otherwise whether the
+// configured ones can be bound (an address of this host; privileged
+// --lb-bind ports need the lb-lan relay).
+func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime bool) {
 	if running {
 		c, err := clientFor(cfg)
 		if err != nil {
@@ -306,10 +307,16 @@ func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.C
 			if name, ok := strings.CutPrefix(n, "lb-lan:"); ok {
 				fmt.Fprintf(out, "[ok  ] forwarding rule %s exposed beyond loopback on %s\n", name, i.Endpoints[n])
 			}
+			if name, ok := strings.CutPrefix(n, "gke-lan:"); ok {
+				fmt.Fprintf(out, "[ok  ] Kubernetes API of %s exposed beyond loopback on %s\n", name, i.Endpoints[n])
+			}
+			if n == "ar-lan" {
+				fmt.Fprintf(out, "[ok  ] Artifact Registry registry exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
+			}
 		}
 		return
 	}
-	if len(cfg.LBBind) == 0 {
+	if len(cfg.LBBind)+len(cfg.GKEBind)+len(cfg.ARBind) == 0 {
 		return
 	}
 	local := map[string]bool{}
@@ -320,10 +327,18 @@ func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.C
 			}
 		}
 	}
-	for _, a := range cfg.LBBind {
-		ip := net.ParseIP(a)
-		report(ip != nil && local[ip.String()], fmt.Sprintf("--lb-bind %s is an address of this host", a),
-			"pick one from "+listAddrsCmd(runtime.GOOS))
+	for _, b := range []struct {
+		flag  string
+		addrs []string
+	}{{"lb-bind", cfg.LBBind}, {"gke-bind", cfg.GKEBind}, {"ar-bind", cfg.ARBind}} {
+		for _, a := range b.addrs {
+			ip := net.ParseIP(a)
+			report(ip != nil && local[ip.String()], fmt.Sprintf("--%s %s is an address of this host", b.flag, a),
+				"pick one from "+listAddrsCmd(runtime.GOOS))
+		}
+	}
+	if len(cfg.LBBind) == 0 {
+		return
 	}
 	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start"); err == nil {
 		start, _ := strconv.Atoi(strings.TrimSpace(string(b)))

@@ -74,6 +74,14 @@ type Config struct {
 	// rule listeners also serve, on their real ports, alongside loopback.
 	// Nothing else is exposed there, so it needs no Insecure.
 	LBBind []string `yaml:"lbBind" env:"LB_BIND"`
+	// GKEBind lists extra addresses on which every GKE cluster's
+	// Kubernetes API is also served, and which its serving certificate
+	// covers. The API server then accepts only real credentials.
+	GKEBind []string `yaml:"gkeBind" env:"GKE_BIND"`
+	// ARBind lists extra addresses on which the Artifact Registry registry
+	// is also served, over TLS from the instance CA and only to
+	// authenticated callers, whatever the IAM enforcement level.
+	ARBind []string `yaml:"arBind" env:"AR_BIND"`
 	// AdminToken is the Admin token used when the API gateway is bound
 	// beyond loopback (FR-UI-009); empty means a random one per start.
 	// There is no flag, so that it never shows in a process listing.
@@ -408,13 +416,19 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("--port %d: a port without a name must be 0 (every listener picks a free port)", p)
 		}
 	}
-	for _, a := range c.LBBind {
-		ip := net.ParseIP(a)
-		if ip == nil {
-			return fmt.Errorf("invalid --lb-bind %q (want an IP address of this host)", a)
-		}
-		if ip.IsUnspecified() {
-			return fmt.Errorf("invalid --lb-bind %s: name an address of this host, not the wildcard", a)
+	for _, b := range []struct {
+		flag  string
+		addrs []string
+	}{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}} {
+		flag := b.flag
+		for _, a := range b.addrs {
+			ip := net.ParseIP(a)
+			if ip == nil {
+				return fmt.Errorf("invalid --%s %q (want an IP address of this host)", flag, a)
+			}
+			if ip.IsUnspecified() {
+				return fmt.Errorf("invalid --%s %s: name an address of this host, not the wildcard", flag, a)
+			}
 		}
 	}
 	if c.AdminToken != "" && len(c.AdminToken) < MinAdminTokenLen {
