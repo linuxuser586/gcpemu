@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { LayoutDashboard, ListChecks } from 'lucide-react'
+import { LayoutDashboard, ListChecks, Zap } from 'lucide-react'
 
 import { infoQuery } from '@/api/queries'
 import { NavLink } from '@/components/Link'
@@ -14,7 +14,7 @@ const item = ({ isActive }: { isActive: boolean }) =>
   )
 
 /**
- * Sidebar lists the Instance-wide views (dashboard, Operations) and the
+ * Sidebar lists the Instance-wide views (dashboard, Operations, Fault rules) and the
  * Services enabled on this Instance.
  */
 export function Sidebar() {
@@ -35,6 +35,12 @@ export function Sidebar() {
           <NavLink to="/operations" className={item}>
             <ListChecks className="size-4" aria-hidden />
             Operations
+          </NavLink>
+        </li>
+        <li>
+          <NavLink to="/faults" className={item}>
+            <Zap className="size-4" aria-hidden />
+            Fault rules
           </NavLink>
         </li>
       </ul>

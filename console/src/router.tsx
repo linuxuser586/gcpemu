@@ -39,6 +39,9 @@ import { RecordSets } from '@/features/dns/RecordSets'
 import { CreateZone, EditZone } from '@/features/dns/ZoneForm'
 import { ZoneOverview, ZonePage } from '@/features/dns/ZonePage'
 import { Zones } from '@/features/dns/Zones'
+import { faultsQuery } from '@/features/faults/api'
+import { CreateFault } from '@/features/faults/FaultForm'
+import { Faults } from '@/features/faults/Faults'
 import { bucketQuery, bucketsQuery, objectQuery } from '@/features/gcs/api'
 import { CreateBucket, EditBucket } from '@/features/gcs/BucketForm'
 import { BucketOverview, BucketPage } from '@/features/gcs/BucketPage'
@@ -183,6 +186,15 @@ export function routes(queryClient: QueryClient): RouteObject[] {
             return null
           },
         },
+        {
+          path: 'faults',
+          element: <Faults />,
+          loader: async () => {
+            await Promise.allSettled([queryClient.ensureQueryData(faultsQuery())])
+            return null
+          },
+        },
+        { path: 'faults/create', element: <CreateFault /> },
         {
           path: 'iam',
           element: <IamLayout />,

@@ -434,6 +434,32 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/Status" }
   /_emu/v1/faults/{id}:
+    patch:
+      summary: Enable or disable a fault injection rule (FR-UI-016).
+      description: A disabled rule stays listed, with its hit count, but does not fire.
+      operationId: setFaultDisabled
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [disabled]
+              properties:
+                disabled: { type: boolean }
+      responses:
+        "200":
+          description: The rule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FaultRule" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
     delete:
       summary: Remove one fault injection rule.
       operationId: removeFault
@@ -1078,4 +1104,5 @@ components:
         drop: { type: boolean, description: Close the connection without a response. }
         probability: { type: number, description: "In (0,1]; 0 means always." }
         count: { type: integer, description: How many times the rule fires; 0 means unlimited. }
-        fired: { type: integer, readOnly: true }
+        disabled: { type: boolean, description: The rule is kept but does not fire. }
+        fired: { type: integer, readOnly: true, description: How many times the rule has fired. }

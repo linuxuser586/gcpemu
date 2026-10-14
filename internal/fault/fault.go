@@ -37,6 +37,8 @@ type Rule struct {
 	Probability float64 `json:"probability,omitempty" yaml:"probability"`
 	// Count limits how many times the rule fires; 0 means unlimited.
 	Count int `json:"count,omitempty" yaml:"count"`
+	// Disabled keeps the rule, and its Fired count, without firing it.
+	Disabled bool `json:"disabled,omitempty" yaml:"disabled"`
 	// Fired is how many times the rule has fired.
 	Fired int `json:"fired" yaml:"-"`
 
@@ -68,7 +70,7 @@ type Set struct {
 	n     int
 }
 
-// Add validates and appends r, assigning an ID if empty.
+// Add validates and appends r, assigning an ID if empty. IDs are unique.
 func (s *Set) Add(r Rule) (Rule, error) {
 	var err error
 	if r.Method != "" {
@@ -94,13 +96,28 @@ func (s *Set) Add(r Rule) (Rule, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.n++
 	if r.ID == "" {
-		r.ID = fmt.Sprintf("fault-%d", s.n)
+		// Skip IDs taken by rules added with an explicit one.
+		for r.ID == "" || s.has(r.ID) {
+			s.n++
+			r.ID = fmt.Sprintf("fault-%d", s.n)
+		}
+	} else if s.has(r.ID) {
+		return r, fmt.Errorf("rule %q already exists", r.ID)
 	}
 	rc := r
 	s.rules = append(s.rules, &rc)
 	return r, nil
+}
+
+// has reports whether a rule has the ID; s.mu is held.
+func (s *Set) has(id string) bool {
+	for _, r := range s.rules {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // List returns a copy of all rules.
@@ -131,11 +148,28 @@ func (s *Set) Remove(id string) bool {
 	return false
 }
 
+// SetDisabled disables or re-enables a rule by ID, returning it, and
+// reports whether it exists.
+func (s *Set) SetDisabled(id string, disabled bool) (Rule, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.rules {
+		if r.ID == id {
+			r.Disabled = disabled
+			return *r, true
+		}
+	}
+	return Rule{}, false
+}
+
 // Match returns the action of the first rule that fires, or nil.
 func (s *Set) Match(service, method, resource string) *Action {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.rules {
+		if r.Disabled {
+			continue
+		}
 		if r.Service != "" && r.Service != service {
 			continue
 		}

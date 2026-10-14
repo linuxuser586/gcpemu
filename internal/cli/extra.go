@@ -151,6 +151,7 @@ func (o *rootOpts) faultCmd() *cobra.Command {
 	f.BoolVar(&r.Drop, "drop", false, "drop the connection")
 	f.Float64Var(&r.Probability, "probability", 0, "probability in (0,1]; 0 = always")
 	f.IntVar(&r.Count, "count", 0, "fire at most N times; 0 = unlimited")
+	f.BoolVar(&r.Disabled, "disabled", false, "add the rule disabled")
 
 	list := &cobra.Command{
 		Use:   "list",
@@ -171,7 +172,20 @@ func (o *rootOpts) faultCmd() *cobra.Command {
 			return o.adminCall(cmd, http.MethodDelete, path, nil)
 		},
 	}
-	root.AddCommand(add, list, clearCmd)
+	toggle := func(name, short string, disabled bool) *cobra.Command {
+		return &cobra.Command{
+			Use:   name + " ID",
+			Short: short,
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				body, _ := json.Marshal(map[string]bool{"disabled": disabled})
+				return o.adminCall(cmd, http.MethodPatch, "/_emu/v1/faults/"+args[0], body)
+			},
+		}
+	}
+	root.AddCommand(add, list, clearCmd,
+		toggle("enable", "Let a disabled rule fire again", false),
+		toggle("disable", "Stop a rule firing, keeping it and its hit count", true))
 	return root
 }
 

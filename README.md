@@ -42,7 +42,7 @@ bin/gcpemu stop
 ```
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
-`fault add|list|clear`, `doctor`, `version`, `admin openapi` (the OpenAPI document of the
+`fault add|list|enable|disable|clear`, `doctor`, `version`, `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
 
 ### Binding beyond loopback
@@ -107,6 +107,11 @@ Principal, permission and resource, with the smallest predefined role that grant
 Project owning the resource. Grant binds that role on that Project through its `setIamPolicy`.
 The log lives in memory until the Instance stops or is reset; `DELETE /_emu/v1/iam/denials`
 clears it.
+Its Fault rules view (`/console/faults`, filtered by `?service=` and `?q=`) lists
+`GET /_emu/v1/faults` with each rule's hit count, adds rules with `POST /_emu/v1/faults`, and
+enables or disables one with `PATCH /_emu/v1/faults/ID` and `{"disabled": true|false}`, as
+`gcpemu fault enable|disable ID` do. A disabled rule keeps its hit count and does not fire; a
+seed file's rule may start with `disabled: true`.
 
 ### Service endpoints
 
