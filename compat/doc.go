@@ -9,21 +9,22 @@
 // Docker come from PATH; their tests skip when one is missing. Helm, crane,
 // ko and the Auth Proxy are downloaded at pinned, checksum-verified
 // versions into $GCPEMU_COMPAT_CACHE (default <user cache dir>/gcpemu-compat),
-// and psql runs from the PostgreSQL image. Cloud SQL and GKE need a
-// container runtime; some steps (crane copy from Docker Hub, ko's base
-// image) need the internet. gcloud runs behind an Escape guard
-// (internal/escapeguard), so a gcloud request that no endpoint override
-// covers fails the step instead of reaching Google.
+// and psql runs from the PostgreSQL image. Cloud SQL, GKE and the Docker
+// steps need a container runtime, which native Windows cannot use (ADR
+// 0008), so only crane and ko are pinned for Windows. Some steps (crane
+// copy from Docker Hub, ko's base image) need the internet. gcloud runs
+// behind an Escape guard (internal/escapeguard), so a gcloud request that
+// no endpoint override covers fails the step instead of reaching Google.
 //
 // The universe subtests (#215) probe the Python and Node client libraries
 // with an emulator-issued key, and Python google-auth with the metadata
 // server (#244), from the scripts in sdk/. They install pinned library
-// versions into the same cache with python3 -m venv and npm, and skip when
-// either is missing or the install fails. The Python probes run behind the
-// Escape guard. The go-mtls subtest (#243) builds the Go probe in
-// sdk/universego and runs it behind the Escape guard, which names the host
-// it dialed. The node-mtls subtest (#246) does the same with
-// sdk/universemtls.js.
+// versions into the same cache with python3 (python on Windows) -m venv
+// and npm, and skip when either is missing or the install fails. The
+// Python probes run behind the Escape guard. The go-mtls subtest (#243)
+// builds the Go probe in sdk/universego and runs it behind the Escape
+// guard, which names the host it dialed. The node-mtls subtest (#246)
+// does the same with sdk/universemtls.js.
 //
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with

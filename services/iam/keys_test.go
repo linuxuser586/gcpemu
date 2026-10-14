@@ -258,3 +258,47 @@ func TestRefreshTokenGrant(t *testing.T) {
 		t.Fatalf("tokeninfo: %v", info)
 	}
 }
+
+// TestRefreshTokenGrantForeign covers #256: a refresh token Google issued
+// is refused, while the emulator's own forms still mint a token.
+func TestRefreshTokenGrantForeign(t *testing.T) {
+	inst := startIAM(t)
+	const gcloudClient = "764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com"
+	for _, tc := range []struct {
+		name, token, client string
+		refused             bool
+	}{
+		{"google token", "1//0gFabricated", "client.apps.googleusercontent.com", true},
+		{"gcloud client", "alice@example.com", gcloudClient, true},
+		{"user", "user:alice@example.com", "", false},
+		{"service account", "serviceAccount:sa@" + testProject + ".iam.gserviceaccount.com", "", false},
+		{"email", "alice@example.com", "client.apps.googleusercontent.com", false},
+		{"arbitrary", "anything", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.PostForm(inst.GatewayURL()+"/oauth2/token", url.Values{
+				"grant_type":    {"refresh_token"},
+				"refresh_token": {tc.token},
+				"client_id":     {tc.client},
+				"client_secret": {"secret"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var out map[string]any
+			_ = json.NewDecoder(resp.Body).Decode(&out)
+			if !tc.refused {
+				if resp.StatusCode != http.StatusOK || out["access_token"] == nil {
+					t.Fatalf("status %d: %v", resp.StatusCode, out)
+				}
+				return
+			}
+			desc, _ := out["error_description"].(string)
+			if resp.StatusCode != http.StatusBadRequest || out["error"] != "invalid_grant" ||
+				!strings.Contains(desc, "Foreign credentials") || !strings.Contains(desc, "README") {
+				t.Fatalf("status %d: %v", resp.StatusCode, out)
+			}
+		})
+	}
+}

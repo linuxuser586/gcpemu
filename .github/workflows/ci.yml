@@ -305,10 +305,11 @@ jobs:
             test ! -e "diag/gcpemu-selftest-second-$arch" || { echo "::error::a successful job uploaded diagnostics"; exit 1; }
           done
 
-  # The Makefile and scripts on macOS and Windows (Git Bash). On macOS, the
-  # tests and the setup-gcpemu action against the in-process Services:
-  # hosted macOS runners have no container runtime, so tests that need one
-  # skip. Windows tests join this job with #207.
+  # The Makefile, scripts and tests on macOS and Windows (Git Bash). Hosted
+  # macOS runners have no container runtime and native Windows cannot use
+  # one (ADR 0008), so tests that need one skip. On macOS, the setup-gcpemu
+  # action against the in-process Services; on Windows, the Client
+  # compatibility suite (SRS 7.1) for them.
   platforms:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -317,7 +318,7 @@ jobs:
       matrix:
         runner: [macos-latest, windows-latest]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read # the action's post step reads the job's result
@@ -337,8 +338,18 @@ jobs:
       - run: make cross
       - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
       - name: Tests
-        if: runner.os == 'macOS'
         run: go test ./...
+      - uses: google-github-actions/setup-gcloud@v3
+        if: runner.os == 'Windows'
+      # os.UserCacheDir on Windows is %LocalAppData%.
+      - uses: actions/cache@v6
+        if: runner.os == 'Windows'
+        with:
+          path: ~/AppData/Local/gcpemu-compat
+          key: gcpemu-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
+      - name: Client compatibility (SRS 7.1)
+        if: runner.os == 'Windows'
+        run: make compat
       - name: Serve this commit as a release
         if: runner.os == 'macOS'
         run: |

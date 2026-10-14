@@ -8,9 +8,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -55,12 +57,36 @@ func fabricatedGoogleKey(t *testing.T) string {
 	return p
 }
 
-// fabricatedADCHome returns a home directory holding gcloud's
-// application-default credentials file, fabricated as above.
+// homeEnv returns the variables that make home where gcloud keeps its
+// configuration: %APPDATA%\gcloud on Windows, $HOME/.config/gcloud
+// elsewhere.
+func homeEnv(home string) map[string]string {
+	if goruntime.GOOS == "windows" {
+		return map[string]string{"APPDATA": home}
+	}
+	return map[string]string{"HOME": home}
+}
+
+// withHome returns set with homeEnv(home) added.
+func withHome(set map[string]string, home string) map[string]string {
+	out := maps.Clone(set)
+	if out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, homeEnv(home))
+	return out
+}
+
+// fabricatedADCHome returns a home directory (see homeEnv) holding
+// gcloud's application-default credentials file, fabricated as above.
 func fabricatedADCHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
-	writeJSONFile(t, filepath.Join(home, ".config", "gcloud", "application_default_credentials.json"), map[string]string{
+	dir := filepath.Join(home, ".config", "gcloud")
+	if goruntime.GOOS == "windows" {
+		dir = filepath.Join(home, "gcloud")
+	}
+	writeJSONFile(t, filepath.Join(dir, "application_default_credentials.json"), map[string]string{
 		"type":          "authorized_user",
 		"client_id":     "fabricated.apps.googleusercontent.com",
 		"client_secret": "fabricated",
@@ -73,7 +99,7 @@ func fabricatedADCHome(t *testing.T) string {
 // to real Google before a Go HTTP client checks the universe, and `gcpemu
 // env` keeps gcloud's application-default credentials from being used.
 func testForeign(t *testing.T, e *emulator) {
-	bin := filepath.Join(t.TempDir(), "foreigngo")
+	bin := filepath.Join(t.TempDir(), exe("foreigngo"))
 	if out, err := exec.Command("go", "build", "-tags", "compat", "-o", bin, "./sdk/foreigngo").CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
@@ -83,11 +109,12 @@ func testForeign(t *testing.T, e *emulator) {
 		out, escaped, _ := e.exec(append(env, e.guard.Env()...), bin, project, endpoint)
 		return out, escaped
 	}
-	// gcpemuEnv runs `gcpemu env` in a shell whose home is home.
+	// gcpemuEnv runs `gcpemu env` in a shell whose home is home (see
+	// homeEnv).
 	gcpemuEnv := func(t *testing.T, home string) (map[string]string, string) {
 		t.Helper()
 		cmd := exec.Command(e.bin, "env", "--data-dir", e.dir)
-		cmd.Env = withEnv(os.Environ(), map[string]string{"HOME": home}, "CLOUDSDK_CONFIG", adcEnvVar)
+		cmd.Env = withEnv(os.Environ(), homeEnv(home), "CLOUDSDK_CONFIG", adcEnvVar)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
@@ -105,7 +132,7 @@ func testForeign(t *testing.T, e *emulator) {
 
 	// The canary: a key from real Google escapes on its token request.
 	t.Run("google-key", func(t *testing.T) {
-		env := withEnv(e.env, map[string]string{adcEnvVar: fabricatedGoogleKey(t), "HOME": t.TempDir()})
+		env := withEnv(e.env, withHome(map[string]string{adcEnvVar: fabricatedGoogleKey(t)}, t.TempDir()))
 		if out, escaped := probe(t, env); !slices.Equal(escaped, []string{googleTokenHost}) {
 			t.Errorf("the Escape guard refused %v, want [%s]; the probe said: %s", escaped, googleTokenHost, out)
 		}
@@ -114,7 +141,7 @@ func testForeign(t *testing.T, e *emulator) {
 	// The canary: gcloud's application-default credentials escape when
 	// nothing overrides them.
 	t.Run("well-known-file", func(t *testing.T) {
-		env := withEnv(e.env, map[string]string{"HOME": fabricatedADCHome(t)}, adcEnvVar, "CLOUDSDK_CONFIG")
+		env := withEnv(e.env, homeEnv(fabricatedADCHome(t)), adcEnvVar, "CLOUDSDK_CONFIG")
 		if out, escaped := probe(t, env); !slices.Equal(escaped, []string{googleTokenHost}) {
 			t.Errorf("the Escape guard refused %v, want [%s]; the probe said: %s", escaped, googleTokenHost, out)
 		}
@@ -131,7 +158,7 @@ func testForeign(t *testing.T, e *emulator) {
 		if !strings.Contains(stderr, "application_default_credentials.json") {
 			t.Errorf("gcpemu env said nothing about the well-known file: %q", stderr)
 		}
-		env := withEnv(e.env, map[string]string{"HOME": home, adcEnvVar: key}, "CLOUDSDK_CONFIG")
+		env := withEnv(e.env, withHome(map[string]string{adcEnvVar: key}, home), "CLOUDSDK_CONFIG")
 		out, escaped := probe(t, env)
 		if len(escaped) > 0 {
 			t.Errorf("the Escape guard refused %v; the probe said: %s", escaped, out)
@@ -149,7 +176,7 @@ func testForeign(t *testing.T, e *emulator) {
 	t.Run("user-set-gcpemu-env", func(t *testing.T) {
 		key := fabricatedGoogleKey(t)
 		cmd := exec.Command(e.bin, "env", "--data-dir", e.dir)
-		cmd.Env = withEnv(os.Environ(), map[string]string{"HOME": fabricatedADCHome(t), adcEnvVar: key}, "CLOUDSDK_CONFIG")
+		cmd.Env = withEnv(os.Environ(), withHome(map[string]string{adcEnvVar: key}, fabricatedADCHome(t)), "CLOUDSDK_CONFIG")
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()

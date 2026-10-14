@@ -90,8 +90,14 @@ func TestStats(t *testing.T) {
 		t.Errorf("dead-letter subscription = %v", dl)
 	}
 
-	// Seeking to now purges the backlog.
-	restCall(t, http.MethodPost, v1+"/subscriptions/dlq-sub:seek", map[string]any{"time": stats(project)["now"]}, 200)
+	// Seeking past now purges the backlog. Seek keeps messages published
+	// at the time itself, and on Windows' coarse wall clock now can equal
+	// the dead-lettered messages' publish time.
+	now, err := time.Parse(time.RFC3339Nano, stats(project)["now"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restCall(t, http.MethodPost, v1+"/subscriptions/dlq-sub:seek", map[string]any{"time": now.Add(time.Nanosecond).Format(time.RFC3339Nano)}, 200)
 	if st := sub(stats(project), "dlq-sub"); st["backlog"] != float64(0) {
 		t.Errorf("after purge: %v", st)
 	}
