@@ -478,7 +478,10 @@ endpoint override. ADC finds gcloud's `application_default_credentials.json` bef
 server, so when it exists and `GOOGLE_APPLICATION_CREDENTIALS` is unset, `gcpemu env` exports
 `GOOGLE_APPLICATION_CREDENTIALS` pointing at an emulator key for the metadata server's service
 account (ADR 0010). It never overrides a `GOOGLE_APPLICATION_CREDENTIALS` you set, but it warns,
-as `gcpemu doctor` does, when that file is not in the Invalid universe.
+as `gcpemu doctor` does, when that file is not in the Invalid universe. In host mode those token
+requests reach the instance instead, which refuses a refresh token Google issued (one starting
+`1//`, or sent with gcloud's application-default client ID) with 400 `invalid_grant` rather than
+taking it as the default Principal.
 
 The Cloud SQL Auth Proxy v2 puts a static `--token` in Google's universe, so in a `gcpemu env`
 shell it refuses the token with a universe mismatch. Its `--universe-domain` cannot go with
