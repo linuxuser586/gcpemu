@@ -1,3 +1,5 @@
+//go:build unix
+
 package dns_test
 
 import (
@@ -15,8 +17,8 @@ import (
 )
 
 // TestStartBesideMDNS: the DNS service starts on a port an mDNS daemon
-// holds on the wildcard address (5353 on most Linux desktops) and answers
-// UDP queries on its loopback bind.
+// holds on the wildcard address (5353 on most Linux desktops, and on macOS
+// where mDNSResponder holds it) and answers UDP queries on its loopback bind.
 func TestStartBesideMDNS(t *testing.T) {
 	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
