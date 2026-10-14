@@ -16,9 +16,10 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
 
-// LoadBalancer Services on a VM runtime (ADR 0005). k3s's servicelb gives
-// a LoadBalancer Service its nodes' addresses, which the host cannot reach
-// there, so clusters run without it and this controller takes its place.
+// LoadBalancer Services on a VM runtime (ADR 0005) or a Translated network
+// (ADR 0004). k3s's servicelb gives a LoadBalancer Service its nodes'
+// addresses, which the host cannot reach there, so clusters run without it
+// (clusterInternal.HostLB) and this controller takes its place.
 // Each Service gets host listeners by the rules LB forwarding rules follow
 // (#172, loopback.Listen):
 //
@@ -30,8 +31,8 @@ import (
 //   - on macOS, a privileged port on the wildcard address, serving only
 //     loopback clients, or a free port when another socket holds that.
 //
-// Each listener pipes its connections through the VM relay to the
-// Service's node port on a node. The address is reported as the Service's
+// Each listener pipes its connections to the Service's node port on a
+// node's container address, through the VM relay on a VM runtime. The address is reported as the Service's
 // load balancer ingress, and each port as endpoint
 // "gke:<cluster>/<namespace>/<service>/<port>", which `gcpemu env` prints
 // and the Web console shows. Only TCP ports with a node port are served.
@@ -52,16 +53,16 @@ type lbPort struct {
 }
 
 // lbServicesLoop serves the cluster's LoadBalancer Services while ctx
-// lives, when the Instance uses the VM relay.
+// lives, when the cluster runs without servicelb.
 func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	if s.env.Containers == nil {
 		return
 	}
-	np, err := s.env.Containers.Netplane(ctx)
-	if err != nil {
+	if rec, err := s.loadKey(key); err != nil || !rec.Int.HostLB {
 		return
 	}
-	if d, ok := np.RelayDecision(); !ok || !d.On {
+	np, err := s.env.Containers.Netplane(ctx)
+	if err != nil {
 		return
 	}
 	lbs := map[string]*lbService{}

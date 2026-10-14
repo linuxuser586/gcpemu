@@ -225,10 +225,10 @@ NAT-allowed egress hits a sink that records the attempt and returns `natSinkResp
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
-whose node addresses the host can't reach, the emulator serves them instead: on a loopback
-address, reported as the Service's ingress and by `gcpemu env` as
-`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the Service's node port. Only
-TCP ports are served.
+or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,
+so the emulator serves them instead: on a loopback address, reported as the Service's ingress
+and by `gcpemu env` as `GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the
+Service's node port. Only TCP ports are served.
 
 Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
 them with the forwarding rule's own IP (host clients still get the local listener), and the

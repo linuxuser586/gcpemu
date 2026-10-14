@@ -97,6 +97,10 @@ _Avoid_: bridge container, tunnel
 An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist.
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
+**LoadBalancer Service ingress**:
+The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC, or, on a VM runtime or a Translated network, a loopback address the emulator serves.
+_Avoid_: external IP, LB address
+
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
