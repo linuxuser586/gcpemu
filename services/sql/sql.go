@@ -167,9 +167,11 @@ func (s *Service) ResourceCounts() map[string]int {
 	})
 }
 
-// Reset removes every instance container and volume (`gcpemu reset`).
+// Reset removes every instance container and volume and the backup files
+// (`gcpemu reset`).
 func (s *Service) Reset(ctx context.Context) error {
 	s.closeAllLoopback()
+	s.removeAllBackupFiles()
 	var any bool
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		any = store.HasPrefix(tx, nsInstances, "")

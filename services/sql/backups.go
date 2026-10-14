@@ -38,6 +38,12 @@ func (s *Service) removeBackupFiles(project, name string) {
 	}
 }
 
+func (s *Service) removeAllBackupFiles() {
+	if d, err := s.env.ServiceDir("sql"); err == nil {
+		_ = os.RemoveAll(filepath.Join(d, "backups"))
+	}
+}
+
 // dumpAll returns a pg_dumpall of the instance.
 func (s *Service) dumpAll(ctx context.Context, project, name string) (string, error) {
 	return s.execIn(ctx, project, name, "", "pg_dumpall", "-h", "/var/run/postgresql", "-p", "5433", "-U", superuser, "--no-password")

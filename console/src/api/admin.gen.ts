@@ -237,8 +237,8 @@ export interface paths {
          *     - `iamDenial`: an IamDenial without its role, Project and granted
          *       fields, sent for every call the audit IAM enforcement level
          *       would deny.
-         *     - `reset`: `{}`; all state was replaced (`gcpemu reset`). Refetch
-         *       everything.
+         *     - `reset`: `{}`; all state was replaced (`gcpemu reset` or a State
+         *       snapshot restore). Refetch everything.
          *     - `gap`: `{}`; only sent first on a resumed stream whose missed
          *       events are no longer retained or whose ID belongs to another
          *       process. Refetch everything.
@@ -369,6 +369,74 @@ export interface paths {
         /** Wipe all state, keeping configuration (`gcpemu reset`). */
         post: operations["reset"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Saved State snapshots (`gcpemu snapshot list`, FR-CORE-012). */
+        get: operations["listSnapshots"];
+        put?: never;
+        /**
+         * Save all state as a State snapshot (`gcpemu snapshot save`).
+         * @description Saves the Store, GCS and Artifact Registry blobs, a dump of every
+         *     Cloud SQL instance's databases and its backup files under the
+         *     instance dir's `snapshots/NAME`, replacing a snapshot of that name.
+         *     GKE clusters are saved, but not the Kubernetes objects inside them:
+         *     a restored cluster comes back with a fresh data plane. Fails with
+         *     409 while the Instance is not ready, an Operation is running, a
+         *     Cloud SQL instance is stopped, or state keeps changing during the
+         *     save.
+         */
+        post: operations["saveSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/snapshots/{name}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace all state with a State snapshot (`gcpemu snapshot restore`).
+         * @description Resets the Instance and loads the snapshot, keeping configuration,
+         *     Fault rules and the Emulator clock. Cloud SQL instances are running
+         *     again when it returns; GKE clusters report RECONCILING until their
+         *     data planes are back. Event streams get a `reset` event.
+         */
+        post: operations["restoreSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/snapshots/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a State snapshot (`gcpemu snapshot delete`). */
+        delete: operations["deleteSnapshot"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1013,6 +1081,22 @@ export interface components {
             statusDetails?: string;
             backendLatencyMs?: number;
         };
+        /** @description A saved State snapshot. */
+        Snapshot: {
+            name: string;
+            /**
+             * Format: date-time
+             * @description The host's time of the save
+             */
+            createTime: string;
+            /** @description Service IDs the Instance ran when it was saved. */
+            services: string[];
+            /**
+             * Format: int64
+             * @description Size of the snapshot's files on disk.
+             */
+            sizeBytes: number;
+        };
         FaultRule: {
             readonly id?: string;
             /** @description Emulator service name ("gcs" */
@@ -1556,6 +1640,93 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["Status"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listSnapshots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description State snapshots, by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        snapshots?: components["schemas"]["Snapshot"][];
+                    };
+                };
+            };
+            500: components["responses"]["Error"];
+        };
+    };
+    saveSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Up to 63 letters, digits, ".", "_" or "-", starting with a letter or digit. */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The saved State snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Snapshot"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    restoreSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    deleteSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             500: components["responses"]["Error"];
         };
     };

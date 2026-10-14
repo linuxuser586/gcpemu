@@ -79,6 +79,7 @@ type Instance struct {
 	fe           *frontend.Frontend // Google frontend (FR-INT-007, FR-CORE-043)
 	hm           *hostmode.Manager  // nil unless --host-mode
 	adcMu        sync.Mutex         // serialises serveADCKey
+	stateMu      sync.Mutex         // serialises Reset and State snapshots
 	shutdownOnce sync.Once
 	done         chan struct{}
 
@@ -505,6 +506,12 @@ func (in *Instance) WaitReady(ctx context.Context) error {
 
 // Reset wipes all state but keeps configuration (FR-CORE-002).
 func (in *Instance) Reset(ctx context.Context) error {
+	in.stateMu.Lock()
+	defer in.stateMu.Unlock()
+	return in.reset(ctx)
+}
+
+func (in *Instance) reset(ctx context.Context) error {
 	var errs []error
 	for _, s := range in.services {
 		if r, ok := s.(emu.Resetter); ok {
