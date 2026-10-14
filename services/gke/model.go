@@ -21,6 +21,7 @@ const (
 	nsClusters   = "gke/clusters"   // PROJECT/LOCATION/NAME → clusterRecord
 	nsOperations = "gke/operations" // PROJECT/OPERATION → protojson Operation
 	nsNEGs       = "gke/negs"       // CLUSTERKEY|ZONE|NAME → negRecord
+	nsL7         = "gke/l7"         // CLUSTERKEY|PATH → l7Record
 )
 
 const apiBase = "https://container.googleapis.com/v1/"

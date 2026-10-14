@@ -50,8 +50,10 @@ type clusterRT struct {
 	kube   *kubeClient
 	creds  adminCreds
 	cancel context.CancelFunc // controllers (NEG sync)
-	wi     sync.Map           // pod IP → wiEntry
-	syncs  sync.Map           // SecretSync UID → syncState
+	// l7Mu serialises load balancer syncs with their removal (l7.go).
+	l7Mu  sync.Mutex
+	wi    sync.Map // pod IP → wiEntry
+	syncs sync.Map // SecretSync UID → syncState
 	// api serves the API server on the host's 127.0.0.1 on a VM runtime.
 	api *netplane.Exposed
 	// lan serves it on the --gke-bind addresses (lan.go), at lanAddrs,
@@ -1297,6 +1299,7 @@ func (s *Service) destroyDataPlane(ctx context.Context, key string) error {
 	if err != nil {
 		return nil
 	}
+	s.deleteL7(ctx, key)
 	s.deleteNEGs(ctx, key)
 	d, err := s.deps(ctx)
 	if err != nil {

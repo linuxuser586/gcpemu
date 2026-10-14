@@ -360,28 +360,33 @@ func (s *Service) insertH(k *kind) http.HandlerFunc {
 		}
 		setID(obj, s.env.IDs.Uint64())
 		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), "insert", path, getID(obj), func(ctx context.Context) error {
-			if err := s.env.Store.Update(func(tx store.Tx) error {
-				if store.Exists(tx, k.ns(), path) {
-					return errExists(path)
-				}
-				s.finish(k, sc, path, obj)
-				if k.inTx != nil {
-					if err := k.inTx(tx, path, obj); err != nil {
-						return err
-					}
-				}
-				return store.PutJSON(tx, k.ns(), path, obj)
-			}); err != nil {
-				return err
-			}
-			if k.afterSave != nil {
-				k.afterSave(ctx, s, path, obj, nil)
-			}
-			s.changed()
-			return nil
+			return s.insert(ctx, k, sc, path, obj)
 		})
 		reply(w, op, err)
 	}
+}
+
+// insert stores a new, prepared resource and reconciles.
+func (s *Service) insert(ctx context.Context, k *kind, sc scope, path string, obj any) error {
+	if err := s.env.Store.Update(func(tx store.Tx) error {
+		if store.Exists(tx, k.ns(), path) {
+			return errExists(path)
+		}
+		s.finish(k, sc, path, obj)
+		if k.inTx != nil {
+			if err := k.inTx(tx, path, obj); err != nil {
+				return err
+			}
+		}
+		return store.PutJSON(tx, k.ns(), path, obj)
+	}); err != nil {
+		return err
+	}
+	if k.afterSave != nil {
+		k.afterSave(ctx, s, path, obj, nil)
+	}
+	s.changed()
+	return nil
 }
 
 func (s *Service) getH(k *kind) http.HandlerFunc {
@@ -448,20 +453,25 @@ func (s *Service) deleteH(k *kind) http.HandlerFunc {
 			return
 		}
 		op, err := s.cmp.StartOperation(r.Context(), "lb", sc.project, sc.String(), "delete", path, getID(obj), func(ctx context.Context) error {
-			if u := s.usedBy(ctx, path); u != "" {
-				return errInUse(k.snake, path, u)
-			}
-			if err := s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(k.ns(), path) }); err != nil {
-				return err
-			}
-			if k.afterDelete != nil {
-				k.afterDelete(ctx, s, path, obj)
-			}
-			s.changed()
-			return nil
+			return s.remove(ctx, k, path, obj)
 		})
 		reply(w, op, err)
 	}
+}
+
+// remove deletes a resource nothing uses and reconciles.
+func (s *Service) remove(ctx context.Context, k *kind, path string, obj any) error {
+	if u := s.usedBy(ctx, path); u != "" {
+		return errInUse(k.snake, path, u)
+	}
+	if err := s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(k.ns(), path) }); err != nil {
+		return err
+	}
+	if k.afterDelete != nil {
+		k.afterDelete(ctx, s, path, obj)
+	}
+	s.changed()
+	return nil
 }
 
 // outputOnly lists the common fields PATCH and PUT never change.
