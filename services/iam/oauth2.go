@@ -182,10 +182,31 @@ func (s *Service) refreshPrincipal(rt string) emu.Principal {
 	return emu.Principal(s.env.Config.DefaultPrincipal)
 }
 
+// gcloudADCClientID is the OAuth client gcloud's application-default
+// login writes into application_default_credentials.json.
+const gcloudADCClientID = "764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com"
+
+// foreignRefreshMessage explains why a Google-issued refresh token is refused.
+const foreignRefreshMessage = "this refresh token was issued by Google, not by gcpemu: these are Foreign credentials " +
+	"(such as gcloud's application-default login) and the emulator does not accept them. " +
+	"Use an emulator key or `gcpemu env`; see \"Foreign credentials\" in the gcpemu README"
+
+// googleIssued reports whether a refresh token grant carries Foreign
+// credentials: a Google refresh token ("1//…") or gcloud's ADC client. In
+// host mode gcloud's application-default credentials reach the emulator,
+// and taking them as the default principal would hide that (#256).
+func googleIssued(refreshToken, clientID string) bool {
+	return strings.HasPrefix(refreshToken, "1//") || clientID == gcloudADCClientID
+}
+
 func (s *Service) refreshGrant(w http.ResponseWriter, form url.Values) {
 	rt := form.Get("refresh_token")
 	if rt == "" {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "Missing required parameter: refresh_token")
+		return
+	}
+	if googleIssued(rt, form.Get("client_id")) {
+		oauthError(w, http.StatusBadRequest, "invalid_grant", foreignRefreshMessage)
 		return
 	}
 	p := s.refreshPrincipal(rt)
