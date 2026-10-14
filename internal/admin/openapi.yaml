@@ -177,6 +177,25 @@ paths:
                 type: object
                 additionalProperties: { type: string }
         "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/adc-key:
+    post:
+      summary: >-
+        Write a key file for the host metadata server's service account, for
+        `gcpemu env` to point GOOGLE_APPLICATION_CREDENTIALS at when gcloud's
+        application-default credentials would otherwise win (ADR 0010). The
+        file already written is kept while its key is valid.
+      operationId: adcKey
+      responses:
+        "200":
+          description: Where the key file is.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
   /_emu/v1/hostmode:
     get:
       summary: Host mode state (FR-CORE-043).

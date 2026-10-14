@@ -32,7 +32,7 @@ import (
 func (o *rootOpts) doctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Check container runtime, ports, CA trust, disk and arch",
+		Short: "Check container runtime, ports, CA trust, disk, arch and credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
@@ -126,6 +126,8 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			} else {
 				fmt.Fprintln(out, "[--  ] emulator CA not created yet (created on first start)")
 			}
+
+			checkForeignCreds(out, report)
 
 			if problems > 0 {
 				return fmt.Errorf("%d problem(s) found", problems)
@@ -327,5 +329,27 @@ func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.C
 			report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
 				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")
 		}
+	}
+}
+
+// checkForeignCreds reports Foreign credentials that ADC would pick up
+// (#247): a GOOGLE_APPLICATION_CREDENTIALS file from outside the Invalid
+// universe, or gcloud's application-default credentials, which `gcpemu
+// env` overrides only while GOOGLE_APPLICATION_CREDENTIALS is unset.
+func checkForeignCreds(out io.Writer, report func(bool, string, string)) {
+	if p := os.Getenv(adcEnv); p != "" {
+		why, err := foreignCredsFile(p)
+		switch {
+		case err != nil:
+			report(false, adcEnv+": "+err.Error(), "point it at a readable key file, unset it, or run `eval \"$(gcpemu env)\"` again")
+		case why != "":
+			report(false, adcEnv+": "+why, "unset it, or use a key created against gcpemu; its token requests go to real Google")
+		default:
+			report(true, adcEnv+" is an emulator key", "")
+		}
+		return
+	}
+	if wk := wellKnownADC(); wk != "" {
+		fmt.Fprintf(out, "[--  ] gcloud's application-default credentials at %s go to real Google; `eval \"$(gcpemu env)\"` points ADC at an emulator key instead\n", wk)
 	}
 }

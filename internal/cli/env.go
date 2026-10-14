@@ -45,6 +45,7 @@ func (o *rootOpts) envCmd() *cobra.Command {
 			if err := json.Unmarshal(b, &vars); err != nil {
 				return err
 			}
+			guardADC(c, vars, cmd.ErrOrStderr())
 			out := cmd.OutOrStdout()
 			if shell == "github" {
 				if p := os.Getenv("GITHUB_ENV"); p != "" {

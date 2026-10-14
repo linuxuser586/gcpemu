@@ -467,7 +467,18 @@ Python google-auth otherwise looks up each account's Regional Access Boundary at
 `iamcredentials.googleapis.com`, which no Endpoint override covers (ADR 0009). ADC through it
 needs nothing else, except that Python Cloud Storage with those credentials passed explicitly
 needs the same `client_options` as an emulator key. In GKE pods the metadata server stays in
-Google's universe, and the instance answers the lookup.
+Google's universe, and the instance answers the lookup. On a machine where someone ran
+`gcloud auth application-default login`, ADC uses a key instead, as below.
+
+Credentials the instance did not issue, such as a key from real Google or gcloud's
+application-default login, send their token requests to `oauth2.googleapis.com`. Go HTTP clients,
+Python Cloud Storage with credentials passed explicitly and the Node REST fallback fetch a token
+before they check the universe, so that request reaches Google even when every API has an
+endpoint override. ADC finds gcloud's `application_default_credentials.json` before the metadata
+server, so when it exists and `GOOGLE_APPLICATION_CREDENTIALS` is unset, `gcpemu env` exports
+`GOOGLE_APPLICATION_CREDENTIALS` pointing at an emulator key for the metadata server's service
+account (ADR 0010). It never overrides a `GOOGLE_APPLICATION_CREDENTIALS` you set, but it warns,
+as `gcpemu doctor` does, when that file is not in the Invalid universe.
 
 The Cloud SQL Auth Proxy v2 puts a static `--token` in Google's universe, so in a `gcpemu env`
 shell it refuses the token with a universe mismatch. Its `--universe-domain` cannot go with

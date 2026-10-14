@@ -77,6 +77,7 @@ type Instance struct {
 	containers   *containers
 	fe           *frontend.Frontend // Google frontend (FR-INT-007, FR-CORE-043)
 	hm           *hostmode.Manager  // nil unless --host-mode
+	adcMu        sync.Mutex         // serialises serveADCKey
 	shutdownOnce sync.Once
 	done         chan struct{}
 

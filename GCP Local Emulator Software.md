@@ -145,7 +145,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | FR-CORE-004 | `gcpemu env --shell bash` (also `fish`, `github`) prints the env vars clients need (`STORAGE_EMULATOR_HOST`, `PUBSUB_EMULATOR_HOST`, `GCE_METADATA_HOST`, `CLOUDSDK_API_ENDPOINT_OVERRIDES_*`, `KUBECONFIG`, `SSL_CERT_FILE` addition); `github` writes `$GITHUB_ENV` format. | M |
 | FR-CORE-005 | `gcpemu tofu-provider` prints an OpenTofu `provider "google"` block with every relevant `*_custom_endpoint` set to the instance. | S |
 | FR-CORE-006 | Graceful shutdown on SIGINT/SIGTERM stops data planes, flushes state and removes containers it created, within 30 s. A crashed instance's orphaned containers are reclaimed on next start (labelled by instance ID). | M |
-| FR-CORE-007 | `gcpemu doctor` checks container runtime, ports, CA trust, disk and arch, and prints fixes. | S |
+| FR-CORE-007 | `gcpemu doctor` checks container runtime, ports, CA trust, disk, arch and Foreign credentials, and prints fixes. | S |
 
 ### 4.2 Configuration and seeding
 

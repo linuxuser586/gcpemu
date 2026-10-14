@@ -91,7 +91,11 @@ func start(t *testing.T) *emulator {
 // resources such as Cloud SQL instances appear).
 func (e *emulator) emuEnv(t *testing.T) map[string]string {
 	t.Helper()
-	out, err := exec.Command(e.bin, "env", "--data-dir", e.dir).Output()
+	// A home without gcloud's application-default credentials, so the
+	// variables are the same on every machine (#247).
+	cmd := exec.Command(e.bin, "env", "--data-dir", e.dir)
+	cmd.Env = withEnv(os.Environ(), map[string]string{"HOME": t.TempDir()}, "CLOUDSDK_CONFIG", "GOOGLE_APPLICATION_CREDENTIALS")
+	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("gcpemu env: %v", err)
 	}
@@ -276,6 +280,10 @@ func TestClients(t *testing.T) {
 
 	t.Run("universe", func(t *testing.T) {
 		testUniverse(t, e)
+	})
+
+	t.Run("foreign", func(t *testing.T) {
+		testForeign(t, e)
 	})
 
 	t.Run("gcloud/dns+dig", func(t *testing.T) {

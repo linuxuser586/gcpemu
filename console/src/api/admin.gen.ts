@@ -148,6 +148,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/adc-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Write a key file for the host metadata server's service account, for `gcpemu env` to point GOOGLE_APPLICATION_CREDENTIALS at when gcloud's application-default credentials would otherwise win (ADR 0010). The file already written is kept while its key is valid. */
+        post: operations["adcKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/hostmode": {
         parameters: {
             query?: never;
@@ -1222,6 +1239,30 @@ export interface operations {
                     };
                 };
             };
+            500: components["responses"]["Error"];
+        };
+    };
+    adcKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Where the key file is. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        path?: string;
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
             500: components["responses"]["Error"];
         };
     };

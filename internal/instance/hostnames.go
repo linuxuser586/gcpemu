@@ -1,9 +1,12 @@
 package instance
 
 import (
+	"bytes"
 	"net/http"
+	"os"
 	"path/filepath"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/trust"
 )
@@ -72,4 +75,38 @@ func (in *Instance) serveEnv(w http.ResponseWriter, r *http.Request) {
 // serveHostMode is GET /_emu/v1/hostmode.
 func (in *Instance) serveHostMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, in.HostMode())
+}
+
+// ADCKeyFile is the key file, in the data directory, that `gcpemu env`
+// points GOOGLE_APPLICATION_CREDENTIALS at when gcloud's
+// application-default credentials would otherwise win over the metadata
+// server (ADR 0010).
+const ADCKeyFile = "adc-key.json"
+
+// serveADCKey is POST /_emu/v1/adc-key: it writes ADCKeyFile, keeping the
+// one already there while its key is valid, and returns its path.
+func (in *Instance) serveADCKey(w http.ResponseWriter, r *http.Request) {
+	var k emu.ADCKeyer
+	for _, s := range in.services {
+		if v, ok := s.(emu.ADCKeyer); ok {
+			k = v
+		}
+	}
+	if k == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no service issues ADC keys (is IAM running?)"})
+		return
+	}
+	in.adcMu.Lock()
+	defer in.adcMu.Unlock()
+	p := filepath.Join(in.Env.DataDir, ADCKeyFile)
+	cur, _ := os.ReadFile(p)
+	b, err := k.ADCKey(cur)
+	if err == nil && !bytes.Equal(b, cur) {
+		err = os.WriteFile(p, b, 0o600)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"path": p})
 }
