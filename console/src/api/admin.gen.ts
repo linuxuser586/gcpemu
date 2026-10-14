@@ -626,7 +626,7 @@ export interface components {
             level: "off" | "audit" | "enforce";
         };
         IamDenial: {
-            /** @description Stable for the Principal */
+            /** @description Stable for the Principal, permission, resource and deny policy. */
             id: string;
             /** @description The caller, e.g. serviceAccount:EMAIL. */
             principal: string;
@@ -634,6 +634,8 @@ export interface components {
             permission: string;
             /** @description The full resource name the permission was checked on. */
             resource: string;
+            /** @description The IAM v2 deny policy that refused the permission, e.g. policies/cloudresourcemanager.googleapis.com%2Fprojects%2F123/denypolicies/no-destroy. Absent when no allow policy granted it. */
+            denyPolicy?: string;
             /** @description The Service ID of the latest denied call. */
             service?: string;
             /** @description The latest denied call's method */
@@ -649,12 +651,12 @@ export interface components {
             firstTime: string;
             /** Format: date-time */
             lastTime: string;
-            /** @description The smallest predefined role granting the permission, e.g. roles/storage.objectViewer. */
+            /** @description The smallest predefined role granting the permission, e.g. roles/storage.objectViewer. Absent for a deny policy's denial, which no grant overrides. */
             role?: string;
             roleTitle?: string;
             /** @description The ID of the Project owning the resource */
             project?: string;
-            /** @description The Principal now holds the permission on the resource. */
+            /** @description The Principal now holds the permission on the resource, and no deny policy refuses it. */
             granted: boolean;
         };
         Info: {

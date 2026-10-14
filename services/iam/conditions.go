@@ -241,12 +241,18 @@ func evalCondition(c *iamv1.Expr, resource string, now time.Time) bool {
 	if err != nil {
 		return false
 	}
+	v, _, err := p.Eval(conditionVars(resource, now))
+	return err == nil && v == types.True
+}
+
+// conditionVars are the attributes a condition sees for an access to
+// resource at now.
+func conditionVars(resource string, now time.Time) map[string]any {
 	host, path := splitResource(resource)
-	v, _, err := p.Eval(map[string]any{
+	return map[string]any{
 		"request.time":     now,
 		"resource.name":    path,
 		"resource.service": host,
 		"resource.type":    resourceType(host, path),
-	})
-	return err == nil && v == types.True
+	}
 }

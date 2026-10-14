@@ -429,17 +429,20 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	// Inside a container, or on a VM runtime, the host cannot reach the
 	// cluster networks, so the API server is also served on the host's
 	// loopback: published by the runtime, or by the emulator through the
-	// VM relay. LoadBalancer Services are then served on loopback too
-	// (lbservices.go), in place of servicelb's node addresses.
+	// VM relay. LoadBalancer Services are served on loopback in place of
+	// servicelb's node addresses (lbservices.go) on a VM runtime, and on a
+	// Translated network, whose Declared addresses the host does not
+	// route (ADR 0004, #270).
 	var ports []runtime.Port
 	relay := d.relay()
+	hostLB := relay || sn.Translated
 	if d.rt.Self() != "" || relay {
 		args = append(args, "--tls-san", loopback.Host)
 	}
 	if d.rt.Self() != "" {
 		ports = []runtime.Port{{HostIP: loopback.Host, HostPort: rec.Int.APIHostPort, ContainerPort: 443}}
 	}
-	if relay {
+	if hostLB {
 		args = append(args, "--disable", "servicelb")
 	}
 	id, err := d.rt.CreateContainer(ctx, runtime.ContainerSpec{
@@ -504,6 +507,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	lanPort := s.serveLAN(d, key, contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name), rec.Int.LANPort, net.JoinHostPort(dial, "443"))
 	if err := s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		rec.Int.ServerIP, rec.Int.ExternalIP, rec.Int.APIHostPort, rec.Int.LANPort = ip, extIP, apiPort, lanPort
+		rec.Int.HostLB = hostLB
 		return nil
 	}); err != nil {
 		return err

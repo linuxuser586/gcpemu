@@ -14,9 +14,14 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
-// serveIAM serves iam.googleapis.com v1 (FR-IAM-001..003).
+// serveIAM serves iam.googleapis.com v1 (FR-IAM-001..003) and v2's deny
+// policies (FR-IAM-010).
 func (s *Service) serveIAM(w http.ResponseWriter, r *http.Request) {
 	rt := parseRoute(r.URL.Path)
+	if len(rt.segs) > 0 && rt.segs[0] == "v2" {
+		s.serveIAMv2(w, r)
+		return
+	}
 	if len(rt.segs) == 0 || rt.segs[0] != "v1" {
 		notFoundRoute(w, r)
 		return

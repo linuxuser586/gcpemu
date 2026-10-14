@@ -120,6 +120,15 @@ type PolicyEvaluator interface {
 	Allowed(ctx context.Context, p Principal, permission, resource string) bool
 }
 
+// DenyEvaluator decides whether a deny policy refuses a principal a
+// permission on a resource (FR-IAM-010). An evaluator that implements it
+// is consulted before any allow policy.
+type DenyEvaluator interface {
+	// Denied returns the name of the deny policy refusing permission, or
+	// ok=false when none does.
+	Denied(ctx context.Context, p Principal, permission, resource string) (policy string, ok bool)
+}
+
 // PolicyAuthorizer implements Authorizer using pluggable authenticator and
 // evaluator, applying the configured mode. The mode starts as configured
 // and can be switched while the Instance runs (SetMode). It keeps a log
@@ -164,10 +173,21 @@ func (a *PolicyAuthorizer) Check(ctx context.Context, permission, resource strin
 		return nil
 	}
 	p := PrincipalFrom(ctx)
+	if de, ok := a.eval.(DenyEvaluator); ok {
+		if policy, denied := de.Denied(ctx, p, permission, resource); denied {
+			a.denials.add(ctx, p, permission, resource, policy, mode)
+			if mode == config.IAMAudit {
+				a.log.Warn("iam audit: deny policy would deny", "principal", string(p), "permission", permission, "resource", resource, "policy", policy)
+				return nil
+			}
+			return apierr.PermissionDenied("Permission '%s' denied on resource '%s' by deny policy '%s'.", permission, resource, policy).
+				WithReason("iam.googleapis.com", "IAM_PERMISSION_DENIED")
+		}
+	}
 	if a.eval.Allowed(ctx, p, permission, resource) {
 		return nil
 	}
-	a.denials.add(ctx, p, permission, resource, mode)
+	a.denials.add(ctx, p, permission, resource, "", mode)
 	if mode == config.IAMAudit {
 		a.log.Warn("iam audit: would deny", "principal", string(p), "permission", permission, "resource", resource)
 		return nil

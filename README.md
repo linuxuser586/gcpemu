@@ -14,7 +14,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 | Area | Package | Highlights |
 | --- | --- | --- |
 | Core | `internal/…` | CLI, API gateway (REST + gRPC on one port), admin API, store (memory/bbolt), seed files, fault injection, request log |
-| IAM | `services/iam` | Service accounts and keys, roles, policies with conditions, audit/enforce, OAuth2 token endpoint, IAM Credentials, metadata server, STS/WIF (OIDC exchange; AWS and SAML providers managed only), Service Usage (enabled APIs per project) |
+| IAM | `services/iam` | Service accounts and keys, roles, policies with conditions, IAM v2 deny policies on projects, audit/enforce, OAuth2 token endpoint, IAM Credentials, metadata server, STS/WIF (OIDC exchange; AWS and SAML providers managed only), Service Usage (enabled APIs per project) |
 | Cloud Storage | `services/gcs` | JSON + XML APIs, resumable uploads, generations/preconditions, checksums, V4 signed URLs, notifications, lifecycle, HMAC, legacy ACLs, managed folders with IAM |
 | Pub/Sub | `services/pubsub` | gRPC + REST, streaming pull, ordering, DLQ, filters, push with OIDC, exactly-once, snapshots/seek, schemas |
 | Secret Manager | `services/secrets` | gRPC + REST, global and regional secrets, versions and aliases, IAM, expiry and delayed destruction on the Emulator clock, Pub/Sub event notifications, managed rotation of Cloud SQL passwords |
@@ -137,6 +137,8 @@ level is switched with `PUT /_emu/v1/iam/enforcement` until the Instance stops. 
 `GET /_emu/v1/iam/denials`: every call IAM found the caller lacking a permission for, once per
 Principal, permission and resource, with the smallest predefined role that grants it and the
 Project owning the resource. Grant binds that role on that Project through its `setIamPolicy`.
+A call an IAM v2 deny policy refused is listed separately, naming the policy (`denyPolicy`) and
+no role, since no grant overrides a deny.
 The log lives in memory until the Instance stops or is reset; `DELETE /_emu/v1/iam/denials`
 clears it.
 Its Fault rules view (`/console/faults`, filtered by `?service=` and `?q=`) lists
@@ -249,10 +251,10 @@ NAT-allowed egress hits a sink that records the attempt and returns `natSinkResp
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
-whose node addresses the host can't reach, the emulator serves them instead: on a loopback
-address, reported as the Service's ingress and by `gcpemu env` as
-`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the Service's node port. Only
-TCP ports are served.
+or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,
+so the emulator serves them instead: on a loopback address, reported as the Service's ingress
+and by `gcpemu env` as `GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the
+Service's node port. Only TCP ports are served.
 
 Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
 them with the forwarding rule's own IP (host clients still get the local listener), and the
@@ -312,6 +314,11 @@ CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the h
 Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. `CI=true` implies `--ephemeral`,
 JSON logs and no Web console. The IAM enforcement level is `audit` by default (`--iam-mode off|audit|enforce`);
 `PUT /_emu/v1/iam/enforcement` with `{"level":"enforce"}` switches it while the Instance runs.
+IAM v2 deny policies (`google_iam_deny_policy`, `/iam/v2/policies/…/denypolicies`) are checked
+before any allow policy and bind every Principal they name, the Default principal included;
+internal calls with no Principal are exempt. Under `audit` a denied call is logged and allowed.
+Denial conditions on `request.time` and `resource.*` are evaluated; conditions on resource tags
+are refused, since the emulator has no tags.
 
 ### Seed files
 
