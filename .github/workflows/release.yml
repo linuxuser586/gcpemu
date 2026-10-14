@@ -3,6 +3,7 @@ name: release
 # setup-gcpemu downloads and verifies (FR-CI-001), and moves the major tag
 # (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves. The image
 # job then publishes the same linux binaries as the OCI image (NFR-PORT-004).
+# Run the manual macOS checks in docs/release.md before pushing the tag.
 on:
   push:
     tags: ["v*.*.*"]
