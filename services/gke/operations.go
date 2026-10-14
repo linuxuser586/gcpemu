@@ -51,14 +51,10 @@ func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, 
 		Progress:      &containerpb.OperationProgress{Status: containerpb.Operation_RUNNING},
 	}
 	if lock {
-		s.mu.Lock()
-		if cur, ok := s.busy[r.key()]; ok {
-			s.mu.Unlock()
+		if cur, ok := s.tryLock(r.key(), name); !ok {
 			return nil, apierr.FailedPrecondition("Cluster is running incompatible operation %s.", cur).
 				WithReason("container.googleapis.com", "CLUSTER_ALREADY_HAS_OPERATION")
 		}
-		s.busy[r.key()] = name
-		s.mu.Unlock()
 	}
 	if err := s.putOp(r.Project, op); err != nil {
 		s.unlock(r, lock, name)
@@ -93,12 +89,37 @@ func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, 
 }
 
 func (s *Service) unlock(r ref, lock bool, name string) {
-	if !lock {
-		return
+	if lock {
+		s.release(r.key(), name)
 	}
+}
+
+// tryLock takes a cluster's operation lock for name, or returns the
+// operation holding it.
+func (s *Service) tryLock(key, name string) (string, bool) {
 	s.mu.Lock()
-	if s.busy[r.key()] == name {
-		delete(s.busy, r.key())
+	defer s.mu.Unlock()
+	if cur, busy := s.busy[key]; busy {
+		return cur, false
+	}
+	s.busy[key] = name
+	return name, true
+}
+
+// hold takes a cluster's operation lock for name, waiting for a running
+// operation to finish.
+func (s *Service) hold(ctx context.Context, key, name string) error {
+	return waitFor(ctx, 2*time.Minute, func() (bool, error) {
+		_, ok := s.tryLock(key, name)
+		return ok, nil
+	})
+}
+
+// release drops a cluster's operation lock if name holds it.
+func (s *Service) release(key, name string) {
+	s.mu.Lock()
+	if s.busy[key] == name {
+		delete(s.busy, key)
 	}
 	s.mu.Unlock()
 }

@@ -402,8 +402,10 @@ export interface paths {
          * @description Saves the Store, GCS and Artifact Registry blobs, a dump of every
          *     Cloud SQL instance's databases and its backup files under the
          *     instance dir's `snapshots/NAME`, replacing a snapshot of that name.
-         *     GKE clusters are saved, but not the Kubernetes objects inside them:
-         *     a restored cluster comes back with a fresh data plane. Fails with
+         *     Each RUNNING GKE cluster's k3s datastore is saved, so a restored
+         *     cluster keeps its Kubernetes objects and cluster CA; PersistentVolume
+         *     contents are not saved and come back empty, and a cluster that is
+         *     not RUNNING comes back with a fresh data plane. Fails with
          *     409 while the Instance is not ready, an Operation is running, a
          *     Cloud SQL instance is stopped, or state keeps changing during the
          *     save.

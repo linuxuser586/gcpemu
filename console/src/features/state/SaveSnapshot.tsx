@@ -75,7 +75,7 @@ export function SaveSnapshot() {
       >
         <p className="text-sm text-muted-foreground">
           The Instance must be ready with no Operation running, and no Cloud SQL instance stopped.
-          GKE clusters are saved without the Kubernetes objects inside them.
+          RUNNING GKE clusters keep their Kubernetes objects, but not PersistentVolume contents.
         </p>
         <Field
           id="snapshot-name"
