@@ -1,0 +1,19 @@
+# On a VM runtime, a Containerized Instance serves host clients through its own published ports
+
+A Containerized Instance starts no VM relay (ADR 0005), because it is already on every network. On Linux the host routes to those networks, so a GKE `LoadBalancer` Service reports node addresses there (#276). On a VM runtime the host cannot route into the VM, so those addresses time out (#280). Managed containers that exist before their host clients, such as Cloud SQL instances and the GKE API server, publish their own ports when they are created. A `LoadBalancer` Service appears after its nodes are running, and a runtime cannot add ports to a running container. We decided that on a VM runtime, a Containerized Instance serves each `LoadBalancer` Service on a port its own container publishes, and reports the host side of that binding. It prefers a published port equal to the Service's port, and otherwise takes a free one from `--port-range`. It learns the host side by inspecting its own container. On Linux nothing changes.
+
+A Containerized Instance can't probe the host's routing from inside its container. It guesses that it is on a VM runtime from the runtime's info (Docker Desktop, OrbStack), and `GCPEMU_VM_RUNTIME=true|false` overrides the guess, for Colima, Podman machine and Linux CI. The setting names the condition, not the VM relay, which a Containerized Instance never starts. When no published port is free, the Service's ingress stays empty, as on GCP while a load balancer is being provisioned. The Instance does not report an address that times out.
+
+## Considered options
+
+- **Publishing ports on the node containers**, as Cloud SQL and the API server do. Services appear after nodes start, so this would mean publishing a NodePort range on every node up front, or recreating nodes whenever Services change.
+- **A per-cluster relay container on the external network** with published ports, recreated whenever the set of Services changes. That is a second relay mechanism beside ADR 0005's, and recreating it drops connections.
+- **Not supporting it** and pointing macOS users to the native binary with the VM relay. That is cheap, but the image is the documented way to run the emulator under compose.
+- **Using published ports whenever the container has any**, with no VM-runtime guess. A Linux user who publishes a range for other reasons would silently lose the node addresses.
+
+## Consequences
+
+- Users on a VM runtime must start the image with `--port-range` and publish that range (`-p 127.0.0.1:20000-20019:20000-20019`). The emulator listens on `0.0.0.0` in its container, so Pods on VPC networks can reach those ports too.
+- The ingress is the binding's host IP, usually `127.0.0.1`. The port is usually not the Service's port, so the real `host:port` appears only in the `gke:` endpoint and `gcpemu env`, as on the VM relay path when a Service's port is taken. Only TCP Service ports are served.
+- Servicelb is turned off when a cluster's nodes are created, so a cluster created before the guess or the override changed keeps unreachable node addresses until it is recreated. `gcpemu doctor` reports the decision and flags such clusters.
+- Forwarding rules and Cloud SQL instance IPs have the same gap and should follow this rule (separate issues).
