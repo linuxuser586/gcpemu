@@ -71,8 +71,8 @@ func TestLBEnvVars(t *testing.T) {
 	}
 }
 
-// Without a VM relay the controller leaves LoadBalancer Services to
-// servicelb.
+// Without a container runtime the controller leaves LoadBalancer Services
+// alone.
 func TestLBServicesLoopWithoutRuntime(t *testing.T) {
 	s := newUnitService(t)
 	s.lbServicesLoop(context.Background(), "p/l/c")
