@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -191,4 +192,26 @@ func (c *Client) SelfIP(ctx context.Context, network string) (string, error) {
 		return "", err
 	}
 	return ct.IPs[network], nil
+}
+
+// SelfPorts maps each TCP port the emulator's own container publishes to
+// the host address it is published at (127.0.0.1 for the wildcard), or is
+// nil on the host. On a VM runtime these are the only container ports
+// the host reaches (ADR 0012).
+func (c *Client) SelfPorts(ctx context.Context) (map[int]string, error) {
+	if c.self == "" {
+		return nil, nil
+	}
+	ct, err := c.InspectContainer(ctx, c.self)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]string{}
+	for k, addr := range ct.Ports {
+		p, proto, _ := strings.Cut(k, "/")
+		if n, err := strconv.Atoi(p); err == nil && proto == "tcp" {
+			out[n] = addr
+		}
+	}
+	return out, nil
 }

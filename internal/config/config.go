@@ -86,6 +86,11 @@ type Config struct {
 	// beyond loopback (FR-UI-009); empty means a random one per start.
 	// There is no flag, so that it never shows in a process listing.
 	AdminToken string `yaml:"adminToken" env:"ADMIN_TOKEN"`
+	// VMRuntime says whether a Containerized Instance runs on a VM runtime,
+	// whose host reaches LoadBalancer Services only through the Instance's
+	// published ports (ADR 0012): "auto" guesses from the runtime's info,
+	// "true" and "false" override the guess.
+	VMRuntime string `yaml:"vmRuntime" env:"VM_RUNTIME"`
 }
 
 // MinAdminTokenLen is the shortest AdminToken accepted.
@@ -127,6 +132,7 @@ func Defaults() Config {
 		WaitTimeout:      120 * time.Second,
 		Ports:            map[string]int{},
 		LROLatency:       map[string]string{},
+		VMRuntime:        "auto",
 	}
 	if os.Getenv("CI") == "true" {
 		c.Ephemeral = true
@@ -407,6 +413,11 @@ func (c *Config) Validate() error {
 	}
 	if _, _, _, err := c.ParsePortRange(); err != nil {
 		return err
+	}
+	switch strings.ToLower(c.VMRuntime) {
+	case "", "auto", "true", "false":
+	default:
+		return fmt.Errorf("invalid --vm-runtime (GCPEMU_VM_RUNTIME, vmRuntime) %q (want auto, true or false)", c.VMRuntime)
 	}
 	for name, p := range c.Ports {
 		if p < 0 || p > 65535 {

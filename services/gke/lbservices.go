@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,8 +44,34 @@ import (
 // a Linux host routes to, and opens no listener: kube-proxy on every node
 // serves a LoadBalancer Service's ingress IPs on the Service's ports.
 // The endpoints then hold the first of them.
+//
+// On a VM runtime (ADR 0012) the host routes to no container address, so
+// a Containerized Instance serves each Service port on the wildcard
+// address of its container, on a port the container publishes
+// (publishedCandidates), and reports the host side of that binding: its
+// host IP as the ingress, and its host address as the endpoint. A Service
+// port with no free published port is not served, and is retried while
+// its Service stays; a Service with none served has no ingress.
 
 const lbEndpointPrefix = "gke:"
+
+// lbMode is how the host reaches a cluster's LoadBalancer Services.
+type lbMode int
+
+const (
+	// lbLoopback: host listeners, for an Instance on the host.
+	lbLoopback lbMode = iota
+	// lbNodes: the Ready nodes' addresses, for a Containerized Instance
+	// off a VM runtime.
+	lbNodes
+	// lbPublished: the container's published ports, for a Containerized
+	// Instance on a VM runtime.
+	lbPublished
+)
+
+// publishedHost is the address published ports are served on in the
+// emulator's container; "" is the wildcard.
+var publishedHost = ""
 
 // lbService is the host side of one LoadBalancer Service.
 type lbService struct {
@@ -53,6 +80,10 @@ type lbService struct {
 	ingress   []string
 	endpoints []string
 	ex        []*netplane.Exposed
+	// served holds the Service ports served on published ports
+	// (lbPublished); unserved is set while some wait for a free one.
+	served   map[int]bool
+	unserved bool
 }
 
 // lbPort is a Service port served on the host.
@@ -74,8 +105,17 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 		return
 	}
 	// Inside a container the VM relay is off, so HostLB means a
-	// Translated network.
-	byNodes := np.Runtime().Self() != ""
+	// Translated network, or a VM runtime.
+	rt := np.Runtime()
+	mode := lbLoopback
+	if rt.Self() != "" {
+		mode = lbNodes
+		if rt.VM.On {
+			mode = lbPublished
+		}
+	}
+	// The container's published ports, fixed for its life.
+	var published map[int]string
 	lbs := map[string]*lbService{}
 	defer func() {
 		for id, l := range lbs {
@@ -85,7 +125,14 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	t := time.NewTicker(negInterval)
 	defer t.Stop()
 	for {
-		if err := s.syncLBServices(ctx, np, key, byNodes, lbs); err != nil && ctx.Err() == nil {
+		err := error(nil)
+		if mode == lbPublished && published == nil {
+			published, err = rt.SelfPorts(ctx)
+		}
+		if err == nil {
+			err = s.syncLBServices(ctx, np, key, mode, published, lbs)
+		}
+		if err != nil && ctx.Err() == nil {
 			s.env.Log.Debug("gke: LoadBalancer Service sync", "cluster", key, "err", err)
 		}
 		select {
@@ -96,10 +143,10 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	}
 }
 
-// syncLBServices reconciles the host listeners of a cluster's
-// LoadBalancer Services, keyed by namespace/name in lbs, or with byNodes
-// their ingress at the nodes' Fallback-range addresses.
-func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key string, byNodes bool, lbs map[string]*lbService) error {
+// syncLBServices reconciles the host side of a cluster's LoadBalancer
+// Services, keyed by namespace/name in lbs, as mode says. published is the
+// container's published ports, for lbPublished.
+func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key string, mode lbMode, published map[int]string, lbs map[string]*lbService) error {
 	kc, err := s.kube(key)
 	if err != nil {
 		return err
@@ -109,7 +156,7 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 		return err
 	}
 	var nodeIPs []string
-	if byNodes {
+	if mode == lbNodes {
 		rec, err := s.loadKey(key)
 		if err != nil {
 			return err
@@ -127,14 +174,25 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 			return nil
 		}
 	}
+	// Close the Services that went first, freeing their ports.
 	seen := map[string]bool{}
+	for _, svc := range svcs.Items {
+		if svc.Spec.Type == "LoadBalancer" {
+			seen[svc.Metadata.Namespace+"/"+svc.Metadata.Name] = true
+		}
+	}
+	for id, l := range lbs {
+		if !seen[id] {
+			s.closeLB(key, id, l)
+			delete(lbs, id)
+		}
+	}
 	var errs []error
 	for _, svc := range svcs.Items {
 		if svc.Spec.Type != "LoadBalancer" {
 			continue
 		}
 		id := svc.Metadata.Namespace + "/" + svc.Metadata.Name
-		seen[id] = true
 		var ports []lbPort
 		for _, p := range svc.Spec.Ports {
 			if (p.Protocol == "" || p.Protocol == "TCP") && p.NodePort != 0 {
@@ -153,10 +211,14 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 			if len(ports) == 0 {
 				continue
 			}
-			if byNodes {
+			switch mode {
+			case lbNodes:
 				l = s.reportLB(key, id, ports, nodeIPs)
 				s.env.Log.Info("gke: LoadBalancer Service at its nodes", "cluster", key, "service", id, "ips", nodeIPs)
-			} else {
+			case lbPublished:
+				l = &lbService{served: map[int]bool{}}
+				s.servePublished(np, key, id, ports, published, l, true)
+			default:
 				if l, err = s.serveLB(np, key, id, ports, prev); err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", id, err))
 					continue
@@ -165,6 +227,8 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 			}
 			l.sig = sig
 			lbs[id] = l
+		} else if l.unserved {
+			s.servePublished(np, key, id, ports, published, l, false)
 		}
 		ing := svc.Status.LoadBalancer.Ingress
 		same := len(ing) == len(l.ingress)
@@ -180,12 +244,6 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 			if err := kc.mergePatch(ctx, "/api/v1/namespaces/"+svc.Metadata.Namespace+"/services/"+svc.Metadata.Name+"/status", patch); err != nil {
 				errs = append(errs, fmt.Errorf("%s: status: %w", id, err))
 			}
-		}
-	}
-	for id, l := range lbs {
-		if !seen[id] {
-			s.closeLB(key, id, l)
-			delete(lbs, id)
 		}
 	}
 	return errors.Join(errs...)
@@ -230,6 +288,59 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 		return nil, fmt.Errorf("serving it on %s: %w", loopback.Host, errors.Join(errs...))
 	}
 	return nil, fmt.Errorf("no free loopback address: %w", errors.Join(errs...))
+}
+
+// servePublished serves the ports of a Service that l does not serve yet
+// on published ports (publishedCandidates), and records the host side in
+// l. A port with none free stays missing; with warn, it is logged with
+// what to publish.
+func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbPort, published map[int]string, l *lbService, warn bool) {
+	lo, hi, ranged, _ := s.env.Config.ParsePortRange()
+	l.unserved = false
+	var missing []int
+	for _, p := range ports {
+		if l.served[p.port] {
+			continue
+		}
+		ep := lbEndpoint(key, id, p.port)
+		var ln net.Listener
+		var cport int
+		for _, c := range publishedCandidates(key+"/"+id+"/"+strconv.Itoa(p.port), p.port, published, lo, hi, ranged) {
+			var err error
+			if ln, err = net.Listen("tcp", net.JoinHostPort(publishedHost, strconv.Itoa(c))); err == nil {
+				cport = c
+				break
+			}
+		}
+		if ln == nil {
+			l.unserved = true
+			missing = append(missing, p.port)
+			continue
+		}
+		host := published[cport]
+		l.ex = append(l.ex, np.Serve(ln, s.nodePorts(key, p.nodePort)))
+		s.env.Endpoints.Set(ep, host)
+		l.endpoints = append(l.endpoints, ep)
+		l.served[p.port] = true
+		if ip, _ := netplane.HostPort(host); !slices.Contains(l.ingress, ip) {
+			l.ingress = append(l.ingress, ip)
+		}
+		s.env.Log.Info("gke: LoadBalancer Service on a published port", "cluster", key, "service", id, "port", p.port, "containerPort", cport, "host", host)
+	}
+	if warn && len(missing) > 0 {
+		s.env.Log.Warn("gke: no free published port for a LoadBalancer Service; the host cannot reach it until one frees",
+			"cluster", key, "service", id, "ports", missing, "fix", publishHint(s.env.Config.PortRange, missing[0]))
+	}
+}
+
+// publishHint says what to publish so that a Service port can be served
+// on a VM runtime.
+func publishHint(portRange string, port int) string {
+	own := fmt.Sprintf("-p 127.0.0.1:%d:%d", port, port)
+	if portRange == "" {
+		return "start the emulator with --port-range LO-HI and publish that range (-p 127.0.0.1:LO-HI:LO-HI), or publish the Service's port (" + own + ")"
+	}
+	return "publish more of --port-range " + portRange + " (-p 127.0.0.1:" + portRange + ":" + portRange + "), or the Service's port (" + own + ")"
 }
 
 // reportLB records a Service that its nodes serve at ips: no listener,
@@ -377,4 +488,31 @@ func envName(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// publishedCandidates lists the container ports to try serving a Service
+// port on, in order, on a VM runtime (ADR 0012): port itself when the
+// emulator's container publishes it at the same host port, then the
+// published ports of --port-range lo-hi (when ranged), from a hash of
+// name onwards, so that a Service keeps its port across syncs and
+// restarts where it can.
+func publishedCandidates(name string, port int, published map[int]string, lo, hi int, ranged bool) []int {
+	var out []int
+	if _, hp := netplane.HostPort(published[port]); hp == port {
+		out = append(out, port)
+	}
+	if !ranged {
+		return out
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	n := hi - lo + 1
+	start := int(h.Sum32() % uint32(n))
+	for i := range n {
+		p := lo + (start+i)%n
+		if _, ok := published[p]; ok && (len(out) == 0 || out[0] != p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }

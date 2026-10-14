@@ -61,10 +61,14 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 			Offline: c.in.Config.Offline, Images: cl,
 		},
 	}
+	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
 	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
+	if cl.Self() != "" {
+		m.Log.Info("VM runtime " + m.VM.String())
+	}
 	c.rt = m
 	return m, nil
 }

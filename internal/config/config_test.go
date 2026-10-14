@@ -148,6 +148,22 @@ func TestValidate(t *testing.T) {
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "--ar-bind") {
 		t.Errorf("--ar-bind ::: err = %v", err)
 	}
+
+	// GCPEMU_VM_RUNTIME is auto, true or false (ADR 0012).
+	c = Defaults()
+	if c.VMRuntime != "auto" {
+		t.Errorf("default VMRuntime = %q, want auto", c.VMRuntime)
+	}
+	for _, ok := range []string{"auto", "true", "false", "TRUE", ""} {
+		c.VMRuntime = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("VMRuntime %q: %v", ok, err)
+		}
+	}
+	c.VMRuntime = "yes"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "GCPEMU_VM_RUNTIME") {
+		t.Errorf("VMRuntime yes: err = %v", err)
+	}
 }
 
 func TestLRO(t *testing.T) {
