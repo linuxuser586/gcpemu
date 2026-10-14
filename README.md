@@ -43,7 +43,7 @@ bin/gcpemu stop
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
 `fault add|list|enable|disable|clear`, `snapshot save|restore|list|delete`, `export` (the
-resources as a seed file), `doctor`, `version`, `admin openapi` (the OpenAPI document of the
+resources as a seed file), `doctor`, `prune`, `version`, `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
 
 ### State snapshots
@@ -238,8 +238,12 @@ uses `DOCKER_HOST` first, then the Docker context (`DOCKER_CONTEXT`, or the curr
 context other than `default` names a runtime that doesn't respond, start fails rather than using
 another one, so `gcpemu` and `docker` always agree. `gcpemu doctor` shows the runtime it picked
 and why. Everything the emulator creates is labelled
-`gcpemu.instance=<id>`; containers are removed on `stop`, and with `--data-dir` the volumes
-holding Postgres and Kubernetes state are kept so resources survive a restart.
+`gcpemu.instance=<id>` and `gcpemu.dir=<data dir>`; containers are removed on `stop`, and with `--data-dir` the volumes
+holding Postgres and Kubernetes state are kept so resources survive a restart. When a data dir
+is deleted, or a run crashes and never starts again, nothing reclaims its objects: `gcpemu doctor`
+warns about such abandoned Instance IDs, and `gcpemu prune` lists their containers, networks and
+volumes and removes them once you confirm (`--yes` skips the question). An ID with a running
+container is never touched.
 
 On a VM runtime, host clients reach Cloud SQL instances, forwarding rules and GKE `LoadBalancer`
 Services on loopback addresses: a `127.0.0.x` of their own each. A GKE cluster's endpoint is

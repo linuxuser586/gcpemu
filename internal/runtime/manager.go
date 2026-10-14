@@ -22,7 +22,10 @@ type Manager struct {
 	Info       Info
 	InstanceID string
 	Instance   string
-	Offline    bool
+	// Dir is the instance's absolute data dir, recorded on every object
+	// (LabelDir) so that an Abandoned Instance ID can be told apart.
+	Dir     string
+	Offline bool
 	// Ephemeral instances also delete volumes and networks on cleanup.
 	Ephemeral bool
 	Log       *slog.Logger
@@ -128,6 +131,9 @@ func (m *Manager) freeAddr(ctx context.Context, network string, reserved []netip
 // Labels returns the standard label set for an object.
 func (m *Manager) Labels(service, resource, role string) map[string]string {
 	l := map[string]string{LabelInstance: m.InstanceID}
+	if m.Dir != "" {
+		l[LabelDir] = m.Dir
+	}
 	if service != "" {
 		l[LabelService] = service
 	}
