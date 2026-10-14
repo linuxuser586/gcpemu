@@ -411,3 +411,109 @@ func TestEnvVars(t *testing.T) {
 		t.Errorf("env = %v", ev)
 	}
 }
+
+func TestSeedExportRoundTrip(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	ctx := context.Background()
+	doc := `
+gcs:
+  buckets:
+    - name: assets
+      project: test-project
+      location: EU
+      storageClass: NEARLINE
+      versioning: true
+      uniformBucketLevelAccess: true
+      labels: {env: test}
+      lifecycle:
+        - action: {type: Delete}
+          condition: {age: 30}
+      website: {mainPageSuffix: index.html, notFoundPage: 404.html}
+      cors:
+        - origin: ["*"]
+          method: [GET]
+          maxAgeSeconds: 3600
+      objects:
+        - name: hello.txt
+          content: hello
+        - name: data.bin
+          contentBase64: AAH/
+          contentType: application/x-custom
+          cacheControl: no-cache
+          metadata: {k: v}
+      notifications:
+        - topic: projects/test-project/topics/uploads
+          eventTypes: [OBJECT_FINALIZE]
+        - topic: projects/test-project/topics/all
+          payloadFormat: NONE
+          objectNamePrefix: logs/
+          customAttributes: {a: b}
+    - name: locked
+      project: test-project
+      retentionPeriod: 60
+      iamConfiguration: {publicAccessPrevention: enforced}
+      softDeletePolicy: {retentionDurationSeconds: "0"}
+`
+	if err := inst.ApplySeedData(ctx, []byte(doc), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	// Binary content written through the API; the overwritten generation
+	// is noncurrent and not exported.
+	b := c.Bucket("assets")
+	for _, data := range [][]byte{[]byte("old"), {0xff, 0xfe, 'x'}} {
+		w := b.Object("img.raw").NewWriter(ctx)
+		w.Metadata = map[string]string{"src": "api"}
+		_, _ = w.Write(data)
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"contentBase64: AAH/", "contentBase64: //54", "content: hello", "payloadFormat: NONE", "storageClass: NEARLINE"} {
+		if !bytes.Contains(first, []byte(want)) {
+			t.Errorf("export lacks %q:\n%s", want, first)
+		}
+	}
+	for _, unwanted := range []string{"old", "timeCreated", "etag", "md5Hash", "lockedTime", "effectiveTime"} {
+		if bytes.Contains(first, []byte(unwanted)) {
+			t.Errorf("export contains %q:\n%s", unwanted, first)
+		}
+	}
+	if err := inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+		t.Fatalf("apply export: %v\n%s", err, first)
+	}
+	second, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("export changed after round trip:\n--- first\n%s\n--- second\n%s", first, second)
+	}
+	a, err := b.Attrs(ctx)
+	if err != nil || a.Location != "EU" || !a.VersioningEnabled || !a.UniformBucketLevelAccess.Enabled ||
+		len(a.CORS) != 1 || len(a.Lifecycle.Rules) != 1 {
+		t.Errorf("assets = %+v %v", a, err)
+	}
+	if a, err := c.Bucket("locked").Attrs(ctx); err != nil || a.RetentionPolicy == nil || a.RetentionPolicy.RetentionPeriod != time.Minute ||
+		a.PublicAccessPrevention != storage.PublicAccessPreventionEnforced {
+		t.Errorf("locked = %+v %v", a, err)
+	}
+	if got := read(t, ctx, b.Object("img.raw")); !bytes.Equal(got, []byte{0xff, 0xfe, 'x'}) {
+		t.Errorf("img.raw = %q", got)
+	}
+	oa, err := b.Object("data.bin").Attrs(ctx)
+	if err != nil || oa.ContentType != "application/x-custom" || oa.CacheControl != "no-cache" || oa.Metadata["k"] != "v" {
+		t.Errorf("data.bin = %+v %v", oa, err)
+	}
+	ns, err := b.Notifications(ctx)
+	if err != nil || len(ns) != 2 {
+		t.Errorf("notifications = %v %v", ns, err)
+	}
+}

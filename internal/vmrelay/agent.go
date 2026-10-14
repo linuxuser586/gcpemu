@@ -156,19 +156,23 @@ func (a *relayAgent) listen(name, addr string, withUDP bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	l, err := net.Listen("tcp", addr)
+	l, pc, err := listenPair(addr, withUDP)
 	if err != nil {
-		if l, err = net.Listen("tcp", net.JoinHostPort(host, "0")); err != nil {
+		// The port, or its UDP twin, is taken: try ports the kernel picks.
+		// A free TCP port's UDP twin can still be held or, on Windows, sit
+		// in an excluded port range, so a few are tried.
+		anyPort := net.JoinHostPort(host, "0")
+		for range udpPairAttempts {
+			if l, pc, err = listenPair(anyPort, withUDP); err == nil {
+				break
+			}
+		}
+		if err != nil {
 			return "", err
 		}
 	}
 	got := l.Addr().String()
-	if withUDP {
-		pc, err := net.ListenPacket("udp", got)
-		if err != nil {
-			l.Close()
-			return "", fmt.Errorf("udp on %s: %w", got, err)
-		}
+	if pc != nil {
 		a.closers = append(a.closers, func() { pc.Close() })
 		go a.serveUDP(name, pc)
 	}
@@ -176,6 +180,28 @@ func (a *relayAgent) listen(name, addr string, withUDP bool) (string, error) {
 	a.listeners[name] = got
 	go a.serveTCP(name, l)
 	return got, nil
+}
+
+// udpPairAttempts bounds the kernel-picked ports listen tries for a TCP
+// listener with a UDP socket on the same port.
+const udpPairAttempts = 10
+
+// listenPair listens on addr over TCP and, withUDP, over UDP on the port
+// TCP got.
+func listenPair(addr string, withUDP bool) (net.Listener, net.PacketConn, error) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !withUDP {
+		return l, nil, nil
+	}
+	pc, err := net.ListenPacket("udp", l.Addr().String())
+	if err != nil {
+		l.Close()
+		return nil, nil, fmt.Errorf("udp on %s: %w", l.Addr(), err)
+	}
+	return l, pc, nil
 }
 
 func (a *relayAgent) serveTCP(name string, l net.Listener) {

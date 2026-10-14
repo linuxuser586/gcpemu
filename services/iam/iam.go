@@ -49,6 +49,7 @@ var (
 	_ emu.DenialAdvisor       = (*Service)(nil)
 	_ emu.Authenticator       = (*Service)(nil)
 	_ emu.Seeder              = (*Service)(nil)
+	_ emu.SeedExporter        = (*Service)(nil)
 	_ emu.EnvVarer            = (*Service)(nil)
 	_ emu.ADCKeyer            = (*Service)(nil)
 	_ emu.Resetter            = (*Service)(nil)

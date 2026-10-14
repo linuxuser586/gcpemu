@@ -30,17 +30,28 @@ var (
 	globalPool, _   = parseCIDR("34.120.0.0/14", true)
 )
 
-// nextExternalIP returns the next unused address of a pool.
+// nextExternalIP returns the next unused address of a pool, skipping
+// those reserved with an explicit IP (an applied Seed file export).
 func nextExternalIP(tx store.Tx, key string, pool cidr) (string, error) {
 	var n uint32
 	_ = store.GetJSON(tx, nsMeta, key, &n)
+	ns := nsAddresses
+	if pool == globalPool {
+		ns = nsGlobalAddresses
+	}
+	held := map[string]bool{}
+	for _, a := range list[computev1.Address](tx, ns, "projects/") {
+		if a.AddressType != "INTERNAL" {
+			held[a.Address] = true
+		}
+	}
 	for {
 		n++
 		ip := pool.base + n
 		if !pool.contains(ip) {
 			return "", apierr.New(8 /* ResourceExhausted */, "External IP address pool exhausted.").WithLegacy("quotaExceeded")
 		}
-		if o := ip & 0xff; o == 0 || o == 255 {
+		if o := ip & 0xff; o == 0 || o == 255 || held[ipString(ip)] {
 			continue
 		}
 		if err := store.PutJSON(tx, nsMeta, key, n); err != nil {

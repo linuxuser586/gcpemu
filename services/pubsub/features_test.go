@@ -1,6 +1,7 @@
 package pubsub_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -310,5 +311,82 @@ func TestIAMPolicyGRPC(t *testing.T) {
 		if _, err := cl.TopicAdminClient.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{Resource: topicName("no-such-topic")}); status.Code(err) != codes.NotFound {
 			t.Errorf("%s: missing resource: %v", name, err)
 		}
+	}
+}
+
+func TestSeedExportRoundTrip(t *testing.T) {
+	inst, c := newEmulatorClient(t)
+	ctx := ctxT(t, 10*time.Second)
+	seed := `
+pubsub:
+  project: ` + project + `
+  schemas:
+    - name: orders
+      type: AVRO
+      definition: '` + avroSchema + `'
+  topics:
+    - name: orders
+      labels: {env: dev}
+      messageRetentionDuration: 3600s
+      schemaSettings: {schema: orders, encoding: JSON}
+    - name: dlq
+  subscriptions:
+    - name: worker
+      topic: orders
+      ackDeadlineSeconds: 30
+      filter: attributes.kind = "a"
+      enableMessageOrdering: true
+      retryPolicy: {minimumBackoff: 5s, maximumBackoff: 60s}
+      expirationPolicy: {}
+      deadLetterPolicy: {deadLetterTopic: dlq, maxDeliveryAttempts: 7}
+    - name: pusher
+      topic: orders
+      pushConfig: {pushEndpoint: "http://127.0.0.1:1/push", attributes: {x-goog-version: v1}}
+`
+	if err := inst.ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	// A subscription in another project on this project's topic, and a
+	// published message, which is not exported.
+	mustSub(t, c, &pubsubpb.Subscription{Name: "projects/other-proj/subscriptions/mirror", Topic: topicName("orders")})
+	publish(t, c, topicName("dlq"), &pubsub.Message{Data: []byte("not exported")})
+
+	first, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"revisionId", "revisionCreateTime", "state:", "ackDeadlineSeconds: 10", "604800s", "not exported"} {
+		if bytes.Contains(first, []byte(unwanted)) {
+			t.Errorf("export contains %q:\n%s", unwanted, first)
+		}
+	}
+	if !bytes.Contains(first, []byte("topic: projects/"+project+"/topics/orders")) {
+		t.Errorf("cross-project topic not fully qualified:\n%s", first)
+	}
+	if err := inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+		t.Fatalf("apply export: %v\n%s", err, first)
+	}
+	second, err := inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("export changed after round trip:\n--- first\n%s\n--- second\n%s", first, second)
+	}
+	s, err := c.SubscriptionAdminClient.GetSubscription(ctx, &pubsubpb.GetSubscriptionRequest{Subscription: subName("worker")})
+	if err != nil || s.AckDeadlineSeconds != 30 || !s.EnableMessageOrdering || s.GetExpirationPolicy().GetTtl() != nil ||
+		s.GetRetryPolicy().GetMinimumBackoff().AsDuration() != 5*time.Second || s.GetDeadLetterPolicy().GetMaxDeliveryAttempts() != 7 {
+		t.Errorf("worker = %v %v", s, err)
+	}
+	if m, err := c.SubscriptionAdminClient.GetSubscription(ctx, &pubsubpb.GetSubscriptionRequest{Subscription: "projects/other-proj/subscriptions/mirror"}); err != nil || m.Topic != topicName("orders") {
+		t.Errorf("mirror = %v %v", m, err)
+	}
+	tp, err := c.TopicAdminClient.GetTopic(ctx, &pubsubpb.GetTopicRequest{Topic: topicName("orders")})
+	if err != nil || tp.Labels["env"] != "dev" || tp.GetMessageRetentionDuration().AsDuration() != time.Hour ||
+		tp.GetSchemaSettings().GetSchema() != "projects/"+project+"/schemas/orders" {
+		t.Errorf("orders topic = %v %v", tp, err)
 	}
 }

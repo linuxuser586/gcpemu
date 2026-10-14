@@ -238,15 +238,38 @@ paths:
                     items: { $ref: "#/components/schemas/Container" }
         "500": { $ref: "#/components/responses/Error" }
   /_emu/v1/seed:
+    get:
+      summary: Export the Instance's resources as a seed file (`gcpemu export`, FR-CORE-013).
+      operationId: exportSeed
+      description: |
+        Projects, each Service's resources and the Fault rules, as YAML
+        that applying to an empty Instance turns back into the same
+        resources. Server-assigned fields and data that lives only in a
+        data plane (Postgres rows, Kubernetes objects, Pub/Sub messages)
+        are left out.
+      responses:
+        "200":
+          description: The seed file.
+          content:
+            application/yaml:
+              schema: { type: string }
+        "500": { $ref: "#/components/responses/Error" }
     post:
       summary: Apply a seed file idempotently (FR-CORE-011).
       operationId: seed
+      description: |
+        Applies the seed file at `path` on the emulator host, or, without
+        `path`, the seed file in the request body (an upload, up to 64 MiB),
+        whose relative paths resolve against the instance dir.
       parameters:
         - name: path
           in: query
-          required: true
           description: Seed file path on the emulator host.
           schema: { type: string }
+      requestBody:
+        content:
+          application/yaml:
+            schema: { type: string }
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "400": { $ref: "#/components/responses/Error" }

@@ -1,10 +1,12 @@
 package secrets
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -27,6 +29,10 @@ import (
 //	        - data: s3cret
 //	        - dataFile: certs/tls.key   # relative to the seed file
 //	          state: DISABLED
+//	        - state: DESTROYED          # keeps the version number, no payload
+//
+// A payload that is not UTF-8 is written as a !!binary (base64) data
+// scalar.
 type seedFile struct {
 	Secrets []seedSecret `yaml:"secrets"`
 }
@@ -34,14 +40,16 @@ type seedFile struct {
 type seedSecret struct {
 	Project  string            `yaml:"project"`
 	ID       string            `yaml:"id"`
-	Location string            `yaml:"location"`
-	Replicas []string          `yaml:"replicas"`
-	Labels   map[string]string `yaml:"labels"`
-	Versions []struct {
-		Data     string `yaml:"data"`
-		DataFile string `yaml:"dataFile"`
-		State    string `yaml:"state"`
-	} `yaml:"versions"`
+	Location string            `yaml:"location,omitempty"`
+	Replicas []string          `yaml:"replicas,omitempty"`
+	Labels   map[string]string `yaml:"labels,omitempty"`
+	Versions []seedVersion     `yaml:"versions,omitempty"`
+}
+
+type seedVersion struct {
+	Data     string `yaml:"data,omitempty"`
+	DataFile string `yaml:"dataFile,omitempty"`
+	State    string `yaml:"state,omitempty"`
 }
 
 // ApplySeed creates the seeded secrets (or updates their labels) and adds
@@ -125,8 +133,8 @@ func (s *Service) seedSecret(ss seedSecret, baseDir string) error {
 			return err
 		}
 		if st := ss.Versions[i].State; st != "" && st != "ENABLED" {
-			if st != "DISABLED" {
-				return fmt.Errorf("versions[%d]: state must be ENABLED or DISABLED", i)
+			if st != "DISABLED" && st != "DESTROYED" {
+				return fmt.Errorf("versions[%d]: state must be ENABLED, DISABLED or DESTROYED", i)
 			}
 			err = s.env.Store.Update(func(tx store.Tx) error {
 				n := versionNumber(v.GetName())
@@ -135,6 +143,9 @@ func (s *Service) seedSecret(ss seedSecret, baseDir string) error {
 					return fmt.Errorf("version %d vanished", n)
 				}
 				vr.pb.State = secretmanagerpb.SecretVersion_DISABLED
+				if st == "DESTROYED" {
+					destroy(vr, now)
+				}
 				return putVersion(tx, ref, n, vr, now)
 			})
 			if err != nil {
@@ -143,4 +154,49 @@ func (s *Service) seedSecret(ss seedSecret, baseDir string) error {
 		}
 	}
 	return nil
+}
+
+// ExportSeed implements emu.SeedExporter: every secret with its
+// replication, labels and versions in order, payloads inline. Version
+// aliases, annotations, topics, rotation, expiry, CMEK, destroy TTLs and
+// pending scheduled destructions have no seed form and are not exported.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	var f seedFile
+	err := s.env.Store.View(func(tx store.Tx) error {
+		var refs []secretRef
+		tx.Scan(nsSecrets, "", func(k string, _ []byte) bool { refs = append(refs, refFromKey(k)); return true })
+		for _, ref := range refs {
+			rec, err := getSecret(tx, ref)
+			if err != nil {
+				return err
+			}
+			ss := seedSecret{Project: ref.Project, ID: ref.ID, Location: ref.Location, Labels: rec.pb.GetLabels()}
+			for _, r := range rec.pb.GetReplication().GetUserManaged().GetReplicas() {
+				ss.Replicas = append(ss.Replicas, r.GetLocation())
+			}
+			// Versions are numbered from 1 in the order they are added.
+			for n := int64(1); n <= rec.Last; n++ {
+				var sv seedVersion
+				switch v, ok := getVersion(tx, ref, n); {
+				case !ok || v.pb.GetState() == secretmanagerpb.SecretVersion_DESTROYED:
+					sv.State = "DESTROYED"
+				default:
+					sv.Data = string(v.Payload)
+					if v.pb.GetState() == secretmanagerpb.SecretVersion_DISABLED {
+						sv.State = "DISABLED"
+					}
+				}
+				ss.Versions = append(ss.Versions, sv)
+			}
+			f.Secrets = append(f.Secrets, ss)
+		}
+		return nil
+	})
+	if err != nil || len(f.Secrets) == 0 {
+		return nil, err
+	}
+	slices.SortFunc(f.Secrets, func(a, b seedSecret) int {
+		return cmp.Or(cmp.Compare(a.Project, b.Project), cmp.Compare(a.ID, b.ID), cmp.Compare(a.Location, b.Location))
+	})
+	return &f, nil
 }

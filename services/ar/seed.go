@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -40,24 +41,82 @@ type seedFile struct {
 }
 
 type seedRepo struct {
-	Name          string            `yaml:"name"`
-	Project       string            `yaml:"project"`
-	Location      string            `yaml:"location"`
-	ID            string            `yaml:"id"`
-	Format        string            `yaml:"format"`
-	Mode          string            `yaml:"mode"`
-	Description   string            `yaml:"description"`
-	Labels        map[string]string `yaml:"labels"`
-	ImmutableTags bool              `yaml:"immutableTags"`
-	Remote        *struct {
-		PublicRepository string `yaml:"publicRepository"`
-		URI              string `yaml:"uri"`
-	} `yaml:"remote"`
-	Upstreams []struct {
-		ID         string `yaml:"id"`
-		Repository string `yaml:"repository"`
-		Priority   int32  `yaml:"priority"`
-	} `yaml:"upstreams"`
+	Name          string            `yaml:"name,omitempty"`
+	Project       string            `yaml:"project,omitempty"`
+	Location      string            `yaml:"location,omitempty"`
+	ID            string            `yaml:"id,omitempty"`
+	Format        string            `yaml:"format,omitempty"`
+	Mode          string            `yaml:"mode,omitempty"`
+	Description   string            `yaml:"description,omitempty"`
+	Labels        map[string]string `yaml:"labels,omitempty"`
+	ImmutableTags bool              `yaml:"immutableTags,omitempty"`
+	Remote        *seedRemote       `yaml:"remote,omitempty"`
+	Upstreams     []seedUpstream    `yaml:"upstreams,omitempty"`
+}
+
+type seedRemote struct {
+	PublicRepository string `yaml:"publicRepository,omitempty"`
+	URI              string `yaml:"uri,omitempty"`
+}
+
+type seedUpstream struct {
+	ID         string `yaml:"id"`
+	Repository string `yaml:"repository"`
+	Priority   int32  `yaml:"priority,omitempty"`
+}
+
+var _ emu.SeedExporter = (*Service)(nil)
+
+// ExportSeed writes the repositories back as the "ar" section
+// (FR-CORE-013), ordered by project, location and ID. Images and their
+// manifests and blobs are not exported: the seed file cannot declare
+// them. A remote repository with a common_repository upstream is written
+// as remote.uri, which serves the same upstream.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	var refs []repoRef
+	var repos []*artifactregistrypb.Repository
+	err := s.env.Store.View(func(tx store.Tx) error {
+		var err error
+		refs, repos, err = listRepos(tx, "")
+		return err
+	})
+	if err != nil || len(repos) == 0 {
+		return nil, err
+	}
+	f := seedFile{}
+	for i, repo := range repos {
+		sr := seedRepo{
+			Project:       refs[i].Project,
+			Location:      refs[i].Location,
+			ID:            refs[i].Repo,
+			Description:   repo.GetDescription(),
+			Labels:        repo.GetLabels(),
+			ImmutableTags: repo.GetDockerConfig().GetImmutableTags(),
+		}
+		if fm := repo.GetFormat(); fm != artifactregistrypb.Repository_DOCKER {
+			sr.Format = fm.String()
+		}
+		switch repo.GetMode() {
+		case artifactregistrypb.Repository_REMOTE_REPOSITORY:
+			sr.Mode = repo.GetMode().String()
+			rc := repo.GetRemoteRepositoryConfig()
+			sr.Remote = &seedRemote{URI: rc.GetCommonRepository().GetUri()}
+			if dr := rc.GetDockerRepository(); dr != nil {
+				if dr.GetPublicRepository() == artifactregistrypb.RemoteRepositoryConfig_DockerRepository_DOCKER_HUB {
+					sr.Remote = &seedRemote{PublicRepository: "DOCKER_HUB"}
+				} else {
+					sr.Remote = &seedRemote{URI: dr.GetCustomRepository().GetUri()}
+				}
+			}
+		case artifactregistrypb.Repository_VIRTUAL_REPOSITORY:
+			sr.Mode = repo.GetMode().String()
+			for _, u := range repo.GetVirtualRepositoryConfig().GetUpstreamPolicies() {
+				sr.Upstreams = append(sr.Upstreams, seedUpstream{ID: u.GetId(), Repository: u.GetRepository(), Priority: u.GetPriority()})
+			}
+		}
+		f.Repositories = append(f.Repositories, sr)
+	}
+	return f, nil
 }
 
 // ApplySeed creates (or updates the description and labels of) the seeded

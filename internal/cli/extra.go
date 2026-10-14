@@ -234,6 +234,17 @@ func (o *rootOpts) snapshotCmd() *cobra.Command {
 	return root
 }
 
+func (o *rootOpts) exportCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "export",
+		Short: "Print a running instance's resources as a seed file",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return o.adminCall(cmd, http.MethodGet, "/_emu/v1/seed", nil)
+		},
+	}
+}
+
 // adminCall sends a request to the running instance's admin API and prints
 // the response body.
 func (o *rootOpts) adminCall(cmd *cobra.Command, method, path string, body []byte) error {

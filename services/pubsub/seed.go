@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
@@ -25,7 +28,7 @@ import (
 //	  schemas:
 //	    - name: events
 //	      type: AVRO
-//	      definitionFile: schemas/event.avsc
+//	      definitionFile: schemas/event.avsc  # or an inline definition
 //	  topics:
 //	    - name: events
 //	      labels: {env: dev}
@@ -203,4 +206,155 @@ func (s *Service) seedSubscription(ctx context.Context, defProject string, item 
 		_, err = s.replaceSubscription(sb, cfg)
 	}
 	return err
+}
+
+// seedItem is one exported resource: its ID, its project, a schema's
+// type or a subscription's topic, and the rest of its REST JSON fields.
+type seedItem struct {
+	Name    string         `yaml:"name"`
+	Project string         `yaml:"project"`
+	Type    string         `yaml:"type,omitempty"`
+	Topic   string         `yaml:"topic,omitempty"`
+	Rest    map[string]any `yaml:",inline"`
+}
+
+// seedOut is the exported section.
+type seedOut struct {
+	Schemas       []seedItem `yaml:"schemas,omitempty"`
+	Topics        []seedItem `yaml:"topics,omitempty"`
+	Subscriptions []seedItem `yaml:"subscriptions,omitempty"`
+}
+
+// ExportSeed implements emu.SeedExporter: the latest revision of each
+// schema (with an inline definition), topics and subscriptions. Messages,
+// snapshots, older schema revisions and pinned revision IDs are not
+// exported.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	s.mu.Lock()
+	schemas := make([]proto.Message, 0, len(s.schemas))
+	for _, h := range s.schemas {
+		schemas = append(schemas, proto.Clone(h.latest()))
+	}
+	topics := make([]proto.Message, 0, len(s.topics))
+	for _, t := range s.topics {
+		topics = append(topics, proto.Clone(t.cfg))
+	}
+	subs := make([]proto.Message, 0, len(s.subs))
+	for _, sb := range s.subs {
+		subs = append(subs, proto.Clone(sb.cfg))
+	}
+	s.mu.Unlock()
+
+	var out seedOut
+	var err error
+	if out.Schemas, err = exportItems(schemas, func(m map[string]any) {
+		delete(m, "revisionId")
+		delete(m, "revisionCreateTime")
+	}); err != nil {
+		return nil, err
+	}
+	if out.Topics, err = exportItems(topics, func(m map[string]any) {
+		delete(m, "state")
+		if ss, ok := m["schemaSettings"].(map[string]any); ok {
+			// Revision IDs are random, so a pinned range cannot be
+			// recreated.
+			delete(ss, "firstRevisionId")
+			delete(ss, "lastRevisionId")
+			if sc, _ := ss["schema"].(string); sc == deletedSchema {
+				delete(m, "schemaSettings")
+			}
+		}
+	}); err != nil {
+		return nil, err
+	}
+	out.Subscriptions, err = exportItems(subs, func(m map[string]any) {
+		for _, k := range []string{"state", "detached", "topicMessageRetentionDuration"} {
+			delete(m, k)
+		}
+		dropDefault(m, "ackDeadlineSeconds", float64(defaultAckDeadline))
+		dropDefault(m, "messageRetentionDuration", durationJSON(defaultSubRetention))
+		if ep, ok := m["expirationPolicy"].(map[string]any); ok && len(ep) == 1 && ep["ttl"] == durationJSON(defaultExpirationTTL) {
+			delete(m, "expirationPolicy")
+		}
+		if pc, ok := m["pushConfig"].(map[string]any); ok && len(pc) == 0 {
+			delete(m, "pushConfig")
+		}
+		if dl, ok := m["deadLetterPolicy"].(map[string]any); ok {
+			dropDefault(dl, "maxDeliveryAttempts", float64(defaultMaxDeliveryAttempts))
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out.Schemas)+len(out.Topics)+len(out.Subscriptions) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// exportItems converts resources to seed items sorted by project then ID.
+// References to resources in the same project are shortened to IDs.
+func exportItems(msgs []proto.Message, clean func(map[string]any)) ([]seedItem, error) {
+	items := make([]seedItem, 0, len(msgs))
+	for _, msg := range msgs {
+		b, err := marshalOpts.Marshal(msg)
+		if err != nil {
+			return nil, err
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			return nil, err
+		}
+		name, _ := m["name"].(string)
+		delete(m, "name")
+		clean(m)
+		project := projectOf(name)
+		shorten(m, "topic", project)
+		if ss, ok := m["schemaSettings"].(map[string]any); ok {
+			shorten(ss, "schema", project)
+		}
+		if dl, ok := m["deadLetterPolicy"].(map[string]any); ok {
+			shorten(dl, "deadLetterTopic", project)
+		}
+		it := seedItem{Name: lastSegment(name), Project: project}
+		it.Type, _ = m["type"].(string)
+		it.Topic, _ = m["topic"].(string)
+		delete(m, "type")
+		delete(m, "topic")
+		if len(m) > 0 {
+			it.Rest = m
+		}
+		items = append(items, it)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Project != items[j].Project {
+			return items[i].Project < items[j].Project
+		}
+		return items[i].Name < items[j].Name
+	})
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items, nil
+}
+
+// shorten replaces m[k], a resource name, with its ID when it is in project.
+func shorten(m map[string]any, k, project string) {
+	if v, ok := m[k].(string); ok && projectOf(v) == project {
+		m[k] = lastSegment(v)
+	}
+}
+
+func dropDefault(m map[string]any, k string, def any) {
+	if m[k] == def {
+		delete(m, k)
+	}
+}
+
+// durationJSON is d in protojson's Duration form.
+func durationJSON(d time.Duration) string {
+	b, _ := marshalOpts.Marshal(durationpb.New(d))
+	var s string
+	_ = json.Unmarshal(b, &s)
+	return s
 }

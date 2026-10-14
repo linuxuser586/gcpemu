@@ -55,12 +55,13 @@ type Service struct {
 }
 
 var (
-	_ emu.Service     = (*Service)(nil)
-	_ emu.Resetter    = (*Service)(nil)
-	_ emu.Snapshotter = (*Service)(nil)
-	_ emu.Seeder      = (*Service)(nil)
-	_ emu.EnvVarer    = (*Service)(nil)
-	_ emu.Publisher   = (*Service)(nil)
+	_ emu.Service      = (*Service)(nil)
+	_ emu.Resetter     = (*Service)(nil)
+	_ emu.Snapshotter  = (*Service)(nil)
+	_ emu.Seeder       = (*Service)(nil)
+	_ emu.SeedExporter = (*Service)(nil)
+	_ emu.EnvVarer     = (*Service)(nil)
+	_ emu.Publisher    = (*Service)(nil)
 
 	_ emu.ClockObserver = (*Service)(nil)
 )

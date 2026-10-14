@@ -3,11 +3,14 @@ package gke
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"sort"
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 	"gopkg.in/yaml.v3"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -40,20 +43,86 @@ type seedCluster struct {
 	Project          string     `yaml:"project"`
 	Location         string     `yaml:"location"`
 	Name             string     `yaml:"name"`
-	Version          string     `yaml:"version"`
-	Network          string     `yaml:"network"`
-	Subnetwork       string     `yaml:"subnetwork"`
-	PrivateNodes     bool       `yaml:"privateNodes"`
-	WorkloadIdentity bool       `yaml:"workloadIdentity"`
-	NodePools        []seedPool `yaml:"nodePools"`
+	Version          string     `yaml:"version,omitempty"`
+	Network          string     `yaml:"network,omitempty"`
+	Subnetwork       string     `yaml:"subnetwork,omitempty"`
+	PrivateNodes     bool       `yaml:"privateNodes,omitempty"`
+	WorkloadIdentity bool       `yaml:"workloadIdentity,omitempty"`
+	NodePools        []seedPool `yaml:"nodePools,omitempty"`
 }
 
 type seedPool struct {
 	Name           string            `yaml:"name"`
-	NodeCount      int32             `yaml:"nodeCount"`
-	MachineType    string            `yaml:"machineType"`
-	Labels         map[string]string `yaml:"labels"`
-	ServiceAccount string            `yaml:"serviceAccount"`
+	NodeCount      int32             `yaml:"nodeCount,omitempty"`
+	MachineType    string            `yaml:"machineType,omitempty"`
+	Labels         map[string]string `yaml:"labels,omitempty"`
+	ServiceAccount string            `yaml:"serviceAccount,omitempty"`
+}
+
+var _ emu.SeedExporter = (*Service)(nil)
+
+// ExportSeed writes the clusters back as the "gke" section (FR-CORE-013),
+// ordered by project, location and name, with the fields that differ from
+// what the seed defaults to: the current master version, network, private
+// nodes, Workload Identity and each node pool's size, machine type, labels
+// and service account. Kubernetes objects are data plane and are not
+// exported, nor is anything else the seed file cannot declare (release
+// channel, node pool versions, autoscaling, taints...). A pool resized to
+// zero nodes comes back with one, as the seed creates every pool with at
+// least one node, and a cluster without node pools gets the default pool.
+func (s *Service) ExportSeed(ctx context.Context) (any, error) {
+	var recs []*clusterRecord
+	_ = s.env.Store.View(func(tx store.Tx) error { recs = listClusters(tx, ""); return nil })
+	if len(recs) == 0 {
+		return nil, nil
+	}
+	sort.Slice(recs, func(i, j int) bool {
+		a, b := recs[i].Int, recs[j].Int
+		if a.Project != b.Project {
+			return a.Project < b.Project
+		}
+		if a.Location != b.Location {
+			return a.Location < b.Location
+		}
+		return a.Name < b.Name
+	})
+	var f seedFile
+	for _, rec := range recs {
+		c := rec.cluster()
+		sc := seedCluster{
+			Project: rec.Int.Project, Location: rec.Int.Location, Name: rec.Int.Name,
+			PrivateNodes:     c.GetPrivateClusterConfig().GetEnablePrivateNodes(),
+			WorkloadIdentity: c.GetWorkloadIdentityConfig().GetWorkloadPool() != "",
+		}
+		if v := c.GetCurrentMasterVersion(); v != defaultVersion {
+			sc.Version = v
+		}
+		if c.GetNetwork() != "default" {
+			sc.Network = c.GetNetwork()
+		}
+		if c.GetSubnetwork() != "default" {
+			sc.Subnetwork = c.GetSubnetwork()
+		}
+		for _, np := range c.GetNodePools() {
+			sp := seedPool{Name: np.GetName(), Labels: np.GetConfig().GetLabels()}
+			if n := np.GetInitialNodeCount(); n > 1 {
+				sp.NodeCount = n
+			}
+			if mt := np.GetConfig().GetMachineType(); mt != defaultMachineType {
+				sp.MachineType = mt
+			}
+			if sa := np.GetConfig().GetServiceAccount(); sa != "default" {
+				sp.ServiceAccount = sa
+			}
+			sc.NodePools = append(sc.NodePools, sp)
+		}
+		// The seed's default: one default-pool of one node.
+		if len(sc.NodePools) == 1 && reflect.DeepEqual(sc.NodePools[0], seedPool{Name: defaultPoolName}) {
+			sc.NodePools = nil
+		}
+		f.Clusters = append(f.Clusters, sc)
+	}
+	return f, nil
 }
 
 // ApplySeed creates the seeded clusters that do not exist yet.

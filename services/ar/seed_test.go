@@ -74,3 +74,91 @@ func countFiles(t *testing.T, dir string) int {
 	})
 	return n
 }
+
+// TestExportSeedRoundTrip checks FR-CORE-013: the exported "ar" section
+// recreates the same repositories on an empty Instance.
+func TestExportSeedRoundTrip(t *testing.T) {
+	e := start(t)
+	ctx := context.Background()
+	repos := "projects/" + testProject + "/locations/us-central1/repositories/"
+	seed := `ar:
+  repositories:
+    - project: ` + testProject + `
+      location: us-central1
+      id: images
+      description: App images
+      labels: {team: web}
+      immutableTags: true
+    - name: ` + repos + `dockerhub
+      mode: REMOTE_REPOSITORY
+      remote: {publicRepository: DOCKER_HUB}
+    - project: ` + testProject + `
+      location: us-central1
+      id: quay
+      mode: remote_repository
+      remote: {uri: https://quay.io}
+    - project: ` + testProject + `
+      location: us-central1
+      id: all
+      mode: VIRTUAL_REPOSITORY
+      upstreams:
+        - {id: mine, repository: ` + repos + `images, priority: 100}
+        - {id: hub, repository: ` + repos + `dockerhub, priority: 10}
+`
+	if err := e.inst.ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `ar:
+  repositories:
+    - project: ` + testProject + `
+      location: us-central1
+      id: all
+      mode: VIRTUAL_REPOSITORY
+      upstreams:
+        - id: mine
+          repository: ` + repos + `images
+          priority: 100
+        - id: hub
+          repository: ` + repos + `dockerhub
+          priority: 10
+    - project: ` + testProject + `
+      location: us-central1
+      id: dockerhub
+      mode: REMOTE_REPOSITORY
+      remote:
+        publicRepository: DOCKER_HUB
+    - project: ` + testProject + `
+      location: us-central1
+      id: images
+      description: App images
+      labels:
+        team: web
+      immutableTags: true
+    - project: ` + testProject + `
+      location: us-central1
+      id: quay
+      mode: REMOTE_REPOSITORY
+      remote:
+        uri: https://quay.io
+`
+	if !strings.Contains(string(got), want) {
+		t.Fatalf("export =\n%s\nwant section\n%s", got, want)
+	}
+	if err := e.inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.inst.ApplySeedData(ctx, got, t.TempDir()); err != nil {
+		t.Fatalf("apply export: %v", err)
+	}
+	again, err := e.inst.ExportSeed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Fatalf("second export =\n%s\nfirst =\n%s", again, got)
+	}
+}

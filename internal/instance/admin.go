@@ -3,6 +3,7 @@ package instance
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -93,11 +94,31 @@ func newAdmin(in *Instance) http.Handler {
 	mux.HandleFunc("GET /_emu/v1/hostmode", in.serveHostMode)
 	mux.HandleFunc("POST /_emu/v1/adc-key", in.serveADCKey)
 	mux.HandleFunc("POST /_emu/v1/seed", func(w http.ResponseWriter, r *http.Request) {
-		if err := in.ApplySeed(r.Context(), r.URL.Query().Get("path")); err != nil {
+		var err error
+		if path := r.URL.Query().Get("path"); path != "" {
+			err = in.ApplySeed(r.Context(), path)
+		} else {
+			// An uploaded seed file: its relative paths resolve against the instance dir.
+			var b []byte
+			if b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, maxSeedUpload)); err == nil {
+				err = in.ApplySeedData(r.Context(), b, in.Dir)
+			}
+		}
+		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "seeded"})
+	})
+	mux.HandleFunc("GET /_emu/v1/seed", func(w http.ResponseWriter, r *http.Request) {
+		b, err := in.ExportSeed(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/yaml")
+		w.Header().Set("Content-Disposition", `attachment; filename="seed.yaml"`)
+		_, _ = w.Write(b)
 	})
 	mux.Handle("GET /_emu/v1/events", in.Events)
 	mux.HandleFunc("GET /_emu/v1/requests", func(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +312,9 @@ func (in *Instance) setEnforcement(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, enforcement{Level: in.Env.Auth.Mode()})
 }
+
+// maxSeedUpload bounds an uploaded seed file, which may hold object content.
+const maxSeedUpload = 64 << 20
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
