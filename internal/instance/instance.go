@@ -317,7 +317,7 @@ func (in *Instance) Start(ctx context.Context) error {
 			in.Env.Log.Error("gateway stopped", "err", err)
 		}
 	}()
-	if err := in.fe.Start(); err != nil {
+	if err := in.fe.Start(ctx); err != nil {
 		return err
 	}
 

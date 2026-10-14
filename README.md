@@ -447,8 +447,8 @@ A Service takes its own port when the container publishes it at the same host po
 of that binding (`127.0.0.1`), and the port appears only in `gcpemu env`
 (`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`) and the Web console. Only TCP ports are
 served. When no published port is free, the Service has no ingress and the emulator logs a
-warning saying what to publish. Other listeners with a dynamic port (the Google front end) also
-take ports from the range, so publish a few more than you have Services.
+warning saying what to publish. The Google front end's dynamic port stays out of the range here,
+so the range is left for Services.
 
 The emulator guesses from the runtime's info that it is on a VM runtime: Docker Desktop and
 OrbStack are recognized. Set `GCPEMU_VM_RUNTIME=true` (or `--vm-runtime true`) on Colima and

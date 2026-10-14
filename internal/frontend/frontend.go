@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // Endpoint is the frontend's name in emu.Endpoints (and netplane.Addr).
@@ -87,6 +88,8 @@ func Serves(hosts []string, name string) bool {
 type Frontend struct {
 	env   *emu.Env
 	hosts func() []string
+	// inContainer is runtime.InContainer, replaced in tests.
+	inContainer func() bool
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -98,7 +101,7 @@ type Frontend struct {
 // New returns a frontend serving the names hosts returns (the gateway's
 // mounted hosts) plus LOCATION-docker.pkg.dev.
 func New(env *emu.Env, hosts func() []string) *Frontend {
-	return &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}}
+	return &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer}
 }
 
 // Hosts returns the exact hostnames served (registry hosts match by
@@ -116,9 +119,18 @@ func (f *Frontend) Hosts() []string {
 func (f *Frontend) Serves(name string) bool { return Serves(f.Hosts(), name) }
 
 // Start opens the listener on the configured bind address and records the
-// "frontend" endpoint.
-func (f *Frontend) Start() error {
-	l, err := f.env.ListenTCP(f.env.Config.Bind, f.env.Config.Port(Endpoint))
+// "frontend" endpoint. A dynamic port comes from --port-range, except for
+// a Containerized Instance on a VM runtime, whose published range ports
+// LoadBalancer Services need (ADR 0012).
+func (f *Frontend) Start(ctx context.Context) error {
+	port := f.env.Config.Port(Endpoint)
+	var l net.Listener
+	var err error
+	if port == 0 && f.vmRuntime(ctx) {
+		l, err = net.Listen("tcp", net.JoinHostPort(f.env.Config.Bind, "0"))
+	} else {
+		l, err = f.env.ListenTCP(f.env.Config.Bind, port)
+	}
 	if err != nil {
 		return fmt.Errorf("Google front end listen %s: %w", net.JoinHostPort(f.env.Config.Bind, strconv.Itoa(f.env.Config.Port(Endpoint))), err)
 	}
@@ -129,6 +141,19 @@ func (f *Frontend) Start() error {
 	f.wg.Add(1)
 	go f.serve(l)
 	return nil
+}
+
+// vmRuntime reports whether the Instance is a Containerized Instance on a
+// VM runtime with a --port-range. Only then does it connect to the
+// container runtime this early, to learn the decision.
+func (f *Frontend) vmRuntime(ctx context.Context) bool {
+	if _, _, ranged, _ := f.env.Config.ParsePortRange(); !ranged || f.env.Containers == nil || !f.inContainer() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	m, err := f.env.Containers.Runtime(ctx)
+	return err == nil && m.VM.On
 }
 
 // Addr returns the listener address ("" before Start).

@@ -215,3 +215,8 @@ func (c *Client) SelfPorts(ctx context.Context) (map[int]string, error) {
 	}
 	return out, nil
 }
+
+// InContainer reports, without asking the runtime, whether the emulator
+// may run in a container: GCPEMU_SELF_CONTAINER is set, or the container
+// marker files exist.
+func InContainer() bool { return selfCandidates() != nil }

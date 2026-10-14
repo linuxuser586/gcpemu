@@ -69,7 +69,7 @@ func TestContainerizedLBIngress(t *testing.T) {
 // On a VM runtime the emulator's container publishes two ports of
 // --port-range, one for web on each cluster, and port 18081, which
 // Service own on plain takes; full on trans then finds none free. The
-// frontend gets a port of its own, outside the range.
+// frontend's dynamic port stays outside the range on a VM runtime.
 const (
 	vmRange   = "20400-20401"
 	vmOwnPort = "18081"
@@ -86,7 +86,7 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 	start := []string{"start", "--ephemeral"}
 	if vm {
 		args = append(args, "-p", "127.0.0.1:"+vmRange+":"+vmRange, "-p", "127.0.0.1:"+vmOwnPort+":"+vmOwnPort)
-		start = append(start, "--port-range", vmRange, "--port", "frontend=4512")
+		start = append(start, "--port-range", vmRange)
 	}
 	docker(t, append(append(args, image), start...)...)
 	t.Cleanup(func() {
