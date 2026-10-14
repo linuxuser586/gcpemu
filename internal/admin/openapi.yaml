@@ -267,8 +267,8 @@ paths:
         - `iamDenial`: an IamDenial without its role, Project and granted
           fields, sent for every call the audit IAM enforcement level
           would deny.
-        - `reset`: `{}`; all state was replaced (`gcpemu reset`). Refetch
-          everything.
+        - `reset`: `{}`; all state was replaced (`gcpemu reset` or a State
+          snapshot restore). Refetch everything.
         - `gap`: `{}`; only sent first on a resumed stream whose missed
           events are no longer retained or whose ID belongs to another
           process. Refetch everything.
@@ -417,6 +417,87 @@ paths:
       operationId: reset
       responses:
         "200": { $ref: "#/components/responses/Status" }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/snapshots:
+    get:
+      summary: Saved State snapshots (`gcpemu snapshot list`, FR-CORE-012).
+      operationId: listSnapshots
+      responses:
+        "200":
+          description: State snapshots, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  snapshots:
+                    type: array
+                    items: { $ref: "#/components/schemas/Snapshot" }
+        "500": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Save all state as a State snapshot (`gcpemu snapshot save`).
+      operationId: saveSnapshot
+      description: |
+        Saves the Store, GCS and Artifact Registry blobs, a dump of every
+        Cloud SQL instance's databases and its backup files under the
+        instance dir's `snapshots/NAME`, replacing a snapshot of that name.
+        GKE clusters are saved, but not the Kubernetes objects inside them:
+        a restored cluster comes back with a fresh data plane. Fails with
+        409 while the Instance is not ready, an Operation is running, a
+        Cloud SQL instance is stopped, or state keeps changing during the
+        save.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Up to 63 letters, digits, ".", "_" or "-", starting with a letter or digit.
+      responses:
+        "200":
+          description: The saved State snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/snapshots/{name}/restore:
+    post:
+      summary: Replace all state with a State snapshot (`gcpemu snapshot restore`).
+      operationId: restoreSnapshot
+      description: |
+        Resets the Instance and loads the snapshot, keeping configuration,
+        Fault rules and the Emulator clock. Cloud SQL instances are running
+        again when it returns; GKE clusters report RECONCILING until their
+        data planes are back. Event streams get a `reset` event.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/snapshots/{name}:
+    delete:
+      summary: Delete a State snapshot (`gcpemu snapshot delete`).
+      operationId: deleteSnapshot
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
         "500": { $ref: "#/components/responses/Error" }
   /_emu/v1/time/advance:
     post:
@@ -1154,6 +1235,18 @@ components:
           description: Cloud CDN's {cdn_cache_status}; disabled when the backend has no CDN.
         statusDetails: { type: string, description: The access log's statusDetails. }
         backendLatencyMs: { type: number }
+    Snapshot:
+      type: object
+      description: A saved State snapshot.
+      required: [name, createTime, services, sizeBytes]
+      properties:
+        name: { type: string }
+        createTime: { type: string, format: date-time, description: The host's time of the save, not the Emulator clock. }
+        services:
+          type: array
+          items: { type: string }
+          description: Service IDs the Instance ran when it was saved.
+        sizeBytes: { type: integer, format: int64, description: Size of the snapshot's files on disk. }
     FaultRule:
       type: object
       properties:

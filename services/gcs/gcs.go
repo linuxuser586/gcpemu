@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -131,6 +132,29 @@ func (s *Service) ResourceCounts() map[string]int {
 		"buckets": nsBuckets, "objects": nsObjects, "notificationConfigs": nsNotifs, "hmacKeys": nsHMAC,
 		"managedFolders": nsFolders,
 	})
+}
+
+// Snapshot implements emu.Snapshotter: object data is linked into dir
+// (blobs are never modified in place) and resumable upload data copied.
+func (s *Service) Snapshot(ctx context.Context, dir string) error {
+	if s.blobs == nil {
+		return nil
+	}
+	if err := emu.LinkTree(s.blobs.blobsDir(), filepath.Join(dir, "blobs")); err != nil {
+		return err
+	}
+	return emu.CopyTree(s.blobs.uploadsDir(), filepath.Join(dir, "uploads"))
+}
+
+// Restore implements emu.Snapshotter, after Reset emptied the blob store.
+func (s *Service) Restore(ctx context.Context, dir string) error {
+	if s.blobs == nil {
+		return nil
+	}
+	if err := emu.LinkTree(filepath.Join(dir, "blobs"), s.blobs.blobsDir()); err != nil {
+		return err
+	}
+	return emu.CopyTree(filepath.Join(dir, "uploads"), s.blobs.uploadsDir())
 }
 
 // Reset implements emu.Resetter: object data files are deleted; the core

@@ -65,6 +65,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -228,6 +229,28 @@ func (s *Service) Operations() []emu.OperationInfo { return s.ops.Operations() }
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, map[string]string{"repositories": nsRepos, "dockerImages": nsManifests, "tags": nsTags})
+}
+
+// Snapshot implements emu.Snapshotter: blobs are content-addressed and
+// never modified, so they are linked into dir. Uploads in progress are
+// not kept, as Reset does not keep them.
+func (s *Service) Snapshot(ctx context.Context, dir string) error {
+	if s.blobs == nil {
+		return nil
+	}
+	s.blobs.gc.RLock()
+	defer s.blobs.gc.RUnlock()
+	return emu.LinkTree(filepath.Join(s.blobs.dir, "blobs"), filepath.Join(dir, "blobs"))
+}
+
+// Restore implements emu.Snapshotter, after Reset emptied the blob store.
+func (s *Service) Restore(ctx context.Context, dir string) error {
+	if s.blobs == nil {
+		return nil
+	}
+	s.blobs.gc.Lock()
+	defer s.blobs.gc.Unlock()
+	return emu.LinkTree(filepath.Join(dir, "blobs"), filepath.Join(s.blobs.dir, "blobs"))
 }
 
 // Reset removes every blob and upload; the store is reset by the instance.

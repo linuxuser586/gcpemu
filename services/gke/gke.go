@@ -160,6 +160,13 @@ func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.started = true
 	s.mu.Unlock()
+	s.recoverClusters()
+	return nil
+}
+
+// recoverClusters brings the stored clusters' data planes back in the
+// background, after a restart or a State snapshot restore.
+func (s *Service) recoverClusters() {
 	var recs []*clusterRecord
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		recs = listClusters(tx, "")
@@ -179,7 +186,6 @@ func (s *Service) Start(ctx context.Context) error {
 			s.goBackground(func(ctx context.Context) { _ = s.teardown(ctx, key) })
 		}
 	}
-	return nil
 }
 
 // goBackground runs f on the service context.
@@ -214,6 +220,19 @@ func (s *Service) Ready() error { return nil }
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, map[string]string{"clusters": nsClusters})
+}
+
+// Snapshot implements emu.Snapshotter. Clusters are in the store; the
+// Kubernetes objects inside them are not saved yet, so a restored cluster
+// comes back with a fresh data plane, as a new one would.
+func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
+
+// Restore implements emu.Snapshotter: Reset tore the data planes down, and
+// the restored clusters are brought up again in the background, reporting
+// RECONCILING until they are back.
+func (s *Service) Restore(ctx context.Context, dir string) error {
+	s.recoverClusters()
+	return nil
 }
 
 // Reset tears down every cluster's containers and volumes; the store is

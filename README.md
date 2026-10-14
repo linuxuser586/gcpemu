@@ -42,8 +42,30 @@ bin/gcpemu stop
 ```
 
 Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
-`fault add|list|enable|disable|clear`, `doctor`, `version`, `admin openapi` (the OpenAPI document of the
-`/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
+`fault add|list|enable|disable|clear`, `snapshot save|restore|list|delete`, `doctor`, `version`,
+`admin openapi` (the OpenAPI document of the `/_emu/v1/` admin API, also served at
+`/_emu/v1/openapi.yaml`), and `admin token`.
+
+### State snapshots
+
+`gcpemu snapshot save NAME` saves all of a running Instance's state, and `snapshot restore NAME`
+puts it back, undoing everything done since. A snapshot holds the control-plane store, GCS and
+Artifact Registry blobs, and a `pg_dumpall` of every Cloud SQL instance with its backup files.
+`snapshot list` and `snapshot delete NAME` manage them. Snapshots live in the instance dir under
+`snapshots/`, beside the data directory, so an Ephemeral Instance's snapshots outlive it and a
+later Instance of the same name restores them. That makes a snapshot a fast test fixture:
+
+```sh
+gcpemu start --detach --seed fixtures.yaml && gcpemu snapshot save clean
+# ... run a test ...
+gcpemu snapshot restore clean   # instead of re-seeding
+```
+
+Saving needs a quiet Instance: it fails while a Service is still starting, an Operation is
+running, a Cloud SQL instance is stopped, or clients keep changing state during the save.
+Restoring keeps configuration, Fault rules and the Emulator clock, which never goes back.
+GKE clusters are saved but the Kubernetes objects inside them are not: a restored cluster comes
+back with a fresh data plane.
 
 ### Windows
 

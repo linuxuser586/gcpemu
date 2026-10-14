@@ -144,6 +144,17 @@ func (s *Service) Reset(ctx context.Context) error {
 	return nil
 }
 
+// Snapshot implements emu.Snapshotter: the load balancer's resources are
+// in the store.
+func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
+
+// Restore implements emu.Snapshotter: it rebuilds the data plane from the
+// restored resources.
+func (s *Service) Restore(ctx context.Context, dir string) error {
+	s.changed()
+	return nil
+}
+
 // EnvVars implements emu.EnvVarer: one GCPEMU_LB_<NAME>=host:port per
 // forwarding rule listener (FR-LB-002).
 func (s *Service) EnvVars(gateway string, endpoints map[string]string) map[string]string {

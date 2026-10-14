@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -191,9 +192,57 @@ func (o *rootOpts) faultCmd() *cobra.Command {
 	return root
 }
 
+// snapshotTimeout bounds saving and restoring a State snapshot, which
+// dumps or replays every Cloud SQL instance's databases.
+const snapshotTimeout = 30 * time.Minute
+
+func (o *rootOpts) snapshotCmd() *cobra.Command {
+	root := &cobra.Command{Use: "snapshot", Short: "Save and restore State snapshots of a running instance"}
+	save := &cobra.Command{
+		Use:   "save NAME",
+		Short: "Save all state as the State snapshot NAME, replacing one of that name",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body, _ := json.Marshal(map[string]string{"name": args[0]})
+			return o.adminCallTimeout(cmd, http.MethodPost, "/_emu/v1/snapshots", body, snapshotTimeout)
+		},
+	}
+	restore := &cobra.Command{
+		Use:   "restore NAME",
+		Short: "Replace all state with the State snapshot NAME, keeping configuration",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return o.adminCallTimeout(cmd, http.MethodPost, "/_emu/v1/snapshots/"+url.PathEscape(args[0])+"/restore", nil, snapshotTimeout)
+		},
+	}
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List State snapshots",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return o.adminCall(cmd, http.MethodGet, "/_emu/v1/snapshots", nil)
+		},
+	}
+	del := &cobra.Command{
+		Use:   "delete NAME",
+		Short: "Delete the State snapshot NAME",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return o.adminCall(cmd, http.MethodDelete, "/_emu/v1/snapshots/"+url.PathEscape(args[0]), nil)
+		},
+	}
+	root.AddCommand(save, restore, list, del)
+	return root
+}
+
 // adminCall sends a request to the running instance's admin API and prints
 // the response body.
 func (o *rootOpts) adminCall(cmd *cobra.Command, method, path string, body []byte) error {
+	return o.adminCallTimeout(cmd, method, path, body, 0)
+}
+
+// adminCallTimeout is adminCall for a call that may outlast the client's
+// default timeout; timeout 0 keeps the default.
+func (o *rootOpts) adminCallTimeout(cmd *cobra.Command, method, path string, body []byte, timeout time.Duration) error {
 	cfg, err := o.load(cmd.Flags())
 	if err != nil {
 		return err
@@ -201,6 +250,9 @@ func (o *rootOpts) adminCall(cmd *cobra.Command, method, path string, body []byt
 	c, err := clientFor(cfg)
 	if err != nil {
 		return err
+	}
+	if timeout > 0 {
+		c.http.Timeout = timeout
 	}
 	var rd io.Reader
 	if body != nil {

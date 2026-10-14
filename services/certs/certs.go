@@ -132,6 +132,17 @@ func (s *Service) Reset(ctx context.Context) error {
 	return nil
 }
 
+// Snapshot implements emu.Snapshotter: certificates are in the store.
+func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
+
+// Restore implements emu.Snapshotter: it re-evaluates the restored
+// certificates.
+func (s *Service) Restore(ctx context.Context, dir string) error {
+	s.invalidate()
+	s.kick()
+	return nil
+}
+
 // ClockAdvanced re-evaluates managed certificates.
 func (s *Service) ClockAdvanced(ctx context.Context) error {
 	s.invalidate()

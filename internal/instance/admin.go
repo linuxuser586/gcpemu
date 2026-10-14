@@ -157,6 +157,43 @@ func newAdmin(in *Instance) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
 	})
+	mux.HandleFunc("GET /_emu/v1/snapshots", func(w http.ResponseWriter, r *http.Request) {
+		snaps, err := in.Snapshots()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"snapshots": snaps})
+	})
+	mux.HandleFunc("POST /_emu/v1/snapshots", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		info, err := in.SaveSnapshot(r.Context(), body.Name)
+		if err != nil {
+			writeJSON(w, snapshotStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, info)
+	})
+	mux.HandleFunc("POST /_emu/v1/snapshots/{name}/restore", func(w http.ResponseWriter, r *http.Request) {
+		if err := in.RestoreSnapshot(r.Context(), r.PathValue("name")); err != nil {
+			writeJSON(w, snapshotStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
+	})
+	mux.HandleFunc("DELETE /_emu/v1/snapshots/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if err := in.DeleteSnapshot(r.PathValue("name")); err != nil {
+			writeJSON(w, snapshotStatus(err), map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	})
 	mux.HandleFunc("POST /_emu/v1/time/advance", func(w http.ResponseWriter, r *http.Request) {
 		d, err := time.ParseDuration(r.URL.Query().Get("by"))
 		if err != nil || d < 0 {

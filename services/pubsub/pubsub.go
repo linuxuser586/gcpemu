@@ -55,11 +55,12 @@ type Service struct {
 }
 
 var (
-	_ emu.Service   = (*Service)(nil)
-	_ emu.Resetter  = (*Service)(nil)
-	_ emu.Seeder    = (*Service)(nil)
-	_ emu.EnvVarer  = (*Service)(nil)
-	_ emu.Publisher = (*Service)(nil)
+	_ emu.Service     = (*Service)(nil)
+	_ emu.Resetter    = (*Service)(nil)
+	_ emu.Snapshotter = (*Service)(nil)
+	_ emu.Seeder      = (*Service)(nil)
+	_ emu.EnvVarer    = (*Service)(nil)
+	_ emu.Publisher   = (*Service)(nil)
 
 	_ emu.ClockObserver = (*Service)(nil)
 )
@@ -210,6 +211,27 @@ func (s *Service) ResourceCounts() map[string]int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return map[string]int{"topics": len(s.topics), "subscriptions": len(s.subs), "snapshots": len(s.snaps), "schemas": len(s.schemas)}
+}
+
+// Snapshot implements emu.Snapshotter: all of Pub/Sub's state is in the
+// store.
+func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
+
+// Restore implements emu.Snapshotter: it rebuilds the in-memory state from
+// the loaded store and restarts push delivery, as a restart does.
+func (s *Service) Restore(ctx context.Context, dir string) error {
+	if err := s.load(); err != nil {
+		return err
+	}
+	if !s.started.Load() {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sb := range s.subs {
+		s.syncPush(sb)
+	}
+	return nil
 }
 
 // Reset drops all in-memory state (FR-CORE-002); the store is wiped by the caller.
