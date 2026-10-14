@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/url"
 	"slices"
@@ -349,4 +350,34 @@ func (s *Service) signWithSystemKey(sa *iamv1.ServiceAccount, data []byte) (stri
 	sum := sha256.Sum256(data)
 	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, sum[:])
 	return rec.KeyID, sig, err
+}
+
+// ADCKey implements emu.ADCKeyer: a key file for the host metadata
+// server's service account, so that ADC given it acts as metadata ADC
+// would (ADR 0010). current is reused while its key still exists, since
+// every new key adds to the account's key list.
+func (s *Service) ADCKey(current []byte) ([]byte, error) {
+	email := s.resolveIdentity(MetadataIdentity{}).Email
+	var kf keyFile
+	if json.Unmarshal(current, &kf) == nil && strings.EqualFold(kf.ClientEmail, email) && kf.TokenURI == s.tokenURI() {
+		valid := false
+		_ = s.env.Store.View(func(tx store.Tx) error {
+			var k keyRecord
+			valid = store.GetJSON(tx, nsKeys, keyKey(email, kf.PrivateKeyID), &k) == nil && !k.Disabled
+			return nil
+		})
+		if valid {
+			return current, nil
+		}
+	}
+	var sa *iamv1.ServiceAccount
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		sa, _ = s.getAccount(tx, email)
+		return nil
+	})
+	if sa == nil {
+		return nil, fmt.Errorf("metadata service account %s does not exist", email)
+	}
+	_, b, err := s.createKey(sa)
+	return b, err
 }

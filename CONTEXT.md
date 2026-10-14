@@ -55,6 +55,10 @@ _Avoid_: leak, outbound call
 The universe domain `gcpemu.invalid` that the emulator gives clients, so that an API with no Endpoint override goes to a host that can never resolve and fails loudly instead of becoming an Escaped request. It does not reach hosts a client hard-codes outside any universe, such as the mTLS endpoints some libraries hard-code. Service-account keys the emulator issues and the metadata server that host processes use belong to it, and gcloud refuses credentials stored for real Google.
 _Avoid_: fake universe, emulator universe
 
+**Foreign credentials**:
+Credentials a client picks up that no Instance issued, such as a service-account key or gcloud's application-default login from real Google. Their token requests go to real Google, so they become Escaped requests even where every API has an Endpoint override.
+_Avoid_: real keys, external credentials (GCP's `external_account` is one kind of Foreign credentials)
+
 **API gateway**:
 The single listener that receives Control plane requests and routes each one to the right Service.
 _Avoid_: gateway (unqualified)

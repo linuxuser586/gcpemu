@@ -274,6 +274,17 @@ type EnvVarer interface {
 	EnvVars(gateway string, endpoints map[string]string) map[string]string
 }
 
+// ADCKeyer is implemented by the service that issues the key file `gcpemu
+// env` points GOOGLE_APPLICATION_CREDENTIALS at when gcloud's
+// application-default credentials, which are Foreign credentials, would
+// otherwise win over the metadata server (ADR 0010).
+type ADCKeyer interface {
+	// ADCKey returns a key file for the host metadata server's service
+	// account. current is the previous one, returned unchanged while its
+	// key is still valid.
+	ADCKey(current []byte) ([]byte, error)
+}
+
 // AddressReserver is implemented by services whose stored resources record
 // container addresses and ask for them again when their containers are
 // recreated (a Cloud SQL instance's public and private IP). Containers
