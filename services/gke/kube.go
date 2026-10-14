@@ -143,6 +143,10 @@ func (k *kubeClient) get(ctx context.Context, path string, out any) error {
 	return k.do(ctx, http.MethodGet, path, "", nil, out)
 }
 
+func (k *kubeClient) create(ctx context.Context, path string, obj, out any) error {
+	return k.do(ctx, http.MethodPost, path, "", obj, out)
+}
+
 func (k *kubeClient) mergePatch(ctx context.Context, path string, patch any) error {
 	return k.do(ctx, http.MethodPatch, path, "application/merge-patch+json", patch, nil)
 }
@@ -183,6 +187,8 @@ type objectMeta struct {
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
 	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`
+	Generation        int64             `json:"generation,omitempty"`
+	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 	OwnerReferences   []struct {
 		Kind string `json:"kind"`
 	} `json:"ownerReferences,omitempty"`
@@ -244,11 +250,12 @@ type kubePod struct {
 }
 
 type kubeServicePort struct {
-	Name       string `json:"name"`
-	Port       int    `json:"port"`
-	Protocol   string `json:"protocol"`
-	TargetPort any    `json:"targetPort"`
-	NodePort   int    `json:"nodePort,omitempty"`
+	Name        string `json:"name"`
+	Port        int    `json:"port"`
+	Protocol    string `json:"protocol"`
+	AppProtocol string `json:"appProtocol,omitempty"`
+	TargetPort  any    `json:"targetPort"`
+	NodePort    int    `json:"nodePort,omitempty"`
 }
 
 type kubeService struct {
@@ -282,6 +289,222 @@ type kubeEndpointSlice struct {
 		Port     *int    `json:"port"`
 		Protocol string  `json:"protocol"`
 	} `json:"ports"`
+}
+
+type kubeSecret struct {
+	Metadata objectMeta        `json:"metadata"`
+	Type     string            `json:"type"`
+	Data     map[string][]byte `json:"data"`
+}
+
+// lbIngressStatus is a status.loadBalancer.ingress entry.
+type lbIngressStatus struct {
+	IP       string `json:"ip,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
+}
+
+type ingressBackend struct {
+	Service *struct {
+		Name string `json:"name"`
+		Port struct {
+			Number int    `json:"number,omitempty"`
+			Name   string `json:"name,omitempty"`
+		} `json:"port"`
+	} `json:"service,omitempty"`
+}
+
+type kubeIngress struct {
+	Metadata objectMeta `json:"metadata"`
+	Spec     struct {
+		IngressClassName *string         `json:"ingressClassName,omitempty"`
+		DefaultBackend   *ingressBackend `json:"defaultBackend,omitempty"`
+		TLS              []struct {
+			Hosts      []string `json:"hosts,omitempty"`
+			SecretName string   `json:"secretName,omitempty"`
+		} `json:"tls,omitempty"`
+		Rules []struct {
+			Host string `json:"host,omitempty"`
+			HTTP *struct {
+				Paths []struct {
+					Path     string         `json:"path,omitempty"`
+					PathType string         `json:"pathType,omitempty"`
+					Backend  ingressBackend `json:"backend"`
+				} `json:"paths"`
+			} `json:"http,omitempty"`
+		} `json:"rules,omitempty"`
+	} `json:"spec"`
+	Status struct {
+		LoadBalancer struct {
+			Ingress []lbIngressStatus `json:"ingress,omitempty"`
+		} `json:"loadBalancer"`
+	} `json:"status"`
+}
+
+// Gateway API (gateway.networking.k8s.io/v1).
+
+type gwCondition struct {
+	Type               string `json:"type"`
+	Status             string `json:"status"`
+	Reason             string `json:"reason"`
+	Message            string `json:"message"`
+	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
+	LastTransitionTime string `json:"lastTransitionTime"`
+}
+
+type kubeGatewayClass struct {
+	Metadata objectMeta `json:"metadata"`
+	Spec     struct {
+		ControllerName string `json:"controllerName"`
+	} `json:"spec"`
+	Status struct {
+		Conditions []gwCondition `json:"conditions,omitempty"`
+	} `json:"status"`
+}
+
+type gwCertRef struct {
+	Group     string `json:"group,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+type gwListener struct {
+	Name     string `json:"name"`
+	Hostname string `json:"hostname,omitempty"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	TLS      *struct {
+		Mode            string            `json:"mode,omitempty"`
+		CertificateRefs []gwCertRef       `json:"certificateRefs,omitempty"`
+		Options         map[string]string `json:"options,omitempty"`
+	} `json:"tls,omitempty"`
+	AllowedRoutes *struct {
+		Namespaces *struct {
+			From string `json:"from,omitempty"`
+		} `json:"namespaces,omitempty"`
+	} `json:"allowedRoutes,omitempty"`
+}
+
+type gwKind struct {
+	Group string `json:"group"`
+	Kind  string `json:"kind"`
+}
+
+type gwListenerStatus struct {
+	Name           string        `json:"name"`
+	SupportedKinds []gwKind      `json:"supportedKinds"`
+	AttachedRoutes int           `json:"attachedRoutes"`
+	Conditions     []gwCondition `json:"conditions"`
+}
+
+type gwAddress struct {
+	Type  string `json:"type,omitempty"`
+	Value string `json:"value"`
+}
+
+type gwStatus struct {
+	Addresses  []gwAddress        `json:"addresses"`
+	Conditions []gwCondition      `json:"conditions,omitempty"`
+	Listeners  []gwListenerStatus `json:"listeners,omitempty"`
+}
+
+type kubeGateway struct {
+	Metadata objectMeta `json:"metadata"`
+	Spec     struct {
+		GatewayClassName string       `json:"gatewayClassName"`
+		Listeners        []gwListener `json:"listeners"`
+		Addresses        []gwAddress  `json:"addresses,omitempty"`
+	} `json:"spec"`
+	Status gwStatus `json:"status"`
+}
+
+type gwParentRef struct {
+	Group       *string `json:"group,omitempty"`
+	Kind        *string `json:"kind,omitempty"`
+	Namespace   *string `json:"namespace,omitempty"`
+	Name        string  `json:"name"`
+	SectionName *string `json:"sectionName,omitempty"`
+	Port        *int    `json:"port,omitempty"`
+}
+
+type gwMatchValue struct {
+	Type  string `json:"type,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Value string `json:"value"`
+}
+
+type gwHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type gwHeaderModifier struct {
+	Set    []gwHeader `json:"set,omitempty"`
+	Add    []gwHeader `json:"add,omitempty"`
+	Remove []string   `json:"remove,omitempty"`
+}
+
+type gwPathModifier struct {
+	Type               string `json:"type"`
+	ReplaceFullPath    string `json:"replaceFullPath,omitempty"`
+	ReplacePrefixMatch string `json:"replacePrefixMatch,omitempty"`
+}
+
+type gwFilter struct {
+	Type                   string            `json:"type"`
+	RequestHeaderModifier  *gwHeaderModifier `json:"requestHeaderModifier,omitempty"`
+	ResponseHeaderModifier *gwHeaderModifier `json:"responseHeaderModifier,omitempty"`
+	RequestRedirect        *struct {
+		Scheme     *string         `json:"scheme,omitempty"`
+		Hostname   *string         `json:"hostname,omitempty"`
+		Path       *gwPathModifier `json:"path,omitempty"`
+		Port       *int            `json:"port,omitempty"`
+		StatusCode *int            `json:"statusCode,omitempty"`
+	} `json:"requestRedirect,omitempty"`
+	URLRewrite *struct {
+		Hostname *string         `json:"hostname,omitempty"`
+		Path     *gwPathModifier `json:"path,omitempty"`
+	} `json:"urlRewrite,omitempty"`
+}
+
+type gwBackendRef struct {
+	Group     *string `json:"group,omitempty"`
+	Kind      *string `json:"kind,omitempty"`
+	Name      string  `json:"name"`
+	Namespace *string `json:"namespace,omitempty"`
+	Port      *int    `json:"port,omitempty"`
+	Weight    *int    `json:"weight,omitempty"`
+}
+
+type gwRouteMatch struct {
+	Path        *gwMatchValue  `json:"path,omitempty"`
+	Headers     []gwMatchValue `json:"headers,omitempty"`
+	QueryParams []gwMatchValue `json:"queryParams,omitempty"`
+	Method      string         `json:"method,omitempty"`
+}
+
+type gwRouteRule struct {
+	Matches     []gwRouteMatch `json:"matches,omitempty"`
+	Filters     []gwFilter     `json:"filters,omitempty"`
+	BackendRefs []gwBackendRef `json:"backendRefs,omitempty"`
+}
+
+type gwParentStatus struct {
+	ParentRef      gwParentRef   `json:"parentRef"`
+	ControllerName string        `json:"controllerName"`
+	Conditions     []gwCondition `json:"conditions"`
+}
+
+type kubeHTTPRoute struct {
+	Metadata objectMeta `json:"metadata"`
+	Spec     struct {
+		ParentRefs []gwParentRef `json:"parentRefs,omitempty"`
+		Hostnames  []string      `json:"hostnames,omitempty"`
+		Rules      []gwRouteRule `json:"rules,omitempty"`
+	} `json:"spec"`
+	Status struct {
+		Parents []gwParentStatus `json:"parents"`
+	} `json:"status"`
 }
 
 type kubeList[T any] struct {

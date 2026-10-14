@@ -107,6 +107,8 @@ type Service struct {
 	fallback *localVPC
 	// testVPC replaces compute's VPC in tests.
 	testVPC emu.VPC
+	// testLB replaces the load balancer in tests.
+	testLB emu.LoadBalancerResources
 	// hosts lists the gateway's host-routed names (real hostnames the
 	// Google frontend serves, FR-INT-007); nil if the router has none.
 	hosts func() []string

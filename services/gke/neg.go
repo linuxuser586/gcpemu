@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -69,8 +70,8 @@ func (s *Service) startControllers(key string) {
 		t := time.NewTicker(negInterval)
 		defer t.Stop()
 		for {
-			if err := s.syncNEGs(ctx, key); err != nil && ctx.Err() == nil {
-				s.env.Log.Debug("gke: NEG sync", "cluster", key, "err", err)
+			if err := s.syncLoadBalancers(ctx, key); err != nil && ctx.Err() == nil {
+				s.env.Log.Debug("gke: NEG and load balancer sync", "cluster", key, "err", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -81,7 +82,9 @@ func (s *Service) startControllers(key string) {
 	}()
 }
 
-// negAnnotation is the cloud.google.com/neg annotation value.
+// negAnnotation is the cloud.google.com/neg annotation value. Ingress is
+// not consulted: load balancers always use NEGs (l7.go), as GKE does on
+// VPC-native clusters.
 type negAnnotation struct {
 	Ingress      bool `json:"ingress"`
 	ExposedPorts map[string]struct {
@@ -89,8 +92,11 @@ type negAnnotation struct {
 	} `json:"exposed_ports"`
 }
 
-// syncNEGs reconciles the NEGs of one cluster.
-func (s *Service) syncNEGs(ctx context.Context, key string) error {
+// syncNEGs reconciles the NEGs of one cluster: those Kubernetes Services'
+// NEG annotations expose and those the load balancers send to, lbPorts
+// (Kubernetes Service ports by namespace/name). A NEG a load balancer
+// still uses is deleted on a later sync, once it no longer does.
+func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]map[int]bool) error {
 	kc, err := s.kube(key)
 	if err != nil {
 		return err
@@ -106,21 +112,10 @@ func (s *Service) syncNEGs(ctx context.Context, key string) error {
 		return err
 	}
 	nodeZone := map[string]string{}
-	zoneSet := map[string]bool{}
 	for _, n := range rec.Int.Nodes {
 		nodeZone[n.Name] = n.Zone
-		zoneSet[n.Zone] = true
 	}
-	if len(zoneSet) == 0 {
-		for _, z := range c.Locations {
-			zoneSet[z] = true
-		}
-	}
-	zones := make([]string, 0, len(zoneSet))
-	for z := range zoneSet {
-		zones = append(zones, z)
-	}
-	sort.Strings(zones)
+	zones := negZones(rec)
 
 	owned := map[string]negRecord{}
 	_ = s.env.Store.View(func(tx store.Tx) error {
@@ -134,28 +129,32 @@ func (s *Service) syncNEGs(ctx context.Context, key string) error {
 	var errs []error
 	for _, svc := range svcs.Items {
 		raw := svc.Metadata.Annotations[annoNEG]
-		if raw == "" {
+		svcLB := lbPorts[svc.Metadata.Namespace+"/"+svc.Metadata.Name]
+		if raw == "" && len(svcLB) == 0 {
 			continue
 		}
 		var ann negAnnotation
-		if err := json.Unmarshal([]byte(raw), &ann); err != nil {
+		if err := json.Unmarshal([]byte(raw), &ann); err != nil && len(svcLB) == 0 {
 			continue
 		}
 		status := map[string]string{}
-		ports := make([]string, 0, len(ann.ExposedPorts))
+		portSet := map[int]bool{}
 		for p := range ann.ExposedPorts {
-			ports = append(ports, p)
+			if port, err := strconv.Atoi(p); err == nil {
+				portSet[port] = true
+			}
 		}
-		sort.Strings(ports)
-		for _, p := range ports {
-			port, err := strconv.Atoi(p)
-			if err != nil {
-				continue
-			}
-			name := ann.ExposedPorts[p].Name
-			if name == "" {
-				name = negName(c.Id, svc.Metadata.Namespace, svc.Metadata.Name, port)
-			}
+		for port := range svcLB {
+			portSet[port] = true
+		}
+		ports := make([]int, 0, len(portSet))
+		for port := range portSet {
+			ports = append(ports, port)
+		}
+		sort.Ints(ports)
+		for _, port := range ports {
+			p := strconv.Itoa(port)
+			name := negNameFor(c.Id, &svc, port)
 			status[p] = name
 			eps, err := s.negEndpoints(ctx, kc, svc, port, nodeZone)
 			if err != nil {
@@ -199,7 +198,9 @@ func (s *Service) syncNEGs(ctx context.Context, key string) error {
 			continue
 		}
 		if err := vpc.DeleteNEG(ctx, r.Project, r.Zone, r.Name); err != nil {
-			errs = append(errs, err)
+			if apierr.From(err).LegacyReason != "resourceInUseByAnotherResource" {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		_ = s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsNEGs, k) })
@@ -278,6 +279,18 @@ func hashEndpoints(eps []emu.NEGEndpoint) string {
 		fmt.Fprintf(h, "%s:%d@%s\n", e.IP, e.Port, e.Instance)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// negNameFor returns the NEG name of a Service port: the one its
+// cloud.google.com/neg annotation gives, or negName's.
+func negNameFor(clusterID string, svc *kubeService, port int) string {
+	var ann negAnnotation
+	if json.Unmarshal([]byte(svc.Metadata.Annotations[annoNEG]), &ann) == nil {
+		if n := ann.ExposedPorts[strconv.Itoa(port)].Name; n != "" {
+			return n
+		}
+	}
+	return negName(clusterID, svc.Metadata.Namespace, svc.Metadata.Name, port)
 }
 
 // negName generates a NEG name like GKE's NEG controller:

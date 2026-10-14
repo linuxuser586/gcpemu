@@ -368,6 +368,25 @@ type VPC interface {
 	DeleteNEG(ctx context.Context, project, zone, name string) error
 }
 
+// LoadBalancerResources is provided by the "lb" service: GKE's Ingress and
+// Gateway controllers (FR-GKE-010) manage load-balancing resources through
+// it, as GKE's service agent does through the compute API. path is a
+// resource's relative name ("projects/P/global/urlMaps/M" or
+// "projects/P/regions/R/backendServices/B"); bodies are its compute v1 JSON
+// form. Errors are *apierr.Error.
+type LoadBalancerResources interface {
+	// PutLBResource creates the resource, or replaces every mutable field
+	// of an existing one, with the API's validation and defaults, and
+	// returns its stored form. A replaced forwarding rule keeps its address
+	// unless the body gives one.
+	PutLBResource(ctx context.Context, path string, body []byte) ([]byte, error)
+	// LBResource returns a resource's stored form, or NOT_FOUND.
+	LBResource(ctx context.Context, path string) ([]byte, error)
+	// DeleteLBResource removes a resource; a missing one is not an error.
+	// It fails with FAILED_PRECONDITION while another resource uses it.
+	DeleteLBResource(ctx context.Context, path string) error
+}
+
 // CertManager is provided by the "certs" service: Certificate Manager
 // (certificates, certificate maps, trust configs, DNS authorizations) and
 // Network Security (backend authentication configs, server TLS policies)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,8 +24,9 @@ import (
 // is recreated, and removes what a disabled setting installed, keeping
 // CRDs, user objects and synced Secrets:
 //   - networkConfig.gatewayApiConfig: the Gateway API CRDs (v1.5.1, which
-//     GKE supports from 1.35.2-gke.1842000) of the chosen channel; removed
-//     only while no Gateway API object exists;
+//     GKE supports from 1.35.2-gke.1842000) of the chosen channel, and
+//     the gke-l7 GatewayClasses (l7.go); removed only while no other
+//     Gateway API object exists;
 //   - secretManagerConfig: the Secrets Store CSI driver registered as GKE's
 //     secrets-store-gke.csi.k8s.io; its `gke` provider is the node agent
 //     (provider.go);
@@ -36,6 +38,7 @@ var addonFS embed.FS
 
 const (
 	addonLabel       = "gcpemu.dev/addon"
+	gatewayAPIAddon  = "gateway-api"
 	gatewayAPIVer    = "v1.5.1"
 	defaultRotation  = 2 * time.Minute
 	minAddonRotation = time.Minute
@@ -240,9 +243,9 @@ func (s *Service) reconcileGatewayAPI(ctx context.Context, kc *kubeClient, ch co
 		if err := s.removeGatewayCRDs(ctx, kc, without(exp, std)); err != nil {
 			return err
 		}
-		return applyAddon(ctx, kc, "gateway-api", std)
+		return applyAddon(ctx, kc, gatewayAPIAddon, std)
 	case containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL:
-		return applyAddon(ctx, kc, "gateway-api", exp)
+		return applyAddon(ctx, kc, gatewayAPIAddon, exp)
 	}
 	return s.removeGatewayCRDs(ctx, kc, exp)
 }
@@ -264,7 +267,7 @@ func without(a, b []map[string]any) []map[string]any {
 }
 
 // removeGatewayCRDs deletes the add-on's Gateway API objects that exist,
-// unless some Gateway API resource still does.
+// unless some Gateway API resource other than the add-on's still does.
 func (s *Service) removeGatewayCRDs(ctx context.Context, kc *kubeClient, objs []map[string]any) error {
 	var installed []map[string]any
 	for _, obj := range objs {
@@ -292,7 +295,7 @@ func (s *Service) removeGatewayCRDs(ctx context.Context, kc *kubeClient, objs []
 		if err != nil {
 			return err
 		}
-		if cur.Metadata.Labels[addonLabel] != "gateway-api" {
+		if cur.Metadata.Labels[addonLabel] != gatewayAPIAddon {
 			continue // installed by someone else
 		}
 		installed = append(installed, obj)
@@ -306,7 +309,10 @@ func (s *Service) removeGatewayCRDs(ctx context.Context, kc *kubeClient, objs []
 			var list struct {
 				Items []map[string]any `json:"items"`
 			}
-			if err := kc.get(ctx, "/apis/"+cur.Spec.Group+"/"+v.Name+"/"+cur.Spec.Names.Plural+"?limit=1", &list); err == nil && len(list.Items) > 0 {
+			// The add-on's own objects (the gke-l7 GatewayClasses) go
+			// with the CRDs.
+			q := "?limit=1&labelSelector=" + url.QueryEscape(addonLabel+"!="+gatewayAPIAddon)
+			if err := kc.get(ctx, "/apis/"+cur.Spec.Group+"/"+v.Name+"/"+cur.Spec.Names.Plural+q, &list); err == nil && len(list.Items) > 0 {
 				s.env.Log.Info("gke: keeping the Gateway API CRDs while Gateway API objects exist", "crd", name)
 				return nil
 			}
