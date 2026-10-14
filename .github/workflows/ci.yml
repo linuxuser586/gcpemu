@@ -305,8 +305,10 @@ jobs:
             test ! -e "diag/gcpemu-selftest-second-$arch" || { echo "::error::a successful job uploaded diagnostics"; exit 1; }
           done
 
-  # The Makefile and scripts on macOS and Windows (Git Bash). Their tests
-  # join this job with #186 and #207.
+  # The Makefile and scripts on macOS and Windows (Git Bash). On macOS, the
+  # tests and the setup-gcpemu action against the in-process Services:
+  # hosted macOS runners have no container runtime, so tests that need one
+  # skip. Windows tests join this job with #207.
   platforms:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -315,7 +317,10 @@ jobs:
       matrix:
         runner: [macos-latest, windows-latest]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # the action's post step reads the job's result
     defaults:
       run:
         shell: bash
@@ -331,6 +336,36 @@ jobs:
       - run: make build
       - run: make cross
       - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
+      # services/lb needs 127.0.0.x listeners, which macOS lacks; it joins
+      # with #172.
+      - name: Tests
+        if: runner.os == 'macOS'
+        run: go test $(go list ./... | grep -v '/services/lb$')
+      - name: Serve this commit as a release
+        if: runner.os == 'macOS'
+        run: |
+          rel="$RUNNER_TEMP/rel/v0.0.0-selftest"
+          mkdir -p "$rel"
+          CGO_ENABLED=0 go build -trimpath -ldflags '-X github.com/linuxuser586/gcpemu/internal/instance.Version=v0.0.0-selftest' \
+            -o "$rel/gcpemu-darwin-$(go env GOARCH)" ./cmd/gcpemu
+          (cd "$rel" && shasum -a 256 gcpemu-* > SHA256SUMS)
+          nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/rel" >/dev/null 2>&1 &
+      - uses: ./setup-gcpemu
+        if: runner.os == 'macOS'
+        id: emu
+        with:
+          version: v0.0.0-selftest
+          download-url: http://127.0.0.1:8765
+          services: gcs,pubsub
+          seed: setup-gcpemu/test/seed-in-process.yaml
+          config: setup-gcpemu/test/gcpemu.yaml
+          artifact-name: gcpemu-macos-selftest-${{ runner.arch }}
+      - name: Environment, seed and config reach the instance
+        if: runner.os == 'macOS'
+        run: setup-gcpemu/test/check.sh
+        env:
+          EXPECT_BIN: ${{ steps.emu.outputs.bin }}
+          EXPECT_SQL: "0"
 
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
