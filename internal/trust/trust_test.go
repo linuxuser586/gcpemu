@@ -1,3 +1,7 @@
+// macOS's /etc/ssl/cert.pem ships EC-ACC, whose serial is negative; Go
+// refuses to parse it unless x509negativeserial is set (#186).
+//
+//go:debug x509negativeserial=1
 package trust
 
 import (

@@ -1,0 +1,16 @@
+# Self-test seed without Cloud SQL (.github/workflows/ci.yml, job
+# "platforms"): hosted macOS runners have no container runtime.
+gcs:
+  buckets:
+    - name: selftest-bucket
+      project: selftest-proj
+      objects:
+        - name: hello.txt
+          content: "hello from the seed"
+pubsub:
+  project: selftest-proj
+  topics:
+    - name: events
+  subscriptions:
+    - name: events-pull
+      topic: events

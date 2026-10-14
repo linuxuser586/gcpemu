@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // Performance targets of SRS 8.1 that need the real binary. They are
@@ -31,12 +33,15 @@ func perfGate(t *testing.T, ok bool, format string, args ...any) {
 
 // perfServices returns the Services NFR-PERF-001/004 cover: the SRS
 // scope is every Service except GKE and Cloud SQL. nat is a Runtime
-// Service, which can't run on native Windows (ADR 0008), so it is left
-// out there.
+// Service, so it is left out where no container runtime can be used:
+// native Windows (ADR 0008) and hosts without one, such as hosted macOS
+// runners (#186).
 func perfServices() string {
 	s := "iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn"
-	if goruntime.GOOS != "windows" {
-		s += ",nat"
+	if runtime.Unusable() == nil {
+		if _, err := runtime.Detect(); err == nil {
+			s += ",nat"
+		}
 	}
 	return s
 }

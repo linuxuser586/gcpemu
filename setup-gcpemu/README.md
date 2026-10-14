@@ -74,8 +74,9 @@ Use `@v0` until v1.0.0: a `vX.Y.Z` release moves its major tag `vX`, so `@v0` fo
 0.x release. Pin a release such as `@v0.1.0` for reproducible builds. `version: latest` installs
 the newest release, whichever major it is.
 
-Runs on `ubuntu-24.04`, `ubuntu-24.04-arm` and macOS runners. GKE, Cloud SQL and Cloud NAT need
-Docker.
+Runs on `ubuntu-24.04`, `ubuntu-24.04-arm` and `macos-latest` runners. Hosted macOS runners have
+no container runtime, so only the in-process Services run there: GKE, Cloud SQL and Cloud NAT need
+Docker on a Linux runner.
 
 ## Development
 
@@ -84,5 +85,6 @@ The runner executes `dist/` as it is, so it is committed. After changing `src/`,
 and commit `dist/`. CI fails when `dist/` doesn't match the sources. The `action` job in
 `.github/workflows/ci.yml` is the self-test. It serves the commit's binary as release
 `v0.0.0-selftest`, uses the action with the fixtures in `test/` (`check.sh` asserts the
-environment, seed and config), and checks the diagnostics artifact. Releases come from
+environment, seed and config), and checks the diagnostics artifact. The `platforms` job does the
+same on `macos-latest` with the in-process Services and `seed-in-process.yaml`. Releases come from
 `.github/workflows/release.yml` on a `vX.Y.Z` tag, which also moves the `vX` tag.
