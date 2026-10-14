@@ -446,6 +446,45 @@ it('lists workloads of every kind in a namespace', async () => {
   expect(within(lb!).getByText('1/2')).toBeInTheDocument()
 })
 
+it('lists Services with the host address a LoadBalancer Service is served at', async () => {
+  fake.endpoints = { ...fake.endpoints, 'gke:web/default/shop/443': '127.0.0.1:52011' }
+  server.use(
+    http.get(`${gw}/api/v1/services`, () =>
+      HttpResponse.json({
+        items: [
+          {
+            metadata: { name: 'shop', namespace: 'default' },
+            spec: {
+              type: 'LoadBalancer',
+              clusterIP: '34.118.230.10',
+              ports: [
+                { port: 80, protocol: 'TCP', nodePort: 30080 },
+                { port: 443, protocol: 'TCP', nodePort: 30443 },
+              ],
+            },
+            status: { loadBalancer: { ingress: [{ ip: '127.0.0.1' }] } },
+          },
+          {
+            metadata: { name: 'queued', namespace: 'default' },
+            spec: { type: 'LoadBalancer', clusterIP: '34.118.230.11', ports: [{ port: 8080 }] },
+          },
+          {
+            metadata: { name: 'kubernetes', namespace: 'default' },
+            spec: { type: 'ClusterIP', clusterIP: '34.118.224.1', ports: [{ port: 443 }] },
+          },
+        ],
+      }),
+    ),
+  )
+  renderApp(`${base}/services?project=${P}`)
+  const table = await screen.findByRole('table', { name: 'Services' })
+  const [api, queued, shop] = within(table).getAllByTestId('service')
+  expect(api).toHaveTextContent('ClusterIP')
+  expect(shop).toHaveTextContent('80/TCP, 443/TCP')
+  await waitFor(() => expect(shop).toHaveTextContent('127.0.0.1:80, 127.0.0.1:52011'))
+  expect(queued).toHaveTextContent('Pending')
+})
+
 it('explains a Kubernetes API error, such as RBAC refusing the Principal', async () => {
   server.use(
     http.get(`${gw}/api/v1/nodes`, () =>

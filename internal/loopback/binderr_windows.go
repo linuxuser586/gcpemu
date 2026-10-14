@@ -1,4 +1,4 @@
-package lb
+package loopback
 
 import (
 	"syscall"

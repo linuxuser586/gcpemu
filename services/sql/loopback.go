@@ -96,7 +96,8 @@ func (s *Service) LoopbackAddrs() []string {
 // loopCandidates lists the addresses to try for an instance, in order:
 // its previous one, then with aliases 127.0.0.x from x = hash of the
 // connection name onwards (x in 2-254), skipping those that other
-// instances and LB forwarding rules hold; without them only 127.0.0.1.
+// instances, LB forwarding rules and GKE LoadBalancer Services hold;
+// without them only 127.0.0.1.
 func (s *Service) loopCandidates(rec *instanceRecord, aliases bool) []string {
 	project, name := rec.Instance.Project, rec.Instance.Name
 	if !aliases {
@@ -114,9 +115,11 @@ func (s *Service) loopCandidates(rec *instanceRecord, aliases bool) []string {
 		})
 		return nil
 	})
-	if lb, ok := s.peer("lb").(emu.LoopbackHolder); ok {
-		for _, a := range lb.LoopbackAddrs() {
-			used[a] = true
+	for _, peer := range []string{"lb", "gke"} {
+		if h, ok := s.peer(peer).(emu.LoopbackHolder); ok {
+			for _, a := range h.LoopbackAddrs() {
+				used[a] = true
+			}
 		}
 	}
 	var out []string

@@ -421,6 +421,13 @@ func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
 	if err != nil {
 		return nil, err
 	}
+	return p.Serve(l, func() []string { return []string{target} }), nil
+}
+
+// Serve pipes each connection l accepts to the first of targets, container
+// addresses, that DialContext reaches; targets is read for each
+// connection. It owns l.
+func (p *Plane) Serve(l net.Listener, targets func() []string) *Exposed {
 	e := &Exposed{l: l}
 	e.wg.Add(1)
 	go func() {
@@ -432,11 +439,18 @@ func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
 			}
 			go func() {
 				defer c.Close()
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				u, err := p.DialContext(ctx, "tcp", target)
-				cancel()
-				if err != nil {
-					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "target", target, "err", err)
+				var u net.Conn
+				ts := targets()
+				for _, target := range ts {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					u, err = p.DialContext(ctx, "tcp", target)
+					cancel()
+					if err == nil {
+						break
+					}
+				}
+				if u == nil {
+					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "targets", ts, "err", err)
 					return
 				}
 				defer u.Close()
@@ -444,7 +458,7 @@ func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
 			}()
 		}
 	}()
-	return e, nil
+	return e
 }
 
 // Addr is the host address bound.

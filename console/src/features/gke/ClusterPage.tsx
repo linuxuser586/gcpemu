@@ -23,6 +23,7 @@ const TABS = [
   ['namespaces', 'Namespaces'],
   ['workloads', 'Workloads'],
   ['pods', 'Pods'],
+  ['services', 'Services'],
   ['negs', 'NEGs'],
 ] as const
 

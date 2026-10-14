@@ -14,7 +14,7 @@ func TestCheckPlatform(t *testing.T) {
 		note       string
 	}{
 		{goos: "linux", ok: true, checks: true},
-		{goos: "darwin", ok: true, checks: true, note: "GKE is Linux-only"},
+		{goos: "darwin", ok: true, checks: true},
 		{goos: "windows", ok: true, note: "Cloud SQL, GKE, Cloud NAT and host mode: the container runtime is not usable on native Windows; run gcpemu in WSL2"},
 		{goos: "plan9", checks: true},
 	} {

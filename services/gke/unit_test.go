@@ -224,25 +224,6 @@ func TestPrivateFlags(t *testing.T) {
 	}
 }
 
-// TestNonLinuxHost is FR-GKE-012 / NFR-PORT-003: on a non-Linux host the
-// service refuses to start with a clear message and reports not-ready.
-func TestNonLinuxHost(t *testing.T) {
-	old := hostOS
-	hostOS = "darwin"
-	defer func() { hostOS = old }()
-	cfg := config.Defaults()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
-		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()})
-	err := s.Start(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "only supported on Linux") || !strings.Contains(err.Error(), "without the gke service on darwin") {
-		t.Fatalf("Start = %v", err)
-	}
-	if err := s.Ready(); err == nil || !strings.Contains(err.Error(), "Linux") {
-		t.Fatalf("Ready = %v", err)
-	}
-}
-
 // TestPreloadLists is FR-GKE-006/007: every supported version preloads its
 // system images, so private nodes (no egress) start offline.
 func TestPreloadLists(t *testing.T) {

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import { errorMessage } from '@/api/errors'
+import { endpointsQuery } from '@/api/queries'
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { Card } from '@/components/ui/card'
@@ -22,12 +23,14 @@ import { useViewState } from '@/lib/viewState'
 import {
   isRunning,
   kubeQuery,
+  lbEndpoint,
   nsPath,
   WORKLOAD_KINDS,
   type KubeList,
   type KubeNamespace,
   type KubeNode,
   type KubePod,
+  type KubeService,
   type KubeWorkload,
 } from './api'
 import { NotRunning, useCluster } from './ClusterPage'
@@ -35,7 +38,7 @@ import { age, podReady, podRestarts, podStatus, StatusBadge, workloadReady } fro
 import { clusterPath, useClusterRef } from './GkeLayout'
 
 // The cluster's Kubernetes objects through the Connect gateway (ADR 0002):
-// nodes, namespaces, workloads and pods. No events report them, so the
+// nodes, namespaces, workloads, pods and Services. No events report them, so the
 // queries poll. ?namespace= scopes workloads and pods, ?q= filters names.
 
 const NODEPOOL_LABEL = 'cloud.google.com/gke-nodepool'
@@ -421,6 +424,97 @@ export function Pods() {
                       Logs
                     </Link>
                   </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      )}
+    </Card>
+  )
+}
+
+// ---- services ----
+
+/**
+ * externalAddrs are the addresses at which clients reach a LoadBalancer
+ * Service: on a VM runtime the host addresses the emulator serves (ADR
+ * 0005), which may be on other ports, and otherwise its ingress.
+ */
+function externalAddrs(
+  svc: KubeService,
+  cluster: string,
+  endpoints: Record<string, string> | undefined,
+): string[] {
+  if (svc.spec?.type !== 'LoadBalancer') return []
+  const ns = svc.metadata.namespace ?? 'default'
+  const hosts = (svc.status?.loadBalancer?.ingress ?? []).map((i) => i.ip ?? i.hostname ?? '')
+  return (svc.spec.ports ?? []).flatMap((p) => {
+    const served = endpoints?.[lbEndpoint(cluster, ns, svc.metadata.name, p.port)]
+    if (served) return [served]
+    return hosts.filter(Boolean).map((h) => `${h}:${p.port}`)
+  })
+}
+
+export function Services() {
+  const ref = useClusterRef()
+  const c = useCluster()
+  const [search] = useSearchParams()
+  const namespace = search.get('namespace') ?? undefined
+  const [text, setText] = useNameFilter()
+  const query = useQuery(
+    kubeQuery<KubeList<KubeService>>(ref, nsPath('/api/v1', 'services', namespace), isRunning(c)),
+  )
+  const endpoints = useQuery(endpointsQuery())
+  if (!isRunning(c)) return <NotRunning c={c} />
+  const shown = (query.data?.items ?? [])
+    .filter((s) => s.metadata.name.includes(text))
+    .sort(
+      (a, b) =>
+        (a.metadata.namespace ?? '').localeCompare(b.metadata.namespace ?? '') ||
+        a.metadata.name.localeCompare(b.metadata.name),
+    )
+  return (
+    <Card>
+      <Filters>
+        <NamespaceSelect />
+        <NameFilter value={text} onChange={setText} label="Service name" />
+      </Filters>
+      <QueryStatus query={query} />
+      {query.data && shown.length === 0 && <Empty>No Services.</Empty>}
+      {shown.length > 0 && (
+        <Table aria-label="Services">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Namespace</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Cluster IP</TableHead>
+              <TableHead>Ports</TableHead>
+              <TableHead>External address</TableHead>
+              <TableHead>Age</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {shown.map((s) => {
+              const ns = s.metadata.namespace ?? 'default'
+              const ext = externalAddrs(s, ref.cluster, endpoints.data)
+              const pending = s.spec?.type === 'LoadBalancer' && ext.length === 0
+              return (
+                <TableRow key={`${ns}/${s.metadata.name}`} data-testid="service">
+                  <TableCell className="font-mono">{s.metadata.name}</TableCell>
+                  <TableCell className="font-mono">{ns}</TableCell>
+                  <TableCell>{s.spec?.type ?? 'ClusterIP'}</TableCell>
+                  <TableCell className="font-mono">{s.spec?.clusterIP ?? '—'}</TableCell>
+                  <TableCell className="font-mono">
+                    {(s.spec?.ports ?? [])
+                      .map((p) => `${p.port}/${p.protocol ?? 'TCP'}`)
+                      .join(', ') || '—'}
+                  </TableCell>
+                  <TableCell className="font-mono">
+                    {pending ? 'Pending' : ext.length > 0 ? ext.join(', ') : '—'}
+                  </TableCell>
+                  <TableCell>{age(s.metadata.creationTimestamp)}</TableCell>
                 </TableRow>
               )
             })}

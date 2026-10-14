@@ -1,6 +1,6 @@
 //go:build !windows
 
-package lb
+package loopback
 
 import "syscall"
 

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -161,7 +162,7 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 		go l.serve(ln)
 		return b, nil
 	}
-	if !bindDenied(err) {
+	if !loopback.BindDenied(err) {
 		return nil, err
 	}
 	if darwinPorts {

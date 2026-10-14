@@ -62,7 +62,7 @@ import (
 func TestGKEBackends(t *testing.T) {
 	emutest.RequireRuntime(t)
 	if goruntime.GOOS == "darwin" {
-		t.Skip("GKE runs on Linux hosts only (macOS: #170)")
+		t.Skip("macOS serves privileged ports on the wildcard address, never through lb-edge")
 	}
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
 	// Force the edge: some hosts let the emulator bind port 443 itself.

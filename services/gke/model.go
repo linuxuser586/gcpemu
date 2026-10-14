@@ -49,8 +49,10 @@ type clusterInternal struct {
 	// endpoint), empty for private-endpoint-only clusters.
 	ServerIP   string `json:"serverIp"`
 	ExternalIP string `json:"externalIp,omitempty"`
-	// APIHostPort publishes the API server on the host's loopback when the
-	// emulator runs in a container (ADR 0003); the kubeconfig then uses it.
+	// APIHostPort is the port on the host's loopback at which the API
+	// server is published when the emulator runs in a container (ADR
+	// 0003), or served by the emulator on a VM runtime (ADR 0005); the
+	// kubeconfig then uses it.
 	APIHostPort int `json:"apiHostPort,omitempty"`
 	// PodCIDR / ServiceCIDR are the ranges k3s runs with.
 	PodCIDR     string       `json:"podCidr"`

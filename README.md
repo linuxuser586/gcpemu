@@ -170,11 +170,14 @@ and why. Everything the emulator creates is labelled
 `gcpemu.instance=<id>`; containers are removed on `stop`, and with `--data-dir` the volumes
 holding Postgres and Kubernetes state are kept so resources survive a restart.
 
-On a VM runtime, host clients reach Cloud SQL instances and forwarding rules on loopback
-addresses: a `127.0.0.x` of their own each. Linux and Windows route all of `127.0.0.0/8` to
-loopback, so they need no loopback aliases, but macOS has only `127.0.0.1`, so there only one Cloud SQL instance is reachable and forwarding rules share
-`127.0.0.1`: each on its own port, or a free one when an earlier rule holds it, as `gcpemu env`
-shows. That needs no container runtime. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
+On a VM runtime, host clients reach Cloud SQL instances, forwarding rules and GKE `LoadBalancer`
+Services on loopback addresses: a `127.0.0.x` of their own each. A GKE cluster's endpoint is
+`127.0.0.1` and a port the emulator serves, so `gcloud container clusters get-credentials` writes
+a kubeconfig that works from the host. Linux and Windows route all of `127.0.0.0/8` to loopback,
+so they need no loopback aliases, but macOS has only `127.0.0.1`, so there only one Cloud SQL
+instance is reachable and forwarding rules and `LoadBalancer` Services share `127.0.0.1`: each on
+its own port, or a free one when an earlier one holds it, as `gcpemu env` shows.
+That needs no container runtime. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
 a LaunchDaemon that adds them again at boot; `sudo gcpemu loopback uninstall` removes both.
 `gcpemu doctor` reports whether they are present.
 
@@ -197,7 +200,7 @@ it uses `GCPEMU_AGENT_BINARY`, then `gcpemu-linux-<arch>` next to the executable
 cached in the instance directory under `agent/<version>/linux-<arch>/`. A release build (`vX.Y.Z`)
 with none of these copies it out of the published image of the same version (`ghcr.io`, then
 Docker Hub) and caches it. A dev build needs `make agent` instead. A binary for the wrong
-architecture fails the start with an error naming both. GKE is Linux-only.
+architecture fails the start with an error naming both.
 
 Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress immediately
 instead of timing out; with `--offline` (or the offline sink switched on from the Web console),
@@ -205,7 +208,11 @@ NAT-allowed egress hits a sink that records the attempt and returns `natSinkResp
 (`GCPEMU_NAT_SINK_RESPONSE`, default `503:gcpemu offline: egress blocked`).
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
-load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009).
+load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
+whose node addresses the host can't reach, the emulator serves them instead: on a loopback
+address, reported as the Service's ingress and by `gcpemu env` as
+`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the Service's node port. Only
+TCP ports are served.
 
 Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
 them with the forwarding rule's own IP (host clients still get the local listener), and the

@@ -56,7 +56,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: go test -count=1 -timeout 35m ./internal/vmrelay ./internal/netplane ./services/sql ./services/compute ./services/lb
+      - run: go test -count=1 -timeout 35m ./internal/vmrelay ./internal/netplane ./services/sql ./services/compute ./services/lb ./services/gke
 
   # FR-UI-001/020: the Web console's lint, types, unit tests, build and
   # bundle budget, and admin API types generated from openapi.yaml.
