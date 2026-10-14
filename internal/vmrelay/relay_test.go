@@ -184,12 +184,14 @@ func TestReconnect(t *testing.T) {
 	r.mu.Unlock()
 	old.Close()
 
+	// The new session is set before its ping proves the agent took it
+	// over; until then the agent may still forward through the old one.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		r.mu.Lock()
-		s := r.sess
+		s, reconnecting := r.sess, r.reconnecting
 		r.mu.Unlock()
-		if s != old && s != nil && !s.IsClosed() {
+		if s != old && s != nil && !s.IsClosed() && !reconnecting {
 			break
 		}
 		if time.Now().After(deadline) {

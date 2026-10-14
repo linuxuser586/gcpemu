@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, it } from 'vitest'
@@ -14,7 +14,10 @@ it('lists Projects and puts the chosen one in the URL', async () => {
   const list = await screen.findByRole('list', { name: 'Projects' })
   await user.click(within(list).getByRole('button', { name: 'beta-project' }))
   expect(router.state.location.search).toBe('?project=beta-project')
-  expect(screen.getByRole('button', { name: 'Project' })).toHaveTextContent('beta-project')
+  // The switcher re-renders once the navigation lands.
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Project' })).toHaveTextContent('beta-project'),
+  )
 })
 
 it('accepts an unknown Project ID as "not yet created" and creates nothing', async () => {

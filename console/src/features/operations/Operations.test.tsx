@@ -136,7 +136,8 @@ it('advances running durations live and polls only while an Operation runs', asy
     const before = shown()
     expect(before).toBeGreaterThanOrEqual(2)
     await vi.advanceTimersByTimeAsync(3000)
-    expect(shown() - before).toBeGreaterThanOrEqual(2)
+    // In tenths: 4.3 - 2.3 is 1.9999999999999996.
+    expect(Math.round((shown() - before) * 10)).toBeGreaterThanOrEqual(20)
     expect(fetched).toBeGreaterThan(1)
 
     // Once it is done the view stops polling: Operation events report changes.

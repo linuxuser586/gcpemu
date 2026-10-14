@@ -325,6 +325,28 @@ paths:
                   requests:
                     type: array
                     items: { $ref: "#/components/schemas/RequestEntry" }
+  /_emu/v1/requests/{id}:
+    get:
+      summary: One request log entry with its request and response bodies (FR-UI-013).
+      description: |
+        Entries listed by /_emu/v1/requests and sent on the event stream
+        leave out bodies; this returns them. Bodies are kept for API calls
+        through the gateway: an HTTP body as sent, a unary gRPC message as
+        protojson. Each keeps its first 16 KiB. 404 once the entry has
+        left the log.
+      operationId: request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The entry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequestDetail" }
+        "404": { $ref: "#/components/responses/Error" }
   /_emu/v1/resources:
     get:
       summary: Dump of the control-plane store.
@@ -1034,6 +1056,10 @@ components:
     RequestEntry:
       type: object
       properties:
+        id:
+          type: integer
+          format: int64
+          description: Numbers the entries of one Instance process from 1, in order.
         time: { type: string, format: date-time }
         service: { type: string }
         protocol: { type: string, description: "http, grpc, dns, postgres, tcp, udp" }
@@ -1049,6 +1075,23 @@ components:
         latencyMs: { type: number }
         lb: { $ref: "#/components/schemas/LbTrace" }
         nat: { $ref: "#/components/schemas/NatTrace" }
+    RequestDetail:
+      allOf:
+        - $ref: "#/components/schemas/RequestEntry"
+        - type: object
+          properties:
+            requestBody: { $ref: "#/components/schemas/RequestBody" }
+            responseBody: { $ref: "#/components/schemas/RequestBody" }
+    RequestBody:
+      type: object
+      description: The start of a request or response body.
+      required: [size]
+      properties:
+        contentType: { type: string }
+        size: { type: integer, format: int64, description: The body's length in bytes. }
+        text: { type: string, description: The first 16 KiB; absent when binary. }
+        truncated: { type: boolean, description: Text is only the start of the body. }
+        binary: { type: boolean, description: The body is not UTF-8 text. }
     NatTrace:
       type: object
       description: >-

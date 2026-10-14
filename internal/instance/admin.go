@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/admin"
@@ -101,6 +102,15 @@ func newAdmin(in *Instance) http.Handler {
 	mux.Handle("GET /_emu/v1/events", in.Events)
 	mux.HandleFunc("GET /_emu/v1/requests", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"requests": in.Log.Entries(r.URL.Query().Get("service"))})
+	})
+	mux.HandleFunc("GET /_emu/v1/requests/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		d, ok := in.Log.Get(id)
+		if err != nil || !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such request log entry; it may no longer be retained"})
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
 	})
 	mux.HandleFunc("GET /_emu/v1/resources", func(w http.ResponseWriter, r *http.Request) {
 		dump, err := in.Env.Store.Dump()

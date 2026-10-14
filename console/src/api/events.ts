@@ -6,15 +6,18 @@ import { origin } from './fetch'
 // The cache bridge (FR-UI-006): one EventSource per tab on
 // /_emu/v1/events. Each event marks the queries it affects stale, so
 // open views refetch without polling; Request log entries are appended
-// to cached logs instead. A `reset`, or a `gap` after a reconnect that
+// to cached logs instead, a burst at a time. A `reset`, or a `gap` after a reconnect that
 // missed events, invalidates everything.
 
 export const EVENTS_PATH = '/_emu/v1/events'
 
-/** REQUESTS_KEPT caps a cached Request log, as the Instance does. */
-export const REQUESTS_KEPT = 2000
+/**
+ * REQUESTS_KEPT caps a cached Request log. The Instance keeps fewer;
+ * the live tail grows to the most the Request log view shows (FR-UI-022).
+ */
+export const REQUESTS_KEPT = 100_000
 
-/** FLUSH_MS batches the invalidations of a burst of events. */
+/** FLUSH_MS batches the invalidations and Request log entries of a burst of events. */
 export const FLUSH_MS = 50
 
 /** RECONNECT_MS is the wait before replacing a closed EventSource. */
@@ -51,12 +54,14 @@ export function staleKeys(type: string, data: unknown): QueryKey[] | 'all' {
   }
 }
 
-/** appendRequest adds a Request log entry to every cached log it belongs in. */
-export function appendRequest(client: QueryClient, entry: RequestEntry) {
+/** appendRequest adds Request log entries to every cached log they belong in. */
+export function appendRequest(client: QueryClient, ...entries: RequestEntry[]) {
   for (const [key, old] of client.getQueriesData<RequestEntry[]>({ queryKey: REQUESTS })) {
     const service = key[2]
-    if (!old || (service && service !== entry.service)) continue
-    client.setQueryData<RequestEntry[]>(key, [...old, entry].slice(-REQUESTS_KEPT))
+    if (!old) continue
+    const add = service ? entries.filter((e) => e.service === service) : entries
+    if (add.length === 0) continue
+    client.setQueryData<RequestEntry[]>(key, old.concat(add).slice(-REQUESTS_KEPT))
   }
 }
 
@@ -82,11 +87,14 @@ export function connectEvents(client: QueryClient, opts: EventsOptions = {}): ()
   let reconnect: ReturnType<typeof setTimeout> | undefined
   let flush: ReturnType<typeof setTimeout> | undefined
   let pending = new Map<string, QueryKey>()
+  let requests: RequestEntry[] = []
   let all = false
   let closed = false
 
   const flushNow = () => {
     flush = undefined
+    if (requests.length > 0) appendRequest(client, ...requests)
+    requests = []
     if (all) {
       void client.invalidateQueries()
     } else {
@@ -105,13 +113,14 @@ export function connectEvents(client: QueryClient, opts: EventsOptions = {}): ()
       return
     }
     if (e.type === 'request') {
-      appendRequest(client, data as RequestEntry)
-      return
+      requests.push(data as RequestEntry)
+    } else {
+      const keys = staleKeys(e.type, data)
+      if (keys === 'all') all = true
+      else for (const k of keys) pending.set(JSON.stringify(k), k)
     }
-    const keys = staleKeys(e.type, data)
-    if (keys === 'all') all = true
-    else for (const k of keys) pending.set(JSON.stringify(k), k)
-    if ((all || pending.size > 0) && flush === undefined) flush = setTimeout(flushNow, FLUSH_MS)
+    if ((all || pending.size > 0 || requests.length > 0) && flush === undefined)
+      flush = setTimeout(flushNow, FLUSH_MS)
   }
 
   const open = () => {
