@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,23 +24,49 @@ import (
 //  1. 127.0.0.x:<port>, x allocated deterministically per forwarding rule
 //     IP (Linux routes all of 127/8 to loopback), or the next free x when
 //     another process holds that address on the port (relocateLoop);
-//  2. when that port is privileged (or below 1024 with Options.Edge) and a
-//     container runtime is available, the lb-edge container (edge.go),
-//     which owns one container IP per forwarding rule and relays
-//     connections with PROXY protocol v2;
-//  3. otherwise 127.0.0.x:<base+n> (base 18080, or the configured "lb"
+//  2. on macOS, when that port is privileged, the wildcard address on the
+//     port, serving only connections to loopback and --lb-bind addresses
+//     (macOS lets an unprivileged process bind a port below 1024 only
+//     there). The first forwarding rule on the port gets it;
+//  3. elsewhere, when that port is privileged (or below 1024 with
+//     Options.Edge) and a container runtime is available, the lb-edge
+//     container (edge.go), which owns one container IP per forwarding rule
+//     and relays connections with PROXY protocol v2;
+//  4. otherwise 127.0.0.x:<base+n> (base 18080, or the configured "lb"
 //     port; 0 = dynamic).
+//
+// A host on which 127.0.0.2 cannot be bound (macOS without loopback
+// aliases, #185) uses single-loopback mode: every x is 1, so a forwarding
+// rule listens on 127.0.0.1 on its own port when it is free, and on a
+// fallback port otherwise.
 //
 // Each mapping is recorded as endpoint "lb:<name>" (printed by `gcpemu env`
 // as GCPEMU_LB_<NAME>), and the emulated DNS answers A queries for a
 // forwarding rule IP with the mapped listener IP.
+
+// singleLoopback is the only loopback address in single-loopback mode.
+const singleLoopback = "127.0.0.1"
+
+// darwinPorts: macOS binds privileged ports on the wildcard address, and
+// never through a container, whose host network is a VM's.
+const darwinPorts = goruntime.GOOS == "darwin"
+
+// loopbackAliases reports whether the host routes 127.0.0.2 to loopback.
+func loopbackAliases() bool {
+	ln, err := net.Listen("tcp", "127.0.0.2:0")
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
+}
 
 type listener struct {
 	name  string
 	key   string
 	https bool
 	addr  string // host:port clients use
-	mode  string // "loopback", "edge" or "fallback"
+	mode  string // "loopback", "wildcard", "edge" or "fallback"
 	ln    net.Listener
 	srv   *http.Server
 	// virt receives edge-relayed connections for this frontend.
@@ -164,14 +191,17 @@ func (d *dataplane) fallbackBase() int {
 // listen opens the listener of a frontend. Callers hold d.mu.
 func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	l := &listener{name: fe.fr.Name, key: fe.key, https: fe.https}
-	lip := d.loopIP(fe.ip)
+	lip := singleLoopback
+	if !d.single {
+		lip = d.loopIP(fe.ip)
+	}
 	// A forced edge takes privileged ports without trying the bind.
-	forced := d.s.options().Edge && fe.port < 1024
+	forced := d.s.options().Edge && fe.port < 1024 && !darwinPorts
 	var ln net.Listener
 	var err error
 	if !forced {
 		ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
-		if addrInUse(err) {
+		if addrInUse(err) && !d.single {
 			if rln, rip, rerr := d.relocateLoop(fe.ip, fe.port); rerr == nil {
 				d.s.env.Log.Warn("lb: loopback address in use by another process; moved", "forwardingRule", fe.frPath, "from", lip, "to", rip)
 				ln, lip, err = rln, rip, nil
@@ -181,7 +211,13 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	switch {
 	case !forced && err == nil:
 		l.ln, l.mode = ln, "loopback"
-	case (forced || bindDenied(err)) && d.edge.available(d.ctx):
+	case darwinPorts && bindDenied(err):
+		// When an earlier forwarding rule on the port (or another
+		// process) holds the wildcard, a fallback port.
+		if wln, werr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(fe.port))); werr == nil {
+			l.ln, l.mode = &localFilter{Listener: wln, allow: d.lbLocal}, "wildcard"
+		}
+	case (forced || bindDenied(err)) && !darwinPorts && d.edge.available(d.ctx):
 		addr, verr := d.edge.add(d.ctx, fe)
 		if verr != nil {
 			d.s.env.Log.Warn("lb: edge container unavailable; using a high port", "forwardingRule", fe.frPath, "err", verr)
@@ -209,7 +245,10 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 		}
 		l.ln, l.mode = ln, "fallback"
 	}
-	if l.ln != nil {
+	switch {
+	case l.mode == "wildcard":
+		l.addr = net.JoinHostPort(lip, strconv.Itoa(fe.port))
+	case l.ln != nil:
 		l.addr = l.ln.Addr().String()
 	}
 	l.srv = d.server(fe)
@@ -234,6 +273,55 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	d.s.env.Endpoints.Set("lb:"+fe.fr.Name, l.addr)
 	d.s.env.Log.Info("lb: forwarding rule listening", "forwardingRule", fe.frPath, "ip", fe.ip, "port", fe.port, "listener", l.addr, "mode", l.mode)
 	return l, nil
+}
+
+// covers reports whether l itself serves addr: its own address, or any
+// --lb-bind address on its port when it is the wildcard listener.
+func (l *listener) covers(addr string) bool {
+	if addr == l.addr {
+		return true
+	}
+	_, port, _ := net.SplitHostPort(addr)
+	_, own, _ := net.SplitHostPort(l.addr)
+	return l.mode == "wildcard" && port == own
+}
+
+// lbLocal reports whether a connection to the local address a may be
+// served by a wildcard listener: one to a loopback or --lb-bind address.
+func (d *dataplane) lbLocal(a net.Addr) bool {
+	ta, ok := a.(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	if ta.IP.IsLoopback() {
+		return true
+	}
+	for _, b := range d.s.env.Config.LBBind {
+		if ta.IP.Equal(net.ParseIP(b)) {
+			return true
+		}
+	}
+	return false
+}
+
+// localFilter serves only the connections whose local address allow
+// accepts, and closes the others unserved.
+type localFilter struct {
+	net.Listener
+	allow func(net.Addr) bool
+}
+
+func (f *localFilter) Accept() (net.Conn, error) {
+	for {
+		c, err := f.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if f.allow(c.LocalAddr()) {
+			return c, nil
+		}
+		c.Close()
+	}
 }
 
 // relayed returns the listener that receives this frontend's connections

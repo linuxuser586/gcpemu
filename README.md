@@ -130,8 +130,10 @@ also served on `<address>:<its port>`, while the admin API, the API gateway and 
 plane stay on `--bind`. Nothing else is exposed, so `--lb-bind` doesn't need
 `--i-understand-this-is-insecure`. The emulator binds the port itself when it can. When the port is
 privileged (`net.ipv4.ip_unprivileged_port_start` above it), a labelled `gcpemu-<id>-lb-lan`
-container on the host network listens there and relays to the emulator. If two forwarding rules
-share a port, only one gets the address. `gcpemu status` lists each rule's addresses as
+container on the host network listens there and relays to the emulator. That fails on a VM
+runtime, whose host network is the VM's. On macOS no container is used: a forwarding rule on a
+port below 1024 listens on the wildcard address, which serves only loopback and `--lb-bind`
+addresses. If two forwarding rules share a port, only one gets the address. `gcpemu status` lists each rule's addresses as
 `lb-lan:<name>`, and `gcpemu doctor` checks the addresses before start and lists them while running.
 
 ### Container runtime
@@ -149,7 +151,8 @@ holding Postgres and Kubernetes state are kept so resources survive a restart.
 On a VM runtime, host clients reach Cloud SQL instances and forwarding rules on loopback
 addresses: a `127.0.0.x` of their own each. Linux has all of `127.0.0.0/8`, but macOS has only
 `127.0.0.1`, so there only one Cloud SQL instance is reachable and forwarding rules share
-`127.0.0.1`. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
+`127.0.0.1`: each on its own port, or a free one when an earlier rule holds it, as `gcpemu env`
+shows. That needs no container runtime. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
 a LaunchDaemon that adds them again at boot; `sudo gcpemu loopback uninstall` removes both.
 `gcpemu doctor` reports whether they are present.
 

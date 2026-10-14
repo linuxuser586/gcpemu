@@ -61,6 +61,9 @@ import (
 //     public address.
 func TestGKEBackends(t *testing.T) {
 	emutest.RequireRuntime(t)
+	if goruntime.GOOS == "darwin" {
+		t.Skip("GKE runs on Linux hosts only (macOS: #170)")
+	}
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
 	// Force the edge: some hosts let the emulator bind port 443 itself.
 	svc, _ := inst.Env.Lookup("lb")
@@ -484,6 +487,9 @@ func mustPool(pemBytes []byte) *x509.CertPool {
 // balancer leaves no containers (SRS 11.2 step 10).
 func TestEdgeRetired(t *testing.T) {
 	emutest.RequireRuntime(t)
+	if goruntime.GOOS == "darwin" {
+		t.Skip("macOS serves privileged ports on the wildcard address, never through lb-edge")
+	}
 	e := start(t)
 	svc, _ := e.inst.Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true, Edge: true})

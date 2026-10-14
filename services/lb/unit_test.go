@@ -14,6 +14,8 @@ import (
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	emuconfig "github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
 func TestSelectCert(t *testing.T) {
@@ -217,6 +219,79 @@ func TestVerifyBackend(t *testing.T) {
 	for _, c := range cases {
 		if err := verifyBackend(st, c.roots.Pool(), c.sni, c.sans); (err == nil) != c.ok {
 			t.Errorf("%s: err = %v", c.name, err)
+		}
+	}
+}
+
+// fakeListener hands out connections with the given local addresses.
+type fakeListener struct {
+	conns chan net.Conn
+}
+
+func (f *fakeListener) Accept() (net.Conn, error) {
+	c, ok := <-f.conns
+	if !ok {
+		return nil, net.ErrClosed
+	}
+	return c, nil
+}
+func (f *fakeListener) Close() error   { return nil }
+func (f *fakeListener) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4zero, Port: 443} }
+
+// localConn is a connection whose local address is injected.
+type localConn struct {
+	net.Conn
+	local  net.Addr
+	closed bool
+}
+
+func (c *localConn) LocalAddr() net.Addr { return c.local }
+func (c *localConn) Close() error        { c.closed = true; return nil }
+
+// TestWildcardLocalFilter: the wildcard listener of a privileged port on
+// macOS serves connections to loopback and --lb-bind addresses only, and
+// closes the others unserved (#172).
+func TestWildcardLocalFilter(t *testing.T) {
+	d := &dataplane{s: &Service{env: &emu.Env{Config: &emuconfig.Config{LBBind: []string{"192.168.1.20", "fd00::1"}}}}}
+	conn := func(ip string) *localConn {
+		return &localConn{local: &net.TCPAddr{IP: net.ParseIP(ip), Port: 443}}
+	}
+	cases := []struct {
+		c     *localConn
+		serve bool
+	}{
+		{conn("127.0.0.1"), true},
+		{conn("127.0.0.9"), true},
+		{conn("::1"), true},
+		{conn("::ffff:127.0.0.1"), true},
+		{conn("192.168.1.20"), true},
+		{conn("::ffff:192.168.1.20"), true},
+		{conn("fd00::1"), true},
+		{conn("192.168.1.21"), false},
+		{conn("10.0.0.5"), false},
+		{conn("fd00::2"), false},
+	}
+	fl := &fakeListener{conns: make(chan net.Conn, len(cases))}
+	for _, tc := range cases {
+		fl.conns <- tc.c
+	}
+	close(fl.conns)
+	ln := &localFilter{Listener: fl, allow: d.lbLocal}
+	var served []net.Conn
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			break
+		}
+		served = append(served, c)
+	}
+	for _, tc := range cases {
+		got := false
+		for _, c := range served {
+			got = got || c == net.Conn(tc.c)
+		}
+		if got != tc.serve || tc.c.closed == tc.serve {
+			t.Errorf("connection to %s: served %v, closed %v; want served %v", tc.c.local, got, tc.c.closed, tc.serve)
 		}
 	}
 }

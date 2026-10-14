@@ -336,11 +336,9 @@ jobs:
       - run: make build
       - run: make cross
       - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
-      # services/lb needs 127.0.0.x listeners, which macOS lacks; it joins
-      # with #172.
       - name: Tests
         if: runner.os == 'macOS'
-        run: go test $(go list ./... | grep -v '/services/lb$')
+        run: go test ./...
       - name: Serve this commit as a release
         if: runner.os == 'macOS'
         run: |

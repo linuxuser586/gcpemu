@@ -31,7 +31,14 @@ import (
 // port is privileged (ip_unprivileged_port_start above it), the lb-lan
 // container, on the host network, listens instead and relays each
 // connection to the edge ingress with a PROXY v2 header, exactly like
-// lb-edge (edgeagent.go runs in both).
+// lb-edge (edgeagent.go runs in both). It does not on macOS, where the
+// forwarding rule's wildcard listener on a privileged port serves the
+// --lb-bind addresses too, nor on a VM runtime, whose host network is the
+// VM's.
+//
+// An address a rule's listener covers itself (its own address, such as
+// 127.0.0.1 in single-loopback mode, or any address on its port for a
+// wildcard listener) is served by that listener, and claimed first.
 //
 // Two forwarding rules on one port cannot share an address: the one with
 // the lowest "ip:port" key gets it. Each frontend's addresses are recorded
@@ -78,6 +85,17 @@ func (d *dataplane) syncLAN() {
 		_, port, _ := net.SplitHostPort(key)
 		for _, ip := range binds {
 			addr := net.JoinHostPort(ip, port)
+			if d.lan[addr] == nil && l.covers(addr) {
+				d.lan[addr] = &lanBinding{key: key, l: l}
+				fresh = append(fresh, addr)
+			}
+		}
+	}
+	for _, key := range keys {
+		l := d.listeners[key]
+		_, port, _ := net.SplitHostPort(key)
+		for _, ip := range binds {
+			addr := net.JoinHostPort(ip, port)
 			if b := d.lan[addr]; b != nil {
 				if b.key != key {
 					d.lanFailed(addr, key, fmt.Errorf("already serves forwarding rule %s", b.l.name))
@@ -110,8 +128,11 @@ func (d *dataplane) syncLAN() {
 		if b := d.lan[addr]; b != nil {
 			delete(d.lanErr, addr+" "+b.key)
 			mode := "direct"
-			if b.relay {
+			switch {
+			case b.relay:
 				mode = "relay"
+			case b.ln == nil:
+				mode = "listener"
 			}
 			d.s.env.Log.Info("lb: forwarding rule exposed", "forwardingRule", b.l.name, "address", addr, "mode", mode)
 		}
@@ -143,12 +164,32 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 	if !bindDenied(err) {
 		return nil, err
 	}
+	if darwinPorts {
+		return nil, fmt.Errorf("%w (privileged port: only the first forwarding rule on it is served on --lb-bind addresses)", err)
+	}
 	if !d.edge.available(d.ctx) {
 		return nil, fmt.Errorf("%w (privileged port and no container runtime to relay it; lower net.ipv4.ip_unprivileged_port_start)", err)
+	}
+	if d.vmRuntime() {
+		return nil, fmt.Errorf("%w (privileged port, and lb-lan on a VM runtime would listen in the VM; lower net.ipv4.ip_unprivileged_port_start)", err)
 	}
 	l.relayed()
 	b.relay = true
 	return b, nil
+}
+
+// vmRuntime reports whether the container runtime runs in a VM (the VM
+// relay's decision), where the host network is the VM's.
+func (d *dataplane) vmRuntime() bool {
+	np, err := d.s.env.Containers.Netplane(d.ctx)
+	if err != nil {
+		return false
+	}
+	if _, err := np.Services(d.ctx); err != nil {
+		return false
+	}
+	dec, ok := np.RelayDecision()
+	return ok && dec.VM
 }
 
 // lanFailed logs a --lb-bind failure once per address and frontend.

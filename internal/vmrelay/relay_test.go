@@ -218,18 +218,19 @@ func TestDecide(t *testing.T) {
 		env         string
 		inContainer bool
 		gateway     string
-		on          bool
+		on, vm      bool
 		reason      string
 	}{
-		{"", false, "127.0.0.1", false, "gateway 127.0.0.1 bindable"},
-		{"", false, "192.0.2.1", true, "gateway 192.0.2.1 not bindable"},
-		{"1", false, "127.0.0.1", true, "forced by GCPEMU_VM_RELAY"},
-		{"0", false, "192.0.2.1", false, "disabled by GCPEMU_VM_RELAY"},
-		{"1", true, "192.0.2.1", false, "the emulator runs in a container"},
+		{"", false, "127.0.0.1", false, false, "gateway 127.0.0.1 bindable"},
+		{"", false, "192.0.2.1", true, true, "gateway 192.0.2.1 not bindable"},
+		{"1", false, "127.0.0.1", true, false, "forced by GCPEMU_VM_RELAY"},
+		{"1", false, "192.0.2.1", true, true, "forced by GCPEMU_VM_RELAY"},
+		{"0", false, "192.0.2.1", false, true, "disabled by GCPEMU_VM_RELAY"},
+		{"1", true, "192.0.2.1", false, false, "the emulator runs in a container"},
 	} {
 		t.Setenv(Env, tc.env)
-		if d := Decide(tc.inContainer, tc.gateway); d.On != tc.on || d.Reason != tc.reason {
-			t.Errorf("Decide(%v, %s) with %s=%q = %+v, want on=%v %q", tc.inContainer, tc.gateway, Env, tc.env, d, tc.on, tc.reason)
+		if d := Decide(tc.inContainer, tc.gateway); d.On != tc.on || d.VM != tc.vm || d.Reason != tc.reason {
+			t.Errorf("Decide(%v, %s) with %s=%q = %+v, want on=%v vm=%v %q", tc.inContainer, tc.gateway, Env, tc.env, d, tc.on, tc.vm, tc.reason)
 		}
 	}
 }
