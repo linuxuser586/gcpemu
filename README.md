@@ -64,8 +64,16 @@ State lives under `%LOCALAPPDATA%\gcpemu\<instance>` unless `XDG_STATE_HOME` or 
 says otherwise. Windows doesn't enforce file modes such as 0600, so the per-user ACL on that
 directory protects the CA key and the admin token.
 
-`gcpemu env` prints bash (the default), fish or GitHub Actions syntax, so run
-`eval "$(gcpemu env)"` from Git Bash.
+`gcpemu env` prints bash by default, so from Git Bash run `eval "$(gcpemu env)"`. From
+PowerShell, ask for PowerShell syntax (`pwsh` works too):
+
+```powershell
+gcpemu env --shell powershell | Out-String | Invoke-Expression
+```
+
+Windows PowerShell 5.1 reads a program's output in the console's OEM code page, so if a path
+such as your profile folder has non-ASCII characters, run
+`[Console]::OutputEncoding = [Text.Encoding]::UTF8` first. PowerShell 7 already reads UTF-8.
 
 ### Binding beyond loopback
 

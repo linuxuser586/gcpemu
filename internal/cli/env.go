@@ -64,7 +64,7 @@ func (o *rootOpts) envCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&shell, "shell", "bash", "output format: bash, fish, github")
+	cmd.Flags().StringVar(&shell, "shell", "bash", "output format: bash, fish, powershell (or pwsh), github")
 	cmd.Flags().BoolVar(&trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
 	cmd.Flags().BoolVar(&noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials; GOOGLE_CLOUD_UNIVERSE_DOMAIN stays, since emulator keys need it")
 	return cmd
@@ -78,13 +78,31 @@ func writeEnv(w io.Writer, shell string, vars map[string]string) error {
 			fmt.Fprintf(w, "export %s=%s\n", k, shQuote(v))
 		case "fish":
 			fmt.Fprintf(w, "set -gx %s %s;\n", k, shQuote(v))
+		case "powershell", "pwsh":
+			fmt.Fprintf(w, "$env:%s = %s\n", k, psQuote(v))
 		case "github":
 			fmt.Fprintf(w, "%s=%s\n", k, v)
 		default:
-			return fmt.Errorf("unknown shell %q (want bash, fish or github)", shell)
+			return fmt.Errorf("unknown shell %q (want bash, fish, powershell or github)", shell)
 		}
 	}
 	return nil
 }
 
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// psQuote quotes s as a PowerShell single-quoted string, in which only a
+// doubled quote is special. PowerShell also takes the typographic single
+// quotes U+2018–U+201B as quotes, so those are doubled too.
+func psQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('\'')
+	for _, r := range s {
+		if r == '\'' || r >= 0x2018 && r <= 0x201b {
+			b.WriteRune(r)
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
