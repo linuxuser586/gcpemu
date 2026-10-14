@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -94,6 +95,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	unusable := runtime.Unusable()
 	if err := refuseRuntime(cfg, unusable); err != nil {
+		return nil, err
+	}
+	if err := refuseHostMode(cfg, goruntime.GOOS); err != nil {
 		return nil, err
 	}
 	dir := cfg.InstanceDir()
@@ -218,6 +222,18 @@ func refuseRuntime(cfg *config.Config, unusable error) error {
 	}
 	if cfg.HostMode {
 		return fmt.Errorf("--host-mode needs a container runtime: %w", unusable)
+	}
+	return nil
+}
+
+// refuseHostMode fails when cfg asks for host mode on an OS other than
+// Linux, before anything starts (#175).
+func refuseHostMode(cfg *config.Config, goos string) error {
+	if !cfg.HostMode {
+		return nil
+	}
+	if err := hostmode.UnsupportedOn(goos); err != nil {
+		return fmt.Errorf("--host-mode: %w", err)
 	}
 	return nil
 }

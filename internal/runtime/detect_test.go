@@ -96,6 +96,20 @@ func (h *fakeHost) locate() (Detection, error) {
 	return d, err
 }
 
+// A socket the user may not open names the --group-add value, not a
+// GNU-only stat command (#175).
+func TestGroupAddHint(t *testing.T) {
+	got := groupAddHint(func(string) (int, bool) { return 991, true }, "/var/run/docker.sock")
+	if !strings.Contains(got, "--group-add 991") {
+		t.Errorf("known group: %q", got)
+	}
+	for _, g := range []func(string) (int, bool){nil, func(string) (int, bool) { return 0, false }} {
+		if got := groupAddHint(g, "/var/run/docker.sock"); !strings.Contains(got, "--group-add") || strings.Contains(got, "stat -c") {
+			t.Errorf("unknown group: %q", got)
+		}
+	}
+}
+
 func TestLocateSocketOrder(t *testing.T) {
 	// Each socket in list order; each case's socket responds, and every
 	// socket after it exists and responds too, so order decides.

@@ -41,6 +41,7 @@ func Locate() (*Client, Detection, error) {
 		getenv:   os.Getenv,
 		home:     home,
 		isSocket: isSocket,
+		group:    fileGroup,
 		probe:    probe,
 	})
 }
@@ -50,6 +51,8 @@ type hostEnv struct {
 	getenv   func(string) string
 	home     string
 	isSocket func(path string) bool
+	// group returns the group id owning path, if known.
+	group func(path string) (int, bool)
 	// probe connects to endpoint and returns a usable client.
 	probe func(endpoint string) (*Client, error)
 }
@@ -92,9 +95,21 @@ func locate(e hostEnv) (*Client, Detection, error) {
 		}
 	}
 	if len(denied) > 0 {
-		return nil, d, fmt.Errorf("container runtime socket %s found but permission denied (uid %d): in the OCI image, run with --group-add $(stat -c %%g %s)", denied[0], os.Getuid(), denied[0])
+		return nil, d, fmt.Errorf("container runtime socket %s found but permission denied (uid %d): %s", denied[0], os.Getuid(), groupAddHint(e.group, denied[0]))
 	}
 	return nil, d, errors.New("no container runtime found: start Docker Engine (>= 24), Docker Desktop, OrbStack, Colima or Podman (>= 4.9) with its Docker-compatible socket, or set DOCKER_HOST")
+}
+
+// groupAddHint says how to let the OCI image use sock: the --group-add
+// value is the socket's group as the container sees it, which works
+// whatever OS the docker command runs on.
+func groupAddHint(group func(string) (int, bool), sock string) string {
+	if group != nil {
+		if gid, ok := group(sock); ok {
+			return fmt.Sprintf("in the OCI image, run with --group-add %d (the socket's group); otherwise join that group", gid)
+		}
+	}
+	return "in the OCI image, run with --group-add set to the socket's group id; otherwise join that group"
 }
 
 // sockets returns the well-known runtime sockets that exist, in the order

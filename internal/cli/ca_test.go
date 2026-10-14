@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,5 +110,44 @@ func TestContainerTrustPlan(t *testing.T) {
 	}
 	if p := containerTrustPlan(trustHost{goos: "linux", isDir: func(string) bool { return false }}, "x", c, true); p != nil {
 		t.Errorf("plan without docker or containerd = %v", p)
+	}
+}
+
+// A VM runtime that keeps its own trust store gets the command to run in
+// its VM; Docker Desktop, OrbStack and native sockets get none (#175).
+func TestVMTrustCommand(t *testing.T) {
+	c, err := ca.Load(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		sock, what, ssh, dir string
+	}{
+		{sock: "/Users/u/.colima/default/docker.sock", what: "Colima (profile default)", ssh: "colima ssh -p default -- sudo sh -s <<'GCPEMU_VM'\n", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
+		{sock: "/Users/u/.colima/work/docker.sock", what: "Colima (profile work)", ssh: "colima ssh -p work -- sudo sh -s", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
+		{sock: "/var/folders/xy/T/podman/podman-machine-default-api.sock", what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt"},
+		{sock: "/Users/u/.local/share/containers/podman/machine/qemu/podman.sock", what: "Podman machine", ssh: "podman machine ssh sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt"},
+		{sock: "/Users/u/.docker/run/docker.sock"},
+		{sock: "/Users/u/.orbstack/run/docker.sock"},
+		{sock: "/var/run/docker.sock"},
+		{sock: ""},
+	} {
+		for _, install := range []bool{true, false} {
+			what, cmd := vmTrustCommand(tc.sock, "dev", c, install)
+			if tc.what == "" {
+				if what != "" || cmd != "" {
+					t.Errorf("%s: %q %q, want none", tc.sock, what, cmd)
+				}
+				continue
+			}
+			script := certsDirScript("/etc", "dev", c, []string{path.Dir(path.Dir(tc.dir))}, false, install)
+			if what != tc.what || !strings.HasPrefix(cmd, tc.ssh) || !strings.Contains(cmd, tc.dir) ||
+				!strings.HasSuffix(cmd, "\n"+script+"GCPEMU_VM") {
+				t.Errorf("%s install=%v: %q\n%s", tc.sock, install, what, cmd)
+			}
+			if strings.Contains(cmd, "/etc/containerd") {
+				t.Errorf("%s: writes containerd config: %s", tc.sock, cmd)
+			}
+		}
 	}
 }

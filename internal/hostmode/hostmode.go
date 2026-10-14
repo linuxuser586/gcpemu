@@ -28,8 +28,9 @@
 // printed by `gcpemu hosts`, and trusts the CA with `gcpemu ca install`
 // (or SSL_CERT_FILE from `gcpemu env --trust`). `gcpemu env` prints these
 // instructions (to stderr) when host mode is on. On macOS and Windows the
-// container IP is not routable from the host, so host mode is Linux-only;
-// an Instance on native Windows refuses it (runtime.Unusable, ADR 0008).
+// container IP is not routable from the host, so host mode is Linux-only:
+// an Instance elsewhere refuses it at start (UnsupportedOn; on native
+// Windows runtime.Unusable says so first, ADR 0008).
 package hostmode
 
 import (
@@ -55,6 +56,17 @@ import (
 // Image runs the host-mode agent (any image works: the agent is a static
 // binary). Pinned by tag; digest pinning is a release task.
 const Image = "busybox:1.37"
+
+// ErrLinuxOnly is why host mode is refused off Linux.
+var ErrLinuxOnly = errors.New("host mode is Linux-only: the host cannot reach container IPs inside a VM runtime; point clients at the emulator with `eval \"$(gcpemu env)\"` instead")
+
+// UnsupportedOn reports why host mode cannot run on goos, or nil on Linux.
+func UnsupportedOn(goos string) error {
+	if goos != "linux" {
+		return ErrLinuxOnly
+	}
+	return nil
+}
 
 // RoutedDomains are the DNS domains to route to the host-mode resolver.
 var RoutedDomains = []string{"googleapis.com", "pkg.dev"}

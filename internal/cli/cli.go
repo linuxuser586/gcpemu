@@ -153,7 +153,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.BoolVar(&o.flags.DNSNoForward, "dns-no-forward", false, "do not forward unknown DNS names to the host resolver")
 	f.BoolVar(&o.flags.Offline, "offline", false, "never reach the internet")
 	f.BoolVar(&o.console, "console", true, "serve the Web console under /console on the API gateway (default false when CI=true)")
-	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (see gcpemu env and gcpemu hosts)")
+	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (Linux only; see gcpemu env and gcpemu hosts)")
 	return cmd
 }
 

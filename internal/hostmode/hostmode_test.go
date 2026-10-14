@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -38,6 +39,9 @@ func TestHostsBlockNames(t *testing.T) {
 // --resolve and the Go storage client with a resolver pointed at it
 // (FR-CORE-043).
 func TestHostMode(t *testing.T) {
+	if err := hostmode.UnsupportedOn(runtime.GOOS); err != nil {
+		t.Skip(err)
+	}
 	emutest.RequireRuntime(t)
 	inst := emutest.Start(t, []string{"gcs", "pubsub", "ar", "dns"}, func(c *config.Config) { c.HostMode = true })
 	var st hostmode.Status
