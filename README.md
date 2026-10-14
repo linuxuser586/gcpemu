@@ -239,8 +239,8 @@ Workload Identity tokens from the metadata server and reach the emulated Service
 Endpoint override. To opt a namespace or a pod out, label it `gcpemu.dev/inject=disabled`;
 `kube-system` is always skipped. Nodes also trust the CA in their own system store.
 
-**Host mode** (`gcpemu start --host-mode`, Linux) does the same for host processes without
-root. It starts a labelled container (`gcpemu-<id>-hostmode`) that the host reaches at its
+**Host mode** (`gcpemu start --host-mode`, Linux only: elsewhere `start` refuses it) does the
+same for host processes without root. It starts a labelled container (`gcpemu-<id>-hostmode`) that the host reaches at its
 container IP. The container serves HTTPS on :443, plain HTTP on :80 and DNS on :53, answering the
 served names with its own IP. It forwards other `googleapis.com`/`pkg.dev` names to your real
 upstream resolvers and everything else to the emulated Cloud DNS. `gcpemu env` prints the IP as
@@ -257,7 +257,9 @@ gcpemu hosts | sudo tee -a /etc/hosts
 Then trust the CA system-wide with `gcpemu ca install`. On Linux it also adds the CA to Docker's
 and containerd's per-registry trust for every `LOCATION-docker.pkg.dev`, and, with `certutil`
 (`libnss3-tools`), to the browser NSS databases: Chrome's `~/.pki/nssdb` and every native, snap
-and flatpak Firefox profile. `gcpemu ca rotate` replaces it in those databases, and `gcpemu
+and flatpak Firefox profile. Colima and Podman machine keep their own registry trust inside
+their VM, so for them `ca install` prints the command to run there; Docker Desktop and OrbStack
+use the macOS keychain. `gcpemu ca rotate` replaces it in those databases, and `gcpemu
 doctor` reports where it is trusted. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
 holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	goruntime "runtime"
 	"strings"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
+	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // `gcpemu ca` manages the instance's local root CA (Section 7.4,
@@ -75,6 +77,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, true)...)
+			printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, true)
 			nss, note := nssPlan(h, cfg.Instance, c, nssInstall)
 			if note != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
@@ -98,6 +101,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
+			printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false)
 			nss, _ := nssPlan(h, cfg.Instance, c, nssUninstall)
 			return runPlan(cmd, append(plan, nss...), yes, dryRun)
 		},
@@ -303,7 +307,8 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 // gcpemu-INSTANCE.crt next to the user's files; containerd's hosts.toml
 // is written only where none exists or gcpemu wrote it (config_path must
 // point at /etc/containerd/certs.d, as on GKE and k3s). Linux only: Docker
-// Desktop on macOS uses the system keychain.
+// Desktop on macOS uses the system keychain, and a VM runtime's own store
+// is left to the command from vmTrustCommand.
 func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []trustStep {
 	if h.goos != "linux" {
 		return nil
@@ -316,6 +321,72 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 	if !docker && !containerd {
 		return nil
 	}
+	var dirs []string
+	if docker {
+		dirs = append(dirs, etc+"/docker/certs.d")
+	}
+	script := certsDirScript(etc, instance, c, dirs, containerd, install)
+	args := []string{"sh", "-s"}
+	if !h.root {
+		args = append([]string{"sudo"}, args...)
+	}
+	return []trustStep{{args: args, stdin: []byte(script), script: true}}
+}
+
+// printVMTrust prints the command that adds the CA to (install) or removes
+// it from the trust store inside the detected runtime's VM, if it keeps
+// one; see vmTrustCommand.
+func printVMTrust(out io.Writer, instance string, c *ca.CA, install bool) {
+	_, det, _ := emuruntime.Locate()
+	what, command := vmTrustCommand(strings.TrimPrefix(det.Endpoint, "unix://"), instance, c, install)
+	if command == "" {
+		return
+	}
+	verb := "trust the CA for image pulls there"
+	if !install {
+		verb = "remove the CA from it"
+	}
+	fmt.Fprintf(out, "%s keeps its own container trust store inside its VM, which gcpemu does not change. To %s, run:\n\n%s\n\n", what, verb, command)
+}
+
+var (
+	colimaSock = regexp.MustCompile(`/\.colima/([^/]+)/docker\.sock$`)
+	// Podman machine: $TMPDIR/podman/NAME-api.sock, or (Podman 4)
+	// .../podman/machine/PROVIDER/podman.sock, which does not name it.
+	podmanSock    = regexp.MustCompile(`/podman/([^/]+)-api\.sock$`)
+	podmanOldSock = regexp.MustCompile(`/podman/machine/[^/]+/podman\.sock$`)
+)
+
+// vmTrustCommand returns, for a runtime socket of a VM runtime that keeps
+// its own registry trust inside the VM (Colima, Podman machine), the
+// runtime's name and the command, run on the host, that installs or
+// removes the CA there; gcpemu never runs anything in the VM itself
+// (#175). Docker Desktop and OrbStack read the macOS keychain, which `ca
+// install` already covers, so they (and every other socket) get "".
+func vmTrustCommand(sock, instance string, c *ca.CA, install bool) (what, command string) {
+	var ssh string
+	var dirs []string
+	if m := colimaSock.FindStringSubmatch(sock); m != nil {
+		what, ssh = "Colima (profile "+m[1]+")", "colima ssh -p "+m[1]+" --"
+		dirs = []string{"/etc/docker/certs.d"}
+	} else if m := podmanSock.FindStringSubmatch(sock); m != nil {
+		what, ssh = "Podman machine "+m[1], "podman machine ssh "+m[1]
+		dirs = []string{"/etc/containers/certs.d"}
+	} else if podmanOldSock.MatchString(sock) {
+		what, ssh = "Podman machine", "podman machine ssh"
+		dirs = []string{"/etc/containers/certs.d"}
+	} else {
+		return "", ""
+	}
+	script := certsDirScript("/etc", instance, c, dirs, false, install)
+	return what, ssh + " sudo sh -s <<'GCPEMU_VM'\n" + script + "GCPEMU_VM"
+}
+
+// certsDirScript is the shell script that adds (install) or removes the CA
+// for every registry host in each certs.d directory of dirs (Docker's and
+// Podman's read every *.crt in DIR/HOST) and, with containerd, in
+// containerd's hosts.toml files. The CA itself goes in etc/gcpemu.
+func certsDirScript(etc, instance string, c *ca.CA, dirs []string, containerd, install bool) string {
 	var hosts []string
 	for _, n := range hostmode.HostsBlockNames(nil) {
 		if frontend.IsRegistryHost(n) {
@@ -330,8 +401,8 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 	if install {
 		b.WriteString("mkdir -p " + etc + "/gcpemu\ncat > " + shared + " <<'GCPEMU_CA'\n" + strings.TrimSpace(string(c.PEM())) + "\nGCPEMU_CA\n")
 		b.WriteString("for h in $hosts; do\n")
-		if docker {
-			b.WriteString("  mkdir -p " + etc + "/docker/certs.d/$h && cp " + shared + " " + etc + "/docker/certs.d/$h/" + file + "\n")
+		for _, d := range dirs {
+			b.WriteString("  mkdir -p " + d + "/$h && cp " + shared + " " + d + "/$h/" + file + "\n")
 		}
 		if containerd {
 			b.WriteString("  f=" + etc + "/containerd/certs.d/$h/hosts.toml\n")
@@ -343,8 +414,8 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 		b.WriteString("done\n")
 	} else {
 		b.WriteString("for h in $hosts; do\n")
-		if docker {
-			b.WriteString("  rm -f " + etc + "/docker/certs.d/$h/" + file + "\n  rmdir " + etc + "/docker/certs.d/$h 2>/dev/null || true\n")
+		for _, d := range dirs {
+			b.WriteString("  rm -f " + d + "/$h/" + file + "\n  rmdir " + d + "/$h 2>/dev/null || true\n")
 		}
 		if containerd {
 			b.WriteString("  f=" + etc + "/containerd/certs.d/$h/hosts.toml\n")
@@ -352,9 +423,5 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 		}
 		b.WriteString("done\nrm -f " + shared + "\n")
 	}
-	args := []string{"sh", "-s"}
-	if !h.root {
-		args = append([]string{"sudo"}, args...)
-	}
-	return []trustStep{{args: args, stdin: []byte(b.String()), script: true}}
+	return b.String()
 }

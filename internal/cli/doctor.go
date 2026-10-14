@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -70,6 +71,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				hasRuntime = rtErr == nil
 				if hasRuntime {
 					checkVMRelay(cmd.Context(), out, cl)
+					if info, err := cl.Info(cmd.Context()); err == nil {
+						checkRuntimeArch(out, runtime.GOOS, machineArch(), info.Arch)
+					}
 				}
 			}
 
@@ -319,7 +323,7 @@ func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.C
 	for _, a := range cfg.LBBind {
 		ip := net.ParseIP(a)
 		report(ip != nil && local[ip.String()], fmt.Sprintf("--lb-bind %s is an address of this host", a),
-			"pick one from `ip -br addr` (or `ifconfig`)")
+			"pick one from "+listAddrsCmd(runtime.GOOS))
 	}
 	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start"); err == nil {
 		start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
@@ -328,6 +332,59 @@ func checkLBBind(out io.Writer, report func(bool, string, string), cfg *config.C
 				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")
 		}
 	}
+}
+
+// listAddrsCmd is the command that lists this host's addresses on goos.
+func listAddrsCmd(goos string) string {
+	switch goos {
+	case "linux":
+		return "`ip -br addr`"
+	case "windows":
+		return "`ipconfig`"
+	}
+	return "`ifconfig`"
+}
+
+// checkRuntimeArch notes a container runtime whose architecture is not the
+// host's. Everything still works, but on a VM runtime the VM is emulated,
+// so every container runs several times slower.
+func checkRuntimeArch(out io.Writer, goos, hostArch, rtArch string) {
+	if rtArch == "" {
+		return
+	}
+	if rtArch == hostArch {
+		fmt.Fprintf(out, "[ok  ] container runtime architecture linux/%s matches the host\n", rtArch)
+		return
+	}
+	if goos != "darwin" {
+		fmt.Fprintf(out, "[--  ] container runtime is linux/%s but the host is %s/%s; Sidecar agents and images are pulled for linux/%s\n", rtArch, goos, hostArch, rtArch)
+		return
+	}
+	fmt.Fprintf(out, "[--  ] container runtime VM is linux/%s but this Mac is %s: the VM is emulated, so every container runs slowly; "+
+		"recreate it for %s (Colima: `colima delete`, then `colima start --arch %s`; Docker Desktop, OrbStack and Podman: install the build for this Mac)\n",
+		rtArch, hostArch, hostArch, vmArch(hostArch))
+}
+
+// machineArch is the host's GOARCH. An amd64 build under Rosetta on an
+// Apple silicon Mac reports arm64, the architecture a VM runs natively.
+func machineArch() string {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
+		if b, err := exec.Command("sysctl", "-n", "sysctl.proc_translated").Output(); err == nil && strings.TrimSpace(string(b)) == "1" {
+			return "arm64"
+		}
+	}
+	return runtime.GOARCH
+}
+
+// vmArch is Colima's (QEMU's) name for a GOARCH.
+func vmArch(goarch string) string {
+	switch goarch {
+	case "arm64":
+		return "aarch64"
+	case "amd64":
+		return "x86_64"
+	}
+	return goarch
 }
 
 // checkForeignCreds reports Foreign credentials that ADC would pick up
