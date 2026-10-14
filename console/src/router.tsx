@@ -55,7 +55,7 @@ import { CreateCluster, EditCluster } from '@/features/gke/ClusterForm'
 import { ClusterOverview, ClusterPage } from '@/features/gke/ClusterPage'
 import { Clusters } from '@/features/gke/Clusters'
 import { GkeLayout } from '@/features/gke/GkeLayout'
-import { Namespaces, Nodes, Pods, Workloads } from '@/features/gke/Kube'
+import { Namespaces, Nodes, Pods, Services, Workloads } from '@/features/gke/Kube'
 import { Negs } from '@/features/gke/Negs'
 import { CreateNodePool, EditNodePool } from '@/features/gke/NodePoolForm'
 import { NodePoolPage, NodePools } from '@/features/gke/NodePools'
@@ -405,6 +405,7 @@ function gkeRoutes(queryClient: QueryClient): RouteObject[] {
         { path: 'workloads', element: <Workloads /> },
         { path: 'pods', element: <Pods /> },
         { path: 'pods/:namespace/:pod', element: <PodLogs /> },
+        { path: 'services', element: <Services /> },
         { path: 'negs', element: <Negs /> },
       ],
     },

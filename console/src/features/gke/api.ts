@@ -284,6 +284,23 @@ export interface KubeWorkload {
   }
 }
 
+export interface KubeService {
+  metadata: ObjectMeta
+  spec?: {
+    type?: string
+    clusterIP?: string
+    ports?: { name?: string; port: number; protocol?: string; nodePort?: number }[]
+  }
+  status?: { loadBalancer?: { ingress?: { ip?: string; hostname?: string }[] } }
+}
+
+/**
+ * lbEndpoint is the endpoint name under which the emulator records the
+ * host address of a LoadBalancer Service port on a VM runtime.
+ */
+export const lbEndpoint = (cluster: string, namespace: string, name: string, port: number) =>
+  `gke:${cluster}/${namespace}/${name}/${port}`
+
 /** gatewayPath is a Kubernetes API path through the Connect gateway. */
 export const gatewayPath = (r: ClusterRef, path: string) =>
   `/connectgateway/v1/projects/${r.project}/locations/${r.location}/gkeMemberships/${r.cluster}${path}`

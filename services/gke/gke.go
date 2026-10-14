@@ -54,16 +54,20 @@
 // with Node,RBAC,Webhook where the webhook grants requests the caller's
 // IAM roles (container.admin/developer/viewer) allow.
 //
-// GKE requires Linux hosts (NFR-PORT-003).
+// # VM runtimes
+//
+// On a VM runtime (ADR 0005) the host cannot reach the cluster networks.
+// The emulator then dials the API server and nodes through the VM relay,
+// serves the API server on 127.0.0.1 and reports that as the cluster's
+// endpoints, and serves LoadBalancer Services on host loopback addresses
+// (lbservices.go) in place of k3s's servicelb.
 package gke
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
-	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,6 +118,11 @@ type Service struct {
 	pubMu  sync.Mutex
 	pubVia string
 	pubIPs []string
+	// loops maps cluster key/namespace/name to the loopback address a
+	// LoadBalancer Service holds on a VM runtime (lbservices.go). loopMu
+	// is never held while calling another Service.
+	loopMu sync.Mutex
+	loops  map[string]string
 }
 
 // New returns the service.
@@ -124,6 +133,7 @@ func New(env *emu.Env) emu.Service {
 		byID:     map[string]string{},
 		busy:     map[string]string{},
 		opCancel: map[string]context.CancelFunc{},
+		loops:    map[string]string{},
 	}
 	s.api = &api{s: s}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
@@ -144,15 +154,9 @@ func (s *Service) Register(r emu.Router) error {
 	return nil
 }
 
-// hostOS is the host operating system (a variable for tests).
-var hostOS = goruntime.GOOS
-
-// Start rejects non-Linux hosts and brings persisted clusters back up in
-// the background (FR-CORE-031).
+// Start brings persisted clusters back up in the background
+// (FR-CORE-031).
 func (s *Service) Start(ctx context.Context) error {
-	if hostOS != "linux" {
-		return errors.New("GKE is only supported on Linux hosts in this release (NFR-PORT-003); run gcpemu without the gke service on " + hostOS)
-	}
 	s.mu.Lock()
 	s.started = true
 	s.mu.Unlock()
@@ -190,6 +194,11 @@ func (s *Service) goBackground(f func(ctx context.Context)) {
 // Stop cancels background work. Containers are removed by the instance.
 func (s *Service) Stop(ctx context.Context) error {
 	s.cancel()
+	s.mu.Lock()
+	for _, rt := range s.clusters {
+		rt.stop()
+	}
+	s.mu.Unlock()
 	done := make(chan struct{})
 	go func() { s.wg.Wait(); close(done) }()
 	select {
@@ -200,12 +209,7 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 // Ready reports readiness of the API; clusters report their own status.
-func (s *Service) Ready() error {
-	if hostOS != "linux" {
-		return fmt.Errorf("GKE requires Linux (NFR-PORT-003)")
-	}
-	return nil
-}
+func (s *Service) Ready() error { return nil }
 
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
@@ -240,12 +244,13 @@ func (s *Service) Reset(ctx context.Context) error {
 }
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004): gcloud's container
-// endpoint override and the kubeconfig the emulator maintains.
+// endpoint override, the kubeconfig the emulator maintains and, on a VM
+// runtime, the host addresses of LoadBalancer Services.
 func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]string {
-	return map[string]string{
-		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER": "http://" + gw + "/container/",
-		"KUBECONFIG": s.kubeconfigPath(),
-	}
+	out := lbEnvVars(endpoints)
+	out["CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER"] = "http://" + gw + "/container/"
+	out["KUBECONFIG"] = s.kubeconfigPath()
+	return out
 }
 
 // maxNodes is the per-instance node limit.

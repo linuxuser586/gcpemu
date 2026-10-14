@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -657,11 +658,13 @@ func testNEG(t *testing.T, e *env) {
 	}
 
 	// LoadBalancer Services get an address from the in-cluster L4
-	// allocator (FR-GKE-009).
+	// allocator (FR-GKE-009), or on a VM runtime a loopback address the
+	// emulator serves (ADR 0005), and are reachable from the host there.
 	e.mustKube("POST", "/api/v1/namespaces/default/services", map[string]any{
 		"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "web-lb"},
 		"spec": map[string]any{"type": "LoadBalancer", "selector": map[string]string{"app": "web"}, "ports": []map[string]any{{"port": 8081, "targetPort": 8080}}},
 	}, nil)
+	var ingress string
 	eventually(t, 60*time.Second, "LoadBalancer ingress", func() bool {
 		var lb struct {
 			Status struct {
@@ -669,7 +672,28 @@ func testNEG(t *testing.T, e *env) {
 			}
 		}
 		e.mustKube("GET", "/api/v1/namespaces/default/services/web-lb", nil, &lb)
-		return len(lb.Status.LoadBalancer.Ingress) > 0 && lb.Status.LoadBalancer.Ingress[0].IP != ""
+		if len(lb.Status.LoadBalancer.Ingress) == 0 {
+			return false
+		}
+		ingress = lb.Status.LoadBalancer.Ingress[0].IP
+		return ingress != ""
+	})
+	addr := net.JoinHostPort(ingress, "8081")
+	if emutest.RelayStreams(t, e.inst) != nil {
+		ep := e.inst.Env.Endpoints.Get("gke:c1/default/web-lb/8081")
+		if h, _, _ := net.SplitHostPort(ep); h != ingress || !net.ParseIP(h).IsLoopback() {
+			t.Fatalf("on the VM relay: ingress %s, endpoint %q; want the endpoint on the ingress loopback address", ingress, ep)
+		}
+		addr = ep
+	}
+	eventually(t, 30*time.Second, "LoadBalancer Service reachable from the host at "+addr, func() bool {
+		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return strings.TrimSpace(string(b)) == "ok"
 	})
 
 	// Removing the annotation deletes the NEG.

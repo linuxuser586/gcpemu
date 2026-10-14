@@ -163,11 +163,25 @@ func TestDeclaredAddressesOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pe := cluster.GetPrivateClusterConfig().GetPrivateEndpoint(); !inCIDR(nodes, pe) {
+	// On a VM runtime host clients reach the control plane on loopback
+	// (ADR 0005); it still advertises its subnetwork address.
+	pe := cluster.GetPrivateClusterConfig().GetPrivateEndpoint()
+	if emutest.RelayStreams(t, inst) != nil {
+		if h, _, err := net.SplitHostPort(pe); err != nil || !net.ParseIP(h).IsLoopback() {
+			t.Errorf("control plane private endpoint %q on the VM relay, want a loopback address", pe)
+		}
+	} else if !inCIDR(nodes, pe) {
 		t.Errorf("control plane private endpoint %q not in the subnetwork range %s", pe, nodes)
 	}
 	adm, pool := adminClient(t, inst, parent+"/clusters/declared")
 	e := &env{t: t, inst: inst, cm: cm, c: cluster, ca: pool, adm: adm}
+	var api struct {
+		Subsets []struct{ Addresses []struct{ IP string } }
+	}
+	e.mustKube("GET", "/api/v1/namespaces/default/endpoints/kubernetes", nil, &api)
+	if len(api.Subsets) != 1 || len(api.Subsets[0].Addresses) != 1 || !inCIDR(nodes, api.Subsets[0].Addresses[0].IP) {
+		t.Errorf("control plane advertises %+v, want an address in the subnetwork range %s", api.Subsets, nodes)
+	}
 
 	var nl struct {
 		Items []struct {

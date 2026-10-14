@@ -16,6 +16,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	emuconfig "github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 )
 
 func TestSelectCert(t *testing.T) {
@@ -276,7 +277,7 @@ func TestWildcardLocalFilter(t *testing.T) {
 		fl.conns <- tc.c
 	}
 	close(fl.conns)
-	ln := &localFilter{Listener: fl, allow: d.lbLocal}
+	ln := &loopback.LocalFilter{Listener: fl, Allow: d.lbLocal}
 	var served []net.Conn
 	for {
 		c, err := ln.Accept()

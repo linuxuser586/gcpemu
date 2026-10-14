@@ -295,7 +295,8 @@ type AddressReserver interface {
 
 // LoopbackHolder is implemented by services that serve host clients on
 // 127.0.0.x addresses they allocate (LB forwarding rules, Cloud SQL
-// instances on a VM runtime), so that each avoids the others' addresses.
+// instances and GKE LoadBalancer Services on a VM runtime), so that each
+// avoids the others' addresses.
 type LoopbackHolder interface {
 	LoopbackAddrs() []string
 }

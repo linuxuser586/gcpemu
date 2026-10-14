@@ -13,6 +13,7 @@ import (
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/project"
 	"github.com/linuxuser586/gcpemu/services/cdn"
 	"github.com/linuxuser586/gcpemu/services/lb/urlmap"
@@ -98,7 +99,7 @@ func (d *dataplane) start(ctx context.Context) {
 	d.mu.Lock()
 	d.ctx = ctx
 	d.closed = false
-	d.single = !loopbackAliases()
+	d.single = !loopback.Aliases()
 	d.mu.Unlock()
 	if d.single {
 		d.s.env.Log.Info("lb: single-loopback mode: forwarding rules listen on 127.0.0.1 (127.0.0.2 not bindable)")

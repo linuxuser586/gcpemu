@@ -1,4 +1,4 @@
-package lb
+package loopback
 
 import (
 	"net"
@@ -12,10 +12,10 @@ func TestWinsockBindErrnos(t *testing.T) {
 	wrap := func(errno error) error {
 		return &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", errno)}
 	}
-	if err := wrap(windows.WSAEADDRINUSE); !addrInUse(err) {
-		t.Errorf("addrInUse(%v) = false, want true", err)
+	if err := wrap(windows.WSAEADDRINUSE); !AddrInUse(err) {
+		t.Errorf("AddrInUse(%v) = false, want true", err)
 	}
-	if err := wrap(windows.WSAEACCES); !bindDenied(err) {
-		t.Errorf("bindDenied(%v) = false, want true", err)
+	if err := wrap(windows.WSAEACCES); !BindDenied(err) {
+		t.Errorf("BindDenied(%v) = false, want true", err)
 	}
 }

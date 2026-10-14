@@ -23,6 +23,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -51,6 +52,8 @@ type clusterRT struct {
 	cancel context.CancelFunc // controllers (NEG sync)
 	wi     sync.Map           // pod IP → wiEntry
 	syncs  sync.Map           // SecretSync UID → syncState
+	// api serves the API server on the host's 127.0.0.1 on a VM runtime.
+	api *netplane.Exposed
 }
 
 func (rt *clusterRT) stop() {
@@ -59,6 +62,15 @@ func (rt *clusterRT) stop() {
 	if rt.cancel != nil {
 		rt.cancel()
 		rt.cancel = nil
+	}
+	rt.closeAPI()
+}
+
+// closeAPI stops serving the API server on the host. Callers hold rt.mu.
+func (rt *clusterRT) closeAPI() {
+	if rt.api != nil {
+		_ = rt.api.Close()
+		rt.api = nil
 	}
 }
 
@@ -109,6 +121,13 @@ func (s *Service) deps(ctx context.Context) (*deps, error) {
 		return nil, err
 	}
 	return &deps{rt: np.Runtime(), np: np, vpc: s.vpc(), svc: svc}, nil
+}
+
+// relay reports whether the Instance uses the VM relay (ADR 0005), which
+// the services network decided when deps created it.
+func (d *deps) relay() bool {
+	r, ok := d.np.RelayDecision()
+	return ok && r.On
 }
 
 func (s *Service) loadKey(key string) (*clusterRecord, error) {
@@ -400,12 +419,21 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if rec.Int.ExternalIP != "" {
 		args = append(args, "--tls-san", rec.Int.ExternalIP)
 	}
-	// Inside a container the host cannot reach the cluster networks, so
-	// the API server is also published on the host's loopback.
+	// Inside a container, or on a VM runtime, the host cannot reach the
+	// cluster networks, so the API server is also served on the host's
+	// loopback: published by the runtime, or by the emulator through the
+	// VM relay. LoadBalancer Services are then served on loopback too
+	// (lbservices.go), in place of servicelb's node addresses.
 	var ports []runtime.Port
+	relay := d.relay()
+	if d.rt.Self() != "" || relay {
+		args = append(args, "--tls-san", loopback.Host)
+	}
 	if d.rt.Self() != "" {
-		args = append(args, "--tls-san", "127.0.0.1")
-		ports = []runtime.Port{{HostIP: "127.0.0.1", HostPort: rec.Int.APIHostPort, ContainerPort: 443}}
+		ports = []runtime.Port{{HostIP: loopback.Host, HostPort: rec.Int.APIHostPort, ContainerPort: 443}}
+	}
+	if relay {
+		args = append(args, "--disable", "servicelb")
 	}
 	id, err := d.rt.CreateContainer(ctx, runtime.ContainerSpec{
 		Name:     name,
@@ -459,6 +487,13 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		_, p, _ := net.SplitHostPort(addr)
 		apiPort, _ = strconv.Atoi(p)
 	}
+	hostAPI := ""
+	if relay {
+		if hostAPI, err = s.serveAPI(d, key, rec.Int.APIHostPort, net.JoinHostPort(dial, "443")); err != nil {
+			return err
+		}
+		_, apiPort = netplane.HostPort(hostAPI)
+	}
 	if err := s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		rec.Int.ServerIP, rec.Int.ExternalIP, rec.Int.APIHostPort = ip, extIP, apiPort
 		return nil
@@ -469,7 +504,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err != nil {
 		return err
 	}
-	kc, err := newKubeClient("https://"+dial+":443", ip, creds)
+	kc, err := newKubeClient("https://"+dial+":443", ip, creds, d.np.DialContext)
 	if err != nil {
 		return err
 	}
@@ -482,18 +517,22 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	rt.kube, rt.creds = kc, creds
 	rt.mu.Unlock()
 	return s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
-		pub := extIP
-		if pub == "" {
-			pub = ip
+		priv, pub := ip, extIP
+		if hostAPI != "" {
+			// Host clients reach both through the emulator (ADR 0005).
+			priv = hostAPI
+			if pub != "" {
+				pub = hostAPI
+			}
 		}
 		c.Endpoint = pub
-		if privateEndpoint(c) {
-			c.Endpoint = ip
+		if c.Endpoint == "" || privateEndpoint(c) {
+			c.Endpoint = priv
 		}
 		c.MasterAuth.ClusterCaCertificate = base64.StdEncoding.EncodeToString(creds.CA)
 		if c.PrivateClusterConfig != nil {
-			c.PrivateClusterConfig.PrivateEndpoint = ip
-			c.PrivateClusterConfig.PublicEndpoint = extIP
+			c.PrivateClusterConfig.PrivateEndpoint = priv
+			c.PrivateClusterConfig.PublicEndpoint = pub
 		}
 		if c.ControlPlaneEndpointsConfig == nil {
 			c.ControlPlaneEndpointsConfig = &containerpb.ControlPlaneEndpointsConfig{}
@@ -506,10 +545,26 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		t, pubOn := true, extIP != ""
 		ipc.Enabled = &t
 		ipc.EnablePublicEndpoint = &pubOn
-		ipc.PublicEndpoint = extIP
-		ipc.PrivateEndpoint = ip
+		ipc.PublicEndpoint = pub
+		ipc.PrivateEndpoint = priv
 		return nil
 	})
+}
+
+// serveAPI serves the API server at target on the host's 127.0.0.1,
+// through the VM relay, on port when it is free, and returns the address.
+// It replaces the cluster's previous listener.
+func (s *Service) serveAPI(d *deps, key string, port int, target string) (string, error) {
+	rt := s.rtFor(key)
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.closeAPI()
+	ex, err := d.np.Expose(net.JoinHostPort(loopback.Host, strconv.Itoa(port)), target, true)
+	if err != nil {
+		return "", fmt.Errorf("serving the API server on %s: %w", loopback.Host, err)
+	}
+	rt.api = ex
+	return ex.Addr(), nil
 }
 
 // waitAdmin waits for k3s to write its admin kubeconfig and parses it.

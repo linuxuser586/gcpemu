@@ -9,13 +9,13 @@ import (
 	"log"
 	"net"
 	"net/http"
-	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 )
 
 // Listener mapping (FR-LB-002). For each forwarding rule IP:port the proxy
@@ -45,21 +45,11 @@ import (
 // forwarding rule IP with the mapped listener IP.
 
 // singleLoopback is the only loopback address in single-loopback mode.
-const singleLoopback = "127.0.0.1"
+const singleLoopback = loopback.Host
 
 // darwinPorts: macOS binds privileged ports on the wildcard address, and
 // never through a container, whose host network is a VM's.
-const darwinPorts = goruntime.GOOS == "darwin"
-
-// loopbackAliases reports whether the host routes 127.0.0.2 to loopback.
-func loopbackAliases() bool {
-	ln, err := net.Listen("tcp", "127.0.0.2:0")
-	if err != nil {
-		return false
-	}
-	ln.Close()
-	return true
-}
+const darwinPorts = loopback.DarwinPorts
 
 type listener struct {
 	name  string
@@ -117,18 +107,20 @@ func (d *dataplane) loopIP(ip string) string {
 }
 
 // peerLoops returns the x of the 127.0.0.x addresses that Cloud SQL
-// instances hold (emu.LoopbackHolder).
+// instances and GKE LoadBalancer Services hold (emu.LoopbackHolder).
 func (d *dataplane) peerLoops() map[int]bool {
 	used := map[int]bool{}
-	svc, _ := d.s.env.Lookup("sql")
-	h, ok := svc.(emu.LoopbackHolder)
-	if !ok {
-		return used
-	}
-	for _, a := range h.LoopbackAddrs() {
-		if x, ok := strings.CutPrefix(a, "127.0.0."); ok {
-			if n, err := strconv.Atoi(x); err == nil {
-				used[n] = true
+	for _, peer := range []string{"sql", "gke"} {
+		svc, _ := d.s.env.Lookup(peer)
+		h, ok := svc.(emu.LoopbackHolder)
+		if !ok {
+			continue
+		}
+		for _, a := range h.LoopbackAddrs() {
+			if x, ok := strings.CutPrefix(a, "127.0.0."); ok {
+				if n, err := strconv.Atoi(x); err == nil {
+					used[n] = true
+				}
 			}
 		}
 	}
@@ -201,7 +193,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	var err error
 	if !forced {
 		ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
-		if addrInUse(err) && !d.single {
+		if loopback.AddrInUse(err) && !d.single {
 			if rln, rip, rerr := d.relocateLoop(fe.ip, fe.port); rerr == nil {
 				d.s.env.Log.Warn("lb: loopback address in use by another process; moved", "forwardingRule", fe.frPath, "from", lip, "to", rip)
 				ln, lip, err = rln, rip, nil
@@ -211,13 +203,13 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	switch {
 	case !forced && err == nil:
 		l.ln, l.mode = ln, "loopback"
-	case darwinPorts && bindDenied(err):
+	case darwinPorts && loopback.BindDenied(err):
 		// When an earlier forwarding rule on the port (or another
 		// process) holds the wildcard, a fallback port.
 		if wln, werr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(fe.port))); werr == nil {
-			l.ln, l.mode = &localFilter{Listener: wln, allow: d.lbLocal}, "wildcard"
+			l.ln, l.mode = &loopback.LocalFilter{Listener: wln, Allow: d.lbLocal}, "wildcard"
 		}
-	case (forced || bindDenied(err)) && !darwinPorts && d.edge.available(d.ctx):
+	case (forced || loopback.BindDenied(err)) && !darwinPorts && d.edge.available(d.ctx):
 		addr, verr := d.edge.add(d.ctx, fe)
 		if verr != nil {
 			d.s.env.Log.Warn("lb: edge container unavailable; using a high port", "forwardingRule", fe.frPath, "err", verr)
@@ -302,26 +294,6 @@ func (d *dataplane) lbLocal(a net.Addr) bool {
 		}
 	}
 	return false
-}
-
-// localFilter serves only the connections whose local address allow
-// accepts, and closes the others unserved.
-type localFilter struct {
-	net.Listener
-	allow func(net.Addr) bool
-}
-
-func (f *localFilter) Accept() (net.Conn, error) {
-	for {
-		c, err := f.Listener.Accept()
-		if err != nil {
-			return nil, err
-		}
-		if f.allow(c.LocalAddr()) {
-			return c, nil
-		}
-		c.Close()
-	}
 }
 
 // relayed returns the listener that receives this frontend's connections

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -69,9 +70,10 @@ type kubeClient struct {
 	ca   []byte
 }
 
-// newKubeClient dials server and verifies its certificate for name (the
-// address the API server advertises, when server is another one).
-func newKubeClient(server, name string, creds adminCreds) (*kubeClient, error) {
+// newKubeClient dials server with dial (the ContainerDialer) and verifies
+// its certificate for name (the address the API server advertises, when
+// server is another one).
+func newKubeClient(server, name string, creds adminCreds, dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*kubeClient, error) {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(creds.CA) {
 		return nil, errors.New("invalid cluster CA")
@@ -81,6 +83,7 @@ func newKubeClient(server, name string, creds adminCreds) (*kubeClient, error) {
 		return nil, err
 	}
 	tr := &http.Transport{
+		DialContext:         dial,
 		TLSClientConfig:     &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, ServerName: name},
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     30 * time.Second,
@@ -245,6 +248,7 @@ type kubeServicePort struct {
 	Port       int    `json:"port"`
 	Protocol   string `json:"protocol"`
 	TargetPort any    `json:"targetPort"`
+	NodePort   int    `json:"nodePort,omitempty"`
 }
 
 type kubeService struct {
@@ -253,6 +257,14 @@ type kubeService struct {
 		Type  string            `json:"type"`
 		Ports []kubeServicePort `json:"ports"`
 	} `json:"spec"`
+	Status struct {
+		LoadBalancer struct {
+			Ingress []struct {
+				IP       string `json:"ip,omitempty"`
+				Hostname string `json:"hostname,omitempty"`
+			} `json:"ingress,omitempty"`
+		} `json:"loadBalancer"`
+	} `json:"status"`
 }
 
 type kubeEndpointSlice struct {

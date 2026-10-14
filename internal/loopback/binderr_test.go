@@ -1,4 +1,4 @@
-package lb
+package loopback
 
 import (
 	"errors"
@@ -18,11 +18,11 @@ func TestAddrInUse(t *testing.T) {
 		ln.Close()
 		t.Fatalf("second bind of %s succeeded", held.Addr())
 	}
-	if !addrInUse(err) {
-		t.Errorf("addrInUse(%v) = false, want true", err)
+	if !AddrInUse(err) {
+		t.Errorf("AddrInUse(%v) = false, want true", err)
 	}
-	if bindDenied(err) {
-		t.Errorf("bindDenied(%v) = true, want false", err)
+	if BindDenied(err) {
+		t.Errorf("BindDenied(%v) = true, want false", err)
 	}
 }
 
@@ -31,18 +31,18 @@ func TestBindErrnos(t *testing.T) {
 		return &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", errno)}
 	}
 	for _, errno := range addrInUseErrnos {
-		if err := wrap(errno); !addrInUse(err) || bindDenied(err) {
-			t.Errorf("%v: addrInUse = %v, bindDenied = %v; want true, false", err, addrInUse(err), bindDenied(err))
+		if err := wrap(errno); !AddrInUse(err) || BindDenied(err) {
+			t.Errorf("%v: AddrInUse = %v, BindDenied = %v; want true, false", err, AddrInUse(err), BindDenied(err))
 		}
 	}
 	for _, errno := range bindDeniedErrnos {
-		if err := wrap(errno); !bindDenied(err) || addrInUse(err) {
-			t.Errorf("%v: bindDenied = %v, addrInUse = %v; want true, false", err, bindDenied(err), addrInUse(err))
+		if err := wrap(errno); !BindDenied(err) || AddrInUse(err) {
+			t.Errorf("%v: BindDenied = %v, AddrInUse = %v; want true, false", err, BindDenied(err), AddrInUse(err))
 		}
 	}
 	for _, err := range []error{nil, errors.New("bind: address already in use"), wrap(errors.New("other"))} {
-		if addrInUse(err) || bindDenied(err) {
-			t.Errorf("%v: addrInUse = %v, bindDenied = %v; want false, false", err, addrInUse(err), bindDenied(err))
+		if AddrInUse(err) || BindDenied(err) {
+			t.Errorf("%v: AddrInUse = %v, BindDenied = %v; want false, false", err, AddrInUse(err), BindDenied(err))
 		}
 	}
 }

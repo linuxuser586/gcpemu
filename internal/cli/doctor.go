@@ -144,9 +144,6 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 func checkPlatform(out io.Writer, report func(bool, string, string), goos, goarch string) bool {
 	platform := fmt.Sprintf("platform %s/%s", goos, goarch)
 	report(goos == "linux" || goos == "darwin" || goos == "windows", platform, "run on Linux, macOS or Windows")
-	if goos == "darwin" {
-		fmt.Fprintln(out, "       note: GKE is Linux-only in v1.0 (NFR-PORT-003)")
-	}
 	if err := emuruntime.UnusableOn(goos); err != nil {
 		fmt.Fprintf(out, "[--  ] Cloud SQL, GKE, Cloud NAT and host mode: %v (ADR 0008); every other Service runs here\n", err)
 		return false
