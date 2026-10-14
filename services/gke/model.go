@@ -60,7 +60,8 @@ type clusterInternal struct {
 	// HostLB is set when the host cannot reach the nodes' addresses, on a
 	// VM runtime (ADR 0005) or a Translated network (ADR 0004): the
 	// cluster then runs without servicelb and the emulator serves its
-	// LoadBalancer Services on host listeners (lbservices.go).
+	// LoadBalancer Services on host listeners, or for a Containerized
+	// Instance reports its nodes' addresses (lbservices.go).
 	HostLB bool `json:"hostLb,omitempty"`
 	// PodCIDR / ServiceCIDR are the ranges k3s runs with.
 	PodCIDR     string       `json:"podCidr"`

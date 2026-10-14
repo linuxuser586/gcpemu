@@ -10,4 +10,9 @@
 // It needs a container runtime, OpenTofu (tofu) on PATH and, for steps 2
 // and later, internet access (GCPEMU_NET_TESTS=1) to download Helm, the
 // Istio release (for its charts) and the Istio images. See README.md ("Reference stack").
+//
+// TestContainerizedLBIngress runs the emulator as its OCI image, with the
+// host's Docker socket, and checks that the host reaches GKE LoadBalancer
+// Services at their ingress (#276). It needs Linux, the docker CLI and
+// GCPEMU_NET_TESTS=1 (the image's base is pulled).
 package e2e

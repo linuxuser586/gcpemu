@@ -98,7 +98,7 @@ An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
 **LoadBalancer Service ingress**:
-The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC, or, on a VM runtime or a Translated network, a loopback address the emulator serves.
+The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC; on a VM runtime or a Translated network, a loopback address the emulator serves; or, for a Containerized Instance on a Translated network, its nodes' Fallback-range addresses.
 _Avoid_: external IP, LB address
 
 **State snapshot**:
@@ -119,6 +119,10 @@ An Instance whose state disappears when it exits.
 
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts.
+
+**Containerized Instance**:
+An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003).
+_Avoid_: container mode, in-container, DooD
 
 **Abandoned Instance ID**:
 An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, so no future Instance will reclaim them.

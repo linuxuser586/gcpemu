@@ -67,9 +67,10 @@ vet:
 	gofmt -l . | (! grep .) && go vet ./... && go vet -tags e2e ./e2e/... && go vet -tags compat ./compat/...
 
 # SRS 11.2 reference stack (container runtime + tofu; steps 2 and 4-8
-# download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them).
+# download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them),
+# and the Containerized Instance's LoadBalancer ingress (#276; needs the net too).
 e2e:
-	GCPEMU_NET_TESTS=$${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -run TestReferenceStack -count=1 -timeout 30m -v
+	GCPEMU_NET_TESTS=$${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -run 'TestReferenceStack|TestContainerizedLBIngress' -count=1 -timeout 30m -v
 
 # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
 # psql, the Cloud SQL Auth Proxy and dig against a detached instance.
