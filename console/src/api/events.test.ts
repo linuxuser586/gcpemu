@@ -101,13 +101,15 @@ it('invalidates everything on reset and gap', async () => {
   }
 })
 
-it('appends Request log entries to matching cached logs', () => {
+it('appends Request log entries to matching cached logs', async () => {
   const entry = (service: string): RequestEntry => ({ service, method: 'GET /x', status: 200 })
   const all = seed(['admin', 'requests', ''], [entry('pubsub')])
   const gcsKey = ['admin', 'requests', 'gcs']
   client.setQueryData(gcsKey, [])
   latest().emit('request', entry('gcs'))
   latest().emit('request', entry('pubsub'))
+  expect(client.getQueryData<RequestEntry[]>(gcsKey)).toEqual([])
+  await vi.advanceTimersByTimeAsync(FLUSH_MS)
   expect(
     client.getQueryData<RequestEntry[]>(['admin', 'requests', ''])?.map((e) => e.service),
   ).toEqual(['pubsub', 'gcs', 'pubsub'])

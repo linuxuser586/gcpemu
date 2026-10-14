@@ -144,6 +144,12 @@ Its Fault rules view (`/console/faults`, filtered by `?service=` and `?q=`) list
 enables or disables one with `PATCH /_emu/v1/faults/ID` and `{"disabled": true|false}`, as
 `gcpemu fault enable|disable ID` do. A disabled rule keeps its hit count and does not fire; a
 seed file's rule may start with `disabled: true`.
+Its Request log view (`/console/requests`, filtered by `?service=`, `?method=`, `?principal=`,
+`?status=` and `?resource=`) tails `GET /_emu/v1/requests` live, newest first, and keeps up to
+100,000 rows in the browser. A status filter is a number (`404`), a class (`5xx`) or a code name
+(`NOT_FOUND`). Expanding an entry reads `GET /_emu/v1/requests/ID`, which adds the request and
+response bodies. The Instance keeps the first 16 KiB of each API call's bodies, and a unary gRPC
+message as protojson, for as long as the entry stays among the last 2,000 it logs.
 
 ### Service endpoints
 

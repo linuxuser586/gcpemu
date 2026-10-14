@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Entry is one logged request.
 type Entry struct {
+	// ID numbers the entries of one process from 1, in the order added.
+	ID       int64     `json:"id"`
 	Time     time.Time `json:"time"`
 	Service  string    `json:"service"`
 	Protocol string    `json:"protocol"` // http, grpc, dns, postgres, tcp, udp
@@ -30,6 +33,81 @@ type Entry struct {
 	LB *LBTrace `json:"lb,omitempty"`
 	// NAT is the egress gateway's trace of an internet egress attempt.
 	NAT *NATTrace `json:"nat,omitempty"`
+	// Bodies are the API call's request and response bodies. They are left
+	// out of Entries and of the event stream, and read with Get.
+	Bodies *Bodies `json:"-"`
+}
+
+// Bodies are the bodies of one API call.
+type Bodies struct {
+	Request  *Body `json:"requestBody,omitempty"`
+	Response *Body `json:"responseBody,omitempty"`
+}
+
+// Detail is an entry with its bodies.
+type Detail struct {
+	Entry
+	Bodies
+}
+
+// MaxBody is how much of a body an entry keeps.
+const MaxBody = 16 << 10
+
+// Body is the start of a request or response body.
+type Body struct {
+	ContentType string `json:"contentType,omitempty"`
+	// Size is the body's length in bytes: what the handler read of a
+	// request, or wrote of a response.
+	Size int64 `json:"size"`
+	// Text is the first MaxBody bytes; empty when Binary.
+	Text      string `json:"text,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	// Binary is set when the kept bytes are not UTF-8 text.
+	Binary bool `json:"binary,omitempty"`
+}
+
+// NewBody returns the body of size bytes that starts with head, keeping
+// at most MaxBody bytes of it as text.
+func NewBody(contentType string, head []byte, size int64) *Body {
+	b := &Body{ContentType: contentType, Size: size}
+	if len(head) > MaxBody {
+		head = head[:MaxBody]
+	}
+	b.Truncated = int64(len(head)) < size
+	if b.Truncated {
+		// Drop a rune the cut split.
+		for i := 0; i < utf8.UTFMax-1 && len(head) > 0 && !utf8.Valid(head); i++ {
+			head = head[:len(head)-1]
+		}
+	}
+	if utf8.Valid(head) {
+		b.Text = string(head)
+	} else {
+		b.Binary = true
+	}
+	return b
+}
+
+// Capture collects the first MaxBody bytes written to it and counts the rest.
+type Capture struct {
+	head []byte
+	size int64
+}
+
+func (c *Capture) Write(p []byte) (int, error) {
+	if n := MaxBody - len(c.head); n > 0 {
+		c.head = append(c.head, p[:min(n, len(p))]...)
+	}
+	c.size += int64(len(p))
+	return len(p), nil
+}
+
+// Body returns what was written as a Body, or nil when nothing was.
+func (c *Capture) Body(contentType string) *Body {
+	if c.size == 0 {
+		return nil
+	}
+	return NewBody(contentType, c.head, c.size)
 }
 
 // NATTrace is one connection the NAT egress gateway saw leave a VPC
@@ -88,6 +166,7 @@ type Log struct {
 	entries []Entry
 	next    int
 	full    bool
+	lastID  int64
 	log     *slog.Logger
 	onAdd   func(Entry)
 }
@@ -101,12 +180,14 @@ func New(size int, log *slog.Logger) *Log {
 // Log is used.
 func (l *Log) OnAdd(fn func(Entry)) { l.onAdd = fn }
 
-// Add records e. A nil Log discards it.
+// Add records e, numbering it. A nil Log discards it.
 func (l *Log) Add(e Entry) {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
+	l.lastID++
+	e.ID = l.lastID
 	l.entries[l.next] = e
 	l.next = (l.next + 1) % len(l.entries)
 	if l.next == 0 {
@@ -114,6 +195,7 @@ func (l *Log) Add(e Entry) {
 	}
 	l.mu.Unlock()
 	if l.onAdd != nil {
+		e.Bodies = nil
 		l.onAdd(e)
 	}
 	if l.log != nil {
@@ -132,6 +214,7 @@ func (l *Log) Entries(service string) []Entry {
 	appendRange := func(es []Entry) {
 		for _, e := range es {
 			if service == "" || e.Service == service {
+				e.Bodies = nil
 				out = append(out, e)
 			}
 		}
@@ -143,7 +226,24 @@ func (l *Log) Entries(service string) []Entry {
 	return out
 }
 
-// Clear drops all entries.
+// Get returns the retained entry numbered id, with its bodies.
+func (l *Log) Get(id int64) (Detail, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, e := range l.entries {
+		if e.ID == id && id != 0 {
+			d := Detail{Entry: e}
+			if e.Bodies != nil {
+				d.Bodies = *e.Bodies
+			}
+			d.Entry.Bodies = nil
+			return d, true
+		}
+	}
+	return Detail{}, false
+}
+
+// Clear drops all entries. IDs keep counting, so an ID never names two entries.
 func (l *Log) Clear() {
 	l.mu.Lock()
 	clear(l.entries)

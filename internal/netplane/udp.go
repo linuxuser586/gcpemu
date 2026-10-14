@@ -17,6 +17,10 @@ import (
 // specific bind address reach our socket while multicast mDNS traffic keeps
 // going to the wildcard sockets. On a wildcard bind we would share (and
 // steal) mDNS traffic, so reuse is only enabled for specific addresses.
+// A wildcard bind is dual-stack ([::]); on macOS, which keeps the IPv4 and
+// IPv6 port spaces apart, it still fails because mDNS daemons hold the port
+// on IPv6 too (mDNSResponder and browsers do). Beside an IPv4-only holder
+// it would bind but receive only IPv6 traffic (issue #262).
 // The TCP listener on the same port is bound first without reuse, so a
 // second emulator instance still fails cleanly.
 func ListenUDP(ctx context.Context, host, port string) (net.PacketConn, error) {

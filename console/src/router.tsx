@@ -125,6 +125,7 @@ import { Subscriptions } from '@/features/pubsub/Subscriptions'
 import { CreateTopic, EditTopic } from '@/features/pubsub/TopicForm'
 import { TopicOverview, TopicPage, TopicSubscriptions } from '@/features/pubsub/TopicPage'
 import { Topics } from '@/features/pubsub/Topics'
+import { RequestLog } from '@/features/requests/RequestLog'
 import { locationsQuery, secretQuery, secretsQuery, versionsQuery } from '@/features/secrets/api'
 import { CreateSecret, EditSecret } from '@/features/secrets/SecretForm'
 import { SecretOverview, SecretPage } from '@/features/secrets/SecretPage'
@@ -195,6 +196,14 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           },
         },
         { path: 'faults/create', element: <CreateFault /> },
+        {
+          path: 'requests',
+          element: <RequestLog />,
+          loader: async () => {
+            await Promise.allSettled([queryClient.ensureQueryData(requestsQuery())])
+            return null
+          },
+        },
         {
           path: 'iam',
           element: <IamLayout />,
