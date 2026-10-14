@@ -130,7 +130,7 @@ func (l *accessLogger) Recent() []*LogEntry {
 
 // log records one request.
 func (l *accessLogger) log(rs *reqState, w *respWriter) {
-	lat := time.Since(rs.start)
+	lat := rs.sw.Elapsed()
 	r := rs.req
 	fe := rs.fe
 	if l.env.RequestLog != nil {

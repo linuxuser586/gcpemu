@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strconv"
@@ -68,6 +69,11 @@ func (s *Service) Register(r emu.Router) error {
 
 // Start opens the DNS data plane: TCP via env.Listen("dns") and UDP on the
 // same port number.
+//
+// A dynamic port must be free for both protocols. Windows reserves
+// different port ranges for each and hands out ephemeral ports in sequence,
+// so every retry of TCP's pick can land in one UDP-reserved block (#206);
+// without a --port-range, retries try random ephemeral ports instead.
 func (s *Service) Start(ctx context.Context) error {
 	s.upstreams = s.hostResolvers()
 	var (
@@ -75,23 +81,31 @@ func (s *Service) Start(ctx context.Context) error {
 		pc  net.PacketConn
 		err error
 	)
+	_, _, ranged, _ := s.env.Config.ParsePortRange()
+	dynamic := s.env.Config.Port("dns") == 0
 	for attempt := 0; attempt < 20; attempt++ {
+		if attempt > 0 && dynamic && !ranged {
+			if tl, pc, err = s.listenPair(ctx, ephemeralLo+rand.IntN(ephemeralN)); err == nil {
+				break
+			}
+			continue
+		}
 		tl, err = s.env.Listen("dns")
 		if err != nil {
 			return fmt.Errorf("dns tcp listen: %w", err)
 		}
 		_, port, _ := net.SplitHostPort(tl.Addr().String())
-		pc, err = netplane.ListenUDP(ctx, s.env.Config.Bind, port)
-		if err == nil {
+		if pc, err = netplane.ListenUDP(ctx, s.env.Config.Bind, port); err == nil {
 			break
 		}
 		_ = tl.Close()
-		if s.env.Config.Port("dns") != 0 {
-			return fmt.Errorf("dns udp listen: %w", err)
+		err = fmt.Errorf("dns udp listen: %w", err)
+		if !dynamic {
+			return err
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("dns udp listen: %w", err)
+		return err
 	}
 	h := mdns.HandlerFunc(s.serveDNS)
 	var wg sync.WaitGroup
@@ -110,6 +124,28 @@ func (s *Service) Start(ctx context.Context) error {
 	s.tcp, s.udp, s.addr, s.started = tcp, udp, tl.Addr().String(), true
 	s.mu.Unlock()
 	return nil
+}
+
+// The IANA dynamic port range, which Windows and macOS use for ephemeral
+// ports.
+const (
+	ephemeralLo = 49152
+	ephemeralN  = 65536 - ephemeralLo
+)
+
+// listenPair binds TCP and then UDP to port.
+func (s *Service) listenPair(ctx context.Context, port int) (net.Listener, net.PacketConn, error) {
+	tl, err := s.env.ListenTCP(s.env.Config.Bind, port)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dns tcp listen: %w", err)
+	}
+	pc, err := netplane.ListenUDP(ctx, s.env.Config.Bind, strconv.Itoa(port))
+	if err != nil {
+		_ = tl.Close()
+		return nil, nil, fmt.Errorf("dns udp listen: %w", err)
+	}
+	s.env.Endpoints.Set("dns", tl.Addr().String())
+	return tl, pc, nil
 }
 
 // Stop shuts the data plane down.
