@@ -98,7 +98,7 @@ An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
 **LoadBalancer Service ingress**:
-The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC; on a VM runtime or a Translated network, a loopback address the emulator serves; or, for a Containerized Instance on a Translated network, its nodes' Fallback-range addresses.
+The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC; on a VM runtime or a Translated network, a loopback address the emulator serves; for a Containerized Instance on a Translated network, its nodes' Fallback-range addresses; or, for a Containerized Instance on a VM runtime, the host side of a port its own container publishes (ADR 0012), empty while none is free.
 _Avoid_: external IP, LB address
 
 **State snapshot**:
