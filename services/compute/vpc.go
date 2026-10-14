@@ -429,32 +429,40 @@ func (s *Service) describeOverlap(ctx context.Context, rt *runtime.Manager, self
 	if err != nil {
 		return ""
 	}
-	return overlapHolder(nets, want, self, func(id string) bool {
+	return overlapHolder(nets, want, self, func(id string) (bool, bool) {
 		found, err := instance.FindAbandoned(ctx, rt.Client, config.StateHome())
-		return err == nil && slices.ContainsFunc(found, func(a instance.Abandoned) bool { return a.ID == id })
+		if err != nil {
+			return false, false
+		}
+		i := slices.IndexFunc(found, func(a instance.Abandoned) bool { return a.ID == id })
+		return i >= 0, i >= 0 && found[i].Unverified
 	})
 }
 
 // overlapHolder names the network among nets, other than self, whose
-// subnet overlaps want, for the Fallback-range warning (#212); "" when
-// none does.
-func overlapHolder(nets []runtime.Network, want cidr, self string, abandoned func(id string) bool) string {
+// subnet overlaps want, for the Fallback-range warning (#212). status
+// reports whether an Instance ID is Abandoned, and whether that is
+// unverified (instance.Abandoned).
+func overlapHolder(nets []runtime.Network, want cidr, self string, status func(id string) (abandoned, unverified bool)) string {
 	for _, n := range nets {
 		c, err := parseCIDR(n.Subnet, false)
 		if n.Name == self || err != nil || !c.overlaps(want) {
 			continue
 		}
 		s := want.String() + " is held by network " + n.Name
-		switch id := n.Labels[runtime.LabelInstance]; {
-		case id == "":
-		case abandoned(id):
-			s += " of Abandoned Instance ID " + id + "; run `gcpemu prune`"
-		default:
-			s += " of Instance ID " + id
+		id := n.Labels[runtime.LabelInstance]
+		if id == "" {
+			return s
 		}
-		return s
+		switch abandoned, unverified := status(id); {
+		case unverified:
+			return s + " of Instance ID " + id + ", which may be Abandoned (unverified: an instance started with --data-dir elsewhere may still own it); run `gcpemu prune` to check"
+		case abandoned:
+			return s + " of Abandoned Instance ID " + id + "; run `gcpemu prune`"
+		}
+		return s + " of Instance ID " + id
 	}
-	return ""
+	return "no runtime network holds " + want.String() + "; a host route or VPN may"
 }
 
 func isOverlap(err error) bool {
