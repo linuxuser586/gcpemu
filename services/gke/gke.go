@@ -22,6 +22,9 @@
 // default route points at the VPC egress gateway, so they reach the
 // internet only through Cloud NAT (FR-GKE-007, FR-INT-009). State lives in
 // labelled volumes, so clusters survive emulator restarts with --data-dir.
+// NetworkPolicy objects are enforced, by k3s's kube-router controller,
+// only with Dataplane V2 or the networkPolicy setting, as on GKE
+// (FR-GKE-011).
 //
 // Every node runs the "gke-node" agent (the gcpemu binary) as its
 // entrypoint. It serves the GKE metadata server on 169.254.169.254

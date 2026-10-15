@@ -439,6 +439,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 		"--kube-apiserver-arg=authorization-webhook-cache-authorized-ttl=10s",
 		"--kube-apiserver-arg=authorization-webhook-cache-unauthorized-ttl=5s",
 	}
+	args = append(args, policyArgs(c)...)
 	if ip != "" {
 		args = append(args, "--advertise-address", ip, "--tls-san", ip)
 	}

@@ -138,6 +138,9 @@ func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterR
 	if err := a.s.checkAddons(rec.cluster()); err != nil {
 		return nil, err
 	}
+	if err := checkNetworkPolicy(rec.cluster()); err != nil {
+		return nil, err
+	}
 	err = a.s.env.Store.Update(func(tx store.Tx) error {
 		if store.Exists(tx, nsClusters, r.key()) {
 			return apierr.AlreadyExists("Already exists: %s.", r.clusterName())
@@ -601,8 +604,8 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 	if u.DesiredDnsConfig != nil {
 		c.NetworkConfig.DnsConfig = u.DesiredDnsConfig
 	}
-	if u.DesiredDatapathProvider != containerpb.DatapathProvider_DATAPATH_PROVIDER_UNSPECIFIED {
-		c.NetworkConfig.DatapathProvider = u.DesiredDatapathProvider
+	if err := setDatapathProvider(c, u.DesiredDatapathProvider); err != nil {
+		return err
 	}
 	if u.DesiredFleet != nil {
 		c.Fleet = u.DesiredFleet
@@ -864,10 +867,23 @@ func (a *api) SetNetworkPolicy(ctx context.Context, req *containerpb.SetNetworkP
 	if err != nil {
 		return nil, err
 	}
+	// A change of enforcement restarts the server with it and recreates
+	// the nodes, whose policy controllers read it when they start.
+	changed := false
 	return a.mutate(ctx, r, containerpb.Operation_SET_NETWORK_POLICY, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		was := policyEnforced(c)
 		c.NetworkPolicy = req.NetworkPolicy
+		if err := checkNetworkPolicy(c); err != nil {
+			return err
+		}
+		changed = policyEnforced(c) != was
 		return nil
-	}, nil)
+	}, func(ctx context.Context) error {
+		if !changed {
+			return nil
+		}
+		return a.s.restartForPolicy(ctx, r.key())
+	})
 }
 
 func (a *api) SetMaintenancePolicy(ctx context.Context, req *containerpb.SetMaintenancePolicyRequest) (*containerpb.Operation, error) {
