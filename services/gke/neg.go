@@ -45,28 +45,34 @@ type negRecord struct {
 
 func negKey(cluster, zone, name string) string { return cluster + "|" + zone + "|" + name }
 
-// startControllers starts the cluster's background controllers once.
-func (s *Service) startControllers(key string) {
+// startControllers starts the cluster's background controllers once, in
+// the background generation of ctx (the bring-up's): a bring-up from
+// before a Reset starts none (#293).
+func (s *Service) startControllers(ctx context.Context, key string) {
+	g := genOf(ctx)
+	if g == nil || !s.join(g, 3) {
+		return
+	}
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	if rt.cancel != nil {
 		rt.mu.Unlock()
+		g.wg.Add(-3)
 		return
 	}
-	ctx, cancel := context.WithCancel(s.ctx)
+	ctx, cancel := context.WithCancel(g.ctx)
 	rt.cancel = cancel
 	rt.mu.Unlock()
-	s.wg.Add(3)
 	go func() {
-		defer s.wg.Done()
+		defer g.wg.Done()
 		s.secretSyncLoop(ctx, key)
 	}()
 	go func() {
-		defer s.wg.Done()
+		defer g.wg.Done()
 		s.lbServicesLoop(ctx, key)
 	}()
 	go func() {
-		defer s.wg.Done()
+		defer g.wg.Done()
 		t := time.NewTicker(negInterval)
 		defer t.Stop()
 		for {

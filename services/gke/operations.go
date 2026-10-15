@@ -50,24 +50,29 @@ func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, 
 		StartTime:     s.now(),
 		Progress:      &containerpb.OperationProgress{Status: containerpb.Operation_RUNNING},
 	}
+	g := s.track(1)
+	if g == nil {
+		return nil, apierr.New(codes.Unavailable, "The service is shutting down.")
+	}
 	if lock {
 		if cur, ok := s.tryLock(r.key(), name); !ok {
+			g.wg.Done()
 			return nil, apierr.FailedPrecondition("Cluster is running incompatible operation %s.", cur).
 				WithReason("container.googleapis.com", "CLUSTER_ALREADY_HAS_OPERATION")
 		}
 	}
 	if err := s.putOp(r.Project, op); err != nil {
+		g.wg.Done()
 		s.unlock(r, lock, name)
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(s.ctx)
+	ctx, cancel := context.WithCancel(g.ctx)
 	s.mu.Lock()
 	s.opCancel[name] = cancel
 	s.mu.Unlock()
 	start := time.Now()
-	s.wg.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer g.wg.Done()
 		defer cancel()
 		err := work(ctx)
 		if d := s.env.Config.LRO("gke") - time.Since(start); d > 0 && err == nil {
@@ -79,7 +84,7 @@ func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, 
 		if err != nil {
 			s.env.Log.Warn("gke operation failed", "operation", name, "type", typ.String(), "target", target, "err", err)
 		}
-		s.finishOp(r.Project, name, err)
+		s.finishOp(ctx, r.Project, name, err)
 		s.unlock(r, lock, name)
 		s.mu.Lock()
 		delete(s.opCancel, name)
@@ -148,8 +153,8 @@ func (s *Service) getOp(projectID, name string) (*containerpb.Operation, error) 
 	return op, nil
 }
 
-// finishOp marks an operation DONE, recording err.
-func (s *Service) finishOp(projectID, name string, err error) {
+// finishOp marks an operation DONE, recording err; ctx is the operation's.
+func (s *Service) finishOp(ctx context.Context, projectID, name string, err error) {
 	_ = s.env.Store.Update(func(tx store.Tx) error {
 		b, ok := tx.Get(nsOperations, opKey(projectID, name))
 		if !ok {
@@ -164,7 +169,7 @@ func (s *Service) finishOp(projectID, name string, err error) {
 		op.Progress = &containerpb.OperationProgress{Status: containerpb.Operation_DONE}
 		if err != nil {
 			e := apierr.From(err)
-			if s.ctx.Err() != nil || e.Code == codes.Canceled {
+			if halted(ctx) || e.Code == codes.Canceled {
 				e = apierr.New(codes.Canceled, "Operation was cancelled.")
 			}
 			op.Error = e.GRPCStatus().Proto()
@@ -236,7 +241,7 @@ func (s *Service) abortStaleOps() {
 		return nil
 	})
 	for _, o := range ops {
-		s.finishOp(o.project, o.name, apierr.Aborted("The operation was interrupted by an emulator restart."))
+		s.finishOp(context.Background(), o.project, o.name, apierr.Aborted("The operation was interrupted by an emulator restart."))
 	}
 }
 

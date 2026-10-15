@@ -66,6 +66,7 @@ package gke
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -92,13 +93,12 @@ type Service struct {
 	env *emu.Env
 	api *api
 
-	// ctx lives from Start to Stop; background work (operations, data
-	// plane, NEG sync) derives from it.
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-
-	mu       sync.Mutex
+	mu sync.Mutex
+	// bg is the current generation of background work (operations, data
+	// plane, controllers). Reset cancels it, waits for it and starts the
+	// next; Stop cancels it for good. The pointer is guarded by mu; a
+	// generation's own fields are safe to use once read.
+	bg       *background
 	clusters map[string]*clusterRT // key → runtime state
 	byID     map[string]string     // cluster ID → key
 	busy     map[string]string     // key → running operation name
@@ -115,6 +115,9 @@ type Service struct {
 	// beforeNodeStart, set by tests, runs between a node container's
 	// creation and its start.
 	beforeNodeStart func(ctx context.Context, sn emu.SubnetNet, node, ip string)
+	// beforeServerStart, set by tests, runs before a bring-up touches the
+	// cluster's server container or volume.
+	beforeServerStart func(ctx context.Context, key string)
 	// pubVia and pubIPs are the load balancer's public routes
 	// (RoutePublic), programmed into nodes with external IPs.
 	pubMu  sync.Mutex
@@ -138,8 +141,80 @@ func New(env *emu.Env) emu.Service {
 		loops:    map[string]string{},
 	}
 	s.api = &api{s: s}
-	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.bg = newBackground()
 	return s
+}
+
+// errHalted is the cause of a background context that Reset or Stop
+// cancelled. Work stopped by it leaves the persisted status as it is.
+var errHalted = errors.New("gke: background work halted by Reset or Stop")
+
+// background is one generation of the service's background work.
+type background struct {
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	wg     sync.WaitGroup
+}
+
+// bgKey keys a background context's generation (genOf).
+type bgKey struct{}
+
+func newBackground() *background {
+	g := &background{}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	g.ctx, g.cancel = context.WithValue(ctx, bgKey{}, g), cancel
+	return g
+}
+
+// genOf returns the background generation ctx derives from, or nil.
+func genOf(ctx context.Context) *background {
+	g, _ := ctx.Value(bgKey{}).(*background)
+	return g
+}
+
+// wait waits for the generation's goroutines, or for ctx to end.
+func (g *background) wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { g.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// track counts n goroutines into the current background generation and
+// returns it, or nil if the service is stopped; each goroutine calls
+// g.wg.Done when it returns.
+func (s *Service) track(n int) *background {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.joinLocked(s.bg, n)
+}
+
+// join counts n goroutines into generation g, unless Reset or Stop has
+// halted it.
+func (s *Service) join(g *background, n int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.joinLocked(g, n) != nil
+}
+
+// joinLocked adds n to g's goroutines unless g is halted. Reset and Stop
+// cancel a generation under mu, so a halted generation gains no goroutines
+// while it is waited for. Callers hold mu.
+func (s *Service) joinLocked(g *background, n int) *background {
+	if g.ctx.Err() != nil {
+		return nil
+	}
+	g.wg.Add(n)
+	return g
+}
+
+// halted reports whether ctx was cancelled by Reset or Stop.
+func halted(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errHalted)
 }
 
 func (s *Service) Name() string { return "gke" }
@@ -190,29 +265,28 @@ func (s *Service) recoverClusters() {
 	}
 }
 
-// goBackground runs f on the service context.
+// goBackground runs f on the background context.
 func (s *Service) goBackground(f func(ctx context.Context)) {
-	s.wg.Add(1)
+	g := s.track(1)
+	if g == nil {
+		return // stopped
+	}
 	go func() {
-		defer s.wg.Done()
-		f(s.ctx)
+		defer g.wg.Done()
+		f(g.ctx)
 	}()
 }
 
 // Stop cancels background work. Containers are removed by the instance.
 func (s *Service) Stop(ctx context.Context) error {
-	s.cancel()
 	s.mu.Lock()
+	g := s.bg
+	g.cancel(errHalted)
 	for _, rt := range s.clusters {
 		s.stopRT(rt)
 	}
 	s.mu.Unlock()
-	done := make(chan struct{})
-	go func() { s.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+	_ = g.wait(ctx)
 	return nil
 }
 
@@ -224,9 +298,23 @@ func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, map[string]string{"clusters": nsClusters})
 }
 
-// Reset tears down every cluster's containers and volumes and drops the
-// staged datastores; the store is reset by the instance.
+// Reset cancels the background work started before it and waits for it
+// (bounded by ctx), so none of it touches a runtime object afterwards
+// (#293). It then tears down every cluster's containers and volumes and
+// drops the staged datastores; the store is reset by the instance. Work
+// started after Reset runs on a fresh background context, unless the
+// service is stopped.
 func (s *Service) Reset(ctx context.Context) error {
+	s.mu.Lock()
+	old := s.bg
+	if old.ctx.Err() == nil {
+		s.bg = newBackground()
+	}
+	old.cancel(errHalted)
+	s.mu.Unlock()
+	if err := old.wait(ctx); err != nil {
+		return fmt.Errorf("gke: waiting for background work: %w", err)
+	}
 	var keys []string
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		for _, r := range listClusters(tx, "") {
