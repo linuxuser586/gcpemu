@@ -119,14 +119,14 @@ func (f *Frontend) Hosts() []string {
 func (f *Frontend) Serves(name string) bool { return Serves(f.Hosts(), name) }
 
 // Start opens the listener on the configured bind address and records the
-// "frontend" endpoint. A dynamic port comes from --port-range, except for
-// a Containerized Instance on a VM runtime, whose published range ports
-// LoadBalancer Services need (ADR 0012).
-func (f *Frontend) Start(ctx context.Context) error {
+// "frontend" endpoint. A dynamic port comes from --port-range, except in
+// a Containerized Instance, whose published range ports forwarding rules
+// and LoadBalancer Services need (ADR 0012).
+func (f *Frontend) Start() error {
 	port := f.env.Config.Port(Endpoint)
 	var l net.Listener
 	var err error
-	if port == 0 && f.vmRuntime(ctx) {
+	if port == 0 && f.keepsRange() {
 		l, err = net.Listen("tcp", net.JoinHostPort(f.env.Config.Bind, "0"))
 	} else {
 		l, err = f.env.ListenTCP(f.env.Config.Bind, port)
@@ -143,17 +143,11 @@ func (f *Frontend) Start(ctx context.Context) error {
 	return nil
 }
 
-// vmRuntime reports whether the Instance is a Containerized Instance on a
-// VM runtime with a --port-range. Only then does it connect to the
-// container runtime this early, to learn the decision.
-func (f *Frontend) vmRuntime(ctx context.Context) bool {
-	if _, _, ranged, _ := f.env.Config.ParsePortRange(); !ranged || f.env.Containers == nil || !f.inContainer() {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	m, err := f.env.Containers.Runtime(ctx)
-	return err == nil && m.VM.On
+// keepsRange reports whether the Instance is a Containerized Instance with
+// a --port-range, which it keeps for Published ports.
+func (f *Frontend) keepsRange() bool {
+	_, _, ranged, _ := f.env.Config.ParsePortRange()
+	return ranged && f.inContainer()
 }
 
 // Addr returns the listener address ("" before Start).

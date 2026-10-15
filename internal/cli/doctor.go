@@ -120,6 +120,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			}
 
 			checkLANBind(out, report, cfg, running == nil, hasRuntime)
+			if running == nil {
+				checkUnpublished(out, cfg)
+			}
 			if runtime.GOOS == "darwin" {
 				checkLoopback(out, loopback.Aliases())
 			}
@@ -222,6 +225,40 @@ func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, c
 		return
 	}
 	reportServiceLB(out, d.On, servers)
+}
+
+// checkUnpublished lists the forwarding rules of the running Instance that
+// have no published port (ADR 0012). Only a Containerized Instance
+// reports any, and an Instance without the lb service none.
+func checkUnpublished(out io.Writer, cfg *config.Config) {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return
+	}
+	if b, err := c.get("/_emu/v1/lb/listeners"); err == nil {
+		reportUnpublished(out, b)
+	}
+}
+
+// reportUnpublished prints each forwarding rule of an lb listeners report
+// that has no published port, with what to publish.
+func reportUnpublished(out io.Writer, body []byte) {
+	var v struct {
+		Listeners []struct {
+			ForwardingRule string `json:"forwardingRule"`
+			Port           int    `json:"port"`
+			Unpublished    string `json:"unpublished"`
+		} `json:"listeners"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return
+	}
+	for _, l := range v.Listeners {
+		if l.Unpublished != "" {
+			fmt.Fprintf(out, "[WARN] forwarding rule %s (port %d) has no published port, so the host cannot reach it\n", l.ForwardingRule, l.Port)
+			fmt.Fprintf(out, "       fix: %s\n", l.Unpublished)
+		}
+	}
 }
 
 // startFlag returns the value of --name in a container's command, as

@@ -211,51 +211,6 @@ func TestLBServicesSync(t *testing.T) {
 	}
 }
 
-// On a VM runtime a Service port is served on a port the emulator's
-// container publishes (ADR 0012): the Service's own port when it is
-// published at the same host port, then the published ports of
-// --port-range from a hash of the name onwards; none when nothing is
-// published.
-func TestLBPublishedCandidates(t *testing.T) {
-	const name = "p/us-central1-a/c1/default/web/8081"
-	published := map[int]string{
-		8081: "127.0.0.1:8081", 9090: "127.0.0.1:19090", 4510: "127.0.0.1:4510",
-		20000: "127.0.0.1:20000", 20001: "127.0.0.1:20001", 20002: "127.0.0.1:20002", 20003: "127.0.0.1:30003",
-	}
-	got := publishedCandidates(name, 8081, published, 20000, 20004, true)
-	if len(got) != 5 || got[0] != 8081 {
-		t.Fatalf("candidates = %v, want 8081 then 20000-20003", got)
-	}
-	rest := slices.Clone(got[1:])
-	slices.Sort(rest)
-	if !slices.Equal(rest, []int{20000, 20001, 20002, 20003}) {
-		t.Errorf("range candidates = %v, want the published 20000-20003", got[1:])
-	}
-	if again := publishedCandidates(name, 8081, published, 20000, 20004, true); !slices.Equal(again, got) {
-		t.Errorf("candidates not stable: %v then %v", got, again)
-	}
-
-	// A Service port published at another host port is not its own.
-	if got := publishedCandidates(name, 9090, published, 20000, 20004, true); slices.Contains(got, 9090) || len(got) != 4 {
-		t.Errorf("port 9090 published as 19090: candidates = %v, want the range only", got)
-	}
-	// A Service port inside the range comes first, and once.
-	if got := publishedCandidates(name, 20002, published, 20000, 20004, true); got[0] != 20002 || len(got) != 4 {
-		t.Errorf("port in range: candidates = %v", got)
-	}
-	// Without --port-range only the Service's own port.
-	if got := publishedCandidates(name, 8081, published, 0, 0, false); !slices.Equal(got, []int{8081}) {
-		t.Errorf("no range: candidates = %v, want [8081]", got)
-	}
-	if got := publishedCandidates(name, 8082, published, 0, 0, false); len(got) != 0 {
-		t.Errorf("no range, port unpublished: candidates = %v, want none", got)
-	}
-	// A range that is not published gives nothing.
-	if got := publishedCandidates(name, 8082, published, 21000, 21999, true); len(got) != 0 {
-		t.Errorf("range unpublished: candidates = %v, want none", got)
-	}
-}
-
 // On a VM runtime (ADR 0012) a LoadBalancer Service is served on its
 // container's published ports and reports the host side: its own port
 // when published at the same host port, otherwise a free one of

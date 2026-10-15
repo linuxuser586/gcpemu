@@ -15,6 +15,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/published"
 )
 
 // LoadBalancer Services on a VM runtime (ADR 0005) or a Translated network
@@ -48,7 +49,7 @@ import (
 // On a VM runtime (ADR 0012) the host routes to no container address, so
 // a Containerized Instance serves each Service port on the wildcard
 // address of its container, on a port the container publishes
-// (publishedCandidates), and reports the host side of that binding: its
+// (published.Candidates), and reports the host side of that binding: its
 // host IP as the ingress, and its host address as the endpoint. A Service
 // port with no free published port is not served, and is retried while
 // its Service stays; a Service with none served has no ingress.
@@ -291,10 +292,10 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 }
 
 // servePublished serves the ports of a Service that l does not serve yet
-// on published ports (publishedCandidates), and records the host side in
+// on published ports (published.Candidates), and records the host side in
 // l. A port with none free stays missing; with warn, it is logged with
 // what to publish.
-func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbPort, published map[int]string, l *lbService, warn bool) {
+func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbPort, pub map[int]string, l *lbService, warn bool) {
 	lo, hi, ranged, _ := s.env.Config.ParsePortRange()
 	l.unserved = false
 	var missing []int
@@ -305,7 +306,7 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 		ep := lbEndpoint(key, id, p.port)
 		var ln net.Listener
 		var cport int
-		for _, c := range publishedCandidates(key+"/"+id+"/"+strconv.Itoa(p.port), p.port, published, lo, hi, ranged) {
+		for _, c := range published.Candidates(key+"/"+id+"/"+strconv.Itoa(p.port), p.port, pub, lo, hi, ranged) {
 			var err error
 			if ln, err = net.Listen("tcp", net.JoinHostPort(publishedHost, strconv.Itoa(c))); err == nil {
 				cport = c
@@ -317,7 +318,7 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 			missing = append(missing, p.port)
 			continue
 		}
-		host := published[cport]
+		host := pub[cport]
 		l.ex = append(l.ex, np.Serve(ln, s.nodePorts(key, p.nodePort)))
 		s.env.Endpoints.Set(ep, host)
 		l.endpoints = append(l.endpoints, ep)
@@ -329,18 +330,8 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 	}
 	if warn && len(missing) > 0 {
 		s.env.Log.Warn("gke: no free published port for a LoadBalancer Service; the host cannot reach it until one frees",
-			"cluster", key, "service", id, "ports", missing, "fix", publishHint(s.env.Config.PortRange, missing[0]))
+			"cluster", key, "service", id, "ports", missing, "fix", published.Hint(s.env.Config.PortRange, missing[0], "the Service"))
 	}
-}
-
-// publishHint says what to publish so that a Service port can be served
-// on a VM runtime.
-func publishHint(portRange string, port int) string {
-	own := fmt.Sprintf("-p 127.0.0.1:%d:%d", port, port)
-	if portRange == "" {
-		return "start the emulator with --port-range LO-HI and publish that range (-p 127.0.0.1:LO-HI:LO-HI), or publish the Service's port (" + own + ")"
-	}
-	return "publish more of --port-range " + portRange + " (-p 127.0.0.1:" + portRange + ":" + portRange + "), or the Service's port (" + own + ")"
 }
 
 // reportLB records a Service that its nodes serve at ips: no listener,
@@ -488,31 +479,4 @@ func envName(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// publishedCandidates lists the container ports to try serving a Service
-// port on, in order, on a VM runtime (ADR 0012): port itself when the
-// emulator's container publishes it at the same host port, then the
-// published ports of --port-range lo-hi (when ranged), from a hash of
-// name onwards, so that a Service keeps its port across syncs and
-// restarts where it can.
-func publishedCandidates(name string, port int, published map[int]string, lo, hi int, ranged bool) []int {
-	var out []int
-	if _, hp := netplane.HostPort(published[port]); hp == port {
-		out = append(out, port)
-	}
-	if !ranged {
-		return out
-	}
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(name))
-	n := hi - lo + 1
-	start := int(h.Sum32() % uint32(n))
-	for i := range n {
-		p := lo + (start+i)%n
-		if _, ok := published[p]; ok && (len(out) == 0 || out[0] != p) {
-			out = append(out, p)
-		}
-	}
-	return out
 }

@@ -159,3 +159,23 @@ func TestStartFlag(t *testing.T) {
 		t.Errorf("bind = %q, want none", got)
 	}
 }
+
+// A running Containerized Instance lists the forwarding rules with no
+// published port, each with what to publish (ADR 0012); the others, and
+// every rule of an Instance on the host, go unmentioned.
+func TestReportUnpublished(t *testing.T) {
+	body := `{"listeners":[
+		{"forwardingRule":"projects/p/global/forwardingRules/a","port":8080,"listener":"127.0.0.5:8080","published":"127.0.0.1:28080"},
+		{"forwardingRule":"projects/p/global/forwardingRules/b","port":8080,"listener":"127.0.0.6:8080","unpublished":"publish more of --port-range 20000-20019"},
+		{"forwardingRule":"projects/p/global/forwardingRules/c","port":80,"listener":"127.0.0.7:80"}]}`
+	var out strings.Builder
+	reportUnpublished(&out, []byte(body))
+	got := out.String()
+	if !strings.Contains(got, "[WARN] forwarding rule projects/p/global/forwardingRules/b (port 8080) has no published port") ||
+		!strings.Contains(got, "fix: publish more of --port-range 20000-20019") {
+		t.Errorf("output lacks rule b and its fix:\n%s", got)
+	}
+	if strings.Contains(got, "forwardingRules/a") || strings.Contains(got, "forwardingRules/c") {
+		t.Errorf("output names a served rule:\n%s", got)
+	}
+}

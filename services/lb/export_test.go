@@ -72,3 +72,29 @@ func MappedIP(svc emu.Service, ip string) string {
 	}
 	return ""
 }
+
+// SetPublished makes the data plane serve forwarding rules on Published
+// ports as a Containerized Instance does, with ports the container's
+// published ports (nil: no runtime socket), served on host instead of the
+// wildcard (call it before creating forwarding rules).
+func SetPublished(svc emu.Service, ports map[int]string, host string) {
+	d := svc.(*Service).dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.pub, d.pubKnown = publishing{on: true, ports: ports}, true
+	publishedHost = host
+}
+
+// ListenerAddr returns the loopback listener IP of forwarding rule name.
+func ListenerAddr(svc emu.Service, name string) string {
+	d := svc.(*Service).dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, l := range d.listeners {
+		if l.name == name {
+			h, _, _ := net.SplitHostPort(l.addr)
+			return h
+		}
+	}
+	return ""
+}

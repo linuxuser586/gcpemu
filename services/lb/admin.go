@@ -25,6 +25,10 @@ type listenerInfo struct {
 	Listener       string `json:"listener"`
 	Mode           string `json:"mode"`
 	HTTPS          bool   `json:"https"`
+	// Published is the host side of its Published port, and Unpublished
+	// what to publish while it has none, in a Containerized Instance.
+	Published   string `json:"published,omitempty"`
+	Unpublished string `json:"unpublished,omitempty"`
 }
 
 // serveListeners is GET /_emu/v1/lb/listeners.
@@ -39,7 +43,7 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out = append(out, listenerInfo{ForwardingRule: fe.frPath, IPAddress: fe.ip, Port: fe.port,
-			Listener: l.addr, Mode: l.mode, HTTPS: l.https})
+			Listener: l.addr, Mode: l.mode, HTTPS: l.https, Published: l.pubHost, Unpublished: l.pubHint})
 	}
 	s.dp.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ForwardingRule < out[j].ForwardingRule })
