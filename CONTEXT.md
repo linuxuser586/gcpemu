@@ -98,8 +98,12 @@ An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
 **LoadBalancer Service ingress**:
-The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC; on a VM runtime or a Translated network, a loopback address the emulator serves; for a Containerized Instance on a Translated network, its nodes' Fallback-range addresses; or, for a Containerized Instance on a VM runtime, the host side of a port its own container publishes (ADR 0012), empty while none is free.
+The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC; on a VM runtime or a Translated network, a loopback address the emulator serves; for a Containerized Instance on a Translated network, its nodes' Fallback-range addresses; or, for a Containerized Instance on a VM runtime, the host side of a Published port (ADR 0012), empty while none is free.
 _Avoid_: external IP, LB address
+
+**Published port**:
+A port that a Containerized Instance's own container publishes to the host. On a VM runtime it is the only way host clients reach a Containerized Instance's GKE `LoadBalancer` Services, and on any runtime it is the only way they reach its forwarding rules (ADR 0012). Its host side, not the container port, is what the Instance reports.
+_Avoid_: exposed port, mapped port
 
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
