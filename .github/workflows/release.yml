@@ -33,13 +33,17 @@ jobs:
         run: |
           make release VERSION="$GITHUB_REF_NAME"
           cd dist && sha256sum gcpemu-* > SHA256SUMS && cat SHA256SUMS
+      # docs/releases/vX.Y.Z.md, when present, goes above the generated
+      # list of pull requests.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pre=""
-          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/gcpemu-* dist/SHA256SUMS --verify-tag --generate-notes $pre
+          flags=()
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          [ -f "$notes" ] && flags+=(--notes-file "$notes")
+          gh release create "$GITHUB_REF_NAME" dist/gcpemu-* dist/SHA256SUMS --verify-tag --generate-notes "${flags[@]}"
       - uses: actions/upload-artifact@v7
         with:
           name: linux-binaries
