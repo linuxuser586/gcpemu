@@ -94,8 +94,20 @@ The Managed container through which an Instance on a VM runtime reaches its othe
 _Avoid_: bridge container, tunnel
 
 **Loopback alias**:
-An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist.
+An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist, and so does each Kubernetes Service a host client reaches through the Host attachment.
 _Avoid_: loopback IP (unqualified), alias (unqualified)
+
+**Host attachment**:
+The development aid, not modelled on GCP, that links the host with an Instance's VPC networks in both directions: host clients reach a GKE cluster's Kubernetes Services by name, and VPC workloads reach Offered ports at the Host address. It exists so that a process on the host can stand in for a pod, which GCP has no equivalent for (ADR 0014).
+_Avoid_: VPN, tunnel, bridge
+
+**Host address**:
+The address at which workloads on one VPC container network reach the host: the network's gateway IP where the host can route to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance.
+_Avoid_: host IP, gateway (unqualified)
+
+**Offered port**:
+A host port that a caller has opened to VPC workloads at the Host address. It stays offered until it is withdrawn, across restarts of a Persistent Instance.
+_Avoid_: exposed port, declared port
 
 **LoadBalancer Service ingress**:
 The address a GKE `LoadBalancer` Service reports as its own, at which host clients reach it: a node address on the cluster's VPC; on a VM runtime or a Translated network, a loopback address the emulator serves; for a Containerized Instance on a Translated network, its nodes' Fallback-range addresses; or, for a Containerized Instance on a VM runtime, the host side of a Published port (ADR 0012), empty while none is free.
