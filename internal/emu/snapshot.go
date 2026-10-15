@@ -25,6 +25,18 @@ type Snapshotter interface {
 	Restore(ctx context.Context, dir string) error
 }
 
+// StoreCacher is implemented by services that keep a cache in the Store,
+// such as a pull-through cache filled whenever a client pulls. Cache
+// entries are saved and restored with the rest of the Store, but a change
+// to one while a State snapshot is saved does not count as the Instance's
+// state changing: the snapshot keeps the entries as they were before the
+// services saved theirs. A cache entry a restore lacks must be refetched
+// when it is next needed.
+type StoreCacher interface {
+	// IsStoreCache reports whether key of namespace ns is a cache entry.
+	IsStoreCache(ns, key string) bool
+}
+
 // LinkTree recreates the files under src beneath dst as hard links,
 // copying them where links are unsupported (across filesystems). It is
 // for files that are never modified in place, such as blobs; a missing

@@ -83,6 +83,12 @@ func splitItemKey(k string) (repoRef, string, string) {
 
 func refKey(digest, key, kind string) string { return digest + "|" + key + "|" + kind }
 
+// refItem is the "<manifest or link key>|m|b" part of a refKey.
+func refItem(k string) string {
+	_, item, _ := strings.Cut(k, "|")
+	return item
+}
+
 // getRepo loads a repository.
 func getRepo(tx store.Tx, r repoRef) (*artifactregistrypb.Repository, error) {
 	b, ok := tx.Get(nsRepos, r.key())
