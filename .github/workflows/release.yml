@@ -18,9 +18,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       # FR-UI-001: `make release` embeds the Web console and fails if it
       # is not built.
       - uses: pnpm/action-setup@v6

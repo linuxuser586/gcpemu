@@ -1,0 +1,42 @@
+name: setup-go with the Go build cache
+description: >-
+  Installs the go.mod toolchain and restores the newest Go cache saved on
+  main for this OS/arch. Only go-cache-save writes it (#340): setup-go's
+  own cache let whichever job finished first save once per go.sum.
+inputs:
+  modules:
+    description: Cache GOMODCACHE as well as GOCACHE. Off on Windows, where unpacking its many small files outweighs downloading them.
+    default: "true"
+outputs:
+  paths:
+    description: The cached directories, one per line, for go-cache-save.
+    value: ${{ steps.cache.outputs.paths }}
+  prefix:
+    description: The cache key without the commit, for go-cache-save.
+    value: ${{ steps.cache.outputs.prefix }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7
+      id: go
+      with:
+        go-version-file: go.mod
+        cache: false
+    - id: cache
+      shell: bash
+      env:
+        MODULES: ${{ inputs.modules }}
+        GO_VERSION: ${{ steps.go.outputs.go-version }}
+      run: |
+        {
+          echo 'paths<<EOF'
+          go env GOCACHE
+          [ "$MODULES" = true ] && go env GOMODCACHE
+          echo EOF
+          echo "prefix=go-$RUNNER_OS-$RUNNER_ARCH-go$GO_VERSION-mod$MODULES-"
+        } >> "$GITHUB_OUTPUT"
+    - uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.cache.outputs.paths }}
+        key: ${{ steps.cache.outputs.prefix }}${{ github.sha }}
+        restore-keys: ${{ steps.cache.outputs.prefix }}

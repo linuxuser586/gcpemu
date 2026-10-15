@@ -1,0 +1,29 @@
+name: Save the Go build cache
+description: >-
+  Saves the Go cache under this commit and deletes the older entries with
+  the same prefix, so each OS/arch keeps one (#340). Needs actions: write.
+inputs:
+  paths:
+    description: The paths output of the setup-go action.
+    required: true
+  prefix:
+    description: The prefix output of the setup-go action.
+    required: true
+runs:
+  using: composite
+  steps:
+    - run: go clean -testcache
+      shell: bash
+    - uses: actions/cache/save@v6
+      with:
+        path: ${{ inputs.paths }}
+        key: ${{ inputs.prefix }}${{ github.sha }}
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        PREFIX: ${{ inputs.prefix }}
+        KEY: ${{ inputs.prefix }}${{ github.sha }}
+      run: |
+        gh cache list --key "$PREFIX" --limit 100 --json id,key --jq ".[] | select(.key != \"$KEY\") | .id" |
+          while read -r id; do gh cache delete "$id"; done
