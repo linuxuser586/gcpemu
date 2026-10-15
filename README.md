@@ -408,8 +408,17 @@ keep it across containers, or set `GCPEMU_EPHEMERAL=true`), and reports healthy 
 Service is ready (`gcpemu status --ready`). Because it is not bound to loopback, the admin API
 and the Web console need the admin token (see "Binding beyond loopback"): `docker logs gcpemu`
 shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints it, and
-`-e GCPEMU_ADMIN_TOKEN=...` sets it. Load balancer forwarding rules listen on their own ports, so publish
-those with extra `-p` flags.
+`-e GCPEMU_ADMIN_TOKEN=...` sets it.
+
+A load balancer forwarding rule listens on a loopback address inside the container, which `-p`
+never forwards to, so each rule is also served on a port the container publishes (ADR 0012), and
+`gcpemu env` prints the host side of that port as `GCPEMU_LB_<NAME>`. Without the Docker socket,
+publish each rule's port at the same host port (`-p 127.0.0.1:8080:8080`); the first rule on a
+port is served there. With the socket, the emulator reads its own published ports: a rule takes
+its own port when the container publishes it (`-p 127.0.0.1:28080:8080` gives
+`GCPEMU_LB_<NAME>=127.0.0.1:28080`), and otherwise a free port of `--port-range` when that range is
+published (see below). A rule with no free published port has no `GCPEMU_LB_<NAME>`; the
+emulator logs what to publish, `gcpemu doctor` lists it, and it is served once a port frees.
 
 Cloud SQL, GKE and Cloud NAT start containers of their own, so they need the host's Docker
 socket (Docker-outside-of-Docker). Without the socket the image starts every other Service and
@@ -443,8 +452,8 @@ Docker daemon, not from the emulator's container. From the host:
 
 On a VM runtime (Docker Desktop, OrbStack, Colima, Podman machine) the host can't route to
 container addresses inside the VM, so the emulator serves each GKE `LoadBalancer` Service on a
-port its own container publishes (ADR 0012). Start it with `--port-range` and publish that range
-on the same container and host ports:
+port its own container publishes (ADR 0012), as it does forwarding rules on any runtime. Start
+it with `--port-range` and publish that range on the same container and host ports:
 
 ```sh
 docker run -d --name gcpemu -p 127.0.0.1:4510:4510 -p 127.0.0.1:20000-20019:20000-20019 \
@@ -457,14 +466,16 @@ A Service takes its own port when the container publishes it at the same host po
 of that binding (`127.0.0.1`), and the port appears only in `gcpemu env`
 (`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`) and the Web console. Only TCP ports are
 served. When no published port is free, the Service has no ingress and the emulator logs a
-warning saying what to publish. The Google front end's dynamic port stays out of the range here,
-so the range is left for Services.
+warning saying what to publish. Forwarding rules without their own published port take ports
+from the same range, and whoever binds a port first gets it. In any container with a
+`--port-range`, the Google front end's dynamic port stays out of the range, so the range is left
+for Services and forwarding rules.
 
 The emulator guesses from the runtime's info that it is on a VM runtime: Docker Desktop and
 OrbStack are recognized. Set `GCPEMU_VM_RUNTIME=true` (or `--vm-runtime true`) on Colima and
 Podman machine, or `false` to keep node addresses; the default is `auto`. `docker exec gcpemu
-/gcpemu doctor` prints the decision, warns when no `--port-range` port is published, and flags
-clusters last started under the other decision; restarting the emulator recreates their servers
+/gcpemu doctor` prints the decision, warns when no `--port-range` port is published, lists
+forwarding rules with no published port, and flags clusters last started under the other decision; restarting the emulator recreates their servers
 with the current one.
 On Docker Desktop the socket belongs to `root` inside the VM, hence `--group-add 0`.
 

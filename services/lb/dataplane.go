@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,11 @@ type dataplane struct {
 	lan    map[string]*lanBinding
 	lanErr map[string]string
 	relay  *lanRelay
+
+	// Published ports (published.go), learnt on first use.
+	pub      publishing
+	pubKnown bool
+	pubRetry time.Time // no read before then, after a failed one
 }
 
 // config is a snapshot of the load-balancing resources.
@@ -107,6 +113,7 @@ func (d *dataplane) start(ctx context.Context) {
 	d.logs = newAccessLogger(d.s.env)
 	d.edge = newEdge(d)
 	go d.endpointLoop(ctx)
+	go d.publishLoop(ctx)
 	d.installDNSMapper()
 }
 
@@ -192,9 +199,23 @@ func (d *dataplane) reconcile() {
 		if fe == nil || fe.https != l.https || fe.fr.Name != l.name {
 			l.close()
 			delete(d.listeners, key)
+			// A global and a regional rule may share the name.
+			if l.pub != nil && d.s.env.Endpoints.Get("lb:"+l.name) == l.pubHost {
+				d.s.env.Endpoints.Delete("lb:" + l.name)
+			}
 		}
 	}
-	for key, fe := range cfg.fronts {
+	// Rules waiting for a Published port take freed ones before new rules
+	// do; then new rules in key order, so that the first of two rules on
+	// a port wins the same way each time.
+	d.retryPublished()
+	keys := make([]string, 0, len(cfg.fronts))
+	for key := range cfg.fronts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fe := cfg.fronts[key]
 		if _, ok := d.listeners[key]; ok {
 			continue
 		}

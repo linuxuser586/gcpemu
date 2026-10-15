@@ -41,8 +41,10 @@ import (
 // fallback port otherwise.
 //
 // Each mapping is recorded as endpoint "lb:<name>" (printed by `gcpemu env`
-// as GCPEMU_LB_<NAME>), and the emulated DNS answers A queries for a
-// forwarding rule IP with the mapped listener IP.
+// as GCPEMU_LB_<NAME>), except in a Containerized Instance, which records
+// the host side of the rule's Published port instead (published.go), and
+// the emulated DNS answers A queries for a forwarding rule IP with the
+// mapped listener IP.
 
 // singleLoopback is the only loopback address in single-loopback mode.
 const singleLoopback = loopback.Host
@@ -64,6 +66,12 @@ type listener struct {
 	onClose func()
 	// serve runs srv on another listener of this frontend (--lb-bind).
 	serve func(net.Listener)
+	// pub serves it on a Published port (published.go), at host address
+	// pubHost; nil while none is free, with pubHint saying what to
+	// publish.
+	pub              net.Listener
+	pubPort          int
+	pubHost, pubHint string
 }
 
 func (l *listener) close() {
@@ -75,6 +83,9 @@ func (l *listener) close() {
 	}
 	if l.ln != nil {
 		_ = l.ln.Close()
+	}
+	if l.pub != nil {
+		_ = l.pub.Close()
 	}
 	if l.virt != nil {
 		l.virt.Close()
@@ -164,7 +175,7 @@ func (d *dataplane) relocateLoop(ip string, port int) (net.Listener, string, err
 			continue
 		}
 		lip := "127.0.0." + strconv.Itoa(x)
-		ln, err := net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(port)))
+		ln, err := d.listenLoop(net.JoinHostPort(lip, strconv.Itoa(port)))
 		if err == nil {
 			d.loopX[ip] = x
 			return ln, lip, nil
@@ -192,7 +203,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	var ln net.Listener
 	var err error
 	if !forced {
-		ln, err = net.Listen("tcp", net.JoinHostPort(lip, strconv.Itoa(fe.port)))
+		ln, err = d.listenLoop(net.JoinHostPort(lip, strconv.Itoa(fe.port)))
 		if loopback.AddrInUse(err) && !d.single {
 			if rln, rip, rerr := d.relocateLoop(fe.ip, fe.port); rerr == nil {
 				d.s.env.Log.Warn("lb: loopback address in use by another process; moved", "forwardingRule", fe.frPath, "from", lip, "to", rip)
@@ -262,8 +273,12 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	if l.virt != nil {
 		go serve(l.virt)
 	}
-	d.s.env.Endpoints.Set("lb:"+fe.fr.Name, l.addr)
 	d.s.env.Log.Info("lb: forwarding rule listening", "forwardingRule", fe.frPath, "ip", fe.ip, "port", fe.port, "listener", l.addr, "mode", l.mode)
+	if d.publishing().on {
+		d.publish(l, fe, true)
+	} else {
+		d.s.env.Endpoints.Set("lb:"+fe.fr.Name, l.addr)
+	}
 	return l, nil
 }
 
