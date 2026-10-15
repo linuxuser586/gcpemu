@@ -35,12 +35,40 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - run: make vet
       - run: make race
       - run: make cross
+
+  # #340: the only writer of the Linux Go cache that every job restores.
+  # On main it builds each variant the jobs compile (-exec true links the
+  # test binaries without running them) and saves one entry per arch.
+  # Nothing waits for it: when it fails, the cache is a commit older.
+  go-cache:
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write # deletes the entries this one replaces
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+        id: go
+      - run: make vet
+      - run: go test -exec true ./...
+      - run: go test -exec true -race ./...
+      - run: go test -exec true -tags e2e ./e2e
+      - run: go test -exec true -tags compat ./compat
+      - run: make cross
+      - uses: ./.github/actions/go-cache-save
+        with:
+          paths: ${{ steps.go.outputs.paths }}
+          prefix: ${{ steps.go.outputs.prefix }}
 
   # ADR 0005: the VM relay path, forced on Linux, where a container
   # runtime is available (hosted macOS runners have none). Cloud NAT's
@@ -55,9 +83,7 @@ jobs:
       GCPEMU_VM_RELAY: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - run: go test -count=1 -timeout 35m ./internal/vmrelay ./internal/netplane ./services/sql ./services/compute ./services/nat ./services/lb ./services/gke
       - uses: google-github-actions/setup-gcloud@v3
         with:
@@ -110,9 +136,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: console/package.json
@@ -155,9 +179,7 @@ jobs:
       GCPEMU_NET_TESTS: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       - uses: actions/cache@v6
@@ -182,9 +204,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin,kubectl
@@ -211,9 +231,7 @@ jobs:
       GCPEMU_TOFU_PROVIDERS: ${{ matrix.provider }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       # actions/cache saves nothing after an exact key hit, so the week in
@@ -246,9 +264,7 @@ jobs:
       actions: read # the post step reads the job's result
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -272,6 +288,7 @@ jobs:
         with:
           version: v0.0.0-selftest
           download-url: http://127.0.0.1:8765
+          cache: false # #340: a new binary every commit can only miss
           services: gcs,pubsub,sql
           seed: setup-gcpemu/test/seed.yaml
           config: setup-gcpemu/test/gcpemu.yaml
@@ -291,6 +308,7 @@ jobs:
         with:
           binary: ${{ steps.emu.outputs.bin }}
           instance: second
+          cache: false
           services: pubsub
           artifact-name: gcpemu-selftest-second-${{ runner.arch }}
       - run: test "$GCPEMU_INSTANCE" = second && gcpemu status | grep -q 'instance second'
@@ -332,15 +350,21 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      actions: read # the action's post step reads the job's result
+      # the action's post step reads the job's result; go-cache-save
+      # deletes the entries it replaces
+      actions: write
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      # #340: the only job on these runners, so on main it saves the Go
+      # cache it restores. Unpacking GOMODCACHE's many small files on
+      # Windows costs more than downloading the modules.
+      - uses: ./.github/actions/setup-go
+        id: go
         with:
-          go-version-file: go.mod
+          modules: ${{ runner.os != 'Windows' }}
       - name: GNU make
         if: runner.os == 'Windows'
         run: command -v make || choco install make --no-progress -y
@@ -376,6 +400,7 @@ jobs:
         with:
           version: v0.0.0-selftest
           download-url: http://127.0.0.1:8765
+          cache: false # #340: a new binary every commit can only miss
           services: gcs,pubsub
           seed: setup-gcpemu/test/seed-in-process.yaml
           config: setup-gcpemu/test/gcpemu.yaml
@@ -386,6 +411,11 @@ jobs:
         env:
           EXPECT_BIN: ${{ steps.emu.outputs.bin }}
           EXPECT_SQL: "0"
+      - uses: ./.github/actions/go-cache-save
+        if: github.event_name == 'push'
+        with:
+          paths: ${{ steps.go.outputs.paths }}
+          prefix: ${{ steps.go.outputs.prefix }}
 
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
   # packages from competing for the CPU while they measure.
@@ -402,9 +432,7 @@ jobs:
       GCPEMU_PERF_TESTS: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
+      - uses: ./.github/actions/setup-go
       # SRS 8.1 measures with images pre-cached.
       - name: Pre-pull images
         run: |
