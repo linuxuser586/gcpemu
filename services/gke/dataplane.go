@@ -166,7 +166,7 @@ func (s *Service) labels(d *deps, key, role string) map[string]string {
 func (s *Service) provision(ctx context.Context, key string) error {
 	err := s.bringUp(ctx, key)
 	if err != nil {
-		s.markError(key, err)
+		s.markError(ctx, key, err)
 	}
 	return err
 }
@@ -177,7 +177,7 @@ func (s *Service) provision(ctx context.Context, key string) error {
 func (s *Service) restore(ctx context.Context, key string) {
 	if err := s.bringUp(ctx, key); err != nil && ctx.Err() == nil {
 		s.env.Log.Warn("gke: restoring cluster failed", "cluster", key, "err", err)
-		s.markError(key, err)
+		s.markError(ctx, key, err)
 	}
 }
 
@@ -192,9 +192,11 @@ func (s *Service) markRestoring(key string) {
 	})
 }
 
-func (s *Service) markError(key string, err error) {
-	if s.ctx.Err() != nil {
-		return // shutting down; keep the persisted status
+// markError reports a cluster's failed data-plane work, run on ctx, as
+// ERROR.
+func (s *Service) markError(ctx context.Context, key string, err error) {
+	if halted(ctx) {
+		return // reset or shutting down; keep the persisted status
 	}
 	_ = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		if c.Status == containerpb.Cluster_STOPPING {
@@ -259,7 +261,7 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 		return err
 	}
 	s.writeKubeconfig()
-	s.startControllers(key)
+	s.startControllers(ctx, key)
 	return nil
 }
 
@@ -367,6 +369,9 @@ func privateNodes(c *containerpb.Cluster, np *containerpb.NodePool) bool {
 // archive is dropped once the server is up, so later restarts keep the
 // volume.
 func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.SubnetNet, version string) error {
+	if s.beforeServerStart != nil {
+		s.beforeServerStart(ctx, key)
+	}
 	rec, err := s.loadKey(key)
 	if err != nil {
 		return err

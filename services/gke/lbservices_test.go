@@ -38,7 +38,7 @@ func newUnitService(t *testing.T) *Service {
 	cfg := config.Defaults()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
-		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()}).(*Service)
+		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints(), DataDir: t.TempDir()}).(*Service)
 }
 
 // A LoadBalancer Service's loopback address skips those forwarding rules,
