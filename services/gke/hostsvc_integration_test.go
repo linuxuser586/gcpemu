@@ -98,9 +98,16 @@ func testHostServices(t *testing.T, e, priv *env) {
 			Clusters []string
 		}
 	}
+	// Every cluster's built-in Services (kubernetes.default, kube-dns)
+	// collide too.
 	eventually(t, 30*time.Second, "the collision listed", func() bool {
 		gw(t, e.inst, "GET", "/_emu/v1/host/services", nil, &report)
-		return len(report.Collisions) == 1 && report.Collisions[0].Name == strings.TrimSuffix(short, ".") && len(report.Collisions[0].Clusters) == 2
+		for _, c := range report.Collisions {
+			if c.Name == strings.TrimSuffix(short, ".") {
+				return len(c.Clusters) == 2
+			}
+		}
+		return false
 	})
 	priv.mustKube("DELETE", "/api/v1/namespaces/default/services/web-host", nil, nil)
 	eventually(t, 10*time.Second, short+" resolving again", func() bool {
