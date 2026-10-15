@@ -21,6 +21,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/instance"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 const allManifests = "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, " +
@@ -304,6 +305,9 @@ func TestMirrorCacheSnapshot(t *testing.T) {
 	e := start(t)
 	base := "http://" + e.registry()
 	pullAll(t, base, "library/app", "v1", up.host(), cached)
+	// A blob is linked in the cache only after it was streamed to the
+	// client, so wait for the links before saving.
+	waitLinked(t, e, "library/app", cached)
 	if _, err := e.inst.SaveSnapshot(e.ctx, "s"); err != nil {
 		t.Fatal(err)
 	}
@@ -325,4 +329,41 @@ func TestMirrorCacheSnapshot(t *testing.T) {
 	}
 	up.down.Store(true)
 	pullAll(t, base, "library/app", "v1", up.host(), cached)
+}
+
+// waitLinked waits until the mirror cache's Store entries link every blob
+// of img.
+func waitLinked(t *testing.T, e *env, repo string, img v1.Image) {
+	t.Helper()
+	cfg, _ := img.ConfigName()
+	digests := []string{cfg.String()}
+	layers, _ := img.Layers()
+	for _, l := range layers {
+		d, _ := l.Digest()
+		digests = append(digests, d.String())
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		linked := map[string]bool{}
+		_ = e.inst.Env.Store.View(func(tx store.Tx) error {
+			tx.Scan("ar/links", "_mirror/", func(k string, _ []byte) bool {
+				if p := strings.SplitN(k, "|", 3); len(p) == 3 && p[1] == repo {
+					linked[p[2]] = true
+				}
+				return true
+			})
+			return nil
+		})
+		missing := 0
+		for _, d := range digests {
+			if !linked[d] {
+				missing++
+			}
+		}
+		if missing == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d blobs of %s still not linked in the mirror cache", missing, repo)
+		}
+	}
 }
