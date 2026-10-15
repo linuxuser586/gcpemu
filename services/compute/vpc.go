@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"slices"
 	"strconv"
 	"strings"
 
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -370,7 +373,7 @@ func (s *Service) createBridge(ctx context.Context, rt *runtime.Manager, name, r
 		picked, err = s.pickFreeRange(ctx, rt, name, c, labels, try)
 		if err == nil {
 			s.env.Log.Warn("compute: VPC range overlaps another network on this host; using a different range for the container network",
-				"network", name, "range", c.String(), "effective", picked)
+				"network", name, "range", c.String(), "effective", picked, "heldBy", s.describeOverlap(ctx, rt, name, c))
 		}
 	}
 	if err != nil && !isExists(err) {
@@ -416,6 +419,50 @@ func (s *Service) pickFreeRange(ctx context.Context, rt *runtime.Manager, name s
 		}
 	}
 	return "", fmt.Errorf("no free address range for %s", name)
+}
+
+// describeOverlap looks up the host network that made want fall back, so
+// that a network left by an Abandoned Instance ID is easy to find (#191).
+// Nothing is pruned.
+func (s *Service) describeOverlap(ctx context.Context, rt *runtime.Manager, self string, want cidr) string {
+	nets, err := rt.ListNetworks(ctx, nil)
+	if err != nil {
+		return ""
+	}
+	return overlapHolder(nets, want, self, func(id string) (bool, bool) {
+		found, err := instance.FindAbandoned(ctx, rt.Client, config.StateHome())
+		if err != nil {
+			return false, false
+		}
+		i := slices.IndexFunc(found, func(a instance.Abandoned) bool { return a.ID == id })
+		return i >= 0, i >= 0 && found[i].Unverified
+	})
+}
+
+// overlapHolder names the network among nets, other than self, whose
+// subnet overlaps want, for the Fallback-range warning (#212). status
+// reports whether an Instance ID is Abandoned, and whether that is
+// unverified (instance.Abandoned).
+func overlapHolder(nets []runtime.Network, want cidr, self string, status func(id string) (abandoned, unverified bool)) string {
+	for _, n := range nets {
+		c, err := parseCIDR(n.Subnet, false)
+		if n.Name == self || err != nil || !c.overlaps(want) {
+			continue
+		}
+		s := want.String() + " is held by network " + n.Name
+		id := n.Labels[runtime.LabelInstance]
+		if id == "" {
+			return s
+		}
+		switch abandoned, unverified := status(id); {
+		case unverified:
+			return s + " of Instance ID " + id + ", which may be Abandoned (unverified: an instance started with --data-dir elsewhere may still own it); run `gcpemu prune` to check"
+		case abandoned:
+			return s + " of Abandoned Instance ID " + id + "; run `gcpemu prune`"
+		}
+		return s + " of Instance ID " + id
+	}
+	return "no runtime network holds " + want.String() + "; a host route or VPN may"
 }
 
 func isOverlap(err error) bool {
