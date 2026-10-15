@@ -131,6 +131,17 @@ type Service struct {
 	// is never held while calling another Service.
 	loopMu sync.Mutex
 	loops  map[string]string
+	// hostMu guards the Services served to host clients at Loopback
+	// aliases (hostsvc.go): hostSvcs by CLUSTERKEY/NAMESPACE/NAME,
+	// hostNames each cluster's answered Services by namespace/name,
+	// hostWarned the short names whose collision was logged, and hostFail
+	// why a Service found by a host query has no alias. hostMu is taken
+	// before loopMu.
+	hostMu     sync.Mutex
+	hostSvcs   map[string]*hostSvc
+	hostNames  map[string]map[string]bool
+	hostWarned map[string]bool
+	hostFail   map[string]error
 }
 
 // New returns the service.
@@ -143,6 +154,7 @@ func New(env *emu.Env) emu.Service {
 		opCancel: map[string]context.CancelFunc{},
 		loops:    map[string]string{},
 	}
+	s.resetHost()
 	s.api = &api{s: s}
 	s.bg = newBackground()
 	return s
@@ -230,6 +242,7 @@ func (s *Service) Register(r emu.Router) error {
 	containerpb.RegisterClusterManagerServer(r.GRPC(), s.api)
 	r.Mount("container", []string{apiHost}, s.restHandler())
 	r.Mount("connectgateway", []string{connectGatewayHost}, http.HandlerFunc(s.serveConnectGateway))
+	r.Handle("GET /_emu/v1/host/services", http.HandlerFunc(s.serveHostServices))
 	s.registerInstanceGroups()
 	return nil
 }
@@ -240,6 +253,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	s.started = true
 	s.mu.Unlock()
+	s.installHostNames()
 	s.recoverClusters()
 	return nil
 }
@@ -339,6 +353,7 @@ func (s *Service) Reset(ctx context.Context) error {
 	s.byID = map[string]string{}
 	s.busy = map[string]string{}
 	s.mu.Unlock()
+	s.resetHost()
 	return errors.Join(errs...)
 }
 

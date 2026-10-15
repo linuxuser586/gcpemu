@@ -945,6 +945,8 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 		Runtime:     d.rt.Info.String(),
 		MirrorHosts: arRegistryHosts(),
 		Network:     c.GetNetworkConfig().GetNetwork(),
+		Secret:      rec.Int.Secret,
+		ServiceCIDR: rec.Int.ServiceCIDR,
 	}
 	if dns, err := d.np.Addr(ctx, "dns"); err == nil {
 		cfg.DNS = dns
@@ -1331,6 +1333,7 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 	delete(s.clusters, key)
 	delete(s.byID, id)
 	s.mu.Unlock()
+	s.forgetHostCluster(key)
 	s.writeKubeconfig()
 	if p, _ := s.stagedDatastore(id); p != "" {
 		_ = os.Remove(p)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"net"
 	"slices"
 	"sort"
@@ -400,7 +401,8 @@ func (s *Service) nodePorts(key string, port int) func() []string {
 // loopCandidates lists the 127.0.0.x addresses to try for a Service, in
 // order: prev, then x = hash of its name onwards (x in 2-254), skipping
 // those that other Services, forwarding rules and Cloud SQL instances
-// hold.
+// hold. A Service served to host clients (hostsvc.go) is named
+// hostLoopPrefix+CLUSTERKEY/NAMESPACE/NAME, and holds its stored alias.
 func (s *Service) loopCandidates(name, prev string) []string {
 	used := map[string]bool{}
 	for _, peer := range []string{"lb", "sql"} {
@@ -410,6 +412,11 @@ func (s *Service) loopCandidates(name, prev string) []string {
 					used[a] = true
 				}
 			}
+		}
+	}
+	for id, a := range s.hostRecords("") {
+		if hostLoopPrefix+id != name {
+			used[a] = true
 		}
 	}
 	s.loopMu.Lock()
@@ -436,20 +443,22 @@ func (s *Service) loopCandidates(name, prev string) []string {
 }
 
 // LoopbackAddrs implements emu.LoopbackHolder: the 127.0.0.x addresses
-// LoadBalancer Services hold. It takes only loopMu, which is never held
-// while calling another Service, so peers may call it holding their own
-// locks.
+// LoadBalancer Services and Services served to host clients hold. It
+// takes only loopMu, which is never held while calling another Service,
+// and reads the store, so peers may call it holding their own locks.
 func (s *Service) LoopbackAddrs() []string {
+	held := map[string]bool{}
+	for _, a := range s.hostRecords("") {
+		held[a] = true
+	}
 	s.loopMu.Lock()
-	defer s.loopMu.Unlock()
-	out := make([]string, 0, len(s.loops))
 	for _, a := range s.loops {
 		if a != loopback.Host {
-			out = append(out, a)
+			held[a] = true
 		}
 	}
-	sort.Strings(out)
-	return out
+	s.loopMu.Unlock()
+	return slices.Sorted(maps.Keys(held))
 }
 
 // lbEnvVars returns GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT> for

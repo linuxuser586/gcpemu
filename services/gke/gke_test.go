@@ -404,6 +404,15 @@ func TestGKE(t *testing.T) {
 		testPrivateEgress(t, inst, cm)
 	})
 
+	t.Run("HostServices", func(t *testing.T) {
+		pc, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: parent + "/clusters/priv"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		padm, ppool := adminClient(t, inst, parent+"/clusters/priv")
+		testHostServices(t, e, &env{t: t, inst: inst, cm: cm, c: pc, ca: ppool, adm: padm})
+	})
+
 	t.Run("Resize", func(t *testing.T) {
 		op, err := cm.SetNodePoolSize(ctx, &containerpb.SetNodePoolSizeRequest{Name: parent + "/clusters/c1/nodePools/pool-a", NodeCount: 2})
 		if err != nil {

@@ -150,7 +150,8 @@ func TestCheckLoopback(t *testing.T) {
 	}
 	b.Reset()
 	checkLoopback(&b, false)
-	if !strings.HasPrefix(b.String(), "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `sudo gcpemu loopback install` lets more than one Cloud SQL instance run") {
+	if !strings.HasPrefix(b.String(), "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `sudo gcpemu loopback install` lets more than one Cloud SQL instance run") ||
+		!strings.Contains(b.String(), "Kubernetes Services") {
 		t.Errorf("missing: %q", b.String())
 	}
 }

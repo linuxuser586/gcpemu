@@ -41,6 +41,8 @@ type Service struct {
 
 	// mapper rewrites A record addresses (SetAddressMapper).
 	mapper atomic.Pointer[func(net.IP, string) net.IP]
+	// hostNames answers host queries for the names it owns (SetHostNames).
+	hostNames atomic.Pointer[hostNamer]
 
 	mu      sync.Mutex
 	udp     *mdns.Server

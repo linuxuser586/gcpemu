@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -119,4 +122,79 @@ func (o *rootOpts) hostAddressCmd() *cobra.Command {
 	}
 	subnetworkFlag(cmd, &subnetwork)
 	return cmd
+}
+
+// The outward half of the Host attachment (ADR 0014): host clients reach
+// GKE clusters' Kubernetes Services by name at Loopback aliases.
+
+// hostServices is /_emu/v1/host/services.
+type hostServices struct {
+	Services []struct {
+		Cluster   string `json:"cluster"`
+		Namespace string `json:"namespace"`
+		Service   string `json:"service"`
+		Name      string `json:"name"`
+		ShortName string `json:"shortName"`
+		Address   string `json:"address"`
+		Ports     []int  `json:"ports"`
+	} `json:"services"`
+	Collisions []struct {
+		Name     string   `json:"name"`
+		Clusters []string `json:"clusters"`
+	} `json:"collisions"`
+	Unserved []struct {
+		Cluster   string `json:"cluster"`
+		Namespace string `json:"namespace"`
+		Service   string `json:"service"`
+		Reason    string `json:"reason"`
+	} `json:"unserved"`
+	PoolExhausted bool `json:"poolExhausted"`
+}
+
+// printHostServices lists, for `gcpemu status`, the Services that hold
+// Loopback aliases: each one's names, alias and served ports.
+func printHostServices(out io.Writer, body []byte) {
+	var hs hostServices
+	if json.Unmarshal(body, &hs) != nil || len(hs.Services) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "kubernetes services for host clients:")
+	for _, s := range hs.Services {
+		name := s.Name
+		if s.ShortName != "" {
+			name += " (" + s.ShortName + ")"
+		}
+		ports := make([]string, 0, len(s.Ports))
+		for _, p := range s.Ports {
+			ports = append(ports, strconv.Itoa(p))
+		}
+		if len(ports) == 0 {
+			fmt.Fprintf(out, "  %s at %s\n", name, s.Address)
+			continue
+		}
+		fmt.Fprintf(out, "  %s at %s: %s\n", name, s.Address, strings.Join(ports, " "))
+	}
+}
+
+// reportHostServices prints, for `gcpemu doctor`, the short Service names
+// that do not resolve because more than one cluster has them, an exhausted
+// alias pool and the Services left without an alias.
+func reportHostServices(out io.Writer, body []byte) {
+	var hs hostServices
+	if json.Unmarshal(body, &hs) != nil {
+		return
+	}
+	for _, c := range hs.Collisions {
+		svc, _, _ := strings.Cut(strings.TrimSuffix(c.Name, ".svc.cluster.local"), ".")
+		ns := strings.TrimPrefix(strings.TrimSuffix(c.Name, ".svc.cluster.local"), svc+".")
+		fmt.Fprintf(out, "[WARN] %s names a Kubernetes Service in %s, so it does not resolve for host clients\n", c.Name, strings.Join(c.Clusters, " and "))
+		fmt.Fprintf(out, "       fix: use the gke.internal names, e.g. %s.%s.svc.<cluster>.<location>.<project>.gke.internal\n", svc, ns)
+	}
+	if hs.PoolExhausted {
+		fmt.Fprintln(out, "[WARN] Loopback aliases 127.0.0.2-127.0.0.254 are all held, so new Kubernetes Services get SERVFAIL for host clients")
+		fmt.Fprintln(out, "       fix: delete the Cloud SQL instances, forwarding rules or Kubernetes Services you no longer use")
+	}
+	for _, u := range hs.Unserved {
+		fmt.Fprintf(out, "[WARN] Kubernetes Service %s/%s of %s has no Loopback alias: %s\n", u.Namespace, u.Service, u.Cluster, u.Reason)
+	}
 }
