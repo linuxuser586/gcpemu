@@ -35,6 +35,9 @@ func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw st
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := rt.EnsureImage(ctx, probeImage, false); err != nil {
+		t.Fatal(err)
+	}
 	a := runtime.Attachment{Network: net.Name, IP: ip}
 	if net.Translated {
 		a.IP = ""
