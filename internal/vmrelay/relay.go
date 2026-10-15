@@ -280,6 +280,33 @@ func (r *Relay) Listen(ctx context.Context, name, addr string, withUDP bool) (st
 	return c.reply, nil
 }
 
+// Offer has the relay listen on exactly addr, over UDP when udp and TCP
+// otherwise, for the named emulator endpoint: an Offered port (ADR 0014).
+// Unlike Listen it fails when the port is taken. It is idempotent per
+// name.
+func (r *Relay) Offer(ctx context.Context, name, addr string, udp bool) error {
+	proto := "tcp"
+	if udp {
+		proto = "udp"
+	}
+	c, err := r.open(ctx, "offer", name, addr, proto)
+	if err != nil {
+		return err
+	}
+	c.Close()
+	return nil
+}
+
+// Withdraw has the relay stop listening for the named endpoint.
+func (r *Relay) Withdraw(ctx context.Context, name string) error {
+	c, err := r.open(ctx, "withdraw", name)
+	if err != nil {
+		return err
+	}
+	c.Close()
+	return nil
+}
+
 // replyConn is an open stream with the argument of its "OK" reply.
 type replyConn struct {
 	*bufConn

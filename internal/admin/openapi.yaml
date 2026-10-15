@@ -852,6 +852,100 @@ paths:
           description: The instance has no CA (Google JSON error envelope).
         "500":
           description: Rotation failed (Google JSON error envelope).
+  /_emu/v1/host/address:
+    get:
+      summary: The Host address of a subnetwork (compute service; `gcpemu host-address`, ADR 0014).
+      operationId: hostAddress
+      description: >-
+        The address at which the workloads on the subnetwork's VPC container
+        network reach the host: the network's gateway where the host routes
+        to it, and an address the VM relay holds on a VM runtime. It stays
+        the same for the life of a Persistent Instance. Asking realises the
+        container network, and starts the VM relay, when they are not yet.
+      parameters:
+        - $ref: "#/components/parameters/Subnetwork"
+      responses:
+        "200":
+          description: The subnetwork's Host address and Offered ports.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostOffers" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/host/offers:
+    get:
+      summary: The Offered ports (compute service; `gcpemu status`, Web console VPC network view).
+      operationId: listHostOffers
+      parameters:
+        - name: subnetwork
+          in: query
+          description: Only this subnetwork's (projects/P/regions/R/subnetworks/S).
+          schema: { type: string }
+      responses:
+        "200":
+          description: The subnetworks with Offered ports.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subnetworks]
+                properties:
+                  subnetworks:
+                    type: array
+                    items: { $ref: "#/components/schemas/HostOffers" }
+    post:
+      summary: Offer host ports to a subnetwork's workloads (`gcpemu offer`, ADR 0014).
+      operationId: createHostOffers
+      description: >-
+        Each port at the Host address forwards to the same port on the
+        host's 127.0.0.1, over TCP, or UDP with "/udp". All the ports are
+        offered or none is. Where the host routes to the network, a port
+        that a host process holds on the wildcard address cannot be offered,
+        and the error names that bind. Ports stay offered until they are
+        withdrawn, across restarts of a Persistent Instance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subnetwork, ports]
+              properties:
+                subnetwork: { type: string, description: "projects/P/regions/R/subnetworks/S" }
+                ports:
+                  type: array
+                  items: { type: string, description: '"8080", "8080/tcp" or "53/udp"' }
+      responses:
+        "200":
+          description: The subnetwork's Host address and Offered ports.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostOffers" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Withdraw Offered ports (`gcpemu withdraw`, ADR 0014).
+      operationId: deleteHostOffers
+      description: Ports that are not offered are ignored. Connections already forwarded run on.
+      parameters:
+        - $ref: "#/components/parameters/Subnetwork"
+        - name: port
+          in: query
+          required: true
+          description: '"8080", "8080/tcp" or "53/udp"; repeated for several.'
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: The subnetwork's Host address and remaining Offered ports.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HostOffers" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 components:
   securitySchemes:
     adminTokenHeader:
@@ -864,6 +958,13 @@ components:
       in: cookie
       name: gcpemu_admin
       description: The admin token as set by opening the console URL printed at startup.
+  parameters:
+    Subnetwork:
+      name: subnetwork
+      in: query
+      required: true
+      description: The subnetwork, as projects/P/regions/R/subnetworks/S.
+      schema: { type: string }
   responses:
     Status:
       description: The operation succeeded.
@@ -1020,6 +1121,20 @@ components:
         deadLettered:
           type: integer
           description: Messages forwarded to the dead-letter topic since the Instance started.
+    HostOffers:
+      type: object
+      required: [subnetwork, hostAddress, offers]
+      properties:
+        subnetwork: { type: string }
+        hostAddress: { type: string }
+        offers:
+          type: array
+          items:
+            type: object
+            required: [port, protocol]
+            properties:
+              port: { type: integer }
+              protocol: { type: string, enum: [tcp, udp] }
     CdnBackend:
       type: object
       required: [backend, entries, bytes, hits, misses, revalidated, uncacheable]

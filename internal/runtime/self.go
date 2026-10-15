@@ -77,7 +77,7 @@ func (c *Client) AttachSelf(ctx context.Context, network string) error {
 	if c.self == "" {
 		return nil
 	}
-	_, err := c.attach(ctx, network, c.self, true)
+	_, err := c.attach(ctx, network, c.self, true, "")
 	return err
 }
 
@@ -92,21 +92,38 @@ func (c *Client) SetMember(container string, joined func(n Network, in bool)) {
 	c.member, c.joined = container, joined
 }
 
+// SetMemberAddr has the member container take, on each network it joins
+// without reserved, the address addr returns for that network while it
+// is free, and else chooses as without a pin; "" leaves the choice to
+// AttachMember. The VM relay holds the
+// Host address of a VPC container network this way, which must not move
+// when the relay or the Instance restarts (ADR 0014).
+func (c *Client) SetMemberAddr(addr func(network string) string) {
+	c.memberMu.Lock()
+	defer c.memberMu.Unlock()
+	c.memberAddr = addr
+}
+
 // AttachMember connects the member container (SetMember) to network; it is
 // a no-op without a member and when already connected. With reserved, it
 // takes the subnet's second-to-last address as AttachSelf does. Without,
-// it takes the highest free address below that one: on a VPC subnetwork
-// the second-to-last address is the egress gateway's, and compute hands
-// out addresses from the bottom, possibly before their containers start,
-// and none that a container holds (#146).
+// it takes its pinned address (SetMemberAddr), or else the highest free
+// address below the second-to-last one: on a VPC subnetwork the
+// second-to-last address is the egress gateway's, and compute hands out
+// addresses from the bottom, possibly before their containers start, and
+// none that a container holds (#146).
 func (c *Client) AttachMember(ctx context.Context, network string, reserved bool) error {
 	c.memberMu.Lock()
-	member, joined := c.member, c.joined
+	member, joined, addr := c.member, c.joined, c.memberAddr
 	c.memberMu.Unlock()
 	if member == "" {
 		return nil
 	}
-	n, err := c.attach(ctx, network, member, reserved)
+	pinned := ""
+	if addr != nil && !reserved {
+		pinned = addr(network)
+	}
+	n, err := c.attach(ctx, network, member, reserved, pinned)
 	if err != nil {
 		return err
 	}
@@ -117,15 +134,26 @@ func (c *Client) AttachMember(ctx context.Context, network string, reserved bool
 // attach connects container to network, with reserved at the subnet's
 // second-to-last address when it is free: GCP reserves that address, so
 // no resource the emulator places on a VPC subnetwork can take it.
-func (c *Client) attach(ctx context.Context, network, container string, reserved bool) (Network, error) {
+// Otherwise it asks for pinned, or the highest free address without one.
+func (c *Client) attach(ctx context.Context, network, container string, reserved bool, pinned string) (Network, error) {
 	n, ierr := c.InspectNetwork(ctx, network)
 	ip := ""
-	if ierr == nil && reserved {
+	switch {
+	case ierr != nil:
+	case reserved:
 		ip = secondToLast(n.Subnet)
-	} else if ierr == nil {
+	case pinned != "":
+		ip = pinned
+	default:
 		ip = c.highestFree(ctx, n)
 	}
 	err := c.Connect(ctx, network, container, ip)
+	if err != nil && pinned != "" && ip == pinned && !alreadyConnected(err) {
+		// Taken, or outside a recreated network's subnet: as unpinned.
+		if ip = c.highestFree(ctx, n); ip != "" {
+			err = c.Connect(ctx, network, container, ip)
+		}
+	}
 	if err != nil && ip != "" && !alreadyConnected(err) {
 		err = c.Connect(ctx, network, container, "")
 	}

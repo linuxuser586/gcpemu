@@ -22,6 +22,10 @@ import (
 //	  dial <network> <ip:port>  → "OK" or "ERR <reason>", then the connection
 //	  listen <name> <ip:port> <tcp|udp>
 //	                            → "OK <addr>" or "ERR <reason>"
+//	  offer <name> <ip:port> <tcp|udp>
+//	                            → "OK" or "ERR <reason>": listen on exactly
+//	                              that address, for an Offered port
+//	  withdraw <name>           → "OK": stop listening for name
 //	relay → emulator
 //	  tcp <name>                  a connection to the named emulator endpoint
 //	  udp <name>                  framed datagrams: one query, then its answers

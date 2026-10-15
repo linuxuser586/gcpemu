@@ -597,6 +597,35 @@ func (s *Service) ReleaseIP(ctx context.Context, net emu.SubnetNet, owner string
 	return err
 }
 
+// reserveIP moves owner's allocation on net to ip, which it takes only
+// when it lies in net's allocation range and no one else holds it; ""
+// releases it. Callers hold vpcMu.
+func reserveIP(tx store.Tx, net emu.SubnetNet, owner, ip string) error {
+	if old, ok := tx.Get(nsIPAlloc, net.Name+"/owner/"+owner); ok {
+		if string(old) == ip {
+			return nil
+		}
+		if err := tx.Delete(nsIPAlloc, net.Name+"/ip/"+string(old)); err != nil {
+			return err
+		}
+		if err := tx.Delete(nsIPAlloc, net.Name+"/owner/"+owner); err != nil {
+			return err
+		}
+	}
+	v, ok := parseIP(ip)
+	c, err := parseCIDR(net.Subnet, false)
+	if !ok || err != nil || !c.contains(v) {
+		return nil
+	}
+	if _, taken := tx.Get(nsIPAlloc, net.Name+"/ip/"+ip); taken {
+		return nil
+	}
+	if err := tx.Put(nsIPAlloc, net.Name+"/ip/"+ip, []byte(owner)); err != nil {
+		return err
+	}
+	return tx.Put(nsIPAlloc, net.Name+"/owner/"+owner, []byte(ip))
+}
+
 func allocatedIPs(tx store.Tx, name string) map[uint32]bool {
 	out := map[uint32]bool{}
 	tx.Scan(nsIPAlloc, name+"/ip/", func(k string, _ []byte) bool {
@@ -631,8 +660,13 @@ func firstOwner(tx store.Tx, name string) string {
 // its egress gateway. It never initialises the runtime itself.
 func (s *Service) releaseNetworkRuntime(ctx context.Context, np string, keys []string) {
 	var states []*vpcNet
+	var hosts []*hostAttachment
 	_ = s.env.Store.Update(func(tx store.Tx) error {
 		for _, k := range keys {
+			if a, ok := get[hostAttachment](tx, nsHostAttach, k); ok {
+				hosts = append(hosts, a)
+				_ = tx.Delete(nsHostAttach, k)
+			}
 			if st, ok := get[vpcNet](tx, nsVPCNets, k); ok {
 				states = append(states, st)
 				_ = tx.Delete(nsVPCNets, k)
@@ -651,6 +685,7 @@ func (s *Service) releaseNetworkRuntime(ctx context.Context, np string, keys []s
 		}
 		return nil
 	})
+	s.withdrawAll(ctx, hosts)
 	if np != "" {
 		s.removeGateway(ctx, np)
 	}

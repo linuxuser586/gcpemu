@@ -146,6 +146,7 @@ import { CreateUser, EditUser, Users } from '@/features/sql/Users'
 import { snapshotsQuery } from '@/features/state/api'
 import { SaveSnapshot } from '@/features/state/SaveSnapshot'
 import { State } from '@/features/state/State'
+import { VpcPage } from '@/features/vpc/VpcPage'
 
 export const BASENAME = '/console'
 
@@ -270,6 +271,14 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'nat',
           element: <NatLayout />,
           children: natRoutes(queryClient),
+        },
+        {
+          path: 'compute',
+          element: <VpcPage />,
+          loader: async () => {
+            await Promise.allSettled([queryClient.ensureQueryData(resourceCountsQuery())])
+            return null
+          },
         },
         {
           path: ':service/*',

@@ -306,6 +306,25 @@ them with the forwarding rule's own IP (host clients still get the local listene
 them to it directly, and the backend sees the node's address; private nodes go through Cloud
 NAT, so they need one, and the backend sees the NAT's address (ADR 0007).
 
+### VPC workloads reaching the host
+
+A process on the host can stand in for a pod (ADR 0014): offer its port, and workloads on a
+subnetwork reach it at the subnetwork's Host address, which forwards to `127.0.0.1` on the host.
+The process only needs to listen on loopback.
+
+```sh
+gcpemu offer 8080 53/udp --subnetwork projects/my-project/regions/us-central1/subnetworks/default
+# prints the Host address, e.g. 10.128.0.1: point an EndpointSlice at 10.128.0.1:8080
+gcpemu host-address --subnetwork projects/my-project/regions/us-central1/subnetworks/default
+gcpemu withdraw 8080 --subnetwork projects/my-project/regions/us-central1/subnetworks/default
+```
+
+Where the host routes to the network (Linux), the Host address is the network's gateway and the
+emulator binds the offered port there, so offering a port that a process holds on `0.0.0.0` or
+`[::]` fails: have it listen on `127.0.0.1` instead. On a VM runtime the VM relay holds the
+address. Ports that aren't offered aren't reachable. The Host address and the offers survive
+`gcpemu stop` and `start` of an Instance with a data dir, and `gcpemu status` lists them.
+
 ### Real hostnames: GKE pods and host mode
 
 The emulator includes a Google front end (Service endpoint `frontend`, a dynamic port unless you

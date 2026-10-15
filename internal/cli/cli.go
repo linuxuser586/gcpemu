@@ -83,6 +83,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.snapshotCmd(), o.exportCmd(), o.tofuProviderCmd(), o.doctorCmd(), o.pruneCmd(),
 		o.cdnCmd(), o.consoleCmd())
 	root.AddCommand(o.hostsCmd())
+	root.AddCommand(o.offerCmd(), o.withdrawCmd(), o.hostAddressCmd())
 	root.AddCommand(o.caCmd())
 	root.AddCommand(loopbackCmd(goruntime.GOOS))
 	root.AddCommand(o.adminCmd())
@@ -446,8 +447,13 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			if err != nil {
 				cts = []byte(`{"containers":[]}`)
 			}
+			// Absent without compute.
+			offers, err := c.get("/_emu/v1/host/offers")
+			if err != nil {
+				offers = []byte(`{"subnetworks":[]}`)
+			}
 			if asJSON {
-				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s}\n", info, ready, cts)
+				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s}\n", info, ready, cts, offers)
 				return notReady()
 			}
 			var i struct {
@@ -483,6 +489,14 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			fmt.Fprintf(out, "containers: %d\n", len(ct.Containers))
 			for _, x := range ct.Containers {
 				fmt.Fprintf(out, "  %-8s %-24s %-8s %s (%s)\n", x.Service, x.Resource, x.Role, x.Name, x.State)
+			}
+			var ho struct{ Subnetworks []hostOffers }
+			_ = json.Unmarshal(offers, &ho)
+			if len(ho.Subnetworks) > 0 {
+				fmt.Fprintln(out, "offered ports:")
+				for _, h := range ho.Subnetworks {
+					fmt.Fprintf(out, "  %s at %s: %s\n", h.Subnetwork, h.HostAddress, strings.Join(h.ports(), " "))
+				}
 			}
 			return notReady()
 		},

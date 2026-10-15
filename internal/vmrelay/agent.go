@@ -43,11 +43,16 @@ func runAgent(ctx context.Context, _ []string) error {
 type relayAgent struct {
 	mu        sync.Mutex
 	sess      *yamux.Session
-	listeners map[string]string // endpoint name → listening address
-	closers   []func()
+	listeners map[string]*agentListener // endpoint name → its listener
 }
 
-func newRelayAgent() *relayAgent { return &relayAgent{listeners: map[string]string{}} }
+// agentListener is what the agent listens on for one endpoint.
+type agentListener struct {
+	addr  string
+	close func()
+}
+
+func newRelayAgent() *relayAgent { return &relayAgent{listeners: map[string]*agentListener{}} }
 
 // serve accepts control connections until l closes. A new connection
 // replaces the current one: the emulator reconnects after a drop.
@@ -80,10 +85,10 @@ func (a *relayAgent) close() {
 	if a.sess != nil {
 		a.sess.Close()
 	}
-	for _, c := range a.closers {
-		c()
+	for name, l := range a.listeners {
+		l.close()
+		delete(a.listeners, name)
 	}
-	a.closers = nil
 }
 
 func (a *relayAgent) accept(s *yamux.Session) {
@@ -131,6 +136,17 @@ func (a *relayAgent) handle(st net.Conn) {
 			_ = writeLine(c, "OK", addr)
 		}
 		c.Close()
+	case len(f) == 4 && f[0] == "offer":
+		if err := a.offer(f[1], f[2], f[3] == "udp"); err != nil {
+			_ = writeLine(c, "ERR", err.Error())
+		} else {
+			_ = writeLine(c, "OK")
+		}
+		c.Close()
+	case len(f) == 2 && f[0] == "withdraw":
+		a.withdraw(f[1])
+		_ = writeLine(c, "OK")
+		c.Close()
 	default:
 		_ = writeLine(c, "ERR", fmt.Sprintf("unknown request %q", line))
 		c.Close()
@@ -150,7 +166,7 @@ func (a *relayAgent) listen(name, addr string, withUDP bool) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if got, ok := a.listeners[name]; ok {
-		return got, nil
+		return got.addr, nil
 	}
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -173,13 +189,54 @@ func (a *relayAgent) listen(name, addr string, withUDP bool) (string, error) {
 	}
 	got := l.Addr().String()
 	if pc != nil {
-		a.closers = append(a.closers, func() { pc.Close() })
 		go a.serveUDP(name, pc)
 	}
-	a.closers = append(a.closers, func() { l.Close() })
-	a.listeners[name] = got
+	a.listeners[name] = &agentListener{addr: got, close: func() {
+		l.Close()
+		if pc != nil {
+			pc.Close()
+		}
+	}}
 	go a.serveTCP(name, l)
 	return got, nil
+}
+
+// offer binds exactly addr for the named endpoint, over TCP or UDP, and
+// relays what arrives to the emulator: an Offered port (ADR 0014), which
+// must not move. It is idempotent per name.
+func (a *relayAgent) offer(name, addr string, udp bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.listeners[name]; ok {
+		return nil
+	}
+	if udp {
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			return err
+		}
+		a.listeners[name] = &agentListener{addr: addr, close: func() { pc.Close() }}
+		go a.serveUDP(name, pc)
+		return nil
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	a.listeners[name] = &agentListener{addr: addr, close: func() { l.Close() }}
+	go a.serveTCP(name, l)
+	return nil
+}
+
+// withdraw stops listening for the named endpoint; connections already
+// relayed run on.
+func (a *relayAgent) withdraw(name string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if l, ok := a.listeners[name]; ok {
+		l.close()
+		delete(a.listeners, name)
+	}
 }
 
 // udpPairAttempts bounds the kernel-picked ports listen tries for a TCP

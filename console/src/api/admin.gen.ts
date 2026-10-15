@@ -700,6 +700,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/host/address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Host address of a subnetwork (compute service; `gcpemu host-address`, ADR 0014).
+         * @description The address at which the workloads on the subnetwork's VPC container network reach the host: the network's gateway where the host routes to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance. Asking realises the container network, and starts the VM relay, when they are not yet.
+         */
+        get: operations["hostAddress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/host/offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Offered ports (compute service; `gcpemu status`, Web console VPC network view). */
+        get: operations["listHostOffers"];
+        put?: never;
+        /**
+         * Offer host ports to a subnetwork's workloads (`gcpemu offer`, ADR 0014).
+         * @description Each port at the Host address forwards to the same port on the host's 127.0.0.1, over TCP, or UDP with "/udp". All the ports are offered or none is. Where the host routes to the network, a port that a host process holds on the wildcard address cannot be offered, and the error names that bind. Ports stay offered until they are withdrawn, across restarts of a Persistent Instance.
+         */
+        post: operations["createHostOffers"];
+        /**
+         * Withdraw Offered ports (`gcpemu withdraw`, ADR 0014).
+         * @description Ports that are not offered are ignored. Connections already forwarded run on.
+         */
+        delete: operations["deleteHostOffers"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -842,6 +887,15 @@ export interface components {
             oldestUnackedPublishTime?: string;
             /** @description Messages forwarded to the dead-letter topic since the Instance started. */
             deadLettered: number;
+        };
+        HostOffers: {
+            subnetwork: string;
+            hostAddress: string;
+            offers: {
+                port: number;
+                /** @enum {string} */
+                protocol: "tcp" | "udp";
+            }[];
         };
         CdnBackend: {
             /** @description The backend service or bucket's resource path. */
@@ -1162,7 +1216,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description The subnetwork, as projects/P/regions/R/subnetworks/S. */
+        Subnetwork: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -2191,6 +2248,113 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    hostAddress: {
+        parameters: {
+            query: {
+                /** @description The subnetwork, as projects/P/regions/R/subnetworks/S. */
+                subnetwork: components["parameters"]["Subnetwork"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The subnetwork's Host address and Offered ports. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostOffers"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listHostOffers: {
+        parameters: {
+            query?: {
+                /** @description Only this subnetwork's (projects/P/regions/R/subnetworks/S). */
+                subnetwork?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The subnetworks with Offered ports. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        subnetworks: components["schemas"]["HostOffers"][];
+                    };
+                };
+            };
+        };
+    };
+    createHostOffers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description projects/P/regions/R/subnetworks/S */
+                    subnetwork: string;
+                    ports: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The subnetwork's Host address and Offered ports. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostOffers"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteHostOffers: {
+        parameters: {
+            query: {
+                /** @description The subnetwork, as projects/P/regions/R/subnetworks/S. */
+                subnetwork: components["parameters"]["Subnetwork"];
+                /** @description "8080", "8080/tcp" or "53/udp"; repeated for several. */
+                port: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The subnetwork's Host address and remaining Offered ports. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostOffers"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
 }

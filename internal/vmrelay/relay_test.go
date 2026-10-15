@@ -236,3 +236,86 @@ func TestDecide(t *testing.T) {
 		}
 	}
 }
+
+// freePort returns a loopback address with a port that was free a moment
+// ago.
+func freePort(t *testing.T, network string) string {
+	t.Helper()
+	if network == "udp" {
+		pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pc.Close()
+		return pc.LocalAddr().String()
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().String()
+}
+
+// TestOfferThroughRelay is the relay side of an Offered port (ADR 0014):
+// the relay listens on exactly the address asked for, over TCP or UDP,
+// refuses a taken port rather than moving, and stops listening when the
+// offer is withdrawn.
+func TestOfferThroughRelay(t *testing.T) {
+	host, hostUDP := echoTCP(t), echoUDP(t)
+	r := startInProcess(t, map[string]string{"offer-tcp": host, "offer-udp": hostUDP})
+	ctx := context.Background()
+
+	addr := freePort(t, "tcp")
+	if err := r.Offer(ctx, "offer-tcp", addr, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Offer(ctx, "offer-tcp", addr, false); err != nil {
+		t.Fatalf("offering again: %v", err)
+	}
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTrip(t, c, "in"); got != "re:in" {
+		t.Fatalf("answer %q", got)
+	}
+
+	taken := echoTCP(t)
+	if err := r.Offer(ctx, "taken", taken, false); err == nil {
+		t.Fatalf("offering the taken %s succeeded", taken)
+	}
+
+	uaddr := freePort(t, "udp")
+	if err := r.Offer(ctx, "offer-udp", uaddr, true); err != nil {
+		t.Fatal(err)
+	}
+	u, err := net.Dial("udp", uaddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Close()
+	_ = u.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := u.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	if n, err := u.Read(buf); err != nil || string(buf[:n]) != "re:q" {
+		t.Fatalf("datagram answer %q %v", buf[:n], err)
+	}
+
+	if err := r.Withdraw(ctx, "offer-tcp"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := net.Dial("tcp", addr); err == nil {
+		c.Close()
+		t.Fatalf("%s still accepts after the withdraw", addr)
+	}
+	if err := r.Withdraw(ctx, "offer-tcp"); err != nil {
+		t.Fatalf("withdrawing again: %v", err)
+	}
+	// The port is free to offer again.
+	if err := r.Offer(ctx, "offer-tcp", addr, false); err != nil {
+		t.Fatalf("offering after the withdraw: %v", err)
+	}
+}

@@ -254,13 +254,25 @@ func (o *rootOpts) adminCall(cmd *cobra.Command, method, path string, body []byt
 // adminCallTimeout is adminCall for a call that may outlast the client's
 // default timeout; timeout 0 keeps the default.
 func (o *rootOpts) adminCallTimeout(cmd *cobra.Command, method, path string, body []byte, timeout time.Duration) error {
-	cfg, err := o.load(cmd.Flags())
+	b, err := o.adminRequest(cmd, method, path, body, timeout)
 	if err != nil {
 		return err
 	}
+	_, err = cmd.OutOrStdout().Write(b)
+	return err
+}
+
+// adminRequest calls the admin API and returns the answer's body, or an
+// error with the body of a failed call; timeout 0 keeps the client's
+// default.
+func (o *rootOpts) adminRequest(cmd *cobra.Command, method, path string, body []byte, timeout time.Duration) ([]byte, error) {
+	cfg, err := o.load(cmd.Flags())
+	if err != nil {
+		return nil, err
+	}
 	c, err := clientFor(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if timeout > 0 {
 		c.http.Timeout = timeout
@@ -271,18 +283,17 @@ func (o *rootOpts) adminCallTimeout(cmd *cobra.Command, method, path string, bod
 	}
 	req, err := c.newRequest(method, path, rd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s", strings.TrimSpace(string(b)))
+		return nil, fmt.Errorf("%s", strings.TrimSpace(string(b)))
 	}
-	_, err = cmd.OutOrStdout().Write(b)
-	return err
+	return b, nil
 }
