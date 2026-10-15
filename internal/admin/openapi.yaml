@@ -948,6 +948,67 @@ paths:
               schema: { $ref: "#/components/schemas/HostOffers" }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/host/services:
+    get:
+      summary: The Kubernetes Services host clients reach by name (gke service; `gcpemu status`, `gcpemu doctor`, ADR 0014).
+      operationId: listHostServices
+      description: >-
+        The emulator's DNS answers a host query for
+        <service>.<namespace>.svc.<cluster>.<location>.<project>.gke.internal,
+        and for <service>.<namespace>.svc.cluster.local while exactly one
+        cluster has that Service, with a Loopback alias the Service gets on
+        the first query and keeps until it is deleted. Lists the Services
+        that hold aliases, the short names that more than one cluster has
+        (which do not resolve), and the Services a query found that got no
+        alias, with why.
+      responses:
+        "200":
+          description: The Services served to host clients.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [services, collisions, unserved, poolExhausted]
+                properties:
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      required: [cluster, namespace, service, name, address, ports]
+                      properties:
+                        cluster: { type: string, description: "projects/P/locations/L/clusters/C" }
+                        namespace: { type: string }
+                        service: { type: string }
+                        name: { type: string, description: The qualified gke.internal name. }
+                        shortName: { type: string, description: The svc.cluster.local name, while no other cluster has the Service. }
+                        address: { type: string, description: The Loopback alias. }
+                        ports:
+                          type: array
+                          description: The TCP ports served there now.
+                          items: { type: integer }
+                  collisions:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, clusters]
+                      properties:
+                        name: { type: string }
+                        clusters:
+                          type: array
+                          items: { type: string }
+                  unserved:
+                    type: array
+                    items:
+                      type: object
+                      required: [cluster, namespace, service, reason]
+                      properties:
+                        cluster: { type: string }
+                        namespace: { type: string }
+                        service: { type: string }
+                        reason: { type: string }
+                  poolExhausted:
+                    type: boolean
+                    description: A Service got no alias because 127.0.0.2-127.0.0.254 are all held.
 components:
   securitySchemes:
     adminTokenHeader:

@@ -179,3 +179,34 @@ func TestReportUnpublished(t *testing.T) {
 		t.Errorf("output names a served rule:\n%s", got)
 	}
 }
+
+const hostServicesBody = `{"services":[
+	{"cluster":"projects/p/locations/l/clusters/c1","namespace":"default","service":"web","name":"web.default.svc.c1.l.p.gke.internal","shortName":"web.default.svc.cluster.local","address":"127.0.0.7","ports":[8080,9090]},
+	{"cluster":"projects/p/locations/l/clusters/c1","namespace":"default","service":"api","name":"api.default.svc.c1.l.p.gke.internal","address":"127.0.0.8","ports":[]}],
+	"collisions":[{"name":"api.default.svc.cluster.local","clusters":["projects/p/locations/l/clusters/c1","projects/p/locations/l/clusters/c2"]}],
+	"unserved":[{"cluster":"projects/p/locations/l/clusters/c2","namespace":"default","service":"db","reason":"no free loopback alias in 127.0.0.2-127.0.0.254"}],
+	"poolExhausted":true}`
+
+// Doctor lists the short Service names more than one cluster has, a pool
+// with no free Loopback alias, and the Services left without one (ADR
+// 0014).
+func TestReportHostServices(t *testing.T) {
+	var out strings.Builder
+	reportHostServices(&out, []byte(hostServicesBody))
+	got := out.String()
+	for _, want := range []string{
+		"[WARN] api.default.svc.cluster.local names a Kubernetes Service in projects/p/locations/l/clusters/c1 and projects/p/locations/l/clusters/c2, so it does not resolve for host clients",
+		"fix: use the gke.internal names, e.g. api.default.svc.<cluster>.<location>.<project>.gke.internal",
+		"[WARN] Loopback aliases 127.0.0.2-127.0.0.254 are all held, so new Kubernetes Services get SERVFAIL for host clients",
+		"[WARN] Kubernetes Service default/db of projects/p/locations/l/clusters/c2 has no Loopback alias: no free loopback alias",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	out.Reset()
+	reportHostServices(&out, []byte(`{"services":[],"collisions":[],"unserved":[],"poolExhausted":false}`))
+	if out.String() != "" {
+		t.Errorf("nothing to report: %q", out.String())
+	}
+}

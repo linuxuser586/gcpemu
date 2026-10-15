@@ -262,8 +262,10 @@ type kubeServicePort struct {
 type kubeService struct {
 	Metadata objectMeta `json:"metadata"`
 	Spec     struct {
-		Type  string            `json:"type"`
-		Ports []kubeServicePort `json:"ports"`
+		Type         string            `json:"type"`
+		ClusterIP    string            `json:"clusterIP,omitempty"`
+		ExternalName string            `json:"externalName,omitempty"`
+		Ports        []kubeServicePort `json:"ports"`
 	} `json:"spec"`
 	Status struct {
 		LoadBalancer struct {

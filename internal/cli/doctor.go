@@ -229,7 +229,9 @@ func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, c
 
 // checkUnpublished lists the forwarding rules of the running Instance that
 // have no published port (ADR 0012). Only a Containerized Instance
-// reports any, and an Instance without the lb service none.
+// reports any, and an Instance without the lb service none. It also lists
+// what keeps host clients from Kubernetes Services (ADR 0014), which an
+// Instance without the gke service does not report.
 func checkUnpublished(out io.Writer, cfg *config.Config) {
 	c, err := clientFor(cfg)
 	if err != nil {
@@ -237,6 +239,9 @@ func checkUnpublished(out io.Writer, cfg *config.Config) {
 	}
 	if b, err := c.get("/_emu/v1/lb/listeners"); err == nil {
 		reportUnpublished(out, b)
+	}
+	if b, err := c.get("/_emu/v1/host/services"); err == nil {
+		reportHostServices(out, b)
 	}
 }
 
@@ -333,7 +338,7 @@ func checkLoopback(out io.Writer, aliases bool) {
 		fmt.Fprintln(out, "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present")
 		return
 	}
-	fmt.Fprintf(out, "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `%s` lets more than one Cloud SQL instance run and gives each load balancer forwarding rule its own address\n", loopback.InstallHint)
+	fmt.Fprintf(out, "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `%s` lets more than one Cloud SQL instance run, gives each load balancer forwarding rule its own address and lets host clients reach Kubernetes Services by name\n", loopback.InstallHint)
 }
 
 // checkDNSUDP checks the UDP side of the DNS port. An mDNS daemon (avahi or

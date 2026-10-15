@@ -357,13 +357,13 @@ func (f *forwarder) serveTCP() {
 				return
 			}
 			defer u.Close()
-			splice(c, u)
+			Splice(c, u)
 		}()
 	}
 }
 
-// splice copies both ways until both directions end.
-func splice(a, b net.Conn) {
+// Splice copies both ways until both directions end.
+func Splice(a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	go func() { _, _ = io.Copy(b, a); closeWrite(b); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(a, b); closeWrite(a); done <- struct{}{} }()
@@ -445,6 +445,24 @@ func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
 // addresses, that DialContext reaches; targets is read for each
 // connection. It owns l.
 func (p *Plane) Serve(l net.Listener, targets func() []string) *Exposed {
+	return p.ServeDial(l, func(ctx context.Context) (net.Conn, error) {
+		ts := targets()
+		err := fmt.Errorf("no target")
+		for _, target := range ts {
+			dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			u, derr := p.DialContext(dctx, "tcp", target)
+			cancel()
+			if err = derr; err == nil {
+				return u, nil
+			}
+		}
+		return nil, fmt.Errorf("targets %v: %w", ts, err)
+	})
+}
+
+// ServeDial pipes each connection l accepts to the connection dial opens
+// for it; dial sets its own timeouts. It owns l.
+func (p *Plane) ServeDial(l net.Listener, dial func(ctx context.Context) (net.Conn, error)) *Exposed {
 	e := &Exposed{l: l}
 	e.wg.Add(1)
 	go func() {
@@ -456,22 +474,13 @@ func (p *Plane) Serve(l net.Listener, targets func() []string) *Exposed {
 			}
 			go func() {
 				defer c.Close()
-				var u net.Conn
-				ts := targets()
-				for _, target := range ts {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					u, err = p.DialContext(ctx, "tcp", target)
-					cancel()
-					if err == nil {
-						break
-					}
-				}
-				if u == nil {
-					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "targets", ts, "err", err)
+				u, err := dial(context.Background())
+				if err != nil {
+					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "err", err)
 					return
 				}
 				defer u.Close()
-				splice(c, u)
+				Splice(c, u)
 			}()
 		}
 	}()

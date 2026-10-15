@@ -42,6 +42,9 @@ import (
 //     services by real hostname (FR-INT-007). Names the emulator does not
 //     serve (logging.googleapis.com, ...) are relayed to the emulated
 //     Cloud DNS and resolve as usual.
+//   - :15090 on every address, the ClusterIP relay (clusteriprelay.go), through
+//     which the emulator connects host clients to Services' ClusterIPs
+//     (ADR 0014).
 
 const (
 	nodeAgentName  = "gke-node"
@@ -92,6 +95,10 @@ type nodeConfig struct {
 	IP  string         `json:"ip,omitempty"`
 	// Runtime names the container runtime, for errors about its kernel.
 	Runtime string `json:"runtime,omitempty"`
+	// Secret and ServiceCIDR configure the ClusterIP relay (clusteriprelay.go):
+	// the cluster's secret, and the Service range it connects to.
+	Secret      string `json:"secret,omitempty"`
+	ServiceCIDR string `json:"serviceCidr,omitempty"`
 }
 
 func init() { agent.Register(nodeAgentName, runNodeAgent) }
@@ -131,6 +138,13 @@ func runNodeAgent(ctx context.Context, args []string) error {
 			return err
 		}
 		go func() { _ = frontend.Relay(feL, cfg.Frontend) }()
+	}
+	if _, cidr, err := net.ParseCIDR(cfg.ServiceCIDR); err == nil && cfg.Secret != "" {
+		svcL, err := net.Listen("tcp", fmt.Sprintf(":%d", clusterIPRelayPort))
+		if err != nil {
+			return err
+		}
+		go serveClusterIPRelay(svcL, cfg.Secret, cidr)
 	}
 	if err := serveProvider(ctx, cfg.Emu); err != nil {
 		return err

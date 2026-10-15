@@ -59,3 +59,21 @@ func TestStatusReady(t *testing.T) {
 		t.Errorf("status --ready without an instance: %v", err)
 	}
 }
+
+// `gcpemu status` lists the Kubernetes Services that hold Loopback aliases
+// (ADR 0014).
+func TestPrintHostServices(t *testing.T) {
+	var out strings.Builder
+	printHostServices(&out, []byte(hostServicesBody))
+	want := "kubernetes services for host clients:\n" +
+		"  web.default.svc.c1.l.p.gke.internal (web.default.svc.cluster.local) at 127.0.0.7: 8080 9090\n" +
+		"  api.default.svc.c1.l.p.gke.internal at 127.0.0.8\n"
+	if out.String() != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	out.Reset()
+	printHostServices(&out, []byte(`{"services":[]}`))
+	if out.String() != "" {
+		t.Errorf("none: %q", out.String())
+	}
+}

@@ -452,8 +452,13 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			if err != nil {
 				offers = []byte(`{"subnetworks":[]}`)
 			}
+			// Absent without gke.
+			hostSvcs, err := c.get("/_emu/v1/host/services")
+			if err != nil {
+				hostSvcs = []byte(`{"services":[],"collisions":[],"unserved":[],"poolExhausted":false}`)
+			}
 			if asJSON {
-				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s}\n", info, ready, cts, offers)
+				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s,\"hostServices\":%s}\n", info, ready, cts, offers, hostSvcs)
 				return notReady()
 			}
 			var i struct {
@@ -498,6 +503,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 					fmt.Fprintf(out, "  %s at %s: %s\n", h.Subnetwork, h.HostAddress, strings.Join(h.ports(), " "))
 				}
 			}
+			printHostServices(out, hostSvcs)
 			return notReady()
 		},
 	}

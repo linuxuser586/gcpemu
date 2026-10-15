@@ -66,7 +66,12 @@ func (s *Service) serveDNS(w mdns.ResponseWriter, req *mdns.Msg) {
 		resp.SetRcode(req, mdns.RcodeRefused)
 	default:
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		a := s.answer(ctx, network, req.Question[0])
+		var a *mdns.Msg
+		if network == "" {
+			a = s.answerHost(ctx, req.Question[0])
+		} else {
+			a = s.answer(ctx, network, req.Question[0])
+		}
 		cancel()
 		resp.SetReply(req)
 		resp.Rcode = a.Rcode

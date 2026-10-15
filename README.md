@@ -313,6 +313,43 @@ them with the forwarding rule's own IP (host clients still get the local listene
 them to it directly, and the backend sees the node's address; private nodes go through Cloud
 NAT, so they need one, and the backend sees the NAT's address (ADR 0007).
 
+### Kubernetes Services from the host
+
+A process on the host can call a GKE cluster's Kubernetes Services by name, as its pods do (ADR 0014). The
+emulator's DNS (Service endpoint `dns`, `127.0.0.1:5353` by default) answers host queries for
+
+- `<service>.<namespace>.svc.<cluster>.<location>.<project>.gke.internal`, always, and
+- `<service>.<namespace>.svc.cluster.local`, while exactly one cluster has that Service. When a
+  second cluster adds a Service of the same name, the short name stops resolving instead of
+  picking one; the emulator logs a warning and `gcpemu doctor` lists the collision. It resolves
+  again once only one cluster has it.
+
+The answer is a Loopback alias (`127.0.0.x`) the Service gets on the first query and keeps until
+it's deleted, also across `gcpemu stop` and `start` of an Instance with a data dir. The emulator
+serves each of the Service's TCP ports there, so `curl http://web.default.svc.cluster.local:8080`
+reaches a pod, on Linux and on a VM runtime alike. Headless Services aren't answered;
+ExternalName Services are answered with their CNAME. Queries from the VPC (pods, through their
+node's DNS relay) are unaffected.
+
+Send the two domains to the emulator's DNS:
+
+```sh
+# macOS: one file per domain
+for d in svc.cluster.local gke.internal; do
+  printf 'nameserver 127.0.0.1\nport 5353\n' | sudo tee /etc/resolver/$d
+done
+# Linux with systemd-resolved, on any non-loopback link, e.g. the docker0 bridge
+sudo resolvectl dns docker0 127.0.0.1:5353 && sudo resolvectl domain docker0 '~svc.cluster.local' '~gke.internal'
+```
+
+Aliases come from the `127.0.0.2`–`127.0.0.254` pool that Cloud SQL instances and forwarding rules
+also use. On macOS run `sudo gcpemu loopback install` first. When no alias is free, or on a Mac
+without them, the DNS answers SERVFAIL and the emulator logs why; `gcpemu doctor` flags both.
+`gcpemu status` lists the Services that hold aliases. The host must allow binding a Service's
+port: Linux refuses ports below 1024 to non-root users unless
+`net.ipv4.ip_unprivileged_port_start` allows them, and those ports aren't served. A
+Containerized Instance has no host loopback, so it doesn't answer these names.
+
 ### VPC workloads reaching the host
 
 A process on the host can stand in for a pod (ADR 0014): offer its port, and workloads on a
