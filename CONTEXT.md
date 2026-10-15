@@ -223,8 +223,12 @@ _Avoid_: recording, records
 **Declared range**:
 The CIDR that a subnetwork or a private services access allocation has in GCP's API, as the user declared it.
 
+**VPC container network**:
+The container network that backs one subnetwork or one private services access allocation of a VPC network. A VPC network has as many as it has subnetworks and allocations, and the Managed containers attached to a subnetwork hold their addresses on it.
+_Avoid_: VPC bridge, network (unqualified, when the container network rather than the GCP resource is meant)
+
 **Fallback range**:
-The CIDR that a VPC's container network uses instead of its Declared range, because the Declared range overlapped another network on the host.
+The CIDR that a VPC container network uses instead of its Declared range, because the Declared range overlapped another network on the host.
 _Avoid_: actual range, real range
 
 **Translated network**:
