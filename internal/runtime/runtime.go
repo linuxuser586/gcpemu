@@ -881,22 +881,40 @@ func (c *Client) forgetStart(id string) {
 // containers among cts that the client started and that have since
 // stopped or been started again by something else, such as a restart of
 // the runtime daemon (#318). They lost what was set up after the start.
-func (c *Client) Disrupted(cts []Container) []string {
-	c.startsMu.Lock()
-	defer c.startsMu.Unlock()
+// Each candidate is inspected again, since the client may have started,
+// stopped or removed it after cts was listed.
+func (c *Client) Disrupted(ctx context.Context, cts []Container) []string {
 	var out []string
 	for _, ct := range cts {
-		s, ok := c.starts[ct.ID]
-		switch {
-		case !ok:
-		case ct.Status == "exited" || ct.Status == "dead":
-			out = append(out, ct.Name+" ("+ct.Status+")")
-		case ct.StartedAt != s.at:
-			out = append(out, ct.Name+" (restarted)")
+		if c.disruption(ct) == "" {
+			continue
+		}
+		if now, err := c.InspectContainer(ctx, ct.ID); err == nil {
+			ct = now
+		}
+		if why := c.disruption(ct); why != "" {
+			out = append(out, ct.Name+" ("+why+")")
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// disruption returns why ct, as listed, differs from the client's record
+// of starting it ("exited", "dead" or "restarted"), or "".
+func (c *Client) disruption(ct Container) string {
+	c.startsMu.Lock()
+	s, ok := c.starts[ct.ID]
+	c.startsMu.Unlock()
+	switch {
+	case !ok:
+		return ""
+	case ct.Status == "exited" || ct.Status == "dead":
+		return ct.Status
+	case ct.StartedAt != s.at:
+		return "restarted"
+	}
+	return ""
 }
 
 // StopContainer stops a container, killing it after timeout.

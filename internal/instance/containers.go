@@ -214,7 +214,8 @@ const disruptedTTL = 2 * time.Second
 // disrupted reports the instance's containers that the runtime stopped or
 // started again behind its back, e.g. in a daemon restart (#318), so
 // that /_emu/v1/ready fails and names them. It does not connect to the
-// runtime.
+// runtime if the instance has not. The answer is cached for every caller,
+// so it is not cut short by one caller's request going away.
 func (c *containers) disrupted(ctx context.Context) error {
 	c.disruptedMu.Lock()
 	defer c.disruptedMu.Unlock()
@@ -227,12 +228,12 @@ func (c *containers) disrupted(ctx context.Context) error {
 	if rt == nil {
 		return nil
 	}
-	lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	var err error
 	if cts, lerr := rt.ListContainers(lctx, map[string]string{runtime.LabelInstance: rt.InstanceID}); lerr != nil {
 		err = fmt.Errorf("listing containers: %w", lerr)
-	} else if names := rt.Disrupted(cts); len(names) > 0 {
+	} else if names := rt.Disrupted(lctx, cts); len(names) > 0 {
 		err = fmt.Errorf("%s; stop and start the instance to bring them back", strings.Join(names, ", "))
 	}
 	c.disruptedErr, c.disruptedAt = err, time.Now()

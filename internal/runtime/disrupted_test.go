@@ -77,7 +77,19 @@ func TestDisrupted(t *testing.T) {
 		}
 		all = append(all, c)
 	}
-	if got, want := cl.Disrupted(all), []string{"exited (exited)", "restarted (restarted)"}; !slices.Equal(got, want) {
+	if got, want := cl.Disrupted(ctx, all), []string{"exited (exited)", "restarted (restarted)"}; !slices.Equal(got, want) {
 		t.Errorf("Disrupted = %v, want %v", got, want)
+	}
+
+	// The client starting or restarting a container after the listing was
+	// taken is no disruption: the listing is stale, not the container.
+	if err := cl.StartContainer(ctx, "exited"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.RestartContainer(ctx, "restarted", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if got := cl.Disrupted(ctx, all); len(got) != 0 {
+		t.Errorf("Disrupted with a stale listing = %v, want none", got)
 	}
 }
