@@ -66,6 +66,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -251,6 +252,22 @@ func (s *Service) Restore(ctx context.Context, dir string) error {
 	s.blobs.gc.Lock()
 	defer s.blobs.gc.Unlock()
 	return emu.LinkTree(filepath.Join(dir, "blobs"), filepath.Join(s.blobs.dir, "blobs"))
+}
+
+var _ emu.StoreCacher = (*Service)(nil)
+
+// IsStoreCache implements emu.StoreCacher: the containerd mirror's
+// pull-through cache, written whenever a node pulls an image, is cache.
+// Remote repositories cache too, but their images are packages users see.
+func (s *Service) IsStoreCache(ns, key string) bool {
+	switch ns {
+	case nsManifests, nsTags, nsLinks:
+	case nsRefs:
+		key = refItem(key)
+	default:
+		return false
+	}
+	return strings.HasPrefix(key, mirrorProject+"/")
 }
 
 // Reset removes every blob and upload; the store is reset by the instance.

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/instance"
 )
 
 const allManifests = "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, " +
@@ -288,4 +291,38 @@ func TestMirrorOfflinePersistentCache(t *testing.T) {
 	if resp.StatusCode != 404 || !strings.Contains(string(body), "offline") {
 		t.Fatalf("uncached offline = %d %s", resp.StatusCode, body)
 	}
+}
+
+// The mirror cache is saved and restored with a State snapshot. A blob no
+// saved entry references, as one a pull finished while the snapshot was
+// saved leaves behind, does not fail the restore, and an image missing
+// from the cache is fetched again.
+func TestMirrorCacheSnapshot(t *testing.T) {
+	up := newFakeUpstream(t)
+	cached := up.put("library/app:v1", 1024, 1)
+	later := up.put("library/later:v1", 1024, 1)
+	e := start(t)
+	base := "http://" + e.registry()
+	pullAll(t, base, "library/app", "v1", up.host(), cached)
+	if _, err := e.inst.SaveSnapshot(e.ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(e.inst.Dir, instance.SnapshotsDir, "s", "services", "ar", "blobs", "sha256", "ff", "ff"+strings.Repeat("0", 62))
+	if err := os.MkdirAll(filepath.Dir(orphan), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphan, []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pullAll(t, base, "library/later", "v1", up.host(), later)
+	if err := e.inst.RestoreSnapshot(e.ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	blobs := up.blobGETs.Load()
+	pullAll(t, base, "library/later", "v1", up.host(), later)
+	if up.blobGETs.Load() == blobs {
+		t.Error("an image the State snapshot did not cache was served without refetching it")
+	}
+	up.down.Store(true)
+	pullAll(t, base, "library/app", "v1", up.host(), cached)
 }

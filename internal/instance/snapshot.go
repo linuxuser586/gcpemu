@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -149,6 +148,7 @@ func (in *Instance) quiescent() error {
 // saveInto writes the Store and every Snapshotter's state into dir. The
 // Store is dumped before and after the services save theirs; when the two
 // differ a client changed something meanwhile, and the save starts again.
+// Entries an emu.StoreCacher declares cache may change meanwhile.
 func (in *Instance) saveInto(ctx context.Context, dir string) error {
 	svcDir := filepath.Join(dir, snapshotServices)
 	for range snapshotAttempts {
@@ -176,23 +176,39 @@ func (in *Instance) saveInto(ctx context.Context, dir string) error {
 		if err != nil {
 			return err
 		}
-		if sameDump(before, after) {
+		if sameDump(before, after, in.isStoreCache) {
 			return writeJSONFile(filepath.Join(dir, snapshotStore), before)
 		}
 	}
 	return fmt.Errorf("%w: its state kept changing while the State snapshot was saved; pause its clients and try again", ErrSnapshotBusy)
 }
 
-func sameDump(a, b map[string]map[string][]byte) bool {
+// isStoreCache reports whether a service declares key of ns a cache entry.
+func (in *Instance) isStoreCache(ns, key string) bool {
+	for _, s := range in.services {
+		if c, ok := s.(emu.StoreCacher); ok && c.IsStoreCache(ns, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// sameDump reports whether two Store dumps hold the same entries, leaving
+// out the cache entries.
+func sameDump(a, b map[string]map[string][]byte, isCache func(ns, key string) bool) bool {
 	// An empty namespace and a missing one are the same state.
 	for ns, kv := range a {
-		if len(kv) > 0 && len(b[ns]) == 0 {
-			return false
+		for k := range kv {
+			if _, ok := b[ns][k]; !ok && !isCache(ns, k) {
+				return false
+			}
 		}
 	}
 	for ns, kv := range b {
-		if !maps.EqualFunc(a[ns], kv, bytes.Equal) {
-			return false
+		for k, v := range kv {
+			if w, ok := a[ns][k]; (!ok || !bytes.Equal(v, w)) && !isCache(ns, k) {
+				return false
+			}
 		}
 	}
 	return true

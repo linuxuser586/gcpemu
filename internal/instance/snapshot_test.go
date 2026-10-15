@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,16 +21,22 @@ type snapSvc struct {
 	env      *emu.Env
 	ops      []emu.OperationInfo
 	file     string
-	churn    bool // write to the store on every Snapshot
+	churnKey string // a key of dns/churn to write on every Snapshot
 	restored string
+}
+
+// IsStoreCache implements emu.StoreCacher: dns/churn keys under cache/
+// are cache.
+func (s *snapSvc) IsStoreCache(ns, key string) bool {
+	return ns == "dns/churn" && strings.HasPrefix(key, "cache/")
 }
 
 func (s *snapSvc) Operations() []emu.OperationInfo { return s.ops }
 
 func (s *snapSvc) Snapshot(_ context.Context, dir string) error {
-	if s.churn {
+	if s.churnKey != "" {
 		if err := s.env.Store.Update(func(tx store.Tx) error {
-			return tx.Put("dns/churn", time.Now().String(), nil)
+			return tx.Put("dns/churn", s.churnKey, []byte(time.Now().String()))
 		}); err != nil {
 			return err
 		}
@@ -126,14 +133,14 @@ func TestSnapshotBusy(t *testing.T) {
 	}
 	release()
 
-	svc.churn = true
+	svc.churnKey = "state"
 	if _, err := in.SaveSnapshot(ctx, "s"); !errors.Is(err, ErrSnapshotBusy) {
 		t.Errorf("save while the store keeps changing: %v", err)
 	}
 	if snaps, _ := in.Snapshots(); len(snaps) != 0 {
 		t.Errorf("failed saves left %+v", snaps)
 	}
-	svc.churn = false
+	svc.churnKey = ""
 	if _, err := in.SaveSnapshot(ctx, "s"); err != nil {
 		t.Errorf("save once quiet: %v", err)
 	}
@@ -141,5 +148,35 @@ func TestSnapshotBusy(t *testing.T) {
 		if _, err := in.SaveSnapshot(ctx, name); !errors.Is(err, ErrSnapshotName) {
 			t.Errorf("SaveSnapshot(%q): %v", name, err)
 		}
+	}
+}
+
+func TestSnapshotIgnoresCacheChurn(t *testing.T) {
+	in, svc := startSnapInstance(t)
+	ctx := t.Context()
+	if err := os.WriteFile(svc.file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The first Snapshot writes the cache entry; every one after changes it.
+	svc.churnKey = "cache/layer"
+	if _, err := in.SaveSnapshot(ctx, "s"); err != nil {
+		t.Fatalf("save while only cache entries change: %v", err)
+	}
+	get := func() string {
+		var v []byte
+		_ = in.Env.Store.View(func(tx store.Tx) error { v, _ = tx.Get("dns/churn", "cache/layer"); return nil })
+		return string(v)
+	}
+	// The State snapshot holds the cache entry as the first Store dump had it.
+	saved := get()
+	if _, err := in.SaveSnapshot(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	svc.churnKey = ""
+	if err := in.RestoreSnapshot(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); saved == "" || got != saved {
+		t.Errorf("restored cache entry %q; the State snapshot saved %q", got, saved)
 	}
 }
