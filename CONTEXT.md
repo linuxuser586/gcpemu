@@ -105,6 +105,10 @@ _Avoid_: external IP, LB address
 A port that a Containerized Instance's own container publishes to the host. On a VM runtime it is the only way host clients reach a Containerized Instance's GKE `LoadBalancer` Services, and on any runtime it is the only way they reach its forwarding rules (ADR 0012). Its host side, not the container port, is what the Instance reports.
 _Avoid_: exposed port, mapped port
 
+**Own port**:
+The port a GKE `LoadBalancer` Service or a forwarding rule declares, as opposed to the Published port it ends up served on. A Service is served on its own port only when the container publishes it at the same host port, since its clients expect that port on the host; a forwarding rule is served on it at any host port, since its clients learn the host side from the rule's environment variable.
+_Avoid_: service port, rule port (unqualified)
+
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
