@@ -80,3 +80,36 @@ func TestHostLocation(t *testing.T) {
 		t.Fatal("localhost matched")
 	}
 }
+
+func TestIsStoreCache(t *testing.T) {
+	var s Service
+	digest := "sha256:" + strings.Repeat("a", 64)
+	mirror := repoRef{mirrorProject, "registry-1.docker.io", "cache"}
+	remote := repoRef{"p", "us", "docker-hub"} // a remote repository's cache is its packages
+	plain := repoRef{"p", "us", "r"}
+	type entry struct{ ns, key string }
+	entries := func(r repoRef) []entry {
+		return []entry{
+			{nsManifests, itemKey(r, "library/alpine", digest)},
+			{nsTags, itemKey(r, "library/alpine", "latest")},
+			{nsLinks, itemKey(r, "library/alpine", digest)},
+			{nsRefs, refKey(digest, itemKey(r, "library/alpine", digest), "m")},
+			{nsRefs, refKey(digest, itemKey(r, "library/alpine", digest), "b")},
+		}
+	}
+	for _, e := range entries(mirror) {
+		if !s.IsStoreCache(e.ns, e.key) {
+			t.Errorf("mirror entry %s %s is not cache", e.ns, e.key)
+		}
+	}
+	for _, r := range []repoRef{remote, plain} {
+		for _, e := range append(entries(r), entry{nsRepos, r.key()}, entry{nsIAM, r.resource()}) {
+			if s.IsStoreCache(e.ns, e.key) {
+				t.Errorf("repository entry %s %s is cache", e.ns, e.key)
+			}
+		}
+	}
+	if s.IsStoreCache("gcs/objects", mirror.key()+"|x|y") {
+		t.Error("another service's namespace is cache")
+	}
+}
