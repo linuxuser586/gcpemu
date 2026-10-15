@@ -191,6 +191,7 @@ type objectMeta struct {
 	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 	OwnerReferences   []struct {
 		Kind string `json:"kind"`
+		Name string `json:"name"`
 	} `json:"ownerReferences,omitempty"`
 }
 

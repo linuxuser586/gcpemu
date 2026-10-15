@@ -23,7 +23,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 | Compute networking | `services/compute` | Networks, subnetworks, firewalls, routes, addresses, routers, zonal/regional/global NEGs, operations; servicenetworking; subnetworks realised as container networks; VPC peering (recorded) |
 | Cloud NAT | `services/compute`, `services/nat` | Router NAT configs drive the NAT egress proxy container; drop/reject, logging, offline sink |
 | Cloud SQL | `services/sql` | sqladmin v1beta4/v1 over real PostgreSQL 14–18 containers; connector (3307), IAM DB auth, authorized networks, private IP, backups, import/export, `executeSql` (Data API) |
-| GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings |
+| GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings; system metrics over OTLP |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
@@ -293,6 +293,12 @@ destination; endpoint-independent mapping caps a workload's concurrent connectio
 and dynamic port allocation lets it grow to `maxPortsPerVm`. Mapping info, status and NAT logs
 name the NAT IP the block stands for.
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
+A cluster whose `monitoring_config` enables `SYSTEM_COMPONENTS` exports its node, pod and
+container CPU and memory usage, requests, limits, allocatable and restarts (with the last
+termination reason, e.g. `OOMKilled`) over OTLP when the Instance's environment sets
+`OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`), using the standard
+`OTEL_EXPORTER_OTLP_*` variables and `OTEL_METRIC_EXPORT_INTERVAL` (default 60000 ms). Names follow
+the OTel Collector's `kubeletstats` and `k8s_cluster` receivers (FR-GKE-014).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
 or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,
