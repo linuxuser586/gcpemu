@@ -3,10 +3,8 @@ package compute_test
 import (
 	"context"
 	"fmt"
-	"maps"
 	"math/rand/v2"
 	"net"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +33,8 @@ func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw st
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Creating a container doesn't pull its image, and a fresh runner may
+	// not have run anything that does.
 	if err := rt.EnsureImage(ctx, probeImage, false); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestOfflineSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, img := range append(slices.Collect(maps.Values(compute.Images)), probeImage) {
+	for _, img := range compute.Images {
 		if err := cl.EnsureImage(context.Background(), img, false); err != nil {
 			t.Fatal(err)
 		}
