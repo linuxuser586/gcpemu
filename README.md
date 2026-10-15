@@ -46,6 +46,11 @@ Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hos
 resources as a seed file), `doctor`, `prune`, `version`, `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
 
+`gcpemu status --ready` exits non-zero, and says why, until every Service is ready. It also fails, naming
+them, while Managed containers that something other than the Instance stopped or restarted (a restart
+of the container runtime, `docker stop` or `docker restart`) are down or have lost their setup: stop and
+start the Instance to bring them back.
+
 ### State snapshots
 
 `gcpemu snapshot save NAME` saves all of a running Instance's state, and `snapshot restore NAME`

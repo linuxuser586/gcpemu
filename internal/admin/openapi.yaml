@@ -62,7 +62,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Readiness" }
         "503":
-          description: At least one service is not ready; its reason is given.
+          description: >-
+            At least one service is not ready, or something other than the
+            Instance stopped or restarted a Managed container (entry
+            "containers", e.g. after the container runtime restarted); the
+            reason is given.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Readiness" }
@@ -1072,6 +1076,9 @@ components:
         ready: { type: boolean }
         services:
           type: object
+          description: >-
+            Readiness by Service ID, plus any readiness holds and a
+            "containers" entry while Managed containers are disrupted.
           additionalProperties:
             type: object
             required: [ready]

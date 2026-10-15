@@ -339,6 +339,12 @@ func notReady(cfg *config.Config) string {
 	if err != nil {
 		return ""
 	}
+	return readyReasons(b)
+}
+
+// readyReasons returns the not-ready entries of a readiness response and
+// their reasons, one per line, or "".
+func readyReasons(b []byte) string {
 	var r struct {
 		Services map[string]struct {
 			Ready  bool   `json:"ready"`
@@ -439,6 +445,9 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			// image's HEALTHCHECK, as distroless has no curl).
 			notReady := func() error {
 				if needReady && code != http.StatusOK {
+					if reasons := readyReasons(ready); reasons != "" {
+						return fmt.Errorf("instance %q is not ready:\n%s", cfg.Instance, reasons)
+					}
 					return fmt.Errorf("instance %q is not ready", cfg.Instance)
 				}
 				return nil

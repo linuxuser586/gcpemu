@@ -2,9 +2,11 @@ package instance
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,10 @@ type containers struct {
 	statusMu sync.Mutex
 	status   RuntimeStatus
 	statusAt time.Time
+
+	disruptedMu  sync.Mutex
+	disruptedErr error
+	disruptedAt  time.Time
 }
 
 func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
@@ -199,6 +205,38 @@ func (c *containers) list(ctx context.Context) ([]ContainerInfo, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// disruptedTTL bounds how often /_emu/v1/ready lists the containers;
+// health checks poll it.
+const disruptedTTL = 2 * time.Second
+
+// disrupted reports the instance's containers that the runtime stopped or
+// started again behind its back, e.g. in a daemon restart (#318), so
+// that /_emu/v1/ready fails and names them. It does not connect to the
+// runtime.
+func (c *containers) disrupted(ctx context.Context) error {
+	c.disruptedMu.Lock()
+	defer c.disruptedMu.Unlock()
+	if !c.disruptedAt.IsZero() && time.Since(c.disruptedAt) < disruptedTTL {
+		return c.disruptedErr
+	}
+	c.mu.Lock()
+	rt := c.rt
+	c.mu.Unlock()
+	if rt == nil {
+		return nil
+	}
+	lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var err error
+	if cts, lerr := rt.ListContainers(lctx, map[string]string{runtime.LabelInstance: rt.InstanceID}); lerr != nil {
+		err = fmt.Errorf("listing containers: %w", lerr)
+	} else if names := rt.Disrupted(cts); len(names) > 0 {
+		err = fmt.Errorf("%s; stop and start the instance to bring them back", strings.Join(names, ", "))
+	}
+	c.disruptedErr, c.disruptedAt = err, time.Now()
+	return err
 }
 
 // Containers lists the instance's containers (see containers.list).

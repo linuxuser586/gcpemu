@@ -40,6 +40,10 @@ func newAdmin(in *Instance) http.Handler {
 				out[name] = svc{Ready: true}
 			}
 		}
+		if err := in.containers.disrupted(r.Context()); err != nil {
+			out["containers"] = svc{Reason: err.Error()}
+			code = http.StatusServiceUnavailable
+		}
 		writeJSON(w, code, map[string]any{"ready": code == http.StatusOK, "services": out})
 	})
 	mux.HandleFunc("GET /_emu/v1/info", func(w http.ResponseWriter, r *http.Request) {
