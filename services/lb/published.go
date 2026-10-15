@@ -54,19 +54,29 @@ type publishing struct {
 	ports map[int]string
 }
 
+// pubRetryAfter is how long the data plane waits before asking the
+// runtime again after it failed to read the container's published ports.
+const pubRetryAfter = 30 * time.Second
+
 // publishing returns how rules reach the host, learning it on first use.
 // The container's published ports are fixed for its life. Callers hold
-// d.mu.
+// d.mu, so after a failed read the runtime is not asked again for
+// pubRetryAfter.
 func (d *dataplane) publishing() publishing {
 	if d.pubKnown {
 		return d.pub
 	}
+	// A Containerized Instance whose ports are unknown for now: nothing
+	// is served on them until a later try reads them.
+	unknown := publishing{on: true, ports: map[int]string{}}
+	if time.Now().Before(d.pubRetry) {
+		return unknown
+	}
 	p, err := d.selfPublishing(d.ctx)
 	if err != nil {
-		// A Containerized Instance whose ports are unknown for now:
-		// nothing is served on them until a later try reads them.
-		d.s.env.Log.Debug("lb: cannot read the container's published ports", "err", err)
-		return publishing{on: true, ports: map[int]string{}}
+		d.pubRetry = time.Now().Add(pubRetryAfter)
+		d.s.env.Log.Warn("lb: cannot read the container's published ports; forwarding rules are not served on them until a later try", "err", err)
+		return unknown
 	}
 	d.pub, d.pubKnown = p, true
 	if p.on {
@@ -75,7 +85,7 @@ func (d *dataplane) publishing() publishing {
 	return p
 }
 
-// selfPublishing asks the runtime about the emulator's own container.
+// selfPublishing asks the runtime about the Instance's own container.
 func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
 	if !runtime.InContainer() {
 		return publishing{}, nil

@@ -42,8 +42,9 @@ import (
 //
 // Each mapping is recorded as endpoint "lb:<name>" (printed by `gcpemu env`
 // as GCPEMU_LB_<NAME>), except in a Containerized Instance, which records
-// the host side of the rule's Published port instead (published.go), and the emulated DNS answers A queries for a
-// forwarding rule IP with the mapped listener IP.
+// the host side of the rule's Published port instead (published.go), and
+// the emulated DNS answers A queries for a forwarding rule IP with the
+// mapped listener IP.
 
 // singleLoopback is the only loopback address in single-loopback mode.
 const singleLoopback = loopback.Host

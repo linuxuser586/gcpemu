@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// A port is served on a port the emulator's container publishes (ADR
+// A port is served on a port the Instance's container publishes (ADR
 // 0012): its own port when it is published at the same host port, then
 // the published ports of --port-range from a hash of the name onwards;
 // none when nothing is published.
@@ -30,15 +30,15 @@ func TestCandidates(t *testing.T) {
 		t.Errorf("candidates not stable: %v then %v", got, again)
 	}
 
-	// A Service port published at another host port is not its own.
+	// A port published at another host port is not its own.
 	if got := Candidates(name, 9090, published, 20000, 20004, true); slices.Contains(got, 9090) || len(got) != 4 {
 		t.Errorf("port 9090 published as 19090: candidates = %v, want the range only", got)
 	}
-	// A Service port inside the range comes first, and once.
+	// A port inside the range comes first, and once.
 	if got := Candidates(name, 20002, published, 20000, 20004, true); got[0] != 20002 || len(got) != 4 {
 		t.Errorf("port in range: candidates = %v", got)
 	}
-	// Without --port-range only the Service's own port.
+	// Without --port-range only the port itself.
 	if got := Candidates(name, 8081, published, 0, 0, false); !slices.Equal(got, []int{8081}) {
 		t.Errorf("no range: candidates = %v, want [8081]", got)
 	}
