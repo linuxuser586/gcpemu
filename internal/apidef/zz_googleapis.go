@@ -215,6 +215,17 @@ var protoServices = []*Service{
 		{Name: "CancelOperation", Input: "google.longrunning.CancelOperationRequest", Output: "google.protobuf.Empty", HTTP: []Binding{{"POST", "/v1/{name=operations/**}:cancel", "*"}}},
 		{Name: "WaitOperation", Input: "google.longrunning.WaitOperationRequest", Output: "google.longrunning.Operation"},
 	}},
+	{Name: "google.monitoring.v3.MetricService", File: "google/monitoring/v3/metric_service.proto", Methods: []*Method{
+		{Name: "ListMonitoredResourceDescriptors", Input: "google.monitoring.v3.ListMonitoredResourceDescriptorsRequest", Output: "google.monitoring.v3.ListMonitoredResourceDescriptorsResponse", HTTP: []Binding{{"GET", "/v3/{name=projects/*}/monitoredResourceDescriptors", ""}}},
+		{Name: "GetMonitoredResourceDescriptor", Input: "google.monitoring.v3.GetMonitoredResourceDescriptorRequest", Output: "google.api.MonitoredResourceDescriptor", HTTP: []Binding{{"GET", "/v3/{name=projects/*/monitoredResourceDescriptors/**}", ""}}},
+		{Name: "ListMetricDescriptors", Input: "google.monitoring.v3.ListMetricDescriptorsRequest", Output: "google.monitoring.v3.ListMetricDescriptorsResponse", HTTP: []Binding{{"GET", "/v3/{name=projects/*}/metricDescriptors", ""}}},
+		{Name: "GetMetricDescriptor", Input: "google.monitoring.v3.GetMetricDescriptorRequest", Output: "google.api.MetricDescriptor", HTTP: []Binding{{"GET", "/v3/{name=projects/*/metricDescriptors/**}", ""}}},
+		{Name: "CreateMetricDescriptor", Input: "google.monitoring.v3.CreateMetricDescriptorRequest", Output: "google.api.MetricDescriptor", HTTP: []Binding{{"POST", "/v3/{name=projects/*}/metricDescriptors", "metric_descriptor"}}},
+		{Name: "DeleteMetricDescriptor", Input: "google.monitoring.v3.DeleteMetricDescriptorRequest", Output: "google.protobuf.Empty", HTTP: []Binding{{"DELETE", "/v3/{name=projects/*/metricDescriptors/**}", ""}}},
+		{Name: "ListTimeSeries", Input: "google.monitoring.v3.ListTimeSeriesRequest", Output: "google.monitoring.v3.ListTimeSeriesResponse", HTTP: []Binding{{"GET", "/v3/{name=projects/*}/timeSeries", ""}, {"GET", "/v3/{name=organizations/*}/timeSeries", ""}, {"GET", "/v3/{name=folders/*}/timeSeries", ""}}},
+		{Name: "CreateTimeSeries", Input: "google.monitoring.v3.CreateTimeSeriesRequest", Output: "google.protobuf.Empty", HTTP: []Binding{{"POST", "/v3/{name=projects/*}/timeSeries", "*"}}},
+		{Name: "CreateServiceTimeSeries", Input: "google.monitoring.v3.CreateTimeSeriesRequest", Output: "google.protobuf.Empty", HTTP: []Binding{{"POST", "/v3/{name=projects/*}/timeSeries:createService", "*"}}},
+	}},
 	{Name: "google.pubsub.v1.Publisher", File: "google/pubsub/v1/pubsub.proto", Methods: []*Method{
 		{Name: "CreateTopic", Input: "google.pubsub.v1.Topic", Output: "google.pubsub.v1.Topic", HTTP: []Binding{{"PUT", "/v1/{name=projects/*/topics/*}", "*"}}},
 		{Name: "UpdateTopic", Input: "google.pubsub.v1.UpdateTopicRequest", Output: "google.pubsub.v1.Topic", HTTP: []Binding{{"PATCH", "/v1/{topic.name=projects/*/topics/*}", "*"}}},
@@ -1426,6 +1437,38 @@ var protoFields = map[string]map[string]Behavior{
 	"google.iam.v1.TestIamPermissionsRequest": {
 		"resource":    Required,
 		"permissions": Required,
+	},
+	"google.monitoring.v3.CreateMetricDescriptorRequest": {
+		"name":              Required,
+		"metric_descriptor": Required,
+	},
+	"google.monitoring.v3.CreateTimeSeriesRequest": {
+		"name":        Required,
+		"time_series": Required,
+	},
+	"google.monitoring.v3.DeleteMetricDescriptorRequest": {
+		"name": Required,
+	},
+	"google.monitoring.v3.GetMetricDescriptorRequest": {
+		"name": Required,
+	},
+	"google.monitoring.v3.GetMonitoredResourceDescriptorRequest": {
+		"name": Required,
+	},
+	"google.monitoring.v3.ListMetricDescriptorsRequest": {
+		"name":        Required,
+		"filter":      Optional,
+		"page_size":   Optional,
+		"page_token":  Optional,
+		"active_only": Optional,
+	},
+	"google.monitoring.v3.ListMonitoredResourceDescriptorsRequest": {
+		"name": Required,
+	},
+	"google.monitoring.v3.ListTimeSeriesRequest": {
+		"name":     Required,
+		"filter":   Required,
+		"interval": Required,
 	},
 	"google.pubsub.v1.AIInference": {
 		"endpoint":               Required,

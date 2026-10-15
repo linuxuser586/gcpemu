@@ -594,7 +594,7 @@ export interface paths {
         };
         /**
          * Pub/Sub subscription statistics (pubsub service; Web console Pub/Sub view).
-         * @description What GCP reports as Cloud Monitoring metrics of a subscription (num_undelivered_messages, oldest_unacked_message_age, dead_letter_message_count), which the emulator does not serve.
+         * @description What GCP reports as Cloud Monitoring metrics of a subscription (num_undelivered_messages, oldest_unacked_message_age, dead_letter_message_count), for every subscription in one call. The emulator serves them as Cloud Monitoring time series too, under /monitoring/v3/projects/{project}/timeSeries.
          */
         get: operations["pubsubStats"];
         put?: never;

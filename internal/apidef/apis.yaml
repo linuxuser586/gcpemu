@@ -16,6 +16,7 @@ googleapis:
     - google/iam/credentials/v1/iamcredentials.proto
     - google/iam/v1/iam_policy.proto
     - google/longrunning/operations.proto
+    - google/monitoring/v3/metric_service.proto
     - google/pubsub/v1/pubsub.proto
     - google/pubsub/v1/schema.proto
   # Field behaviours the real APIs don't enforce, dropped from the generated
@@ -25,6 +26,9 @@ googleapis:
     # OpenTofu's node pool updates); GKE accepts that.
     google.container.v1.UpdateNodePoolRequest.node_version: [REQUIRED]
     google.container.v1.UpdateNodePoolRequest.image_type: [REQUIRED]
+    # TimeSeriesView has no UNSPECIFIED value: its zero is FULL, which is
+    # what a request that omits view (the REST examples, curl) asks for.
+    google.monitoring.v3.ListTimeSeriesRequest.view: [REQUIRED]
 
 # Discovery documents, read from the google.golang.org/api module version
 # pinned in go.mod (each revision is recorded in zz_discovery.go).

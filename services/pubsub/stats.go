@@ -10,8 +10,8 @@ import (
 // Subscription statistics for the Web console's Pub/Sub view (SRS 4.8.3).
 // GCP reports them as Cloud Monitoring metrics
 // (subscription/num_undelivered_messages, oldest_unacked_message_age,
-// dead_letter_message_count), which the emulator does not serve, so the
-// admin API reports them instead:
+// dead_letter_message_count), which the emulator serves too
+// (monitoring.go); the admin API reports them in one call:
 //
 //	GET /_emu/v1/pubsub/subscriptions[?project=P]
 
@@ -41,24 +41,29 @@ func (s *Service) stats(project string) []subStats {
 		if project != "" && projectOf(name) != project {
 			continue
 		}
-		st := subStats{Name: name, Topic: sb.cfg.GetTopic(), DeadLettered: sb.deadLettered}
-		for _, e := range sb.entries {
-			if e.acked {
-				continue
-			}
-			st.Backlog++
-			st.BacklogBytes += e.m.size
-			if e.leased() {
-				st.Outstanding++
-			}
-			if st.OldestUnackedPublishTime.IsZero() || e.m.publish.Before(st.OldestUnackedPublishTime) {
-				st.OldestUnackedPublishTime = e.m.publish
-			}
-		}
-		out = append(out, st)
+		out = append(out, statsOf(name, sb))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// statsOf reports sb's statistics; callers hold s.mu.
+func statsOf(name string, sb *sub) subStats {
+	st := subStats{Name: name, Topic: sb.cfg.GetTopic(), DeadLettered: sb.deadLettered}
+	for _, e := range sb.entries {
+		if e.acked {
+			continue
+		}
+		st.Backlog++
+		st.BacklogBytes += e.m.size
+		if e.leased() {
+			st.Outstanding++
+		}
+		if st.OldestUnackedPublishTime.IsZero() || e.m.publish.Before(st.OldestUnackedPublishTime) {
+			st.OldestUnackedPublishTime = e.m.publish
+		}
+	}
+	return st
 }
 
 // serveStats is GET /_emu/v1/pubsub/subscriptions. now is the Emulator

@@ -34,6 +34,8 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	{"service_usage_custom_endpoint", "iam", "/serviceusage/v1/"},
 	{"storage_custom_endpoint", "gcs", "/storage/v1/"},
 	{"pubsub_custom_endpoint", "pubsub", "/pubsub/v1/"},
+	// Pub/Sub serves the subscription metrics of Cloud Monitoring (#347).
+	{"monitoring_custom_endpoint", "pubsub", "/monitoring/v3/"},
 	{"dns_custom_endpoint", "dns", "/dns/v1/"},
 	{"artifact_registry_custom_endpoint", "ar", "/artifactregistry/v1/"},
 	{"compute_custom_endpoint", "compute", "/compute/v1/"},

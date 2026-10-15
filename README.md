@@ -16,7 +16,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 | Core | `internal/…` | CLI, API gateway (REST + gRPC on one port), admin API, store (memory/bbolt), seed files, fault injection, request log |
 | IAM | `services/iam` | Service accounts and keys, roles, policies with conditions, IAM v2 deny policies on projects, audit/enforce, OAuth2 token endpoint, IAM Credentials, metadata server, STS/WIF (OIDC exchange; AWS and SAML providers managed only), Service Usage (enabled APIs per project) |
 | Cloud Storage | `services/gcs` | JSON + XML APIs, resumable uploads, generations/preconditions, checksums, V4 signed URLs, notifications, lifecycle, HMAC, legacy ACLs, managed folders with IAM |
-| Pub/Sub | `services/pubsub` | gRPC + REST, streaming pull, ordering, DLQ, filters, push with OIDC, exactly-once, snapshots/seek, schemas |
+| Pub/Sub | `services/pubsub` | gRPC + REST, streaming pull, ordering, DLQ, filters, push with OIDC, exactly-once, snapshots/seek, schemas; Cloud Monitoring's subscription metrics (`num_undelivered_messages`, `oldest_unacked_message_age`, `dead_letter_message_count`) through `timeSeries.list` |
 | Secret Manager | `services/secrets` | gRPC + REST, global and regional secrets, versions and aliases, IAM, expiry and delayed destruction on the Emulator clock, Pub/Sub event notifications, managed rotation of Cloud SQL passwords |
 | Cloud DNS | `services/dns` | Zones, record sets, changes, zone IAM policies; server policies (recorded); response policies applied to bound VPC networks; authoritative UDP/TCP server with forwarding |
 | Artifact Registry | `services/ar` | Repositories API with Operations; OCI Distribution v1.1 registry with referrers; pull-through cache, remote and virtual repositories |
