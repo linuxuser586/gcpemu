@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
+	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -97,7 +98,8 @@ func (s *Service) resetMemory() {
 }
 
 // Register loads persisted state and mounts the gRPC and REST APIs on the
-// gateway (FR-CORE-040), and the subscription statistics on the admin API.
+// gateway (FR-CORE-040), and the subscription statistics on the admin API
+// and as Cloud Monitoring metrics (monitoring.go).
 func (s *Service) Register(r emu.Router) error {
 	if err := s.load(); err != nil {
 		return err
@@ -105,6 +107,8 @@ func (s *Service) Register(r emu.Router) error {
 	s.loaded.Store(true)
 	s.registerGRPC(r.GRPC())
 	r.Mount("pubsub", []string{"pubsub.googleapis.com"}, s.restHandler())
+	monitoringpb.RegisterMetricServiceServer(r.GRPC(), &metricServer{s: s})
+	r.Mount("monitoring", []string{"monitoring.googleapis.com"}, s.monitoringHandler())
 	r.Handle("GET /_emu/v1/pubsub/subscriptions", http.HandlerFunc(s.serveStats))
 	return nil
 }
@@ -254,6 +258,7 @@ func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]str
 	}
 	if gw != "" {
 		out["CLOUDSDK_API_ENDPOINT_OVERRIDES_PUBSUB"] = "http://" + gw + "/pubsub/"
+		out["CLOUDSDK_API_ENDPOINT_OVERRIDES_MONITORING"] = "http://" + gw + "/monitoring/"
 	}
 	return out
 }
@@ -265,8 +270,8 @@ func (s *Service) ClockAdvanced(ctx context.Context) error {
 	return nil
 }
 
-// tickLoop expires leases, promotes delayed redeliveries and runs
-// retention garbage collection.
+// tickLoop expires leases, promotes delayed redeliveries, samples the
+// backlog for Cloud Monitoring and runs retention garbage collection.
 func (s *Service) tickLoop() {
 	defer s.wg.Done()
 	t := time.NewTicker(50 * time.Millisecond)
@@ -285,6 +290,7 @@ func (s *Service) tickLoop() {
 			s.promote(sb, now)
 		}
 		s.mu.Unlock()
+		s.sample(s.env.Clock.Now())
 		if now.Sub(lastGC) >= 5*time.Second {
 			lastGC = now
 			s.gc()

@@ -23,10 +23,11 @@ var defaultServices = []string{
 	"cloudbilling.googleapis.com", "cloudresourcemanager.googleapis.com",
 	"compute.googleapis.com", "connectgateway.googleapis.com",
 	"container.googleapis.com", "dns.googleapis.com", "iam.googleapis.com",
-	"iamcredentials.googleapis.com", "networksecurity.googleapis.com",
-	"pubsub.googleapis.com", "secretmanager.googleapis.com",
-	"servicenetworking.googleapis.com", "serviceusage.googleapis.com",
-	"sqladmin.googleapis.com", "storage.googleapis.com", "sts.googleapis.com",
+	"iamcredentials.googleapis.com", "monitoring.googleapis.com",
+	"networksecurity.googleapis.com", "pubsub.googleapis.com",
+	"secretmanager.googleapis.com", "servicenetworking.googleapis.com",
+	"serviceusage.googleapis.com", "sqladmin.googleapis.com",
+	"storage.googleapis.com", "sts.googleapis.com",
 }
 
 var serviceNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?\.[a-z]{2,}$`)

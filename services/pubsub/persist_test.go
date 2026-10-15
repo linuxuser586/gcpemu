@@ -21,14 +21,23 @@ import (
 )
 
 type fakeRouter struct {
-	g    *grpc.Server
-	rest http.Handler
+	g      *grpc.Server
+	rest   http.Handler
+	mounts map[string]http.Handler
 }
 
-func (r *fakeRouter) Mount(_ string, _ []string, h http.Handler) { r.rest = h }
-func (r *fakeRouter) Handle(string, http.Handler)                {}
-func (r *fakeRouter) GRPC() *grpc.Server                         { return r.g }
-func (r *fakeRouter) Fallback(http.Handler)                      {}
+func (r *fakeRouter) Mount(api string, _ []string, h http.Handler) {
+	if r.mounts == nil {
+		r.mounts = map[string]http.Handler{}
+	}
+	r.mounts[api] = h
+	if api == "pubsub" {
+		r.rest = h
+	}
+}
+func (r *fakeRouter) Handle(string, http.Handler) {}
+func (r *fakeRouter) GRPC() *grpc.Server          { return r.g }
+func (r *fakeRouter) Fallback(http.Handler)       {}
 
 // openService builds a Pub/Sub service over a bbolt store at path, as in
 // --data-dir mode, and returns its REST handler.

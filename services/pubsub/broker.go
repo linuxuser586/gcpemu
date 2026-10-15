@@ -176,6 +176,9 @@ type sub struct {
 	// deadLettered counts messages forwarded to the dead-letter topic
 	// (memory only, for the admin API's statistics).
 	deadLettered int64
+	// samples is the backlog history Cloud Monitoring's metrics replay,
+	// oldest first (memory only).
+	samples []backlogSample
 }
 
 func newSub(name string, cfg *pubsubpb.Subscription, f filterExpr) *sub {

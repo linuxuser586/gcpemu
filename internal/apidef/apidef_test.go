@@ -16,6 +16,7 @@ import (
 	_ "cloud.google.com/go/iam/apiv1/iampb"
 	_ "cloud.google.com/go/iam/credentials/apiv1/credentialspb"
 	_ "cloud.google.com/go/longrunning/autogen/longrunningpb"
+	_ "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	_ "cloud.google.com/go/networksecurity/apiv1/networksecuritypb"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	_ "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
