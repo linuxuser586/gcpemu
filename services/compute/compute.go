@@ -54,6 +54,10 @@ type Service struct {
 	aliasMu   sync.Mutex
 	aliasDone bool
 	aliasErr  error
+	// hostMu serialises changes to the Host attachment (hostattach.go);
+	// restoring is the restore of its Offered ports at start.
+	hostMu    sync.Mutex
+	restoring sync.WaitGroup
 	// egress holds the NAT egress gateways by VPC network path.
 	egMu   sync.Mutex
 	egress map[string]*gateway
@@ -110,13 +114,30 @@ func (s *Service) Register(r emu.Router) error {
 	r.Mount("compute", []string{"compute.googleapis.com"}, api)
 	r.Mount("servicenetworking", []string{"servicenetworking.googleapis.com"}, s.sn)
 	s.lro.Register(r)
+	s.hostRoutes(r)
 	return nil
 }
 
 // Start fails operations interrupted by a previous run. Container networks
-// and the egress gateway are (re)created lazily when workloads ask for them.
+// and the egress gateway are (re)created lazily when workloads ask for
+// them, except those of subnetworks with Offered ports, which are served
+// again in the background.
 func (s *Service) Start(ctx context.Context) error {
 	s.recoverOps()
+	rctx, cancel := context.WithCancel(context.Background())
+	s.restoring.Add(1)
+	go func() {
+		defer s.restoring.Done()
+		defer cancel()
+		go func() {
+			select {
+			case <-s.stopped:
+				cancel()
+			case <-rctx.Done():
+			}
+		}()
+		s.restoreOffers(rctx)
+	}()
 	return nil
 }
 
@@ -132,6 +153,7 @@ func (s *Service) Stop(ctx context.Context) error {
 		delete(s.timers, k)
 	}
 	s.opMu.Unlock()
+	s.restoring.Wait()
 	s.lro.Close()
 	s.egMu.Lock()
 	gws := s.egress
@@ -158,6 +180,9 @@ func (s *Service) ResourceCounts() map[string]int {
 // Reset removes the NAT egress gateways (their state is wiped with the
 // store); workload containers and networks belong to their owners and the core.
 func (s *Service) Reset(ctx context.Context) error {
+	s.hostMu.Lock()
+	s.withdrawAll(ctx, s.hostAttachments())
+	s.hostMu.Unlock()
 	s.egMu.Lock()
 	var nets []string
 	for np := range s.egress {

@@ -61,6 +61,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 			Offline: c.in.Config.Offline, Images: cl,
 		},
 	}
+	cl.SetMemberAddr(c.relayAddr)
 	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
@@ -83,6 +84,19 @@ func (c *containers) reservedAddrs() []string {
 		}
 	}
 	return out
+}
+
+// relayAddr is the address a service pins for the VM relay on network
+// (emu.RelayAddresser).
+func (c *containers) relayAddr(network string) string {
+	for _, s := range c.in.services {
+		if r, ok := s.(emu.RelayAddresser); ok {
+			if a := r.RelayAddr(network); a != "" {
+				return a
+			}
+		}
+	}
+	return ""
 }
 
 func (c *containers) Netplane(ctx context.Context) (*netplane.Plane, error) {

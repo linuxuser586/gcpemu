@@ -51,12 +51,15 @@ type Plane struct {
 	// relayed maps endpoint names to the addresses the relay listens on
 	// for them, which a restarted relay listens on again.
 	relayed map[string]string
+	// offers are the Offered ports served (Offer): nil when the relay
+	// serves one.
+	offers map[offerKey]*forwarder
 }
 
 // New returns a plane. endpoints returns the current host endpoint map
 // (name → host:port), as recorded by emu.Endpoints.
 func New(rt *runtime.Manager, endpoints func() map[string]string, log *slog.Logger) *Plane {
-	return &Plane{rt: rt, endpoints: endpoints, log: log, fwd: map[string]*forwarder{}, relayed: map[string]string{}}
+	return &Plane{rt: rt, endpoints: endpoints, log: log, fwd: map[string]*forwarder{}, relayed: map[string]string{}, offers: map[offerKey]*forwarder{}}
 }
 
 // Runtime returns the runtime manager.
@@ -104,7 +107,12 @@ func (p *Plane) startRelayLocked(ctx context.Context) error {
 	}
 	r, err := vmrelay.Start(ctx, p.rt, vmrelay.Options{
 		Services: p.svc.Name, External: ext.Name, Log: p.log,
-		Target: func(name string) string { return p.endpoints()[name] },
+		Target: func(name string) string {
+			if t := offerTarget(name); t != "" {
+				return t
+			}
+			return p.endpoints()[name]
+		},
 	})
 	if err != nil {
 		return err
@@ -121,6 +129,7 @@ func (p *Plane) startRelayLocked(ctx context.Context) error {
 		}
 	}
 	p.relay = r
+	p.reofferLocked(ctx)
 	return nil
 }
 
@@ -282,6 +291,12 @@ func (p *Plane) Close() {
 		f.close()
 	}
 	p.fwd = map[string]*forwarder{}
+	for k, f := range p.offers {
+		if f != nil {
+			f.close()
+		}
+		delete(p.offers, k)
+	}
 	r := p.relay
 	p.relay = nil
 	p.mu.Unlock()
@@ -393,7 +408,9 @@ func (f *forwarder) serveUDP() {
 }
 
 func (f *forwarder) close() {
-	f.tcp.Close()
+	if f.tcp != nil {
+		f.tcp.Close()
+	}
 	if f.udp != nil {
 		f.udp.Close()
 	}

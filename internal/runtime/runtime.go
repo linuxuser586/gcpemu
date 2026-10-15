@@ -67,6 +67,8 @@ type Client struct {
 	memberMu sync.Mutex
 	member   string
 	joined   func(Network, bool)
+	// memberAddr pins the member's address per network (SetMemberAddr).
+	memberAddr func(network string) string
 }
 
 // Info describes the connected runtime.

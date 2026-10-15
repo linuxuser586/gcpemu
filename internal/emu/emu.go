@@ -305,6 +305,14 @@ type AddressReserver interface {
 	ReservedAddrs() []string
 }
 
+// RelayAddresser is implemented by services that pin the address the VM
+// relay holds on a container network: compute keeps the Host address of a
+// VPC container network there across restarts (ADR 0014). RelayAddr
+// returns "" for networks it does not pin.
+type RelayAddresser interface {
+	RelayAddr(network string) string
+}
+
 // LoopbackHolder is implemented by services that serve host clients on
 // 127.0.0.x addresses they allocate (LB forwarding rules, Cloud SQL
 // instances and GKE LoadBalancer Services on a VM runtime), so that each
