@@ -400,6 +400,8 @@ it('shows pods with their status through the Connect gateway, and their logs', a
   await user.click(within(crashing!).getByRole('link', { name: 'Logs of web-2' }))
   expect(await screen.findByLabelText('Log')).toHaveTextContent('log of app (100 lines)')
   await user.selectOptions(screen.getByLabelText('Container'), 'sidecar')
+  // Both selects write the URL; let the first land before the second.
+  await waitFor(() => expect(screen.getByLabelText('Container')).toHaveValue('sidecar'))
   await user.selectOptions(screen.getByLabelText('Lines'), '500')
   expect(await screen.findByText(/log of sidecar \(500 lines\)/)).toBeInTheDocument()
 })

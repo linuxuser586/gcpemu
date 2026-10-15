@@ -203,8 +203,8 @@ it('lists topics with their subscriptions and filters them in the URL', async ()
   expect(orders).toHaveTextContent('1 day')
 
   await user.type(screen.getByLabelText('Filter'), 'dlq')
+  await waitFor(() => expect(within(table).getAllByTestId('topic')).toHaveLength(1))
   expect(router.state.location.search).toContain('q=dlq')
-  expect(within(table).getAllByTestId('topic')).toHaveLength(1)
 })
 
 it('lists subscriptions with backlog, oldest unacked age and dead-letter counts', async () => {

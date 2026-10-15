@@ -93,6 +93,7 @@ it('filters by Service, status and text, keeping the filters in the URL', async 
   expect(router.state.location.search).toBe('?service=dns')
 
   await user.selectOptions(screen.getByLabelText('Service'), '')
+  await waitFor(() => expect(rows()).toHaveLength(3))
   await user.type(screen.getByLabelText('Filter'), 'vpc-')
   await waitFor(() => expect(rows()).toHaveLength(2))
   expect(router.state.location.search).toBe('?q=vpc-')

@@ -590,7 +590,7 @@ it('shows and edits the policy of a bucket chosen by kind and name', async () =>
   await user.selectOptions(await screen.findByLabelText('Resource type'), 'bucket')
   await user.click(screen.getByRole('button', { name: 'Show policy' }))
   expect(await screen.findByText('Enter the bucket.')).toBeInTheDocument()
-  await user.type(screen.getByLabelText('Bucket'), 'assets')
+  await user.type(await screen.findByLabelText('Bucket'), 'assets')
   await user.click(screen.getByRole('button', { name: 'Show policy' }))
   expect(router.state.location.search).toContain('kind=bucket')
   expect(router.state.location.search).toContain('name=assets')
@@ -883,7 +883,7 @@ it('simulates a Principal’s permissions on the Project and on a bucket', async
   expect(requests.filter((r) => r.auth).map((r) => r.path)).toEqual(['crm:testIamPermissions'])
 
   await user.selectOptions(screen.getByLabelText('Resource type'), 'bucket')
-  await user.type(screen.getByLabelText('Bucket'), 'assets')
+  await user.type(await screen.findByLabelText('Bucket'), 'assets')
   await waitFor(() =>
     expect(screen.getByLabelText('Permissions')).toHaveValue(
       'storage.buckets.get\nstorage.buckets.list\nstorage.objects.get',
