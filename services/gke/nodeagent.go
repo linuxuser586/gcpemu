@@ -112,6 +112,9 @@ func runNodeAgent(ctx context.Context, args []string) error {
 	if err := setupNodeNetwork(cfg); err != nil {
 		return err
 	}
+	if err := bridgeNetfilter(); err != nil {
+		fmt.Fprintf(os.Stderr, "gke-node: pods may not reach Services on their own node: %v\n", err)
+	}
 	mdL, err := net.Listen("tcp", metadataIP+":80")
 	if err != nil {
 		return err
@@ -256,6 +259,23 @@ func setupNodeNetwork(cfg nodeConfig) error {
 		return err
 	}
 	return os.WriteFile(nodeResolvConf, []byte("nameserver "+metadataIP+"\n"), 0o644)
+}
+
+// bridgeNetfilter makes bridged traffic pass iptables, so that a pod's
+// reply to another pod on the node that reached it through a Service
+// (CoreDNS above all) is un-DNATed. It needs br_netfilter, which the node
+// cannot modprobe; adding a physdev rule loads it through the kernel, as
+// kube-router's rules do when NetworkPolicy is enforced (FR-GKE-011).
+func bridgeNetfilter() error {
+	const ipt, chain = "/bin/aux/iptables", "GCPEMU-BRNF"
+	_ = exec.Command(ipt, "-N", chain).Run()
+	out, err := exec.Command(ipt, "-A", chain, "-m", "physdev", "--physdev-is-bridged", "-j", "RETURN").CombinedOutput()
+	_ = exec.Command(ipt, "-F", chain).Run()
+	_ = exec.Command(ipt, "-X", chain).Run()
+	if err != nil {
+		return fmt.Errorf("physdev rule: %v: %s", err, out)
+	}
+	return os.WriteFile("/proc/sys/net/bridge/bridge-nf-call-iptables", []byte("1"), 0o644)
 }
 
 // trustNodeCA adds the emulator CA to the node's system bundle (read by
