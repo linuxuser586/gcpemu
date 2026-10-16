@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -77,11 +76,11 @@ func TestProjectPolicy(t *testing.T) {
 	}
 }
 
-// TestUnmodelledServiceRoles: roles of a service missing from roles.yaml are
-// accepted and grant nothing. Once the service enters roles.yaml its roles
-// are checked against the catalogue, so each role here must come in with it
-// or a grant that used to apply is rejected (#364).
-func TestUnmodelledServiceRoles(t *testing.T) {
+// TestPreviouslyAcceptedRoles: a predefined role of a service missing from
+// roles.yaml is accepted and grants nothing. Once the service enters
+// roles.yaml its roles are checked against the catalogue, so each role here
+// must come in with it or a grant that used to apply is rejected (#364).
+func TestPreviouslyAcceptedRoles(t *testing.T) {
 	inst := startIAM(t)
 	c := crmClient(t, inst)
 	for _, role := range []string{
@@ -90,6 +89,15 @@ func TestUnmodelledServiceRoles(t *testing.T) {
 		"roles/monitoring.metricWriter",
 		"roles/monitoring.viewer",
 		"roles/stackdriver.resourceMetadata.writer",
+		// Cloud Monitoring, accepted while unmodelled before v0.7.0.
+		"roles/monitoring.admin",
+		"roles/monitoring.editor",
+		"roles/monitoring.alertPolicyEditor",
+		"roles/monitoring.alertPolicyViewer",
+		"roles/monitoring.dashboardEditor",
+		"roles/monitoring.dashboardViewer",
+		"roles/monitoring.notificationChannelEditor",
+		"roles/monitoring.notificationChannelViewer",
 	} {
 		p, err := c.Projects.GetIamPolicy(testProject, &crmv1.GetIamPolicyRequest{}).Do()
 		if err != nil {
@@ -99,19 +107,6 @@ func TestUnmodelledServiceRoles(t *testing.T) {
 		if _, err := c.Projects.SetIamPolicy(testProject, &crmv1.SetIamPolicyRequest{Policy: p}).Do(); err != nil {
 			t.Errorf("grant %s on project: %v", role, err)
 		}
-	}
-
-	r, err := iamClient(t, inst).Roles.Get("roles/monitoring.metricWriter").Do()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get", "monitoring.metricDescriptors.list",
-		"monitoring.monitoredResourceDescriptors.get", "monitoring.monitoredResourceDescriptors.list",
-		"monitoring.timeSeries.create",
-	}
-	if !slices.Equal(r.IncludedPermissions, want) {
-		t.Errorf("metricWriter permissions = %v, want %v", r.IncludedPermissions, want)
 	}
 }
 

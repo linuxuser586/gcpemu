@@ -1,6 +1,9 @@
 package iam
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestCatalogueLoads(t *testing.T) {
 	c, err := loadCatalogue(rolesYAML)
@@ -51,11 +54,31 @@ func TestRoleHas(t *testing.T) {
 		{"roles/container.viewer", "container.secrets.get", false},
 		{"roles/iam.securityAdmin", "storage.buckets.setIamPolicy", true},
 		{"roles/iam.serviceAccountTokenCreator", "iam.serviceAccounts.signBlob", true},
+		{"roles/monitoring.viewer", "monitoring.metricDescriptors.list", true},
+		{"roles/monitoring.viewer", "monitoring.alertPolicies.get", true},
+		{"roles/monitoring.viewer", "monitoring.timeSeries.create", false},
+		{"roles/monitoring.editor", "monitoring.dashboards.update", true},
+		{"roles/monitoring.alertPolicyEditor", "monitoring.alertPolicies.delete", true},
+		{"roles/monitoring.alertPolicyEditor", "monitoring.dashboards.delete", false},
+		{"roles/monitoring.dashboardViewer", "monitoring.dashboards.update", false},
 	}
 	for _, tc := range cases {
 		if got := c.roles[tc.role].has(tc.perm); got != tc.want {
 			t.Errorf("%s has %s = %v, want %v", tc.role, tc.perm, got, tc.want)
 		}
+	}
+}
+
+// TestMetricWriterPermissions: the role a GKE node service account gets to
+// write metrics grants exactly what GCP lists for it (#364).
+func TestMetricWriterPermissions(t *testing.T) {
+	want := []string{
+		"monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get", "monitoring.metricDescriptors.list",
+		"monitoring.monitoredResourceDescriptors.get", "monitoring.monitoredResourceDescriptors.list",
+		"monitoring.timeSeries.create",
+	}
+	if got := builtin().roles["roles/monitoring.metricWriter"].Permissions; !slices.Equal(got, want) {
+		t.Errorf("metricWriter permissions = %v, want %v", got, want)
 	}
 }
 
