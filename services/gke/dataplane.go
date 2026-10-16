@@ -1091,6 +1091,10 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 		}
 		var list kubeList[kubeNode]
 		if err := kc.get(ctx, "/api/v1/nodes", &list); err != nil {
+			if ctx.Err() != nil {
+				// Keep missing from the last poll that succeeded (#355).
+				return false, ctx.Err()
+			}
 			list.Items = nil // every node is missing; still check for deaths
 		}
 		ready := map[string]bool{}
