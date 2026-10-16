@@ -190,8 +190,9 @@ func TestClusterAddons(t *testing.T) {
 
 // Once the operation that installs an add-on finishes, the API server
 // serves every CRD the add-on defines (#310): the Gateway API CRDs of the
-// standard channel and the SecretSync CRD on create, the experimental
-// channel's on update.
+// standard channel and the SecretSync CRD on create, each channel's on an
+// update that moves the cluster to it directly, Gateway API objects
+// present (#358).
 func TestAddonCRDsEstablished(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
@@ -243,19 +244,53 @@ func TestAddonCRDsEstablished(t *testing.T) {
 	}
 	assertEstablished(gke.GatewayAPIManifest("standard"))
 	assertEstablished("secret-sync.yaml")
-	// Objects of the CRDs are served at once, without 404.
+	// The add-on installs no safe-upgrades policy (#358).
+	const safeUpgrades = "safe-upgrades.gateway.networking.k8s.io"
+	vap := "/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies"
+	vapb := "/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings"
+	for _, p := range []string{vap, vapb} {
+		if code, _ := e.kube("GET", p+"/"+safeUpgrades, "", nil, nil); code != 404 {
+			t.Errorf("GET %s/%s after create: %d; want 404", p, safeUpgrades, code)
+		}
+	}
+	// Objects of the CRDs are served at once, without 404; the route
+	// stays through the channel changes below.
+	route := "/apis/gateway.networking.k8s.io/v1/namespaces/default/httproutes/r"
 	e.mustKube("POST", "/apis/gateway.networking.k8s.io/v1/namespaces/default/httproutes", map[string]any{
 		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
 		"metadata": map[string]any{"name": "r"}, "spec": map[string]any{},
 	}, nil)
 
-	e.mustKube("DELETE", "/apis/gateway.networking.k8s.io/v1/namespaces/default/httproutes/r", nil, nil)
+	// A cluster an older emulator set up carries the policy and binding
+	// with the add-on label; the next update removes them and still moves
+	// the cluster to the experimental channel.
+	for _, o := range []struct{ kind, coll string }{{"ValidatingAdmissionPolicy", vap}, {"ValidatingAdmissionPolicyBinding", vapb}} {
+		obj := gke.GatewayAPIObject("standard", o.kind, safeUpgrades)
+		if obj == nil {
+			t.Fatalf("no %s in the standard manifest", o.kind)
+		}
+		obj["metadata"].(map[string]any)["labels"] = map[string]any{"gcpemu.dev/addon": "gateway-api"}
+		e.mustKube("POST", o.coll, obj, nil)
+	}
+	// Wait until the API server enforces the policy: a dry-run replace of
+	// a standard CRD with its experimental version is denied.
+	crdPath := "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/httproutes.gateway.networking.k8s.io"
+	eventually(t, time.Minute, "the safe-upgrades policy to deny", func() bool {
+		var cur struct {
+			Metadata struct {
+				ResourceVersion string `json:"resourceVersion"`
+			} `json:"metadata"`
+		}
+		e.mustKube("GET", crdPath, nil, &cur)
+		obj := gke.GatewayAPIObject("experimental", "CustomResourceDefinition", "httproutes.gateway.networking.k8s.io")
+		obj["metadata"].(map[string]any)["resourceVersion"] = cur.Metadata.ResourceVersion
+		code, _ := e.kube("PUT", crdPath+"?dryRun=All", "", obj, nil)
+		return code == 422
+	})
 
-	// The experimental channel through an update (by way of disabled: the
-	// Gateway API's safe-upgrades policy refuses experimental CRDs over
-	// standard ones).
-	for _, ch := range []containerpb.GatewayAPIConfig_Channel{containerpb.GatewayAPIConfig_CHANNEL_DISABLED, containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL} {
-		op, err = cm.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: name, Update: &containerpb.ClusterUpdate{
+	update := func(ch containerpb.GatewayAPIConfig_Channel) {
+		t.Helper()
+		op, err := cm.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: name, Update: &containerpb.ClusterUpdate{
 			DesiredGatewayApiConfig: &containerpb.GatewayAPIConfig{Channel: ch},
 		}})
 		if err != nil {
@@ -263,5 +298,20 @@ func TestAddonCRDsEstablished(t *testing.T) {
 		}
 		waitOp(t, cm, zone, op.Name, 2*time.Minute)
 	}
+	// standard → experimental → standard, one update each, the route
+	// present throughout.
+	update(containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL)
 	assertEstablished(gke.GatewayAPIManifest("experimental"))
+	for _, p := range []string{vap, vapb} {
+		if code, _ := e.kube("GET", p+"/"+safeUpgrades, "", nil, nil); code != 404 {
+			t.Errorf("GET %s/%s after the update: %d; want 404", p, safeUpgrades, code)
+		}
+	}
+	e.mustKube("GET", route, nil, nil)
+	update(containerpb.GatewayAPIConfig_CHANNEL_STANDARD)
+	assertEstablished(gke.GatewayAPIManifest("standard"))
+	e.mustKube("GET", route, nil, nil)
+	update(containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL)
+	assertEstablished(gke.GatewayAPIManifest("experimental"))
+	e.mustKube("GET", route, nil, nil)
 }

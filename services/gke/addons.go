@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -26,7 +27,10 @@ import (
 //   - networkConfig.gatewayApiConfig: the Gateway API CRDs (v1.5.1, which
 //     GKE supports from 1.35.2-gke.1842000) of the chosen channel, and
 //     the gke-l7 GatewayClasses (l7.go); removed only while no other
-//     Gateway API object exists;
+//     Gateway API object exists. The add-on owns these CRDs and does not
+//     install the manifests' safe-upgrades ValidatingAdmissionPolicy,
+//     which would refuse an update from the standard channel to the
+//     experimental one (#358);
 //   - secretManagerConfig: the Secrets Store CSI driver registered as GKE's
 //     secrets-store-gke.csi.k8s.io; its `gke` provider is the node agent
 //     (provider.go);
@@ -45,7 +49,14 @@ const (
 	// crdEstablishTimeout bounds the wait for an add-on's CRDs to be
 	// served.
 	crdEstablishTimeout = 2 * time.Minute
+	// safeUpgrades names the Gateway API's admission policy and its
+	// binding, which the add-on does not install.
+	safeUpgrades = "safe-upgrades.gateway.networking.k8s.io"
 )
+
+// safeUpgradesGrace bounds the retries of a CRD apply that a deleted
+// safe-upgrades policy still denies.
+var safeUpgradesGrace = time.Minute
 
 // manifest decodes an embedded multi-document YAML file (gzipped if it
 // ends in .gz).
@@ -276,12 +287,15 @@ func (s *Service) reconcileAddons(ctx context.Context, key string) error {
 }
 
 func (s *Service) reconcileGatewayAPI(ctx context.Context, kc *kubeClient, ch containerpb.GatewayAPIConfig_Channel) error {
-	std, err := manifest("gateway-api-" + gatewayAPIVer + "-standard.yaml.gz")
+	std, err := gatewayManifest("standard")
 	if err != nil {
 		return err
 	}
-	exp, err := manifest("gateway-api-" + gatewayAPIVer + "-experimental.yaml.gz")
+	exp, err := gatewayManifest("experimental")
 	if err != nil {
+		return err
+	}
+	if err := removeSafeUpgrades(ctx, kc); err != nil {
 		return err
 	}
 	switch ch {
@@ -290,11 +304,79 @@ func (s *Service) reconcileGatewayAPI(ctx context.Context, kc *kubeClient, ch co
 		if err := s.removeGatewayCRDs(ctx, kc, without(exp, std)); err != nil {
 			return err
 		}
-		return applyAddon(ctx, kc, gatewayAPIAddon, std)
+		return applyGatewayAPI(ctx, kc, std)
 	case containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL:
-		return applyAddon(ctx, kc, gatewayAPIAddon, exp)
+		return applyGatewayAPI(ctx, kc, exp)
 	}
 	return s.removeGatewayCRDs(ctx, kc, exp)
+}
+
+// gatewayManifestName is the embedded Gateway API manifest of channel
+// ("standard" or "experimental").
+func gatewayManifestName(channel string) string {
+	return "gateway-api-" + gatewayAPIVer + "-" + channel + ".yaml.gz"
+}
+
+// gatewayManifest returns the objects of the embedded Gateway API manifest
+// of channel without the safe-upgrades policy and binding.
+func gatewayManifest(channel string) ([]map[string]any, error) {
+	objs, err := manifest(gatewayManifestName(channel))
+	if err != nil {
+		return nil, err
+	}
+	var out []map[string]any
+	for _, o := range objs {
+		if _, n, _ := objectPath(o); n == safeUpgrades && (o["kind"] == "ValidatingAdmissionPolicy" || o["kind"] == "ValidatingAdmissionPolicyBinding") {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out, nil
+}
+
+// removeSafeUpgrades deletes the safe-upgrades policy and binding that
+// the add-on installed before #358, leaving ones without the add-on label.
+func removeSafeUpgrades(ctx context.Context, kc *kubeClient) error {
+	for _, kind := range []string{"ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicy"} {
+		kp := kindPaths[kind]
+		path := "/" + kp.group + "/" + kp.resource + "/" + safeUpgrades
+		var cur struct {
+			Metadata objectMeta `json:"metadata"`
+		}
+		err := kc.get(ctx, path, &cur)
+		switch {
+		case isKubeNotFound(err):
+			continue
+		case err != nil:
+		case cur.Metadata.Labels[addonLabel] != gatewayAPIAddon:
+			continue // installed by someone else
+		default:
+			err = kc.delete(ctx, path)
+		}
+		if err != nil {
+			return fmt.Errorf("%s %s: %w", kind, safeUpgrades, err)
+		}
+	}
+	return nil
+}
+
+// applyGatewayAPI applies the Gateway API objects, retrying for
+// safeUpgradesGrace while a deleted safe-upgrades policy, which the API
+// server keeps enforcing for a moment, denies a CRD.
+func applyGatewayAPI(ctx context.Context, kc *kubeClient, objs []map[string]any) error {
+	var err error
+	if werr := waitFor(ctx, safeUpgradesGrace, func() (bool, error) {
+		err = applyAddon(ctx, kc, gatewayAPIAddon, objs)
+		return !deniedBySafeUpgrades(err), nil
+	}); werr != nil {
+		return fmt.Errorf("Gateway API CRDs still denied (%v): %w", werr, err)
+	}
+	return err
+}
+
+func deniedBySafeUpgrades(err error) bool {
+	var ke *kubeError
+	return errors.As(err, &ke) && ke.Status == http.StatusUnprocessableEntity && strings.Contains(ke.Body, "'"+safeUpgrades+"'")
 }
 
 // without returns the objects of a whose names are not in b.
