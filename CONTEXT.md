@@ -87,7 +87,7 @@ The Managed container that relays clients to the load balancer's Data plane on f
 _Avoid_: edge (unqualified), LB proxy
 
 **VM runtime**:
-A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS.
+A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, and Docker Desktop or Podman machine on Windows.
 
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
