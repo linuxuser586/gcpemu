@@ -90,6 +90,7 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 func TestRecoveryWithGKE(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	dir := t.TempDir()
 	persistent := func(c *config.Config) { c.Ephemeral = false; c.DataDir = dir }
 	ctx := context.Background()
@@ -194,7 +195,7 @@ func gkeClient(t *testing.T, inst *emutest.Instance) *container.ClusterManagerCl
 
 func waitClusterOp(t *testing.T, cm *container.ClusterManagerClient, name string) {
 	t.Helper()
-	for deadline := time.Now().Add(5 * time.Minute); ; time.Sleep(500 * time.Millisecond) {
+	for deadline := time.Now().Add(emutest.ClusterOpTimeout); ; time.Sleep(500 * time.Millisecond) {
 		op, err := cm.GetOperation(context.Background(), &containerpb.GetOperationRequest{Name: name})
 		if err != nil {
 			t.Fatal(err)
@@ -206,7 +207,7 @@ func waitClusterOp(t *testing.T, cm *container.ClusterManagerClient, name string
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%s not done after 5m", op.OperationType)
+			t.Fatalf("%s not done after %v", op.OperationType, emutest.ClusterOpTimeout)
 		}
 	}
 }

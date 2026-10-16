@@ -30,6 +30,7 @@ import (
 func TestNodeAddressHeld(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	cl, err := runtime.Detect()
 	if err != nil {
@@ -111,7 +112,7 @@ func TestNodeAddressHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 4*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 
 	cvc, _ := inst.Env.Lookup("compute")
 	vpc := cvc.(emu.VPC)
@@ -129,7 +130,7 @@ func TestNodeAddressHeld(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitOp(t, cm, zone, op.Name, 4*time.Minute)
+		waitOp(t, cm, zone, op.Name)
 	}
 	// Joined before the resize, with the lowest free address: the one
 	// compute would pick for the next node.

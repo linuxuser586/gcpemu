@@ -64,6 +64,7 @@ func TestGKEBackends(t *testing.T) {
 	if goruntime.GOOS == "darwin" {
 		t.Skip("macOS serves privileged ports on the wildcard address, never through lb-edge")
 	}
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
 	// Force the edge: some hosts let the emulator bind port 443 itself.
 	svc, _ := inst.Env.Lookup("lb")
@@ -290,7 +291,7 @@ func eventually(t *testing.T, timeout time.Duration, what string, cond func() bo
 
 func waitCluster(t *testing.T, cm *container.ClusterManagerClient, zone, op string) {
 	t.Helper()
-	eventually(t, 3*time.Minute, "cluster RUNNING", func() bool {
+	eventually(t, emutest.ClusterOpTimeout, "cluster RUNNING", func() bool {
 		o, err := cm.GetOperation(context.Background(), &containerpb.GetOperationRequest{Name: "projects/" + proj + "/locations/" + zone + "/operations/" + op})
 		if err != nil {
 			t.Fatal(err)

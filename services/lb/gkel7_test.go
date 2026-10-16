@@ -28,6 +28,7 @@ import (
 // reported in status, and deleting the Ingress removes its load balancer.
 func TestGKEIngressAndGateway(t *testing.T) {
 	emutest.RequireRuntime(t)
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
 	ctx := context.Background()
 	const zone = "us-central1-a"

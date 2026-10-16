@@ -49,8 +49,12 @@ func (e *opFailed) Error() string {
 	return e.op.OperationType + " failed"
 }
 
+// opTimeout is longer than the emulator's own recovery deadline
+// (recoveryTimeout, 5m), so a slow operation fails with its error (#396).
+const opTimeout = 6 * time.Minute
+
 func waitOpErr(svc *sqladmin.Service, op *sqladmin.Operation) (*sqladmin.Operation, error) {
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(opTimeout)
 	for op.Status != "DONE" {
 		if time.Now().After(deadline) {
 			return op, context.DeadlineExceeded

@@ -48,6 +48,7 @@ func (e *env) kubeNodes() []struct {
 func TestRegionalPoolsAndRoles(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"}, emutest.WithIAMMode("enforce"))
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -63,7 +64,7 @@ func TestRegionalPoolsAndRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, region, op.Name, 3*time.Minute)
+	waitOp(t, cm, region, op.Name)
 	name := rparent + "/clusters/reg"
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {
@@ -97,7 +98,7 @@ func TestRegionalPoolsAndRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, region, op.Name, 3*time.Minute)
+	waitOp(t, cm, region, op.Name)
 	eventually(t, 60*time.Second, "updated labels and taints on every node", func() bool {
 		for _, n := range e.kubeNodes() {
 			if n.Metadata.Labels["tier"] != "b" || len(n.Spec.Taints) != 1 || n.Spec.Taints[0].Key != "spot" || n.Spec.Taints[0].Effect != "PreferNoSchedule" {
@@ -142,6 +143,7 @@ func TestRegionalPoolsAndRoles(t *testing.T) {
 func TestUpgrades(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -178,7 +180,7 @@ func TestUpgrades(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 5*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/up"
 	c, _ := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	adm, pool := adminClient(t, inst, name)
@@ -202,7 +204,7 @@ func TestUpgrades(t *testing.T) {
 	if op.OperationType != containerpb.Operation_UPGRADE_MASTER {
 		t.Errorf("operation type %v", op.OperationType)
 	}
-	waitOp(t, cm, zone, op.Name, 5*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	c, _ = cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if c.CurrentMasterVersion != "1.36.5-gke.100" {
 		t.Errorf("currentMasterVersion %s", c.CurrentMasterVersion)
@@ -213,7 +215,7 @@ func TestUpgrades(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 5*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	np, _ := cm.GetNodePool(ctx, &containerpb.GetNodePoolRequest{Name: name + "/nodePools/np"})
 	if np.Version != "1.36.5-gke.100" {
 		t.Errorf("pool version %s", np.Version)

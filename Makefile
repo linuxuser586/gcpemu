@@ -47,8 +47,10 @@ console:
 console-e2e: build
 	cd console && pnpm exec playwright test
 
+# #396: tests that run GKE clusters share GCPEMU_TEST_CLUSTERS slots (2)
+# across packages, so services/gke outlasts go test's default 10m.
 test:
-	go test ./...
+	go test -timeout 30m ./...
 
 # NFR-MNT-001: regenerate the API route tables and field-behaviour
 # validation (internal/apidef) from the pinned googleapis commit and the
@@ -61,7 +63,7 @@ generate:
 # The race detector needs cgo, which Go turns off without a C compiler.
 race:
 	@[ "$$(go env CGO_ENABLED)" = 1 ] || { echo "race: the race detector needs cgo and a C compiler ($$(go env CC)); install one, or run make test" >&2; exit 1; }
-	go test -race ./...
+	go test -race -timeout 30m ./...
 
 vet:
 	gofmt -l . | (! grep .) && go vet ./... && go vet -tags e2e ./e2e/... && go vet -tags compat ./compat/...

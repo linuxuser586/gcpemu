@@ -22,6 +22,7 @@ import (
 func TestNodePullsAsNodeSA(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"}, emutest.WithIAMMode("enforce"))
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -51,7 +52,7 @@ func TestNodePullsAsNodeSA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	c, _ := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: parent + "/clusters/pull"})
 	adm, pool := adminClient(t, inst, parent+"/clusters/pull")
 	e := &env{t: t, inst: inst, cm: cm, c: c, ca: pool, adm: adm}

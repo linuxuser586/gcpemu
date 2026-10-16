@@ -39,6 +39,10 @@ const (
 	registryPort  = 5000
 	webhookDir    = "/etc/gcpemu"
 	nodeReadyWait = 3 * time.Minute
+	// adminWait bounds the wait for k3s to write its admin kubeconfig,
+	// and apiReadyWait the wait after it for the API server to be ready.
+	adminWait    = 2 * time.Minute
+	apiReadyWait = 2 * time.Minute
 	// Pod and service ranges used when the cluster names none: pod ranges
 	// are unique per instance (10.64.0.0/16 upwards) so pod IPs stay
 	// unambiguous for NEG backends; service ranges are cluster-local.
@@ -560,7 +564,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err != nil {
 		return err
 	}
-	if err := waitFor(ctx, 2*time.Minute, func() (bool, error) { return kc.ready(ctx), nil }); err != nil {
+	if err := waitFor(ctx, apiReadyWait, func() (bool, error) { return kc.ready(ctx), nil }); err != nil {
 		logs, _ := d.rt.Logs(context.Background(), id, 20)
 		return fmt.Errorf("control plane did not become ready: %w\n%s", err, logs)
 	}
@@ -627,7 +631,7 @@ func (s *Service) serveAPI(d *deps, key string, port int, target string) (string
 // waitAdmin waits for k3s to write its admin kubeconfig and parses it.
 func (s *Service) waitAdmin(ctx context.Context, d *deps, id string) (adminCreds, error) {
 	var creds adminCreds
-	err := waitFor(ctx, 2*time.Minute, func() (bool, error) {
+	err := waitFor(ctx, adminWait, func() (bool, error) {
 		ct, err := d.rt.InspectContainer(ctx, id)
 		if err != nil {
 			return false, err

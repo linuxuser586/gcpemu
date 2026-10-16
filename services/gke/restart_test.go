@@ -52,6 +52,7 @@ func startPersistent(t *testing.T, dir string) *emutest.Instance {
 func TestRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	dir := t.TempDir()
 	inst := startPersistent(t, dir)
 	id := inst.ID
@@ -83,7 +84,7 @@ func TestRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/keep"
 	c, _ := cm.GetCluster(context.Background(), &containerpb.GetClusterRequest{Name: name})
 	if c.CurrentNodeCount != 2 {
@@ -132,7 +133,7 @@ func TestRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 2*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	cl, _ := runtime.Detect()
 	vols, _ := cl.ListVolumes(context.Background(), map[string]string{runtime.LabelInstance: id, runtime.LabelService: "gke"})
 	if len(vols) != 0 {

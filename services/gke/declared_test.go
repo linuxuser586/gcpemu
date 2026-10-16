@@ -31,6 +31,7 @@ import (
 func TestDeclaredAddressesOverlap(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	cl, err := runtime.Detect()
 	if err != nil {
@@ -158,7 +159,7 @@ func TestDeclaredAddressesOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 4*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	cluster, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: parent + "/clusters/declared"})
 	if err != nil {
 		t.Fatal(err)

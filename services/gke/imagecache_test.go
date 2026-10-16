@@ -25,6 +25,7 @@ func TestImageCacheAcrossClusters(t *testing.T) {
 		t.Skip("set GCPEMU_NET_TESTS=1 to pull a public image")
 	}
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -40,7 +41,7 @@ func TestImageCacheAcrossClusters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateCluster %s: %v", name, err)
 		}
-		waitOp(t, cm, zone, op.Name, 3*time.Minute)
+		waitOp(t, cm, zone, op.Name)
 		c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: parent + "/clusters/" + name})
 		if err != nil {
 			t.Fatal(err)
@@ -62,7 +63,7 @@ func TestImageCacheAcrossClusters(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitOp(t, cm, zone, op.Name, 2*time.Minute)
+		waitOp(t, cm, zone, op.Name)
 	}
 
 	run("first", false)

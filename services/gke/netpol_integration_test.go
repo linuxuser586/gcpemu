@@ -20,6 +20,7 @@ import (
 func TestNetworkPolicy(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -41,7 +42,7 @@ func TestNetworkPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/netpol"
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {
@@ -63,7 +64,7 @@ func TestNetworkPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetNetworkPolicy: %v", err)
 	}
-	waitOp(t, cm, zone, op.Name, 5*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	reach = e.reachPods("b")
 	eventually(t, 2*time.Minute, "client reaching the server, not enforced", func() bool { return strings.Contains(reach(), "REACH-OK") })
 }
