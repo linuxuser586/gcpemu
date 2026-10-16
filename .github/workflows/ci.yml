@@ -418,7 +418,9 @@ jobs:
           prefix: ${{ steps.go.outputs.prefix }}
 
   # SRS 8.1 targets, asserted without the race detector; -p 1 keeps the
-  # packages from competing for the CPU while they measure.
+  # packages from competing for the CPU while they measure. ci-ok does not
+  # need this job: a shared runner can miss a target without a regression
+  # (ADR 0017), so a miss shows red here without blocking the merge.
   perf:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -448,11 +450,11 @@ jobs:
 
   # The only required check: the matrix legs above report unexpanded names
   # when skipped, so the ruleset requires this job instead. It passes when
-  # every job ran green, or when the change touched docs alone and every
-  # job was skipped.
+  # every job it needs ran green, or when the change touched docs alone and
+  # every job was skipped. perf is left out on purpose (see its comment).
   ci-ok:
     if: always()
-    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, perf, platforms]
+    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, platforms]
     runs-on: ubuntu-24.04
     steps:
       - env:
