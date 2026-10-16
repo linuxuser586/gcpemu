@@ -29,6 +29,7 @@ type fakeUpstream struct {
 	push  *httptest.Server // same storage, no auth
 	down  atomic.Bool      // answer 503 to everything
 	delay atomic.Int64     // nanoseconds to stall blob GETs
+	hold  atomic.Pointer[blobHold]
 
 	tokens, manifestGETs, manifestHEADs, blobGETs atomic.Int64
 }
@@ -74,12 +75,56 @@ func newFakeUpstream(t *testing.T) *fakeUpstream {
 			if d := u.delay.Load(); d > 0 {
 				time.Sleep(time.Duration(d))
 			}
+			if h := u.hold.Swap(nil); h != nil {
+				defer close(h.ended)
+				w = &holdWriter{ResponseWriter: w, h: h, done: r.Context().Done()}
+			}
 		}
 		reg.ServeHTTP(w, r)
 	}))
 	t.Cleanup(u.pub.Close)
 	t.Cleanup(u.push.Close)
 	return u
+}
+
+// blobHold stalls the next blob GET after its first body bytes.
+type blobHold struct {
+	held    chan struct{} // closed once the first bytes were sent
+	ended   chan struct{} // closed when the held request returned
+	release chan struct{} // closed at test cleanup
+}
+
+// holdBlob makes the next blob GET send its first bytes and then wait for
+// the hold's release or for the client to go away.
+func (u *fakeUpstream) holdBlob() *blobHold {
+	h := &blobHold{held: make(chan struct{}), ended: make(chan struct{}), release: make(chan struct{})}
+	u.hold.Store(h)
+	u.t.Cleanup(func() { close(h.release) })
+	return h
+}
+
+type holdWriter struct {
+	http.ResponseWriter
+	h      *blobHold
+	done   <-chan struct{}
+	waited bool
+}
+
+func (w *holdWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	if !w.waited && n > 0 {
+		w.waited = true
+		if f, ok := w.ResponseWriter.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(w.h.held)
+		select {
+		case <-w.h.release:
+		case <-w.done:
+			return n, http.ErrAbortHandler
+		}
+	}
+	return n, err
 }
 
 // host is the token-protected upstream host:port.

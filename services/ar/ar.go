@@ -63,6 +63,7 @@ package ar
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -95,7 +96,8 @@ type Service struct {
 
 	// Pull-through cache (pullthrough.go): upstream client, base URL
 	// overrides, tag TTL, coalesced manifest fetches, in-flight blob
-	// downloads and the context they run under.
+	// downloads, the context they run under, and the running downloads
+	// Reset waits for; while resetting no download starts.
 	upstream     *upstreamClient
 	upstreamURLs map[string]string
 	tagTTL       time.Duration
@@ -103,6 +105,8 @@ type Service struct {
 	fetches      map[string]*blobFetch
 	bgCtx        context.Context
 	bgCancel     context.CancelFunc
+	fetchRuns    sync.WaitGroup
+	resetting    bool
 }
 
 // New returns the service.
@@ -270,13 +274,35 @@ func (s *Service) IsStoreCache(ns, key string) bool {
 	return strings.HasPrefix(key, mirrorProject+"/")
 }
 
-// Reset drops pending operations, waiting for running ones (#301), and
-// removes every blob and upload; the store is reset by the instance.
+// Reset drops pending operations, waiting for running ones (#301), stops
+// upstream fetches and waits for them, so none writes to the blob store
+// while it is emptied (#397), and removes every blob and upload; the
+// store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {
 	err := s.ops.Reset(ctx)
 	s.mu.Lock()
 	s.uploads = map[string]*upload{}
+	s.resetting = true
+	s.bgCancel()
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.resetting = false
+		if s.ready {
+			s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+		}
+		s.mu.Unlock()
+	}()
+	stopped := make(chan struct{})
+	go func() {
+		s.fetchRuns.Wait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		return errors.Join(err, fmt.Errorf("wait for upstream fetches: %w", ctx.Err()))
+	}
 	if s.blobs == nil {
 		return err
 	}

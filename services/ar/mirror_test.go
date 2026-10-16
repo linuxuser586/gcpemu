@@ -198,6 +198,43 @@ func TestMirrorCoalescesConcurrentPulls(t *testing.T) {
 	}
 }
 
+// Reset stops a mirror blob download that is still running and waits for
+// it, so that it neither writes into the blob store while Reset empties it
+// nor caches the blob afterwards (#397). Pulls work again after the Reset.
+func TestResetStopsMirrorFetch(t *testing.T) {
+	up := newFakeUpstream(t)
+	img := up.put("library/big:v1", 1<<20, 1)
+	e := start(t)
+	base := "http://" + e.registry()
+	layers, _ := img.Layers()
+	ld, _ := layers[0].Digest()
+	h := up.holdBlob()
+	go func() {
+		resp, err := http.Get(base + "/v2/library/big/blobs/" + ld.String() + "?ns=" + up.host())
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}()
+	select {
+	case <-h.held:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the upstream blob download never started")
+	}
+	if err := e.inst.Reset(e.ctx); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	select {
+	case <-h.ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the upstream blob download kept running after Reset")
+	}
+	if ents, err := os.ReadDir(filepath.Join(e.inst.Env.DataDir, "ar", "tmp")); err != nil || len(ents) != 0 {
+		t.Fatalf("ar tmp after Reset = %d entries, %v", len(ents), err)
+	}
+	pullAll(t, base, "library/big", "v1", up.host(), img)
+}
+
 // go-containerregistry through the emulator as a containerd-style mirror
 // for docker.io (library/ prefix, index host aliases) and with the path
 // form REGISTRY/docker.io/IMAGE, including a multi-platform index.
