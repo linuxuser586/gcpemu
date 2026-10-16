@@ -52,11 +52,19 @@ type Service struct {
 	aliases func() bool
 
 	recovering atomic.Int32
+
+	// sweepMu serialises backup expiry sweeps (and Reset with them).
+	sweepMu sync.Mutex
+	// inUseMu guards inUse: the backups ("P/I/backupKey") restores are
+	// about to read, which a sweep must not delete yet.
+	inUseMu sync.Mutex
+	inUse   map[string]int
 }
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {
-	s := &Service{env: env, locks: map[string]*sync.Mutex{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases}
+	s := &Service{env: env, locks: map[string]*sync.Mutex{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases,
+		inUse: map[string]int{}}
 	s.mux = s.routes()
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	return s
@@ -82,6 +90,7 @@ func (s *Service) Start(ctx context.Context) error {
 		s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	}
 	s.failInterruptedOps()
+	s.goBackground(s.expiryLoop)
 	var recs []*instanceRecord
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		scanJSON(tx, nsInstances, "", func(_ string, rec *instanceRecord) {
@@ -171,7 +180,9 @@ func (s *Service) ResourceCounts() map[string]int {
 // (`gcpemu reset`).
 func (s *Service) Reset(ctx context.Context) error {
 	s.closeAllLoopback()
+	s.sweepMu.Lock()
 	s.removeAllBackupFiles()
+	s.sweepMu.Unlock()
 	var any bool
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		any = store.HasPrefix(tx, nsInstances, "")
