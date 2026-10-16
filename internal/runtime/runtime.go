@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,7 +70,13 @@ type Client struct {
 	joined   func(Network, bool)
 	// memberAddr pins the member's address per network (SetMemberAddr).
 	memberAddr func(network string) string
+	// starts records the containers the client started (Disrupted).
+	startsMu sync.Mutex
+	starts   map[string]start // by container ID
 }
+
+// start is a container's name and start time as the client last started it.
+type start struct{ name, at string }
 
 // Info describes the connected runtime.
 type Info struct {
@@ -742,6 +749,8 @@ type Container struct {
 	Labels  map[string]string
 	Running bool
 	Status  string // created, running, exited, ...
+	// StartedAt is the runtime's time of the last start, RFC 3339.
+	StartedAt string
 	// ExitCode of the last run.
 	ExitCode int
 	// IPs maps network name to IPv4 address.
@@ -833,11 +842,84 @@ func (c *Client) CreateContainer(ctx context.Context, s ContainerSpec) (string, 
 
 // StartContainer starts a created or stopped container.
 func (c *Client) StartContainer(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/start", nil, nil, nil)
+	if err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/start", nil, nil, nil); err != nil {
+		return err
+	}
+	c.recordStart(ctx, id)
+	return nil
+}
+
+// recordStart records when the runtime started container id for the
+// client. A container whose start time no longer matches was stopped or
+// started again by something else (Disrupted).
+func (c *Client) recordStart(ctx context.Context, id string) {
+	ct, err := c.InspectContainer(ctx, id)
+	if err != nil {
+		return
+	}
+	c.startsMu.Lock()
+	defer c.startsMu.Unlock()
+	if c.starts == nil {
+		c.starts = map[string]start{}
+	}
+	c.starts[ct.ID] = start{name: ct.Name, at: ct.StartedAt}
+}
+
+// forgetStart drops the record of container id, by ID or name, before the
+// client stops or removes it.
+func (c *Client) forgetStart(id string) {
+	c.startsMu.Lock()
+	defer c.startsMu.Unlock()
+	for k, s := range c.starts {
+		if k == id || s.name == id {
+			delete(c.starts, k)
+		}
+	}
+}
+
+// Disrupted returns, as "name (exited)" or "name (restarted)", the
+// containers among cts that the client started and that have since
+// stopped or been started again by something else, such as a restart of
+// the runtime daemon (#318). They lost what was set up after the start.
+// Each candidate is inspected again, since the client may have started,
+// stopped or removed it after cts was listed.
+func (c *Client) Disrupted(ctx context.Context, cts []Container) []string {
+	var out []string
+	for _, ct := range cts {
+		if c.disruption(ct) == "" {
+			continue
+		}
+		if now, err := c.InspectContainer(ctx, ct.ID); err == nil {
+			ct = now
+		}
+		if why := c.disruption(ct); why != "" {
+			out = append(out, ct.Name+" ("+why+")")
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// disruption returns why ct, as listed, differs from the client's record
+// of starting it ("exited", "dead" or "restarted"), or "".
+func (c *Client) disruption(ct Container) string {
+	c.startsMu.Lock()
+	s, ok := c.starts[ct.ID]
+	c.startsMu.Unlock()
+	switch {
+	case !ok:
+		return ""
+	case ct.Status == "exited" || ct.Status == "dead":
+		return ct.Status
+	case ct.StartedAt != s.at:
+		return "restarted"
+	}
+	return ""
 }
 
 // StopContainer stops a container, killing it after timeout.
 func (c *Client) StopContainer(ctx context.Context, id string, timeout time.Duration) error {
+	c.forgetStart(id)
 	err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/stop",
 		url.Values{"t": {strconv.Itoa(int(timeout.Seconds()))}}, nil, nil)
 	if errors.Is(err, ErrNotFound) {
@@ -848,8 +930,13 @@ func (c *Client) StopContainer(ctx context.Context, id string, timeout time.Dura
 
 // RestartContainer restarts a container.
 func (c *Client) RestartContainer(ctx context.Context, id string, timeout time.Duration) error {
-	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/restart",
-		url.Values{"t": {strconv.Itoa(int(timeout.Seconds()))}}, nil, nil)
+	c.forgetStart(id)
+	if err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/restart",
+		url.Values{"t": {strconv.Itoa(int(timeout.Seconds()))}}, nil, nil); err != nil {
+		return err
+	}
+	c.recordStart(ctx, id)
+	return nil
 }
 
 // PauseContainer freezes a running container's processes.
@@ -865,6 +952,7 @@ func (c *Client) UnpauseContainer(ctx context.Context, id string) error {
 // RemoveContainer deletes a container (with anonymous volumes); a missing
 // container is not an error.
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
+	c.forgetStart(id)
 	err := c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(id),
 		url.Values{"force": {strconv.FormatBool(force)}, "v": {"true"}}, nil, nil)
 	if errors.Is(err, ErrNotFound) {
@@ -884,9 +972,10 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (Container, er
 			Cmd    []string
 		}
 		State struct {
-			Status   string
-			Running  bool
-			ExitCode int
+			Status    string
+			Running   bool
+			ExitCode  int
+			StartedAt string
 		}
 		NetworkSettings struct {
 			Networks map[string]struct{ IPAddress string }
@@ -898,7 +987,7 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (Container, er
 	}
 	ct := Container{
 		ID: v.ID, Name: strings.TrimPrefix(v.Name, "/"), Image: v.Config.Image, Labels: v.Config.Labels,
-		Running: v.State.Running, Status: v.State.Status, ExitCode: v.State.ExitCode,
+		Running: v.State.Running, Status: v.State.Status, ExitCode: v.State.ExitCode, StartedAt: v.State.StartedAt,
 		IPs: map[string]string{}, Ports: map[string]string{}, Cmd: v.Config.Cmd,
 	}
 	for n, ep := range v.NetworkSettings.Networks {

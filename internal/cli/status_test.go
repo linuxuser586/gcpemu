@@ -22,7 +22,7 @@ func TestStatusReady(t *testing.T) {
 		case "/_emu/v1/ready":
 			if !ready {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = io.WriteString(w, `{"ready":false,"services":{"gcs":{"ready":false,"reason":"starting"}}}`)
+				_, _ = io.WriteString(w, `{"ready":false,"services":{"gcs":{"ready":true},"containers":{"ready":false,"reason":"gcpemu-x-sql (exited)"}}}`)
 				return
 			}
 			_, _ = io.WriteString(w, `{"ready":true,"services":{"gcs":{"ready":true}}}`)
@@ -42,11 +42,13 @@ func TestStatusReady(t *testing.T) {
 		return root.Execute()
 	}
 	if err := run(); err != nil {
-		t.Errorf("status while starting: %v", err)
+		t.Errorf("status while not ready: %v", err)
 	}
 	for _, args := range [][]string{{"--ready"}, {"--ready", "--json"}} {
-		if err := run(args...); err == nil || !strings.Contains(err.Error(), "not ready") {
-			t.Errorf("status %v while starting: %v", args, err)
+		// The error names what is down, e.g. containers the runtime stopped (#318).
+		err := run(args...)
+		if err == nil || !strings.Contains(err.Error(), "not ready") || !strings.Contains(err.Error(), "containers: gcpemu-x-sql (exited)") {
+			t.Errorf("status %v while not ready: %v", args, err)
 		}
 	}
 	ready = true
