@@ -91,6 +91,11 @@ type Config struct {
 	// published ports (ADR 0012): "auto" guesses from the runtime's info,
 	// "true" and "false" override the guess.
 	VMRuntime string `yaml:"vmRuntime" env:"VM_RUNTIME"`
+	// NoSQLHostClients stops Cloud SQL serving host clients on a loopback
+	// address on a VM runtime (ADR 0005), so that tests which never dial
+	// an instance's reported address don't contend for 127.0.0.1 (#316).
+	// Only emutest sets it: it has no flag, env var or config key.
+	NoSQLHostClients bool `yaml:"-" env:"-"`
 }
 
 // MinAdminTokenLen is the shortest AdminToken accepted.
@@ -281,7 +286,11 @@ func (c *Config) LoadEnv(getenv func(string) string) error {
 	dv := reflect.ValueOf(c).Elem()
 	t := dv.Type()
 	for i := 0; i < t.NumField(); i++ {
-		name := "GCPEMU_" + t.Field(i).Tag.Get("env")
+		tag := t.Field(i).Tag.Get("env")
+		if tag == "-" {
+			continue
+		}
+		name := "GCPEMU_" + tag
 		v := getenv(name)
 		if v == "" {
 			continue

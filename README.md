@@ -444,6 +444,12 @@ inst := emutest.Start(t, []string{"gcs", "pubsub"})
 inst.Setenv(t) // client env vars for this test
 ```
 
+On a VM runtime, Cloud SQL instances started by `emutest` serve no host clients on a loopback
+address, so a test reaches each one on its published port (`GCPEMU_SQL_<INSTANCE>`).
+`emutest.WithSQLHostClients()` serves them as `gcpemu` does, for tests that dial the address an
+instance reports. On a host without loopback aliases, such a test waits until no other `emutest`
+test of the same user is serving on `127.0.0.1`.
+
 ### GitHub Actions
 
 ```yaml

@@ -295,7 +295,7 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 		return err
 	}
 	loopIP := ""
-	if public && relayOn(plane) {
+	if public && relayOn(plane) && s.hostClients() {
 		if loopIP, err = s.exposeLoopback(plane, rec, publicIP); err != nil {
 			return err
 		}

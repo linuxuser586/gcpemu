@@ -41,7 +41,7 @@ func connect(ctx context.Context, host string, port int, user, password, db stri
 func TestInstanceLifecycle(t *testing.T) {
 	emutest.RequireRuntime(t)
 	// Not parallel: the NFR-PERF-002 timing is measured on an idle host.
-	inst := emutest.Start(t, []string{"sql"})
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithSQLHostClients())
 	svc := adminClient(t, inst)
 	ctx := context.Background()
 

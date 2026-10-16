@@ -36,7 +36,7 @@ func TestLoopbackPerInstance(t *testing.T) {
 		t.Skipf("no loopback aliases on this host (%s)", loopback.InstallHint)
 	}
 	t.Setenv(vmrelay.Env, "1")
-	inst := emutest.Start(t, []string{"sql"})
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithSQLHostClients())
 	svc := adminClient(t, inst)
 	ctx := context.Background()
 
@@ -99,12 +99,12 @@ func TestLoopbackPerInstance(t *testing.T) {
 func TestLoopbackWithoutAliases(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Setenv(vmrelay.Env, "1")
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithSQLHostClients()) // without aliases, waits for other tests serving on 127.0.0.1
 	if l, err := net.Listen("tcp", "127.0.0.1:3307"); err != nil {
 		t.Skipf("127.0.0.1:3307 is taken: %v", err)
 	} else {
 		l.Close()
 	}
-	inst := emutest.Start(t, []string{"sql"})
 	svcMod, _ := inst.Env.Lookup("sql")
 	sql.SetLoopbackAliases(svcMod, false)
 	svc := adminClient(t, inst)
@@ -142,4 +142,25 @@ func TestLoopbackWithoutAliases(t *testing.T) {
 		t.Fatalf("third instance PRIMARY %s, want 127.0.0.1 after the holder's deletion", ip)
 	}
 	queryVia(t, d, third.ConnectionName, "postgres", "rootpw", "postgres")
+}
+
+// TestWithoutHostClients is emutest's default (#316): through the VM
+// relay on a host without loopback aliases, public instances serve no
+// host clients on a loopback address, so any number of them run, each
+// reached on its published host port.
+func TestWithoutHostClients(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Setenv(vmrelay.Env, "1")
+	inst := emutest.Start(t, []string{"sql"})
+	svcMod, _ := inst.Env.Lookup("sql")
+	sql.SetLoopbackAliases(svcMod, false)
+	svc := adminClient(t, inst)
+	for _, name := range []string{"nohost-a", "nohost-b"} {
+		in := createInstance(t, svc, publicInstance(name))
+		if p := net.ParseIP(publicIP(in)); p == nil || p.IsLoopback() {
+			t.Fatalf("%s PRIMARY %s, want the instance's public IP", name, publicIP(in))
+		}
+		c := connectHost(t, inst, name, "postgres", "rootpw", "postgres")
+		c.Close(context.Background())
+	}
 }

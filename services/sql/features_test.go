@@ -33,7 +33,7 @@ func count(t testing.TB, c *pgx.Conn, q string) int {
 func TestDataFeatures(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
-	inst := emutest.Start(t, []string{"sql", "gcs"})
+	inst := emutest.Start(t, []string{"sql", "gcs"}, emutest.WithSQLHostClients())
 	svc := adminClient(t, inst)
 	ctx := context.Background()
 	open := []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}}
@@ -119,23 +119,6 @@ func TestDataFeatures(t *testing.T) {
 	}
 	conn.Close(ctx)
 
-	// Clone.
-	waitOp(t, svc, must(svc.Instances.Clone(testProject, "data", &sqladmin.InstancesCloneRequest{CloneContext: &sqladmin.CloneContext{
-		DestinationInstanceName: "data-clone",
-	}}).Do()))
-	cl := must(svc.Instances.Get(testProject, "data-clone").Do())
-	conn, err = connect(ctx, publicIP(cl), 5432, "postgres", "rootpw", "app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := count(t, conn, "SELECT count(*) FROM items"); n != 5 {
-		t.Fatalf("rows in clone = %d", n)
-	}
-	conn.Close(ctx)
-	if dbs := must(svc.Databases.List(testProject, "data-clone").Do()); len(dbs.Items) != 3 {
-		t.Fatalf("clone databases = %d", len(dbs.Items))
-	}
-
 	// SSL modes and client certificates.
 	waitOp(t, svc, must(svc.Instances.Patch(testProject, "data", &sqladmin.DatabaseInstance{Settings: &sqladmin.Settings{
 		IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true, AuthorizedNetworks: open, SslMode: "ENCRYPTED_ONLY"},
@@ -174,6 +157,38 @@ func TestDataFeatures(t *testing.T) {
 	waitOp(t, svc, must(svc.SslCerts.Delete(testProject, "data", ins.ClientCert.CertInfo.Sha1Fingerprint).Do()))
 	if _, err := connectSSL(ctx, ip, "require", tlsCfg); err == nil {
 		t.Fatal("deleted client certificate accepted")
+	}
+}
+
+// TestClone is FR-SQL-010's clone: a new instance with the source's
+// databases and data.
+func TestClone(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	inst := emutest.Start(t, []string{"sql"})
+	svc := adminClient(t, inst)
+	ctx := context.Background()
+	createInstance(t, svc, &sqladmin.DatabaseInstance{Name: "src", DatabaseVersion: "POSTGRES_18", RootPassword: "rootpw",
+		Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true, AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}}}}})
+	for _, db := range []string{"app", "other"} {
+		waitOp(t, svc, must(svc.Databases.Insert(testProject, "src", &sqladmin.Database{Name: db}).Do()))
+	}
+	conn := connectHost(t, inst, "src", "postgres", "rootpw", "app")
+	if _, err := conn.Exec(ctx, "CREATE TABLE items (id int PRIMARY KEY); INSERT INTO items SELECT generate_series(1, 5)"); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close(ctx)
+
+	waitOp(t, svc, must(svc.Instances.Clone(testProject, "src", &sqladmin.InstancesCloneRequest{CloneContext: &sqladmin.CloneContext{
+		DestinationInstanceName: "src-clone",
+	}}).Do()))
+	conn = connectHost(t, inst, "src-clone", "postgres", "rootpw", "app")
+	defer conn.Close(ctx)
+	if n := count(t, conn, "SELECT count(*) FROM items"); n != 5 {
+		t.Fatalf("rows in clone = %d", n)
+	}
+	if dbs := must(svc.Databases.List(testProject, "src-clone").Do()); len(dbs.Items) != 3 {
+		t.Fatalf("clone databases = %d, want postgres, app and other", len(dbs.Items))
 	}
 }
 
@@ -231,10 +246,7 @@ sql:
 	if in.State != "RUNNABLE" || len(in.Settings.DatabaseFlags) != 1 {
 		t.Fatalf("seeded instance = %s %+v", in.State, in.Settings.DatabaseFlags)
 	}
-	conn, err := connect(ctx, publicIP(in), 5432, "writer", "pw", "notes")
-	if err != nil {
-		t.Fatal(err)
-	}
+	conn := connectHost(t, inst, in.Name, "writer", "pw", "notes")
 	defer conn.Close(ctx)
 	if n := count(t, conn, "SELECT count(*) FROM notes"); n != 1 {
 		t.Fatalf("notes rows = %d, want 1 (init SQL applied once)", n)

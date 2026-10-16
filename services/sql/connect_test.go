@@ -21,6 +21,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
@@ -58,7 +59,7 @@ func grantProjectRole(t testing.TB, inst *emutest.Instance, role, member string)
 func TestConnectivityAndIAM(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
-	inst := emutest.Start(t, []string{"sql"}, emutest.WithIAMMode("enforce"))
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithIAMMode("enforce"), emutest.WithSQLHostClients())
 	svc := adminClient(t, inst)
 	ctx := context.Background()
 
@@ -203,7 +204,7 @@ func TestConnectivityAndIAM(t *testing.T) {
 func TestIAMUserDatabaseRoles(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
-	inst := emutest.Start(t, []string{"sql"}, emutest.WithIAMMode("enforce"))
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithIAMMode("enforce"), emutest.WithSQLHostClients())
 	svc := adminClient(t, inst)
 	ctx := context.Background()
 
@@ -302,15 +303,23 @@ func TestIAMUserDatabaseRoles(t *testing.T) {
 func TestMajorVersions(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
-	inst := emutest.Start(t, []string{"sql"})
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithSQLHostClients())
 	svc := adminClient(t, inst)
 	ctx := context.Background()
+	// Without loopback aliases the instances serve host clients on
+	// 127.0.0.1 one at a time.
+	parallel := loopback.Aliases()
 	for _, v := range []string{"14", "15", "16", "17", "18"} {
 		t.Run("POSTGRES_"+v, func(t *testing.T) {
-			t.Parallel()
+			if parallel {
+				t.Parallel()
+			}
 			in := createInstance(t, svc, &sqladmin.DatabaseInstance{Name: "pg" + v, DatabaseVersion: "POSTGRES_" + v, RootPassword: "rootpw",
 				Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true,
 					AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}}}}})
+			if !parallel {
+				t.Cleanup(func() { waitOp(t, svc, must(svc.Instances.Delete(testProject, in.Name).Do())) })
+			}
 			if !strings.HasPrefix(in.DatabaseInstalledVersion, "POSTGRES_"+v+"_") {
 				t.Errorf("databaseInstalledVersion %s", in.DatabaseInstalledVersion)
 			}
@@ -402,10 +411,7 @@ func TestExtensionFlags(t *testing.T) {
 		}})
 	show := func(name string) string {
 		t.Helper()
-		c, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
-		if err != nil {
-			t.Fatal(err)
-		}
+		c := connectHost(t, inst, in.Name, "postgres", "rootpw", "postgres")
 		defer c.Close(ctx)
 		var v string
 		if err := c.QueryRow(ctx, "SHOW "+name).Scan(&v); err != nil {
@@ -417,10 +423,7 @@ func TestExtensionFlags(t *testing.T) {
 	// unit; a placeholder would read "250") and list them in pg_settings.
 	loaded := func() string {
 		t.Helper()
-		c, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
-		if err != nil {
-			t.Fatal(err)
-		}
+		c := connectHost(t, inst, in.Name, "postgres", "rootpw", "postgres")
 		defer c.Close(ctx)
 		var n int
 		if err := c.QueryRow(ctx, "SELECT count(*) FROM pg_settings WHERE name LIKE 'pg_stat_statements.%' OR name LIKE 'auto_explain.%'").Scan(&n); err != nil {

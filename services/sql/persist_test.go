@@ -44,17 +44,14 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 		}
 	})
 	svc := adminClient(t, inst)
-	in := createInstance(t, svc, &sqladmin.DatabaseInstance{
+	createInstance(t, svc, &sqladmin.DatabaseInstance{
 		Name:         "keep",
 		RootPassword: "rootpw",
 		Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{
 			Ipv4Enabled: true, AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "0.0.0.0/0"}},
 		}},
 	})
-	conn, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
-	if err != nil {
-		t.Fatal(err)
-	}
+	conn := connectHost(t, inst, "keep", "postgres", "rootpw", "postgres")
 	if _, err := conn.Exec(ctx, "CREATE TABLE kept (v text); INSERT INTO kept VALUES ('survives')"); err != nil {
 		t.Fatal(err)
 	}
@@ -75,10 +72,7 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 	if in2.State != "RUNNABLE" {
 		t.Fatalf("state after restart = %s", in2.State)
 	}
-	conn, err = connect(ctx, publicIP(in2), 5432, "postgres", "rootpw", "postgres")
-	if err != nil {
-		t.Fatal(err)
-	}
+	conn = connectHost(t, inst2, "keep", "postgres", "rootpw", "postgres")
 	var v string
 	if err := conn.QueryRow(ctx, "SELECT v FROM kept").Scan(&v); err != nil || v != "survives" {
 		t.Fatalf("row after restart: %q %v", v, err)
@@ -119,10 +113,7 @@ func TestRecoveryWithGKE(t *testing.T) {
 		}},
 	})
 	ip := publicIP(in)
-	conn, err := connect(ctx, ip, 5432, "postgres", "rootpw", "postgres")
-	if err != nil {
-		t.Fatal(err)
-	}
+	conn := connectHost(t, inst, "db", "postgres", "rootpw", "postgres")
 	if _, err := conn.Exec(ctx, "CREATE TABLE kept (v text); INSERT INTO kept VALUES ('survives')"); err != nil {
 		t.Fatal(err)
 	}
@@ -147,10 +138,7 @@ func TestRecoveryWithGKE(t *testing.T) {
 		if in.State != "RUNNABLE" || publicIP(in) != ip {
 			t.Fatalf("%s: state %s, public IP %s; want RUNNABLE, %s", when, in.State, publicIP(in), ip)
 		}
-		conn, err := connect(ctx, ip, 5432, "postgres", "rootpw", "postgres")
-		if err != nil {
-			t.Fatalf("%s: %v", when, err)
-		}
+		conn := connectHost(t, inst, "db", "postgres", "rootpw", "postgres")
 		defer conn.Close(ctx)
 		var v string
 		if err := conn.QueryRow(ctx, "SELECT v FROM kept").Scan(&v); err != nil || v != "survives" {

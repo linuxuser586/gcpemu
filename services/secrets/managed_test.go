@@ -56,7 +56,7 @@ func login(ctx context.Context, ip, user, password string) error {
 // it as the secret's newest version, on demand and on schedule.
 func TestManagedRotation(t *testing.T) {
 	emutest.RequireRuntime(t)
-	e := start(t, []string{"sql"})
+	e := start(t, []string{"sql"}, emutest.WithSQLHostClients())
 	sql, err := sqladmin.NewService(e.ctx, option.WithEndpoint(e.inst.GatewayURL()+"/"), option.WithoutAuthentication())
 	if err != nil {
 		t.Fatal(err)

@@ -45,6 +45,10 @@ func relayOn(plane *netplane.Plane) bool {
 	return ok && d.On
 }
 
+// hostClients reports whether instances serve host clients on a
+// loopback address; emutest turns it off (config.NoSQLHostClients).
+func (s *Service) hostClients() bool { return !s.env.Config.NoSQLHostClients }
+
 // loopHolder returns the connection name of the instance other than
 // project/name that holds addr, or "".
 func (s *Service) loopHolder(project, name, addr string) string {
@@ -64,6 +68,9 @@ func (s *Service) loopHolder(project, name, addr string) string {
 // that would start a second public instance on a VM runtime when the
 // host has no loopback aliases. startContainer checks again.
 func (s *Service) checkLoopback(ctx context.Context, project, name string) error {
+	if !s.hostClients() {
+		return nil
+	}
 	holder := s.loopHolder(project, name, loopbackHost)
 	if holder == "" {
 		return nil
