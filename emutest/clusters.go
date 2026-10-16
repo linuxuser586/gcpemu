@@ -13,9 +13,10 @@ import (
 
 // ClusterOpTimeout is how long tests wait for a GKE cluster operation. It
 // is longer than the emulator's own bring-up waits added up (the k3s admin
-// kubeconfig, the API server, the nodes and the add-ons' CRDs), so a slow
-// bring-up fails with the emulator's error rather than the test's (#396).
-const ClusterOpTimeout = 10 * time.Minute
+// kubeconfig, the API server, the nodes and the add-ons' CRDs: 9m), with
+// room for image setup, which has no deadline, so a slow bring-up fails
+// with the emulator's error rather than the test's (#396).
+const ClusterOpTimeout = 12 * time.Minute
 
 // ClusterSlotsEnv sets how many tests of the user's test binaries may run
 // GKE clusters at once (default 2): every k3s server competes for CPU and
@@ -30,7 +31,8 @@ var slotHolders sync.Map // testing.TB → struct{}
 // test binaries (ClusterSlotsEnv), up to the test's deadline, and holds it
 // for the rest of the test. Tests that create GKE clusters call it before
 // starting their emulator, and after t.Parallel, so a paused test holds
-// none. Calling it again in the same test does nothing.
+// none. Calling it again in the same test does nothing; a subtest that
+// calls it takes a slot of its own.
 func HoldClusterSlot(t testing.TB) {
 	t.Helper()
 	if _, held := slotHolders.LoadOrStore(t, struct{}{}); held {

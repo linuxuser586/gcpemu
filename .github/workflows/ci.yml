@@ -78,13 +78,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       GCPEMU_VM_RELAY: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
-      - run: go test -count=1 -timeout 35m ./internal/vmrelay ./internal/netplane ./services/sql ./services/compute ./services/nat ./services/lb ./services/gke
+      - run: go test -count=1 -timeout 45m ./internal/vmrelay ./internal/netplane ./services/sql ./services/compute ./services/nat ./services/lb ./services/gke
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin,kubectl
