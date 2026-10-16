@@ -367,11 +367,38 @@ func privateNodes(c *containerpb.Cluster, np *containerpb.NodePool) bool {
 // waits for the API server. A cluster with a staged datastore (one restored
 // from a State snapshot) starts on a fresh volume holding it; the staged
 // archive is dropped once the server is up, so later restarts keep the
-// volume.
+// volume. A server that exits before it is ready is recreated once on its
+// volume (#395).
 func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.SubnetNet, version string) error {
 	if s.beforeServerStart != nil {
 		s.beforeServerStart(ctx, key)
 	}
+	return restartExited(func(again bool) error {
+		return s.bringUpServer(ctx, d, key, sn, version, again)
+	}, func(err error) {
+		s.env.Log.Warn("gke: control plane exited during bring-up; starting it again", "cluster", key, "err", err)
+	})
+}
+
+// restartExited runs start(false), and start(true) if that fails with a
+// serverExitedError, calling warn with that error first. A busy host can
+// make kube-apiserver miss a fixed startup deadline and exit; the second
+// start, on storage already initialised, is usually quick (#395). Unlike
+// a node (#230), the server is started again: the first exit's error is
+// logged, and a second exit fails with its own.
+func restartExited(start func(again bool) error, warn func(error)) error {
+	err := start(false)
+	var exited *serverExitedError
+	if !errors.As(err, &exited) {
+		return err
+	}
+	warn(err)
+	return start(true)
+}
+
+// bringUpServer is one attempt of startServer. Again, it keeps the volume
+// the first attempt initialised, even from a staged datastore.
+func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu.SubnetNet, version string, again bool) error {
 	rec, err := s.loadKey(key)
 	if err != nil {
 		return err
@@ -398,7 +425,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err != nil {
 		return err
 	}
-	if staged != "" {
+	if staged != "" && !again {
 		if err := d.rt.RemoveVolume(ctx, name); err != nil {
 			return err
 		}
@@ -503,7 +530,7 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
 		return err
 	}
-	if staged != "" {
+	if staged != "" && !again {
 		if err := writeDatastore(ctx, d.rt, id, staged); err != nil {
 			return err
 		}
@@ -560,9 +587,8 @@ func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.S
 	if err != nil {
 		return err
 	}
-	if err := waitFor(ctx, 2*time.Minute, func() (bool, error) { return kc.ready(ctx), nil }); err != nil {
-		logs, _ := d.rt.Logs(context.Background(), id, 20)
-		return fmt.Errorf("control plane did not become ready: %w\n%s", err, logs)
+	if err := awaitServer(ctx, d.rt, id, func() bool { return kc.ready(ctx) }); err != nil {
+		return err
 	}
 	rt := s.rtFor(key)
 	rt.mu.Lock()
@@ -624,6 +650,42 @@ func (s *Service) serveAPI(d *deps, key string, port int, target string) (string
 	return ex.Addr(), nil
 }
 
+// serverExitedError reports that the control-plane container exited
+// before the API server became ready.
+type serverExitedError struct {
+	code int
+	logs string
+}
+
+func (e *serverExitedError) Error() string {
+	return fmt.Sprintf("control plane exited with code %d before it became ready: %s", e.code, e.logs)
+}
+
+// serverExited returns a serverExitedError if container id has exited.
+func serverExited(ctx context.Context, rt *runtime.Manager, id string) error {
+	if code, logs, ok := containerExit(ctx, rt, id); ok {
+		return &serverExitedError{code: code, logs: logs}
+	}
+	return nil
+}
+
+// awaitServer waits for ready, failing as soon as the control-plane
+// container id has exited instead of polling a dead endpoint (#395).
+func awaitServer(ctx context.Context, rt *runtime.Manager, id string, ready func() bool) error {
+	err := waitFor(ctx, 2*time.Minute, func() (bool, error) {
+		if ready() {
+			return true, nil
+		}
+		return false, serverExited(ctx, rt, id)
+	})
+	var exited *serverExitedError
+	if err == nil || errors.As(err, &exited) {
+		return err
+	}
+	logs, _ := rt.Logs(context.Background(), id, 20)
+	return fmt.Errorf("control plane did not become ready: %w\n%s", err, logs)
+}
+
 // waitAdmin waits for k3s to write its admin kubeconfig and parses it.
 func (s *Service) waitAdmin(ctx context.Context, d *deps, id string) (adminCreds, error) {
 	var creds adminCreds
@@ -634,7 +696,7 @@ func (s *Service) waitAdmin(ctx context.Context, d *deps, id string) (adminCreds
 		}
 		if !ct.Running {
 			logs, _ := d.rt.Logs(ctx, id, 30)
-			return false, fmt.Errorf("k3s server exited (code %d): %s", ct.ExitCode, strings.TrimSpace(logs))
+			return false, &serverExitedError{code: ct.ExitCode, logs: strings.TrimSpace(logs)}
 		}
 		b, err := d.rt.CopyFrom(ctx, id, "/etc/rancher/k3s/k3s.yaml")
 		if err != nil || len(b) == 0 {
@@ -1133,15 +1195,25 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 // nodeExited returns an error naming node's exit code and the tail of
 // its logs if its container name has exited.
 func nodeExited(ctx context.Context, rt *runtime.Manager, name, node string) error {
-	ct, err := rt.InspectContainer(ctx, name)
-	if err != nil || (ct.Status != "exited" && ct.Status != "dead") {
+	code, logs, ok := containerExit(ctx, rt, name)
+	if !ok {
 		return nil
 	}
-	logs, err := rt.Logs(ctx, name, 30)
+	return fmt.Errorf("node %s exited with code %d before it became ready: %s", node, code, logs)
+}
+
+// containerExit reports whether container name has exited, with its exit
+// code and the tail of its logs.
+func containerExit(ctx context.Context, rt *runtime.Manager, name string) (code int, logs string, ok bool) {
+	ct, err := rt.InspectContainer(ctx, name)
+	if err != nil || (ct.Status != "exited" && ct.Status != "dead") {
+		return 0, "", false
+	}
+	logs, err = rt.Logs(ctx, name, 30)
 	if err != nil {
 		logs = "(logs unavailable: " + err.Error() + ")"
 	}
-	return fmt.Errorf("node %s exited with code %d before it became ready: %s", node, ct.ExitCode, strings.TrimSpace(logs))
+	return ct.ExitCode, strings.TrimSpace(logs), true
 }
 
 // reconcilePool starts a pool's missing node containers and waits for them.
