@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -69,12 +70,16 @@ func TestPrepareRestore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(pgdata, "recovery.signal")); err != nil {
 		t.Fatalf("recovery.signal: %v", err)
 	}
-	if fi, err := os.Stat(pgdata); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("PGDATA mode: %v %v", fi.Mode(), err)
-	}
-	// The server user must be able to reach PGDATA through its parents.
-	if fi, err := os.Stat(filepath.Dir(pgdata)); err != nil || fi.Mode().Perm()&0o005 != 0o005 {
-		t.Fatalf("PGDATA parent mode: %v %v", fi.Mode(), err)
+	// The agent runs in a Linux container; Windows has no permission bits
+	// to check.
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(pgdata); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Fatalf("PGDATA mode: %v %v", fi.Mode(), err)
+		}
+		// The server user must be able to reach PGDATA through its parents.
+		if fi, err := os.Stat(filepath.Dir(pgdata)); err != nil || fi.Mode().Perm()&0o005 != 0o005 {
+			t.Fatalf("PGDATA parent mode: %v %v", fi.Mode(), err)
+		}
 	}
 	conf, _ := os.ReadFile(filepath.Join(pgdata, "postgresql.auto.conf"))
 	want := []string{
