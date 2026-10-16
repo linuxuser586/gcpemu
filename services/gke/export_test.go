@@ -40,3 +40,16 @@ func AddonCRDs(name string) ([]string, error) {
 func GatewayAPIManifest(channel string) string {
 	return "gateway-api-" + gatewayAPIVer + "-" + channel + ".yaml.gz"
 }
+
+// GatewayAPIObject returns the object of kind and name in the embedded
+// Gateway API manifest of channel, as the file has it (exported to the
+// external tests).
+func GatewayAPIObject(channel, kind, name string) map[string]any {
+	objs, _ := manifest(GatewayAPIManifest(channel))
+	for _, o := range objs {
+		if _, n, _ := objectPath(o); o["kind"] == kind && n == name {
+			return o
+		}
+	}
+	return nil
+}

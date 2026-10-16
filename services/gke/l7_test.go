@@ -19,14 +19,19 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
-// fakeKube is an in-memory Kubernetes API: list, get, create and JSON
-// merge patch of the objects stored, by API path.
+// fakeKube is an in-memory Kubernetes API: list, get, create, replace,
+// delete and JSON merge patch of the objects stored, by API path.
 type fakeKube struct {
 	t          *testing.T
 	mu         sync.Mutex
 	objs       map[string]map[string]any // object path → object
 	gatewayAPI bool
 	patches    []string
+	// establish marks the CRDs created or replaced Established.
+	establish bool
+	// admit, when set, sees each create and replace (with the object
+	// stored at path, if any) and denies it with a non-zero status.
+	admit func(method, path string, old, obj map[string]any) (int, string)
 }
 
 func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
@@ -79,7 +84,8 @@ func (k *fakeKube) put(obj string) {
 
 func (k *fakeKube) pathOf(m map[string]any) string {
 	res := map[string]string{"Service": "services", "Ingress": "ingresses", "Gateway": "gateways", "HTTPRoute": "httproutes",
-		"GatewayClass": "gatewayclasses", "Secret": "secrets", "CustomResourceDefinition": "customresourcedefinitions"}[m["kind"].(string)]
+		"GatewayClass": "gatewayclasses", "Secret": "secrets", "CustomResourceDefinition": "customresourcedefinitions",
+		"ValidatingAdmissionPolicy": "validatingadmissionpolicies", "ValidatingAdmissionPolicyBinding": "validatingadmissionpolicybindings"}[m["kind"].(string)]
 	av, _ := m["apiVersion"].(string)
 	base := "/apis/" + av
 	if av == "v1" || av == "" {
@@ -165,8 +171,25 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		if k.denied(w, r.Method, p, nil, m) {
+			return
+		}
 		meta["generation"] = 1
-		k.objs[p] = m
+		k.store(p, m)
+		_ = json.NewEncoder(w).Encode(m)
+	case r.Method == http.MethodPut:
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		p := objPath(base, ns, res, name)
+		old := k.objs[p]
+		if old == nil {
+			http.NotFound(w, r)
+			return
+		}
+		if k.denied(w, r.Method, p, old, m) {
+			return
+		}
+		k.store(p, m)
 		_ = json.NewEncoder(w).Encode(m)
 	case r.Method == http.MethodDelete:
 		p := objPath(base, ns, res, name)
@@ -197,6 +220,28 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		k.t.Errorf("unexpected kube request %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// denied answers a create or replace that admit denies.
+func (k *fakeKube) denied(w http.ResponseWriter, method, path string, old, obj map[string]any) bool {
+	if k.admit == nil {
+		return false
+	}
+	code, msg := k.admit(method, path, old, obj)
+	if code == 0 {
+		return false
+	}
+	w.WriteHeader(code)
+	_, _ = io.WriteString(w, msg)
+	return true
+}
+
+// store saves obj at path, Established when it is a CRD and k.establish.
+func (k *fakeKube) store(path string, obj map[string]any) {
+	if k.establish && obj["kind"] == "CustomResourceDefinition" {
+		obj["status"] = map[string]any{"conditions": []any{map[string]any{"type": "Established", "status": "True"}}}
+	}
+	k.objs[path] = obj
 }
 
 // mergeJSON applies a JSON merge patch (RFC 7386) to dst.

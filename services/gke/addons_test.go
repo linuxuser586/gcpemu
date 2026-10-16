@@ -2,9 +2,12 @@ package gke
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"cloud.google.com/go/container/apiv1/containerpb"
 )
 
 // The embedded add-on manifests decode, and every object has a known
@@ -122,6 +125,116 @@ func TestApplyAddonWaitsForEstablished(t *testing.T) {
 		}
 		if d := time.Since(start); d > 5*time.Second {
 			t.Errorf("awaitEstablished took %v past its timeout", d)
+		}
+	})
+}
+
+// The Gateway API add-on owns its CRDs and installs no safe-upgrades
+// policy, so that one update moves a cluster between channels; a policy
+// an older emulator installed goes, one the user installed stays (#358).
+func TestGatewayAPISafeUpgrades(t *testing.T) {
+	const (
+		policy  = "/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicies/" + safeUpgrades
+		binding = "/apis/admissionregistration.k8s.io/v1/validatingadmissionpolicybindings/" + safeUpgrades
+		tcp     = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/tcproutes.gateway.networking.k8s.io"
+	)
+	ctx := context.Background()
+	std, exp := containerpb.GatewayAPIConfig_CHANNEL_STANDARD, containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL
+	// fixture enforces the policy's first rule while the policy exists and
+	// for stale more requests after it is deleted, as the API server's
+	// policy cache lags.
+	fixture := func(t *testing.T, stale int) (*Service, *fakeKube, *kubeClient) {
+		k, kc := newFakeKube(t)
+		k.establish = true
+		k.admit = func(method, path string, old, obj map[string]any) (int, string) {
+			channel := func(o map[string]any) any {
+				return field(o, "metadata.annotations").(map[string]any)["gateway.networking.k8s.io/channel"]
+			}
+			if obj["kind"] != "CustomResourceDefinition" || old == nil || channel(old) != "standard" || channel(obj) != "experimental" {
+				return 0, ""
+			}
+			if k.objs[policy] == nil {
+				if stale == 0 {
+					return 0, ""
+				}
+				stale--
+			}
+			return http.StatusUnprocessableEntity, `{"kind":"Status","message":"customresourcedefinitions.apiextensions.k8s.io \"` + path +
+				`\" is forbidden: ValidatingAdmissionPolicy 'safe-upgrades.gateway.networking.k8s.io' with binding 'safe-upgrades.gateway.networking.k8s.io' denied request: Installing experimental CRDs on top of standard channel CRDs is prohibited by default.","reason":"Invalid","code":422}`
+		}
+		return snapshotService(t), k, kc
+	}
+	// legacy installs the standard manifest as it was before #358, the
+	// policy and binding included.
+	legacy := func(t *testing.T, kc *kubeClient) {
+		objs, err := manifest(GatewayAPIManifest("standard"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := applyAddon(ctx, kc, gatewayAPIAddon, objs); err != nil {
+			t.Fatalf("legacy install: %v", err)
+		}
+	}
+
+	t.Run("NotInstalled", func(t *testing.T) {
+		s, k, kc := fixture(t, 0)
+		for _, ch := range []containerpb.GatewayAPIConfig_Channel{std, exp, std, exp} {
+			if err := s.reconcileGatewayAPI(ctx, kc, ch); err != nil {
+				t.Fatalf("reconcile %v: %v", ch, err)
+			}
+			if k.get(policy) != nil || k.get(binding) != nil {
+				t.Fatalf("%v: the safe-upgrades policy or binding is installed", ch)
+			}
+		}
+		if k.get(tcp) == nil {
+			t.Error("experimental CRD missing on the experimental channel")
+		}
+	})
+
+	t.Run("LabelledRemoved", func(t *testing.T) {
+		s, k, kc := fixture(t, 3)
+		legacy(t, kc)
+		if k.get(policy) == nil || k.get(binding) == nil {
+			t.Fatal("legacy install lacks the policy or binding")
+		}
+		if err := s.reconcileGatewayAPI(ctx, kc, exp); err != nil {
+			t.Fatalf("standard → experimental: %v", err)
+		}
+		if k.get(policy) != nil || k.get(binding) != nil {
+			t.Error("the add-on's safe-upgrades policy or binding survived the reconcile")
+		}
+		if k.get(tcp) == nil {
+			t.Error("experimental CRD missing after the update")
+		}
+	})
+
+	t.Run("UserPolicyKept", func(t *testing.T) {
+		s, k, kc := fixture(t, 0)
+		for _, o := range []string{
+			`{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicy","metadata":{"name":"` + safeUpgrades + `"}}`,
+			`{"apiVersion":"admissionregistration.k8s.io/v1","kind":"ValidatingAdmissionPolicyBinding","metadata":{"name":"` + safeUpgrades + `"}}`,
+		} {
+			k.put(o)
+		}
+		if err := s.reconcileGatewayAPI(ctx, kc, std); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		if k.get(policy) == nil || k.get(binding) == nil {
+			t.Fatal("the user's safe-upgrades policy or binding was deleted")
+		}
+		if l := field(k.get(policy), "metadata.labels"); l != nil {
+			t.Errorf("the user's policy was relabelled: %v", l)
+		}
+		// The user's policy keeps denying: the update fails, bounded.
+		defer func(d time.Duration) { safeUpgradesGrace = d }(safeUpgradesGrace)
+		safeUpgradesGrace = time.Second
+		start := time.Now()
+		err := s.reconcileGatewayAPI(ctx, kc, exp)
+		if err == nil || !strings.Contains(err.Error(), safeUpgrades) {
+			t.Fatalf("standard → experimental under the user's policy = %v; want its denial", err)
+		}
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("the denied reconcile took %v", d)
 		}
 	})
 }
