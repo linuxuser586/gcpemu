@@ -6,7 +6,7 @@ Oct 7, 2026 · @Barry
 
 ### 1.1 Purpose
 
-This SRS defines the requirements for `gcpemu`, a single Go binary that emulates eleven Google Cloud Products well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for Endpoint overrides, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
+This SRS defines the requirements for `gcpemu`, a single Go binary that emulates twelve Google Cloud Products well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for Endpoint overrides, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
 
 ### 1.2 Scope
 
@@ -25,8 +25,9 @@ In scope are the control-plane APIs and a working data plane for these Products:
 | Cloud CDN | Cache settings on backend services and buckets; `urlMaps.invalidateCache` | HTTP cache in the L7 proxy |
 | Cloud NAT | `compute.googleapis.com` v1 routers and NAT configs | NAT egress proxy for cluster workloads |
 | Secret Manager | `secretmanager.googleapis.com` v1 (gRPC and REST), global and regional endpoints | Secret payload store with Pub/Sub event notifications and Cloud SQL credential rotation |
+| Cloud Build | `cloudbuild.googleapis.com` v1 (builds, Build triggers, worker pools) | Build steps run as real containers against a per-Instance Docker daemon |
 
-Supporting resources those Products depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, Operations) are emulated to the degree the eleven Products need them. A React web console embedded in the binary lets users inspect and operate all eleven Products from a browser.
+Supporting resources those Products depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, Operations) are emulated to the degree the twelve Products need them. A React web console embedded in the binary lets users inspect and operate all twelve Products from a browser.
 
 Out of scope: production use, performance or SLA parity with GCP, billing, real global anycast, and every Google Cloud product not listed. Section 10 gives the full exclusions list.
 
@@ -40,7 +41,7 @@ Out of scope: production use, performance or SLA parity with GCP, billing, real 
 | Endpoint override | Pointing a client at the emulator through an env var, provider setting or SDK option instead of `*.googleapis.com` |
 | Host mode | Optional mode where the emulator answers on real Google hostnames via local DNS and a locally trusted CA |
 | Instance | One running emulator process and its state directory |
-| Product | A GCP product the emulator promises to cover; the eleven are listed in 1.2 |
+| Product | A GCP product the emulator promises to cover; the twelve are listed in 1.2 |
 | Service | An independently enabled unit of emulation that implements all or part of a Product, named by its Service ID (`gcs`, `sql`, `gke`, …) |
 
 ### 1.4 Requirement conventions
@@ -95,7 +96,7 @@ Today a GCP stack of GKE, a global external Application Load Balancer with Cloud
 
 ## 3. System architecture
 
-`gcpemu` is one process: a shared API gateway, one Go package per Service, the data planes those Services configure, and one state store. It reaches outside itself only to run Kubernetes nodes and PostgreSQL in the host's container runtime.
+`gcpemu` is one process: a shared API gateway, one Go package per Service, the data planes those Services configure, and one state store. It reaches outside itself only to run Kubernetes nodes, PostgreSQL and Build steps in the host's container runtime.
 
 &#91;embedded content: gcpemu architecture · one process, one external dependency\]
 
@@ -109,7 +110,7 @@ Services create and manage the GKE and Cloud SQL containers; the data planes car
 | Services | One Go package per Service: validation, resource state machine, Operations, IAM permission checks; generated types from discovery docs/protos |
 | Policy engine | Shared IAM evaluation used by every module and data plane |
 | Data planes | L7 proxy with CDN cache (one listener per forwarding rule), DNS server, OCI registry, Pub/Sub broker, metadata server, NAT egress proxy, Cloud SQL connector listener |
-| Runtime driver | Talks to Docker, Podman or containerd to create, label, start, stop and reclaim node and Postgres containers |
+| Runtime driver | Talks to Docker, Podman or containerd to create, label, start, stop and reclaim node, Postgres, Build daemon and Build step containers |
 | State store | Embedded pure-Go KV for resources; files under the data dir for objects, blobs, caches and volumes |
 | Web console | React SPA embedded in the binary, served by the API gateway at /console; uses the public APIs and the admin API's event stream |
 
@@ -152,7 +153,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-CORE-010 | Config precedence: flags > env (`GCPEMU_*`) > `gcpemu.yaml` > defaults. | M |
-| FR-CORE-011 | A seed file (YAML) declares projects and resources (buckets + objects from local paths, topics, subscriptions, DNS zones and records, service accounts, IAM bindings, AR repositories, SQL instances with init SQL). `start --seed file` applies it idempotently before reporting ready. | M |
+| FR-CORE-011 | A seed file (YAML) declares projects and resources (buckets + objects from local paths, topics, subscriptions, DNS zones and records, service accounts, IAM bindings, AR repositories, SQL instances with init SQL, Build triggers). `start --seed file` applies it idempotently before reporting ready. | M |
 | FR-CORE-012 | State snapshots: `gcpemu snapshot save NAME` / `restore NAME` capture and restore all of an Instance's state, including GCS objects and Postgres data, for fast test fixtures. | S |
 | FR-CORE-013 | `gcpemu export` writes current resources as seed YAML. | C |
 
@@ -251,6 +252,7 @@ The web console is a React single-page app compiled into the binary and served a
 | Cloud CDN | Cache settings per backend, hit ratio, cached entries and sizes | Invalidate a path, purge all | M |
 | Cloud NAT | Routers, NAT configs, covered subnets, port usage, translation log | Toggle offline sink | S |
 | Secret Manager | Global and regional secrets, labels, expiry, rotation and topics; versions with state and aliases | CRUD secrets; add a version; reveal a payload (masked by default); enable, disable and destroy versions | M |
+| Cloud Build | Builds per Project with status, duration, Build steps and live per-step logs; Build triggers; the Build daemon's cache size | Cancel and retry a Build; run a Build trigger; prune the Build daemon's cache | M |
 | Load Balancer traffic | Live per-request trace: forwarding rule, matched route, backend, cache status, latency | Filter by host or path | S |
 
 #### 4.8.4 Console quality
@@ -271,7 +273,7 @@ IAM is the identity backbone every other service calls; the IAM enforcement leve
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-IAM-001 | Service accounts: create, get, list, patch, disable/enable, delete, undelete; keys: create (JSON, RSA-2048), list, delete, upload. | M |
-| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the eleven Products, plus project-level custom roles (create, patch, delete, undelete). | M |
+| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the twelve Products, plus project-level custom roles (create, patch, delete, undelete). | M |
 | FR-IAM-003 | `getIamPolicy`, `setIamPolicy`, `testIamPermissions` on projects and on every resource type GCP supports them on (buckets, topics, subscriptions, AR repositories, service accounts, clusters via project). Etag concurrency enforced. | M |
 | FR-IAM-004 | IAM enforcement levels: `off` (allow all), `audit` (allow, log every call that real IAM would deny with the missing permission), `enforce` (deny with `PERMISSION_DENIED`). The default level is audit. Each API method maps to the permission GCP checks. | M |
 | FR-IAM-005 | IAM Conditions on bindings, evaluating `request.time`, `resource.name` and `resource.type` CEL expressions. | S |
@@ -426,6 +428,28 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | FR-SM-005 | Event notifications: every change to a secret with `topics` is published to the emulated Pub/Sub in the `JSON_API_V1` format. | M |
 | FR-SM-006 | Managed rotation (`EnableManagedRotation`, `RotateSecret`, scheduled rotation) of a `CLOUD_SQL_DB_CREDENTIALS` regional secret sets a new password on the Cloud SQL user and stores it as the newest version. | S |
 
+### 5.12 Cloud Build
+
+Builds execute: each Build step is a real container, and Docker-builder steps reach a Docker daemon of the Instance's own, the Build daemon (ADR 0016). Builds need a container runtime, so Cloud Build is a Runtime Service.
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-CB-001 | Builds: `create` (returning an Operation with `BuildOperationMetadata`), `get`, `list` (with `filter`), `cancel` and `retry` on `projects/*/builds` and `projects/*/locations/*/builds`. Status moves through `QUEUED`, `WORKING` and one of `SUCCESS`, `FAILURE`, `INTERNAL_ERROR`, `TIMEOUT`, `CANCELLED` or `EXPIRED`, with per-step status and timing. | M |
+| FR-CB-002 | Build steps run as containers in order or by `waitFor`, sharing `/workspace` and user `volumes`, honouring `name`, `args`, `entrypoint`, `env`, `dir`, `script`, `id`, `allowFailure` and `allowExitCodes`. A failing step fails the Build and stops the steps still running. | M |
+| FR-CB-003 | Sources: `storageSource` (including the tarball `gcloud builds submit` uploads to `gs://PROJECT_cloudbuild/source/`), `gitSource` from a public HTTPS URL, and no source. `repoSource`, `connectedRepository`, `developerConnectConfig` and `storageSourceManifest` are Absent. | M |
+| FR-CB-004 | Every Build step gets `/var/run/docker.sock` of the Instance's Build daemon, so `gcr.io/cloud-builders/docker` and `docker` images build, run and push images unmodified. The Build daemon's image cache persists across Builds, Reset and restarts of a Persistent Instance, and can be pruned. | M |
+| FR-CB-005 | Build steps get the environment a GKE pod gets (FR-INT-007): the metadata server answers as the Build's service account, Google hostnames reach the emulator, the emulator CA is trusted, and `LOCATION-docker.pkg.dev` pushes and pulls authenticate as the Build's service account. A `gcloud` or client-library step needs no Endpoint override. | M |
+| FR-CB-006 | `images` are pushed to Artifact Registry after the steps succeed and reported with digests in `results.images`; `artifacts.objects` are uploaded to Cloud Storage and reported in `results`. Maven, Python, npm and Go artifacts are Absent. | M |
+| FR-CB-007 | Substitutions: built-in (`$PROJECT_ID`, `$PROJECT_NUMBER`, `$BUILD_ID`, `$LOCATION`, and the source and trigger ones where they apply) and user `$_*` substitutions, `options.substitutionOption` and `options.dynamicSubstitutions`. `availableSecrets.secretManager` feeds `secretEnv` from Secret versions; KMS `secrets` are Absent. | M |
+| FR-CB-008 | Logs: every step's output is appended, as it is produced, to `log-BUILD_ID.txt` in `logsBucket`, by default `gs://PROJECT_NUMBER.cloudbuild-logs.googleusercontent.com`; `logUrl` opens the Build in the Web console. `options.logging` is Recorded and logs always go to Cloud Storage. | M |
+| FR-CB-009 | `timeout` and `queueTtl` run on the Emulator clock. At most `build.concurrency` Builds (default 4) run at once and the rest wait in `QUEUED`; `cancel` works in any non-terminal state and stops the Build's containers. | M |
+| FR-CB-010 | A Build without `serviceAccount` runs as the Compute Engine default service account. `serviceAccount` is honoured and needs `iam.serviceAccounts.actAs`; the legacy `PROJECT_NUMBER@cloudbuild.gserviceaccount.com` exists in every Project as a service agent. `cloudbuild.*` permissions and the predefined Cloud Build roles apply under every IAM enforcement level. | M |
+| FR-CB-011 | Reset cancels running and queued Builds and keeps the Build daemon's cache. A Build that was running when a State snapshot was saved restores as `INTERNAL_ERROR`. | M |
+| FR-CB-012 | Build triggers: create, get, list, patch and delete, global and regional, and `run` with a `storageSource` or public `gitSource` to build. A `pubsubConfig` Build trigger starts a Build per message on its topic. `github`, `repositoryEventConfig` and `triggerTemplate` are Recorded: they never fire, and running such a Build trigger without `sourceToBuild` answers Absent. | M |
+| FR-CB-013 | `webhookConfig` Build triggers start a Build when `triggers.webhook` is called with the trigger's Secret Manager secret. | S |
+| FR-CB-014 | Every Build status change is published to the Project's `cloud-builds` topic, when it exists, with `buildId` and `status` attributes and the Build as JSON. | M |
+| FR-CB-015 | Worker pools: create, get, list, patch and delete are Recorded; a Build naming a pool runs on the Build daemon like any other. | C |
+
 ## 6. Cross-service integration
 
 The emulator's value is in the seams: each row below is a path that must work end to end without user glue.
@@ -445,6 +469,10 @@ The emulator's value is in the seams: each row below is a path that must work en
 | FR-INT-011 | Pub/Sub → GKE push | Push subscription to a service URL via the LB, with OIDC token verifiable by the app. | M |
 | FR-INT-012 | IAM everywhere | At IAM enforcement level `enforce`, every Service checks the caller's permissions through one shared policy engine; at `audit` the log lists exactly the roles a workload is missing. | M |
 | FR-INT-013 | Cloud SQL ↔ GCS | Import/export dumps (FR-SQL-009). | S |
+| FR-INT-014 | Cloud Build → Artifact Registry | Build steps pull and push `LOCATION-docker.pkg.dev/...` images, and `images` are pushed, as the Build's service account (FR-CB-005, FR-CB-006). | M |
+| FR-INT-015 | Cloud Build ↔ GCS | `gcloud builds submit` sources, build logs and `artifacts.objects` live in emulated buckets (FR-CB-003, FR-CB-006, FR-CB-008). | M |
+| FR-INT-016 | Cloud Build → Secret Manager | `availableSecrets` resolve Secret versions as the Build's service account (FR-CB-007). | M |
+| FR-INT-017 | Cloud Build ↔ Pub/Sub | Build status notifications on `cloud-builds` (FR-CB-014), and `pubsubConfig` Build triggers start Builds (FR-CB-012), so a GCS upload can start a Build through a bucket notification. | M |
 
 ## 7. External interface requirements
 
@@ -454,9 +482,9 @@ The compatibility bar is the client, not the spec: a requirement is met when the
 
 | ID | Client | How it is pointed at the emulator | Must work for | Pri |
 | --- | --- | --- | --- | --- |
-| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the eleven Products, including `plan` with no diff after `apply` and clean `destroy` | M |
-| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or Host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector | M |
-| IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `secrets`, `container`, `compute` (LB, routers, NEGs), `dns`, `artifacts`, `sql`, `iam` command groups | M |
+| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the twelve Products, including `plan` with no diff after `apply` and clean `destroy` | M |
+| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or Host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector, Cloud Build | M |
+| IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `secrets`, `container`, `compute` (LB, routers, NEGs), `dns`, `artifacts`, `sql`, `iam`, `builds` command groups, including `builds submit --tag` and `--config` | M |
 | IF-004 | `kubectl`, Helm, `istioctl` | Kubeconfig from `get-credentials` | Standard cluster operations | M |
 | IF-005 | Docker, Podman, `crane`, `ko` | Registry host from `gcpemu env`; credential helper | Push and pull multi-arch images | M |
 | IF-006 | `psql`, pgx, Cloud SQL Auth Proxy v2 | Host port, or proxy pointed at the emulator | Connect, IAM auth | M |
@@ -592,6 +620,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 | Pub/Sub | — | Delivery, ordering, DLQ, filters, push, exactly-once | Message storage policy, CMEK |
 | Cloud DNS | DNS server | Zones, record sets, changes | DNSSEC signing, anycast name servers |
 | IAM | — | Policies, roles, tokens, impersonation, metadata server | Org policy, recommender, audit logs as a separate API |
+| Cloud Build | Build steps, Docker daemon | Builds API, Build triggers, substitutions, secrets, logs in Cloud Storage, `cloud-builds` notifications | Machine type, disk size, worker pools, logging mode, SCM-event triggers. Unlike GCP, Builds share one image cache (ADR 0016) |
 | Secret Manager | — | Secrets, versions, aliases, expiry, delayed destruction, event notifications, managed rotation of Cloud SQL credentials | Replication policy, CMEK, the secret's own identity (`policy_member`) |
 
 ### 10.3 Out of scope for v1.0
@@ -655,5 +684,12 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | M2 | Cloud SQL, GKE, NAT | Workload Identity and private cluster tests green |
 | M3 | ALB, CDN, backend mTLS, NEGs | Reference stack steps 1–4 and 9 green |
 | v1.0 | All | Full Reference stack on both arches; all **M** requirements tested |
+| M4 | Cloud Build | `gcloud builds submit --tag` and `--config` in the Client compatibility suite and `google_cloudbuild_trigger` in OpenTofu acceptance green; all **M** FR-CB requirements tested |
 
 The web console ships with each milestone: the shell, dashboard, request log and IAM views in M1, then each service's view in the milestone that delivers the service.
+
+### 11.5 Open questions
+
+| Question | Notes |
+| --- | --- |
+| How does `gcloud builds submit` stream logs without Host mode? | gcloud reads the log from `https://storage.UNIVERSE_DOMAIN/BUCKET/log-BUILD_ID.txt` and ignores Endpoint overrides, so under the Invalid universe it asks `storage.gcpemu.invalid`, which never resolves. The Build still completes and `gcloud builds log` fails the same way. In Host mode streaming works. |

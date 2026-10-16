@@ -17,7 +17,7 @@ The user-chosen label for an Instance's configuration, e.g. "default".
 The unique identifier that tags everything an Instance owns, such as its containers and networks.
 
 **Product**:
-A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager). There are eleven.
+A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build). There are twelve.
 
 **Service**:
 An independently enabled unit of emulation that implements all or part of a Product. One Product may be split across several Services, which is why there are more Services than Products.
@@ -250,6 +250,26 @@ _Avoid_: actual range, real range
 **Translated network**:
 A VPC container network on a Fallback range whose Managed containers still hold, and report, addresses from the Declared range, aliased onto their VPC interfaces (ADR 0004). A network that cannot be translated reports Fallback-range addresses.
 
+**Build**:
+One execution of a Cloud Build config: its Build steps run in order or by their declared dependencies, and its images are pushed when they finish.
+_Avoid_: job, pipeline, run (as a noun)
+
+**Build step**:
+One container in a Build, sharing the Build's workspace with the other Build steps.
+_Avoid_: stage, task
+
+**Build trigger**:
+A stored recipe that starts a Build when it is run or when the event it watches arrives.
+_Avoid_: trigger (unqualified)
+
+**Build daemon**:
+The Managed container, one per Instance, whose Docker daemon every Build's steps use to build, run and push images. Its image cache outlives Builds and Reset.
+_Avoid_: dind, docker host
+
+**Build agent**:
+The Sidecar agent that gives Build steps the metadata server, Google hostnames and Artifact Registry as the Build's service account.
+_Avoid_: build sidecar
+
 ### Testing
 
 **Client compatibility suite**:
@@ -274,4 +294,6 @@ _Avoid_: egress check, leak detector
 - "Endpoint" on its own is ambiguous. Use *Service endpoint*, *Endpoint override*, or GCP's *network endpoint* (NEG).
 - "Gateway" and "frontend" on their own are ambiguous. Load balancer frontends and the network's gateway IP keep their GCP meanings and are always qualified.
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
+- "Build" on its own is ambiguous: it also means compiling gcpemu, a Docker image build or the Web console's Vite build. Use *Build* (capitalised) only for a Cloud Build execution, and say *image build* or *compile* for the others.
+- "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
