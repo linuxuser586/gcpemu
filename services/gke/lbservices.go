@@ -50,7 +50,7 @@ import (
 // On a VM runtime (ADR 0012) the host routes to no container address, so
 // a Containerized Instance serves each Service port on the wildcard
 // address of its container, on a port the container publishes
-// (published.Candidates), and reports the host side of that binding: its
+// (published.Ports), and reports the host side of that binding: its
 // host IP as the ingress, and its host address as the endpoint. A Service
 // port with no free published port is not served, and is retried while
 // its Service stays; a Service with none served has no ingress.
@@ -116,8 +116,8 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 			mode = lbPublished
 		}
 	}
-	// The container's published ports, fixed for its life.
-	var published map[int]string
+	// The container's published ports, fixed for its life; nil until read.
+	var pub *published.Ports
 	lbs := map[string]*lbService{}
 	defer func() {
 		for id, l := range lbs {
@@ -128,11 +128,14 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	defer t.Stop()
 	for {
 		err := error(nil)
-		if mode == lbPublished && published == nil {
-			published, err = rt.SelfPorts(ctx)
+		if mode == lbPublished && pub == nil {
+			var ports map[int]string
+			if ports, err = rt.SelfPorts(ctx); ports != nil {
+				pub = published.NewPorts(ports, s.env.Config)
+			}
 		}
 		if err == nil {
-			err = s.syncLBServices(ctx, np, key, mode, published, lbs)
+			err = s.syncLBServices(ctx, np, key, mode, pub, lbs)
 		}
 		if err != nil && ctx.Err() == nil {
 			s.env.Log.Debug("gke: LoadBalancer Service sync", "cluster", key, "err", err)
@@ -146,9 +149,9 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 }
 
 // syncLBServices reconciles the host side of a cluster's LoadBalancer
-// Services, keyed by namespace/name in lbs, as mode says. published is the
-// container's published ports, for lbPublished.
-func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key string, mode lbMode, published map[int]string, lbs map[string]*lbService) error {
+// Services, keyed by namespace/name in lbs, as mode says. pub is the
+// container's published ports, for lbPublished; nil until read.
+func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key string, mode lbMode, pub *published.Ports, lbs map[string]*lbService) error {
 	kc, err := s.kube(key)
 	if err != nil {
 		return err
@@ -219,7 +222,7 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 				s.env.Log.Info("gke: LoadBalancer Service at its nodes", "cluster", key, "service", id, "ips", nodeIPs)
 			case lbPublished:
 				l = &lbService{served: map[int]bool{}}
-				s.servePublished(np, key, id, ports, published, l, true)
+				s.servePublished(np, key, id, ports, pub, l, true)
 			default:
 				if l, err = s.serveLB(np, key, id, ports, prev); err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", id, err))
@@ -230,7 +233,7 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 			l.sig = sig
 			lbs[id] = l
 		} else if l.unserved {
-			s.servePublished(np, key, id, ports, published, l, false)
+			s.servePublished(np, key, id, ports, pub, l, false)
 		}
 		ing := svc.Status.LoadBalancer.Ingress
 		same := len(ing) == len(l.ingress)
@@ -293,11 +296,16 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 }
 
 // servePublished serves the ports of a Service that l does not serve yet
-// on published ports (published.Candidates), and records the host side in
-// l. A port with none free stays missing; with warn, it is logged with
-// what to publish.
-func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbPort, pub map[int]string, l *lbService, warn bool) {
-	lo, hi, ranged, _ := s.env.Config.ParsePortRange()
+// on published ports (published.Ports.Candidates), and records the host
+// side in l. A port with none free stays missing; with warn, it is logged
+// with what to publish. pub is nil until the published ports are read.
+func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbPort, pub *published.Ports, l *lbService, warn bool) {
+	if pub == nil {
+		pub = published.NewPorts(nil, s.env.Config)
+	}
+	listen := func(port int) (net.Listener, error) {
+		return net.Listen("tcp", net.JoinHostPort(publishedHost, strconv.Itoa(port)))
+	}
 	l.unserved = false
 	var missing []int
 	for _, p := range ports {
@@ -305,33 +313,24 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 			continue
 		}
 		ep := lbEndpoint(key, id, p.port)
-		var ln net.Listener
-		var cport int
-		for _, c := range published.Candidates(key+"/"+id+"/"+strconv.Itoa(p.port), p.port, pub, lo, hi, ranged) {
-			var err error
-			if ln, err = net.Listen("tcp", net.JoinHostPort(publishedHost, strconv.Itoa(c))); err == nil {
-				cport = c
-				break
-			}
-		}
-		if ln == nil {
+		b := pub.Bind(pub.Candidates(key+"/"+id+"/"+strconv.Itoa(p.port), p.port, published.SameHostPort), listen, nil)
+		if b == nil {
 			l.unserved = true
 			missing = append(missing, p.port)
 			continue
 		}
-		host := pub[cport]
-		l.ex = append(l.ex, np.Serve(ln, s.nodePorts(key, p.nodePort)))
-		s.env.Endpoints.Set(ep, host)
+		l.ex = append(l.ex, np.Serve(b.Listener, s.nodePorts(key, p.nodePort)))
+		s.env.Endpoints.Set(ep, b.Host)
 		l.endpoints = append(l.endpoints, ep)
 		l.served[p.port] = true
-		if ip, _ := netplane.HostPort(host); !slices.Contains(l.ingress, ip) {
+		if ip, _ := netplane.HostPort(b.Host); !slices.Contains(l.ingress, ip) {
 			l.ingress = append(l.ingress, ip)
 		}
-		s.env.Log.Info("gke: LoadBalancer Service on a published port", "cluster", key, "service", id, "port", p.port, "containerPort", cport, "host", host)
+		s.env.Log.Info("gke: LoadBalancer Service on a published port", "cluster", key, "service", id, "port", p.port, "containerPort", b.Port, "host", b.Host)
 	}
 	if warn && len(missing) > 0 {
 		s.env.Log.Warn("gke: no free published port for a LoadBalancer Service; the host cannot reach it until one frees",
-			"cluster", key, "service", id, "ports", missing, "fix", published.Hint(s.env.Config.PortRange, missing[0], "the Service"))
+			"cluster", key, "service", id, "ports", missing, "fix", pub.Hint(missing[0], "the Service"))
 	}
 }
 
