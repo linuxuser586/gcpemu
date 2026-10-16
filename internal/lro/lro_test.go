@@ -197,3 +197,78 @@ func TestOperationsSummary(t *testing.T) {
 		t.Fatalf("operation = %s", got.Operation)
 	}
 }
+
+func TestResetDropsPendingOperation(t *testing.T) {
+	m, _ := setup(t, "20ms")
+	ran := make(chan struct{}, 1)
+	op, err := m.Run(context.Background(), "projects/p/locations/l", nil, func(context.Context) (proto.Message, error) {
+		ran <- struct{}{}
+		return structpb.NewStringValue("late"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.env.Store.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("RunFunc ran after Reset")
+	default:
+	}
+	if _, err := m.Get(op.Name); apierr.From(err).Code != 5 {
+		t.Fatalf("get after reset = %v", err)
+	}
+	// The manager stays usable.
+	next, err := m.Run(context.Background(), "projects/p/locations/l", nil, resp("ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.server.WaitOperation(context.Background(), &longrunningpb.WaitOperationRequest{Name: next.Name, Timeout: durationpb.New(5 * time.Second)})
+	if err != nil || !got.Done || got.GetResponse() == nil {
+		t.Fatalf("operation after reset = %v %v", got, err)
+	}
+}
+
+func TestResetWaitsForRunningOperation(t *testing.T) {
+	m, _ := setup(t, "1ms")
+	started, release := make(chan struct{}), make(chan struct{})
+	if _, err := m.Run(context.Background(), "projects/p/locations/l", nil, func(context.Context) (proto.Message, error) {
+		close(started)
+		<-release
+		return structpb.NewStringValue("late"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	// Reset is bounded by its ctx while the work is blocked.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := m.Reset(ctx); err == nil {
+		t.Fatal("Reset returned nil while an operation was still running")
+	}
+	reset := make(chan error, 1)
+	go func() { reset <- m.Reset(context.Background()) }()
+	select {
+	case err := <-reset:
+		t.Fatalf("Reset returned %v before the running operation finished", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-reset; err != nil {
+		t.Fatal(err)
+	}
+	// The operation's completion was written before Reset returned, so a
+	// Store reset leaves nothing behind.
+	if err := m.env.Store.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if ops := m.Operations(); len(ops) != 0 {
+		t.Fatalf("operations after reset = %+v", ops)
+	}
+}

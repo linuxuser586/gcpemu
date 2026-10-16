@@ -46,6 +46,13 @@ type Service struct {
 	// in the order they were accepted.
 	lastOp  map[string]chan struct{}
 	stopped chan struct{} // closed by Stop
+	// halt is closed by Reset (and replaced), releasing operations that
+	// wait behind one it dropped.
+	halt chan struct{}
+	// running counts operations whose work has started; opIdle is closed
+	// when it drops to zero (nil while it is zero).
+	running int
+	opIdle  chan struct{}
 
 	// vpcMu serialises realisation of container networks and IP allocation.
 	vpcMu sync.Mutex
@@ -91,6 +98,7 @@ func New(env *emu.Env) emu.Service {
 		timers:  map[string]*time.Timer{},
 		lastOp:  map[string]chan struct{}{},
 		stopped: make(chan struct{}),
+		halt:    make(chan struct{}),
 		egress:  map[string]*gateway{},
 	}
 	s.lro = lro.NewManager(env, "compute")
@@ -177,9 +185,12 @@ func (s *Service) ResourceCounts() map[string]int {
 	})
 }
 
-// Reset removes the NAT egress gateways (their state is wiped with the
-// store); workload containers and networks belong to their owners and the core.
+// Reset drops pending operations and waits, bounded by ctx, for those
+// already running (#301). It then removes the NAT egress gateways (their
+// state is wiped with the store); workload containers and networks belong
+// to their owners and the core.
 func (s *Service) Reset(ctx context.Context) error {
+	err := errors.Join(s.resetOps(ctx), s.lro.Reset(ctx))
 	s.hostMu.Lock()
 	s.withdrawAll(ctx, s.hostAttachments())
 	s.hostMu.Unlock()
@@ -192,7 +203,7 @@ func (s *Service) Reset(ctx context.Context) error {
 	for _, np := range nets {
 		s.removeGateway(ctx, np)
 	}
-	return nil
+	return err
 }
 
 // EnvVars implements emu.EnvVarer. gcloud's compute client has BASE_URL

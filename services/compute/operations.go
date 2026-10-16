@@ -100,7 +100,7 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 		// A Service's operations share one latency, so running each one's
 		// work after the previous one's keeps completion in acceptance order:
 		// separate timer goroutines that fire together would otherwise race.
-		prev, done := s.lastOp[svc], make(chan struct{})
+		prev, done, halt := s.lastOp[svc], make(chan struct{}), s.halt
 		if prev == nil {
 			prev = closedChan
 		}
@@ -110,14 +110,19 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 			select {
 			case <-prev:
 			case <-s.stopped:
+			case <-halt:
 			}
 			s.opMu.Lock()
 			_, live := s.timers[path]
 			delete(s.timers, path)
+			if live {
+				s.enterOpLocked()
+			}
 			s.opMu.Unlock()
 			if !live {
 				return
 			}
+			defer s.exitOp()
 			err := fn(bg)
 			_ = s.env.Store.Update(func(tx store.Tx) error {
 				cur, ok := get[computev1.Operation](tx, nsOps, path)
@@ -133,6 +138,50 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 	s.opMu.Unlock()
 	cp := *op
 	return &cp, nil
+}
+
+// enterOpLocked counts an operation whose work starts. Callers hold opMu.
+func (s *Service) enterOpLocked() {
+	if s.running == 0 {
+		s.opIdle = make(chan struct{})
+	}
+	s.running++
+}
+
+// exitOp uncounts an operation whose work and completion are done.
+func (s *Service) exitOp() {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	s.running--
+	if s.running == 0 {
+		close(s.opIdle)
+		s.opIdle = nil
+	}
+}
+
+// resetOps drops pending operations, so their work never runs and they are
+// never completed, and waits, bounded by ctx, for those already running.
+// Operations started afterwards run normally, in order among themselves.
+func (s *Service) resetOps(ctx context.Context) error {
+	s.opMu.Lock()
+	for k, t := range s.timers {
+		t.Stop()
+		delete(s.timers, k)
+	}
+	close(s.halt)
+	s.halt = make(chan struct{})
+	s.lastOp = map[string]chan struct{}{}
+	idle := s.opIdle
+	s.opMu.Unlock()
+	if idle == nil {
+		return nil
+	}
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("compute: waiting for running operations: %w", ctx.Err())
+	}
 }
 
 // finishOp marks op DONE, recording err.

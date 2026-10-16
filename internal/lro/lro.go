@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,10 @@ type Manager struct {
 
 	mu      sync.Mutex
 	pending map[string]*time.Timer
+	// running counts operation callbacks past their timer; idle is closed
+	// when it drops to zero (nil while it is zero).
+	running int
+	idle    chan struct{}
 	server  *Server
 	closed  bool
 }
@@ -94,6 +99,30 @@ func (m *Manager) Close() {
 	m.mu.Unlock()
 	if srv != nil {
 		srv.remove(m)
+	}
+}
+
+// Reset drops the pending operations and waits, bounded by ctx, for those
+// already running to return, so none started before Reset writes to the
+// store afterwards (#301). Dropped operations are not completed: the store
+// is reset by the instance. Unlike Close, operations started after Reset
+// run normally.
+func (m *Manager) Reset(ctx context.Context) error {
+	m.mu.Lock()
+	for name, t := range m.pending {
+		t.Stop()
+		delete(m.pending, name)
+	}
+	idle := m.idle
+	m.mu.Unlock()
+	if idle == nil {
+		return nil
+	}
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("lro: %s: waiting for running operations: %w", m.service, ctx.Err())
 	}
 }
 
@@ -135,16 +164,39 @@ func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message
 			m.mu.Lock()
 			_, live := m.pending[op.Name]
 			delete(m.pending, op.Name)
+			if live {
+				m.enterLocked()
+			}
 			m.mu.Unlock()
 			if !live {
 				return
 			}
+			defer m.exit()
 			resp, err := run(bg)
 			m.complete(op.Name, resp, err)
 		})
 	}
 	m.mu.Unlock()
 	return proto.Clone(op).(*longrunningpb.Operation), nil
+}
+
+// enterLocked counts a running operation callback. Callers hold mu.
+func (m *Manager) enterLocked() {
+	if m.running == 0 {
+		m.idle = make(chan struct{})
+	}
+	m.running++
+}
+
+// exit uncounts a running operation callback.
+func (m *Manager) exit() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.running--
+	if m.running == 0 {
+		close(m.idle)
+		m.idle = nil
+	}
 }
 
 // newID returns a UUID-formatted operation ID.

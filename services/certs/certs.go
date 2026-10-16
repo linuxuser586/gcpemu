@@ -126,10 +126,12 @@ func (s *Service) ResourceCounts() map[string]int {
 	return out
 }
 
-// Reset drops cached certificates; the store is reset by the instance.
+// Reset drops pending operations, waiting for running ones (#301), and
+// cached certificates; the store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {
+	err := s.ops.Reset(ctx)
 	s.invalidate()
-	return nil
+	return err
 }
 
 // Snapshot implements emu.Snapshotter: certificates are in the store.
