@@ -153,7 +153,15 @@ permissions:
     - "versions: access add destroy disable enable get list"
     - "locations: get list"
   monitoring:
-    - "timeSeries: list"
+    - "alertPolicies: create delete get list update"
+    - "dashboards: create delete get list update"
+    - "groups: create delete get list update"
+    - "metricDescriptors: create get list"
+    - "monitoredResourceDescriptors: get list"
+    - "notificationChannelDescriptors: get list"
+    - "notificationChannels: create delete get getVerificationCode list sendVerificationCode update verify"
+    - "timeSeries: create list"
+    - "uptimeCheckConfigs: create delete get list update"
 
 roles:
   # Basic roles.
@@ -487,10 +495,46 @@ roles:
     title: Secret Manager Viewer
     description: Allows viewing metadata of all Secret Manager resources.
     permissions: [secretmanager.secrets.get, secretmanager.secrets.list, secretmanager.versions.get, secretmanager.versions.list, secretmanager.locations.get, secretmanager.locations.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.admin
+    title: Monitoring Admin
+    description: Provides full access to Cloud Monitoring.
+    permissions: [monitoring.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.editor
+    title: Monitoring Editor
+    description: Provides full access to information about all monitoring data and configurations.
+    permissions: [monitoring.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.alertPolicyEditor
+    title: Monitoring AlertPolicy Editor
+    description: Read/write access to alerting policies.
+    permissions: [monitoring.alertPolicies.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.alertPolicyViewer
+    title: Monitoring AlertPolicy Viewer
+    description: Read-only access to alerting policies.
+    permissions: [monitoring.alertPolicies.get, monitoring.alertPolicies.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.dashboardEditor
+    title: Monitoring Dashboard Configuration Editor
+    description: Read/write access to dashboard configurations.
+    permissions: [monitoring.dashboards.*, monitoring.groups.get, monitoring.groups.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.dashboardViewer
+    title: Monitoring Dashboard Configuration Viewer
+    description: Read-only access to dashboard configurations.
+    permissions: [monitoring.dashboards.get, monitoring.dashboards.list, monitoring.groups.get, monitoring.groups.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.metricWriter
+    title: Monitoring Metric Writer
+    description: Provides write-only access to metrics. This provides exactly the permissions needed by the Cloud Monitoring agent and other systems that send metrics.
+    permissions: [monitoring.metricDescriptors.create, monitoring.metricDescriptors.get, monitoring.metricDescriptors.list, monitoring.monitoredResourceDescriptors.get, monitoring.monitoredResourceDescriptors.list, monitoring.timeSeries.create]
+  - name: roles/monitoring.notificationChannelEditor
+    title: Monitoring NotificationChannel Editor
+    description: Read/write access to notification channels.
+    permissions: [monitoring.notificationChannelDescriptors.*, monitoring.notificationChannels.*, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.notificationChannelViewer
+    title: Monitoring NotificationChannel Viewer
+    description: Read-only access to notification channels.
+    permissions: [monitoring.notificationChannelDescriptors.get, monitoring.notificationChannelDescriptors.list, monitoring.notificationChannels.get, monitoring.notificationChannels.list, resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/monitoring.viewer
     title: Monitoring Viewer
     description: Provides read-only access to get and list information about all monitoring data and configurations.
-    permissions: [monitoring.timeSeries.list, resourcemanager.projects.get, resourcemanager.projects.list]
+    permissions: [monitoring.*.get, monitoring.*.list, resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/networksecurity.admin
     title: Network Security Admin
     description: Full access to Network Security resources.

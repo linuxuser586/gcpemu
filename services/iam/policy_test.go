@@ -76,6 +76,40 @@ func TestProjectPolicy(t *testing.T) {
 	}
 }
 
+// TestPreviouslyAcceptedRoles: a predefined role of a service missing from
+// roles.yaml is accepted and grants nothing. Once the service enters
+// roles.yaml its roles are checked against the catalogue, so each role here
+// must come in with it or a grant that used to apply is rejected (#364).
+func TestPreviouslyAcceptedRoles(t *testing.T) {
+	inst := startIAM(t)
+	c := crmClient(t, inst)
+	for _, role := range []string{
+		// GKE's least-privilege node service account.
+		"roles/logging.logWriter",
+		"roles/monitoring.metricWriter",
+		"roles/monitoring.viewer",
+		"roles/stackdriver.resourceMetadata.writer",
+		// Cloud Monitoring, accepted while unmodelled before v0.7.0.
+		"roles/monitoring.admin",
+		"roles/monitoring.editor",
+		"roles/monitoring.alertPolicyEditor",
+		"roles/monitoring.alertPolicyViewer",
+		"roles/monitoring.dashboardEditor",
+		"roles/monitoring.dashboardViewer",
+		"roles/monitoring.notificationChannelEditor",
+		"roles/monitoring.notificationChannelViewer",
+	} {
+		p, err := c.Projects.GetIamPolicy(testProject, &crmv1.GetIamPolicyRequest{}).Do()
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Bindings = append(p.Bindings, &crmv1.Binding{Role: role, Members: []string{"user:a@example.com"}})
+		if _, err := c.Projects.SetIamPolicy(testProject, &crmv1.SetIamPolicyRequest{Policy: p}).Do(); err != nil {
+			t.Errorf("grant %s on project: %v", role, err)
+		}
+	}
+}
+
 // TestCustomRolesAndConditions covers FR-IAM-002 custom roles and
 // FR-IAM-005 conditions, evaluated in enforce mode.
 func TestCustomRolesAndConditions(t *testing.T) {
