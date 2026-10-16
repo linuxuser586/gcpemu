@@ -3,9 +3,12 @@ package sql_test
 import (
 	"context"
 	"net"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -112,4 +115,25 @@ func cidrHas(cidr, ip string) bool {
 // staticTS is a token source for a fixed access token.
 func staticTS(tok string) oauth2.TokenSource {
 	return oauth2.StaticTokenSource(&oauth2.Token{AccessToken: tok, TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)})
+}
+
+// connectHost connects to an instance's published host port
+// (GCPEMU_SQL_<INSTANCE>), which every runtime serves whether or not the
+// instance serves host clients on its reported address.
+func connectHost(t testing.TB, inst *emutest.Instance, name, user, password, db string) *pgx.Conn {
+	t.Helper()
+	addr := inst.EnvVars()["GCPEMU_SQL_"+strings.ToUpper(strings.ReplaceAll(name, "-", "_"))]
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("host port of %s: %q: %v", name, addr, err)
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatalf("host port of %s: %q: %v", name, addr, err)
+	}
+	c, err := connect(context.Background(), host, p, user, password, db)
+	if err != nil {
+		t.Fatalf("connect %s on %s: %v", name, addr, err)
+	}
+	return c
 }

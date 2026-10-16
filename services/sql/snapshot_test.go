@@ -27,10 +27,7 @@ func TestStateSnapshot(t *testing.T) {
 	})
 	exec := func(in *sqladmin.DatabaseInstance, q string) {
 		t.Helper()
-		conn, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
-		if err != nil {
-			t.Fatal(err)
-		}
+		conn := connectHost(t, inst, in.Name, "postgres", "rootpw", "postgres")
 		defer conn.Close(ctx)
 		if _, err := conn.Exec(ctx, q); err != nil {
 			t.Fatal(err)
@@ -53,10 +50,7 @@ func TestStateSnapshot(t *testing.T) {
 	if in.State != "RUNNABLE" {
 		t.Fatalf("state after restore = %s", in.State)
 	}
-	conn, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "postgres")
-	if err != nil {
-		t.Fatal(err)
-	}
+	conn := connectHost(t, inst, in.Name, "postgres", "rootpw", "postgres")
 	var rows []string
 	r, err := conn.Query(ctx, "SELECT v FROM kept ORDER BY v")
 	if err != nil {

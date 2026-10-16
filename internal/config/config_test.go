@@ -268,3 +268,15 @@ func TestStateHome(t *testing.T) {
 		t.Errorf("InstanceDir = %q, want %q", got, want)
 	}
 }
+
+// NoSQLHostClients is for emutest only (#316): no env var reaches it.
+func TestNoSQLHostClientsNotFromEnv(t *testing.T) {
+	c := Defaults()
+	set := map[string]string{"GCPEMU_": "true", "GCPEMU_-": "true", "GCPEMU_NO_SQL_HOST_CLIENTS": "true"}
+	if err := c.LoadEnv(func(k string) string { return set[k] }); err != nil {
+		t.Fatal(err)
+	}
+	if c.NoSQLHostClients {
+		t.Fatal("an env var set NoSQLHostClients")
+	}
+}

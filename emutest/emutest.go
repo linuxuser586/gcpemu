@@ -28,6 +28,17 @@ func WithIAMMode(mode string) Option { return func(c *config.Config) { c.IAMMode
 // WithDeterministic enables deterministic IDs and the fake clock.
 func WithDeterministic() Option { return func(c *config.Config) { c.Deterministic = true } }
 
+// WithSQLHostClients has Cloud SQL instances with a public IP serve host
+// clients on a loopback address on a VM runtime (ADR 0005), as gcpemu
+// does, for tests that dial the address an instance reports (the Cloud
+// SQL connector, pgx or psql to its PRIMARY IP). Without it they serve
+// none, and the host reaches each instance only on its published port
+// (GCPEMU_SQL_<INSTANCE>). On a host without loopback aliases every
+// instance would serve on 127.0.0.1, so the test then holds a lock shared
+// by the user's test binaries for as long as its emulator runs, and its
+// instances must serve one at a time.
+func WithSQLHostClients() Option { return func(c *config.Config) { c.NoSQLHostClients = false } }
+
 // Start launches an instance running services (plus dependencies) and stops
 // it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
@@ -38,8 +49,12 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	cfg.Services = svcs
 	cfg.LogLevel = "warn"
 	cfg.Ports[config.AllPorts] = 0
+	cfg.NoSQLHostClients = true
 	for _, o := range opts {
 		o(&cfg)
+	}
+	if !cfg.NoSQLHostClients {
+		holdHostLoopback(t) // released after Shutdown, registered later
 	}
 	var logOut io.Writer = io.Discard
 	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
