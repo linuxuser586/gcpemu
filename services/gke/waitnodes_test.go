@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -93,6 +94,52 @@ func TestAwaitNodesFailsFast(t *testing.T) {
 				t.Errorf("awaitNodes took %v; want it to fail fast", d)
 			}
 		})
+	}
+}
+
+// TestAwaitNodesDeadlineMidPoll (#355): when the deadline cuts off a
+// nodes request, the error names the nodes not Ready at the last poll
+// that succeeded, not every node.
+func TestAwaitNodesDeadlineMidPoll(t *testing.T) {
+	cfg := config.Defaults()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
+		Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()}).(*Service)
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0",
+		Nodes: []nodeRecord{{Name: "n1", Pool: "default-pool"}, {Name: "n2", Pool: "default-pool"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: "c0", Id: "0123456789abcdef"})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	// The first poll sees n1 Ready; later polls hang until cancelled.
+	var polls atomic.Int32
+	kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if polls.Add(1) > 1 {
+			<-r.Context().Done()
+			return
+		}
+		_, _ = io.WriteString(w, `{"items":[{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`)
+	}))
+	defer kube.Close()
+	s.rtFor(rec.key()).kube = &kubeClient{base: kube.URL, hc: kube.Client()}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := s.awaitNodes(ctx, rec.key(), "", nil)
+	if err == nil || !strings.Contains(err.Error(), "nodes [n2] did not become ready") {
+		t.Fatalf("awaitNodes = %v; want n2 not ready", err)
+	}
+	if polls.Load() < 2 {
+		t.Fatalf("polls = %d; want the deadline to cut off a later poll", polls.Load())
+	}
+
+	// With no poll that succeeded, every node is named.
+	polls.Store(1)
+	ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err = s.awaitNodes(ctx, rec.key(), "", nil)
+	if err == nil || !strings.Contains(err.Error(), "nodes [n1 n2] did not become ready") {
+		t.Fatalf("awaitNodes = %v; want n1 and n2 not ready", err)
 	}
 }
 
