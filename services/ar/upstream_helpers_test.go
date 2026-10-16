@@ -25,10 +25,11 @@ import (
 // unauthenticated side door used by tests to push content.
 type fakeUpstream struct {
 	t     *testing.T
-	pub   *httptest.Server // token-protected, what the emulator pulls from
-	push  *httptest.Server // same storage, no auth
-	down  atomic.Bool      // answer 503 to everything
-	delay atomic.Int64     // nanoseconds to stall blob GETs
+	pub   *httptest.Server         // token-protected, what the emulator pulls from
+	push  *httptest.Server         // same storage, no auth
+	down  atomic.Bool              // answer 503 to everything
+	delay atomic.Int64             // nanoseconds to stall blob GETs
+	hold  atomic.Pointer[blobHold] // stalls the next blob GET (holdBlob)
 
 	tokens, manifestGETs, manifestHEADs, blobGETs atomic.Int64
 }
@@ -74,12 +75,65 @@ func newFakeUpstream(t *testing.T) *fakeUpstream {
 			if d := u.delay.Load(); d > 0 {
 				time.Sleep(time.Duration(d))
 			}
+			if h := u.hold.Swap(nil); h != nil {
+				defer close(h.ended)
+				w = &holdWriter{ResponseWriter: w, h: h, done: r.Context().Done()}
+			}
 		}
 		reg.ServeHTTP(w, r)
 	}))
 	t.Cleanup(u.pub.Close)
 	t.Cleanup(u.push.Close)
 	return u
+}
+
+// blobHold stalls the next blob GET after its first body bytes.
+type blobHold struct {
+	held    chan struct{} // closed once the first bytes were sent
+	ended   chan struct{} // closed when the held request returned
+	release chan struct{} // closed at test cleanup
+}
+
+// holdBlob makes the next blob GET send its first bytes and then wait for
+// the hold's release or for the client to go away.
+func (u *fakeUpstream) holdBlob() *blobHold {
+	h := &blobHold{held: make(chan struct{}), ended: make(chan struct{}), release: make(chan struct{})}
+	u.hold.Store(h)
+	u.t.Cleanup(func() { close(h.release) })
+	return h
+}
+
+// holdWriter sends the first bytes of a body, then waits for the hold.
+type holdWriter struct {
+	http.ResponseWriter
+	h      *blobHold
+	done   <-chan struct{}
+	waited bool
+}
+
+// Write sends at most 1 KiB of the first write before it waits, as the
+// registry writes a whole blob at once.
+func (w *holdWriter) Write(b []byte) (int, error) {
+	if w.waited || len(b) == 0 {
+		return w.ResponseWriter.Write(b)
+	}
+	w.waited = true
+	first := b[:min(len(b), 1<<10)]
+	n, err := w.ResponseWriter.Write(first)
+	if err != nil {
+		return n, err
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+	close(w.h.held)
+	select {
+	case <-w.h.release:
+	case <-w.done:
+		return n, http.ErrAbortHandler
+	}
+	m, err := w.ResponseWriter.Write(b[n:])
+	return n + m, err
 }
 
 // host is the token-protected upstream host:port.

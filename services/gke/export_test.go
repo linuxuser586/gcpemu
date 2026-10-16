@@ -56,10 +56,11 @@ func GatewayAPIObject(channel, kind, name string) map[string]any {
 }
 
 // BringUpWaits are the waits a cluster bring-up runs one after another,
-// each bounded on its own.
+// each bounded on its own. A server that exits before it is ready is
+// started once more (restartExited), so its waits count twice.
 var BringUpWaits = map[string]time.Duration{
-	"admin kubeconfig": adminWait,
-	"API server ready": apiReadyWait,
-	"nodes ready":      nodeReadyWait,
-	"add-on CRDs":      crdEstablishTimeout,
+	"admin kubeconfig, two starts": 2 * adminWait,
+	"API server ready, two starts": 2 * apiReadyWait,
+	"nodes ready":                  nodeReadyWait,
+	"add-on CRDs":                  crdEstablishTimeout,
 }

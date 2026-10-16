@@ -13,10 +13,11 @@ import (
 
 // ClusterOpTimeout is how long tests wait for a GKE cluster operation. It
 // is longer than the emulator's own bring-up waits added up (the k3s admin
-// kubeconfig, the API server, the nodes and the add-ons' CRDs: 9m), with
-// room for image setup, which has no deadline, so a slow bring-up fails
-// with the emulator's error rather than the test's (#396).
-const ClusterOpTimeout = 12 * time.Minute
+// kubeconfig and the API server, twice when the server exits and is
+// started again, the nodes and the add-ons' CRDs: 13m), with room for
+// image setup, which has no deadline, so a slow bring-up fails with the
+// emulator's error rather than the test's (#396).
+const ClusterOpTimeout = 16 * time.Minute
 
 // ClusterSlotsEnv sets how many tests of the user's test binaries may run
 // GKE clusters at once (default 2): every k3s server competes for CPU and

@@ -63,6 +63,7 @@ package ar
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -75,6 +76,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -103,6 +105,8 @@ type Service struct {
 	fetches      map[string]*blobFetch
 	bgCtx        context.Context
 	bgCancel     context.CancelFunc
+	fetchRuns    inflight.Tracker // running blob downloads, waited for by Reset
+	resetting    bool             // no blob download starts while set
 }
 
 // New returns the service.
@@ -270,13 +274,28 @@ func (s *Service) IsStoreCache(ns, key string) bool {
 	return strings.HasPrefix(key, mirrorProject+"/")
 }
 
-// Reset drops pending operations, waiting for running ones (#301), and
-// removes every blob and upload; the store is reset by the instance.
+// Reset drops pending operations, waiting for running ones (#301), stops
+// upstream fetches and waits for them, so none writes to the blob store
+// while it is emptied (#397), and removes every blob and upload; the
+// store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {
 	err := s.ops.Reset(ctx)
 	s.mu.Lock()
 	s.uploads = map[string]*upload{}
+	s.resetting = true
+	s.bgCancel()
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.resetting = false
+		if s.ready {
+			s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+		}
+		s.mu.Unlock()
+	}()
+	if werr := s.fetchRuns.Wait(ctx); werr != nil {
+		return errors.Join(err, fmt.Errorf("ar: waiting for upstream fetches: %w", werr))
+	}
 	if s.blobs == nil {
 		return err
 	}
