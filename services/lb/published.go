@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -26,7 +25,7 @@ import (
 //
 // The rule's own port comes first, when the container publishes it at any
 // host port (GCPEMU_LB_<NAME> carries the port), then a free port of
-// --port-range from a hash of the rule onwards (published.Candidates).
+// --port-range from a hash of the rule onwards (published.AnyHostPort).
 // GKE LoadBalancer Services take ports from the same range: whoever binds
 // a port first wins. A rule with none free has no endpoint, logs what to
 // publish, and is retried each second and whenever the rules change.
@@ -49,9 +48,12 @@ var publishedHost = ""
 type publishing struct {
 	// on: a Containerized Instance, which serves rules on Published ports.
 	on bool
-	// ports maps each published container port to its host address
-	// (runtime.Client.SelfPorts); nil without the runtime socket.
-	ports map[int]string
+	// noSocket: the Instance has no runtime socket to read its published
+	// ports with.
+	noSocket bool
+	// ports is the container's published ports; nil until read, or
+	// without the runtime socket.
+	ports *published.Ports
 }
 
 // pubRetryAfter is how long the data plane waits before asking the
@@ -68,7 +70,7 @@ func (d *dataplane) publishing() publishing {
 	}
 	// A Containerized Instance whose ports are unknown for now: nothing
 	// is served on them until a later try reads them.
-	unknown := publishing{on: true, ports: map[int]string{}}
+	unknown := publishing{on: true}
 	if time.Now().Before(d.pubRetry) {
 		return unknown
 	}
@@ -80,7 +82,7 @@ func (d *dataplane) publishing() publishing {
 	}
 	d.pub, d.pubKnown = p, true
 	if p.on {
-		d.s.env.Log.Info("lb: Containerized Instance: forwarding rules are also served on published ports", "published", len(p.ports), "runtimeSocket", p.ports != nil)
+		d.s.env.Log.Info("lb: Containerized Instance: forwarding rules are also served on published ports", "published", p.ports.Len(), "runtimeSocket", !p.noSocket)
 	}
 	return p
 }
@@ -91,7 +93,7 @@ func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
 		return publishing{}, nil
 	}
 	if !d.edge.available(ctx) {
-		return publishing{on: true}, nil
+		return publishing{on: true, noSocket: true}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -107,10 +109,7 @@ func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
 	if err != nil {
 		return publishing{}, err
 	}
-	if ports == nil {
-		ports = map[int]string{}
-	}
-	return publishing{on: true, ports: ports}, nil
+	return publishing{on: true, ports: published.NewPorts(ports, d.s.env.Config)}, nil
 }
 
 // listenLoop opens a forwarding rule's loopback listener, sharing its port
@@ -138,32 +137,27 @@ func (d *dataplane) publish(l *listener, fe *frontend, warn bool) {
 			held[o.pubPort] = true
 		}
 	}
-	var cands []int
-	host := func(c int) string { return pub.ports[c] }
-	if pub.ports == nil {
+	ports, cands := pub.ports, []int(nil)
+	if pub.noSocket {
+		ports = published.NewPorts(map[int]string{fe.port: net.JoinHostPort(loopback.Host, strconv.Itoa(fe.port))}, d.s.env.Config)
 		cands = []int{fe.port}
-		host = func(c int) string { return net.JoinHostPort(loopback.Host, strconv.Itoa(c)) }
 		l.pubHint = fmt.Sprintf("publish the forwarding rule's port at the same host port (-p 127.0.0.1:%d:%d); without the container runtime socket only the first forwarding rule on a port is served", fe.port, fe.port)
 	} else {
-		lo, hi, ranged, _ := d.s.env.Config.ParsePortRange()
-		cands = published.Candidates(fe.frPath, fe.port, pub.ports, lo, hi, ranged)
-		if _, ok := pub.ports[fe.port]; ok {
-			cands = append([]int{fe.port}, slices.DeleteFunc(cands, func(c int) bool { return c == fe.port })...)
+		if ports == nil {
+			// Not read yet: none to serve on.
+			ports = published.NewPorts(nil, d.s.env.Config)
 		}
-		l.pubHint = published.Hint(d.s.env.Config.PortRange, fe.port, "the forwarding rule")
+		cands = ports.Candidates(fe.frPath, fe.port, published.AnyHostPort)
+		l.pubHint = ports.Hint(fe.port, "the forwarding rule")
 	}
-	for _, c := range cands {
-		if held[c] {
-			continue
-		}
-		ln, err := published.ListenShared(net.JoinHostPort(publishedHost, strconv.Itoa(c)))
-		if err != nil {
-			continue
-		}
-		l.pub, l.pubPort, l.pubHost, l.pubHint = ln, c, host(c), ""
-		go l.serve(ln)
+	listen := func(port int) (net.Listener, error) {
+		return published.ListenShared(net.JoinHostPort(publishedHost, strconv.Itoa(port)))
+	}
+	if b := ports.Bind(cands, listen, func(port int) bool { return held[port] }); b != nil {
+		l.pub, l.pubPort, l.pubHost, l.pubHint = b.Listener, b.Port, b.Host, ""
+		go l.serve(b.Listener)
 		d.s.env.Endpoints.Set("lb:"+fe.fr.Name, l.pubHost)
-		d.s.env.Log.Info("lb: forwarding rule on a published port", "forwardingRule", fe.frPath, "port", fe.port, "containerPort", c, "host", l.pubHost)
+		d.s.env.Log.Info("lb: forwarding rule on a published port", "forwardingRule", fe.frPath, "port", fe.port, "containerPort", b.Port, "host", l.pubHost)
 		return
 	}
 	if warn {

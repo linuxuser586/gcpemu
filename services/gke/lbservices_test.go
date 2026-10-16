@@ -22,6 +22,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/published"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -211,6 +212,12 @@ func TestLBServicesSync(t *testing.T) {
 	}
 }
 
+// publishedPorts is the Ports of a container publishing ports, under the
+// config of s.
+func publishedPorts(s *Service, ports map[int]string) *published.Ports {
+	return published.NewPorts(ports, s.env.Config)
+}
+
 // On a VM runtime (ADR 0012) a LoadBalancer Service is served on its
 // container's published ports and reports the host side: its own port
 // when published at the same host port, otherwise a free one of
@@ -281,7 +288,7 @@ func TestLBServicesPublished(t *testing.T) {
 		}
 	}()
 	ctx := context.Background()
-	if err := s.syncLBServices(ctx, np, rec.key(), lbPublished, published, lbs); err != nil {
+	if err := s.syncLBServices(ctx, np, rec.key(), lbPublished, publishedPorts(s, published), lbs); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -314,7 +321,7 @@ func TestLBServicesPublished(t *testing.T) {
 	mu.Lock()
 	svcs = `{"items":[` + web + `,` + full + `]}`
 	mu.Unlock()
-	if err := s.syncLBServices(ctx, np, rec.key(), lbPublished, published, lbs); err != nil {
+	if err := s.syncLBServices(ctx, np, rec.key(), lbPublished, publishedPorts(s, published), lbs); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.env.Endpoints.Get("gke:c0/default/full/18277"); got != "127.0.0.1:40001" {

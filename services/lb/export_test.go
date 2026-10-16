@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/published"
 )
 
 // JoinSubnetwork starts the edge if needed and attaches it to subnetwork's
@@ -81,7 +82,11 @@ func SetPublished(svc emu.Service, ports map[int]string, host string) {
 	d := svc.(*Service).dp
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.pub, d.pubKnown = publishing{on: true, ports: ports}, true
+	d.pub = publishing{on: true, noSocket: ports == nil}
+	if ports != nil {
+		d.pub.ports = published.NewPorts(ports, d.s.env.Config)
+	}
+	d.pubKnown = true
 	publishedHost = host
 }
 
