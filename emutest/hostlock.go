@@ -1,6 +1,7 @@
 package emutest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,36 +25,57 @@ func holdHostLoopback(t testing.TB) {
 	if loopback.Aliases() {
 		return
 	}
-	var deadline time.Time
-	if d, ok := t.(interface{ Deadline() (time.Time, bool) }); ok {
-		deadline, _ = d.Deadline()
-	}
-	release, err := acquireHostLock(hostLockFile, deadline)
+	release, err := acquireHostLock(hostLockFile, testDeadline(t))
 	if err != nil {
 		t.Fatalf("emutest: %v", err)
 	}
 	t.Cleanup(release)
 }
 
+// errLockHeld is acquireLock reaching its deadline with every file held.
+var errLockHeld = errors.New("still held")
+
 // acquireHostLock takes an exclusive OS lock on path, which the OS
 // releases if the process dies, polling until deadline (zero: forever).
 func acquireHostLock(path string, deadline time.Time) (release func(), err error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return nil, err
+	release, err = acquireLock([]string{path}, deadline)
+	if errors.Is(err, errLockHeld) {
+		return nil, fmt.Errorf("another test still serves Cloud SQL host clients on 127.0.0.1 (lock %s); run `%s` to give each its own address", path, loopback.InstallHint)
+	}
+	return release, err
+}
+
+// acquireLock takes an exclusive OS lock on whichever of paths is free
+// first, so that len(paths) holders get in at once. The OS releases it if
+// the process dies. It polls until deadline (zero: forever), then fails
+// with errLockHeld.
+func acquireLock(paths []string, deadline time.Time) (release func(), err error) {
+	files := make([]*os.File, 0, len(paths))
+	defer func() {
+		for _, f := range files {
+			f.Close()
+		}
+	}()
+	for _, p := range paths {
+		f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
 	}
 	for {
-		ok, err := tryLock(f)
-		if err != nil {
-			f.Close()
-			return nil, fmt.Errorf("locking %s: %w", path, err)
-		}
-		if ok {
-			return func() { _ = unlock(f); _ = f.Close() }, nil
+		for i, f := range files {
+			ok, err := tryLock(f)
+			if err != nil {
+				return nil, fmt.Errorf("locking %s: %w", paths[i], err)
+			}
+			if ok {
+				files = append(files[:i], files[i+1:]...) // kept open: closing drops the lock
+				return func() { _ = unlock(f); _ = f.Close() }, nil
+			}
 		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
-			f.Close()
-			return nil, fmt.Errorf("another test still serves Cloud SQL host clients on 127.0.0.1 (lock %s); run `%s` to give each its own address", path, loopback.InstallHint)
+			return nil, errLockHeld
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

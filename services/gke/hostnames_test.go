@@ -40,6 +40,7 @@ import (
 func TestRealHostnames(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	const proj = project // waitOp polls operations in project
 	inst := emutest.Start(t, []string{"gke", "gcs", "pubsub"}, emutest.WithIAMMode("enforce"))
 	cm := newClient(t, inst)
@@ -77,7 +78,7 @@ func TestRealHostnames(t *testing.T) {
 	mustGW(t, inst, "PUT", "/pubsub/v1/projects/"+proj+"/topics/hn-topic", map[string]any{}, nil)
 	mustGW(t, inst, "PUT", "/pubsub/v1/projects/"+proj+"/subscriptions/hn-sub", map[string]any{"topic": "projects/" + proj + "/topics/hn-topic"}, nil)
 
-	waitOp(t, cm, loc, op.Name, 3*time.Minute)
+	waitOp(t, cm, loc, op.Name)
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: par + "/clusters/hn"})
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +212,7 @@ func TestRealHostnames(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitOp(t, cm, loc, op.Name, 2*time.Minute)
+		waitOp(t, cm, loc, op.Name)
 	})
 }
 

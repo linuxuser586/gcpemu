@@ -98,6 +98,7 @@ func TestSystemMetricsOTLP(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "1000")
 
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -111,7 +112,7 @@ func TestSystemMetricsOTLP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/metrics"
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {
@@ -151,7 +152,7 @@ func TestSystemMetricsOTLP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateCluster: %v", err)
 	}
-	waitOp(t, cm, zone, op.Name, time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	time.Sleep(3 * time.Second) // an export in flight
 	before := sink.count()
 	time.Sleep(4 * time.Second)

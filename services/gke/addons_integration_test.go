@@ -28,6 +28,7 @@ func TestClusterAddons(t *testing.T) {
 		t.Skip("set GCPEMU_NET_TESTS=1 to pull the Secrets Store CSI driver images")
 	}
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	const proj = project
 	inst := emutest.Start(t, []string{"gke", "secrets"}, emutest.WithIAMMode("enforce"))
 	cm := newClient(t, inst)
@@ -67,7 +68,7 @@ func TestClusterAddons(t *testing.T) {
 		{"role": "roles/secretmanager.secretAccessor", "members": []string{member}},
 	}}}, nil)
 
-	waitOp(t, cm, loc, op.Name, 4*time.Minute)
+	waitOp(t, cm, loc, op.Name)
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: par + "/clusters/addons"})
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +173,7 @@ func TestClusterAddons(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			waitOp(t, cm, loc, op.Name, 2*time.Minute)
+			waitOp(t, cm, loc, op.Name)
 		}
 		if code, _ := e.kube("GET", crd+"gateways.gateway.networking.k8s.io", "", nil, nil); code != 404 {
 			t.Errorf("Gateway CRD after disabling: %d", code)
@@ -196,6 +197,7 @@ func TestClusterAddons(t *testing.T) {
 func TestAddonCRDsEstablished(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke", "secrets"})
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -212,7 +214,7 @@ func TestAddonCRDsEstablished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCluster: %v", err)
 	}
-	waitOp(t, cm, zone, op.Name, 4*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +298,7 @@ func TestAddonCRDsEstablished(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitOp(t, cm, zone, op.Name, 2*time.Minute)
+		waitOp(t, cm, zone, op.Name)
 	}
 	// standard → experimental → standard, one update each, the route
 	// present throughout.

@@ -1,6 +1,7 @@
 package emutest
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,4 +77,45 @@ func TestHostLockHolderDies(t *testing.T) {
 		t.Fatalf("after the holder died: %v", err)
 	}
 	release()
+}
+
+// TestLockSlots is a lock over n files letting n holders in at once and
+// the next one in when any of them releases.
+func TestLockSlots(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{filepath.Join(dir, "0"), filepath.Join(dir, "1")}
+	first, err := acquireLock(paths, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireLock(paths, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatalf("second holder of two slots: %v", err)
+	}
+	defer second()
+	if _, err := acquireLock(paths, time.Now().Add(300*time.Millisecond)); !errors.Is(err, errLockHeld) {
+		t.Fatalf("third holder of two slots: err = %v, want errLockHeld", err)
+	}
+	got := make(chan error, 1)
+	go func() {
+		r, err := acquireLock(paths, time.Now().Add(10*time.Second))
+		if err == nil {
+			r()
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		t.Fatalf("waiter returned while both slots were held: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	first()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("waiter after a release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter did not get the freed slot")
+	}
 }

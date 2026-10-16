@@ -28,6 +28,7 @@ import (
 func TestStateSnapshot(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
@@ -37,7 +38,7 @@ func TestStateSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/snap"
 	saved, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {
@@ -53,7 +54,7 @@ func TestStateSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 2*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 
 	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
@@ -74,6 +75,7 @@ func TestStateSnapshot(t *testing.T) {
 func TestStateSnapshotOtherInstance(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	var ids []string
@@ -111,7 +113,7 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 		_ = inst.Shutdown(ctx)
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/moved"
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {

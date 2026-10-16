@@ -39,6 +39,10 @@ const (
 	registryPort  = 5000
 	webhookDir    = "/etc/gcpemu"
 	nodeReadyWait = 3 * time.Minute
+	// adminWait bounds the wait for k3s to write its admin kubeconfig,
+	// and apiReadyWait the wait after it for the API server to be ready.
+	adminWait    = 2 * time.Minute
+	apiReadyWait = 2 * time.Minute
 	// Pod and service ranges used when the cluster names none: pod ranges
 	// are unique per instance (10.64.0.0/16 upwards) so pod IPs stay
 	// unambiguous for NEG backends; service ranges are cluster-local.
@@ -672,7 +676,7 @@ func serverExited(ctx context.Context, rt *runtime.Manager, id string) error {
 // awaitServer waits for ready, failing as soon as the control-plane
 // container id has exited instead of polling a dead endpoint (#395).
 func awaitServer(ctx context.Context, rt *runtime.Manager, id string, ready func() bool) error {
-	err := waitFor(ctx, 2*time.Minute, func() (bool, error) {
+	err := waitFor(ctx, apiReadyWait, func() (bool, error) {
 		if ready() {
 			return true, nil
 		}
@@ -689,7 +693,7 @@ func awaitServer(ctx context.Context, rt *runtime.Manager, id string, ready func
 // waitAdmin waits for k3s to write its admin kubeconfig and parses it.
 func (s *Service) waitAdmin(ctx context.Context, d *deps, id string) (adminCreds, error) {
 	var creds adminCreds
-	err := waitFor(ctx, 2*time.Minute, func() (bool, error) {
+	err := waitFor(ctx, adminWait, func() (bool, error) {
 		ct, err := d.rt.InspectContainer(ctx, id)
 		if err != nil {
 			return false, err

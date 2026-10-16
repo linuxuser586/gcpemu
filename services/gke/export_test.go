@@ -2,6 +2,7 @@ package gke
 
 import (
 	"context"
+	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
@@ -52,4 +53,14 @@ func GatewayAPIObject(channel, kind, name string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// BringUpWaits are the waits a cluster bring-up runs one after another,
+// each bounded on its own. A server that exits before it is ready is
+// started once more (restartExited), so its waits count twice.
+var BringUpWaits = map[string]time.Duration{
+	"admin kubeconfig, two starts": 2 * adminWait,
+	"API server ready, two starts": 2 * apiReadyWait,
+	"nodes ready":                  nodeReadyWait,
+	"add-on CRDs":                  crdEstablishTimeout,
 }

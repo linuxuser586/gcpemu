@@ -56,9 +56,11 @@ func newClient(t *testing.T, inst *emutest.Instance) *container.ClusterManagerCl
 	return cm
 }
 
-func waitOp(t *testing.T, cm *container.ClusterManagerClient, loc, name string, timeout time.Duration) *containerpb.Operation {
+// waitOp waits up to emutest.ClusterOpTimeout for an operation to be
+// DONE, and fails the test when it failed.
+func waitOp(t *testing.T, cm *container.ClusterManagerClient, loc, name string) *containerpb.Operation {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(emutest.ClusterOpTimeout)
 	for {
 		op, err := cm.GetOperation(context.Background(), &containerpb.GetOperationRequest{Name: "projects/" + project + "/locations/" + loc + "/operations/" + name})
 		if err != nil {
@@ -71,7 +73,7 @@ func waitOp(t *testing.T, cm *container.ClusterManagerClient, loc, name string, 
 			return op
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("operation %s (%s) not done after %v", name, op.OperationType, timeout)
+			t.Fatalf("operation %s (%s) not done after %v", name, op.OperationType, emutest.ClusterOpTimeout)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -204,6 +206,7 @@ func saToken(t *testing.T, inst *emutest.Instance, id string) (string, string) {
 func TestGKE(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke"}, emutest.WithIAMMode("enforce"))
 	cm := newClient(t, inst)
 	ctx := context.Background()
@@ -245,7 +248,7 @@ func TestGKE(t *testing.T) {
 	if op.OperationType != containerpb.Operation_CREATE_CLUSTER || op.Status != containerpb.Operation_RUNNING {
 		t.Errorf("create op = %v", op)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	took := time.Since(start)
 	t.Logf("cluster create → RUNNING took %v", took)
 	// NFR-PERF-003 targets an otherwise idle runner; under `go test -race
@@ -400,7 +403,7 @@ func TestGKE(t *testing.T) {
 		if privErr != nil {
 			t.Fatalf("create private cluster: %v", privErr)
 		}
-		waitOp(t, cm, zone, privOp.Name, 3*time.Minute)
+		waitOp(t, cm, zone, privOp.Name)
 		testPrivateEgress(t, inst, cm)
 	})
 
@@ -418,7 +421,7 @@ func TestGKE(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitOp(t, cm, zone, op.Name, 3*time.Minute)
+		waitOp(t, cm, zone, op.Name)
 		countReady := func() int {
 			var nodes struct {
 				Items []struct {
@@ -445,7 +448,7 @@ func TestGKE(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		waitOp(t, cm, zone, op.Name, 3*time.Minute)
+		waitOp(t, cm, zone, op.Name)
 		if n := countReady(); n != 1 {
 			t.Fatalf("after resize to 1: %d nodes", n)
 		}
@@ -461,7 +464,7 @@ func TestGKE(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			waitOp(t, cm, zone, op.Name, 2*time.Minute)
+			waitOp(t, cm, zone, op.Name)
 		}
 		if _, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: parent + "/clusters/c1"}); err == nil {
 			t.Error("cluster still exists")

@@ -31,6 +31,7 @@ func stalled(ctx context.Context) {
 func TestResetRestoreDuringBringUp(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
@@ -40,7 +41,7 @@ func TestResetRestoreDuringBringUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 	name := parent + "/clusters/inflight"
 	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
 	if err != nil {
@@ -88,6 +89,7 @@ func TestResetRestoreDuringBringUp(t *testing.T) {
 func TestResetStopsOperation(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
+	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	inst := emutest.Start(t, []string{"gke"})
 	gsvc, _ := inst.Env.Lookup("gke")
@@ -142,5 +144,5 @@ func TestResetStopsOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitOp(t, cm, zone, op.Name, 3*time.Minute)
+	waitOp(t, cm, zone, op.Name)
 }
