@@ -8,7 +8,9 @@ import (
 	"time"
 
 	computev1 "google.golang.org/api/compute/v1"
+	"google.golang.org/grpc/codes"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -131,4 +133,44 @@ func TestResetWaitsForRunningOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitDone(t, s, op)
+}
+
+// hookStore runs after once, after the next Update commits.
+type hookStore struct {
+	store.Store
+	after func()
+}
+
+func (h *hookStore) Update(fn func(store.Tx) error) error {
+	err := h.Store.Update(fn)
+	if f := h.after; f != nil {
+		h.after = nil
+		f()
+	}
+	return err
+}
+
+func TestResetDuringStartOpAbortsOperation(t *testing.T) {
+	s := opService(t, "20ms")
+	hs := &hookStore{Store: s.env.Store}
+	s.env.Store = hs
+	// A whole Instance Reset lands between the pending record's write and
+	// the operation's timer.
+	hs.after = func() {
+		if err := s.Reset(context.Background()); err != nil {
+			t.Error(err)
+		}
+		if err := hs.Store.Reset(); err != nil {
+			t.Error(err)
+		}
+	}
+	ran := make(chan struct{}, 1)
+	op, err := s.startOp(context.Background(), resetSpec, func(context.Context) error { ran <- struct{}{}; return nil })
+	if err == nil || apierr.From(err).Code != codes.Aborted {
+		t.Fatalf("startOp across a Reset = %v %v, want Aborted", op, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if len(ran) != 0 || opCount(s) != 0 {
+		t.Fatalf("after reset: %d ran, %d operations", len(ran), opCount(s))
+	}
 }

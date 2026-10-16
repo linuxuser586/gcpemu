@@ -31,6 +31,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -61,12 +62,11 @@ type Manager struct {
 
 	mu      sync.Mutex
 	pending map[string]*time.Timer
-	// running counts operation callbacks past their timer; idle is closed
-	// when it drops to zero (nil while it is zero).
-	running int
-	idle    chan struct{}
-	server  *Server
-	closed  bool
+	// work counts operation callbacks past their timer; Reset starts its
+	// next generation under mu.
+	work   inflight.Tracker
+	server *Server
+	closed bool
 }
 
 // NewManager returns a manager for service.
@@ -103,27 +103,22 @@ func (m *Manager) Close() {
 }
 
 // Reset drops the pending operations and waits, bounded by ctx, for those
-// already running to return, so none started before Reset writes to the
-// store afterwards (#301). Dropped operations are not completed: the store
-// is reset by the instance. Unlike Close, operations started after Reset
-// run normally.
+// already running, so none started before Reset writes to the store
+// afterwards (#301). Dropped operations are not completed: the store is
+// reset by the instance. Unlike Close, operations started after Reset run
+// normally.
 func (m *Manager) Reset(ctx context.Context) error {
 	m.mu.Lock()
 	for name, t := range m.pending {
 		t.Stop()
 		delete(m.pending, name)
 	}
-	idle := m.idle
+	m.work.Next()
 	m.mu.Unlock()
-	if idle == nil {
-		return nil
+	if err := m.work.Wait(ctx); err != nil {
+		return fmt.Errorf("lro: %s: waiting for running operations: %w", m.service, err)
 	}
-	select {
-	case <-idle:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("lro: %s: waiting for running operations: %w", m.service, ctx.Err())
-	}
+	return nil
 }
 
 // Latency returns the configured operation latency for the service.
@@ -154,49 +149,38 @@ func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message
 		}
 		return op, nil
 	}
+	gen := m.work.Gen()
 	if err := m.put(op, start, time.Time{}); err != nil {
 		return nil, err
 	}
 	bg := context.WithoutCancel(ctx)
 	m.mu.Lock()
+	if m.work.Gen() != gen {
+		// A Reset ran since the record was written, perhaps after the
+		// store's: the operation goes with the state it was started on.
+		m.mu.Unlock()
+		_ = m.env.Store.Update(func(tx store.Tx) error { return tx.Delete(Namespace, op.Name) })
+		return nil, apierr.Aborted("The operation was aborted by an emulator reset.")
+	}
 	if !m.closed {
 		m.pending[op.Name] = time.AfterFunc(d, func() {
 			m.mu.Lock()
 			_, live := m.pending[op.Name]
 			delete(m.pending, op.Name)
 			if live {
-				m.enterLocked()
+				m.work.Enter()
 			}
 			m.mu.Unlock()
 			if !live {
 				return
 			}
-			defer m.exit()
+			defer m.work.Exit()
 			resp, err := run(bg)
 			m.complete(op.Name, resp, err)
 		})
 	}
 	m.mu.Unlock()
 	return proto.Clone(op).(*longrunningpb.Operation), nil
-}
-
-// enterLocked counts a running operation callback. Callers hold mu.
-func (m *Manager) enterLocked() {
-	if m.running == 0 {
-		m.idle = make(chan struct{})
-	}
-	m.running++
-}
-
-// exit uncounts a running operation callback.
-func (m *Manager) exit() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.running--
-	if m.running == 0 {
-		close(m.idle)
-		m.idle = nil
-	}
 }
 
 // newID returns a UUID-formatted operation ID.

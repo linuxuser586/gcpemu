@@ -272,3 +272,46 @@ func TestResetWaitsForRunningOperation(t *testing.T) {
 		t.Fatalf("operations after reset = %+v", ops)
 	}
 }
+
+// hookStore runs after once, after the next Update commits.
+type hookStore struct {
+	store.Store
+	after func()
+}
+
+func (h *hookStore) Update(fn func(store.Tx) error) error {
+	err := h.Store.Update(fn)
+	if f := h.after; f != nil {
+		h.after = nil
+		f()
+	}
+	return err
+}
+
+func TestResetDuringRunAbortsOperation(t *testing.T) {
+	m, _ := setup(t, "20ms")
+	hs := &hookStore{Store: m.env.Store}
+	m.env.Store = hs
+	// A whole Instance Reset lands between the pending record's write and
+	// the operation's timer.
+	hs.after = func() {
+		if err := m.Reset(context.Background()); err != nil {
+			t.Error(err)
+		}
+		if err := hs.Store.Reset(); err != nil {
+			t.Error(err)
+		}
+	}
+	ran := make(chan struct{}, 1)
+	op, err := m.Run(context.Background(), "projects/p/locations/l", nil, func(context.Context) (proto.Message, error) {
+		ran <- struct{}{}
+		return structpb.NewStringValue("late"), nil
+	})
+	if err == nil || apierr.From(err).Code != 10 {
+		t.Fatalf("Run across a Reset = %v %v, want Aborted", op, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if len(ran) != 0 || len(m.Operations()) != 0 {
+		t.Fatalf("after reset: %d ran, operations %+v", len(ran), m.Operations())
+	}
+}

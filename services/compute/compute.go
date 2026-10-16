@@ -26,6 +26,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apidef"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -49,10 +50,9 @@ type Service struct {
 	// halt is closed by Reset (and replaced), releasing operations that
 	// wait behind one it dropped.
 	halt chan struct{}
-	// running counts operations whose work has started; opIdle is closed
-	// when it drops to zero (nil while it is zero).
-	running int
-	opIdle  chan struct{}
+	// opWork counts operations whose work has started; Reset starts its
+	// next generation under opMu.
+	opWork inflight.Tracker
 
 	// vpcMu serialises realisation of container networks and IP allocation.
 	vpcMu sync.Mutex
