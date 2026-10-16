@@ -42,6 +42,9 @@ const (
 	gatewayAPIVer    = "v1.5.1"
 	defaultRotation  = 2 * time.Minute
 	minAddonRotation = time.Minute
+	// crdEstablishTimeout bounds the wait for an add-on's CRDs to be
+	// served.
+	crdEstablishTimeout = 2 * time.Minute
 )
 
 // manifest decodes an embedded multi-document YAML file (gzipped if it
@@ -115,8 +118,12 @@ func objectPath(obj map[string]any) (string, string, error) {
 	return "/" + kp.group + "/" + kp.resource, name, nil
 }
 
-// applyAddon creates or replaces objs, labelled as add-on addon.
+// applyAddon creates or replaces objs, labelled as add-on addon, and
+// waits until the API server serves the CRDs among them, so that a RUNNING
+// cluster or a finished update serves every resource its add-ons define
+// (#310).
 func applyAddon(ctx context.Context, kc *kubeClient, addon string, objs []map[string]any) error {
+	var crds []string
 	for _, obj := range objs {
 		coll, name, err := objectPath(obj)
 		if err != nil {
@@ -131,6 +138,46 @@ func applyAddon(ctx context.Context, kc *kubeClient, addon string, objs []map[st
 		meta["labels"] = labels
 		if err := applyObject(ctx, kc, coll, name, obj); err != nil {
 			return fmt.Errorf("%s %s: %w", obj["kind"], name, err)
+		}
+		if obj["kind"] == "CustomResourceDefinition" {
+			crds = append(crds, name)
+		}
+	}
+	return awaitEstablished(ctx, kc, crds, crdEstablishTimeout)
+}
+
+// awaitEstablished waits until each named CRD has the condition
+// Established=True, failing with the first that is not when ctx ends or
+// timeout passes.
+func awaitEstablished(ctx context.Context, kc *kubeClient, names []string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for _, name := range names {
+		var last error
+		err := waitFor(ctx, timeout, func() (bool, error) {
+			var crd struct {
+				Status struct {
+					Conditions []struct {
+						Type   string `json:"type"`
+						Status string `json:"status"`
+					} `json:"conditions"`
+				} `json:"status"`
+			}
+			if last = kc.get(ctx, "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/"+name, &crd); last != nil {
+				return false, nil // not visible yet, or a transient error: poll again
+			}
+			for _, c := range crd.Status.Conditions {
+				if c.Type == "Established" {
+					return c.Status == "True", nil
+				}
+			}
+			return false, nil
+		})
+		if err != nil {
+			if last != nil {
+				err = fmt.Errorf("%w (last: %v)", err, last)
+			}
+			return fmt.Errorf("CustomResourceDefinition %s is not established: %w", name, err)
 		}
 	}
 	return nil

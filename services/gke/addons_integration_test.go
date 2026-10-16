@@ -13,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	projectid "github.com/linuxuser586/gcpemu/internal/project"
+	"github.com/linuxuser586/gcpemu/services/gke"
 )
 
 // The cluster settings gatewayApiConfig, secretManagerConfig and
@@ -185,4 +186,82 @@ func TestClusterAddons(t *testing.T) {
 			t.Fatalf("cluster after disabling: %v %v", got.GetSecretManagerConfig(), err)
 		}
 	})
+}
+
+// Once the operation that installs an add-on finishes, the API server
+// serves every CRD the add-on defines (#310): the Gateway API CRDs of the
+// standard channel and the SecretSync CRD on create, the experimental
+// channel's on update.
+func TestAddonCRDsEstablished(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	inst := emutest.Start(t, []string{"gke", "secrets"})
+	cm := newClient(t, inst)
+	ctx := context.Background()
+	name := parent + "/clusters/crds"
+	on := true
+
+	op, err := cm.CreateCluster(ctx, &containerpb.CreateClusterRequest{Parent: parent, Cluster: &containerpb.Cluster{
+		Name:                   "crds",
+		WorkloadIdentityConfig: &containerpb.WorkloadIdentityConfig{WorkloadPool: project + ".svc.id.goog"},
+		NetworkConfig:          &containerpb.NetworkConfig{GatewayApiConfig: &containerpb.GatewayAPIConfig{Channel: containerpb.GatewayAPIConfig_CHANNEL_STANDARD}},
+		SecretSyncConfig:       &containerpb.SecretSyncConfig{Enabled: &on},
+		NodePools:              []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
+	}})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+	waitOp(t, cm, zone, op.Name, 4*time.Minute)
+	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adm, pool := adminClient(t, inst, name)
+	e := &env{t: t, inst: inst, cm: cm, c: c, ca: pool, adm: adm}
+
+	assertEstablished := func(manifest string) {
+		t.Helper()
+		names, err := gke.AddonCRDs(manifest)
+		if err != nil || len(names) == 0 {
+			t.Fatalf("%s: %v %v", manifest, names, err)
+		}
+		for _, n := range names {
+			var crd struct {
+				Status struct {
+					Conditions []struct{ Type, Status string } `json:"conditions"`
+				} `json:"status"`
+			}
+			e.mustKube("GET", "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/"+n, nil, &crd)
+			ok := false
+			for _, c := range crd.Status.Conditions {
+				ok = ok || c.Type == "Established" && c.Status == "True"
+			}
+			if !ok {
+				t.Errorf("%s: CRD %s not Established: %+v", manifest, n, crd.Status.Conditions)
+			}
+		}
+	}
+	assertEstablished(gke.GatewayAPIManifest("standard"))
+	assertEstablished("secret-sync.yaml")
+	// Objects of the CRDs are served at once, without 404.
+	e.mustKube("POST", "/apis/gateway.networking.k8s.io/v1/namespaces/default/httproutes", map[string]any{
+		"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+		"metadata": map[string]any{"name": "r"}, "spec": map[string]any{},
+	}, nil)
+
+	e.mustKube("DELETE", "/apis/gateway.networking.k8s.io/v1/namespaces/default/httproutes/r", nil, nil)
+
+	// The experimental channel through an update (by way of disabled: the
+	// Gateway API's safe-upgrades policy refuses experimental CRDs over
+	// standard ones).
+	for _, ch := range []containerpb.GatewayAPIConfig_Channel{containerpb.GatewayAPIConfig_CHANNEL_DISABLED, containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL} {
+		op, err = cm.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: name, Update: &containerpb.ClusterUpdate{
+			DesiredGatewayApiConfig: &containerpb.GatewayAPIConfig{Channel: ch},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitOp(t, cm, zone, op.Name, 2*time.Minute)
+	}
+	assertEstablished(gke.GatewayAPIManifest("experimental"))
 }
