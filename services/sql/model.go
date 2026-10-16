@@ -78,6 +78,8 @@ type backupRecord struct {
 	File      string               `json:"file,omitempty"`
 	Databases []*sqladmin.Database `json:"databases,omitempty"`
 	Users     []*userRecord        `json:"users,omitempty"`
+	// ExpiryTime is the backups API's expiryTime (stored, not enforced).
+	ExpiryTime string `json:"expiryTime,omitempty"`
 }
 
 // instKey is the store key "P/I".
