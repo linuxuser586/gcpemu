@@ -16,8 +16,10 @@ import (
 // The backups API (FR-SQL-008): projects/{project}/backups/{backup} is the
 // project-level view of the stored backup runs, with the run's ID as the
 // backup ID. Permissions are the backupRuns ones on the backup's instance,
-// as in Cloud SQL. expiryTime and ttlDays are stored and reported, not
-// enforced.
+// as in Cloud SQL. A backup past its expiryTime (set by expiryTime or
+// ttlDays) is deleted on the emulator clock. Unlike Cloud SQL, which only
+// lets FINAL backups expire, any backup can: the emulator has no final
+// backups yet (#407).
 
 // toBackup renders a stored backup as a backups API resource.
 func toBackup(project string, b *backupRecord) *sqladmin.Backup {
@@ -62,17 +64,28 @@ func (s *Service) backupFor(r *http.Request, perm string) (*backupRecord, error)
 	return b, nil
 }
 
+// maxTTLDays is how far ahead, in days, a backup's expiry can be, as in
+// Cloud SQL.
+const maxTTLDays = 365
+
 // expiryOf returns the expiry time a request asks for: ttlDays from now,
-// or expiryTime.
+// or expiryTime. ttlDays 0 cannot be told from an absent ttlDays and
+// means none; an expiryTime in the past is accepted, and the next sweep
+// deletes the backup.
 func (s *Service) expiryOf(b *sqladmin.Backup) (string, error) {
+	now := s.env.Clock.Now().UTC()
 	switch {
-	case b.TtlDays < 0 || b.TtlDays > 365:
-		return "", errInvalid("ttlDays must be between 1 and 365.")
+	case b.TtlDays < 0 || b.TtlDays > maxTTLDays:
+		return "", errInvalid("ttlDays must be between 1 and %d.", maxTTLDays)
 	case b.TtlDays > 0:
-		return s.env.Clock.Now().UTC().Add(time.Duration(b.TtlDays) * 24 * time.Hour).Format(time.RFC3339Nano), nil
+		return now.Add(time.Duration(b.TtlDays) * 24 * time.Hour).Format(time.RFC3339Nano), nil
 	case b.ExpiryTime != "":
-		if _, err := time.Parse(time.RFC3339Nano, b.ExpiryTime); err != nil {
+		t, err := time.Parse(time.RFC3339Nano, b.ExpiryTime)
+		if err != nil {
 			return "", errInvalid("Invalid value for expiryTime: %q is not an RFC 3339 timestamp.", b.ExpiryTime)
+		}
+		if t.Sub(now) > maxTTLDays*24*time.Hour {
+			return "", errInvalid("expiryTime must be at most %d days from now.", maxTTLDays)
 		}
 		return b.ExpiryTime, nil
 	}
@@ -126,15 +139,21 @@ func (s *Service) listBackups(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	// Newest first across the project's instances. The filter parameter
-	// is not interpreted.
+	match, err := compileFilter(r.URL.Query().Get("filter"), backupFilterFields)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	// Newest first across the project's instances.
 	items := map[string]*sqladmin.Backup{}
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		scanJSON(tx, nsBackups, project+"/", func(k string, b *backupRecord) {
 			// k is P/I/backupKey; order by backupKey, then instance.
 			_, rest := splitKey(k)
 			inst, idKey, _ := strings.Cut(rest, "/")
-			items[idKey+"/"+inst] = toBackup(project, b)
+			if out := toBackup(project, b); match(out) {
+				items[idKey+"/"+inst] = out
+			}
 		})
 		return nil
 	})

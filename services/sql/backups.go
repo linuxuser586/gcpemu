@@ -390,12 +390,17 @@ func (s *Service) deleteBackupOp(ctx context.Context, project string, b *backupR
 	name := b.Run.Instance
 	op := s.newOp(ctx, project, name, "DELETE_BACKUP")
 	return s.runOp(op, false, func(context.Context) error {
-		if b.File != "" {
-			_ = os.Remove(b.File)
-		}
-		return s.env.Store.Update(func(tx store.Tx) error {
-			return tx.Delete(nsBackups, childKey(project, name, backupKey(b.Run.Id)))
-		})
+		return s.removeBackup(project, b)
+	})
+}
+
+// removeBackup deletes a stored backup and its dump.
+func (s *Service) removeBackup(project string, b *backupRecord) error {
+	if b.File != "" {
+		_ = os.Remove(b.File)
+	}
+	return s.env.Store.Update(func(tx store.Tx) error {
+		return tx.Delete(nsBackups, b.key(project))
 	})
 }
 
@@ -438,16 +443,19 @@ func (s *Service) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	project, name := rec.Instance.Project, rec.Instance.Name
 	var b *backupRecord
+	var srcProject string
 	if byRun {
-		srcProject, srcName := orDefault(rc.Project, project), orDefault(rc.InstanceId, name)
+		var srcName string
+		srcProject, srcName = orDefault(rc.Project, project), orDefault(rc.InstanceId, name)
 		var ok bool
 		if b, ok = s.loadBackup(srcProject, srcName, strconv.FormatInt(rc.BackupRunId, 10)); !ok {
 			apierr.Write(w, errBackupNotFound())
 			return
 		}
 	} else {
-		srcProject, id, err := parseBackupName(req.Backup)
-		if err != nil {
+		var id int64
+		var err error
+		if srcProject, id, err = parseBackupName(req.Backup); err != nil {
 			apierr.Write(w, err)
 			return
 		}
@@ -461,9 +469,16 @@ func (s *Service) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errInvalid("Backup %d is %s; only a successful backup can be restored.", b.Run.Id, b.Run.Status))
 		return
 	}
+	// The backup must outlive its expiry until the dump has been read.
+	release, ok := s.holdBackup(srcProject, b)
+	if !ok {
+		apierr.Write(w, errBackupMissing())
+		return
+	}
 	op := s.newOp(r.Context(), project, name, "RESTORE_VOLUME")
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		dump, err := os.ReadFile(b.File)
+		release()
 		if err != nil {
 			return newOpError("INTERNAL_ERROR", "read backup: %v", err)
 		}
