@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,11 +14,27 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 )
 
+// nodeTaint is a taint on a Kubernetes node.
+type nodeTaint struct{ Key, Value, Effect string }
+
+// poolTaints drops the node.kubernetes.io/ taints Kubernetes manages,
+// such as the not-ready taint the node controller adds while a node
+// misses heartbeats under load (#399), leaving the pool's own taints.
+func poolTaints(ts []nodeTaint) []nodeTaint {
+	var out []nodeTaint
+	for _, t := range ts {
+		if !strings.HasPrefix(t.Key, "node.kubernetes.io/") {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // kubeNodes lists the cluster's nodes.
 func (e *env) kubeNodes() []struct {
 	Metadata struct{ Labels map[string]string }
 	Spec     struct {
-		Taints []struct{ Key, Value, Effect string }
+		Taints []nodeTaint
 	}
 	Status struct {
 		NodeInfo struct {
@@ -29,7 +46,7 @@ func (e *env) kubeNodes() []struct {
 		Items []struct {
 			Metadata struct{ Labels map[string]string }
 			Spec     struct {
-				Taints []struct{ Key, Value, Effect string }
+				Taints []nodeTaint
 			}
 			Status struct {
 				NodeInfo struct {
@@ -40,6 +57,30 @@ func (e *env) kubeNodes() []struct {
 	}
 	e.mustKube("GET", "/api/v1/nodes", nil, &l)
 	return l.Items
+}
+
+// TestPoolTaintsDropsSystemTaints checks that only the pool's own taints
+// are compared with its configuration (#399).
+func TestPoolTaintsDropsSystemTaints(t *testing.T) {
+	pool := nodeTaint{"dedicated", "infra", "NoSchedule"}
+	for _, tc := range []struct {
+		name string
+		in   []nodeTaint
+		want []nodeTaint
+	}{
+		{"none", nil, nil},
+		{"pool only", []nodeTaint{pool}, []nodeTaint{pool}},
+		{"not-ready", []nodeTaint{pool, {"node.kubernetes.io/not-ready", "", "NoExecute"}}, []nodeTaint{pool}},
+		{"unreachable first", []nodeTaint{{"node.kubernetes.io/unreachable", "", "NoSchedule"}, pool}, []nodeTaint{pool}},
+		{"other prefix kept", []nodeTaint{pool, {"example.com/node.kubernetes.io", "x", "NoSchedule"}},
+			[]nodeTaint{pool, {"example.com/node.kubernetes.io", "x", "NoSchedule"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := poolTaints(tc.in); !slices.Equal(got, tc.want) {
+				t.Errorf("poolTaints(%v) = %v; want %v", tc.in, got, tc.want)
+			}
+		})
+	}
 }
 
 // TestRegionalPoolsAndRoles covers FR-GKE-001 (regional clusters),
@@ -82,8 +123,7 @@ func TestRegionalPoolsAndRoles(t *testing.T) {
 		if n.Metadata.Labels["kubernetes.io/arch"] != goruntime.GOARCH || n.Status.NodeInfo.Architecture != goruntime.GOARCH {
 			t.Errorf("node arch %q/%q, host %s", n.Metadata.Labels["kubernetes.io/arch"], n.Status.NodeInfo.Architecture, goruntime.GOARCH)
 		}
-		if n.Metadata.Labels["tier"] != "a" || len(n.Spec.Taints) != 1 || n.Spec.Taints[0].Key != "dedicated" ||
-			n.Spec.Taints[0].Value != "infra" || n.Spec.Taints[0].Effect != "NoSchedule" {
+		if n.Metadata.Labels["tier"] != "a" || !slices.Equal(poolTaints(n.Spec.Taints), []nodeTaint{{"dedicated", "infra", "NoSchedule"}}) {
 			t.Errorf("node labels %v, taints %v", n.Metadata.Labels, n.Spec.Taints)
 		}
 	}
@@ -101,7 +141,7 @@ func TestRegionalPoolsAndRoles(t *testing.T) {
 	waitOp(t, cm, region, op.Name)
 	eventually(t, 60*time.Second, "updated labels and taints on every node", func() bool {
 		for _, n := range e.kubeNodes() {
-			if n.Metadata.Labels["tier"] != "b" || len(n.Spec.Taints) != 1 || n.Spec.Taints[0].Key != "spot" || n.Spec.Taints[0].Effect != "PreferNoSchedule" {
+			if n.Metadata.Labels["tier"] != "b" || !slices.Equal(poolTaints(n.Spec.Taints), []nodeTaint{{"spot", "true", "PreferNoSchedule"}}) {
 				return false
 			}
 		}
