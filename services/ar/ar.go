@@ -76,6 +76,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -96,8 +97,7 @@ type Service struct {
 
 	// Pull-through cache (pullthrough.go): upstream client, base URL
 	// overrides, tag TTL, coalesced manifest fetches, in-flight blob
-	// downloads, the context they run under, and the running downloads
-	// Reset waits for; while resetting no download starts.
+	// downloads and the context they run under.
 	upstream     *upstreamClient
 	upstreamURLs map[string]string
 	tagTTL       time.Duration
@@ -105,8 +105,8 @@ type Service struct {
 	fetches      map[string]*blobFetch
 	bgCtx        context.Context
 	bgCancel     context.CancelFunc
-	fetchRuns    sync.WaitGroup
-	resetting    bool
+	fetchRuns    inflight.Tracker // running blob downloads, waited for by Reset
+	resetting    bool             // no blob download starts while set
 }
 
 // New returns the service.
@@ -293,15 +293,8 @@ func (s *Service) Reset(ctx context.Context) error {
 		}
 		s.mu.Unlock()
 	}()
-	stopped := make(chan struct{})
-	go func() {
-		s.fetchRuns.Wait()
-		close(stopped)
-	}()
-	select {
-	case <-stopped:
-	case <-ctx.Done():
-		return errors.Join(err, fmt.Errorf("wait for upstream fetches: %w", ctx.Err()))
+	if werr := s.fetchRuns.Wait(ctx); werr != nil {
+		return errors.Join(err, fmt.Errorf("ar: waiting for upstream fetches: %w", werr))
 	}
 	if s.blobs == nil {
 		return err

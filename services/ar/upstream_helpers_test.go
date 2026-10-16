@@ -25,11 +25,11 @@ import (
 // unauthenticated side door used by tests to push content.
 type fakeUpstream struct {
 	t     *testing.T
-	pub   *httptest.Server // token-protected, what the emulator pulls from
-	push  *httptest.Server // same storage, no auth
-	down  atomic.Bool      // answer 503 to everything
-	delay atomic.Int64     // nanoseconds to stall blob GETs
-	hold  atomic.Pointer[blobHold]
+	pub   *httptest.Server         // token-protected, what the emulator pulls from
+	push  *httptest.Server         // same storage, no auth
+	down  atomic.Bool              // answer 503 to everything
+	delay atomic.Int64             // nanoseconds to stall blob GETs
+	hold  atomic.Pointer[blobHold] // stalls the next blob GET (holdBlob)
 
 	tokens, manifestGETs, manifestHEADs, blobGETs atomic.Int64
 }
@@ -103,6 +103,7 @@ func (u *fakeUpstream) holdBlob() *blobHold {
 	return h
 }
 
+// holdWriter sends the first bytes of a body, then waits for the hold.
 type holdWriter struct {
 	http.ResponseWriter
 	h      *blobHold
@@ -110,21 +111,29 @@ type holdWriter struct {
 	waited bool
 }
 
+// Write sends at most 1 KiB of the first write before it waits, as the
+// registry writes a whole blob at once.
 func (w *holdWriter) Write(b []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(b)
-	if !w.waited && n > 0 {
-		w.waited = true
-		if f, ok := w.ResponseWriter.(http.Flusher); ok {
-			f.Flush()
-		}
-		close(w.h.held)
-		select {
-		case <-w.h.release:
-		case <-w.done:
-			return n, http.ErrAbortHandler
-		}
+	if w.waited || len(b) == 0 {
+		return w.ResponseWriter.Write(b)
 	}
-	return n, err
+	w.waited = true
+	first := b[:min(len(b), 1<<10)]
+	n, err := w.ResponseWriter.Write(first)
+	if err != nil {
+		return n, err
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+	close(w.h.held)
+	select {
+	case <-w.h.release:
+	case <-w.done:
+		return n, http.ErrAbortHandler
+	}
+	m, err := w.ResponseWriter.Write(b[n:])
+	return n + m, err
 }
 
 // host is the token-protected upstream host:port.
