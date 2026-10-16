@@ -311,16 +311,22 @@ func (s *Service) reconcileGatewayAPI(ctx context.Context, kc *kubeClient, ch co
 	return s.removeGatewayCRDs(ctx, kc, exp)
 }
 
+// gatewayManifestName is the embedded Gateway API manifest of channel
+// ("standard" or "experimental").
+func gatewayManifestName(channel string) string {
+	return "gateway-api-" + gatewayAPIVer + "-" + channel + ".yaml.gz"
+}
+
 // gatewayManifest returns the objects of the embedded Gateway API manifest
 // of channel without the safe-upgrades policy and binding.
 func gatewayManifest(channel string) ([]map[string]any, error) {
-	objs, err := manifest("gateway-api-" + gatewayAPIVer + "-" + channel + ".yaml.gz")
+	objs, err := manifest(gatewayManifestName(channel))
 	if err != nil {
 		return nil, err
 	}
 	var out []map[string]any
 	for _, o := range objs {
-		if _, n, _ := objectPath(o); n == safeUpgrades && strings.HasPrefix(o["kind"].(string), "ValidatingAdmissionPolicy") {
+		if _, n, _ := objectPath(o); n == safeUpgrades && (o["kind"] == "ValidatingAdmissionPolicy" || o["kind"] == "ValidatingAdmissionPolicyBinding") {
 			continue
 		}
 		out = append(out, o)
@@ -329,7 +335,7 @@ func gatewayManifest(channel string) ([]map[string]any, error) {
 }
 
 // removeSafeUpgrades deletes the safe-upgrades policy and binding that
-// the add-on installed before #358; the user's stay.
+// the add-on installed before #358, leaving ones without the add-on label.
 func removeSafeUpgrades(ctx context.Context, kc *kubeClient) error {
 	for _, kind := range []string{"ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicy"} {
 		kp := kindPaths[kind]
@@ -338,10 +344,13 @@ func removeSafeUpgrades(ctx context.Context, kc *kubeClient) error {
 			Metadata objectMeta `json:"metadata"`
 		}
 		err := kc.get(ctx, path, &cur)
-		if isKubeNotFound(err) || err == nil && cur.Metadata.Labels[addonLabel] != gatewayAPIAddon {
+		switch {
+		case isKubeNotFound(err):
 			continue
-		}
-		if err == nil {
+		case err != nil:
+		case cur.Metadata.Labels[addonLabel] != gatewayAPIAddon:
+			continue // installed by someone else
+		default:
 			err = kc.delete(ctx, path)
 		}
 		if err != nil {
@@ -356,11 +365,11 @@ func removeSafeUpgrades(ctx context.Context, kc *kubeClient) error {
 // server keeps enforcing for a moment, denies a CRD.
 func applyGatewayAPI(ctx context.Context, kc *kubeClient, objs []map[string]any) error {
 	var err error
-	if waitFor(ctx, safeUpgradesGrace, func() (bool, error) {
+	if werr := waitFor(ctx, safeUpgradesGrace, func() (bool, error) {
 		err = applyAddon(ctx, kc, gatewayAPIAddon, objs)
 		return !deniedBySafeUpgrades(err), nil
-	}) != nil {
-		return fmt.Errorf("still denied after %v: %w", safeUpgradesGrace, err)
+	}); werr != nil {
+		return fmt.Errorf("Gateway API CRDs still denied (%v): %w", werr, err)
 	}
 	return err
 }

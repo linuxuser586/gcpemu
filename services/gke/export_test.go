@@ -38,7 +38,7 @@ func AddonCRDs(name string) ([]string, error) {
 // GatewayAPIManifest is the embedded Gateway API manifest of channel
 // ("standard" or "experimental").
 func GatewayAPIManifest(channel string) string {
-	return "gateway-api-" + gatewayAPIVer + "-" + channel + ".yaml.gz"
+	return gatewayManifestName(channel)
 }
 
 // GatewayAPIObject returns the object of kind and name in the embedded

@@ -141,7 +141,7 @@ func TestGatewayAPISafeUpgrades(t *testing.T) {
 	ctx := context.Background()
 	std, exp := containerpb.GatewayAPIConfig_CHANNEL_STANDARD, containerpb.GatewayAPIConfig_CHANNEL_EXPERIMENTAL
 	// fixture enforces the policy's first rule while the policy exists and
-	// for stale more requests after it is deleted, as the API server's
+	// for the next stale requests after it is deleted, as the API server's
 	// policy cache lags.
 	fixture := func(t *testing.T, stale int) (*Service, *fakeKube, *kubeClient) {
 		k, kc := newFakeKube(t)
