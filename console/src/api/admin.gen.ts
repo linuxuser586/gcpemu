@@ -834,6 +834,7 @@ export interface components {
         };
         Readiness: {
             ready: boolean;
+            /** @description Readiness by Service ID, plus any readiness holds and a "containers" entry while Managed containers are disrupted. */
             services: {
                 [key: string]: {
                     ready: boolean;
@@ -1287,7 +1288,7 @@ export interface operations {
                     "application/json": components["schemas"]["Readiness"];
                 };
             };
-            /** @description At least one service is not ready; its reason is given. */
+            /** @description At least one service is not ready, or something other than the Instance stopped or restarted a Managed container (entry "containers", e.g. after the container runtime restarted); the reason is given. */
             503: {
                 headers: {
                     [name: string]: unknown;
