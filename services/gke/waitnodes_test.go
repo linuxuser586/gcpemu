@@ -132,6 +132,15 @@ func TestAwaitNodesDeadlineMidPoll(t *testing.T) {
 	if polls.Load() < 2 {
 		t.Fatalf("polls = %d; want the deadline to cut off a later poll", polls.Load())
 	}
+
+	// With no poll that succeeded, every node is named.
+	polls.Store(1)
+	ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err = s.awaitNodes(ctx, rec.key(), "", nil)
+	if err == nil || !strings.Contains(err.Error(), "nodes [n1 n2] did not become ready") {
+		t.Fatalf("awaitNodes = %v; want n1 and n2 not ready", err)
+	}
 }
 
 // TestEvacuateRetriesBusy (#230): a process that joins the root cgroup
