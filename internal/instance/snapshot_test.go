@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ type snapSvc struct {
 	ops      []emu.OperationInfo
 	file     string
 	churnKey string // a key of dns/churn to write on every Snapshot
+	churns   int    // the value of the last churn write, so each one differs
 	restored string
 }
 
@@ -35,8 +37,9 @@ func (s *snapSvc) Operations() []emu.OperationInfo { return s.ops }
 
 func (s *snapSvc) Snapshot(_ context.Context, dir string) error {
 	if s.churnKey != "" {
+		s.churns++
 		if err := s.env.Store.Update(func(tx store.Tx) error {
-			return tx.Put("dns/churn", s.churnKey, []byte(time.Now().String()))
+			return tx.Put("dns/churn", s.churnKey, []byte(strconv.Itoa(s.churns)))
 		}); err != nil {
 			return err
 		}
