@@ -153,7 +153,9 @@ permissions:
     - "versions: access add destroy disable enable get list"
     - "locations: get list"
   monitoring:
-    - "timeSeries: list"
+    - "metricDescriptors: create get list"
+    - "monitoredResourceDescriptors: get list"
+    - "timeSeries: create list"
 
 roles:
   # Basic roles.
@@ -487,6 +489,10 @@ roles:
     title: Secret Manager Viewer
     description: Allows viewing metadata of all Secret Manager resources.
     permissions: [secretmanager.secrets.get, secretmanager.secrets.list, secretmanager.versions.get, secretmanager.versions.list, secretmanager.locations.get, secretmanager.locations.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/monitoring.metricWriter
+    title: Monitoring Metric Writer
+    description: Provides write-only access to metrics. This provides exactly the permissions needed by the Cloud Monitoring agent and other systems that send metrics.
+    permissions: [monitoring.metricDescriptors.create, monitoring.metricDescriptors.get, monitoring.metricDescriptors.list, monitoring.monitoredResourceDescriptors.get, monitoring.monitoredResourceDescriptors.list, monitoring.timeSeries.create]
   - name: roles/monitoring.viewer
     title: Monitoring Viewer
     description: Provides read-only access to get and list information about all monitoring data and configurations.
