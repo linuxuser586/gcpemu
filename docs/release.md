@@ -3,6 +3,11 @@
 CI runs the VM relay path on Linux (the `vm-relay` job, `GCPEMU_VM_RELAY=1`), but hosted macOS
 runners have no container runtime. Before tagging `vX.Y.Z`, run these checks by hand on macOS.
 
+## Release notes
+
+The release lists the merged pull requests on its own. For a release that users need to act on,
+commit `docs/releases/vX.Y.Z.md` before tagging: the workflow puts it above that list.
+
 ## macOS (Apple Silicon)
 
 Run every step below on **Docker Desktop** and on **Colima**. OrbStack and Podman machine are
