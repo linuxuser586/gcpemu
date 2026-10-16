@@ -56,6 +56,10 @@ const (
 	InternalPort = 5433
 	PublicPort   = 5432
 	ConnectPort  = 3307
+
+	// ArchiveDir is the archive volume's mount point: completed WAL
+	// segments in wal/ and base backups in base/ (point-in-time recovery).
+	ArchiveDir = "/var/lib/gcpemu-archive"
 )
 
 // Listener names used in LoginRequest.
@@ -111,6 +115,9 @@ func Main(ctx context.Context, _ []string) error {
 	}
 	if a.control == "" {
 		return errors.New(EnvControl + " is not set")
+	}
+	if err := prepareDataDirs(); err != nil {
+		return fmt.Errorf("prepare data directories: %w", err)
 	}
 	cmdline := PGCommand()
 	cmd := exec.Command(cmdline[0], cmdline[1:]...)

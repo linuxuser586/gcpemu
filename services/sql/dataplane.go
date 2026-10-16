@@ -60,6 +60,12 @@ func volumeName(rt *runtime.Manager, project, name string) string {
 	return rt.Name("sql", project, name, "data")
 }
 
+// archiveVolumeName is the volume holding archived WAL and base backups
+// (pitr.go).
+func archiveVolumeName(rt *runtime.Manager, project, name string) string {
+	return rt.Name("sql", project, name, "archive")
+}
+
 func resourceLabel(project, name string) string { return "projects/" + project + "/instances/" + name }
 
 // hostIP is the address host ports are published on.
@@ -126,6 +132,12 @@ func (s *Service) allocHostPort(project, name string, prev int) int {
 // record, waits until PostgreSQL accepts connections and records the
 // container's addresses. The caller holds the instance lock.
 func (s *Service) startContainer(ctx context.Context, project, name string) error {
+	return s.startContainerWith(ctx, project, name, nil)
+}
+
+// startContainerWith is startContainer with extra files copied into the
+// container before it starts (a point-in-time restore bundle).
+func (s *Service) startContainerWith(ctx context.Context, project, name string, extra []runtime.File) error {
 	rec, err := s.loadRecord(project, name)
 	if err != nil {
 		return err
@@ -144,6 +156,10 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 	labels := rt.Labels("sql", resourceLabel(project, name), "postgres")
 	vol := volumeName(rt, project, name)
 	if err := rt.CreateVolume(ctx, vol, labels); err != nil {
+		return err
+	}
+	archive := archiveVolumeName(rt, project, name)
+	if err := rt.CreateVolume(ctx, archive, labels); err != nil {
 		return err
 	}
 	cname := containerName(rt, project, name)
@@ -176,6 +192,7 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 		{Name: "gcpemu/" + proxy.HBAFile, Data: []byte(hbaConf)},
 		{Name: "docker-entrypoint-initdb.d/00-gcpemu.sql", Data: []byte(bootstrapSQL(rec))},
 	}
+	files = append(files, extra...)
 	control := fmt.Sprintf("http://%s/sqladmin/_agent/v1/projects/%s/instances/%s", gw, project, name)
 
 	// The private services network is realised again: after a restart its
@@ -228,9 +245,12 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 			Hostname: name,
 			Networks: nets,
 			Ports:    []runtime.Port{{HostIP: s.hostIP(), HostPort: hostPort, ContainerPort: proxy.PublicPort}},
-			Mounts:   []runtime.Mount{{Type: "volume", Source: vol, Target: ver.DataMount}},
-			Init:     true,
-			CapAdd:   capAdd,
+			Mounts: []runtime.Mount{
+				{Type: "volume", Source: vol, Target: ver.DataMount},
+				{Type: "volume", Source: archive, Target: proxy.ArchiveDir},
+			},
+			Init:   true,
+			CapAdd: capAdd,
 		}
 		id, err = rt.CreateContainer(ctx, spec)
 		if err != nil && publicIP != "" && attempt < 3 {
@@ -307,8 +327,10 @@ func (s *Service) startContainer(ctx context.Context, project, name string) erro
 		if rec.PrivateNet != nil && r.PrivateNet != nil {
 			r.PrivateNet = rec.PrivateNet
 		}
+		// AppliedFlags is left alone: a fresh volume got the record's flags
+		// from bootstrapSQL (its callers record them), an existing one
+		// keeps what was applied, and applyFlags catches up from there.
 		r.Instance.IpAddresses = ipMappings(r)
-		r.AppliedFlags = flagMap(r.Instance.Settings)
 		return nil
 	})
 }
@@ -553,10 +575,12 @@ func orDefault(v, d string) string {
 
 // hbaConf: the agent reaches PostgreSQL over the unix socket (trust, used
 // after IAM authentication and by the emulator's admin commands) and over
-// 127.0.0.1 with SCRAM (BUILT_IN users passed through).
+// 127.0.0.1 with SCRAM (BUILT_IN users passed through); pg_basebackup
+// (pitr.go) uses a local replication connection.
 const hbaConf = `# gcpemu Cloud SQL
-local   all  all                trust
-host    all  all  127.0.0.1/32  scram-sha-256
+local   all          all                trust
+local   replication  all                trust
+host    all          all  127.0.0.1/32  scram-sha-256
 `
 
 // bootstrapSQL creates Cloud SQL's role model on a fresh data directory
@@ -577,7 +601,7 @@ func bootstrapSQL(rec *instanceRecord) string {
 	b.WriteString("GRANT pg_read_all_stats, pg_signal_backend TO cloudsqlsuperuser;\n")
 	b.WriteString("ALTER DATABASE postgres OWNER TO cloudsqlsuperuser;\n")
 	b.WriteString("ALTER DATABASE template1 OWNER TO cloudsqlsuperuser;\n")
-	b.WriteString(alterSystemSQL(nil, pgSettings(flagMap(rec.Instance.Settings))))
+	b.WriteString(alterSystemSQL(nil, pgSettings(serverFlags(rec.Instance.Settings))))
 	return b.String()
 }
 

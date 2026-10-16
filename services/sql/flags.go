@@ -320,6 +320,9 @@ func pgSettings(flags map[string]string) map[string]string {
 			libs = append(libs, prefix)
 		}
 		switch {
+		case k == pitrFlag:
+			out["archive_mode"] = "on"
+			out["archive_command"] = archiveCommand
 		case k == "cloudsql.logical_decoding":
 			if v == "on" {
 				out["wal_level"] = "logical"
@@ -339,7 +342,7 @@ func pgSettings(flags map[string]string) map[string]string {
 // needsRestart reports whether changing from old to new flags requires a
 // server restart.
 func needsRestart(old, new map[string]string) bool {
-	if pgSettings(old)["shared_preload_libraries"] != pgSettings(new)["shared_preload_libraries"] {
+	if pgSettings(old)["shared_preload_libraries"] != pgSettings(new)["shared_preload_libraries"] || old[pitrFlag] != new[pitrFlag] {
 		return true
 	}
 	for _, k := range unionKeys(old, new) {
@@ -362,6 +365,24 @@ func unionKeys(a, b map[string]string) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// pitrFlag marks, among the server flags, that point-in-time recovery
+// is enabled: PostgreSQL then archives its WAL (pitr.go).
+const pitrFlag = "gcpemu.pitr"
+
+// archiveCommand copies a completed WAL segment into the archive volume,
+// never overwriting a segment already archived.
+const archiveCommand = "test ! -f " + archiveWAL + "/%f && cp %p " + archiveWAL + "/%f"
+
+// serverFlags are the flags applied to PostgreSQL: the database flags plus
+// pitrFlag when point-in-time recovery is enabled.
+func serverFlags(st *sqladmin.Settings) map[string]string {
+	out := flagMap(st)
+	if pitrOn(st) {
+		out[pitrFlag] = "on"
+	}
 	return out
 }
 

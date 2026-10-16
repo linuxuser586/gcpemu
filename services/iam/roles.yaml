@@ -61,7 +61,7 @@ permissions:
     - "aptartifacts: create"
     - "yumartifacts: create"
   cloudsql:
-    - "backupRuns: create delete get list"
+    - "backupRuns: create delete get list update"
     - "databases: create delete get list update"
     - "flags: list"
     - "instances: addServerCa clone connect create delete demoteMaster executeSql export failover get import list login promoteReplica resetSslConfig restart restoreBackup rotateServerCa startReplica stopReplica truncateLog update listServerCas"

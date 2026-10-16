@@ -9,6 +9,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -31,7 +32,7 @@ func (s *Service) insertInstance(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	op, err := s.createInstance(ctx, project, raw, "CREATE", nil)
+	op, err := s.createInstance(ctx, project, raw, "CREATE", createHooks{})
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -39,10 +40,21 @@ func (s *Service) insertInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, op)
 }
 
+// createHooks customise a CREATE (or CLONE) operation.
+type createHooks struct {
+	// files, if set, returns files for the first container, before it
+	// starts (a point-in-time clone's restore bundle).
+	files func(ctx context.Context) ([]runtime.File, error)
+	// after, if set, runs once the instance is running (clone and seed use
+	// it to load data).
+	after func(ctx context.Context) error
+}
+
 // createInstance validates and stores a new instance and starts its CREATE
-// (or CLONE) operation. after, if set, runs inside the operation once the instance is
-// running (clone and restore use it to load data).
-func (s *Service) createInstance(ctx context.Context, project string, raw map[string]any, opType string, after func(ctx context.Context) error) (*sqladmin.Operation, error) {
+// (or CLONE) operation. With point-in-time recovery enabled the operation
+// ends with the instance's first base backup.
+func (s *Service) createInstance(ctx context.Context, project string, raw map[string]any, opType string, hooks createHooks) (*sqladmin.Operation, error) {
+	after := hooks.after
 	var in sqladmin.DatabaseInstance
 	if err := fromMap(raw, &in); err != nil {
 		return nil, apierr.InvalidArgument("Invalid JSON payload received. %v", err).WithLegacy("parseError")
@@ -114,7 +126,7 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	in.ServerCaCert = sslCertOf(rec.ServerCAPEM, project, in.Name)
 	in.Etag = etagOf(in.Settings)
 	rec.Instance = &in
-	rec.AppliedFlags = flagMap(in.Settings) // applied by the bootstrap script
+	rec.AppliedFlags = serverFlags(in.Settings) // applied by the bootstrap script
 
 	if ipc.Ipv4Enabled && (in.Settings.ActivationPolicy != "NEVER" || after != nil) {
 		if err := s.checkLoopback(ctx, project, in.Name); err != nil {
@@ -155,12 +167,26 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	op := s.newOp(ctx, project, name, opType)
 	return s.runOp(op, true, func(ctx context.Context) error {
 		if in.Settings.ActivationPolicy != "NEVER" || after != nil {
-			if err := s.startContainer(ctx, project, name); err != nil {
+			var files []runtime.File
+			if hooks.files != nil {
+				var err error
+				if files, err = hooks.files(ctx); err != nil {
+					_ = s.setState(project, name, "FAILED")
+					return err
+				}
+			}
+			if err := s.startContainerWith(ctx, project, name, files); err != nil {
 				_ = s.setState(project, name, "FAILED")
 				return err
 			}
 			if after != nil {
 				if err := after(ctx); err != nil {
+					_ = s.setState(project, name, "FAILED")
+					return err
+				}
+			}
+			if pitrEnabled(&in) {
+				if err := s.takeBaseBackup(ctx, project, name); err != nil {
 					_ = s.setState(project, name, "FAILED")
 					return err
 				}
@@ -371,7 +397,7 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 
 	oldAct, newAct := cur.Settings.ActivationPolicy, next.Settings.ActivationPolicy
 	netChanged := oldIP.Ipv4Enabled != newIP.Ipv4Enabled || oldIP.PrivateNetwork != newIP.PrivateNetwork
-	flagsChanged := !reflect.DeepEqual(flagMap(cur.Settings), flagMap(next.Settings))
+	flagsChanged := !reflect.DeepEqual(serverFlags(cur.Settings), serverFlags(next.Settings))
 
 	if newIP.Ipv4Enabled && newAct != "NEVER" && rec.LoopIP == "" {
 		if err := s.checkLoopback(ctx, project, name); err != nil {
@@ -423,7 +449,10 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 				return err
 			}
 		}
-		return s.applyFlags(ctx, project, name)
+		if err := s.applyFlags(ctx, project, name); err != nil {
+			return err
+		}
+		return s.ensureBaseBackup(ctx, project, name)
 	})
 	writeJSON(w, r, op)
 }
@@ -434,7 +463,7 @@ func (s *Service) applyFlags(ctx context.Context, project, name string) error {
 	if err != nil {
 		return err
 	}
-	want := flagMap(rec.Instance.Settings)
+	want := serverFlags(rec.Instance.Settings)
 	if reflect.DeepEqual(want, rec.AppliedFlags) || (len(want) == 0 && len(rec.AppliedFlags) == 0) {
 		return nil
 	}
@@ -449,6 +478,19 @@ func (s *Service) applyFlags(ctx context.Context, project, name string) error {
 		}
 	} else if _, err := s.execSQL(ctx, project, name, "postgres", "", "SELECT pg_reload_conf();"); err != nil {
 		return err
+	}
+	// Turning point-in-time recovery on starts the recovery window with a
+	// base backup; turning it off discards the archive, as Cloud SQL
+	// discards its logs.
+	switch was, is := rec.AppliedFlags[pitrFlag] != "", want[pitrFlag] != ""; {
+	case is && !was:
+		if err := s.takeBaseBackup(ctx, project, name); err != nil {
+			return err
+		}
+	case was && !is:
+		if err := s.clearArchive(ctx, project, name); err != nil {
+			return err
+		}
 	}
 	return s.updateRecord(project, name, func(r *instanceRecord) error {
 		r.AppliedFlags = want

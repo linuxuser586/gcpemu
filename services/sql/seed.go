@@ -303,7 +303,7 @@ func (s *Service) seedInstance(ctx context.Context, si seedInstance, baseDir str
 		if settings["activationPolicy"] == "NEVER" && len(si.Databases)+len(si.Users)+len(scripts) > 0 {
 			after = func(ctx context.Context) error { return s.seedContents(ctx, project, si, scripts, hash, false) }
 		}
-		op, err := s.createInstance(ctx, project, raw, "CREATE", after)
+		op, err := s.createInstance(ctx, project, raw, "CREATE", createHooks{after: after})
 		if err != nil {
 			return err
 		}

@@ -101,6 +101,13 @@ func (s *Service) routes() *http.ServeMux {
 	mux.HandleFunc("GET "+i+"/backupRuns/{id}", s.getBackupRun)
 	mux.HandleFunc("DELETE "+i+"/backupRuns/{id}", s.deleteBackupRun)
 
+	mux.HandleFunc("POST "+p+"/backups", s.createBackup)
+	mux.HandleFunc("GET "+p+"/backups", s.listBackups)
+	mux.HandleFunc("GET "+p+"/backups/{backup}", s.getBackup)
+	mux.HandleFunc("PATCH "+p+"/backups/{backup}", s.updateBackup)
+	mux.HandleFunc("DELETE "+p+"/backups/{backup}", s.deleteBackup)
+	mux.HandleFunc("GET "+i+"/getLatestRecoveryTime", s.getLatestRecoveryTime)
+
 	mux.HandleFunc("GET "+p+"/operations", s.listOperations)
 	mux.HandleFunc("GET "+p+"/operations/{operation}", s.getOperation)
 	mux.HandleFunc("POST "+p+"/operations/{operation}/wait", s.waitOperation)
@@ -159,13 +166,19 @@ func readBody(r *http.Request) (map[string]any, error) {
 
 // paginate applies maxResults/pageToken (FR-CORE-024) to items in key order.
 func paginate[T any](r *http.Request, keys []string, items map[string]T) ([]T, string, error) {
+	return paginateBy(r, "maxResults", keys, items)
+}
+
+// paginateBy is paginate with the page size in the sizeParam parameter
+// (pageSize in the newer list methods).
+func paginateBy[T any](r *http.Request, sizeParam string, keys []string, items map[string]T) ([]T, string, error) {
 	sort.Strings(keys)
 	q := r.URL.Query()
 	max := 0
-	if v := q.Get("maxResults"); v != "" {
+	if v := q.Get(sizeParam); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
-			return nil, "", errInvalid("Invalid value for maxResults: %s", v)
+			return nil, "", errInvalid("Invalid value for %s: %s", sizeParam, v)
 		}
 		max = n
 	}

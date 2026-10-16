@@ -140,5 +140,15 @@ func (s *Service) restoreInstance(ctx context.Context, dir, project, name string
 			return err
 		}
 	}
+	// The fresh volume was bootstrapped with the record's settings.
+	if err := s.updateRecord(project, name, func(r *instanceRecord) error {
+		r.AppliedFlags = serverFlags(r.Instance.Settings)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := s.ensureBaseBackup(ctx, project, name); err != nil {
+		return err
+	}
 	return s.setState(project, name, state)
 }
