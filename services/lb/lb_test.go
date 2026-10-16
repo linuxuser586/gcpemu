@@ -843,22 +843,27 @@ func TestWebSocketBackends(t *testing.T) {
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpsProxies/p"}).Do())
 	listener := e.inst.Endpoint("lb:fr")
 	cl := e.client(listener)
+	// Each path routes to its own backend service, so a 200 on one says
+	// nothing about the others' health checks: wait for every path.
+	paths := []string{"/", "/zonal", "/cdn"}
 	deadline := time.Now().Add(10 * time.Second)
-	for {
-		resp, err := cl.Get("https://app.example.test/")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == 200 {
-				break
+	for _, path := range paths {
+		for {
+			resp, err := cl.Get("https://app.example.test" + path)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode == 200 {
+					break
+				}
 			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: backend never became healthy: %v %v", path, resp, err)
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("backend never became healthy: %v %v", resp, err)
-		}
-		time.Sleep(200 * time.Millisecond)
 	}
 
-	for _, path := range []string{"/", "/zonal", "/cdn"} {
+	for _, path := range paths {
 		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: "app.example.test", RootCAs: e.inst.Env.CA.Pool(), NextProtos: []string{"http/1.1"}})
 		if err != nil {
 			t.Fatal(err)
