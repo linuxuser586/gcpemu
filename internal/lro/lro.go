@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -60,8 +62,11 @@ type Manager struct {
 
 	mu      sync.Mutex
 	pending map[string]*time.Timer
-	server  *Server
-	closed  bool
+	// work counts operation callbacks past their timer; Reset starts its
+	// next generation under mu.
+	work   inflight.Tracker
+	server *Server
+	closed bool
 }
 
 // NewManager returns a manager for service.
@@ -97,6 +102,25 @@ func (m *Manager) Close() {
 	}
 }
 
+// Reset drops the pending operations and waits, bounded by ctx, for those
+// already running, so none started before Reset writes to the store
+// afterwards (#301). Dropped operations are not completed: the store is
+// reset by the instance. Unlike Close, operations started after Reset run
+// normally.
+func (m *Manager) Reset(ctx context.Context) error {
+	m.mu.Lock()
+	for name, t := range m.pending {
+		t.Stop()
+		delete(m.pending, name)
+	}
+	m.work.Next()
+	m.mu.Unlock()
+	if err := m.work.Wait(ctx); err != nil {
+		return fmt.Errorf("lro: %s: waiting for running operations: %w", m.service, err)
+	}
+	return nil
+}
+
 // Latency returns the configured operation latency for the service.
 func (m *Manager) Latency() time.Duration { return m.env.Config.LRO(m.service) }
 
@@ -125,20 +149,32 @@ func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message
 		}
 		return op, nil
 	}
+	gen := m.work.Gen()
 	if err := m.put(op, start, time.Time{}); err != nil {
 		return nil, err
 	}
 	bg := context.WithoutCancel(ctx)
 	m.mu.Lock()
+	if m.work.Gen() != gen {
+		// A Reset ran since the record was written, perhaps after the
+		// store's: the operation goes with the state it was started on.
+		m.mu.Unlock()
+		_ = m.env.Store.Update(func(tx store.Tx) error { return tx.Delete(Namespace, op.Name) })
+		return nil, apierr.Aborted("The operation was aborted by an emulator reset.")
+	}
 	if !m.closed {
 		m.pending[op.Name] = time.AfterFunc(d, func() {
 			m.mu.Lock()
 			_, live := m.pending[op.Name]
 			delete(m.pending, op.Name)
+			if live {
+				m.work.Enter()
+			}
 			m.mu.Unlock()
 			if !live {
 				return
 			}
+			defer m.work.Exit()
 			resp, err := run(bg)
 			m.complete(op.Name, resp, err)
 		})

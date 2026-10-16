@@ -26,6 +26,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apidef"
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -46,6 +47,12 @@ type Service struct {
 	// in the order they were accepted.
 	lastOp  map[string]chan struct{}
 	stopped chan struct{} // closed by Stop
+	// halt is closed by Reset (and replaced), releasing operations that
+	// wait behind one it dropped.
+	halt chan struct{}
+	// opWork counts operations whose work has started; Reset starts its
+	// next generation under opMu.
+	opWork inflight.Tracker
 
 	// vpcMu serialises realisation of container networks and IP allocation.
 	vpcMu sync.Mutex
@@ -91,6 +98,7 @@ func New(env *emu.Env) emu.Service {
 		timers:  map[string]*time.Timer{},
 		lastOp:  map[string]chan struct{}{},
 		stopped: make(chan struct{}),
+		halt:    make(chan struct{}),
 		egress:  map[string]*gateway{},
 	}
 	s.lro = lro.NewManager(env, "compute")
@@ -177,9 +185,12 @@ func (s *Service) ResourceCounts() map[string]int {
 	})
 }
 
-// Reset removes the NAT egress gateways (their state is wiped with the
-// store); workload containers and networks belong to their owners and the core.
+// Reset drops pending operations and waits, bounded by ctx, for those
+// already running (#301). It then removes the NAT egress gateways (their
+// state is wiped with the store); workload containers and networks belong
+// to their owners and the core.
 func (s *Service) Reset(ctx context.Context) error {
+	err := errors.Join(s.resetOps(ctx), s.lro.Reset(ctx))
 	s.hostMu.Lock()
 	s.withdrawAll(ctx, s.hostAttachments())
 	s.hostMu.Unlock()
@@ -192,7 +203,7 @@ func (s *Service) Reset(ctx context.Context) error {
 	for _, np := range nets {
 		s.removeGateway(ctx, np)
 	}
-	return nil
+	return err
 }
 
 // EnvVars implements emu.EnvVarer. gcloud's compute client has BASE_URL

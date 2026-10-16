@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	iamv2 "cloud.google.com/go/iam/apiv2"
 	iampb "cloud.google.com/go/iam/apiv2/iampb"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/project"
 )
 
@@ -251,5 +253,31 @@ func TestDenyPolicyEnforced(t *testing.T) {
 	_, tok := refreshToken(t, inst, "user:breakglass@example.com")
 	if code, out := call(t, http.MethodDelete, sa+"drop-me@"+testProject+".iam.gserviceaccount.com", tok, nil); code != 200 {
 		t.Errorf("exception principal delete: %d %v", code, out)
+	}
+}
+
+// TestDenyPolicyOperationResetDropped: a deny policy operation pending when
+// the instance is reset never creates its policy, and leaves no operation
+// behind (#301).
+func TestDenyPolicyOperationResetDropped(t *testing.T) {
+	const latency = 100 * time.Millisecond
+	inst := startIAM(t, func(c *config.Config) { c.LROLatency = map[string]string{"iam": latency.String()} })
+	base := inst.GatewayURL() + "/iam/v2/"
+	parent := "policies/" + url.PathEscape("cloudresourcemanager.googleapis.com/projects/"+testProject) + "/denypolicies"
+	code, op := call(t, http.MethodPost, base+parent+"?policyId=late", "", map[string]any{
+		"rules": []any{denyRule("secretmanager.googleapis.com/versions.destroy", []string{"principalSet://goog/public:all"}, nil)},
+	})
+	if code != 200 || op["done"] == true {
+		t.Fatalf("create: %d %v", code, op)
+	}
+	if err := inst.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * latency)
+	if code, got := call(t, http.MethodGet, base+parent+"/late", "", nil); code != 404 {
+		t.Errorf("policy after reset: %d %v", code, got)
+	}
+	if code, got := call(t, http.MethodGet, base+op["name"].(string), "", nil); code != 404 {
+		t.Errorf("operation after reset: %d %v", code, got)
 	}
 }

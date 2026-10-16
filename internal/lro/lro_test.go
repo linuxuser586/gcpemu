@@ -197,3 +197,121 @@ func TestOperationsSummary(t *testing.T) {
 		t.Fatalf("operation = %s", got.Operation)
 	}
 }
+
+func TestResetDropsPendingOperation(t *testing.T) {
+	m, _ := setup(t, "20ms")
+	ran := make(chan struct{}, 1)
+	op, err := m.Run(context.Background(), "projects/p/locations/l", nil, func(context.Context) (proto.Message, error) {
+		ran <- struct{}{}
+		return structpb.NewStringValue("late"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.env.Store.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-ran:
+		t.Fatal("RunFunc ran after Reset")
+	default:
+	}
+	if _, err := m.Get(op.Name); apierr.From(err).Code != 5 {
+		t.Fatalf("get after reset = %v", err)
+	}
+	// The manager stays usable.
+	next, err := m.Run(context.Background(), "projects/p/locations/l", nil, resp("ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.server.WaitOperation(context.Background(), &longrunningpb.WaitOperationRequest{Name: next.Name, Timeout: durationpb.New(5 * time.Second)})
+	if err != nil || !got.Done || got.GetResponse() == nil {
+		t.Fatalf("operation after reset = %v %v", got, err)
+	}
+}
+
+func TestResetWaitsForRunningOperation(t *testing.T) {
+	m, _ := setup(t, "1ms")
+	started, release := make(chan struct{}), make(chan struct{})
+	if _, err := m.Run(context.Background(), "projects/p/locations/l", nil, func(context.Context) (proto.Message, error) {
+		close(started)
+		<-release
+		return structpb.NewStringValue("late"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	// Reset is bounded by its ctx while the work is blocked.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := m.Reset(ctx); err == nil {
+		t.Fatal("Reset returned nil while an operation was still running")
+	}
+	reset := make(chan error, 1)
+	go func() { reset <- m.Reset(context.Background()) }()
+	select {
+	case err := <-reset:
+		t.Fatalf("Reset returned %v before the running operation finished", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	if err := <-reset; err != nil {
+		t.Fatal(err)
+	}
+	// The operation's completion was written before Reset returned, so a
+	// Store reset leaves nothing behind.
+	if err := m.env.Store.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if ops := m.Operations(); len(ops) != 0 {
+		t.Fatalf("operations after reset = %+v", ops)
+	}
+}
+
+// hookStore runs after once, after the next Update commits.
+type hookStore struct {
+	store.Store
+	after func()
+}
+
+func (h *hookStore) Update(fn func(store.Tx) error) error {
+	err := h.Store.Update(fn)
+	if f := h.after; f != nil {
+		h.after = nil
+		f()
+	}
+	return err
+}
+
+func TestResetDuringRunAbortsOperation(t *testing.T) {
+	m, _ := setup(t, "20ms")
+	hs := &hookStore{Store: m.env.Store}
+	m.env.Store = hs
+	// A whole Instance Reset lands between the pending record's write and
+	// the operation's timer.
+	hs.after = func() {
+		if err := m.Reset(context.Background()); err != nil {
+			t.Error(err)
+		}
+		if err := hs.Store.Reset(); err != nil {
+			t.Error(err)
+		}
+	}
+	ran := make(chan struct{}, 1)
+	op, err := m.Run(context.Background(), "projects/p/locations/l", nil, func(context.Context) (proto.Message, error) {
+		ran <- struct{}{}
+		return structpb.NewStringValue("late"), nil
+	})
+	if err == nil || apierr.From(err).Code != 10 {
+		t.Fatalf("Run across a Reset = %v %v, want Aborted", op, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if len(ran) != 0 || len(m.Operations()) != 0 {
+		t.Fatalf("after reset: %d ran, operations %+v", len(ran), m.Operations())
+	}
+}

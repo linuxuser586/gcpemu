@@ -148,11 +148,13 @@ func (s *Service) ResourceCounts() map[string]int {
 	return out
 }
 
-// Reset drops in-memory caches; persistent state lives in the store, which
+// Reset drops pending deny policy operations, waiting for running ones
+// (#301), and in-memory caches; persistent state lives in the store, which
 // the instance wipes.
 func (s *Service) Reset(ctx context.Context) error {
+	err := s.ops.Reset(ctx)
 	s.mu.Lock()
 	s.tokCache = map[string]cachedToken{}
 	s.mu.Unlock()
-	return nil
+	return err
 }

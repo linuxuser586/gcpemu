@@ -91,16 +91,24 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 		}
 		return op, nil
 	}
+	gen := s.opWork.Gen()
 	if err := s.putOp(path, op); err != nil {
 		return nil, err
 	}
 	bg := context.WithoutCancel(ctx)
 	s.opMu.Lock()
+	if s.opWork.Gen() != gen {
+		// A Reset ran since the record was written, perhaps after the
+		// store's: the operation goes with the state it was started on.
+		s.opMu.Unlock()
+		_ = s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsOps, path) })
+		return nil, apierr.Aborted("The operation was aborted by an emulator reset.").WithLegacy("aborted")
+	}
 	if !s.closed {
 		// A Service's operations share one latency, so running each one's
 		// work after the previous one's keeps completion in acceptance order:
 		// separate timer goroutines that fire together would otherwise race.
-		prev, done := s.lastOp[svc], make(chan struct{})
+		prev, done, halt := s.lastOp[svc], make(chan struct{}), s.halt
 		if prev == nil {
 			prev = closedChan
 		}
@@ -110,14 +118,19 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 			select {
 			case <-prev:
 			case <-s.stopped:
+			case <-halt:
 			}
 			s.opMu.Lock()
 			_, live := s.timers[path]
 			delete(s.timers, path)
+			if live {
+				s.opWork.Enter()
+			}
 			s.opMu.Unlock()
 			if !live {
 				return
 			}
+			defer s.opWork.Exit()
 			err := fn(bg)
 			_ = s.env.Store.Update(func(tx store.Tx) error {
 				cur, ok := get[computev1.Operation](tx, nsOps, path)
@@ -133,6 +146,26 @@ func (s *Service) startOp(ctx context.Context, sp opSpec, fn func(ctx context.Co
 	s.opMu.Unlock()
 	cp := *op
 	return &cp, nil
+}
+
+// resetOps drops pending operations, so their work never runs and they are
+// never completed, and waits, bounded by ctx, for those already running.
+// Operations started afterwards run normally, in order among themselves.
+func (s *Service) resetOps(ctx context.Context) error {
+	s.opMu.Lock()
+	for k, t := range s.timers {
+		t.Stop()
+		delete(s.timers, k)
+	}
+	close(s.halt)
+	s.halt = make(chan struct{})
+	s.lastOp = map[string]chan struct{}{}
+	s.opWork.Next()
+	s.opMu.Unlock()
+	if err := s.opWork.Wait(ctx); err != nil {
+		return fmt.Errorf("compute: waiting for running operations: %w", err)
+	}
+	return nil
 }
 
 // finishOp marks op DONE, recording err.

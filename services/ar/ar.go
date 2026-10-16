@@ -270,17 +270,19 @@ func (s *Service) IsStoreCache(ns, key string) bool {
 	return strings.HasPrefix(key, mirrorProject+"/")
 }
 
-// Reset removes every blob and upload; the store is reset by the instance.
+// Reset drops pending operations, waiting for running ones (#301), and
+// removes every blob and upload; the store is reset by the instance.
 func (s *Service) Reset(ctx context.Context) error {
+	err := s.ops.Reset(ctx)
 	s.mu.Lock()
 	s.uploads = map[string]*upload{}
 	s.mu.Unlock()
 	if s.blobs == nil {
-		return nil
+		return err
 	}
 	s.blobs.gc.Lock()
 	defer s.blobs.gc.Unlock()
-	return s.blobs.reset()
+	return errors.Join(err, s.blobs.reset())
 }
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004).

@@ -737,3 +737,27 @@ func TestServiceNetworking(t *testing.T) {
 	}
 	waitDo(t, c)(c.GlobalAddresses.Delete(proj, "psa").Do())
 }
+
+// TestOperationsResetDropped: an operation pending when the instance is
+// reset never creates its resource, and leaves no operation behind (#301).
+func TestOperationsResetDropped(t *testing.T) {
+	const latency = 100 * time.Millisecond
+	inst, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = latency.String() })
+	op, err := c.Networks.Insert(proj, &computev1.Network{Name: "late", AutoCreateSubnetworks: true}).Do()
+	if err != nil || op.Status != "RUNNING" {
+		t.Fatalf("insert: %+v %v", op, err)
+	}
+	if err := inst.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * latency)
+	if _, err := c.Networks.Get(proj, "late").Do(); code(err) != http.StatusNotFound {
+		t.Errorf("network after reset: %v", err)
+	}
+	if _, err := c.GlobalOperations.Get(proj, op.Name).Do(); code(err) != http.StatusNotFound {
+		t.Errorf("operation after reset: %v", err)
+	}
+	if ops := inst.Operations("compute", ""); len(ops) != 0 {
+		t.Errorf("operations after reset: %+v", ops)
+	}
+}
