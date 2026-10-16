@@ -89,6 +89,10 @@ func (s *Service) tagTTLValue() time.Duration {
 // fetchable because the emulator is offline.
 var errNotCached = errors.New("not cached and the emulator is offline")
 
+// errResetting is returned for a blob fetch asked for while the Instance
+// resets.
+var errResetting = errors.New("the emulator is resetting")
+
 // ptManifest returns the cached or fetched manifest for a tag or digest.
 //
 // Upstream fetches run detached from the request (bounded by
@@ -462,15 +466,26 @@ type scopeImg struct {
 }
 
 // joinFetch returns the in-flight fetch for digest, starting one if none
-// is running, with a reference held for the caller.
+// is running, with a reference held for the caller. While the Instance
+// resets, the fetch returned has failed.
 func (s *Service) joinFetch(pt *pullThrough, digest string) *blobFetch {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f := s.fetches[digest]
 	if f == nil {
 		f = &blobFetch{s: s, digest: digest, ready: make(chan struct{}), size: -1, notify: make(chan struct{}), refs: 1}
-		s.fetches[digest] = f
-		go f.run(s.bgCtx, pt.up)
+		if s.resetting {
+			f.done, f.err = true, errResetting
+			close(f.ready)
+		} else {
+			s.fetches[digest] = f
+			s.fetchRuns.Enter()
+			ctx := s.bgCtx
+			go func() {
+				defer s.fetchRuns.Exit()
+				f.run(ctx, pt.up)
+			}()
+		}
 	}
 	f.mu.Lock()
 	f.refs++
@@ -670,6 +685,8 @@ func ptError(err error, kind, ref string) *regError {
 	switch {
 	case errors.Is(err, errNotCached):
 		return regErr(http.StatusNotFound, code, "%s %s is not cached and the emulator is offline", kind, ref)
+	case errors.Is(err, errResetting):
+		return regErr(http.StatusServiceUnavailable, "UNAVAILABLE", "%s %s: the emulator is resetting; try again", kind, ref)
 	case isNotFound(err):
 		return regErr(http.StatusNotFound, code, "%s unknown: %s", kind, ref)
 	case errors.As(err, &ue) && ue.status == http.StatusUnauthorized:

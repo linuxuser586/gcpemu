@@ -177,7 +177,10 @@ func (s *Service) startUpload(w http.ResponseWriter, r *http.Request, t *target)
 		return
 	}
 	u := &upload{id: s.uploadID(), ref: t.ref, img: t.img, started: s.env.Clock.Now()}
+	// Under gc, so that Reset does not empty uploads meanwhile (#397).
+	s.blobs.gc.RLock()
 	f, err := os.OpenFile(s.blobs.uploadPath(u.id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	s.blobs.gc.RUnlock()
 	if err != nil {
 		writeRegError(w, regErr(http.StatusInternalServerError, "UNKNOWN", "%v", err))
 		return
