@@ -433,20 +433,23 @@ func (r *Relay) reconnect() {
 	}
 }
 
-// inbound connects a stream the relay opened to the named endpoint.
+// inbound connects a stream the relay opened to the named endpoint. It
+// answers "OK" once it holds what the stream goes to, or "ERR <reason>";
+// only after "OK" may the relay have sent bytes it cannot send again.
 func (r *Relay) inbound(st net.Conn) {
 	c := newBufConn(st)
+	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(handshakeTimeout))
 	line, err := c.readLine()
 	f := strings.Fields(line)
-	if err != nil || len(f) != 2 {
-		c.Close()
+	if err != nil || len(f) != 2 || f[0] != "tcp" && f[0] != "udp" {
+		_ = writeLine(c, "ERR", fmt.Sprintf("unknown request %q", line))
 		return
 	}
 	target := r.target(f[1])
 	if target == "" {
 		r.log.Debug("VM relay: endpoint not running", "endpoint", f[1])
-		c.Close()
+		_ = writeLine(c, "ERR", "endpoint "+f[1]+" not running")
 		return
 	}
 	switch f[0] {
@@ -454,14 +457,17 @@ func (r *Relay) inbound(st net.Conn) {
 		u, err := net.DialTimeout("tcp", target, 5*time.Second)
 		if err != nil {
 			r.log.Debug("VM relay: endpoint dial failed", "endpoint", f[1], "target", target, "err", err)
-			c.Close()
+			_ = writeLine(c, "ERR", err.Error())
+			return
+		}
+		if err := writeLine(c, "OK"); err != nil {
+			u.Close()
 			return
 		}
 		r.count(f[1])
 		_ = c.SetDeadline(time.Time{})
 		pipe(c, u)
 	case "udp":
-		defer c.Close()
 		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
 		q, err := readFrame(c)
 		if err != nil {
@@ -469,9 +475,13 @@ func (r *Relay) inbound(st net.Conn) {
 		}
 		u, err := net.Dial("udp", target)
 		if err != nil {
+			_ = writeLine(c, "ERR", err.Error())
 			return
 		}
 		defer u.Close()
+		if err := writeLine(c, "OK"); err != nil {
+			return
+		}
 		_ = u.SetDeadline(time.Now().Add(10 * time.Second))
 		if _, err := u.Write(q); err != nil {
 			return
@@ -483,8 +493,6 @@ func (r *Relay) inbound(st net.Conn) {
 			return
 		}
 		_ = writeFrame(c, resp[:n])
-	default:
-		c.Close()
 	}
 }
 

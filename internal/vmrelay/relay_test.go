@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,7 +20,12 @@ func startInProcess(t *testing.T, targets map[string]string) *Relay {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := newRelayAgent()
+	return startOn(t, l, newRelayAgent(), targets)
+}
+
+// startOn runs a on l and returns the emulator's side connected to it.
+func startOn(t *testing.T, l net.Listener, a *relayAgent, targets map[string]string) *Relay {
+	t.Helper()
 	go a.serve(l)
 	t.Cleanup(func() { l.Close() })
 	r := &Relay{
@@ -170,7 +176,8 @@ func TestInwardThroughRelay(t *testing.T) {
 }
 
 // TestReconnect: after the control connection drops, the emulator
-// reconnects by itself, so containers reach it again, and new dials work.
+// reconnects by itself, so containers reach it again, even straight
+// away, and new dials work.
 func TestReconnect(t *testing.T) {
 	gw := echoTCP(t)
 	r := startInProcess(t, map[string]string{"gateway": gw})
@@ -184,21 +191,8 @@ func TestReconnect(t *testing.T) {
 	r.mu.Unlock()
 	old.Close()
 
-	// The new session is set before its ping proves the agent took it
-	// over; until then the agent may still forward through the old one.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		r.mu.Lock()
-		s, reconnecting := r.sess, r.reconnecting
-		r.mu.Unlock()
-		if s != old && s != nil && !s.IsClosed() && !reconnecting {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("no reconnect")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	// No waiting for the reconnect: the agent holds the connection, or
+	// retries it, until its next session is in place.
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -317,5 +311,258 @@ func TestOfferThroughRelay(t *testing.T) {
 	// The port is free to offer again.
 	if err := r.Offer(ctx, "offer-tcp", addr, false); err != nil {
 		t.Fatalf("offering after the withdraw: %v", err)
+	}
+}
+
+// gatedListener holds each accepted control connection while held, so the
+// agent stays without a session until release.
+type gatedListener struct {
+	net.Listener
+	mu   sync.Mutex
+	gate chan struct{}
+}
+
+func (l *gatedListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	l.mu.Lock()
+	g := l.gate
+	l.mu.Unlock()
+	if g != nil {
+		<-g
+	}
+	return c, err
+}
+
+// hold makes later accepts wait; the returned func releases them.
+func (l *gatedListener) hold() (release func()) {
+	g := make(chan struct{})
+	l.mu.Lock()
+	l.gate = g
+	l.mu.Unlock()
+	return sync.OnceFunc(func() {
+		l.mu.Lock()
+		l.gate = nil
+		l.mu.Unlock()
+		close(g)
+	})
+}
+
+// dropAgentSession closes the emulator's control session and waits until
+// the agent has seen its own end close.
+func dropAgentSession(t *testing.T, r *Relay, a *relayAgent) {
+	t.Helper()
+	a.mu.Lock()
+	as := a.sess
+	a.mu.Unlock()
+	r.mu.Lock()
+	old := r.sess
+	r.mu.Unlock()
+	old.Close()
+	select {
+	case <-as.CloseChan():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent did not see its session close")
+	}
+}
+
+// TestInwardDuringReconnect: a connection or datagram that reaches the
+// agent between losing its session and accepting the next one waits for
+// the next one and goes through.
+func TestInwardDuringReconnect(t *testing.T) {
+	gw, dns := echoTCP(t), echoUDP(t)
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &gatedListener{Listener: inner}
+	a := newRelayAgent()
+	r := startOn(t, l, a, map[string]string{"gateway": gw, "dns": dns})
+	ctx := context.Background()
+	addr, err := r.Listen(ctx, "gateway", "127.0.0.1:0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	daddr, err := r.Listen(ctx, "dns", "127.0.0.1:0", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	release := l.hold()
+	defer release()
+	dropAgentSession(t, r, a)
+
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := net.Dial("udp", daddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Close()
+	_ = u.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := u.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	// Let both reach the agent while it has no session.
+	time.Sleep(200 * time.Millisecond)
+	release()
+
+	if got := roundTrip(t, c, "gap"); got != "re:gap" {
+		t.Fatalf("inward during the gap: %q", got)
+	}
+	buf := make([]byte, 64)
+	if n, err := u.Read(buf); err != nil || string(buf[:n]) != "re:q" {
+		t.Fatalf("datagram during the gap: %q %v", buf[:n], err)
+	}
+}
+
+// freezeListener lets a test stall the agent's writes on its latest
+// control connection and then cut it, so a stream the agent opens there
+// never reaches the emulator.
+type freezeListener struct {
+	net.Listener
+	mu   sync.Mutex
+	last *freezeConn
+}
+
+func (l *freezeListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	fc := &freezeConn{Conn: c}
+	l.mu.Lock()
+	l.last = fc
+	l.mu.Unlock()
+	return fc, nil
+}
+
+// freeze stalls writes on the latest connection; the returned func cuts it.
+func (l *freezeListener) freeze() (cut func()) {
+	l.mu.Lock()
+	fc := l.last
+	l.mu.Unlock()
+	g := make(chan struct{})
+	fc.mu.Lock()
+	fc.frozen = g
+	fc.mu.Unlock()
+	return sync.OnceFunc(func() {
+		close(g)
+		fc.Conn.Close()
+	})
+}
+
+type freezeConn struct {
+	net.Conn
+	mu     sync.Mutex
+	frozen chan struct{}
+}
+
+func (c *freezeConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	g := c.frozen
+	c.mu.Unlock()
+	if g != nil {
+		<-g
+		return 0, net.ErrClosed
+	}
+	return c.Conn.Write(p)
+}
+
+// TestInwardRetriedOnNextSession: a connection the agent sends on a
+// session that dies before the emulator answers is sent again on the next
+// session.
+func TestInwardRetriedOnNextSession(t *testing.T) {
+	gw := echoTCP(t)
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &freezeListener{Listener: inner}
+	r := startOn(t, l, newRelayAgent(), map[string]string{"gateway": gw})
+	addr, err := r.Listen(context.Background(), "gateway", "127.0.0.1:0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cut := l.freeze()
+	defer cut()
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Let the agent open its stream on the frozen session.
+	time.Sleep(200 * time.Millisecond)
+	cut()
+	if got := roundTrip(t, c, "retry"); got != "re:retry" {
+		t.Fatalf("inward across a dead session: %q", got)
+	}
+}
+
+// closedWithin fails unless the peer closes c within d.
+func closedWithin(t *testing.T, c net.Conn, d time.Duration) {
+	t.Helper()
+	defer c.Close()
+	start := time.Now()
+	_ = c.SetDeadline(start.Add(d))
+	if _, err := io.ReadAll(c); err != nil {
+		t.Fatalf("not closed within %v: %v", d, err)
+	}
+	if time.Since(start) > d {
+		t.Fatalf("closed after %v, want within %v", time.Since(start), d)
+	}
+}
+
+// TestInwardWithoutSession: a connection that arrives while no session
+// comes back is closed once the agent's wait runs out.
+func TestInwardWithoutSession(t *testing.T) {
+	gw := echoTCP(t)
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &gatedListener{Listener: inner}
+	a := newRelayAgent()
+	a.wait = 300 * time.Millisecond
+	r := startOn(t, l, a, map[string]string{"gateway": gw})
+	addr, err := r.Listen(context.Background(), "gateway", "127.0.0.1:0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := l.hold()
+	defer release()
+	dropAgentSession(t, r, a)
+
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedWithin(t, c, 3*time.Second)
+}
+
+// TestInwardEndpointDown: when the endpoint is not running, or refuses,
+// the emulator says so and the agent closes the connection at once,
+// without waiting for another session.
+func TestInwardEndpointDown(t *testing.T) {
+	// Not a port freePort found: the agent's listeners below may be given
+	// that one, and the endpoint would relay to itself.
+	const refused = "127.0.0.1:1"
+	r := startInProcess(t, map[string]string{"refused": refused})
+	ctx := context.Background()
+	for _, name := range []string{"ghost", "refused"} {
+		addr, err := r.Listen(ctx, name, "127.0.0.1:0", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Well inside the agent's wait, which a retry would sit out.
+		closedWithin(t, c, time.Second)
+		if n := r.Streams()[name]; n != 0 {
+			t.Fatalf("streams to %s = %d, want 0", name, n)
+		}
 	}
 }
