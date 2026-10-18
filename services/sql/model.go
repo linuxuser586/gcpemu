@@ -78,8 +78,14 @@ type backupRecord struct {
 	File      string               `json:"file,omitempty"`
 	Databases []*sqladmin.Database `json:"databases,omitempty"`
 	Users     []*userRecord        `json:"users,omitempty"`
-	// ExpiryTime is the backups API's expiryTime (stored, not enforced).
+	// ExpiryTime is the backups API's expiryTime; the backup is deleted
+	// once the emulator clock passes it.
 	ExpiryTime string `json:"expiryTime,omitempty"`
+}
+
+// key is the backup's store key "P/I/backupKey" in project.
+func (b *backupRecord) key(project string) string {
+	return childKey(project, b.Run.Instance, backupKey(b.Run.Id))
 }
 
 // instKey is the store key "P/I".
