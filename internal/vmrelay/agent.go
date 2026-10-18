@@ -296,9 +296,7 @@ func (a *relayAgent) serveTCP(name string, l net.Listener) {
 			return
 		}
 		go func() {
-			st := a.inward(time.Now().Add(a.wait), func(st *bufConn) error {
-				return writeLine(st, "tcp", name)
-			})
+			st := a.inward("tcp", name)
 			if st == nil {
 				c.Close()
 				return
@@ -308,12 +306,13 @@ func (a *relayAgent) serveTCP(name string, l net.Listener) {
 	}
 }
 
-// inward opens a stream to the emulator, sends what send writes, and
-// returns the stream once the emulator answers "OK". Until it answers, a
-// failed attempt is tried again on the next session, before deadline;
-// after the answer, nothing is: the caller may then send bytes it cannot
-// take back. It returns nil on "ERR" or once deadline passes.
-func (a *relayAgent) inward(deadline time.Time, send func(*bufConn) error) *bufConn {
+// inward opens a stream to the emulator with header, and returns it once
+// the emulator answers "OK". Until it answers, a failed attempt is tried
+// again on the next session, within the agent's wait; after the answer,
+// nothing is: the caller then sends what it cannot take back. It returns
+// nil on "ERR" or once the wait runs out.
+func (a *relayAgent) inward(header ...string) *bufConn {
+	deadline := time.Now().Add(a.wait)
 	var failed *yamux.Session
 	for {
 		s := a.next(deadline, failed)
@@ -327,7 +326,7 @@ func (a *relayAgent) inward(deadline time.Time, send func(*bufConn) error) *bufC
 		}
 		c := newBufConn(st)
 		_ = c.SetDeadline(deadline)
-		if send(c) != nil {
+		if writeLine(c, header...) != nil {
 			c.Close()
 			continue
 		}
@@ -356,17 +355,15 @@ func (a *relayAgent) serveUDP(name string, pc net.PacketConn) {
 		}
 		q := append([]byte(nil), buf[:n]...)
 		go func() {
-			st := a.inward(time.Now().Add(a.wait), func(st *bufConn) error {
-				if err := writeLine(st, "udp", name); err != nil {
-					return err
-				}
-				return writeFrame(st, q)
-			})
+			st := a.inward("udp", name)
 			if st == nil {
 				return
 			}
 			defer st.Close()
 			_ = st.SetDeadline(time.Now().Add(10 * time.Second))
+			if writeFrame(st, q) != nil {
+				return
+			}
 			for {
 				p, err := readFrame(st)
 				if err != nil {

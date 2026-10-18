@@ -435,7 +435,8 @@ func (r *Relay) reconnect() {
 
 // inbound connects a stream the relay opened to the named endpoint. It
 // answers "OK" once it holds what the stream goes to, or "ERR <reason>";
-// only after "OK" may the relay have sent bytes it cannot send again.
+// only after "OK" does the relay send the connection's bytes or the
+// datagram.
 func (r *Relay) inbound(st net.Conn) {
 	c := newBufConn(st)
 	defer c.Close()
@@ -468,11 +469,6 @@ func (r *Relay) inbound(st net.Conn) {
 		_ = c.SetDeadline(time.Time{})
 		pipe(c, u)
 	case "udp":
-		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
-		q, err := readFrame(c)
-		if err != nil {
-			return
-		}
 		u, err := net.Dial("udp", target)
 		if err != nil {
 			_ = writeLine(c, "ERR", err.Error())
@@ -480,6 +476,11 @@ func (r *Relay) inbound(st net.Conn) {
 		}
 		defer u.Close()
 		if err := writeLine(c, "OK"); err != nil {
+			return
+		}
+		_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+		q, err := readFrame(c)
+		if err != nil {
 			return
 		}
 		_ = u.SetDeadline(time.Now().Add(10 * time.Second))

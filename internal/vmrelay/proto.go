@@ -29,9 +29,8 @@ import (
 //	relay → emulator
 //	  tcp <name>                → "OK" or "ERR <reason>", then a connection
 //	                              to the named emulator endpoint
-//	  udp <name>, one query frame
-//	                            → "OK" or "ERR <reason>", then the answer
-//	                              frames
+//	  udp <name>                → "OK" or "ERR <reason>", then framed
+//	                              datagrams: one query, then its answers
 //
 // The emulator answers a relay stream once it holds the endpoint
 // connection, and only then do bytes flow. Until the answer, the relay

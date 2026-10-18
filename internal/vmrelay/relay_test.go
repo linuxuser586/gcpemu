@@ -446,6 +446,7 @@ func (l *freezeListener) freeze() (cut func()) {
 	g := make(chan struct{})
 	fc.mu.Lock()
 	fc.frozen = g
+	fc.stalled = make(chan struct{})
 	fc.mu.Unlock()
 	return sync.OnceFunc(func() {
 		close(g)
@@ -453,17 +454,29 @@ func (l *freezeListener) freeze() (cut func()) {
 	})
 }
 
+// stalled is closed once a write on the latest connection is held.
+func (l *freezeListener) stalled() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.last.mu.Lock()
+	defer l.last.mu.Unlock()
+	return l.last.stalled
+}
+
 type freezeConn struct {
 	net.Conn
-	mu     sync.Mutex
-	frozen chan struct{}
+	mu      sync.Mutex
+	frozen  chan struct{}
+	stalled chan struct{}
+	once    sync.Once
 }
 
 func (c *freezeConn) Write(p []byte) (int, error) {
 	c.mu.Lock()
-	g := c.frozen
+	g, stalled := c.frozen, c.stalled
 	c.mu.Unlock()
 	if g != nil {
+		c.once.Do(func() { close(stalled) })
 		<-g
 		return 0, net.ErrClosed
 	}
@@ -492,8 +505,12 @@ func TestInwardRetriedOnNextSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Let the agent open its stream on the frozen session.
-	time.Sleep(200 * time.Millisecond)
+	// The agent opens its stream on the frozen session.
+	select {
+	case <-l.stalled():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent sent nothing on its session")
+	}
 	cut()
 	if got := roundTrip(t, c, "retry"); got != "re:retry" {
 		t.Fatalf("inward across a dead session: %q", got)
