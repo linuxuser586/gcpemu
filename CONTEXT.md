@@ -74,6 +74,10 @@ _Avoid_: frontend (unqualified)
 **Managed container**:
 A container that an Instance starts, owns and removes, e.g. a Cloud SQL instance's Postgres, a GKE node, the NAT egress proxy, the host-mode container.
 
+**Disrupted container**:
+A Managed container that the container runtime stopped or started again without the Instance doing it, e.g. when a VM runtime or daemon restarts. An Instance with one is not ready until it is stopped and started.
+_Avoid_: crashed container, dead container
+
 **Sidecar agent**:
 The emulator's helper process that runs inside a Managed container.
 _Avoid_: agent (unqualified)
