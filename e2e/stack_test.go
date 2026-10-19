@@ -27,6 +27,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/lb"
 )
@@ -638,19 +639,43 @@ func (r *run) step9(t *testing.T) {
 func (r *run) step10(t *testing.T) {
 	r.tf.t = t
 	r.tf.run(15*time.Minute, "destroy", "-auto-approve")
-	// `gcpemu status`: the instance owns no containers any more.
+	// `gcpemu status`: the instance owns no Managed containers for
+	// resources any more.
 	var left []string
 	eventually(t, time.Minute, "no leftover containers", func() bool {
 		cts, err := r.inst.Containers(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		left = left[:0]
-		for _, c := range cts {
-			left = append(left, c.Service+"/"+c.Role+" "+c.Name)
-		}
+		left = leftoverContainers(cts)
 		return len(left) == 0
 	}, func() string { return strings.Join(left, "\n") })
+}
+
+// leftoverContainers names the Managed containers that outlive the
+// resources destroyed, as "service/role name". Those the Instance itself
+// owns (service core), such as the VM relay on a VM runtime (ADR 0005),
+// live as long as the Instance and do not count.
+func leftoverContainers(cts []instance.ContainerInfo) []string {
+	var left []string
+	for _, c := range cts {
+		if c.Service != "core" {
+			left = append(left, c.Service+"/"+c.Role+" "+c.Name)
+		}
+	}
+	return left
+}
+
+func TestLeftoverContainersIgnoresCore(t *testing.T) {
+	cts := []instance.ContainerInfo{
+		{Name: "gcpemu-1-vmrelay", Service: "core", Role: "relay"},
+		{Name: "gcpemu-1-hostmode", Service: "core", Role: "frontend"},
+		{Name: "gcpemu-1-sql-db", Service: "sqladmin", Role: "postgres"},
+	}
+	got := strings.Join(leftoverContainers(cts), "\n")
+	if want := "sqladmin/postgres gcpemu-1-sql-db"; got != want {
+		t.Errorf("leftoverContainers = %q, want %q", got, want)
+	}
 }
 
 // ---- helpers ----
