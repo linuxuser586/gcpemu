@@ -383,7 +383,12 @@ func TestClients(t *testing.T) {
 			t.Fatalf("ko image index: %+v %v", idx, err)
 		}
 
-		// Docker: login with the gcloud token, push, pull.
+		// Docker: login with the gcloud token, push, pull. A daemon gcpemu
+		// cannot use (one serving Windows containers) cannot pull these
+		// Linux images.
+		if !e.runtime {
+			t.Skip("docker needs a container runtime")
+		}
 		docker := onPath(t, "docker")
 		dl := exec.Command(docker, "login", "-u", "oauth2accesstoken", "--password-stdin", reg)
 		dl.Env, dl.Stdin = e.env, strings.NewReader(tok)
