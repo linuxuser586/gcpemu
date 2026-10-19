@@ -179,6 +179,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	env.Middleware = in.gw.Middleware
 	env.GRPCOptions = in.gw.GRPCOptions
 	in.fe = frontend.New(env, in.gw.Hosts)
+	in.fe.SetGateway(in.gw.ServeFrontend)
 
 	explicit := map[string]bool{}
 	for _, s := range cfg.Services {
