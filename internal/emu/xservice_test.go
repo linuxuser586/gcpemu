@@ -104,8 +104,8 @@ func TestAliasError(t *testing.T) {
 // TestPublicRoutesScript: the script keeps exactly the wanted public
 // routes among those it tagged, leaving other routes alone (#187).
 func TestPublicRoutesScript(t *testing.T) {
-	// The script runs only for the Runtime Services, which native Windows
-	// does not run (ADR 0008).
+	// The script programs host routes, which only a Linux host has: native
+	// Windows runs the Runtime Services on a VM runtime (ADR 0015).
 	if runtime.GOOS == "windows" {
 		t.Skip("host routes are not programmed on Windows")
 	}

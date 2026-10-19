@@ -20,16 +20,6 @@ var (
 	agentErr  error
 )
 
-// RequireRuntimeOS skips the test where an Instance cannot use a container
-// runtime at all (native Windows, ADR 0008), so it refuses the Runtime
-// Services even for control-plane tests that need no runtime.
-func RequireRuntimeOS(t testing.TB) {
-	t.Helper()
-	if err := runtime.Unusable(); err != nil {
-		t.Skip(err)
-	}
-}
-
 // RequireRuntime skips the test unless a container runtime is available
 // (and GCPEMU_SKIP_CONTAINER_TESTS is unset), and makes a static gcpemu
 // binary available for in-container agents.
@@ -41,7 +31,6 @@ func RequireRuntime(t testing.TB) {
 	if testing.Short() {
 		t.Skip("container test skipped in -short mode")
 	}
-	RequireRuntimeOS(t)
 	cl, err := runtime.Detect()
 	if err != nil {
 		t.Skipf("no container runtime: %v", err)
