@@ -65,7 +65,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 	var yes, dryRun bool
 	install := &cobra.Command{
 		Use:   "install",
-		Short: "Add the CA to the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo)",
+		Short: "Add the CA to the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo on Linux and macOS)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, c, err := loadCA(cmd)
 			if err != nil {
@@ -82,14 +82,15 @@ func (o *rootOpts) caCmd() *cobra.Command {
 			if note != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
 			}
+			windowsTrustNote(cmd.ErrOrStderr(), h, true)
 			return runPlan(cmd, append(plan, nss...), yes, dryRun)
 		},
 	}
-	install.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password)")
+	install.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
 	install.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
 	uninstall := &cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the CA from the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo)",
+		Short: "Remove the CA from the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo on Linux and macOS)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, c, err := loadCA(cmd)
 			if err != nil {
@@ -103,10 +104,11 @@ func (o *rootOpts) caCmd() *cobra.Command {
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
 			printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false)
 			nss, _ := nssPlan(h, cfg.Instance, c, nssUninstall)
+			windowsTrustNote(cmd.ErrOrStderr(), h, false)
 			return runPlan(cmd, append(plan, nss...), yes, dryRun)
 		},
 	}
-	uninstall.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password)")
+	uninstall.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
 	uninstall.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
 	rotate := &cobra.Command{
 		Use:   "rotate",
@@ -163,6 +165,19 @@ func rotateTrust(cmd *cobra.Command, instance string, c *ca.CA) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "Run `gcpemu ca install` to trust the new CA in the OS and container stores.")
 	return nil
+}
+
+// windowsTrustNote warns that Windows confirms a change to the current
+// user's Root store in a dialog of its own, which the plan waits for.
+func windowsTrustNote(out io.Writer, h trustHost, install bool) {
+	if h.goos != "windows" {
+		return
+	}
+	verb := "adding the CA to"
+	if !install {
+		verb = "removing the CA from"
+	}
+	fmt.Fprintf(out, "note: Windows shows a security dialog to confirm %s your Root certificate store; choose Yes\n", verb)
 }
 
 // trustHost describes the host's trust store tooling.
@@ -247,10 +262,23 @@ func trustPlan(h trustHost, instance string, c *ca.CA, install bool) ([]trustSte
 		if install {
 			return []trustStep{{args: sudo("security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", keychain, c.Path())}}, nil
 		}
-		sum := sha1.Sum(c.Certificate().Raw)
-		return []trustStep{{args: sudo("security", "delete-certificate", "-Z", strings.ToUpper(hex.EncodeToString(sum[:])), keychain)}}, nil
+		return []trustStep{{args: sudo("security", "delete-certificate", "-Z", strings.ToUpper(thumbprint(c)), keychain)}}, nil
+	case "windows":
+		// The current user's Root store needs no administrator rights;
+		// Windows asks the user to confirm the change in its own dialog.
+		if install {
+			return []trustStep{{args: []string{"certutil", "-user", "-addstore", "Root", c.Path()}}}, nil
+		}
+		return []trustStep{{args: []string{"certutil", "-user", "-delstore", "Root", thumbprint(c)}}}, nil
 	}
 	return nil, fmt.Errorf("automatic trust store changes are not supported on %s; trust the file from `gcpemu ca path` manually", h.goos)
+}
+
+// thumbprint is the CA certificate's SHA-1 hash in hex, which the macOS
+// keychain and the Windows certificate stores identify it by.
+func thumbprint(c *ca.CA) string {
+	sum := sha1.Sum(c.Certificate().Raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // runPlan prints the plan, asks for confirmation unless yes, and runs it
