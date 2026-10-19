@@ -73,3 +73,12 @@ resource "google_artifact_registry_repository_iam_member" "nodes_read" {
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${google_service_account.nodes.email}"
 }
+
+# The app reads its own image back, as CI tooling (crane, Trivy) does from
+# a pod with Workload Identity (#426).
+resource "google_artifact_registry_repository_iam_member" "app_read" {
+  location   = google_artifact_registry_repository.app.location
+  repository = google_artifact_registry_repository.app.name
+  role       = "roles/artifactregistry.reader"
+  member     = local.app_member
+}

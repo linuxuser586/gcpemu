@@ -14,6 +14,8 @@
 //	                    (step 6) and records the delivery
 //	GET  /api/received  deliveries recorded by /api/push
 //	GET  /api/egress    fetches ?url= from the internet (step 7)
+//	GET  /api/digest    resolves image ?ref= in Artifact Registry with
+//	                    go-containerregistry, as crane digest does (step 6c)
 //
 // Configuration (environment): PROJECT, BUCKET, TOPIC, SQL_INSTANCE
 // (connection name), SQL_USER (IAM user), SQL_DB, PUSH_AUDIENCE,
@@ -37,7 +39,11 @@ import (
 	"cloud.google.com/go/cloudsqlconn"
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/storage"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/idtoken"
 	"google.golang.org/grpc/codes"
@@ -89,6 +95,7 @@ func main() {
 	mux.HandleFunc("POST /api/push", a.push)
 	mux.HandleFunc("GET /api/received", a.listReceived)
 	mux.HandleFunc("GET /api/egress", a.egress)
+	mux.HandleFunc("GET /api/digest", a.digest)
 	srv := &http.Server{Addr: ":" + port, Handler: logRequests(mux), ReadHeaderTimeout: 10 * time.Second}
 	log.Printf("app listening on :%s", port)
 	log.Fatal(srv.ListenAndServe())
@@ -302,4 +309,34 @@ func (a *app) egress(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Body.Close()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": resp.StatusCode})
+}
+
+// digest resolves ?ref= over HTTPS (no insecure option) with the app's
+// access token, as `crane digest` and `trivy image` do: the registry's
+// Bearer challenge must name an https realm (#426).
+func (a *app) digest(w http.ResponseWriter, r *http.Request) {
+	ref, err := name.ParseReference(r.URL.Query().Get("ref"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		fail(w, "credentials", err)
+		return
+	}
+	tok, err := ts.Token()
+	if err != nil {
+		fail(w, "credentials", err)
+		return
+	}
+	d, err := remote.Head(ref, remote.WithContext(ctx),
+		remote.WithAuth(&authn.Basic{Username: "oauth2accesstoken", Password: tok.AccessToken}))
+	if err != nil {
+		fail(w, "registry", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"digest": d.Digest.String()})
 }
