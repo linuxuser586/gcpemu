@@ -81,7 +81,7 @@ Docker on a Linux runner.
 ## Development
 
 The runner executes `dist/` as it is, so it is committed. After changing `src/`, run
-`make action` from the repository root (it runs `npm ci`, the unit tests and the esbuild bundle)
+`task action` from the repository root (it runs `npm ci`, the unit tests and the esbuild bundle)
 and commit `dist/`. CI fails when `dist/` doesn't match the sources. The `action` job in
 `.github/workflows/ci.yml` is the self-test. It serves the commit's binary as release
 `v0.0.0-selftest`, uses the action with the fixtures in `test/` (`check.sh` asserts the

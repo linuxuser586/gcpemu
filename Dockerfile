@@ -1,5 +1,5 @@
 # NFR-PORT-004: the multi-arch OCI image. The build context is dist/ after
-# `make release`, so the image holds the same static binaries as the
+# `task release`, so the image holds the same static binaries as the
 # GitHub release and its SHA256SUMS:
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile dist

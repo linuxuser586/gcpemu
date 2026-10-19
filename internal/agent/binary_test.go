@@ -274,12 +274,12 @@ func TestDynamicSiblingRefused(t *testing.T) {
 	}
 }
 
-func TestDevBuildHintsMakeAgent(t *testing.T) {
+func TestDevBuildHintsTaskAgent(t *testing.T) {
 	for _, v := range []string{"dev", "v1.2.3-4-gabcdef0", "v1.2.3-dirty", "abcdef0"} {
 		e := newEnv(t)
 		e.images.files["ghcr.io/linuxuser586/gcpemu:"+v] = fakeELF(elf.EM_AARCH64, false)
 		_, err := e.resolver("arm64", v).Binary(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "make agent") || !strings.Contains(err.Error(), BinaryEnv) {
+		if err == nil || !strings.Contains(err.Error(), "task agent") || !strings.Contains(err.Error(), BinaryEnv) {
 			t.Fatalf("%s: err = %v", v, err)
 		}
 		if len(e.images.pulls) > 0 {

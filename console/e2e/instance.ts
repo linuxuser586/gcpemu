@@ -1,5 +1,5 @@
 // Starts an Ephemeral Instance from bin/gcpemu (built with the real console
-// by `make build`): the shared one Playwright's webServer runs
+// by `task build`): the shared one Playwright's webServer runs
 // (emulator.ts), and private ones for tests that change all of an
 // Instance's state (state.spec.ts).
 import { spawn } from 'node:child_process'

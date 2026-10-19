@@ -9,7 +9,7 @@ except for Endpoint overrides. See [the SRS](GCP%20Local%20Emulator%20Software.m
 Milestones **M1** (core, IAM, Cloud Storage, Pub/Sub, Cloud DNS, Artifact Registry),
 **M2** (compute networking, Cloud SQL, GKE, Cloud NAT) and **M3** (Application Load Balancer,
 Cloud CDN, backend mTLS, Certificate Manager, Host mode) are implemented. The full SRS 11.2
-Reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
+Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 
 | Area | Package | Highlights |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`make e2e`).
 ## Quick start
 
 ```sh
-make build
+task build
 bin/gcpemu start --detach --services gcs,pubsub --seed seed.yaml
 eval "$(bin/gcpemu env)"       # STORAGE_EMULATOR_HOST, PUBSUB_EMULATOR_HOST, GCE_METADATA_HOST, …
 bin/gcpemu status
@@ -124,7 +124,7 @@ opens it. It calls only the public APIs and the admin API, and works offline. It
 the default principal until you pick another user or service account in the header's
 principal switcher, so the views show what IAM allows that principal (try it with
 `--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` it is off unless `--console`
-is passed. `make build` builds it when
+is passed. `task build` builds it when
 `pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
 It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gateway
 (`/connectgateway/v1/projects/P/locations/L/gkeMemberships/CLUSTER/...`, see
@@ -282,7 +282,7 @@ runtime's architecture. On a linux host of that architecture it's its own execut
 it uses `GCPEMU_AGENT_BINARY`, then `gcpemu-linux-<arch>` next to the executable, then the copy
 cached in the instance directory under `agent/<version>/linux-<arch>/`. A release build (`vX.Y.Z`)
 with none of these copies it out of the published image of the same version (`ghcr.io`, then
-Docker Hub) and caches it. A dev build needs `make agent` instead. A binary for the wrong
+Docker Hub) and caches it. A dev build needs `task agent` instead. A binary for the wrong
 architecture fails the start with an error naming both.
 
 Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress immediately
@@ -598,8 +598,8 @@ in-process emulator at IAM enforcement level `enforce`:
 10. `tofu destroy` leaves no containers (`gcpemu status` lists the instance's containers).
 
 ```sh
-make e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run TestReferenceStack -timeout 30m -v
-GCPEMU_NET_TESTS=0 make e2e       # offline-ish: steps 1, 3, 9 and 10 only
+task e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run TestReferenceStack -timeout 30m -v
+GCPEMU_NET_TESTS=0 task e2e       # offline-ish: steps 1, 3, 9 and 10 only
 ```
 
 It needs a container runtime and `tofu` on `PATH`; `tofu init` downloads the `google` and `tls`
@@ -611,7 +611,7 @@ With `emulator_gateway` empty the module targets real GCP (set `project` and `do
 
 ### Client compatibility (SRS 7.1)
 
-`make compat` runs the real clients against a detached instance with only Endpoint
+`task compat` runs the real clients against a detached instance with only Endpoint
 overrides: `gcloud` (storage, pubsub, secrets, iam, dns, compute load balancing and NAT, artifacts,
 sql, container), `kubectl` through `gke-gcloud-auth-plugin`, Helm, Docker, `crane`, `ko`, `psql`,
 the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. gcloud (with the
@@ -628,7 +628,7 @@ either stay on loopback or reach the internet on purpose.
 
 ### OpenTofu acceptance (SRS 11.1, IF-001)
 
-`make tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
+`task tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
 DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE, Artifact
 Registry), plans again expecting no changes, destroys it and checks the state is empty. It does
 this with the `google` and `google-beta` providers, each at the latest release of the current
@@ -734,15 +734,16 @@ shell it refuses the token with a universe mismatch. Its `--universe-domain` can
 ## Development
 
 ```sh
-make agent         # the Sidecar agent, bin/gcpemu-linux-<arch> (needed off linux)
-make vet race      # gofmt, vet, tests with -race
-make release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
-make cross         # the same binaries without building the console (no Node.js)
+task agent         # the Sidecar agent, bin/gcpemu-linux-<arch> (needed off linux)
+task vet race      # gofmt, vet, tests with -race
+task release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
+task cross         # the same binaries without building the console (no Node.js)
 ```
 
-The Makefile needs GNU make (3.81 or later) and a POSIX shell. macOS ships both. On Windows,
-run it from Git Bash with GNU make (`winget install ezwinports.make`); `make build` writes
-`bin/gcpemu.exe` there, and `make race` needs a C compiler for cgo.
+The tasks in `Taskfile.yml` need Task 3.54 or later, from any shell (brew, winget, or
+`go install github.com/go-task/task/v3/cmd/task@v3.54.0`), and only the tools each task calls
+(go, git, pnpm, docker, npm). A bare `task` runs `task build`, which writes `bin/gcpemu.exe` on
+Windows. `task race` needs a C compiler for cgo.
 
 The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` embeds its
 `dist/`. With Node.js 24 and pnpm:
@@ -753,7 +754,7 @@ cd console && pnpm install && pnpm dev # /console/ with hot reload; other paths 
                                        # (GCPEMU_GATEWAY, default 127.0.0.1:4510)
 pnpm lint && pnpm typecheck && pnpm test
 pnpm gen:api                           # after editing internal/admin/openapi.yaml
-make console-e2e                       # Playwright on Chromium, Firefox and WebKit
+task console-e2e                       # Playwright on Chromium, Firefox and WebKit
 ```
 
 Each Service is an isolated package implementing `emu.Service`
@@ -766,8 +767,8 @@ version in `go.mod`. gRPC services get REST through `internal/transcode`, and th
 checks every gRPC request against the generated tables. After a version bump, regenerate:
 
 ```sh
-make generate                     # after go get google.golang.org/api@... or editing apis.yaml
-make generate GOOGLEAPIS=latest   # move the googleapis pin to master, then regenerate
+task generate                     # after go get google.golang.org/api@... or editing apis.yaml
+task generate GOOGLEAPIS=latest   # move the googleapis pin to master, then regenerate
 go test ./internal/apidef         # TestDrift: the pin and the Go modules must agree
 ```
 
