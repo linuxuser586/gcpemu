@@ -136,8 +136,7 @@ func TestVMTrustCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		endpoint, what, ssh, dir, shell string
-		restart                         bool
+		endpoint, what, ssh, dir, shell, store string
 	}{
 		{endpoint: "/Users/u/.colima/default/docker.sock", what: "Colima (profile default)", ssh: "colima ssh -p default -- sudo sh -s <<'GCPEMU_VM'\n", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
 		{endpoint: "unix:///Users/u/.colima/work/docker.sock", what: "Colima (profile work)", ssh: "colima ssh -p work -- sudo sh -s", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
@@ -146,18 +145,20 @@ func TestVMTrustCommand(t *testing.T) {
 		{endpoint: "npipe:////./pipe/podman-machine-default", what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s <<'GCPEMU_VM'\n", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt", shell: "Git Bash"},
 		{endpoint: `npipe://\\.\pipe\podman-machine-default`, what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt", shell: "Git Bash"},
 		{endpoint: "npipe:////./pipe/podman-work"}, // machine work or podman-work: ambiguous
-		{endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine", what: "Docker Desktop", restart: true},
-		{endpoint: "npipe:////./pipe/docker_engine", what: "Docker Desktop", restart: true},
+		{endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine", what: "Docker Desktop", store: "the Windows certificate store"},
+		{endpoint: "npipe:////./pipe/docker_engine", what: "Docker Desktop", store: "the Windows certificate store"},
 		{endpoint: "npipe:////./pipe/other"},
-		{endpoint: "/Users/u/.docker/run/docker.sock"},
+		{endpoint: "/Users/u/.docker/run/docker.sock", what: "Docker Desktop", store: "the keychain"},
+		{endpoint: "unix:///Users/u/.docker/run/docker.sock", what: "Docker Desktop", store: "the keychain"},
+		{endpoint: "unix:///home/u/.docker/desktop/docker.sock"}, // Docker Desktop on Linux: certs.d, not a store
 		{endpoint: "/Users/u/.orbstack/run/docker.sock"},
 		{endpoint: "unix:///var/run/docker.sock"},
 		{endpoint: ""},
 	} {
 		for _, install := range []bool{true, false} {
 			v := vmTrustCommand(tc.endpoint, "dev", c, install)
-			if v.what != tc.what || v.shell != tc.shell || v.restart != tc.restart {
-				t.Errorf("%s install=%v: %+v, want what %q shell %q restart %v", tc.endpoint, install, v, tc.what, tc.shell, tc.restart)
+			if v.what != tc.what || v.shell != tc.shell || v.store != tc.store {
+				t.Errorf("%s install=%v: %+v, want what %q shell %q store %q", tc.endpoint, install, v, tc.what, tc.shell, tc.store)
 				continue
 			}
 			if tc.ssh == "" {
@@ -178,9 +179,43 @@ func TestVMTrustCommand(t *testing.T) {
 	}
 }
 
+// socketTarget follows a symlinked Unix socket, as Docker Desktop on macOS
+// makes /var/run/docker.sock, to the socket vmTrustCommand recognises.
+func TestSocketTarget(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, ".docker", "run", "docker.sock")
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "docker.sock")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	want, err := filepath.EvalSymlinks(real) // macOS: /var/folders is under /private
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ endpoint, want string }{
+		{"unix://" + link, "unix://" + want},
+		{link, want},
+		{"unix://" + filepath.Join(dir, "missing.sock"), "unix://" + filepath.Join(dir, "missing.sock")},
+		{"npipe:////./pipe/docker_engine", "npipe:////./pipe/docker_engine"},
+		{"tcp://127.0.0.1:2375", "tcp://127.0.0.1:2375"},
+		{"", ""},
+	} {
+		if got := socketTarget(tc.endpoint); got != tc.want {
+			t.Errorf("socketTarget(%q) = %q, want %q", tc.endpoint, got, tc.want)
+		}
+	}
+}
+
 // writeVMTrust's advice: unchanged for Unix sockets, naming the shell for
 // a Podman machine on Windows and asking for a Docker Desktop restart, once
-// the plan's commands have run (by the user, on a dry run).
+// the plan's commands have run (by the user, on a dry run), naming the
+// store it rebuilds from: the Windows certificate store or the keychain.
 func TestWriteVMTrust(t *testing.T) {
 	for _, tc := range []struct {
 		v               vmTrust
@@ -196,12 +231,16 @@ func TestWriteVMTrust(t *testing.T) {
 			"Podman machine keeps its own container trust store inside its VM, which gcpemu does not change. To remove the CA from it, run:\n\nCMD\n\n"},
 		{vmTrust{what: "Podman machine work", command: "CMD", shell: "Git Bash"}, true, false,
 			"Podman machine work keeps its own container trust store inside its VM, which gcpemu does not change. To trust the CA for image pulls there, run this in Git Bash (PowerShell has no heredocs):\n\nCMD\n\n"},
-		{vmTrust{what: "Docker Desktop", restart: true}, true, false,
+		{vmTrust{what: "Docker Desktop", store: "the Windows certificate store"}, true, false,
 			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. Restart Docker Desktop to trust the CA for image pulls there.\n\n"},
-		{vmTrust{what: "Docker Desktop", restart: true}, false, false,
+		{vmTrust{what: "Docker Desktop", store: "the Windows certificate store"}, false, false,
 			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. Restart Docker Desktop to remove the CA from it.\n\n"},
-		{vmTrust{what: "Docker Desktop", restart: true}, true, true,
+		{vmTrust{what: "Docker Desktop", store: "the Windows certificate store"}, true, true,
 			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. After running these commands, restart Docker Desktop to trust the CA for image pulls there.\n\n"},
+		{vmTrust{what: "Docker Desktop", store: "the keychain"}, true, false,
+			"Docker Desktop rebuilds its container trust store from the keychain when it starts. Restart Docker Desktop to trust the CA for image pulls there.\n\n"},
+		{vmTrust{what: "Docker Desktop", store: "the keychain"}, false, true,
+			"Docker Desktop rebuilds its container trust store from the keychain when it starts. After running these commands, restart Docker Desktop to remove the CA from it.\n\n"},
 	} {
 		var b strings.Builder
 		writeVMTrust(&b, tc.v, tc.install, tc.dryRun)
