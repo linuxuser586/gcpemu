@@ -751,6 +751,10 @@ paths:
                   listeners:
                     type: array
                     items: { $ref: "#/components/schemas/LbListener" }
+                  unavailable:
+                    type: array
+                    description: The forwarding rules that have no listener, such as one on a port in a Windows excluded port range.
+                    items: { $ref: "#/components/schemas/LbUnavailable" }
   /_emu/v1/lb/route:
     post:
       summary: Which route and backend of a URL map would serve a request (lb service; Web console Load Balancer view).
@@ -1271,6 +1275,14 @@ components:
             loopback is 127.0.0.x on the rule's port, edge the lb-edge
             container (privileged ports), fallback 127.0.0.x on a high port.
         https: { type: boolean }
+    LbUnavailable:
+      type: object
+      required: [forwardingRule, ipAddress, port, error]
+      properties:
+        forwardingRule: { type: string, description: The forwarding rule's resource path. }
+        ipAddress: { type: string, description: The forwarding rule's IP address. }
+        port: { type: integer }
+        error: { type: string, description: Why the rule has no listener. }
     LbRouteRequest:
       type: object
       required: [urlMap, host]

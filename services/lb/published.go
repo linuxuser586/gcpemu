@@ -116,6 +116,9 @@ func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
 // with a published listener in a Containerized Instance. Callers hold
 // d.mu.
 func (d *dataplane) listenLoop(addr string) (net.Listener, error) {
+	if d.bind != nil {
+		return d.bind(addr)
+	}
 	if d.publishing().on && !d.single {
 		return published.ListenShared(addr)
 	}

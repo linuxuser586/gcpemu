@@ -80,17 +80,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if running == nil {
 				fmt.Fprintf(out, "[ok  ] instance %q is running; skipping port checks\n", cfg.Instance)
 			} else {
-				var names []string
-				for n := range config.DefaultPorts {
-					names = append(names, n)
-				}
-				for n := range cfg.Ports {
-					if _, dflt := config.DefaultPorts[n]; !dflt && n != config.AllPorts {
-						names = append(names, n)
-					}
-				}
-				sort.Strings(names)
-				for _, n := range names {
+				for _, n := range portNames(cfg) {
 					p := cfg.Port(n)
 					if p == 0 {
 						continue
@@ -114,6 +104,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			}
 			if runtime.GOOS == "darwin" {
 				checkLoopback(out, loopback.Aliases())
+			}
+			if runtime.GOOS == "windows" {
+				checkExcludedPorts(out, cfg, running == nil)
 			}
 
 			dir := cfg.InstanceDir()
@@ -141,6 +134,96 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			fmt.Fprintln(out, "all checks passed")
 			return nil
 		},
+	}
+}
+
+// portNames lists the configured ports' names: the default ones and any
+// other --port, sorted.
+func portNames(cfg *config.Config) []string {
+	var names []string
+	for n := range config.DefaultPorts {
+		names = append(names, n)
+	}
+	for n := range cfg.Ports {
+		if _, dflt := config.DefaultPorts[n]; !dflt && n != config.AllPorts {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// checkExcludedPorts warns, on Windows, about ports in one of its
+// excluded port ranges, which no address binds there (ADR 0015): the
+// running Instance's forwarding rules' ports, which its --lb-bind
+// addresses serve too, or else the configured ports.
+func checkExcludedPorts(out io.Writer, cfg *config.Config, running bool) {
+	ports := map[string]int{}
+	if running {
+		c, err := clientFor(cfg)
+		if err != nil {
+			return
+		}
+		b, err := c.get("/_emu/v1/lb/listeners")
+		if err != nil {
+			return
+		}
+		ports = forwardingRulePorts(b)
+	} else {
+		for _, n := range portNames(cfg) {
+			if p := cfg.Port(n); p != 0 {
+				ports["port "+n] = p
+			}
+		}
+	}
+	if len(ports) == 0 {
+		return
+	}
+	tcp, err := loopback.ExcludedRanges("tcp")
+	if err != nil {
+		fmt.Fprintf(out, "[--  ] excluded port ranges: cannot read them: %v\n", err)
+		return
+	}
+	reportExcludedPorts(out, "tcp", tcp, ports)
+	if p, ok := ports["port dns"]; ok {
+		if udp, err := loopback.ExcludedRanges("udp"); err == nil {
+			reportExcludedPorts(out, "udp", udp, map[string]int{"port dns": p})
+		}
+	}
+}
+
+// forwardingRulePorts returns the port of each forwarding rule in an lb
+// listeners report, served or unavailable, by "forwarding rule <path>".
+func forwardingRulePorts(body []byte) map[string]int {
+	type rule struct {
+		ForwardingRule string `json:"forwardingRule"`
+		Port           int    `json:"port"`
+	}
+	var v struct{ Listeners, Unavailable []rule }
+	ports := map[string]int{}
+	if json.Unmarshal(body, &v) != nil {
+		return ports
+	}
+	for _, r := range append(v.Listeners, v.Unavailable...) {
+		ports["forwarding rule "+r.ForwardingRule] = r.Port
+	}
+	return ports
+}
+
+// reportExcludedPorts warns about each of ports (by what uses it) that one
+// of ranges, network's excluded port ranges, holds.
+func reportExcludedPorts(out io.Writer, network string, ranges []loopback.PortRange, ports map[string]int) {
+	warned := false
+	for _, what := range sortedKeys(ports) {
+		r, ok := loopback.ExcludedPort(ranges, ports[what])
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(out, "[WARN] %s (port %d) is in Windows' excluded port range %s, so nothing can listen on it\n", what, ports[what], r)
+		warned = true
+	}
+	if warned {
+		fmt.Fprintf(out, "       fix: use a port outside the ranges `netsh int ipv4 show excludedportrange protocol=%s` lists; Hyper-V, WSL and others reserve them\n", network)
 	}
 }
 

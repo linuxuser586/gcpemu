@@ -88,7 +88,10 @@ inside its WSL2 VM, where the host can't route, so `gcpemu.exe` ignores the runt
 `DOCKER_HOST` is set. With the default Service list it skips those three and logs that they
 need WSL2. Naming one of them in `--services`, or passing `--host-mode`, fails at start. For
 those, run the Linux binary inside WSL2. The load balancer runs natively, and Windows has no
-privileged ports, so a forwarding rule binds its own port directly.
+privileged ports, so a forwarding rule binds its own port directly. A port in one of Windows'
+excluded port ranges, which Hyper-V, WSL and others reserve, can't be bound at all: a forwarding
+rule on one fails, pointing at `netsh int ipv4 show excludedportrange protocol=tcp`, and
+`gcpemu doctor` lists the ports that fall in a range.
 
 State lives under `%LOCALAPPDATA%\gcpemu\<instance>` unless `XDG_STATE_HOME` or `--data-dir`
 says otherwise. Windows doesn't enforce file modes such as 0600, so the per-user ACL on that

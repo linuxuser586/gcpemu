@@ -31,6 +31,14 @@ type listenerInfo struct {
 	Unpublished string `json:"unpublished,omitempty"`
 }
 
+// unavailableInfo is a forwarding rule that has no listener, and why.
+type unavailableInfo struct {
+	ForwardingRule string `json:"forwardingRule"`
+	IPAddress      string `json:"ipAddress"`
+	Port           int    `json:"port"`
+	Error          string `json:"error"`
+}
+
 // serveListeners is GET /_emu/v1/lb/listeners.
 func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 	project := r.URL.Query().Get("project")
@@ -45,9 +53,18 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 		out = append(out, listenerInfo{ForwardingRule: fe.frPath, IPAddress: fe.ip, Port: fe.port,
 			Listener: l.addr, Mode: l.mode, HTTPS: l.https, Published: l.pubHost, Unpublished: l.pubHint})
 	}
+	failed := []unavailableInfo{}
+	for key, why := range s.dp.unavailable {
+		fe := cfg.fronts[key]
+		if fe == nil || project != "" && fe.project != project {
+			continue
+		}
+		failed = append(failed, unavailableInfo{ForwardingRule: fe.frPath, IPAddress: fe.ip, Port: fe.port, Error: why})
+	}
 	s.dp.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ForwardingRule < out[j].ForwardingRule })
-	writeJSON(w, http.StatusOK, map[string]any{"listeners": out})
+	sort.Slice(failed, func(i, j int) bool { return failed[i].ForwardingRule < failed[j].ForwardingRule })
+	writeJSON(w, http.StatusOK, map[string]any{"listeners": out, "unavailable": failed})
 }
 
 // routeRequest is the body of POST /_emu/v1/lb/route.
