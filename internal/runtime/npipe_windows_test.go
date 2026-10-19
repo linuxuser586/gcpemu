@@ -191,3 +191,35 @@ func TestNamedPipeDaemon(t *testing.T) {
 		t.Skip("no Docker Engine named pipe")
 	}
 }
+
+// TestLocateWindowsContainersEngine: $DOCKER_HOST naming an engine that
+// serves Windows containers, as the hosted windows-* runners' does, fails
+// rather than falling back (#375). It skips where docker_engine is absent
+// or serves Linux containers (Docker Desktop).
+func TestLocateWindowsContainersEngine(t *testing.T) {
+	const ep = "npipe:////./pipe/docker_engine"
+	if _, err := os.Stat(`\\.\pipe\docker_engine`); err != nil {
+		t.Skip("no docker_engine named pipe")
+	}
+	cl, err := New(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	in, err := cl.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.OSType != "windows" {
+		t.Skipf("docker_engine serves %q containers", in.OSType)
+	}
+	t.Setenv("DOCKER_HOST", ep)
+	_, d, err := Locate()
+	if !errors.Is(err, ErrWindowsContainers) || !strings.Contains(err.Error(), "serves Windows containers") {
+		t.Fatalf("Locate = %v, want ErrWindowsContainers", err)
+	}
+	if d.Endpoint != ep || d.Source != "$DOCKER_HOST" {
+		t.Errorf("Detection = %+v", d)
+	}
+}

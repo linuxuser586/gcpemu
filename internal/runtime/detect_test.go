@@ -20,12 +20,19 @@ type fakeHost struct {
 	home string
 	env  map[string]string
 	up   map[string]bool
+	goos string
+	// pipes are the named pipes present, as //./pipe/NAME.
+	pipes map[string]bool
+	// osType is what /info reports per endpoint; "" is an /info that did
+	// not answer, taken as linux.
+	osType map[string]string
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
 	root := t.TempDir()
 	h := &fakeHost{t: t, root: root, home: filepath.Join(root, "home"), up: map[string]bool{},
-		env: map[string]string{"TMPDIR": filepath.Join(root, "tmp")}}
+		env: map[string]string{"TMPDIR": filepath.Join(root, "tmp")}, goos: "linux",
+		pipes: map[string]bool{}, osType: map[string]string{}}
 	return h
 }
 
@@ -81,16 +88,18 @@ func (h *fakeHost) locate() (Detection, error) {
 	_, d, err := locate(hostEnv{
 		getenv: func(k string) string { return h.env[k] },
 		home:   h.home,
+		goos:   h.goos,
+		isPipe: func(addr string) bool { return h.pipes[addr] },
 		isSocket: func(p string) bool {
 			// Only fake sockets count, not the real host's.
 			_, ok := h.up["unix://"+p]
 			return ok
 		},
-		probe: func(endpoint string) (*Client, error) {
+		probe: func(endpoint string) (*Client, Info, error) {
 			if h.up[endpoint] {
-				return &Client{Endpoint: endpoint}, nil
+				return &Client{Endpoint: endpoint}, Info{OSType: h.osType[endpoint]}, nil
 			}
-			return nil, errors.New("connection refused")
+			return nil, Info{}, errors.New("connection refused")
 		},
 	})
 	return d, err
@@ -157,7 +166,7 @@ func TestLocateSocketOrder(t *testing.T) {
 			if d.Endpoint != "unix://"+wantPath || d.Source != "socket list" {
 				t.Errorf("got %s via %s, want %s via socket list", d.Endpoint, d.Source, wantPath)
 			}
-			if !slices.Contains(d.Found, wantPath) {
+			if !slices.Contains(d.Found, "unix://"+wantPath) {
 				t.Errorf("Found %v lacks %s", d.Found, wantPath)
 			}
 		})
@@ -177,7 +186,7 @@ func TestLocatePodmanMachineFirstMatchOfEachGlob(t *testing.T) {
 	if d.Endpoint != "unix://"+tmp {
 		t.Errorf("Endpoint = %s, want %s", d.Endpoint, tmp)
 	}
-	if want := []string{tmp, machine}; !slices.Equal(d.Found, want) {
+	if want := []string{"unix://" + tmp, "unix://" + machine}; !slices.Equal(d.Found, want) {
 		t.Errorf("Found = %v, want %v", d.Found, want)
 	}
 }
@@ -340,6 +349,136 @@ func TestLocateNothing(t *testing.T) {
 	h.sock(".colima/default/docker.sock", false)
 	_, err := h.locate()
 	if err == nil || !strings.Contains(err.Error(), "no container runtime found") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// pipe adds the named pipe NAME and returns its endpoint.
+func (h *fakeHost) pipe(name string, up bool) string {
+	h.pipes["//./pipe/"+name] = true
+	ep := "npipe:////./pipe/" + name
+	h.up[ep] = up
+	return ep
+}
+
+// On Windows, detection probes Docker Desktop's Linux engine, then
+// docker_engine, then Podman machine's pipe (#375).
+func TestLocateWindowsPipeOrder(t *testing.T) {
+	order := []string{"dockerDesktopLinuxEngine", "docker_engine", "podman-machine-default"}
+	for i, want := range order {
+		t.Run(want, func(t *testing.T) {
+			h := newFakeHost(t)
+			h.goos = "windows"
+			h.sock("/var/run/docker.sock", true) // not looked for on Windows
+			var all []string
+			for j, p := range order {
+				all = append(all, h.pipe(p, j >= i))
+			}
+			d, err := h.locate()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Endpoint != "npipe:////./pipe/"+want || d.Source != "named pipe list" {
+				t.Errorf("got %s via %s, want %s via named pipe list", d.Endpoint, d.Source, want)
+			}
+			if !slices.Equal(d.Found, all) {
+				t.Errorf("Found = %v, want %v", d.Found, all)
+			}
+		})
+	}
+}
+
+// A runtime named explicitly that serves Windows containers fails start
+// rather than falling back, on every OS (#375).
+func TestLocateExplicitWindowsContainersFails(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(h *fakeHost) string
+	}{
+		{"DOCKER_HOST", func(h *fakeHost) string {
+			h.env["DOCKER_HOST"] = "npipe:////./pipe/docker_engine"
+			h.up["npipe:////./pipe/docker_engine"] = true
+			return "npipe:////./pipe/docker_engine"
+		}},
+		{"context", func(h *fakeHost) string {
+			h.context("remote", "tcp://10.0.0.5:2375")
+			h.env["DOCKER_CONTEXT"] = "remote"
+			h.up["tcp://10.0.0.5:2375"] = true
+			return "tcp://10.0.0.5:2375"
+		}},
+	} {
+		for _, goos := range []string{"windows", "linux", "darwin"} {
+			t.Run(tc.name+"/"+goos, func(t *testing.T) {
+				h := newFakeHost(t)
+				h.goos = goos
+				h.sock(".docker/run/docker.sock", true) // would answer if fallen through to
+				h.pipe("dockerDesktopLinuxEngine", true)
+				ep := tc.setup(h)
+				h.osType[ep] = "windows"
+				d, err := h.locate()
+				if err == nil || !strings.Contains(err.Error(), "serves Windows containers; switch Docker Desktop to Linux containers") || !strings.Contains(err.Error(), ep) {
+					t.Fatalf("got %s via %s, err %v; want the Windows containers error naming %s", d.Endpoint, d.Source, err, ep)
+				}
+			})
+		}
+	}
+}
+
+// A probed endpoint that serves Windows containers is skipped, and said
+// to be (#375).
+func TestLocateProbedWindowsContainersSkipped(t *testing.T) {
+	h := newFakeHost(t)
+	h.goos = "windows"
+	h.pipe("dockerDesktopLinuxEngine", false)
+	engine := h.pipe("docker_engine", true)
+	h.osType[engine] = "windows"
+	podman := h.pipe("podman-machine-default", true)
+	d, err := h.locate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Endpoint != podman {
+		t.Errorf("Endpoint = %s, want %s", d.Endpoint, podman)
+	}
+	if want := []string{engine}; !slices.Equal(d.Skipped, want) {
+		t.Errorf("Skipped = %v, want %v", d.Skipped, want)
+	}
+
+	// With nothing else, the error says why the one found was not used.
+	h.up[podman] = false
+	_, err = h.locate()
+	if err == nil || !strings.Contains(err.Error(), engine) || !strings.Contains(err.Error(), "Windows containers") {
+		t.Errorf("err = %v, want it to name %s and Windows containers", err, engine)
+	}
+}
+
+// The same holds for a socket on Linux or macOS.
+func TestLocateProbedSocketWindowsContainersSkipped(t *testing.T) {
+	h := newFakeHost(t)
+	first := "unix://" + h.sock("/var/run/docker.sock", true)
+	h.osType[first] = "windows"
+	second := "unix://" + h.sock(".docker/run/docker.sock", true)
+	d, err := h.locate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Endpoint != second || !slices.Equal(d.Skipped, []string{first}) {
+		t.Errorf("got %s, skipped %v; want %s, skipped %s", d.Endpoint, d.Skipped, second, first)
+	}
+}
+
+// A permission-denied pipe on Windows names no uid, which is -1 there.
+func TestLocateWindowsPermissionDenied(t *testing.T) {
+	h := newFakeHost(t)
+	h.goos = "windows"
+	h.pipe("docker_engine", false)
+	env := hostEnv{getenv: func(string) string { return "" }, home: h.home, goos: "windows",
+		isPipe: func(a string) bool { return h.pipes[a] },
+		probe: func(string) (*Client, Info, error) {
+			return nil, Info{}, os.ErrPermission
+		}}
+	_, _, err := locate(env)
+	if err == nil || strings.Contains(err.Error(), "uid") || !strings.Contains(err.Error(), "docker_engine") {
 		t.Errorf("err = %v", err)
 	}
 }

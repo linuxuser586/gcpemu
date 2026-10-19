@@ -58,18 +58,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			hasRuntime := false
 			if checkPlatform(out, report, runtime.GOOS, runtime.GOARCH) {
 				cl, det, rtErr := emuruntime.Locate()
-				if rtErr != nil {
-					fix := "install Docker Engine >= 24, Docker Desktop, OrbStack, Colima or Podman >= 4.9 (needed only for GKE, Cloud SQL and Cloud NAT)"
-					if det.Source != "" {
-						fix = "start that runtime, or choose a running one (unset DOCKER_HOST or DOCKER_CONTEXT, or `docker context use`)"
-					}
-					report(false, "container runtime: "+rtErr.Error(), fix)
-				} else {
-					report(true, fmt.Sprintf("container runtime %s (chosen by %s)", det.Endpoint, det.Source), "")
-				}
-				if others := slices.DeleteFunc(slices.Clone(det.Found), func(s string) bool { return "unix://"+s == det.Endpoint }); len(others) > 0 {
-					fmt.Fprintf(out, "       also found: %s\n", strings.Join(others, ", "))
-				}
+				checkRuntimeDetection(out, report, det, rtErr)
 				hasRuntime = rtErr == nil
 				if hasRuntime {
 					checkVMRelay(cmd.Context(), out, cl)
@@ -513,6 +502,34 @@ func listAddrsCmd(goos string) string {
 		return "`ipconfig`"
 	}
 	return "`ifconfig`"
+}
+
+// checkRuntimeDetection reports the runtime endpoint detection picked and
+// why, the others it found, and any it skipped because it serves Windows
+// containers.
+func checkRuntimeDetection(out io.Writer, report func(ok bool, what, fix string), det emuruntime.Detection, err error) {
+	if err != nil {
+		fix := "install Docker Engine >= 24, Docker Desktop, OrbStack, Colima or Podman >= 4.9 (needed only for GKE, Cloud SQL and Cloud NAT)"
+		switch {
+		case errors.Is(err, emuruntime.ErrWindowsContainers) && det.Source != "":
+			fix = "or choose a runtime serving Linux containers (unset DOCKER_HOST or DOCKER_CONTEXT, or `docker context use`)"
+		case errors.Is(err, emuruntime.ErrWindowsContainers):
+			fix = "" // the error says what to do
+		case det.Source != "":
+			fix = "start that runtime, or choose a running one (unset DOCKER_HOST or DOCKER_CONTEXT, or `docker context use`)"
+		}
+		report(false, "container runtime: "+err.Error(), fix)
+	} else {
+		report(true, fmt.Sprintf("container runtime %s (chosen by %s)", det.Endpoint, det.Source), "")
+	}
+	if others := slices.DeleteFunc(slices.Clone(det.Found), func(s string) bool {
+		return s == det.Endpoint || slices.Contains(det.Skipped, s)
+	}); len(others) > 0 {
+		fmt.Fprintf(out, "       also found: %s\n", strings.Join(others, ", "))
+	}
+	for _, s := range det.Skipped {
+		fmt.Fprintf(out, "[--  ] skipped %s: serves Windows containers\n", s)
+	}
 }
 
 // checkRuntimeArch notes a container runtime whose architecture is not the
