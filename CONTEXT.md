@@ -133,6 +133,13 @@ _Avoid_: reserved port, privileged port (on Windows)
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
 
+**Datastore**:
+A GKE cluster's k3s server state: the k3s server's `server/` directory, holding the kine sqlite database, the cluster CA and credentials, and the join token. A State snapshot saves the Datastore of each RUNNING cluster, so the cluster keeps its Kubernetes objects and CA when the snapshot is restored, including into another Instance. Node volumes (pulled images and local-path PersistentVolume data) are not part of it. A cluster that is not RUNNING when the snapshot is saved comes back with a new Datastore: none of its earlier Kubernetes objects and a new cluster CA.
+_Avoid_: seed (collides with Seed file and Seeding), etcd (k3s here uses kine on sqlite)
+
+**Staged datastore**:
+A Datastore restored from a State snapshot that has not yet been written into its cluster's server volume. The cluster's server takes it on its next start, before the server container first runs. Reset and deleting the cluster drop it.
+
 **Reset**:
 Removing all resources and data from an Instance while keeping its configuration. It does not re-apply the Seed file. To get back to a known state, restore a State snapshot instead.
 
@@ -303,6 +310,7 @@ _Avoid_: egress check, leak detector
 
 - "Service" also appears as GCP and Kubernetes terms. Always qualify those: *backend service*, *Kubernetes Service*, *service account*. The container network that Services share is the *services network*.
 - "Snapshot" on its own is ambiguous. Use *State snapshot* or *Pub/Sub snapshot*.
+- "Datastore" on its own always means a GKE cluster's k3s Datastore. The GCP product is always called *Cloud Datastore* or *Firestore in Datastore mode*.
 - "Endpoint" on its own is ambiguous. Use *Service endpoint*, *Endpoint override*, or GCP's *network endpoint* (NEG).
 - "Gateway" and "frontend" on their own are ambiguous. Load balancer frontends and the network's gateway IP keep their GCP meanings and are always qualified.
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
