@@ -49,6 +49,9 @@ type relayAgent struct {
 	// wait bounds how long a connection or datagram waits for a session
 	// to carry it to the emulator.
 	wait time.Duration
+	// listenPacket binds a UDP socket: net.ListenPacket, which tests
+	// replace to refuse binds as Windows does.
+	listenPacket func(network, addr string) (net.PacketConn, error)
 }
 
 // agentListener is what the agent listens on for one endpoint.
@@ -62,7 +65,7 @@ type agentListener struct {
 const inwardWait = 10 * time.Second
 
 func newRelayAgent() *relayAgent {
-	return &relayAgent{swapped: make(chan struct{}), listeners: map[string]*agentListener{}, wait: inwardWait}
+	return &relayAgent{swapped: make(chan struct{}), listeners: map[string]*agentListener{}, wait: inwardWait, listenPacket: net.ListenPacket}
 }
 
 // serve accepts control connections until l closes. A new connection
@@ -200,14 +203,16 @@ func (a *relayAgent) listen(name, addr string, withUDP bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	l, pc, err := listenPair(addr, withUDP)
+	l, pc, err := a.listenPair(addr, withUDP, false)
 	if err != nil {
 		// The port, or its UDP twin, is taken: try ports the kernel picks.
 		// A free TCP port's UDP twin can still be held or, on Windows, sit
-		// in an excluded port range, so a few are tried.
+		// in an excluded port range, so a few are tried. Windows picks
+		// nearby ports, which can all sit in one of the other protocol's
+		// excluded ranges, so TCP and UDP take turns picking (#459).
 		anyPort := net.JoinHostPort(host, "0")
-		for range udpPairAttempts {
-			if l, pc, err = listenPair(anyPort, withUDP); err == nil {
+		for i := range udpPairAttempts {
+			if l, pc, err = a.listenPair(anyPort, withUDP, i%2 == 0); err == nil {
 				break
 			}
 		}
@@ -272,8 +277,20 @@ func (a *relayAgent) withdraw(name string) {
 const udpPairAttempts = 10
 
 // listenPair listens on addr over TCP and, withUDP, over UDP on the port
-// TCP got.
-func listenPair(addr string, withUDP bool) (net.Listener, net.PacketConn, error) {
+// TCP got, or, udpPicks, over UDP first and TCP on the port UDP got.
+func (a *relayAgent) listenPair(addr string, withUDP, udpPicks bool) (net.Listener, net.PacketConn, error) {
+	if withUDP && udpPicks {
+		pc, err := a.listenPacket("udp", addr)
+		if err != nil {
+			return nil, nil, err
+		}
+		l, err := net.Listen("tcp", pc.LocalAddr().String())
+		if err != nil {
+			pc.Close()
+			return nil, nil, fmt.Errorf("tcp on %s: %w", pc.LocalAddr(), err)
+		}
+		return l, pc, nil
+	}
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, nil, err
@@ -281,7 +298,7 @@ func listenPair(addr string, withUDP bool) (net.Listener, net.PacketConn, error)
 	if !withUDP {
 		return l, nil, nil
 	}
-	pc, err := net.ListenPacket("udp", l.Addr().String())
+	pc, err := a.listenPacket("udp", l.Addr().String())
 	if err != nil {
 		l.Close()
 		return nil, nil, fmt.Errorf("udp on %s: %w", l.Addr(), err)
