@@ -235,7 +235,7 @@ func (s *Service) updateBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	deleted, err := b.deletedAt()
+	deleted, err := b.finalDeletedAt()
 	if err != nil {
 		apierr.Write(w, err)
 		return

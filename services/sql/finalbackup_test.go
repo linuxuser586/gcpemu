@@ -20,18 +20,7 @@ func deleteAndWait(t *testing.T, s *Service, project, name, query string) {
 	if code != 200 {
 		t.Fatalf("delete %s%s: %d %s", name, query, code, body)
 	}
-	var op sqladmin.Operation
-	if err := json.Unmarshal([]byte(body), &op); err != nil {
-		t.Fatal(err)
-	}
-	for deadline := time.Now().Add(10 * time.Second); op.Status != "DONE"; {
-		if time.Now().After(deadline) {
-			t.Fatalf("delete %s: operation %s not done", name, op.Name)
-		}
-		time.Sleep(10 * time.Millisecond)
-		_, body = call(s, "GET", "/projects/"+project+"/operations/"+op.Name, "")
-		_ = json.Unmarshal([]byte(body), &op)
-	}
+	waitOpDone(t, s, project, body)
 }
 
 // getBackups lists the project's backups matching filter.

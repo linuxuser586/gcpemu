@@ -94,6 +94,9 @@ func (s *Service) Restore(ctx context.Context, dir string) error {
 		return err
 	}
 	s.failInterruptedOps()
+	if err := s.migrateDeletedOwners(); err != nil {
+		return err
+	}
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex
