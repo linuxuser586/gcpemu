@@ -38,6 +38,16 @@ import (
 //     GCE_METADATA_HOST=169.254.169.254 (see metadataHostEnv), unless the
 //     container sets them.
 //
+// A pod labelled gcpemu.dev/googleapis=real (a builder such as BuildKit,
+// whose build containers are started by the pod and never get the CA)
+// also gets dnsPolicy None and a dnsConfig naming the node's googleapis
+// resolver (googleAPIsDNSIP, nodeagent.go), which resolves *.googleapis.com
+// as Cloud DNS does on GCP, to real Google, and every other name through
+// the cluster's DNS. Its build containers inherit that resolv.conf, so they
+// reach real Google APIs, such as the public bucket behind proxy.golang.org,
+// while LOCATION-docker.pkg.dev stays emulated (ADR 0019). A pod that
+// sets dnsPolicy None keeps its own DNS; a dnsConfig of its own is merged.
+//
 // The webhook's failurePolicy is Ignore: pods are admitted unchanged when
 // the emulator is unreachable.
 
@@ -49,6 +59,11 @@ const (
 	caBundlePath     = caBundleDir + "/" + caBundleKey
 	systemBundlePath = "/etc/ssl/certs/ca-certificates.crt"
 	injectLabel      = "gcpemu.dev/inject"
+	// googleAPIsLabel=googleAPIsReal gives a pod real Google APIs (see above).
+	googleAPIsLabel = "gcpemu.dev/googleapis"
+	googleAPIsReal  = "real"
+	dnsPolicyNone   = "None"
+	clusterDomain   = "cluster.local"
 )
 
 // caEnvVars are set to the bundle path in every container.
@@ -170,12 +185,26 @@ type admitPod struct {
 		Labels map[string]string `json:"labels"`
 	} `json:"metadata"`
 	Spec struct {
-		Volumes []struct {
+		DNSPolicy string     `json:"dnsPolicy"`
+		DNSConfig *dnsConfig `json:"dnsConfig"`
+		Volumes   []struct {
 			Name string `json:"name"`
 		} `json:"volumes"`
 		Containers     []admitContainer `json:"containers"`
 		InitContainers []admitContainer `json:"initContainers"`
 	} `json:"spec"`
+}
+
+// dnsConfig is a pod's spec.dnsConfig.
+type dnsConfig struct {
+	Nameservers []string    `json:"nameservers,omitempty"`
+	Options     []dnsOption `json:"options,omitempty"`
+	Searches    []string    `json:"searches,omitempty"`
+}
+
+type dnsOption struct {
+	Name  string  `json:"name"`
+	Value *string `json:"value,omitempty"`
 }
 
 type admitContainer struct {
@@ -205,7 +234,7 @@ func (s *Service) servePodAdmission(w http.ResponseWriter, r *http.Request, key 
 	resp := &admissionResponse{UID: req.UID, Allowed: true}
 	var pod admitPod
 	if req.Operation == "CREATE" && json.Unmarshal(req.Object, &pod) == nil {
-		if ops := injectPatch(&pod); len(ops) > 0 {
+		if ops := injectPatch(&pod, req.Namespace); len(ops) > 0 {
 			dry := req.DryRun != nil && *req.DryRun
 			if dry || s.ensureCABundle(r.Context(), key, req.Namespace) {
 				b, _ := json.Marshal(ops)
@@ -217,12 +246,50 @@ func (s *Service) servePodAdmission(w http.ResponseWriter, r *http.Request, key 
 	writeJSON(w, admissionReview{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview", Response: resp})
 }
 
-// injectPatch returns the JSON patch adding the CA bundle to pod, or nil
-// when the pod opted out or is already injected.
-func injectPatch(pod *admitPod) []patchOp {
+// injectPatch returns the JSON patch adding the CA bundle and, for a pod
+// labelled for real Google APIs, their DNS to pod in namespace ns, or nil
+// when the pod opted out or has both already.
+func injectPatch(pod *admitPod, ns string) []patchOp {
 	if pod.Metadata.Labels[injectLabel] == "disabled" {
 		return nil
 	}
+	ops := caPatch(pod)
+	if pod.Metadata.Labels[googleAPIsLabel] == googleAPIsReal && pod.Spec.DNSPolicy != dnsPolicyNone {
+		ops = append(ops,
+			patchOp{Op: "add", Path: "/spec/dnsPolicy", Value: dnsPolicyNone},
+			patchOp{Op: "add", Path: "/spec/dnsConfig", Value: googleAPIsDNSConfig(ns, pod.Spec.DNSConfig)})
+	}
+	return ops
+}
+
+// googleAPIsDNSConfig is the dnsConfig of a pod in ns labelled for real
+// Google APIs: the googleapis resolver and the cluster's search path, with
+// the pod's own dnsConfig merged in as kubelet merges it under
+// ClusterFirst (its nameservers and searches after, its options winning).
+func googleAPIsDNSConfig(ns string, own *dnsConfig) dnsConfig {
+	five := "5"
+	c := dnsConfig{
+		Nameservers: []string{googleAPIsDNSIP},
+		Searches:    []string{ns + ".svc." + clusterDomain, "svc." + clusterDomain, clusterDomain},
+		Options:     []dnsOption{{Name: "ndots", Value: &five}},
+	}
+	if own == nil {
+		return c
+	}
+	c.Nameservers = append(c.Nameservers, own.Nameservers...)
+	c.Searches = append(c.Searches, own.Searches...)
+	for _, o := range own.Options {
+		if o.Name == "ndots" {
+			c.Options = c.Options[1:]
+		}
+	}
+	c.Options = append(c.Options, own.Options...)
+	return c
+}
+
+// caPatch returns the JSON patch adding the CA bundle to pod, or nil when
+// it is already injected.
+func caPatch(pod *admitPod) []patchOp {
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == caBundleName {
 			return nil

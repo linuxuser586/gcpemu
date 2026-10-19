@@ -393,6 +393,24 @@ Workload Identity tokens from the metadata server and reach the emulated Service
 Endpoint override. To opt a namespace or a pod out, label it `gcpemu.dev/inject=disabled`;
 `kube-system` is always skipped. Nodes also trust the CA in their own system store.
 
+Containers that a pod starts itself, such as the ones BuildKit runs for a Dockerfile's `RUN`
+lines, get the cluster's DNS but not the CA, so `storage.googleapis.com` fails TLS in them.
+`go mod download` fails this way, because proxy.golang.org redirects every download to a bucket
+there. Label the pod that starts them `gcpemu.dev/googleapis=real`. The webhook then points the
+pod's DNS, which its containers inherit, at a resolver on the node that resolves
+`*.googleapis.com` through Cloud DNS to real Google, as on GCP. Every other name, including
+`LOCATION-docker.pkg.dev`, still resolves through the cluster. The pod's calls to every
+`googleapis.com` API are then deliberately Escaped requests, so the label suits public data and
+anonymous calls only; on private nodes they need Cloud NAT. A pod that sets `dnsPolicy: None`
+keeps its own DNS, and a `dnsConfig` of its own is merged in. The label does nothing in
+`kube-system` or with `gcpemu.dev/inject=disabled` (ADR 0019).
+
+```yaml
+metadata:
+  labels:
+    gcpemu.dev/googleapis: real   # e.g. on the BuildKit pod
+```
+
 **Host mode** (`gcpemu start --host-mode`, Linux only: elsewhere `start` refuses it) does the
 same for host processes without root. It starts a labelled container (`gcpemu-<id>-hostmode`) that the host reaches at its
 container IP. The container serves HTTPS on :443, plain HTTP on :80 and DNS on :53, answering the
