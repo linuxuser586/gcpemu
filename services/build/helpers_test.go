@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -37,7 +38,7 @@ type env struct {
 func start(t *testing.T, opts ...emutest.Option) *env {
 	t.Helper()
 	emutest.RequireRuntime(t)
-	inst := emutest.Start(t, []string{"build"}, opts...)
+	inst := emutest.Start(t, []string{"build", "gcs"}, opts...)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
 	cb, err := cloudbuild.NewClient(ctx,
@@ -185,4 +186,39 @@ func (e *env) log(b *cloudbuildpb.Build) string {
 		e.t.Fatalf("log of %s: %d %s", b.GetName(), resp.StatusCode, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// object reads a Cloud Storage object through the gateway, as gcloud
+// storage cat does, from byte from on, returning the status and body.
+func (e *env) object(bucket, name string, from int) (int, string) {
+	e.t.Helper()
+	req, err := http.NewRequestWithContext(e.ctx, http.MethodGet, e.inst.GatewayURL()+"/"+bucket+"/"+name, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if from > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", from))
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+// storedLog reads a Build's log object from its logsBucket.
+func (e *env) storedLog(b *cloudbuildpb.Build) string {
+	e.t.Helper()
+	bucket, prefix, _ := strings.Cut(strings.TrimPrefix(b.GetLogsBucket(), "gs://"), "/")
+	name := "log-" + b.GetId() + ".txt"
+	if prefix != "" {
+		name = prefix + "/" + name
+	}
+	code, body := e.object(bucket, name, 0)
+	if code != http.StatusOK {
+		e.t.Fatalf("log object %s/%s: %d %s", bucket, name, code, body)
+	}
+	return body
 }

@@ -6,6 +6,7 @@ import (
 	"path"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
@@ -203,7 +204,7 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 	b.Id, b.Name, b.ProjectId = r.ID, r.name(), project
 	b.Status, b.StatusDetail = cloudbuildpb.Build_QUEUED, ""
 	b.CreateTime, b.StartTime, b.FinishTime = timestamppb.New(s.env.Clock.Now()), nil, nil
-	b.Results, b.Timing, b.FailureInfo = nil, nil, nil
+	b.Results, b.Timing, b.FailureInfo, b.SourceProvenance = nil, nil, nil, nil
 	if b.Timeout == nil {
 		b.Timeout = durationpb.New(defaultTimeout)
 	}
@@ -213,8 +214,11 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 	for _, st := range b.Steps {
 		st.Status, st.ExitCode, st.Timing, st.PullTiming = cloudbuildpb.Build_QUEUED, 0, nil, nil
 	}
+	if err := s.logsBucket(b); err != nil {
+		return nil, err
+	}
 	if gw := s.env.Endpoints.Get("gateway"); gw != "" {
-		b.LogUrl = "http://" + gw + "/_emu/v1/build/" + r.name() + "/log"
+		b.LogUrl = "http://" + gw + "/console/build/" + r.name()
 	}
 	op, err := s.ops.Begin(r.parent(), &cloudbuildpb.BuildOperationMetadata{Build: b})
 	if err != nil {
@@ -234,11 +238,35 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 	return op, nil
 }
 
+// logsBucket gives a Build its logsBucket in gs:// form: the default one
+// when it names none, which is created in Cloud Storage if it is missing.
+func (s *Service) logsBucket(b *cloudbuildpb.Build) error {
+	if b.LogsBucket != "" {
+		if !strings.HasPrefix(b.LogsBucket, "gs://") {
+			b.LogsBucket = "gs://" + b.LogsBucket
+		}
+		return nil
+	}
+	name := defaultLogsBucket(b.GetProjectId())
+	b.LogsBucket = "gs://" + name
+	if objs := s.objects(); objs != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := objs.EnsureServiceBucket(ctx, b.GetProjectId(), name); err != nil {
+			return apierr.Internal("Creating the default logs bucket %s: %v", name, err)
+		}
+	}
+	return nil
+}
+
 // validate refuses a Build that the real API would, and the features this
 // emulator does not have yet rather than run without them.
 func validate(b *cloudbuildpb.Build) error {
 	if len(b.GetSteps()) == 0 {
 		return apierr.InvalidArgument("invalid build: no build steps.")
+	}
+	if err := validateSource(b.GetSource()); err != nil {
+		return err
 	}
 	if len(b.GetSecrets()) > 0 || b.GetAvailableSecrets() != nil {
 		return apierr.New(codes.Unimplemented, "Build secrets are not emulated yet.")

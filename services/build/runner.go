@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -172,7 +173,17 @@ func (s *Service) begin(ref buildRef) {
 func (s *Service) execute(r *liveBuild, b *cloudbuildpb.Build) {
 	defer s.work.Exit()
 	defer close(r.done)
+	s.logs.line(r.ref, fmt.Sprintf("starting build %q", b.GetId()))
+	s.logs.line(r.ref, "")
+	stopFlush := make(chan struct{})
+	flushed := make(chan struct{})
+	go func() {
+		defer close(flushed)
+		s.flushLogs(r, b, stopFlush)
+	}()
 	o := s.runSteps(r, b)
+	close(stopFlush)
+	<-flushed
 	s.removeObjects(r.ref)
 	if !r.halted() {
 		switch c := context.Cause(r.ctx); {
@@ -198,7 +209,18 @@ type outcome struct {
 }
 
 // end gives a Build its final status, logs it and completes its Operation.
+//
+// The log's last line is written to the log object first: gcloud reads the
+// log once more when it sees the Build finished, and stops.
 func (s *Service) end(ref buildRef, o outcome) {
+	if o.status == cloudbuildpb.Build_SUCCESS {
+		s.logs.line(ref, "DONE")
+	} else {
+		s.logs.line(ref, "ERROR: "+o.status.String()+": "+o.detail)
+	}
+	if cur, err := s.load(ref); err == nil {
+		s.flushLog(cur)
+	}
 	var b *cloudbuildpb.Build
 	var op string
 	err := s.update(ref, func(st *stored) {
@@ -217,11 +239,6 @@ func (s *Service) end(ref buildRef, o outcome) {
 	if err != nil {
 		s.env.Log.Error("build: end", "build", ref.name(), "err", err)
 		return
-	}
-	if o.status == cloudbuildpb.Build_SUCCESS {
-		s.logs.line(ref, "DONE")
-	} else {
-		s.logs.line(ref, "ERROR: "+o.status.String()+": "+o.detail)
 	}
 	s.ops.Finish(op, &cloudbuildpb.BuildOperationMetadata{Build: b}, b, opError(o.status))
 }

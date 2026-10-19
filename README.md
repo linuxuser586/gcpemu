@@ -26,7 +26,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings; system metrics over OTLP |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
-| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; step logs at `/_emu/v1/build/<build name>/log` |
+| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket` |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
 ## Quick start
@@ -323,6 +323,23 @@ Cloud Build knobs: `build.concurrency` in `gcpemu.yaml` (`GCPEMU_BUILD_CONCURREN
 `QUEUED` until their `queueTtl` passes. A Reset cancels every Build and removes its containers
 and volumes; a Build that was `QUEUED` or `WORKING` when a State snapshot was saved restores as
 `INTERNAL_ERROR`.
+
+A Build's source is a `storageSource` tarball (gzipped, plain or zip), extracted into `/workspace`
+at the `generation` given (a generation that is gone fails the Build `FETCH_SOURCE_FAILED`), or a
+`gitSource` cloned at its `revision` (branch, tag or commit) with the `alpine/git` image. Other
+sources answer `UNIMPLEMENTED`. Every step's output goes to `log-BUILD_ID.txt` in the Build's
+`logsBucket` while it runs, under its path prefix if it has one; without one the Build gets
+`gs://PROJECT_NUMBER.cloudbuild-logs.googleusercontent.com`, which the emulator creates.
+`options.logging` is recorded, and the log always goes to Cloud Storage. `logUrl` opens the Build in
+the Web console.
+
+gcloud can't stream the log outside Host mode (SRS 11.3): it reads it from
+`storage.UNIVERSE_DOMAIN`, ignoring endpoint overrides, so `gcloud builds submit` fails even when
+the Build succeeds, and `--suppress-logs` doesn't help, since gcloud still reads the log. Pass
+`--async`, or set `options.logging: NONE` in the build config, which makes gcloud wait without
+reading the log and exit non-zero for a failed Build. Then read the log with
+`gcloud storage cat gs://BUCKET/log-BUILD_ID.txt`, in the Web console or at `logUrl`. In Host mode,
+`eval "$(gcpemu env --no-universe)"` points gcloud at `storage.googleapis.com`, and the log streams.
 
 Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
 them with the forwarding rule's own IP (host clients still get the local listener), and the
