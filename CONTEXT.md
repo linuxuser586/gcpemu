@@ -71,6 +71,10 @@ _Avoid_: gateway (unqualified)
 A way of running an Instance so that it answers on real Google hostnames, using local DNS and a locally trusted CA. Clients then need no Endpoint override.
 _Avoid_: "mode" for anything else
 
+**Instance CA**:
+The root certificate authority an Instance creates the first time it starts and keeps for its whole life. It signs Google-managed certificates and Host mode serving certificates, and clients trust it once. It is made of a certificate and a private key, which always belong together: an Instance never uses one without the other and never quietly replaces either.
+_Avoid_: local CA, root CA, emulator CA
+
 **Google front end**:
 The component that terminates TLS for real Google hostnames in Host mode and hands requests to the API gateway. Its in-container piece is the *host-mode relay*. With `--gfe-bind` it also serves another machine on the LAN, to real credentials only, and makes Read-throughs there (ADR 0021).
 _Avoid_: frontend (unqualified)
