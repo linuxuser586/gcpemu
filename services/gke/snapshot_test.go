@@ -20,6 +20,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/services/gke"
 )
 
 // TestStateSnapshot covers FR-CORE-012 for GKE: restoring a State
@@ -65,6 +66,64 @@ func TestStateSnapshot(t *testing.T) {
 	}
 	e := masterAuthEnv(t, inst, c)
 	checkConfigMap(t, e, "saved")
+	checkNodesReady(t, e, 1)
+}
+
+// TestStateSnapshotErrorCluster saves a State snapshot while a cluster is
+// in ERROR: its datastore is not saved, and the restore brings it back
+// RUNNING on a fresh data plane, with a new cluster CA, none of its
+// earlier Kubernetes objects and its nodes rejoined (#286, #295).
+func TestStateSnapshotErrorCluster(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	emutest.HoldClusterSlot(t)
+	ctx := context.Background()
+	inst := emutest.Start(t, []string{"gke"})
+	cm := newClient(t, inst)
+	op, err := cm.CreateCluster(ctx, &containerpb.CreateClusterRequest{Parent: parent, Cluster: &containerpb.Cluster{
+		Name: "snaperr", NodePools: []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitOp(t, cm, zone, op.Name)
+	name := parent + "/clusters/snaperr"
+	saved := waitRunning(t, inst, name)
+	putConfigMap(t, inst, saved, "saved")
+	gsvc, ok := inst.Env.Lookup("gke")
+	if !ok {
+		t.Fatal("gke service not found")
+	}
+	if err := gke.SetClusterStatus(gsvc, name, containerpb.Cluster_ERROR); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := inst.SaveSnapshot(ctx, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	// The only cluster is skipped, so the snapshot holds no gke files.
+	var files []string
+	_ = filepath.WalkDir(filepath.Join(inst.Dir, instance.SnapshotsDir, "fixture", "services", "gke"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			files = append(files, p)
+		}
+		return nil
+	})
+	if len(files) != 0 {
+		t.Fatalf("gke snapshot files of the ERROR cluster %s = %v, want none", saved.Id, files)
+	}
+
+	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	c := waitRunning(t, inst, name)
+	if c.MasterAuth.GetClusterCaCertificate() == saved.MasterAuth.GetClusterCaCertificate() {
+		t.Error("clusterCaCertificate kept by the restore of a fresh data plane")
+	}
+	e := masterAuthEnv(t, inst, c)
+	if code, b := e.kube("GET", "/api/v1/namespaces/default/configmaps/saved", "", nil, nil); code != http.StatusNotFound {
+		t.Errorf("configmap saved: %d %s, want 404", code, b)
+	}
 	checkNodesReady(t, e, 1)
 }
 

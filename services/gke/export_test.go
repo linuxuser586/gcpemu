@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"cloud.google.com/go/container/apiv1/containerpb"
+
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -11,6 +13,20 @@ import (
 // and its start (exported to the external tests).
 func SetBeforeNodeStart(svc emu.Service, f func(ctx context.Context, sn emu.SubnetNet, node, ip string)) {
 	svc.(*Service).beforeNodeStart = f
+}
+
+// SetClusterStatus writes the status of the cluster with resource name
+// name to the Store, leaving its data plane as it is (exported to the
+// external tests).
+func SetClusterStatus(svc emu.Service, name string, st containerpb.Cluster_Status) error {
+	r, err := parseRef(name, "", "", "", "", 1)
+	if err != nil {
+		return err
+	}
+	return svc.(*Service).updateCluster(r.key(), func(_ *clusterRecord, c *containerpb.Cluster) error {
+		c.Status = st
+		return nil
+	})
 }
 
 // SetBeforeServerStart makes f run before each bring-up touches a cluster's
