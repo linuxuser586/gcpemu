@@ -1,14 +1,19 @@
 package lb_test
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/http"
 	goruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/lb"
 )
 
@@ -20,6 +25,14 @@ import (
 // container; elsewhere on 127.0.0.1, or on ::1 in single-loopback mode,
 // where the rules' loopback listeners hold 127.0.0.1.
 func startPublished(t *testing.T, portRange string, ports map[int]string) (*env, func(port int) string) {
+	t.Helper()
+	return startContainerized(t, portRange, func(svc emu.Service, bind string) { lb.SetPublished(svc, ports, bind) })
+}
+
+// startContainerized starts an Instance as startPublished does, with set
+// making its data plane a Containerized Instance's, serving published
+// ports on bind.
+func startContainerized(t *testing.T, portRange string, set func(svc emu.Service, bind string)) (*env, func(port int) string) {
 	t.Helper()
 	if c, err := net.DialTimeout("tcp", "127.0.0.1:8080", time.Second); err == nil {
 		c.Close()
@@ -40,7 +53,7 @@ func startPublished(t *testing.T, portRange string, ports map[int]string) (*env,
 			l.Close()
 		}
 	}
-	lb.SetPublished(svc, ports, bind)
+	set(svc, bind)
 	e.lanLB(newBackend(t))
 	return e, func(port int) string { return net.JoinHostPort(host, strconv.Itoa(port)) }
 }
@@ -150,6 +163,98 @@ func TestPublishedNoSocket(t *testing.T) {
 	e.do(e.c.GlobalForwardingRules.Delete(proj, "a").Do())
 	e.waitEndpoint("lb:b", "127.0.0.1:8080")
 	e.serves(dial(8080))
+}
+
+// fakeRuntime stands in for the Instance's container runtime: each
+// Runtime call takes the next of errs (nil once they run out) and is
+// counted.
+type fakeRuntime struct {
+	mu    sync.Mutex
+	errs  []error
+	calls int
+}
+
+func (f *fakeRuntime) runtime(context.Context) (*runtime.Manager, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		return nil, err
+	}
+	return &runtime.Manager{}, nil
+}
+
+func (f *fakeRuntime) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// A transient runtime failure on the first try leaves the Published ports
+// unknown rather than deciding no-socket mode: rules are not served on
+// published ports and the runtime is not asked again until the backoff
+// ends. The next try, which does not wait for the edge's own backoff,
+// reads the ports, and the waiting rule is served on its --port-range
+// port (#313).
+func TestPublishedRuntimeTransient(t *testing.T) {
+	rng := freePort(t)
+	rt := &fakeRuntime{errs: []error{errors.New("runtime socket not ready")}}
+	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
+			return "self", map[int]string{rng: "127.0.0.1:40001"}, nil
+		}, bind)
+	})
+	svc, _ := e.inst.Env.Lookup("lb")
+	e.forwardingRule("a", 8080)
+	if got := e.inst.Endpoint("lb:a"); got != "" {
+		t.Fatalf("runtime not yet known: endpoint %q, want none", got)
+	}
+	time.Sleep(1500 * time.Millisecond) // the data plane retries each second
+	if lb.RuntimeAvailable(svc) {
+		t.Error("runtime available while it is down")
+	}
+	if n := rt.count(); n != 1 {
+		t.Errorf("runtime tried %d times within the backoff, want 1", n)
+	}
+	if got := e.inst.Endpoint("lb:a"); got != "" {
+		t.Fatalf("runtime not yet known: endpoint %q, want none", got)
+	}
+
+	lb.RetryPublishedNow(svc)
+	e.waitEndpoint("lb:a", "127.0.0.1:40001")
+	e.serves(dial(rng))
+	if !lb.RuntimeAvailable(svc) {
+		t.Error("runtime not available once it answers")
+	}
+}
+
+// A permanent runtime failure (no runtime at all) decides no-socket mode
+// for good, as TestPublishedNoSocket: the runtime is not asked again.
+func TestPublishedRuntimeNone(t *testing.T) {
+	rt := &fakeRuntime{errs: []error{emu.NoRuntime(errors.New("no runtime found"))}}
+	e, dial := startContainerized(t, "", func(svc emu.Service, bind string) {
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
+			t.Error("published ports read without a runtime")
+			return "", nil, nil
+		}, bind)
+	})
+	svc, _ := e.inst.Env.Lookup("lb")
+	e.forwardingRule("a", 8080)
+	e.waitEndpoint("lb:a", "127.0.0.1:8080")
+	e.serves(dial(8080))
+	lb.RetryPublishedNow(svc)
+	time.Sleep(1500 * time.Millisecond)
+	if lb.RuntimeAvailable(svc) {
+		t.Error("runtime available without one")
+	}
+	if n := rt.count(); n != 1 {
+		t.Errorf("runtime tried %d times, want 1", n)
+	}
+	if got := e.inst.Endpoint("lb:a"); got != "127.0.0.1:8080" {
+		t.Errorf("endpoint %q moved from no-socket mode's", got)
+	}
 }
 
 // freePort returns a TCP port free on 127.0.0.1.

@@ -1,6 +1,7 @@
 package emu
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"testing"
@@ -75,4 +76,20 @@ func freePortWindow(t *testing.T, n int) int {
 	}
 	t.Fatalf("no %d contiguous free ports on 127.0.0.1 in %d-%d", n, base, limit-1)
 	return 0
+}
+
+// NoRuntime marks a permanent runtime failure and keeps the error it
+// wraps, message and all (#313).
+func TestNoRuntime(t *testing.T) {
+	cause := errors.New("no runtime found")
+	err := NoRuntime(cause)
+	if !errors.Is(err, ErrNoRuntime) || !errors.Is(err, cause) {
+		t.Errorf("NoRuntime(%v) matches ErrNoRuntime %v, cause %v; want both", cause, errors.Is(err, ErrNoRuntime), errors.Is(err, cause))
+	}
+	if err.Error() != cause.Error() {
+		t.Errorf("message %q, want %q", err, cause)
+	}
+	if errors.Is(cause, ErrNoRuntime) {
+		t.Error("an unmarked error matches ErrNoRuntime")
+	}
 }

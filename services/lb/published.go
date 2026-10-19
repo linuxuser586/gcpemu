@@ -2,12 +2,14 @@ package lb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strconv"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/published"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
@@ -33,7 +35,12 @@ import (
 // Without the runtime socket the Instance cannot read its published
 // ports. A rule then listens on its own port and reports 127.0.0.1 there,
 // which is right when the port is published at the same host port; the
-// first rule on each port wins.
+// first rule on each port wins. Only a permanent failure decides this
+// no-socket mode (no runtime at all, emu.ErrNoRuntime), and once decided
+// it stays, so live endpoints never move. A transient failure (the socket
+// not ready yet, a timeout) leaves the ports unknown: no rule is served on
+// them, and the runtime is asked again after pubRetryAfter, when the
+// waiting rules are served as on a first-try success (#313).
 //
 // The loopback and published listeners share their port on Linux only
 // when both set SO_REUSEPORT (published.ListenShared), which would also
@@ -87,29 +94,82 @@ func (d *dataplane) publishing() publishing {
 	return p
 }
 
+// selfProbe stands in for the runtime in tests: inContainer for
+// runtime.InContainer, runtime for emu.Containers.Runtime, and selfPorts
+// for the Manager's Self and SelfPorts.
+type selfProbe struct {
+	inContainer func() bool
+	runtime     func(ctx context.Context) (*runtime.Manager, error)
+	selfPorts   func(ctx context.Context, rt *runtime.Manager) (self string, ports map[int]string, err error)
+}
+
+// inContainer reports whether the Instance runs in a container. Callers
+// hold d.mu.
+func (d *dataplane) inContainer() bool {
+	if d.self != nil {
+		return d.self.inContainer()
+	}
+	return runtime.InContainer()
+}
+
+// containerRuntime returns the Instance's container runtime; an error
+// matching emu.ErrNoRuntime means it has none for good. Callers hold d.mu.
+func (d *dataplane) containerRuntime(ctx context.Context) (*runtime.Manager, error) {
+	if d.self != nil {
+		return d.self.runtime(ctx)
+	}
+	if d.s.env.Containers == nil {
+		return nil, emu.ErrNoRuntime
+	}
+	return d.s.env.Containers.Runtime(ctx)
+}
+
+// errRuntimeUnknown is selfPublishing's error while the runtime check
+// fails transiently.
+var errRuntimeUnknown = errors.New("container runtime not reachable yet")
+
 // selfPublishing asks the runtime about the Instance's own container.
 func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
-	if !runtime.InContainer() {
+	if !d.inContainer() {
 		return publishing{}, nil
 	}
-	if !d.edge.available(ctx) {
+	// publishing backs off on its own: ask now, whatever the edge's
+	// backoff.
+	switch d.edge.runtimeState(ctx, true) {
+	case rtNone:
 		return publishing{on: true, noSocket: true}, nil
+	case rtUnknown:
+		// Decided by a permanent failure only: try again later (#313).
+		return publishing{}, errRuntimeUnknown
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	rt, err := d.s.env.Containers.Runtime(ctx)
+	rt, err := d.containerRuntime(ctx)
 	if err != nil {
 		return publishing{}, err
 	}
-	if rt.Self() == "" {
+	self, ports, err := d.selfPorts(ctx, rt)
+	if err != nil {
+		return publishing{}, err
+	}
+	if self == "" {
 		// On the host network: as on the host.
 		return publishing{}, nil
 	}
-	ports, err := rt.SelfPorts(ctx)
-	if err != nil {
-		return publishing{}, err
-	}
 	return publishing{on: true, ports: published.NewPorts(ports, d.s.env.Config)}, nil
+}
+
+// selfPorts returns the Instance's own container ("" on the host network)
+// and the ports it publishes. Callers hold d.mu.
+func (d *dataplane) selfPorts(ctx context.Context, rt *runtime.Manager) (string, map[int]string, error) {
+	if d.self != nil {
+		return d.self.selfPorts(ctx, rt)
+	}
+	if rt.Self() == "" {
+		return "", nil, nil
+	}
+	ports, err := rt.SelfPorts(ctx)
+	return rt.Self(), ports, err
 }
 
 // listenLoop opens a forwarding rule's loopback listener, sharing its port
