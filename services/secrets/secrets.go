@@ -9,6 +9,7 @@ package secrets
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/genproto/googleapis/cloud/location"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -32,14 +34,15 @@ type Service struct {
 
 	sweepMu sync.Mutex // one sweep at a time, side effects included
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	// loops runs the sweep loop; Reset restarts it (#307).
+	loops inflight.Loops
 }
 
 var (
 	_ emu.Service         = (*Service)(nil)
 	_ emu.ClockObserver   = (*Service)(nil)
+	_ emu.Resetter        = (*Service)(nil)
+	_ emu.ResetFinisher   = (*Service)(nil)
 	_ emu.ResourceCounter = (*Service)(nil)
 	_ emu.Seeder          = (*Service)(nil)
 	_ emu.SeedExporter    = (*Service)(nil)
@@ -71,37 +74,36 @@ func (s *Service) Register(r emu.Router) error {
 	return nil
 }
 
-// Start runs the sweep of time-driven changes.
+// Start runs the sweep of time-driven changes, the first one at once.
 func (s *Service) Start(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cancel != nil {
-		return nil
-	}
-	bg, cancel := context.WithCancel(context.Background())
-	s.cancel, s.done = cancel, make(chan struct{})
-	go func(done chan struct{}) {
-		defer close(done)
-		s.loop(bg, sweepInterval)
-	}(s.done)
+	s.loops.Start(func(ctx context.Context) { s.loop(ctx, sweepInterval) })
+	s.kick()
 	return nil
 }
 
 // Stop stops the sweep.
 func (s *Service) Stop(ctx context.Context) error {
-	s.mu.Lock()
-	cancel, done := s.cancel, s.done
-	s.cancel, s.done = nil, nil
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		select {
-		case <-done:
-		case <-ctx.Done():
-		}
+	_ = s.loops.Stop(ctx)
+	return nil
+}
+
+// Reset stops a sweep in flight, waiting for it (bounded by ctx), so none
+// of its changes, notifications or rotations from the state before the
+// Reset lands after it (#307); the store is reset by the instance, and the
+// sweep runs again from ResetDone.
+func (s *Service) Reset(ctx context.Context) error {
+	select {
+	case <-s.kickC:
+	default:
+	}
+	if err := s.loops.Reset(ctx); err != nil {
+		return fmt.Errorf("secrets: waiting for the sweep: %w", err)
 	}
 	return nil
 }
+
+// ResetDone runs the sweep again once the store is reset too.
+func (s *Service) ResetDone() { s.loops.Resume() }
 
 func (s *Service) Ready() error { return nil }
 

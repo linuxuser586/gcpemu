@@ -10,6 +10,7 @@ import (
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/certs"
 )
@@ -110,7 +111,13 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 		if equalStatus(c.Managed.DomainStatus, status) && !all {
 			continue
 		}
+		if s.beforeCertWrite != nil {
+			s.beforeCertWrite(ctx, path)
+		}
 		_ = s.env.Store.Update(func(tx store.Tx) error {
+			if inflight.Halted(ctx) {
+				return nil // read before a Reset
+			}
 			if !store.Exists(tx, kindSSLCertificate.ns(), path) {
 				return nil
 			}

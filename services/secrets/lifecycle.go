@@ -7,6 +7,7 @@ import (
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -94,6 +95,9 @@ func (s *Service) sweep(ctx context.Context) {
 		return
 	}
 	for _, e := range events {
+		if inflight.Halted(ctx) {
+			return // the state these events came from was reset
+		}
 		if e.event == "SECRET_DELETE" {
 			s.deletePolicy(ctx, e.ref.resource())
 		}
@@ -111,13 +115,13 @@ func (s *Service) loop(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		s.sweep(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		case <-s.kickC:
 		}
+		s.sweep(ctx)
 	}
 }
 

@@ -19,14 +19,16 @@ package certs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
-	"sync"
 
 	"cloud.google.com/go/certificatemanager/apiv1/certificatemanagerpb"
 	"cloud.google.com/go/networksecurity/apiv1/networksecuritypb"
 	"google.golang.org/genproto/googleapis/cloud/location"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -38,9 +40,8 @@ type Service struct {
 	cache tlsCache
 	kickC chan struct{}
 
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	// loops runs the provisioner; Reset restarts it (#307).
+	loops inflight.Loops
 }
 
 // New returns the service.
@@ -66,37 +67,18 @@ func (s *Service) Register(r emu.Router) error {
 	return nil
 }
 
-// Start runs the managed-certificate provisioner.
+// Start runs the managed-certificate provisioner, its first pass at once.
 func (s *Service) Start(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cancel != nil {
-		return nil
-	}
-	bg, cancel := context.WithCancel(context.Background())
-	s.cancel, s.done = cancel, make(chan struct{})
 	s.invalidate()
-	go func(done chan struct{}) {
-		defer close(done)
-		s.reconcileLoop(bg)
-	}(s.done)
+	s.loops.Start(s.reconcileLoop)
+	s.kick()
 	return nil
 }
 
 // Stop stops the provisioner and pending operations.
 func (s *Service) Stop(ctx context.Context) error {
 	s.ops.Close()
-	s.mu.Lock()
-	cancel, done := s.cancel, s.done
-	s.cancel, s.done = nil, nil
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-		select {
-		case <-done:
-		case <-ctx.Done():
-		}
-	}
+	_ = s.loops.Stop(ctx)
 	return nil
 }
 
@@ -126,13 +108,27 @@ func (s *Service) ResourceCounts() map[string]int {
 	return out
 }
 
-// Reset drops pending operations, waiting for running ones (#301), and
-// cached certificates; the store is reset by the instance.
+// Reset drops pending operations, waiting for running ones (#301), stops
+// a provisioning pass in flight, waiting for it (#307), and drops cached
+// certificates; the store is reset by the instance, and the provisioner
+// runs again from ResetDone.
 func (s *Service) Reset(ctx context.Context) error {
 	err := s.ops.Reset(ctx)
+	select {
+	case <-s.kickC:
+	default:
+	}
+	if lerr := s.loops.Reset(ctx); lerr != nil {
+		err = errors.Join(err, fmt.Errorf("certs: waiting for the provisioner: %w", lerr))
+	}
 	s.invalidate()
 	return err
 }
+
+var _ emu.ResetFinisher = (*Service)(nil)
+
+// ResetDone runs the provisioner again once the store is reset too.
+func (s *Service) ResetDone() { s.loops.Resume() }
 
 // Snapshot implements emu.Snapshotter: certificates are in the store.
 func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }

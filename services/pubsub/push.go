@@ -120,7 +120,9 @@ func (s *Service) pushOne(ctx context.Context, sb *sub, d pushDelivery) {
 			s.nack(sb, e, now, true)
 		}
 	}
+	s.work.Enter()
 	s.mu.Unlock()
+	defer s.work.Exit()
 	_ = s.commit(&w)
 }
 

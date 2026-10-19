@@ -535,6 +535,11 @@ func (in *Instance) reset(ctx context.Context) error {
 	}
 	errs = append(errs, in.containers.reset(ctx))
 	errs = append(errs, in.Env.Store.Reset())
+	for _, s := range in.services {
+		if f, ok := s.(emu.ResetFinisher); ok {
+			f.ResetDone()
+		}
+	}
 	in.Log.Clear()
 	if a, ok := in.Env.Auth.(*emu.PolicyAuthorizer); ok {
 		a.ClearDenials()

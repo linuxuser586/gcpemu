@@ -11,6 +11,8 @@ import (
 	"time"
 
 	compute "google.golang.org/api/compute/v1"
+
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 )
 
 // Values of the {cdn_cache_status} header variable (FR-CDN-004).
@@ -70,8 +72,12 @@ type Cache struct {
 
 	mu       sync.Mutex
 	inflight map[string]*flight
-	// bg tracks background revalidations (stale-while-revalidate).
-	bg sync.WaitGroup
+	// bg tracks background revalidations (stale-while-revalidate), which
+	// run on bgCtx; Reset cancels it, starts bg's next generation under
+	// mu and waits for them (#307).
+	bg       inflight.Tracker
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
 	// counts are each backend's {cdn_cache_status} totals, by backend ID.
 	counts sync.Map // string → *counts
 }
@@ -87,6 +93,7 @@ func NewCache(o Options) (*Cache, error) {
 		o.Clock = realClock{}
 	}
 	c := &Cache{st: newStore(o.Dir, o.MaxBytes), clock: o.Clock, inflight: map[string]*flight{}}
+	c.bgCtx, c.bgCancel = context.WithCancel(context.Background())
 	return c, c.st.load()
 }
 
@@ -105,7 +112,22 @@ func (c *Cache) Stats() (entries int, bytes int64) {
 func (c *Cache) Limit() int64 { return c.st.limit }
 
 // Wait blocks until background revalidations finish (tests, shutdown).
-func (c *Cache) Wait() { c.bg.Wait() }
+func (c *Cache) Wait() { _ = c.bg.Wait(context.Background()) }
+
+// Reset cancels background revalidations and waits for them, bounded by
+// ctx, so none stores a response fetched before it afterwards (#307);
+// then it removes every cached object and the backends' totals.
+func (c *Cache) Reset(ctx context.Context) error {
+	c.mu.Lock()
+	c.bgCancel()
+	c.bgCtx, c.bgCancel = context.WithCancel(context.Background())
+	c.bg.Next()
+	c.mu.Unlock()
+	err := c.bg.Wait(ctx)
+	c.purge()
+	c.resetCounts()
+	return err
+}
 
 // Invalidate removes the entries of the given backends (all backends when
 // empty) whose host matches host ("" = any) and whose path matches path:
@@ -271,13 +293,18 @@ func (c *Cache) revalidateAsync(q *request, origin http.Handler) {
 	}
 	f := &flight{done: make(chan struct{})}
 	c.inflight[q.primary] = f
+	bgCtx := c.bgCtx
+	c.bg.Enter()
 	c.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.WithoutCancel(q.r.Context()))
+	stop := context.AfterFunc(bgCtx, cancel)
 	bq := *q
-	bq.r = q.r.Clone(context.WithoutCancel(q.r.Context()))
+	bq.r = q.r.Clone(ctx)
 	bq.r.Header.Del("Range")
-	c.bg.Add(1)
 	go func() {
-		defer c.bg.Done()
+		defer c.bg.Exit()
+		defer stop()
+		defer cancel()
 		defer func() {
 			c.mu.Lock()
 			delete(c.inflight, q.primary)

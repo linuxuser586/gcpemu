@@ -95,10 +95,12 @@ func (s *Service) Stop(ctx context.Context) error {
 // Ready implements emu.Service.
 func (s *Service) Ready() error { return nil }
 
-// Reset clears the cache and the backends' totals on `gcpemu reset`.
+// Reset clears the cache and the backends' totals on `gcpemu reset`,
+// after waiting for background revalidations (#307).
 func (s *Service) Reset(ctx context.Context) error {
-	s.cache.Purge()
-	s.cache.resetCounts()
+	if err := s.cache.Reset(ctx); err != nil {
+		return fmt.Errorf("cdn: waiting for background revalidations: %w", err)
+	}
 	return nil
 }
 

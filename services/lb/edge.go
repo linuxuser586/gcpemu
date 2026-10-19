@@ -93,9 +93,7 @@ type edge struct {
 const edgeIdleGrace = 5 * time.Second
 
 func newEdge(d *dataplane) *edge {
-	e := &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}, vpcs: map[string]emu.SubnetNet{}}
-	go e.routeLoop(d.ctx)
-	return e
+	return &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}, vpcs: map[string]emu.SubnetNet{}}
 }
 
 func (e *edge) env() *emu.Env { return e.d.s.env }
@@ -478,17 +476,24 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	if e.d.s.options().DirectDial {
 		return
 	}
-	svc, ok := e.env().Lookup("gke")
-	if !ok {
-		return
-	}
-	g, ok := svc.(*gke.Service)
-	if !ok {
-		return
+	podRoutes := e.d.s.podRoutes
+	if podRoutes == nil {
+		svc, ok := e.env().Lookup("gke")
+		if !ok {
+			return
+		}
+		g, ok := svc.(*gke.Service)
+		if !ok {
+			return
+		}
+		podRoutes = g.PodRoutes
 	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	prs := g.PodRoutes(cctx)
+	prs := podRoutes(cctx)
+	if ctx.Err() != nil {
+		return // stopped, or the routes were read before a Reset
+	}
 	var pub []edgeListener
 	if len(prs) > 0 {
 		// Only GKE nodes are VPC workloads that call load balancers.

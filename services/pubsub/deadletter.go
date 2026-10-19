@@ -56,7 +56,10 @@ func (s *Service) forwardDeadLetter(sb *sub, e *entry) {
 	}
 	dlt := sb.cfg.GetDeadLetterPolicy().GetDeadLetterTopic()
 	attempts := e.attempts
+	gen := s.work.Gen()
+	s.work.Enter()
 	s.mu.Unlock()
+	defer s.work.Exit()
 
 	src := e.m.pb
 	attrs := make(map[string]string, len(src.GetAttributes())+4)
@@ -65,7 +68,7 @@ func (s *Service) forwardDeadLetter(sb *sub, e *entry) {
 	attrs["CloudPubSubDeadLetterSourceSubscription"] = lastSegment(sb.name)
 	attrs["CloudPubSubDeadLetterSourceSubscriptionProject"] = projectOf(sb.name)
 	attrs["CloudPubSubDeadLetterSourceTopicPublishTime"] = src.GetPublishTime().AsTime().Format(time.RFC3339Nano)
-	_, err := s.publish(dlt, []*pubsubpb.PubsubMessage{{Data: src.GetData(), Attributes: attrs, OrderingKey: src.GetOrderingKey()}})
+	_, err := s.publishUnlessReset(gen, dlt, []*pubsubpb.PubsubMessage{{Data: src.GetData(), Attributes: attrs, OrderingKey: src.GetOrderingKey()}})
 
 	var w writes
 	now := time.Now()

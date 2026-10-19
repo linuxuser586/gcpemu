@@ -24,8 +24,10 @@ import (
 	"sync/atomic"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/compute"
+	"github.com/linuxuser586/gcpemu/services/gke"
 )
 
 // Service is the lb service module.
@@ -41,7 +43,16 @@ type Service struct {
 	certMu   sync.Mutex
 	certKick chan struct{}
 	stop     context.CancelFunc
-	bgDone   chan struct{}
+	// loops runs the managed-certificate and edge route loops, whose
+	// passes Reset stops and waits for (#307).
+	loops inflight.Loops
+
+	// beforeCertWrite, set by tests, runs before a managed-certificate
+	// pass writes a certificate's new status.
+	beforeCertWrite func(ctx context.Context, path string)
+	// podRoutes, set by tests, replaces GKE as the edge's source of pod
+	// routes.
+	podRoutes func(ctx context.Context) []gke.PodRoute
 
 	// Options for tests. Tests set them after Start, while the data-plane
 	// loops already read them.
@@ -106,12 +117,8 @@ func (s *Service) Register(r emu.Router) error {
 func (s *Service) Start(ctx context.Context) error {
 	bg, cancel := context.WithCancel(context.Background())
 	s.stop = cancel
-	s.bgDone = make(chan struct{})
 	s.dp.start(bg)
-	go func() {
-		defer close(s.bgDone)
-		s.managedCertLoop(bg)
-	}()
+	s.loops.Start(s.managedCertLoop, s.dp.edge.routeLoop)
 	s.changed()
 	return nil
 }
@@ -120,7 +127,7 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context) error {
 	if s.stop != nil {
 		s.stop()
-		<-s.bgDone
+		_ = s.loops.Stop(ctx)
 	}
 	s.dp.close(ctx)
 	return nil
@@ -138,11 +145,29 @@ func (s *Service) ResourceCounts() map[string]int {
 	return store.Counts(s.env.Store, nss)
 }
 
-// Reset drops the data plane's runtime state; the store is wiped by the core.
+// Reset stops the managed-certificate and edge route passes in flight,
+// waiting for them (bounded by ctx), so none writes a certificate or
+// creates an edge container or attachment from the state before the
+// Reset after it (#307); they run again from ResetDone. It drops the data
+// plane's runtime state; the store is wiped by the core.
 func (s *Service) Reset(ctx context.Context) error {
+	select {
+	case <-s.certKick:
+	default:
+	}
+	err := s.loops.Reset(ctx)
 	s.changed()
+	if err != nil {
+		return fmt.Errorf("lb: waiting for background work: %w", err)
+	}
 	return nil
 }
+
+var _ emu.ResetFinisher = (*Service)(nil)
+
+// ResetDone runs the managed-certificate and edge route loops again once
+// the store is reset too.
+func (s *Service) ResetDone() { s.loops.Resume() }
 
 // Snapshot implements emu.Snapshotter: the load balancer's resources are
 // in the store.
