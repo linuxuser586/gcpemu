@@ -396,6 +396,7 @@ func TestGKE(t *testing.T) {
 
 	t.Run("WorkloadIdentity", func(t *testing.T) { testWorkloadIdentity(t, e) })
 	t.Run("PrivateDNS", func(t *testing.T) { testPrivateDNS(t, e) })
+	t.Run("RealGoogleAPIs", func(t *testing.T) { testRealGoogleAPIs(t, e) })
 	t.Run("NEG", func(t *testing.T) { testNEG(t, e) })
 
 	t.Run("PrivateCluster", func(t *testing.T) {
@@ -567,6 +568,48 @@ sleep 1; done`
 		if job.Status.Succeeded != 1 {
 			t.Errorf("Job %s fetching a token at start failed", name)
 		}
+	}
+}
+
+// testRealGoogleAPIs is issue #427: a pod labelled gcpemu.dev/googleapis=real
+// (and so the containers it starts, which inherit its resolv.conf) resolves
+// *.googleapis.com through Cloud DNS on the cluster's network, as on GCP,
+// instead of to the emulator; an unlabelled pod still gets the emulator,
+// and cluster names resolve in both. A private googleapis.com zone stands
+// in for real Google so that the test needs no internet.
+func testRealGoogleAPIs(t *testing.T, e *env) {
+	network := e.c.GetNetworkConfig().GetNetwork()
+	zone := map[string]any{"name": "googleapis", "dnsName": "googleapis.com.", "description": "", "visibility": "private",
+		"privateVisibilityConfig": map[string]any{"networks": []map[string]any{{"networkUrl": network}}}}
+	if code := gw(t, e.inst, "POST", "/dns/v1/projects/"+project+"/managedZones", zone, nil); code != 200 {
+		t.Fatalf("create zone: %d", code)
+	}
+	rr := map[string]any{"name": "container.googleapis.com.", "type": "A", "ttl": 30, "rrdatas": []string{"10.9.9.10"}}
+	if code := gw(t, e.inst, "POST", "/dns/v1/projects/"+project+"/managedZones/googleapis/rrsets", rr, nil); code != 200 {
+		t.Fatalf("create record: %d", code)
+	}
+	// Other subtests' unserved googleapis.com names need the zone gone.
+	defer gw(t, e.inst, "DELETE", "/dns/v1/projects/"+project+"/managedZones/googleapis", nil, nil)
+	defer gw(t, e.inst, "DELETE", "/dns/v1/projects/"+project+"/managedZones/googleapis/rrsets/container.googleapis.com./A", nil, nil)
+
+	script := `while true; do
+g=$(nslookup container.googleapis.com 2>&1 | grep -o -e 10.9.9.10 -e 169.254.169.254 | head -1)
+k=N; nslookup kubernetes.default.svc.cluster.local 2>&1 | grep -Fqw 34.118.224.1 && k=Y
+echo "R google=$g kube=$k"; sleep 1; done`
+	for name, labels := range map[string]map[string]string{"apis-real": {"gcpemu.dev/googleapis": "real"}, "apis-emulated": nil} {
+		e.mustKube("POST", "/api/v1/namespaces/default/pods", map[string]any{
+			"apiVersion": "v1", "kind": "Pod",
+			"metadata": map[string]any{"name": name, "namespace": "default", "labels": labels},
+			"spec": map[string]any{"containers": []map[string]any{{
+				"name": "c", "image": testImage, "imagePullPolicy": "IfNotPresent",
+				"command": []string{"sh", "-c", script},
+			}}},
+		}, nil)
+	}
+	for name, want := range map[string]string{"apis-real": "R google=10.9.9.10 kube=Y", "apis-emulated": "R google=169.254.169.254 kube=Y"} {
+		eventually(t, 60*time.Second, name+" logging "+want, func() bool {
+			return strings.Contains(e.podLogs("default", name), want)
+		})
 	}
 }
 

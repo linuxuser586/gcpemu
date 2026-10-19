@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	mdns "github.com/miekg/dns"
+
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
@@ -42,9 +44,17 @@ import (
 //     services by real hostname (FR-INT-007). Names the emulator does not
 //     serve (logging.googleapis.com, ...) are relayed to the emulated
 //     Cloud DNS and resolve as usual.
+//   - 169.254.169.253:53 the googleapis resolver (googleAPIsDNSIP) for pods
+//     labelled gcpemu.dev/googleapis=real (cainject.go, ADR 0019).
 //   - :15090 on every address, the ClusterIP relay (clusteriprelay.go), through
 //     which the emulator connects host clients to Services' ClusterIPs
 //     (ADR 0014).
+
+// googleAPIsDNSIP is the node's googleapis resolver: *.googleapis.com
+// resolves as on GCP (through Cloud DNS, to real Google) and every other
+// name through the cluster's DNS. Pods labelled gcpemu.dev/googleapis=real
+// use it (cainject.go, ADR 0019).
+const googleAPIsDNSIP = "169.254.169.253"
 
 const (
 	nodeAgentName  = "gke-node"
@@ -96,7 +106,8 @@ type nodeConfig struct {
 	// Runtime names the container runtime, for errors about its kernel.
 	Runtime string `json:"runtime,omitempty"`
 	// Secret and ServiceCIDR configure the ClusterIP relay (clusteriprelay.go):
-	// the cluster's secret, and the Service range it connects to.
+	// the cluster's secret, and the Service range it connects to. The
+	// googleapis resolver finds the cluster's DNS in ServiceCIDR too.
 	Secret      string `json:"secret,omitempty"`
 	ServiceCIDR string `json:"serviceCidr,omitempty"`
 }
@@ -216,12 +227,15 @@ func evacuate(root string, write func(string, []byte, os.FileMode) error) error 
 	}
 }
 
-// setupNodeNetwork adds the metadata address, fixes the default route,
-// points registry hosts at the proxy and writes kubelet's resolv.conf.
+// setupNodeNetwork adds the metadata and googleapis resolver addresses,
+// fixes the default route, points registry hosts at the proxy and writes
+// kubelet's resolv.conf.
 func setupNodeNetwork(cfg nodeConfig) error {
-	if out, err := exec.Command("ip", "addr", "add", metadataIP+"/32", "dev", "lo").CombinedOutput(); err != nil &&
-		!strings.Contains(string(out), "File exists") {
-		return fmt.Errorf("ip addr add: %v: %s", err, out)
+	for _, ip := range []string{metadataIP, googleAPIsDNSIP} {
+		if out, err := exec.Command("ip", "addr", "add", ip+"/32", "dev", "lo").CombinedOutput(); err != nil &&
+			!strings.Contains(string(out), "File exists") {
+			return fmt.Errorf("ip addr add: %v: %s", err, out)
+		}
 	}
 	private := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 	defaultVia, privateVia := cfg.DefaultVia, cfg.PrivateVia
@@ -391,7 +405,8 @@ func (t *nodeTokenSource) token() string {
 }
 
 // serveNodeDNS relays DNS to the emulator over UDP and TCP. It answers
-// metadata.google.internal and the frontend's hostnames itself.
+// metadata.google.internal and the frontend's hostnames itself. It also
+// serves the googleapis resolver when the cluster's DNS address is known.
 func serveNodeDNS(cfg nodeConfig) (func(), error) {
 	upstream := cfg.DNS
 	if upstream == "" {
@@ -404,7 +419,21 @@ func serveNodeDNS(cfg nodeConfig) (func(), error) {
 		Upstreams: func(string) []string { return []string{upstream} },
 		Network:   cfg.Network,
 	}
-	return frontend.ListenDNS(metadataIP+":53", h)
+	stop, err := frontend.ListenDNS(metadataIP+":53", h)
+	if err != nil {
+		return nil, err
+	}
+	kubeDNS, err := clusterDNS(cfg.ServiceCIDR)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gke-node: pods labelled %s=real resolve nothing: %v\n", googleAPIsLabel, err)
+		return stop, nil
+	}
+	stopGoogleAPIs, err := frontend.ListenDNS(googleAPIsDNSIP+":53", googleAPIsDNS(upstream, net.JoinHostPort(kubeDNS, "53"), cfg.Network))
+	if err != nil {
+		stop()
+		return nil, err
+	}
+	return func() { stopGoogleAPIs(); stop() }, nil
 }
 
 // nodeDNSAnswer returns the names the node relay answers with addr.
@@ -441,4 +470,38 @@ func addrIn(cidr string) (string, error) {
 func inCIDR(cidr, ip string) bool {
 	_, n, err := net.ParseCIDR(cidr)
 	return err == nil && n.Contains(net.ParseIP(ip))
+}
+
+// clusterDNS returns the cluster DNS (kube-dns) address k3s picks in
+// serviceCIDR when, as in startServer (dataplane.go), it is given no
+// --cluster-dns: the range's 10th address.
+func clusterDNS(serviceCIDR string) (string, error) {
+	_, n, err := net.ParseCIDR(serviceCIDR)
+	if err != nil {
+		return "", err
+	}
+	ip := n.IP.To4()
+	if ip == nil {
+		return "", fmt.Errorf("service range %s is not IPv4", serviceCIDR)
+	}
+	v := uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3]) + 10
+	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v)).String(), nil
+}
+
+// googleAPIsDNS is the googleapis resolver's handler: *.googleapis.com
+// goes to Cloud DNS (cloud) tagged with the node's VPC network, which
+// resolves it to real Google as on GCP, and every other name to the
+// cluster's DNS (cluster), whose upstream is the node relay.
+func googleAPIsDNS(cloud, cluster, network string) mdns.Handler {
+	google := &frontend.DNS{Upstreams: func(string) []string { return []string{cloud} }, Network: network}
+	rest := &frontend.DNS{Upstreams: func(string) []string { return []string{cluster} }}
+	return mdns.HandlerFunc(func(w mdns.ResponseWriter, req *mdns.Msg) {
+		if len(req.Question) == 1 {
+			if n := frontend.Normalize(req.Question[0].Name); n == "googleapis.com" || strings.HasSuffix(n, ".googleapis.com") {
+				google.ServeDNS(w, req)
+				return
+			}
+		}
+		rest.ServeDNS(w, req)
+	})
 }
