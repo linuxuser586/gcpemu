@@ -333,6 +333,10 @@ _Avoid_: "acceptance" on its own, e2e
 Tests that build the OCI image and drive a Containerized Instance from the host.
 _Avoid_: image tests
 
+**Image readiness check**:
+Starting a release's amd64 OCI image, with the host's container runtime, and requiring it to report ready before any of its tags is pushed. Unlike the Containerized Instance tests, it runs the image built from the release's binaries.
+_Avoid_: smoke test
+
 **Escape guard**:
 A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it.
 _Avoid_: egress check, leak detector
