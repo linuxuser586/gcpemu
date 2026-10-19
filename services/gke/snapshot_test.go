@@ -130,7 +130,8 @@ func TestStateSnapshotErrorCluster(t *testing.T) {
 // TestStateSnapshotOtherInstance restores a State snapshot into a later
 // Instance with the same dir but a different Instance ID, then restarts
 // it: the restored objects and those created since survive, so the
-// restored datastore is not written again (#286).
+// restored datastore is not written again (#286). The restore does not
+// wait for the cluster's Store-recovery bring-up to finish (#303).
 func TestStateSnapshotOtherInstance(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
@@ -191,8 +192,9 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 	if inst.ID == ids[0] {
 		t.Fatalf("Instance ID kept: %s", inst.ID)
 	}
-	// It first comes back fresh from the Store, on the new Instance's volumes.
-	waitRunning(t, inst, name)
+	// Restore deliberately during the Store-recovery bring-up, as a user
+	// restoring right after a restart would. Nothing makes sure it is still
+	// in flight; TestResetRestoreDuringBringUp checks that ordering reliably.
 	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
 		_ = inst.Shutdown(ctx)
 		t.Fatal(err)
