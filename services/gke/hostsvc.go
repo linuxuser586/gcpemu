@@ -326,6 +326,9 @@ func (s *Service) serveHostOnAlias(ctx context.Context, key, id string, svc *kub
 		for _, p := range ports {
 			var ln net.Listener
 			if ln, err = listenAlias(ip, p); loopback.Refused(err) != loopback.NotRefused {
+				if loopback.Refused(err) == loopback.Excluded {
+					err = loopback.ExcludedError(err, "tcp")
+				}
 				s.env.Log.Warn("gke: the host refuses a Kubernetes Service port; host clients cannot reach it", "service", id, "address", ip, "port", p, "err", err)
 				err = nil
 				continue

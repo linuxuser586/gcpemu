@@ -36,7 +36,7 @@ import (
 //     port; 0 = dynamic).
 //
 // Windows has no privileged ports: a bind it refuses is of a port in an
-// excluded range (Hyper-V, WSL), which the edge's published port would hit
+// excluded range (Hyper-V, WSL), which the Edge relay's host port would hit
 // too, so the forwarding rule fails instead (ADR 0015).
 //
 // A host on which 127.0.0.2 cannot be bound (macOS without loopback
@@ -198,7 +198,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	if !d.single {
 		lip = d.loopIP(fe.ip)
 	}
-	// A forced edge takes privileged ports without trying the bind, on
+	// A forced Edge relay takes privileged ports without trying the bind, on
 	// hosts whose privileged ports it relays: not macOS, which binds them
 	// on the wildcard address, nor Windows, which has none.
 	forced := d.s.options().Edge && fe.port < 1024 && loopback.RefusalOn(d.goos) == loopback.Privileged

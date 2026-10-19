@@ -185,7 +185,7 @@ func checkExcludedPorts(out io.Writer, cfg *config.Config, running bool) {
 		return
 	}
 	reportExcludedPorts(out, "tcp", tcp, ports)
-	if p, ok := ports["port dns"]; ok {
+	if p := cfg.Port("dns"); !running && p != 0 {
 		if udp, err := loopback.ExcludedRanges("udp"); err == nil {
 			reportExcludedPorts(out, "udp", udp, map[string]int{"port dns": p})
 		}

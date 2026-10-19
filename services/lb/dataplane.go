@@ -35,7 +35,8 @@ type dataplane struct {
 
 	mu        sync.Mutex
 	listeners map[string]*listener // by frontend key "ip:port"
-	// unavailable holds why each frontend without a listener has none.
+	// unavailable holds why each forwarding rule (by frontend key) without
+	// a listener has none.
 	unavailable map[string]string
 	loopX       map[string]int // forwarding rule IP → 127.0.0.x
 	single      bool           // single-loopback mode (listeners.go)
