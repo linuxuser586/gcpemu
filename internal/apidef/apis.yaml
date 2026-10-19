@@ -1,7 +1,7 @@
 # API definitions the emulator's route tables and field-behaviour
 # validation are generated from (NFR-MNT-001). After changing this file,
-# or bumping google.golang.org/api in go.mod, run `make generate`;
-# `make generate GOOGLEAPIS=latest` first moves the googleapis pin to the
+# or bumping google.golang.org/api in go.mod, run `task generate`;
+# `task generate GOOGLEAPIS=latest` first moves the googleapis pin to the
 # head of master.
 googleapis:
   # googleapis/googleapis commit the .proto files are read from.

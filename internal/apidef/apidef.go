@@ -4,7 +4,7 @@
 // commit pinned in apis.yaml, and the methods and field annotations of the
 // discovery (JSON/REST) APIs, read from the discovery documents vendored in
 // the google.golang.org/api module pinned in go.mod. A version bump of
-// either is followed by `make generate`, which rewrites zz_*.go.
+// either is followed by `task generate`, which rewrites zz_*.go.
 //
 // Services use it to route REST onto their gRPC implementations
 // (internal/transcode) and to validate requests: CheckProto for protobuf

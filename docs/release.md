@@ -16,12 +16,12 @@ best-effort: check them when one is at hand, but a release does not wait for the
 Switch runtimes with `docker context use <name>` (or `DOCKER_HOST`), and confirm the choice with
 `bin/gcpemu doctor`: it names the runtime it picked and reports the VM relay as on.
 
-Start from a clean checkout of the commit to be tagged, and run `make build`.
+Start from a clean checkout of the commit to be tagged, and run `task build`.
 
 ### 1. Reference stack
 
 ```sh
-make e2e
+task e2e
 ```
 
 It must pass within its 10-minute budget. See "Reference stack (SRS 11.2)" in the README.

@@ -105,7 +105,7 @@ func (r *Resolver) resolve(ctx context.Context) (string, error) {
 			return "", exeErr
 		}
 		if dynamic(exe) {
-			return "", fmt.Errorf("%s is dynamically linked, so it can't run as a Sidecar agent in containers; build gcpemu with CGO_ENABLED=0 (as `make build` does) or set %s to a static build", exe, BinaryEnv)
+			return "", fmt.Errorf("%s is dynamically linked, so it can't run as a Sidecar agent in containers; build gcpemu with CGO_ENABLED=0 (as `task build` does) or set %s to a static build", exe, BinaryEnv)
 		}
 		return exe, nil
 	}
@@ -130,7 +130,7 @@ func (r *Resolver) resolve(ctx context.Context) (string, error) {
 	}
 
 	if !Release(r.Version) {
-		return "", fmt.Errorf("no linux/%s gcpemu binary for the Sidecar agents in containers (a %s build doesn't fetch one): run `make agent` to build bin/gcpemu-linux-%s next to bin/gcpemu, or set %s", arch, r.Version, arch, BinaryEnv)
+		return "", fmt.Errorf("no linux/%s gcpemu binary for the Sidecar agents in containers (a %s build doesn't fetch one): run `task agent` to build bin/gcpemu-linux-%s next to bin/gcpemu, or set %s", arch, r.Version, arch, BinaryEnv)
 	}
 	if cached == "" || r.Images == nil {
 		return "", fmt.Errorf("no linux/%s gcpemu binary for the Sidecar agents in containers: put gcpemu-linux-%s next to gcpemu, or set %s", arch, arch, BinaryEnv)

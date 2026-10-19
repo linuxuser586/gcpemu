@@ -36,9 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
-      - run: make vet
-      - run: make race
-      - run: make cross
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - run: task vet
+      - run: task race
+      - run: task cross
 
   # #340: the only writer of the Linux Go cache that every job restores.
   # On main it builds each variant the jobs compile (-exec true links the
@@ -59,12 +62,15 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
         id: go
-      - run: make vet
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - run: task vet
       - run: go test -exec true ./...
       - run: go test -exec true -race ./...
       - run: go test -exec true -tags e2e ./e2e
       - run: go test -exec true -tags compat ./compat
-      - run: make cross
+      - run: task cross
       - uses: ./.github/actions/go-cache-save
         with:
           paths: ${{ steps.go.outputs.paths }}
@@ -137,6 +143,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: console/package.json
@@ -151,7 +160,7 @@ jobs:
         working-directory: console
       # The Instance removes its containers on exit, so record how they end.
       - run: docker events --filter type=container --filter event=die --filter event=oom --filter event=kill --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' > "$RUNNER_TEMP/container-events.log" &
-      - run: make console-e2e
+      - run: task console-e2e
       - name: Container ends and OOM kills
         if: failure()
         run: |
@@ -180,6 +189,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       - uses: actions/cache@v6
@@ -188,7 +200,7 @@ jobs:
           key: gcpemu-e2e-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
           restore-keys: gcpemu-e2e-${{ runner.arch }}-
       - name: Reference stack (SRS 11.2)
-        run: make e2e
+        run: task e2e
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
 
@@ -205,6 +217,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin,kubectl
@@ -213,7 +228,7 @@ jobs:
           path: ~/.cache/gcpemu-compat
           key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
       - name: Client compatibility (SRS 7.1)
-        run: make compat
+        run: task compat
 
   # SRS 11.1 / IF-001: apply → plan (no diff) → destroy of every supported
   # resource type, with each provider at its current and previous minor.
@@ -232,6 +247,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       # actions/cache saves nothing after an exact key hit, so the week in
@@ -246,7 +264,7 @@ jobs:
           key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**', 'compat/tofu_test.go') }}-${{ steps.week.outputs.week }}
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
       - name: OpenTofu acceptance (SRS 11.1)
-        run: make tofu
+        run: task tofu
 
   # FR-CI-001/002: the setup-gcpemu action, with this commit's binary
   # served as release v0.0.0-selftest.
@@ -274,7 +292,7 @@ jobs:
           npm ci
           npm test
           npm run build
-          git diff --exit-code dist/ || { echo "::error::setup-gcpemu/dist is stale: run 'make action' and commit it"; exit 1; }
+          git diff --exit-code dist/ || { echo "::error::setup-gcpemu/dist is stale: run 'task action' and commit it"; exit 1; }
       - name: Serve this commit as a release
         run: |
           rel="$RUNNER_TEMP/rel/v0.0.0-selftest"
@@ -334,11 +352,13 @@ jobs:
             test ! -e "diag/gcpemu-selftest-second-$arch" || { echo "::error::a successful job uploaded diagnostics"; exit 1; }
           done
 
-  # The Makefile, scripts and tests on macOS and Windows (Git Bash). Hosted
-  # macOS runners have no container runtime and native Windows cannot use
-  # one (ADR 0008), so tests that need one skip. On macOS, the setup-gcpemu
-  # action against the in-process Services; on Windows, the Client
-  # compatibility suite (SRS 7.1) for them.
+  # The Taskfile, scripts and tests on macOS and Windows. The tasks run
+  # from pwsh (ADR 0018), so one that needs a POSIX tool fails here; the
+  # other steps run in bash (Git Bash on Windows). Hosted macOS runners
+  # have no container runtime and native Windows cannot use one (ADR 0008),
+  # so tests that need one skip. On macOS, the setup-gcpemu action against
+  # the in-process Services; on Windows, the Client compatibility suite
+  # (SRS 7.1) for them.
   platforms:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -365,12 +385,15 @@ jobs:
         id: go
         with:
           modules: ${{ runner.os != 'Windows' }}
-      - name: GNU make
-        if: runner.os == 'Windows'
-        run: command -v make || choco install make --no-progress -y
-      - run: make vet
-      - run: make build
-      - run: make cross
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - run: task vet
+        shell: pwsh
+      - run: task build
+        shell: pwsh
+      - run: task cross
+        shell: pwsh
       - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
       - name: Tests
         run: go test ./...
@@ -384,7 +407,8 @@ jobs:
           key: gcpemu-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
       - name: Client compatibility (SRS 7.1)
         if: runner.os == 'Windows'
-        run: make compat
+        shell: pwsh
+        run: task compat
       - name: Serve this commit as a release
         if: runner.os == 'macOS'
         run: |

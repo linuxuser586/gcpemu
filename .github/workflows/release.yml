@@ -19,7 +19,10 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-go
-      # FR-UI-001: `make release` embeds the Web console and fails if it
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      # FR-UI-001: `task release` embeds the Web console and fails if it
       # is not built.
       - uses: pnpm/action-setup@v6
         with:
@@ -31,7 +34,7 @@ jobs:
           cache-dependency-path: console/pnpm-lock.yaml
       - name: Build
         run: |
-          make release VERSION="$GITHUB_REF_NAME"
+          task release VERSION="$GITHUB_REF_NAME"
           cd dist && sha256sum gcpemu-* > SHA256SUMS && cat SHA256SUMS
       # docs/releases/vX.Y.Z.md, when present, goes above the generated
       # list of pull requests.

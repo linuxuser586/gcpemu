@@ -345,7 +345,7 @@ func (in *Instance) mountConsole() {
 		return
 	}
 	if !console.Built {
-		in.Env.Log.Warn("this binary was built without the Web console; /console shows a placeholder (build with `make build` and pnpm on PATH)")
+		in.Env.Log.Warn("this binary was built without the Web console; /console shows a placeholder (build with `task build` and pnpm on PATH)")
 	}
 	in.gw.HandleConsole(webconsole.Handler(console.FS))
 	in.consoleServed = true

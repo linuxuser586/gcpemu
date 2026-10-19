@@ -31,5 +31,5 @@
 // the google and google-beta providers at their current and previous
 // minor versions, behind an Escape guard (internal/escapeguard) that fails
 // a module on any request leaving the machine. It needs tofu on PATH
-// (`make tofu`; `make compat` skips it).
+// (`task tofu`; `task compat` skips it).
 package compat

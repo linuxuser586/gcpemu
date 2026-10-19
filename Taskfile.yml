@@ -1,0 +1,190 @@
+# ADR 0018: Task runs every command through its built-in POSIX shell
+# interpreter, so these tasks run from PowerShell, cmd, zsh or bash. They
+# call no Unix-only programs (grep, sed, awk, ...): only go (and gofmt),
+# git, pnpm, docker and npm, and the interpreter's builtins.
+version: "3"
+
+vars:
+  # Evaluated once, before the console build rewrites
+  # console/dist/index.html. `task release VERSION=v1.2.3` overrides it.
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  LDFLAGS: -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version={{.VERSION}}
+  # FR-UI-001: the Web console is embedded from console/dist. Building it
+  # overwrites the committed placeholder console/dist/index.html, which is
+  # put back once the binaries are built, or when the build fails.
+  CONSOLE_PLACEHOLDER: console/dist/index.html
+  RESTORE_PLACEHOLDER: git checkout -- {{.CONSOLE_PLACEHOLDER}} 2>/dev/null || true
+
+tasks:
+  default:
+    desc: Build bin/gcpemu (same as task build)
+    cmds:
+      - task: build
+
+  # Builds the console first when pnpm is on PATH; without it the binary
+  # embeds the "console not built" placeholder.
+  build:
+    desc: Build bin/gcpemu, with the Web console when pnpm is on PATH
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - defer: "{{.RESTORE_PLACEHOLDER}}"
+        silent: true
+      - task: console
+        if: command -v pnpm
+      - cmd: >-
+          echo "warning: pnpm not found; embedding the Web console placeholder
+          (install Node.js 24 and pnpm for the real console)" >&2
+        if: "! command -v pnpm"
+        silent: true
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o bin/gcpemu{{exeExt}} ./cmd/gcpemu
+
+  # ADR 0005: the linux binary that Managed containers run, next to
+  # bin/gcpemu, for the container runtime's architecture (the host's when
+  # docker doesn't answer). Needed when the host isn't linux on that
+  # architecture and the build isn't a release (vX.Y.Z).
+  agent:
+    desc: Build bin/gcpemu-linux-<arch> for the container runtime's architecture
+    vars:
+      ARCH:
+        sh: |
+          arch=$(docker version --format '{{"{{"}}.Server.Arch{{"}}"}}' 2>/dev/null)
+          [ -n "$arch" ] || arch=$(go env GOARCH)
+          echo "$arch"
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: "{{.ARCH}}"
+    cmds:
+      - cmd: echo "building linux/{{.ARCH}}"
+        silent: true
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o bin/gcpemu-linux-{{.ARCH}} ./cmd/gcpemu
+
+  console:
+    desc: Build the Web console bundle into console/dist (needs pnpm)
+    dir: console
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm build
+
+  # FR-UI-023: Playwright on Chromium, Firefox and WebKit against a binary
+  # with the real console.
+  console-e2e:
+    desc: Run the Web console's Playwright tests against a fresh build
+    cmds:
+      - task: build
+      - cd console && pnpm exec playwright test
+
+  # #396: tests that run GKE clusters share GCPEMU_TEST_CLUSTERS slots (2)
+  # across packages, so services/gke outlasts go test's default 10m.
+  test:
+    desc: Run the Go tests
+    cmds:
+      - go test -timeout 45m ./...
+
+  # NFR-MNT-001: regenerate the API route tables and field-behaviour
+  # validation (internal/apidef) from the pinned googleapis commit and the
+  # discovery documents of the google.golang.org/api version in go.mod.
+  # GOOGLEAPIS=latest (or a commit SHA) moves the googleapis pin first.
+  generate:
+    desc: Regenerate internal/apidef (GOOGLEAPIS=latest or a SHA moves the pin)
+    dir: internal/apidef
+    cmds:
+      - go mod download google.golang.org/api
+      - go run ./internal/apigen -config apis.yaml -out .{{if .GOOGLEAPIS}} -googleapis {{.GOOGLEAPIS}}{{end}}
+
+  # The race detector needs cgo, which Go turns off without a C compiler.
+  race:
+    desc: Run the Go tests with the race detector (needs a C compiler)
+    vars:
+      CC:
+        sh: go env CC
+    preconditions:
+      - sh: '[ "$(go env CGO_ENABLED)" = 1 ]'
+        msg: "race: the race detector needs cgo and a C compiler ({{.CC}}); install one, or run task test"
+    cmds:
+      - go test -race -timeout 45m ./...
+
+  vet:
+    desc: Check gofmt and run go vet, with the e2e and compat build tags too
+    cmds:
+      - cmd: |
+          unformatted=$(gofmt -l .)
+          [ -z "$unformatted" ] || { echo "$unformatted"; exit 1; }
+        silent: true
+      - go vet ./...
+      - go vet -tags e2e ./e2e/...
+      - go vet -tags compat ./compat/...
+
+  # SRS 11.2 reference stack (container runtime + tofu; steps 2 and 4-8
+  # download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them),
+  # and the Containerized Instance's LoadBalancer ingress (#276; needs the net too).
+  e2e:
+    desc: Run the SRS 11.2 reference stack and LoadBalancer ingress tests
+    cmds:
+      - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -run 'TestReferenceStack|TestContainerizedLBIngress' -count=1 -timeout 30m -v
+
+  # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
+  # psql, the Cloud SQL Auth Proxy and dig against a detached instance.
+  compat:
+    desc: Run the SRS 7.1 client compatibility suite
+    cmds:
+      - go test -tags compat ./compat -skip TestOpenTofu -count=1 -timeout 30m -v
+
+  # SRS 11.1 / IF-001 OpenTofu acceptance: every module in compat/tofu with
+  # google and google-beta at the current and previous minor
+  # (GCPEMU_TOFU_PROVIDERS narrows it, e.g. google-beta or google@8.6.0).
+  tofu:
+    desc: Run the SRS 11.1 OpenTofu acceptance tests
+    cmds:
+      - go test -tags compat ./compat -run TestOpenTofu -count=1 -timeout 35m -v
+
+  # NFR-PORT-001: static builds for every supported OS/arch, with the real
+  # Web console embedded.
+  release:
+    desc: Build the release binaries into dist/, with the Web console (VERSION=vX.Y.Z)
+    deps: [console]
+    preconditions:
+      # The placeholder's marker is gone once the console is built
+      # (console/embed.go); read and case are builtins, unlike grep.
+      - sh: |
+          while IFS= read -r line; do
+            case $line in *'content="placeholder"'*) exit 1 ;; esac
+          done < {{.CONSOLE_PLACEHOLDER}}
+        msg: "release: the Web console bundle is not built"
+    cmds:
+      - defer: "{{.RESTORE_PLACEHOLDER}}"
+        silent: true
+      - task: cross
+
+  # The release builds with whatever console/dist holds (Node-free CI).
+  cross:
+    desc: Build static binaries for every supported OS/arch into dist/
+    cmds:
+      - for: [linux/amd64, linux/arm64, darwin/arm64, darwin/amd64, windows/amd64, windows/arm64]
+        task: cross-platform
+        vars:
+          GOOS: '{{index (splitList "/" .ITEM) 0}}'
+          GOARCH: '{{index (splitList "/" .ITEM) 1}}'
+
+  cross-platform:
+    internal: true
+    silent: true
+    env:
+      CGO_ENABLED: "0"
+      GOOS: "{{.GOOS}}"
+      GOARCH: "{{.GOARCH}}"
+    cmds:
+      - echo "building {{.GOOS}}/{{.GOARCH}}"
+      - go build -trimpath -ldflags '{{.LDFLAGS}}' -o dist/gcpemu-{{.GOOS}}-{{.GOARCH}}{{if eq .GOOS "windows"}}.exe{{end}} ./cmd/gcpemu
+
+  # FR-CI-001/002: the setup-gcpemu GitHub Action; dist/ is committed (the
+  # runner executes it as is), so rebuild and commit it with the sources.
+  action:
+    desc: Test and rebuild the setup-gcpemu action (commit its dist/)
+    dir: setup-gcpemu
+    cmds:
+      - npm ci
+      - npm test
+      - npm run build
