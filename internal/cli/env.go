@@ -61,6 +61,7 @@ func (o *rootOpts) envCmd() *cobra.Command {
 				return err
 			}
 			hostModeHints(c, cmd.ErrOrStderr())
+			buildLogHints(vars, cmd.ErrOrStderr())
 			return nil
 		},
 	}
@@ -68,6 +69,24 @@ func (o *rootOpts) envCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
 	cmd.Flags().BoolVar(&noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials; GOOGLE_CLOUD_UNIVERSE_DOMAIN stays, since emulator keys need it")
 	return cmd
+}
+
+// buildLogHints says how to run `gcloud builds submit` when gcloud can't
+// tail the Build log (SRS 11.3): it reads the log from
+// storage.UNIVERSE_DOMAIN, ignoring endpoint overrides, so under the
+// Invalid universe it fails even for a Build that succeeds. It writes to
+// stderr so that `eval $(gcpemu env)` is unaffected.
+func buildLogHints(vars map[string]string, w io.Writer) {
+	universe := vars["CLOUDSDK_CORE_UNIVERSE_DOMAIN"]
+	if vars["CLOUDSDK_API_ENDPOINT_OVERRIDES_CLOUDBUILD"] == "" || universe == "" {
+		return
+	}
+	fmt.Fprintf(w, `# gcpemu: gcloud builds submit can't stream the Build log: gcloud reads it from storage.%s.
+#   Pass --async, or set options.logging: NONE in the build config (gcloud then waits without
+#   streaming); --suppress-logs still reads the log. Read it with
+#   gcloud storage cat gs://BUCKET/log-BUILD_ID.txt (the Build's logsBucket), or open its logUrl.
+#   In Host mode, eval "$(gcpemu env --no-universe)" lets gcloud stream it.
+`, universe)
 }
 
 func writeEnv(w io.Writer, shell string, vars map[string]string) error {

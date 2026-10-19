@@ -46,7 +46,7 @@ func start(t *testing.T) *emulator {
 	services := "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn"
 	if emuruntime.Unusable() == nil && exec.Command("docker", "info").Run() == nil {
 		e.runtime = true
-		services += ",sql,gke"
+		services += ",sql,gke,build"
 	}
 	cmd := exec.Command(e.bin, "start", "--detach", "--data-dir", e.dir, "--ephemeral", "--port", "0",
 		"--services", services, "--wait-timeout", "120s")
@@ -403,6 +403,39 @@ func TestClients(t *testing.T) {
 		ar := "us-central1-docker.pkg.dev/" + project + "/compat-repo"
 		contains(t, "artifacts docker images list", e.run(t, g, "artifacts", "docker", "images", "list", ar, "--format=value(package)"), ar+"/docker")
 		contains(t, "artifacts docker tags list", e.run(t, g, "artifacts", "docker", "tags", "list", ar+"/docker"), "v2")
+	})
+
+	t.Run("gcloud/builds", func(t *testing.T) {
+		g := gcloud(t)
+		if !e.runtime {
+			t.Skip("Cloud Build needs a container runtime")
+		}
+		// Without Host mode gcloud cannot tail the log (SRS 11.3), and
+		// --suppress-logs still tails it; with options.logging NONE gcloud
+		// only waits for the Build, whose log still goes to Cloud Storage.
+		src := longTempDir(t)
+		_ = os.WriteFile(filepath.Join(src, "hello.txt"), []byte("from the source\n"), 0o644)
+		config := filepath.Join(src, "cloudbuild.yaml")
+		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  id: greet\n  args: [cat, hello.txt]\noptions:\n  logging: NONE\n"), 0o644)
+		out := e.run(t, g, "builds", "submit", "--config", config, "--format=value(id,logsBucket)", src)
+		fields := strings.Fields(out)
+		if len(fields) < 2 {
+			t.Fatalf("builds submit printed %q", out)
+		}
+		id, bucket := fields[len(fields)-2], fields[len(fields)-1]
+		contains(t, "builds describe", e.run(t, g, "builds", "describe", id, "--format=value(status)"), "SUCCESS")
+		log := e.run(t, g, "storage", "cat", bucket+"/log-"+id+".txt")
+		contains(t, "the Build log", log, `Step #0 - "greet": from the source`)
+		contains(t, "the Build log", log, "DONE")
+
+		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  args: [sh, -c, 'exit 3']\noptions:\n  logging: NONE\n"), 0o644)
+		if out, err := e.try(t, g, "builds", "submit", "--config", config, src); err == nil {
+			t.Fatalf("builds submit of a failing Build exited 0:\n%s", out)
+		}
+		id = strings.TrimSpace(e.run(t, g, "builds", "submit", "--config", config, "--async", "--format=value(id)", src))
+		if id == "" {
+			t.Fatal("builds submit --async printed no Build ID")
+		}
 	})
 
 	t.Run("gcloud/sql+psql+auth-proxy", func(t *testing.T) {

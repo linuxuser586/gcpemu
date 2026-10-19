@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 
@@ -67,6 +68,27 @@ type Publisher interface {
 	PublishInternal(ctx context.Context, topic string, data []byte, attrs map[string]string) (string, error)
 	// TopicExists reports whether the topic exists.
 	TopicExists(ctx context.Context, topic string) bool
+}
+
+// ObjectStore is provided by the "gcs" service: Cloud Storage objects for
+// other Services in process, such as Cloud Build's sources and logs. It
+// makes no IAM checks; the calling Service checks its own permissions.
+// Errors are *apierr.Error.
+type ObjectStore interface {
+	// ReadObject opens generation gen of an object, or its live
+	// generation when gen is 0, and returns the generation it opened. An
+	// object or generation that does not exist is NOT_FOUND.
+	ReadObject(ctx context.Context, bucket, name string, gen int64) (io.ReadCloser, int64, error)
+	// AppendObject adds data to the end of an object, creating it with
+	// contentType when absent. Each call makes a new generation holding
+	// everything appended so far, so a reader polling the live object
+	// sees it grow, as with a log written while it is read.
+	AppendObject(ctx context.Context, bucket, name, contentType string, data []byte) error
+	// EnsureServiceBucket creates a bucket in project unless it exists,
+	// without the naming rule users are held to: a bucket Google itself
+	// names, such as Cloud Build's default logs bucket, may contain
+	// "google".
+	EnsureServiceBucket(ctx context.Context, project, name string) error
 }
 
 // SQLUsers is provided by the "sql" service for Secret Manager's managed

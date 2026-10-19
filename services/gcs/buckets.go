@@ -89,6 +89,12 @@ func (s *Service) insertBucket(w http.ResponseWriter, r *http.Request) {
 // createBucket validates and stores a new bucket. acl, when not nil, sets
 // its ACLs instead of the defaults.
 func (s *Service) createBucket(ctx context.Context, proj string, b *storage.Bucket, objectRetention bool, acl *bucketACLChange) (*bucketRec, error) {
+	return s.storeBucket(ctx, proj, b, objectRetention, acl, false)
+}
+
+// storeBucket is createBucket; anyName skips the naming rule users are
+// held to, for a bucket Google names (EnsureServiceBucket).
+func (s *Service) storeBucket(ctx context.Context, proj string, b *storage.Bucket, objectRetention bool, acl *bucketACLChange, anyName bool) (*bucketRec, error) {
 	if err := s.env.EnsureProject(proj); err != nil {
 		return nil, err
 	}
@@ -98,7 +104,7 @@ func (s *Service) createBucket(ctx context.Context, proj string, b *storage.Buck
 	if b.Name == "" {
 		return nil, apierr.InvalidArgument("Required").WithLegacy("required")
 	}
-	if !validBucketName(b.Name) {
+	if !anyName && !validBucketName(b.Name) {
 		return nil, errInvalid("Invalid bucket name: '%s'", b.Name)
 	}
 	now := s.now()

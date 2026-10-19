@@ -51,6 +51,13 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) outcome {
 	if err != nil {
 		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build network: " + err.Error()}
 	}
+	if err := s.fetchSource(r.ctx, rt, r, b, vols, network); err != nil {
+		var f *stepFailure
+		if errors.As(err, &f) {
+			return f.o
+		}
+		return outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}
+	}
 	s.logs.line(r.ref, "BUILD")
 	ctx, fail := context.WithCancelCause(r.ctx)
 	defer fail(nil)
@@ -243,7 +250,7 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 	if err := rt.StartContainer(ctx, id); err != nil {
 		return failed(cloudbuildpb.Build_FAILURE, 0, err.Error())
 	}
-	copied := s.follow(ctx, rt, r.ref, id, label)
+	copied := s.follow(ctx, rt, r.ref, id, label+": ")
 	code, err := rt.WaitContainer(ctx, id)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -279,7 +286,7 @@ func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Sta
 }
 
 // stepSpec is the container of step i: its image, entrypoint and args or
-// script, env (the Build's options first), dir under /workspace, the
+// script, env (the Build's options first), dir under the source's, the
 // Build's volumes and the Build network, labelled as the Build's so
 // cleanup finds it.
 func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network string) runtime.ContainerSpec {
@@ -290,7 +297,7 @@ func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vo
 		Image:      st.GetName(),
 		Env:        append(env, st.GetEnv()...),
 		Labels:     rt.Labels("build", b.GetName(), "step"),
-		WorkingDir: path.Join(workspace, st.GetDir()),
+		WorkingDir: path.Join(sourceDir(b), st.GetDir()),
 		Mounts:     vols.mounts(b, st),
 		Networks:   []runtime.Attachment{{Network: network}},
 	}
@@ -316,15 +323,15 @@ func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vo
 	return spec
 }
 
-// follow copies a step container's output into the Build's log; the
-// returned channel is closed once the output has ended. The copy counts
-// as the Service's work, so that Reset waits for it before clearing the
-// logs.
-func (s *Service) follow(ctx context.Context, rt *runtime.Manager, ref buildRef, id, label string) <-chan struct{} {
+// follow copies a container's output into the Build's log, each line
+// after prefix; the returned channel is closed once the output has ended.
+// The copy counts as the Service's work, so that Reset waits for it before
+// clearing the logs.
+func (s *Service) follow(ctx context.Context, rt *runtime.Manager, ref buildRef, id, prefix string) <-chan struct{} {
 	copied := make(chan struct{})
 	rc, err := rt.FollowLogs(ctx, id)
 	if err != nil {
-		s.logs.line(ref, label+": (no output: "+err.Error()+")")
+		s.logs.line(ref, prefix+"(no output: "+err.Error()+")")
 		close(copied)
 		return copied
 	}
@@ -333,7 +340,7 @@ func (s *Service) follow(ctx context.Context, rt *runtime.Manager, ref buildRef,
 		defer s.work.Exit()
 		defer close(copied)
 		defer rc.Close()
-		w := s.logs.writer(ref, label+": ")
+		w := s.logs.writer(ref, prefix)
 		_, _ = io.Copy(w, rc)
 		w.flush()
 	}()
