@@ -68,7 +68,7 @@ A way of running an Instance so that it answers on real Google hostnames, using 
 _Avoid_: "mode" for anything else
 
 **Google front end**:
-The component that terminates TLS for real Google hostnames in Host mode and hands requests to the API gateway. Its in-container piece is the *host-mode relay*.
+The component that terminates TLS for real Google hostnames in Host mode and hands requests to the API gateway. Its in-container piece is the *host-mode relay*. With `--gfe-bind` it also serves another machine on the LAN, to real credentials only (ADR 0021).
 _Avoid_: frontend (unqualified)
 
 **Managed container**:

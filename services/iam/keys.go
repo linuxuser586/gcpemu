@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -178,9 +179,17 @@ func (s *Service) gatewayURL() string {
 // tokenURI is the OAuth2 token endpoint advertised in key files (FR-IAM-006).
 func (s *Service) tokenURI() string { return s.gatewayURL() + "/oauth2/token" }
 
+// googleHosted reports whether r reached the emulator by a real Google
+// hostname, through the Google front end: from a pod, Host mode or the
+// LAN (--gfe-bind).
+func googleHosted(r *http.Request) bool { return emu.IsGoogleHost(r.Host) }
+
 // createKey creates a user-managed key and returns it with the JSON key
-// file (FR-IAM-001).
-func (s *Service) createKey(sa *iamv1.ServiceAccount) (*keyRecord, []byte, error) {
+// file (FR-IAM-001). A key created through a real Google hostname
+// (googleHosted) names Google's token and certificate URLs and universe, which that caller reaches by the same
+// names, so it works unmodified on another machine (#462); any other names
+// the gateway and the Invalid universe.
+func (s *Service) createKey(sa *iamv1.ServiceAccount, google bool) (*keyRecord, []byte, error) {
 	now := s.env.Clock.Now().UTC().Truncate(time.Second)
 	priv, certPEM, err := newKeyPair(sa.Email, now, maxValidBefore)
 	if err != nil {
@@ -191,7 +200,7 @@ func (s *Service) createKey(sa *iamv1.ServiceAccount) (*keyRecord, []byte, error
 		Type: keyUserManaged, Origin: originGoogle, Algorithm: keyAlgRSA2048,
 		CertPEM: certPEM, ValidAfter: now, ValidBefore: maxValidBefore,
 	}
-	kf, _ := json.MarshalIndent(keyFile{
+	f := keyFile{
 		Type: "service_account", ProjectID: sa.ProjectId, PrivateKeyID: rec.KeyID,
 		PrivateKey: privatePEM(priv), ClientEmail: sa.Email, ClientID: sa.UniqueId,
 		AuthURI:                 "https://accounts.google.com/o/oauth2/auth",
@@ -202,7 +211,14 @@ func (s *Service) createKey(sa *iamv1.ServiceAccount) (*keyRecord, []byte, error
 		// `gcpemu env`: Go clients and gcloud reject a key whose universe
 		// differs from the one they are configured for (#215).
 		UniverseDomain: emu.InvalidUniverse,
-	}, "", "  ")
+	}
+	if google {
+		f.TokenURI = "https://oauth2.googleapis.com/token"
+		f.AuthProviderX509CertURL = "https://www.googleapis.com/oauth2/v1/certs"
+		f.ClientX509CertURL = "https://www.googleapis.com/robot/v1/metadata/x509/" + url.PathEscape(sa.Email)
+		f.UniverseDomain = GoogleUniverse
+	}
+	kf, _ := json.MarshalIndent(f, "", "  ")
 	err = s.env.Store.Update(func(tx store.Tx) error {
 		return store.PutJSON(tx, nsKeys, keyKey(sa.Email, rec.KeyID), rec)
 	})
@@ -378,6 +394,6 @@ func (s *Service) ADCKey(current []byte) ([]byte, error) {
 	if sa == nil {
 		return nil, fmt.Errorf("metadata service account %s does not exist", email)
 	}
-	_, b, err := s.createKey(sa)
+	_, b, err := s.createKey(sa, false)
 	return b, err
 }

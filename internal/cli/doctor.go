@@ -24,6 +24,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
@@ -542,10 +543,11 @@ func osTrustsCA(der []byte) bool {
 	return false
 }
 
-// checkLANBind reports the --lb-bind, --gke-bind and --ar-bind addresses:
-// what the running instance serves on them, otherwise whether the
-// configured ones can be bound (an address of this host; privileged
-// --lb-bind ports need the lb-lan relay).
+// checkLANBind reports the --lb-bind, --gke-bind, --ar-bind and --gfe-bind
+// addresses: what the running instance serves on them, otherwise whether
+// the configured ones can be bound (an address of this host; privileged
+// --lb-bind ports need the lb-lan relay, and --gfe-bind's 443 an
+// unprivileged port start at or below it).
 func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime bool) {
 	if running {
 		c, err := clientFor(cfg)
@@ -568,10 +570,13 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 			if n == "ar-lan" {
 				fmt.Fprintf(out, "[ok  ] Artifact Registry registry exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
 			}
+			if n == frontend.LANEndpoint {
+				fmt.Fprintf(out, "[ok  ] Google front end exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
+			}
 		}
 		return
 	}
-	if len(cfg.LBBind)+len(cfg.GKEBind)+len(cfg.ARBind) == 0 {
+	if len(cfg.LBBind)+len(cfg.GKEBind)+len(cfg.ARBind)+len(cfg.GFEBind) == 0 {
 		return
 	}
 	local := map[string]bool{}
@@ -585,18 +590,23 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	for _, b := range []struct {
 		flag  string
 		addrs []string
-	}{{"lb-bind", cfg.LBBind}, {"gke-bind", cfg.GKEBind}, {"ar-bind", cfg.ARBind}} {
+	}{{"lb-bind", cfg.LBBind}, {"gke-bind", cfg.GKEBind}, {"ar-bind", cfg.ARBind}, {"gfe-bind", cfg.GFEBind}} {
 		for _, a := range b.addrs {
 			ip := net.ParseIP(a)
 			report(ip != nil && local[ip.String()], fmt.Sprintf("--%s %s is an address of this host", b.flag, a),
 				"pick one from "+listAddrsCmd(runtime.GOOS))
 		}
 	}
-	if len(cfg.LBBind) == 0 {
+	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")
+	if err != nil {
 		return
 	}
-	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start"); err == nil {
-		start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	if _, set := cfg.PortSet(frontend.LANEndpoint); len(cfg.GFEBind) > 0 && !set {
+		report(start <= 443 || os.Geteuid() == 0, fmt.Sprintf("--gfe-bind port 443 can be bound (net.ipv4.ip_unprivileged_port_start is %d)", start),
+			"sudo sysctl net.ipv4.ip_unprivileged_port_start=443")
+	}
+	if len(cfg.LBBind) > 0 {
 		if start > 80 {
 			report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
 				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")

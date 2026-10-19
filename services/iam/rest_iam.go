@@ -531,7 +531,7 @@ func (s *Service) createKeyREST(w http.ResponseWriter, r *http.Request, projectS
 	default:
 		return apierr.InvalidArgument("Unsupported key algorithm %s; only KEY_ALG_RSA_2048 is supported.", req.KeyAlgorithm)
 	}
-	rec, kf, err := s.createKey(sa)
+	rec, kf, err := s.createKey(sa, googleHosted(r))
 	if err != nil {
 		return err
 	}

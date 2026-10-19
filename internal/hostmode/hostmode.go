@@ -229,7 +229,7 @@ func (m *Manager) run(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	cfg := agentConfig{AnswerCIDR: ext.Subnet, Hosts: m.hosts(), Resolvers: upstreamResolvers(m.env.Config.Offline)}
+	cfg := agentConfig{AnswerCIDR: ext.Subnet, Hosts: m.hosts(), Resolvers: UpstreamResolvers(m.env.Config.Offline)}
 	if cfg.Frontend, err = np.Addr(ctx, frontend.Endpoint); err != nil {
 		return Status{}, err
 	}
@@ -324,11 +324,12 @@ func interfaceWith(ip string) string {
 	return ""
 }
 
-// upstreamResolvers returns the host's real DNS servers for names under
-// the routed domains that the emulator does not serve: systemd-resolved's
+// UpstreamResolvers returns the host's real DNS servers for names under
+// the routed domains that the emulator does not serve, and for the Google
+// front end's reads from real GCS (ADR 0021): systemd-resolved's
 // upstream list if present, else non-loopback servers from
 // /etc/resolv.conf, else public resolvers unless offline.
-func upstreamResolvers(offline bool) []string {
+func UpstreamResolvers(offline bool) []string {
 	var out []string
 	for _, f := range []string{"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"} {
 		cc, err := mdns.ClientConfigFromFile(f)

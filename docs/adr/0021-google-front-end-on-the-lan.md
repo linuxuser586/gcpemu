@@ -1,0 +1,20 @@
+# The Google front end on the LAN accepts only real credentials, and reads foreign buckets through from real GCS
+
+An office Instance is used by a cluster on another machine whose clients call Google by its real hostnames and take no Endpoint override: Argo Workflows' GCS artifact driver takes only a bucket and a key, calls `storage.googleapis.com` and exchanges the key at its `token_uri` (#462). `--ar-bind` and `--gke-bind` (ADR 0011) don't cover that, and the Go client's `STORAGE_EMULATOR_HOST` turns authentication off. We decided that `--gfe-bind <address>` also serves the Google front end on `<address>:443`, with certificates from the instance CA. These listeners terminate HTTP, unlike the loopback one, which pipes bytes to the gateway, so that every request can be checked whatever the IAM enforcement level. The registry hosts go to Artifact Registry's `--ar-bind` handler. The token endpoint takes only the JWT-bearer grant, in a form or JSON body and with no query, because the refresh-token grant names its principal unverified. Every other request needs a bearer token the Instance issued, or a V4 signature that the Cloud Storage XML API verifies. The Admin API and the Web console are never served there.
+
+A key works unmodified from another machine only if its `token_uri` is `https://oauth2.googleapis.com/token` and its universe is `googleapis.com`. We decided that a key's form depends on the caller, as the metadata server's universe does (ADR 0009). A key created through a real Google hostname, which reaches the gateway only through the Google front end (from the LAN, a pod or Host mode), names Google's endpoints and universe. A key created at the gateway's address keeps the gateway's `token_uri` and the Invalid universe.
+
+A GET or HEAD of a bucket the Instance doesn't have, carrying none of the Instance's credentials (no Authorization or API key header, no `access_token` or `key` parameter), is read through from real `storage.googleapis.com`, resolved through the host's real DNS servers. This is an exception to NFR-SEC-002 ("the emulator never calls real Google hosts"), limited to `--gfe-bind`. Signed URLs go with it, because the only signed URLs for buckets the Instance lacks are Google's own. A machine whose DNS sends `storage.googleapis.com` to the Instance would otherwise lose the Go module proxy, which redirects every download to the `proxy-golang-org-prod` bucket. ADR 0019 rejected this for GKE pods, where a label lets a pod resolve Google for itself. A machine on the LAN has no such per-workload choice the Instance could offer, and its operator has already sent all of `storage.googleapis.com` here.
+
+## Considered options
+
+- **Every key in Google's form while `--gfe-bind` is set.** Host clients configured by `gcpemu env` (Invalid universe) would refuse those keys, and without Host mode their token requests would go to Google.
+- **An emulator-only command that writes a key in Google's form.** It works, but the key would not come from the IAM API that OpenTofu and gcloud use.
+- **Refusing every anonymous request**, and leaving the other machine's DNS to send builders to Google. That works only where the other cluster can split DNS per workload.
+- **Binding port 443 through a host-network relay container**, as `--lb-bind` does for privileged ports. Deferred: an unprivileged emulator needs `net.ipv4.ip_unprivileged_port_start=443` instead, and `gcpemu doctor` says so.
+
+## Consequences
+
+- The Instance makes requests to real Google on behalf of LAN clients without credentials, for buckets it doesn't have, and never with `--offline`. Without `--gfe-bind` NFR-SEC-002 holds as before.
+- Keys that Seeding creates and the key behind the host's application-default credentials keep the gateway's form.
+- An authenticated request for a bucket the Instance doesn't have is answered by the Instance, as not found.
