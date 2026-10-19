@@ -164,10 +164,10 @@ An Instance ID that still tags containers, networks or volumes on the host but t
 _Avoid_: orphan, dead instance
 
 **Emulator clock**:
-The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour.
+The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
 
 **Deterministic Instance**:
-An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests.
+An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it.
 _Avoid_: deterministic mode
 
 **Fault rule**:
