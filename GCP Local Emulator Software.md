@@ -675,6 +675,7 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | Backend mTLS API surface | Follow the current googleapis/googleapis protos on GitHub |
 | GKE on macOS | Supported in v1.0 through the VM relay (ADR 0005) |
 | Autopilot | Excluded from v1.0 |
+| `gcloud builds submit` log streaming without Host mode | Accepted and documented. gcloud reads the log from `https://storage.UNIVERSE_DOMAIN/BUCKET/log-BUILD_ID.txt` and ignores Endpoint overrides, so under the Invalid universe it never reaches the log, and its final poll fails the command even when the Build succeeds; `gcloud builds log` fails the same way. Without Host mode, users pass `--suppress-logs` or `--async` and read the log with `gcloud storage cat`, the Web console or `logUrl`. Streaming works in Host mode. |
 
 ### 11.4 Release plan
 
@@ -687,9 +688,3 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | M4 | Cloud Build | `gcloud builds submit --tag` and `--config` in the Client compatibility suite and `google_cloudbuild_trigger` in OpenTofu acceptance green; all **M** FR-CB requirements tested |
 
 The web console ships with each milestone: the shell, dashboard, request log and IAM views in M1, then each service's view in the milestone that delivers the service.
-
-### 11.5 Open questions
-
-| Question | Notes |
-| --- | --- |
-| How does `gcloud builds submit` stream logs without Host mode? | gcloud reads the log from `https://storage.UNIVERSE_DOMAIN/BUCKET/log-BUILD_ID.txt` and ignores Endpoint overrides, so under the Invalid universe it asks `storage.gcpemu.invalid`, which never resolves. The Build still completes and `gcloud builds log` fails the same way. In Host mode streaming works. |
