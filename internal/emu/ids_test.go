@@ -39,3 +39,10 @@ func TestUUID(t *testing.T) {
 		t.Fatalf("random UUID() = %q, %q", a, b)
 	}
 }
+
+// TestFormatUUID: 32 hex digits are grouped 8-4-4-4-12.
+func TestFormatUUID(t *testing.T) {
+	if got := FormatUUID("0123456789abcdef0123456789abcdef"); got != "01234567-89ab-cdef-0123-456789abcdef" {
+		t.Fatalf("FormatUUID = %q", got)
+	}
+}

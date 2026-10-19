@@ -235,7 +235,5 @@ func notFound(name string) error {
 	return apierr.NotFound("Resource '%s' was not found", name)
 }
 
-// ---- pagination ----
-
 // pageOpts is how Certificate Manager pages its lists.
 var pageOpts = listpage.Options{Max: 1000}

@@ -44,9 +44,11 @@ func (g *IDs) Hex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// UUID returns Hex(16) formatted as a UUID (8-4-4-4-12).
-func (g *IDs) UUID() string {
-	h := g.Hex(16)
+// UUID returns Hex(16) formatted as a UUID.
+func (g *IDs) UUID() string { return FormatUUID(g.Hex(16)) }
+
+// FormatUUID groups 32 hex digits as a UUID (8-4-4-4-12).
+func FormatUUID(h string) string {
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
