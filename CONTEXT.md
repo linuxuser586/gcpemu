@@ -255,6 +255,10 @@ An Instance setting under which referencing a Project that does not exist is an 
 A Cloud SQL database server resource. Always write it in full so it is not confused with an Instance.
 _Avoid_: instance (unqualified)
 
+**On-demand backup**:
+A backup of a Cloud SQL instance taken at someone's request while the Cloud SQL instance exists. It never expires: it lasts until it is deleted, or until its Cloud SQL instance is deleted unless it becomes a Retained backup. Always qualify it, so it is not confused with a Final backup.
+_Avoid_: manual backup
+
 **Final backup**:
 A backup of a Cloud SQL instance taken as part of deleting it. It outlives the Cloud SQL instance and is deleted when it expires. Unlike a Retained backup, the delete takes it. Always qualify it, so it is not confused with an on-demand backup taken while the Cloud SQL instance exists.
 _Avoid_: last backup, deletion backup
