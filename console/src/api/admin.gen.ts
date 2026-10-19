@@ -691,6 +691,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/build/projects/{project}/locations/{location}/builds/{id}/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A Build's log, as its logUrl points to (build service).
+         * @description Each step's output, line by line after "Step #N" (and its id), with the lines Cloud Build adds around the steps. Logs are kept in memory until the Instance stops or resets; a Build of the global location (projects/*\/builds) is under locations/global.
+         */
+        get: operations["buildLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/sql/hosts": {
         parameters: {
             query?: never;
@@ -2279,6 +2299,31 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    buildLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project: string;
+                location: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The log so far. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
     sqlHosts: {
