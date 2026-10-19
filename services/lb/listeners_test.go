@@ -30,7 +30,7 @@ func TestLoopbackInUse(t *testing.T) {
 			IPAddress: "34.120.0.77", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
 	}
 	fr()
-	first := e.inst.Endpoint("lb:a")
+	first := e.inst.Endpoint(ep("a"))
 	if h, p, _ := net.SplitHostPort(first); p != "8080" || !net.ParseIP(h).IsLoopback() {
 		t.Fatalf("listener %q", first)
 	}
@@ -48,7 +48,7 @@ func TestLoopbackInUse(t *testing.T) {
 	defer held.Close()
 
 	fr()
-	moved := e.inst.Endpoint("lb:a")
+	moved := e.inst.Endpoint(ep("a"))
 	h, p, _ := net.SplitHostPort(moved)
 	if moved == first || p != "8080" || !net.ParseIP(h).IsLoopback() {
 		t.Fatalf("with %s taken the rule listens on %q, want another loopback address on 8080", first, moved)
@@ -73,7 +73,7 @@ func (e *env) twoRules(port string) {
 		e.do(e.c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: name, LoadBalancingScheme: "EXTERNAL_MANAGED",
 			PortRange: port, Target: "global/targetHttpProxies/p"}).Do())
 	}
-	a, b := e.inst.Endpoint("lb:a"), e.inst.Endpoint("lb:b")
+	a, b := e.inst.Endpoint(ep("a")), e.inst.Endpoint(ep("b"))
 	if a != "127.0.0.1:"+port {
 		e.t.Fatalf("rule a listens on %q, want 127.0.0.1:%s", a, port)
 	}
@@ -89,7 +89,7 @@ func (e *env) twoRules(port string) {
 		if got := lb.MappedIP(svc, fr.IPAddress); got != "127.0.0.1" {
 			e.t.Errorf("DNS maps rule %s's %s to %q, want 127.0.0.1", name, fr.IPAddress, got)
 		}
-		addr := e.inst.Endpoint("lb:" + name)
+		addr := e.inst.Endpoint(ep(name))
 		resp, body := get(e.t, cl, "http://"+addr+"/"+name)
 		if resp.StatusCode != http.StatusOK || !strings.HasSuffix(body, "/"+name) {
 			e.t.Errorf("GET via %s: %d %q", addr, resp.StatusCode, body)

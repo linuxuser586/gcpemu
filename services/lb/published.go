@@ -22,11 +22,11 @@ import (
 // served on a port its container publishes, on the wildcard address of
 // the container, beside its loopback listener (which clients inside the
 // container and the emulated DNS keep using), much as --lb-bind serves it
-// on more addresses. Its endpoint "lb:<name>" is the host side of that
-// binding instead of the loopback listener.
+// on more addresses. Its endpoint "lb:<project>/<region|global>/<name>"
+// is the host side of that binding instead of the loopback listener.
 //
 // The rule's own port comes first, when the container publishes it at any
-// host port (GCPEMU_LB_<NAME> carries the port), then a free port of
+// host port (its GCPEMU_LB_* variables carry the port), then a free port of
 // --port-range from a hash of the rule onwards (published.AnyHostPort).
 // GKE LoadBalancer Services take ports from the same range: whoever binds
 // a port first wins. A rule with none free has no endpoint, logs what to
@@ -219,7 +219,7 @@ func (d *dataplane) publish(l *listener, fe *frontend, warn bool) {
 	if b := ports.Bind(cands, listen, func(port int) bool { return held[port] }); b != nil {
 		l.pub, l.pubPort, l.pubHost, l.pubHint = b.Listener, b.Port, b.Host, ""
 		go l.serve(b.Listener)
-		d.s.env.Endpoints.Set("lb:"+fe.fr.Name, l.pubHost)
+		d.s.env.Endpoints.Set(l.ep, l.pubHost)
 		d.s.env.Log.Info("lb: forwarding rule on a published port", "forwardingRule", fe.frPath, "port", fe.port, "containerPort", b.Port, "host", l.pubHost)
 		return
 	}
@@ -262,6 +262,7 @@ func (d *dataplane) publishLoop(ctx context.Context) {
 		d.mu.Lock()
 		if !d.closed {
 			d.retryPublished()
+			d.warnWithheld()
 		}
 		d.mu.Unlock()
 	}

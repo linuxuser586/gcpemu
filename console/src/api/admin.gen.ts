@@ -896,7 +896,7 @@ export interface components {
                 [key: string]: number;
             };
         };
-        /** @description Service endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port. */
+        /** @description Service endpoint name ("gateway", "gcs", "lb:PROJECT/REGION_OR_GLOBAL/FORWARDING_RULE", ...) to host:port. */
         Endpoints: {
             [key: string]: string;
         };
@@ -1064,6 +1064,14 @@ export interface components {
             port: number;
             /** @description Why the rule has no listener. */
             error: string;
+        };
+        LbWithheld: {
+            /** @description The withheld variable. */
+            variable: string;
+            /** @description The resource paths of the forwarding rules that would print it. */
+            forwardingRules: string[];
+            /** @description Each rule's qualified GCPEMU_LB_PROJECT_SCOPE_NAME variable, in the order of forwardingRules. */
+            qualified: string[];
         };
         LbRouteRequest: {
             /** @description The URL map's resource path or selfLink. */
@@ -2191,6 +2199,8 @@ export interface operations {
                         listeners: components["schemas"]["LbListener"][];
                         /** @description The forwarding rules that have no listener, such as one on a port in a Windows excluded port range. */
                         unavailable?: components["schemas"]["LbUnavailable"][];
+                        /** @description The GCPEMU_LB_* variables `gcpemu env` does not print because more than one forwarding rule would (ADR 0013); with project, those involving one of its rules. */
+                        withheld?: components["schemas"]["LbWithheld"][];
                     };
                 };
             };

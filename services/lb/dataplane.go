@@ -59,6 +59,10 @@ type dataplane struct {
 	pubKnown bool
 	pubRetry time.Time // no read before then, after a failed one
 
+	// withheld holds the GCPEMU_LB_* variables already logged as
+	// withheld (envvars.go).
+	withheld map[string]bool
+
 	// goos is the host OS, which says what a refused bind means
 	// (loopback.RefusalOn), and bind, when set, replaces listenLoop's
 	// bind (tests).
@@ -138,6 +142,10 @@ func (d *dataplane) close(ctx context.Context) {
 	bs := d.backends
 	d.backends = map[string]*backendSvc{}
 	d.closeLAN(ctx)
+	for _, l := range ls {
+		d.s.env.Endpoints.Delete(l.ep)
+	}
+	d.withheld = nil
 	d.mu.Unlock()
 	for _, l := range ls {
 		l.close()
@@ -209,18 +217,10 @@ func (d *dataplane) reconcile() {
 	// Listeners.
 	for key, l := range d.listeners {
 		fe := cfg.fronts[key]
-		if fe == nil || fe.https != l.https || fe.fr.Name != l.name {
+		if fe == nil || fe.https != l.https || endpointKey(fe) != l.ep {
 			l.close()
 			delete(d.listeners, key)
-			// A global and a regional rule may share the name: drop the
-			// lb: entry only while it still names this listener.
-			advertised := l.addr
-			if l.pub != nil {
-				advertised = l.pubHost
-			}
-			if d.s.env.Endpoints.Get("lb:"+l.name) == advertised {
-				d.s.env.Endpoints.Delete("lb:" + l.name)
-			}
+			d.s.env.Endpoints.Delete(l.ep)
 		}
 	}
 	// Rules waiting for a Published port take freed ones before new rules
@@ -248,6 +248,7 @@ func (d *dataplane) reconcile() {
 	}
 	d.unavailable = unavailable
 	d.syncLAN()
+	d.warnWithheld()
 }
 
 // buildFrontend resolves a forwarding rule's target proxy, URL map and TLS

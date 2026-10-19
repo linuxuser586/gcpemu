@@ -91,7 +91,7 @@ func perfStack(tb testing.TB) *perfEnv {
 	do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
 	tr := &http.Transport{MaxIdleConnsPerHost: 256, MaxIdleConns: 256}
 	tb.Cleanup(tr.CloseIdleConnections)
-	return &perfEnv{env: e, url: "http://" + inst.Endpoint("lb:fr"), client: &http.Client{Transport: tr}}
+	return &perfEnv{env: e, url: "http://" + inst.Endpoint(ep("fr")), client: &http.Client{Transport: tr}}
 }
 
 func atoi(s string) int {

@@ -147,7 +147,7 @@ func TestGKEBackends(t *testing.T) {
 		{Name: "app.example.test.", Type: "A", Ttl: 60, Rrdatas: []string{fr.IPAddress}}}}).Do(); err != nil {
 		t.Fatal(err)
 	}
-	listener := inst.Endpoint("lb:https")
+	listener := inst.Endpoint(ep("https"))
 	lh, lp, _ := net.SplitHostPort(listener)
 	if lp != "443" || net.ParseIP(lh).IsLoopback() {
 		t.Fatalf("listener %s: want the edge on port 443", listener)
@@ -499,8 +499,8 @@ func TestEdgeRetired(t *testing.T) {
 	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/be"}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "80", Target: "global/targetHttpProxies/p"}).Do())
-	if host, port, _ := net.SplitHostPort(e.inst.Endpoint("lb:fr")); port != "80" || net.ParseIP(host).IsLoopback() {
-		t.Fatalf("listener %s: want the edge on port 80", e.inst.Endpoint("lb:fr"))
+	if host, port, _ := net.SplitHostPort(e.inst.Endpoint(ep("fr"))); port != "80" || net.ParseIP(host).IsLoopback() {
+		t.Fatalf("listener %s: want the edge on port 80", e.inst.Endpoint(ep("fr")))
 	}
 	edges := func() int {
 		cts, err := e.inst.Containers(context.Background())

@@ -297,7 +297,8 @@ func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, c
 
 // checkUnpublished lists the forwarding rules of the running Instance that
 // have no published port (ADR 0012). Only a Containerized Instance
-// reports any, and an Instance without the lb service none. It also lists
+// reports any, and an Instance without the lb service none. It lists the
+// GCPEMU_LB_* variables withheld as ambiguous (ADR 0013), and also
 // what keeps host clients from Kubernetes Services (ADR 0014), which an
 // Instance without the gke service does not report.
 func checkUnpublished(out io.Writer, cfg *config.Config) {
@@ -345,7 +346,9 @@ func reportSQLHosts(out io.Writer, body []byte) {
 }
 
 // reportUnpublished prints each forwarding rule of an lb listeners report
-// that has no published port, with what to publish.
+// that has no published port, with what to publish, and each GCPEMU_LB_*
+// variable withheld because more than one rule would print it (ADR 0013),
+// with the qualified variables to use instead.
 func reportUnpublished(out io.Writer, body []byte) {
 	var v struct {
 		Listeners []struct {
@@ -353,6 +356,11 @@ func reportUnpublished(out io.Writer, body []byte) {
 			Port           int    `json:"port"`
 			Unpublished    string `json:"unpublished"`
 		} `json:"listeners"`
+		Withheld []struct {
+			Variable        string   `json:"variable"`
+			ForwardingRules []string `json:"forwardingRules"`
+			Qualified       []string `json:"qualified"`
+		} `json:"withheld"`
 	}
 	if json.Unmarshal(body, &v) != nil {
 		return
@@ -363,6 +371,23 @@ func reportUnpublished(out io.Writer, body []byte) {
 			fmt.Fprintf(out, "       fix: %s\n", l.Unpublished)
 		}
 	}
+	for _, w := range v.Withheld {
+		fmt.Fprintf(out, "[WARN] `gcpemu env` does not print %s: forwarding rules %s share it\n", w.Variable, joinAnd(w.ForwardingRules, "and"))
+		fix := "use " + joinAnd(w.Qualified, "or")
+		if slices.Contains(w.Qualified, w.Variable) {
+			// Their qualified variables flatten alike.
+			fix = "rename one of the forwarding rules"
+		}
+		fmt.Fprintf(out, "       fix: %s\n", fix)
+	}
+}
+
+// joinAnd joins items as "a, b and c", with conj for "and".
+func joinAnd(items []string, conj string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " " + conj + " " + items[len(items)-1]
 }
 
 // startFlag returns the value of --name in a container's command, as

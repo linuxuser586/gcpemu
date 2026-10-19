@@ -14,7 +14,8 @@ import (
 // The Web console's Load Balancer view reads two things GCP has no API
 // for (SRS 4.8.3), on the admin API:
 //
-//	GET  /_emu/v1/lb/listeners[?project=P]  each forwarding rule's local listener (FR-LB-002)
+//	GET  /_emu/v1/lb/listeners[?project=P]  each forwarding rule's local listener (FR-LB-002), and the
+//	                                        GCPEMU_LB_* variables withheld as ambiguous (ADR 0013)
 //	POST /_emu/v1/lb/route                  which route and backend of a URL map serve a request
 
 // listenerInfo is one forwarding rule's mapped listener.
@@ -37,6 +38,15 @@ type unavailableInfo struct {
 	IPAddress      string `json:"ipAddress"`
 	Port           int    `json:"port"`
 	Error          string `json:"error"`
+}
+
+// withheldInfo is a GCPEMU_LB_* variable that `gcpemu env` does not print
+// because more than one forwarding rule would (ADR 0013), with those
+// rules and their qualified variables.
+type withheldInfo struct {
+	Variable        string   `json:"variable"`
+	ForwardingRules []string `json:"forwardingRules"`
+	Qualified       []string `json:"qualified"`
 }
 
 // serveListeners is GET /_emu/v1/lb/listeners.
@@ -62,9 +72,21 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 		failed = append(failed, unavailableInfo{ForwardingRule: fe.frPath, IPAddress: fe.ip, Port: fe.port, Error: why})
 	}
 	s.dp.mu.Unlock()
+	_, ws := lbEnv(s.env.Endpoints.All())
+	withheld := []withheldInfo{}
+	for _, w := range ws {
+		info := w.info()
+		in := project == ""
+		for _, r := range info.ForwardingRules {
+			in = in || scopeOfPath(r).project == project
+		}
+		if in {
+			withheld = append(withheld, info)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ForwardingRule < out[j].ForwardingRule })
 	sort.Slice(failed, func(i, j int) bool { return failed[i].ForwardingRule < failed[j].ForwardingRule })
-	writeJSON(w, http.StatusOK, map[string]any{"listeners": out, "unavailable": failed})
+	writeJSON(w, http.StatusOK, map[string]any{"listeners": out, "unavailable": failed, "withheld": withheld})
 }
 
 // routeRequest is the body of POST /_emu/v1/lb/route.

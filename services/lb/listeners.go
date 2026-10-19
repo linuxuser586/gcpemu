@@ -44,9 +44,11 @@ import (
 // rule listens on 127.0.0.1 on its own port when it is free, and on a
 // fallback port otherwise.
 //
-// Each mapping is recorded as endpoint "lb:<name>" (printed by `gcpemu env`
-// as GCPEMU_LB_<NAME>), except in a Containerized Instance, which records
-// the host side of the rule's Published port instead (published.go), and
+// Each mapping is recorded as endpoint "lb:<project>/<region|global>/<name>"
+// (printed by `gcpemu env` as GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>,
+// and as GCPEMU_LB_<NAME> while the name is unique; envvars.go), except
+// in a Containerized Instance, which records the host side of the rule's
+// Published port instead (published.go), and
 // the emulated DNS answers A queries for a forwarding rule IP with the
 // mapped listener IP.
 
@@ -55,6 +57,7 @@ const singleLoopback = loopback.Host
 
 type listener struct {
 	name  string
+	ep    string // its rule's endpoint, "lb:<project>/<region|global>/<name>"
 	key   string
 	https bool
 	addr  string // host:port clients use
@@ -193,7 +196,7 @@ func (d *dataplane) fallbackBase() int {
 
 // listen opens the listener of a frontend. Callers hold d.mu.
 func (d *dataplane) listen(fe *frontend) (*listener, error) {
-	l := &listener{name: fe.fr.Name, key: fe.key, https: fe.https}
+	l := &listener{name: fe.fr.Name, ep: endpointKey(fe), key: fe.key, https: fe.https}
 	lip := singleLoopback
 	if !d.single {
 		lip = d.loopIP(fe.ip)
@@ -283,7 +286,7 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	if d.publishing().on {
 		d.publish(l, fe, true)
 	} else {
-		d.s.env.Endpoints.Set("lb:"+fe.fr.Name, l.addr)
+		d.s.env.Endpoints.Set(l.ep, l.addr)
 	}
 	return l, nil
 }

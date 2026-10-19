@@ -208,6 +208,14 @@ listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports incl
 `--port-range 20000-20999` draws those free ports from a range. The choices are written to
 `<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
+Each load balancer forwarding rule's host listener is printed as
+`GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>` (for example `GCPEMU_LB_MY_PROJ_GLOBAL_WEB`), and
+also as `GCPEMU_LB_<NAME>` while the name is unique across all projects and scopes (ADR 0013).
+When a second rule takes the name, say a regional `web` beside a global one, `GCPEMU_LB_WEB` is
+not printed rather than pointing at either rule; it comes back once only one rule has the name.
+Two rules whose qualified variables come out the same (`-` and `/` both become `_`) print neither.
+The emulator logs a warning when a variable is withheld, and `gcpemu doctor` lists it.
+
 To reach a load balancer from another device (say, a phone on the LAN), pass
 `--lb-bind <address>` (repeatable; `lbBind` / `GCPEMU_LB_BIND`). Every forwarding rule is then
 also served on `<address>:<its port>`, while the admin API, the API gateway and every other Data
@@ -572,12 +580,14 @@ shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints i
 
 A load balancer forwarding rule listens on a loopback address inside the container, which `-p`
 never forwards to, so each rule is also served on a port the container publishes (ADR 0012), and
-`gcpemu env` prints the host side of that port as `GCPEMU_LB_<NAME>`. Without the Docker socket,
+`gcpemu env` prints the host side of that port as the rule's `GCPEMU_LB_*` variables (see "Service
+endpoints"). Without the Docker socket,
 publish each rule's port at the same host port (`-p 127.0.0.1:8080:8080`); the first rule on a
 port is served there. With the socket, the emulator reads its own published ports: a rule takes
 its own port when the container publishes it (`-p 127.0.0.1:28080:8080` gives
-`GCPEMU_LB_<NAME>=127.0.0.1:28080`), and otherwise a free port of `--port-range` when that range is
-published (see below). A rule with no free published port has no `GCPEMU_LB_<NAME>`; the
+`GCPEMU_LB_<NAME>=127.0.0.1:28080`, while the name is unique), and otherwise a free port of
+`--port-range` when that range is published (see below). A rule with no free published port has
+no `GCPEMU_LB_*` variable; the
 emulator logs what to publish, `gcpemu doctor` lists it, and it is served once a port frees.
 
 Cloud SQL, GKE and Cloud NAT start containers of their own, so they need the host's Docker

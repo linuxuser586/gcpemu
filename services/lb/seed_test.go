@@ -97,7 +97,7 @@ lb:
 	if a, err := e.c.GlobalAddresses.Get(proj, "web-ip").Do(); err != nil || a.Address != fr.IPAddress || a.Status != "IN_USE" {
 		t.Fatalf("address after round trip = %+v, %v", a, err)
 	}
-	if e.inst.Endpoint("lb:web") == "" {
+	if e.inst.Endpoint(ep("web")) == "" {
 		t.Error("forwarding rule after round trip has no listener")
 	}
 }

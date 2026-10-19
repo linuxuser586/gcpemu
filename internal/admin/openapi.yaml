@@ -762,6 +762,13 @@ paths:
                     type: array
                     description: The forwarding rules that have no listener, such as one on a port in a Windows excluded port range.
                     items: { $ref: "#/components/schemas/LbUnavailable" }
+                  withheld:
+                    type: array
+                    description: >-
+                      The GCPEMU_LB_* variables `gcpemu env` does not print because
+                      more than one forwarding rule would (ADR 0013); with project,
+                      those involving one of its rules.
+                    items: { $ref: "#/components/schemas/LbWithheld" }
   /_emu/v1/lb/route:
     post:
       summary: Which route and backend of a URL map would serve a request (lb service; Web console Load Balancer view).
@@ -1186,7 +1193,7 @@ components:
         additionalProperties: { type: integer }
     Endpoints:
       type: object
-      description: Service endpoint name ("gateway", "gcs", "lb:FORWARDING_RULE", ...) to host:port.
+      description: Service endpoint name ("gateway", "gcs", "lb:PROJECT/REGION_OR_GLOBAL/FORWARDING_RULE", ...) to host:port.
       additionalProperties: { type: string }
     Readiness:
       type: object
@@ -1345,6 +1352,19 @@ components:
         ipAddress: { type: string, description: The forwarding rule's IP address. }
         port: { type: integer }
         error: { type: string, description: Why the rule has no listener. }
+    LbWithheld:
+      type: object
+      required: [variable, forwardingRules, qualified]
+      properties:
+        variable: { type: string, description: The withheld variable. }
+        forwardingRules:
+          type: array
+          description: The resource paths of the forwarding rules that would print it.
+          items: { type: string }
+        qualified:
+          type: array
+          description: Each rule's qualified GCPEMU_LB_PROJECT_SCOPE_NAME variable, in the order of forwardingRules.
+          items: { type: string }
     LbRouteRequest:
       type: object
       required: [urlMap, host]

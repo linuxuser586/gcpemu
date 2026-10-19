@@ -22,11 +22,12 @@ import (
 // TestContainerizedForwardingRules (#289): in a Containerized Instance a
 // forwarding rule's loopback listener is the container's, which `-p`
 // never reaches, so each rule is also served on a port the container
-// publishes (ADR 0012), and GCPEMU_LB_<NAME> is the host side of it.
+// publishes (ADR 0012), and its GCPEMU_LB_* variables (ADR 0013) are the
+// host side of it.
 //
 // With the runtime socket a rule takes its own port, published here at
 // another host port, then a free port of --port-range; a rule with none
-// free has no GCPEMU_LB_<NAME>, `gcpemu doctor` lists it, and it takes a
+// free has no GCPEMU_LB_* variable, `gcpemu doctor` lists it, and it takes a
 // port once one frees. The loopback listener inside the container keeps
 // answering. Without the socket a rule listens on its own port, which is
 // published at the same host port.
@@ -55,13 +56,15 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		gcpemuEnv := func() string { return docker(t, "exec", name+"-socket", "/gcpemu", "env") }
 		lb := newLBClient(t, gw)
 		lb.rule("a")
-		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_A"); got != "127.0.0.1:"+own {
-			t.Fatalf("GCPEMU_LB_A=%s, want 127.0.0.1:%s", got, own)
+		for _, v := range []string{"GCPEMU_LB_E2E_FRULES_GLOBAL_A", "GCPEMU_LB_A"} {
+			if got := envAddr(t, gcpemuEnv, v); got != "127.0.0.1:"+own {
+				t.Fatalf("%s=%s, want 127.0.0.1:%s", v, got, own)
+			}
 		}
 		answers(t, "127.0.0.1:"+own)
 		lb.rule("b")
-		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_B"); got != "127.0.0.1:"+rng {
-			t.Fatalf("GCPEMU_LB_B=%s, want 127.0.0.1:%s of --port-range", got, rng)
+		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_E2E_FRULES_GLOBAL_B"); got != "127.0.0.1:"+rng {
+			t.Fatalf("GCPEMU_LB_E2E_FRULES_GLOBAL_B=%s, want 127.0.0.1:%s of --port-range", got, rng)
 		}
 		answers(t, "127.0.0.1:"+rng)
 
@@ -88,7 +91,7 @@ func TestContainerizedForwardingRules(t *testing.T) {
 
 		lb.rule("c")
 		time.Sleep(2 * time.Second)
-		if out := gcpemuEnv(); strings.Contains(out, "GCPEMU_LB_C=") {
+		if out := gcpemuEnv(); strings.Contains(out, "GCPEMU_LB_C=") || strings.Contains(out, "GCPEMU_LB_E2E_FRULES_GLOBAL_C=") {
 			t.Fatalf("rule c has no free published port, but gcpemu env prints it:\n%s", out)
 		}
 		if out := docker(t, "exec", name+"-socket", "/gcpemu", "doctor"); !strings.Contains(out, "forwardingRules/c (port 8080) has no published port") {
@@ -96,7 +99,8 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		}
 		lb.delete("a")
 		eventually(t, 30*time.Second, "rule c takes port "+own, func() bool {
-			return strings.Contains(gcpemuEnv(), "GCPEMU_LB_C='127.0.0.1:"+own+"'")
+			out := gcpemuEnv()
+			return strings.Contains(out, "GCPEMU_LB_E2E_FRULES_GLOBAL_C='127.0.0.1:"+own+"'") && !strings.Contains(out, "GCPEMU_LB_A=")
 		}, gcpemuEnv)
 		answers(t, "127.0.0.1:"+own)
 	})
@@ -109,8 +113,8 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		gw := runEmulator(t, name+"-nosocket", image, []string{"-p", "127.0.0.1:8080:8080"})
 		gcpemuEnv := func() string { return docker(t, "exec", name+"-nosocket", "/gcpemu", "env") }
 		newLBClient(t, gw).rule("a")
-		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_A"); got != "127.0.0.1:8080" {
-			t.Fatalf("GCPEMU_LB_A=%s, want 127.0.0.1:8080", got)
+		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_E2E_FRULES_GLOBAL_A"); got != "127.0.0.1:8080" {
+			t.Fatalf("GCPEMU_LB_E2E_FRULES_GLOBAL_A=%s, want 127.0.0.1:8080", got)
 		}
 		answers(t, "127.0.0.1:8080")
 	})
