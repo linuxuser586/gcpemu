@@ -16,6 +16,7 @@ require (
 	cloud.google.com/go/pubsub/v2 v2.7.0
 	cloud.google.com/go/secretmanager v1.22.0
 	cloud.google.com/go/storage v1.69.0
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-containerregistry v0.21.5

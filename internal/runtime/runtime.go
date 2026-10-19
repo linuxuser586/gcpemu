@@ -60,8 +60,11 @@ var ErrNotFound = errors.New("runtime: not found")
 type Client struct {
 	http *http.Client
 	base string // e.g. "http://docker/v1.41"
-	// Endpoint is the socket or URL in use.
+	// Endpoint is the socket, pipe or URL in use.
 	Endpoint string
+	// dial connects to Endpoint; host is the Host header sent over it.
+	dial func(context.Context) (net.Conn, error)
+	host string
 	// self is the emulator's own container (self.go).
 	self string
 	// member joins every network like self (SetMember).
@@ -111,23 +114,31 @@ func (i Info) String() string {
 	return s
 }
 
-// New returns a client for endpoint ("unix:///path" or "tcp://host:port").
+// New returns a client for endpoint ("unix:///path", "tcp://host:port" or,
+// on Windows, "npipe:////./pipe/name").
 func New(endpoint string) (*Client, error) {
-	tr := &http.Transport{MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second}
-	base := "http://docker/" + apiVersion
-	switch {
-	case strings.HasPrefix(endpoint, "unix://"):
-		sock := strings.TrimPrefix(endpoint, "unix://")
-		tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
+	c := &Client{Endpoint: endpoint, host: "docker"}
+	var d net.Dialer
+	switch scheme, addr, _ := strings.Cut(endpoint, "://"); scheme {
+	case "unix":
+		c.dial = func(ctx context.Context) (net.Conn, error) { return d.DialContext(ctx, "unix", addr) }
+	case "tcp":
+		c.host = addr
+		c.dial = func(ctx context.Context) (net.Conn, error) { return d.DialContext(ctx, "tcp", addr) }
+	case "npipe":
+		dial, err := pipeDialer(addr)
+		if err != nil {
+			return nil, err
 		}
-	case strings.HasPrefix(endpoint, "tcp://"):
-		base = "http://" + strings.TrimPrefix(endpoint, "tcp://") + "/" + apiVersion
+		c.dial = dial
 	default:
 		return nil, fmt.Errorf("unsupported runtime endpoint %q", endpoint)
 	}
-	return &Client{http: &http.Client{Transport: tr}, base: base, Endpoint: endpoint}, nil
+	tr := &http.Transport{MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return c.dial(ctx) }}
+	c.http = &http.Client{Transport: tr}
+	c.base = "http://" + c.host + "/" + apiVersion
+	return c, nil
 }
 
 type apiError struct {
@@ -1164,10 +1175,11 @@ func (c *Client) execStart(ctx context.Context, execID string, stdin []byte) (Ex
 		err = demux(resp.Body, &res)
 		return res, err
 	}
-	conn, br, err := c.hijack(ctx, "/exec/"+execID+"/start", payload)
+	conn, br, stop, err := c.hijack(ctx, "/exec/"+execID+"/start", payload)
 	if err != nil {
 		return res, err
 	}
+	defer stop()
 	defer conn.Close()
 	go func() {
 		_, _ = conn.Write(stdin)
@@ -1175,42 +1187,42 @@ func (c *Client) execStart(ctx context.Context, execID string, stdin []byte) (Ex
 			_ = cw.CloseWrite()
 		}
 	}()
-	err = demux(br, &res)
+	if err = demux(br, &res); err != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	return res, err
 }
 
-// hijack issues an upgrade request and returns the raw connection.
-func (c *Client) hijack(ctx context.Context, p string, payload []byte) (net.Conn, *bufio.Reader, error) {
-	var conn net.Conn
-	var err error
-	var d net.Dialer
-	host := "docker"
-	if sock, ok := strings.CutPrefix(c.Endpoint, "unix://"); ok {
-		conn, err = d.DialContext(ctx, "unix", sock)
-	} else {
-		host = strings.TrimPrefix(c.Endpoint, "tcp://")
-		conn, err = d.DialContext(ctx, "tcp", host)
-	}
+// hijack issues an upgrade request and returns the raw connection, which is
+// closed when ctx is done until stop is called.
+func (c *Client) hijack(ctx context.Context, p string, payload []byte) (net.Conn, *bufio.Reader, func() bool, error) {
+	conn, err := c.dial(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	fail := func(err error) (net.Conn, *bufio.Reader, func() bool, error) {
+		stop()
+		conn.Close()
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return nil, nil, nil, err
 	}
 	req := fmt.Sprintf("POST /%s%s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: %d\r\n\r\n",
-		apiVersion, p, host, len(payload))
+		apiVersion, p, c.host, len(payload))
 	if _, err := conn.Write(append([]byte(req), payload...)); err != nil {
-		conn.Close()
-		return nil, nil, err
+		return fail(err)
 	}
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
-		conn.Close()
-		return nil, nil, err
+		return fail(err)
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols && resp.StatusCode != http.StatusOK {
-		conn.Close()
-		return nil, nil, fmt.Errorf("exec start: HTTP %d", resp.StatusCode)
+		return fail(fmt.Errorf("exec start: HTTP %d", resp.StatusCode))
 	}
-	return conn, br, nil
+	return conn, br, stop, nil
 }
 
 // demux splits Docker's multiplexed stdout/stderr stream.

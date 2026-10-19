@@ -15,9 +15,8 @@ func Unusable() error { return UnusableOn(goruntime.GOOS) }
 // UnusableOn reports why an Instance cannot use a container runtime on
 // goos, or nil when it can. It is decided by OS, not by detection: on native
 // Windows, Docker Desktop's bridge networks are inside the WSL2 VM and not
-// routable from the host, whatever $DOCKER_HOST names (ADR 0008). Lift it
-// once native Windows has the VM relay's host side (ADR 0005) and a
-// named-pipe runtime endpoint.
+// routable from the host, whatever $DOCKER_HOST names (ADR 0008). ADR 0015
+// lifts it (#373): the client already dials named-pipe endpoints.
 func UnusableOn(goos string) error {
 	if goos == "windows" {
 		return ErrNeedsWSL2

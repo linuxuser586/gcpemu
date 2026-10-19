@@ -23,6 +23,9 @@ func TestReclaimOrphans(t *testing.T) {
 	if testing.Short() {
 		t.Skip("needs a container runtime")
 	}
+	if err := runtime.Unusable(); err != nil {
+		t.Skip(err)
+	}
 	cl, err := runtime.Detect()
 	if err != nil {
 		t.Skipf("no container runtime: %v", err)
@@ -92,6 +95,9 @@ func TestReclaimOrphans(t *testing.T) {
 func TestReadyReportsDisruptedContainers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("needs a container runtime")
+	}
+	if err := runtime.Unusable(); err != nil {
+		t.Skip(err)
 	}
 	cl, err := runtime.Detect()
 	if err != nil {
