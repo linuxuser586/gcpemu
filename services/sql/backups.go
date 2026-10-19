@@ -617,7 +617,7 @@ func (s *Service) cloneInstance(w http.ResponseWriter, r *http.Request) {
 		return s.replaceAPIState(project, dest, dbs, users)
 	}}
 	if pitr {
-		hooks.files = func(ctx context.Context) ([]runtime.File, error) {
+		hooks.files = func(ctx context.Context) ([]runtime.File, func(), error) {
 			return s.restoreBundle(ctx, project, src, target)
 		}
 		hooks.after = func(ctx context.Context) error {
