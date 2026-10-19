@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
+	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 const project = "compat-proj"
@@ -43,7 +44,9 @@ func start(t *testing.T) *emulator {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	services := "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn"
-	if exec.Command("docker", "info").Run() == nil {
+	// gcpemu's own detection, not `docker info`: an engine serving Windows
+	// containers answers `docker info` but cannot run the Runtime Services.
+	if _, err := emuruntime.Detect(); err == nil {
 		e.runtime = true
 		services += ",sql,gke,build"
 	}
@@ -380,7 +383,12 @@ func TestClients(t *testing.T) {
 			t.Fatalf("ko image index: %+v %v", idx, err)
 		}
 
-		// Docker: login with the gcloud token, push, pull.
+		// Docker: login with the gcloud token, push, pull. A daemon gcpemu
+		// cannot use (one serving Windows containers) cannot pull these
+		// Linux images.
+		if !e.runtime {
+			t.Skip("docker needs a container runtime")
+		}
 		docker := onPath(t, "docker")
 		dl := exec.Command(docker, "login", "-u", "oauth2accesstoken", "--password-stdin", reg)
 		dl.Env, dl.Stdin = e.env, strings.NewReader(tok)
