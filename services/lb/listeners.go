@@ -28,12 +28,16 @@ import (
 //     port, serving only connections to loopback and --lb-bind addresses
 //     (macOS lets an unprivileged process bind a port below 1024 only
 //     there). The first forwarding rule on the port gets it;
-//  3. elsewhere, when that port is privileged (or below 1024 with
-//     Options.Edge) and a container runtime is available, the lb-edge
+//  3. elsewhere but Windows, when that port is privileged (or below 1024
+//     with Options.Edge) and a container runtime is available, the lb-edge
 //     container (edge.go), which owns one container IP per forwarding rule
 //     and relays connections with PROXY protocol v2;
 //  4. otherwise 127.0.0.x:<base+n> (base 18080, or the configured "lb"
 //     port; 0 = dynamic).
+//
+// Windows has no privileged ports: a bind it refuses is of a port in an
+// excluded range (Hyper-V, WSL), which the Edge relay's host port would hit
+// too, so the forwarding rule fails instead (ADR 0015).
 //
 // A host on which 127.0.0.2 cannot be bound (macOS without loopback
 // aliases, #185) uses single-loopback mode: every x is 1, so a forwarding
@@ -48,10 +52,6 @@ import (
 
 // singleLoopback is the only loopback address in single-loopback mode.
 const singleLoopback = loopback.Host
-
-// darwinPorts: macOS binds privileged ports on the wildcard address, and
-// never through a container, whose host network is a VM's.
-const darwinPorts = loopback.DarwinPorts
 
 type listener struct {
 	name  string
@@ -198,8 +198,10 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 	if !d.single {
 		lip = d.loopIP(fe.ip)
 	}
-	// A forced edge takes privileged ports without trying the bind.
-	forced := d.s.options().Edge && fe.port < 1024 && !darwinPorts
+	// A forced Edge relay takes privileged ports without trying the bind, on
+	// hosts whose privileged ports it relays: not macOS, which binds them
+	// on the wildcard address, nor Windows, which has none.
+	forced := d.s.options().Edge && fe.port < 1024 && loopback.RefusalOn(d.goos) == loopback.Privileged
 	var ln net.Listener
 	var err error
 	if !forced {
@@ -211,16 +213,20 @@ func (d *dataplane) listen(fe *frontend) (*listener, error) {
 			}
 		}
 	}
+	refused := loopback.RefusedOn(d.goos, err)
 	switch {
 	case !forced && err == nil:
 		l.ln, l.mode = ln, "loopback"
-	case darwinPorts && loopback.BindDenied(err):
+	case refused == loopback.Excluded:
+		// No address or relay binds the port.
+		return nil, loopback.ExcludedError(err, "tcp")
+	case refused == loopback.PrivilegedWildcard:
 		// When an earlier forwarding rule on the port (or another
 		// process) holds the wildcard, a fallback port.
 		if wln, werr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(fe.port))); werr == nil {
 			l.ln, l.mode = &loopback.LocalFilter{Listener: wln, Allow: d.lbLocal}, "wildcard"
 		}
-	case (forced || loopback.BindDenied(err)) && !darwinPorts && d.edge.available(d.ctx):
+	case (forced || refused == loopback.Privileged) && d.edge.available(d.ctx):
 		addr, verr := d.edge.add(d.ctx, fe)
 		if verr != nil {
 			d.s.env.Log.Warn("lb: edge container unavailable; using a high port", "forwardingRule", fe.frPath, "err", verr)

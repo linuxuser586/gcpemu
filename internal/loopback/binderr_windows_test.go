@@ -15,7 +15,7 @@ func TestWinsockBindErrnos(t *testing.T) {
 	if err := wrap(windows.WSAEADDRINUSE); !AddrInUse(err) {
 		t.Errorf("AddrInUse(%v) = false, want true", err)
 	}
-	if err := wrap(windows.WSAEACCES); !BindDenied(err) {
-		t.Errorf("BindDenied(%v) = false, want true", err)
+	if err := wrap(windows.WSAEACCES); Refused(err) != Excluded {
+		t.Errorf("Refused(%v) is not Excluded", err)
 	}
 }

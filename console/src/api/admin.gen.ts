@@ -998,6 +998,15 @@ export interface components {
             mode: "loopback" | "edge" | "fallback";
             https: boolean;
         };
+        LbUnavailable: {
+            /** @description The forwarding rule's resource path. */
+            forwardingRule: string;
+            /** @description The forwarding rule's IP address. */
+            ipAddress: string;
+            port: number;
+            /** @description Why the rule has no listener. */
+            error: string;
+        };
         LbRouteRequest: {
             /** @description The URL map's resource path or selfLink. */
             urlMap: string;
@@ -2122,6 +2131,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         listeners: components["schemas"]["LbListener"][];
+                        /** @description The forwarding rules that have no listener, such as one on a port in a Windows excluded port range. */
+                        unavailable?: components["schemas"]["LbUnavailable"][];
                     };
                 };
             };

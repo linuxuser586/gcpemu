@@ -325,7 +325,10 @@ func (s *Service) serveHostOnAlias(ctx context.Context, key, id string, svc *kub
 		var err error
 		for _, p := range ports {
 			var ln net.Listener
-			if ln, err = listenAlias(ip, p); loopback.BindDenied(err) {
+			if ln, err = listenAlias(ip, p); loopback.Refused(err) != loopback.NotRefused {
+				if loopback.Refused(err) == loopback.Excluded {
+					err = loopback.ExcludedError(err, "tcp")
+				}
 				s.env.Log.Warn("gke: the host refuses a Kubernetes Service port; host clients cannot reach it", "service", id, "address", ip, "port", p, "err", err)
 				err = nil
 				continue
@@ -360,7 +363,7 @@ func (s *Service) serveHostOnAlias(ctx context.Context, key, id string, svc *kub
 // on the wildcard address, it binds that and serves only clients of ip.
 func listenAlias(ip string, port int) (net.Listener, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
-	if err == nil || !loopback.BindDenied(err) || !loopback.DarwinPorts {
+	if loopback.Refused(err) != loopback.PrivilegedWildcard {
 		return ln, err
 	}
 	wln, werr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))

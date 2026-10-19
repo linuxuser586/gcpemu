@@ -162,10 +162,12 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 		go l.serve(ln)
 		return b, nil
 	}
-	if !loopback.BindDenied(err) {
+	switch loopback.RefusedOn(d.goos, err) {
+	case loopback.NotRefused:
 		return nil, err
-	}
-	if darwinPorts {
+	case loopback.Excluded:
+		return nil, loopback.ExcludedError(err, "tcp")
+	case loopback.PrivilegedWildcard:
 		return nil, fmt.Errorf("%w (privileged port: only the first forwarding rule on it is served on --lb-bind addresses)", err)
 	}
 	if !d.edge.available(d.ctx) {

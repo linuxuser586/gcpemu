@@ -17,8 +17,9 @@ const Host = "127.0.0.1"
 // port below 1024 only on the wildcard address.
 const DarwinPorts = goruntime.GOOS == "darwin"
 
-// Listen binds ip:port for host clients. When the host refuses the port
-// as privileged, it binds the wildcard address on the port on macOS,
+// Listen binds ip:port for host clients. When the port is in a Windows
+// excluded range, it fails. When the host refuses the port as privileged,
+// it binds the wildcard address on the port on macOS,
 // serving only connections to a loopback address, and otherwise (or when
 // another socket holds the wildcard) a free port on ip. When another
 // socket holds ip:port, it binds a free port on ip if inUse is set, and
@@ -26,15 +27,16 @@ const DarwinPorts = goruntime.GOOS == "darwin"
 // served.
 func Listen(ip string, port int, inUse bool) (ln net.Listener, addr string, err error) {
 	ln, err = net.Listen("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
-	switch {
+	switch refused := Refused(err); {
 	case err == nil:
 		return ln, ln.Addr().String(), nil
-	case BindDenied(err):
-		if DarwinPorts {
-			if wln, werr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port))); werr == nil {
-				return &LocalFilter{Listener: wln, Allow: IsLoopback}, net.JoinHostPort(ip, strconv.Itoa(port)), nil
-			}
+	case refused == Excluded:
+		return nil, "", ExcludedError(err, "tcp")
+	case refused == PrivilegedWildcard:
+		if wln, werr := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port))); werr == nil {
+			return &LocalFilter{Listener: wln, Allow: IsLoopback}, net.JoinHostPort(ip, strconv.Itoa(port)), nil
 		}
+	case refused == Privileged:
 	case !AddrInUse(err) || !inUse:
 		return nil, "", err
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -34,12 +35,15 @@ type dataplane struct {
 
 	mu        sync.Mutex
 	listeners map[string]*listener // by frontend key "ip:port"
-	loopX     map[string]int       // forwarding rule IP → 127.0.0.x
-	single    bool                 // single-loopback mode (listeners.go)
-	nextPort  int
-	backends  map[string]*backendSvc // by backend service path
-	ctx       context.Context
-	closed    bool
+	// unavailable holds why each forwarding rule (by frontend key) without
+	// a listener has none.
+	unavailable map[string]string
+	loopX       map[string]int // forwarding rule IP → 127.0.0.x
+	single      bool           // single-loopback mode (listeners.go)
+	nextPort    int
+	backends    map[string]*backendSvc // by backend service path
+	ctx         context.Context
+	closed      bool
 
 	logs *accessLogger
 	edge *edge
@@ -54,6 +58,12 @@ type dataplane struct {
 	pub      publishing
 	pubKnown bool
 	pubRetry time.Time // no read before then, after a failed one
+
+	// goos is the host OS, which says what a refused bind means
+	// (loopback.RefusalOn), and bind, when set, replaces listenLoop's
+	// bind (tests).
+	goos string
+	bind func(addr string) (net.Listener, error)
 }
 
 // config is a snapshot of the load-balancing resources.
@@ -95,7 +105,7 @@ type frontend struct {
 }
 
 func newDataplane(s *Service) *dataplane {
-	d := &dataplane{s: s, listeners: map[string]*listener{}, loopX: map[string]int{}, backends: map[string]*backendSvc{}}
+	d := &dataplane{s: s, listeners: map[string]*listener{}, loopX: map[string]int{}, backends: map[string]*backendSvc{}, goos: goruntime.GOOS}
 	d.relay = &lanRelay{d: d}
 	d.cfg.Store(&config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, public: map[string]bool{}, svcs: map[string]*backendSvc{}})
 	return d
@@ -214,6 +224,7 @@ func (d *dataplane) reconcile() {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	unavailable := map[string]string{}
 	for _, key := range keys {
 		fe := cfg.fronts[key]
 		if _, ok := d.listeners[key]; ok {
@@ -222,10 +233,12 @@ func (d *dataplane) reconcile() {
 		l, err := d.listen(fe)
 		if err != nil {
 			s.env.Log.Warn("lb: cannot listen for forwarding rule", "forwardingRule", fe.frPath, "err", err)
+			unavailable[key] = err.Error()
 			continue
 		}
 		d.listeners[key] = l
 	}
+	d.unavailable = unavailable
 	d.syncLAN()
 }
 

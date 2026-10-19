@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -271,5 +272,41 @@ func TestCheckRuntimeDetection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// On Windows, doctor warns about each forwarding rule, served or not,
+// and each configured port in an excluded port range (#376).
+func TestReportExcludedPorts(t *testing.T) {
+	body := `{"listeners":[
+		{"forwardingRule":"projects/p/global/forwardingRules/a","port":8080,"listener":"127.0.0.5:8080"},
+		{"forwardingRule":"projects/p/global/forwardingRules/b","port":8033,"listener":"127.0.0.6:18080","mode":"fallback"}],
+		"unavailable":[{"forwardingRule":"projects/p/global/forwardingRules/c","port":50010,"error":"bind: access denied"}]}`
+	ports := forwardingRulePorts([]byte(body))
+	ports["port lb (--port lb=8033)"] = 8033
+	ranges := loopback.ParseExcludedRanges([]byte("\n      8033        8033\n     50000       50059     *\n"))
+	var out strings.Builder
+	reportExcludedPorts(&out, "tcp", ranges, ports)
+	got := out.String()
+	for _, want := range []string{
+		"[WARN] forwarding rule projects/p/global/forwardingRules/b (port 8033) is in Windows' excluded port range 8033",
+		"[WARN] forwarding rule projects/p/global/forwardingRules/c (port 50010) is in Windows' excluded port range 50000-50059",
+		"[WARN] port lb (--port lb=8033) (port 8033) is in Windows' excluded port range 8033",
+		"netsh int ipv4 show excludedportrange protocol=tcp",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "forwardingRules/a") {
+		t.Errorf("output names rule a, whose port is not excluded:\n%s", got)
+	}
+	if strings.Index(got, "forwardingRules/b") > strings.Index(got, "forwardingRules/c") {
+		t.Errorf("output is not sorted:\n%s", got)
+	}
+	out.Reset()
+	reportExcludedPorts(&out, "tcp", nil, ports)
+	if out.Len() != 0 {
+		t.Errorf("no ranges: output %q, want none", out.String())
 	}
 }
