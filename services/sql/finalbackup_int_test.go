@@ -27,14 +27,11 @@ func TestFinalBackupRestoresADeletedInstance(t *testing.T) {
 	withRows := func(name string, n int, settings *sqladmin.Settings) {
 		t.Helper()
 		settings.IpConfiguration = ipc()
-		in := createInstance(t, svc, &sqladmin.DatabaseInstance{
+		createInstance(t, svc, &sqladmin.DatabaseInstance{
 			Name: name, DatabaseVersion: "POSTGRES_18", RootPassword: "rootpw", Settings: settings,
 		})
 		waitOp(t, svc, must(svc.Databases.Insert(testProject, name, &sqladmin.Database{Name: "app"}).Do()))
-		c, err := connect(ctx, publicIP(in), 5432, "postgres", "rootpw", "app")
-		if err != nil {
-			t.Fatal(err)
-		}
+		c := connectHost(t, inst, name, "postgres", "rootpw", "app")
 		defer c.Close(ctx)
 		if _, err := c.Exec(ctx, fmt.Sprintf("CREATE TABLE items (id int PRIMARY KEY); INSERT INTO items SELECT generate_series(1, %d)", n)); err != nil {
 			t.Fatal(err)
@@ -73,18 +70,14 @@ func TestFinalBackupRestoresADeletedInstance(t *testing.T) {
 		t.Errorf("description %q, want the finalBackupDescription", d)
 	}
 
-	dest := createInstance(t, svc, &sqladmin.DatabaseInstance{
+	createInstance(t, svc, &sqladmin.DatabaseInstance{
 		Name: "dest", DatabaseVersion: "POSTGRES_18", RootPassword: "rootpw", Settings: &sqladmin.Settings{IpConfiguration: ipc()},
 	})
 	for name, want := range map[string]int{"live": 3, "stopped": 4} {
 		waitOp(t, svc, must(svc.Instances.RestoreBackup(testProject, "dest", &sqladmin.InstancesRestoreBackupRequest{
 			Backup: byInstance[name].Name,
 		}).Do()))
-		dest = must(svc.Instances.Get(testProject, "dest").Do())
-		c, err := connect(ctx, publicIP(dest), 5432, "postgres", "rootpw", "app")
-		if err != nil {
-			t.Fatalf("connect after restoring %s's Final backup: %v", name, err)
-		}
+		c := connectHost(t, inst, "dest", "postgres", "rootpw", "app")
 		if n := count(t, c, "SELECT count(*) FROM items"); n != want {
 			t.Errorf("rows after restoring %s's Final backup: %d, want %d", name, n, want)
 		}

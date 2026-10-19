@@ -16,7 +16,9 @@ import (
 	"github.com/linuxuser586/gcpemu/services/sql/proxy"
 )
 
-// publicIP returns the instance's PRIMARY address.
+// publicIP returns the instance's PRIMARY address. The host reaches it on a
+// VM runtime only when the test starts with emutest.WithSQLHostClients();
+// otherwise dial the published host port with connectHost.
 func publicIP(in *sqladmin.DatabaseInstance) string {
 	for _, ip := range in.IpAddresses {
 		if ip.Type == "PRIMARY" {
