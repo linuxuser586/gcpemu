@@ -116,6 +116,125 @@ func TestContainerizedForwardingRules(t *testing.T) {
 	})
 }
 
+// TestContainerizedRuleServiceContention (#315): forwarding rules and GKE
+// LoadBalancer Services take Published ports (ADR 0012) from the same
+// --port-range, and the first to bind a port holds it. With one port to
+// compete for, exactly one of a rule and a Service holds it at a time;
+// the other has no endpoint, and takes the port once the holder goes.
+//
+// Services take Published ports only on a VM runtime, which
+// GCPEMU_VM_RUNTIME=true forces. Neither the rule's port nor the
+// Service's is published, so both can only take the range's port.
+//
+// It builds the image from the repository's Dockerfile, whose base image
+// comes from the internet, so it runs only with GCPEMU_NET_TESTS=1.
+func TestContainerizedRuleServiceContention(t *testing.T) {
+	emutest.RequireRuntime(t)
+	if os.Getenv("GCPEMU_NET_TESTS") != "1" {
+		t.Skip("GCPEMU_NET_TESTS != 1: building the image pulls its base image")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker is not on PATH")
+	}
+	const port = "20420"
+	const addr = "127.0.0.1:" + port
+	name := fmt.Sprintf("gcpemu-e2e-contention-%d", time.Now().UnixNano())
+	image := name + ":test"
+	buildEmulatorImage(t, image)
+	gid := socketGroup(t, "/var/run/docker.sock")
+	gw := runEmulator(t, name, image,
+		[]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid,
+			"-e", "GCPEMU_VM_RUNTIME=true", "-p", addr + ":" + port},
+		"--port-range", port+"-"+port)
+	gcpemuEnv := func() string { return docker(t, "exec", name, "/gcpemu", "env") }
+	doctor := func() string { return docker(t, "exec", name, "/gcpemu", "doctor") }
+	const svcKey = "GCPEMU_GKE_CONTEND_DEFAULT_WEB_8081"
+	// holders reports which of rule and Service web gcpemu env gives the
+	// port, and fails if it gives it to both.
+	holders := func(rule string) (ruleHolds, svcHolds bool) {
+		t.Helper()
+		out := gcpemuEnv()
+		ruleHolds = strings.Contains(out, "GCPEMU_LB_"+strings.ToUpper(rule)+"='"+addr+"'")
+		svcHolds = strings.Contains(out, svcKey+"='"+addr+"'")
+		if ruleHolds && svcHolds {
+			t.Errorf("rule %s and Service web both hold %s:\n%s", rule, addr, out)
+		}
+		return ruleHolds, svcHolds
+	}
+	svcWarnings := func() int {
+		logs, _ := exec.Command("docker", "logs", name).CombinedOutput()
+		n := 0
+		for _, line := range strings.Split(string(logs), "\n") {
+			if strings.Contains(line, "no free published port") && strings.Contains(line, "default/web") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Start the cluster first: it takes minutes, the rule does not.
+	createCluster(t, gw, lbProject, map[string]any{"name": "contend",
+		"nodePools": []map[string]any{{"name": "np", "initialNodeCount": 1}}})
+	lb := newLBClient(t, gw)
+
+	// 1. A rule takes the port.
+	lb.rule("first")
+	if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_FIRST"); got != addr {
+		t.Fatalf("GCPEMU_LB_FIRST=%s, want %s of --port-range", got, addr)
+	}
+	answers(t, addr)
+
+	// 2. A Service finds it taken: no ingress, no endpoint, one warning.
+	k := clusterKube(t, gw, lbProject, "contend")
+	lbWeb(t, k)
+	eventually(t, 30*time.Second, "a warning about Service web", func() bool { return svcWarnings() > 0 }, nil)
+	time.Sleep(3 * time.Second)
+	if n := svcWarnings(); n != 1 {
+		t.Errorf("%d no-free-published-port warnings for Service web, want 1", n)
+	}
+	if ing := lbIngress(t, k, "web", 0, nil); len(ing) != 0 {
+		t.Errorf("Service web has ingress %v while rule first holds %s, want none", ing, addr)
+	}
+	if out := gcpemuEnv(); strings.Contains(out, svcKey+"=") {
+		t.Errorf("Service web has no published port, but gcpemu env prints it:\n%s", out)
+	}
+	if ruleHolds, _ := holders("first"); !ruleHolds {
+		t.Fatalf("rule first no longer holds %s:\n%s", addr, gcpemuEnv())
+	}
+
+	// 3. The rule goes; the Service takes the port.
+	lb.delete("first")
+	eventually(t, 30*time.Second, "Service web takes "+addr, func() bool {
+		_, svcHolds := holders("first")
+		return svcHolds
+	}, gcpemuEnv)
+	if ing := lbIngress(t, k, "web", 30*time.Second, func(ing []string) bool { return len(ing) > 0 }); len(ing) != 1 || ing[0] != "127.0.0.1" {
+		t.Fatalf("ingress %v, want [127.0.0.1]", ing)
+	}
+	getWeb(t, addr)
+
+	// 4. A new rule finds it taken: no GCPEMU_LB_SECOND, and doctor lists it.
+	lb.rule("second")
+	time.Sleep(2 * time.Second)
+	if out := gcpemuEnv(); strings.Contains(out, "GCPEMU_LB_SECOND=") {
+		t.Fatalf("rule second has no free published port, but gcpemu env prints it:\n%s", out)
+	}
+	if out := doctor(); !strings.Contains(out, "forwardingRules/second (port 8080) has no published port") {
+		t.Errorf("gcpemu doctor does not list rule second:\n%s", out)
+	}
+	if _, svcHolds := holders("second"); !svcHolds {
+		t.Fatalf("Service web no longer holds %s:\n%s", addr, gcpemuEnv())
+	}
+
+	// 5. The Service goes; the rule takes the port.
+	k.delete("Service", "default", "web")
+	eventually(t, 30*time.Second, "rule second takes "+addr, func() bool {
+		ruleHolds, _ := holders("second")
+		return ruleHolds
+	}, gcpemuEnv)
+	answers(t, addr)
+}
+
 // runEmulator runs the image as an Ephemeral Instance in container name,
 // with extra docker run args and start args, waits until it is healthy,
 // and returns the host address of its API gateway.
