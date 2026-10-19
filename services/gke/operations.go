@@ -2,6 +2,7 @@ package gke
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,11 +35,23 @@ func (s *Service) newOpName() string {
 func (s *Service) now() string { return s.env.Clock.Now().UTC().Format(time.RFC3339Nano) }
 
 // startOp records a RUNNING operation for target and runs work in the
-// background. cluster is the cluster key the operation locks (empty for
-// none); a second mutating operation on a busy cluster fails like GKE's
-// "incompatible operation" error.
-func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, lock bool, work workFunc) (*containerpb.Operation, error) {
+// background. With lock it first takes the cluster's operation lock (see
+// acquire); a second mutating operation on a busy cluster fails like
+// GKE's "incompatible operation" error.
+func (s *Service) startOp(ctx context.Context, r ref, typ containerpb.Operation_Type, target string, lock bool, work workFunc) (*containerpb.Operation, error) {
 	name := s.newOpName()
+	if lock {
+		if err := s.acquire(ctx, r.key(), name); err != nil {
+			return nil, err
+		}
+	}
+	return s.runOp(r, name, typ, target, lock, work)
+}
+
+// runOp is startOp for an operation whose name already holds the cluster's
+// operation lock if lock is set. The lock is released when the operation
+// ends or fails to start.
+func (s *Service) runOp(r ref, name string, typ containerpb.Operation_Type, target string, lock bool, work workFunc) (*containerpb.Operation, error) {
 	op := &containerpb.Operation{
 		Name:          name,
 		Zone:          r.Location,
@@ -52,14 +65,8 @@ func (s *Service) startOp(r ref, typ containerpb.Operation_Type, target string, 
 	}
 	g := s.track(1)
 	if g == nil {
+		s.unlock(r, lock, name)
 		return nil, apierr.New(codes.Unavailable, "The service is shutting down.")
-	}
-	if lock {
-		if cur, ok := s.tryLock(r.key(), name); !ok {
-			g.wg.Done()
-			return nil, apierr.FailedPrecondition("Cluster is running incompatible operation %s.", cur).
-				WithReason("container.googleapis.com", "CLUSTER_ALREADY_HAS_OPERATION")
-		}
 	}
 	if err := s.putOp(r.Project, op); err != nil {
 		g.wg.Done()
@@ -97,6 +104,43 @@ func (s *Service) unlock(r ref, lock bool, name string) {
 	if lock {
 		s.release(r.key(), name)
 	}
+}
+
+// snapshotWait is how long a mutating call waits for a State snapshot save
+// to release a cluster's operation lock. Tests shorten it.
+var snapshotWait = 30 * time.Second
+
+// acquire takes a cluster's operation lock for name. A State snapshot
+// save holding the lock is waited out for up to snapshotWait, as the save
+// is not an Operation the client can see; any other holder fails at once
+// with GKE's "incompatible operation" error.
+func (s *Service) acquire(ctx context.Context, key, name string) error {
+	cur, ok := s.tryLock(key, name)
+	if ok {
+		return nil
+	}
+	if cur != snapshotOp {
+		return incompatibleOp(cur)
+	}
+	err := waitFor(ctx, snapshotWait, func() (bool, error) {
+		cur, ok := s.tryLock(key, name)
+		if !ok && cur != snapshotOp {
+			return false, incompatibleOp(cur)
+		}
+		return ok, nil
+	})
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return apierr.FailedPrecondition("A State snapshot of the Instance is being saved; retry shortly.").
+			WithReason("container.googleapis.com", "CLUSTER_ALREADY_HAS_OPERATION")
+	}
+	return err
+}
+
+// incompatibleOp is the error for a call on a cluster that operation cur
+// holds.
+func incompatibleOp(cur string) error {
+	return apierr.FailedPrecondition("Cluster is running incompatible operation %s.", cur).
+		WithReason("container.googleapis.com", "CLUSTER_ALREADY_HAS_OPERATION")
 }
 
 // tryLock takes a cluster's operation lock for name, or returns the

@@ -154,7 +154,7 @@ func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterR
 		return nil, err
 	}
 	a.s.index(r.key(), rec.cluster().Id)
-	op, err := a.s.startOp(r, containerpb.Operation_CREATE_CLUSTER, selfLink(r.Project, r.Location, "clusters/"+r.Cluster), true,
+	op, err := a.s.startOp(ctx, r, containerpb.Operation_CREATE_CLUSTER, selfLink(r.Project, r.Location, "clusters/"+r.Cluster), true,
 		func(ctx context.Context) error { return a.s.provision(ctx, r.key()) })
 	if err != nil {
 		_ = a.s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsClusters, r.key()) })
@@ -481,7 +481,7 @@ func (a *api) DeleteCluster(ctx context.Context, req *containerpb.DeleteClusterR
 	}); err != nil {
 		return nil, err
 	}
-	return a.s.startOp(r, containerpb.Operation_DELETE_CLUSTER, selfLink(r.Project, r.Location, "clusters/"+r.Cluster), true,
+	return a.s.startOp(ctx, r, containerpb.Operation_DELETE_CLUSTER, selfLink(r.Project, r.Location, "clusters/"+r.Cluster), true,
 		func(ctx context.Context) error { return a.s.teardown(ctx, r.key()) })
 }
 
@@ -627,12 +627,11 @@ func (a *api) mutate(ctx context.Context, r ref, typ containerpb.Operation_Type,
 	if _, err := a.load(r); err != nil {
 		return nil, err
 	}
-	a.s.mu.Lock()
-	cur, busy := a.s.busy[r.key()]
-	a.s.mu.Unlock()
-	if busy {
-		return nil, apierr.FailedPrecondition("Cluster is running incompatible operation %s.", cur).
-			WithReason("container.googleapis.com", "CLUSTER_ALREADY_HAS_OPERATION")
+	// The lock is taken before the change is stored, so a call that loses
+	// it leaves the cluster untouched.
+	name := a.s.newOpName()
+	if err := a.s.acquire(ctx, r.key(), name); err != nil {
+		return nil, err
 	}
 	err := a.s.updateCluster(r.key(), func(rec *clusterRecord, c *containerpb.Cluster) error {
 		if etag != "" && etag != c.Etag {
@@ -651,13 +650,14 @@ func (a *api) mutate(ctx context.Context, r ref, typ containerpb.Operation_Type,
 		return nil
 	})
 	if err != nil {
+		a.s.release(r.key(), name)
 		return nil, err
 	}
 	target := selfLink(r.Project, r.Location, "clusters/"+r.Cluster)
 	if r.Pool != "" {
 		target += "/nodePools/" + r.Pool
 	}
-	return a.s.startOp(r, typ, target, true, func(ctx context.Context) error {
+	return a.s.runOp(r, name, typ, target, true, func(ctx context.Context) error {
 		if work == nil {
 			return nil
 		}
