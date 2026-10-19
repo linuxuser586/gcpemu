@@ -215,17 +215,14 @@ func (s *Service) updateBackupRecord(project, name string, id int64, fn func(b *
 	})
 }
 
-// startBackup stores a RUNNING on-demand backup of the instance and starts
-// the BACKUP_VOLUME operation that fills it: a pg_dumpall with the API's
-// users and databases and, with point-in-time recovery enabled, a base
-// backup that later recoveries can start from.
-func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, description, expiry string) (*sqladmin.Operation, error) {
-	project, name := rec.Instance.Project, rec.Instance.Name
-	run := &sqladmin.BackupRun{
+// newBackupRun returns a RUNNING backup run of the instance, not yet
+// stored.
+func (s *Service) newBackupRun(rec *instanceRecord, typ, description string) *sqladmin.BackupRun {
+	return &sqladmin.BackupRun{
 		Kind:            "sql#backupRun",
-		Instance:        name,
+		Instance:        rec.Instance.Name,
 		Description:     description,
-		Type:            "ON_DEMAND",
+		Type:            typ,
 		BackupKind:      "SNAPSHOT",
 		Status:          "RUNNING",
 		DatabaseVersion: rec.Instance.DatabaseVersion,
@@ -233,27 +230,59 @@ func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, descript
 		WindowStartTime: s.now(),
 		Location:        rec.Instance.Region,
 	}
-	if err := s.env.Store.Update(func(tx store.Tx) error {
+}
+
+// storeNewBackup gives b's run an ID unique in the project and stores it.
+func (s *Service) storeNewBackup(project string, b *backupRecord) error {
+	return s.env.Store.Update(func(tx store.Tx) error {
 		id := s.env.Clock.Now().UnixMilli()
 		for backupIDTaken(tx, project, id) {
 			id++
 		}
-		run.Id = id
-		run.SelfLink = instanceLink(project, name) + "/backupRuns/" + strconv.FormatInt(id, 10)
-		return store.PutJSON(tx, nsBackups, childKey(project, name, backupKey(id)), &backupRecord{Run: run, ExpiryTime: expiry})
-	}); err != nil {
+		b.Run.Id = id
+		b.Run.SelfLink = instanceLink(project, b.Run.Instance) + "/backupRuns/" + strconv.FormatInt(id, 10)
+		return store.PutJSON(tx, nsBackups, b.key(project), b)
+	})
+}
+
+// fail marks the backup FAILED with err.
+func (s *Service) fail(b *backupRecord, err error) {
+	b.Run.Status, b.Run.EndTime = "FAILED", s.now()
+	b.Run.Error = &sqladmin.OperationError{Kind: "sql#operationError", Code: "INTERNAL_ERROR", Message: err.Error()}
+}
+
+// writeDump writes a pg_dumpall of the instance to the file of the backup
+// with the ID stored under owner (backupRecord.owner) and returns its path.
+func (s *Service) writeDump(ctx context.Context, project, name, owner string, id int64) (string, error) {
+	dump, err := s.dumpAll(ctx, project, name)
+	if err != nil {
+		return "", err
+	}
+	dir, err := s.backupDir(project, owner)
+	if err != nil {
+		return "", err
+	}
+	file := filepath.Join(dir, strconv.FormatInt(id, 10)+".sql")
+	return file, writeFileAtomic(file, []byte(dump))
+}
+
+// startBackup stores a RUNNING on-demand backup of the instance and starts
+// the BACKUP_VOLUME operation that fills it: a pg_dumpall with the API's
+// users and databases and, with point-in-time recovery enabled, a base
+// backup that later recoveries can start from.
+func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, description, expiry string) (*sqladmin.Operation, error) {
+	project, name := rec.Instance.Project, rec.Instance.Name
+	b := &backupRecord{Run: s.newBackupRun(rec, "ON_DEMAND", description), ExpiryTime: expiry}
+	if err := s.storeNewBackup(project, b); err != nil {
 		return nil, err
 	}
-	id := run.Id
+	id := b.Run.Id
 	op := s.newOp(ctx, project, name, "BACKUP_VOLUME")
 	op.BackupContext = &sqladmin.BackupContext{Kind: "sql#backupContext", BackupId: id, Name: backupName(project, id)}
 	return s.runOp(op, true, func(ctx context.Context) error {
 		err := s.fillBackup(ctx, project, name, id)
 		if err != nil {
-			_ = s.updateBackupRecord(project, name, id, func(b *backupRecord) {
-				b.Run.Status, b.Run.EndTime = "FAILED", s.now()
-				b.Run.Error = &sqladmin.OperationError{Kind: "sql#operationError", Code: "INTERNAL_ERROR", Message: err.Error()}
-			})
+			_ = s.updateBackupRecord(project, name, id, func(b *backupRecord) { s.fail(b, err) })
 		}
 		return err
 	}), nil
@@ -264,16 +293,8 @@ func (s *Service) fillBackup(ctx context.Context, project, name string, id int64
 	if err := s.updateBackupRecord(project, name, id, func(b *backupRecord) { b.Run.StartTime = start }); err != nil {
 		return err
 	}
-	dump, err := s.dumpAll(ctx, project, name)
+	file, err := s.writeDump(ctx, project, name, name, id)
 	if err != nil {
-		return err
-	}
-	dir, err := s.backupDir(project, name)
-	if err != nil {
-		return err
-	}
-	file := filepath.Join(dir, strconv.FormatInt(id, 10)+".sql")
-	if err := writeFileAtomic(file, []byte(dump)); err != nil {
 		return err
 	}
 	if rec, err := s.loadRecord(project, name); err == nil && pitrEnabled(rec.Instance) {

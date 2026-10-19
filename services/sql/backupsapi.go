@@ -18,8 +18,8 @@ import (
 // backup ID. Permissions are the backupRuns ones on the backup's instance,
 // as in Cloud SQL. A backup past its expiryTime (set by expiryTime or
 // ttlDays) is deleted on the emulator clock. Unlike Cloud SQL, which only
-// lets FINAL backups expire, any backup can: the emulator has no final
-// backups yet (#407).
+// lets Final backups (finalbackup.go) expire, any backup can, as agreed in
+// #367; #416 decides whether that stays.
 
 // toBackup renders a stored backup as a backups API resource.
 func toBackup(project string, b *backupRecord) *sqladmin.Backup {
@@ -39,6 +39,9 @@ func toBackup(project string, b *backupRecord) *sqladmin.Backup {
 		BackupRun:       run.SelfLink,
 		ExpiryTime:      b.ExpiryTime,
 		Error:           run.Error,
+
+		InstanceDeletionTime: b.InstanceDeletionTime,
+		InstanceSettings:     b.InstanceSettings,
 	}
 	if run.StartTime != "" || run.EndTime != "" {
 		out.BackupInterval = &sqladmin.Interval{StartTime: run.StartTime, EndTime: run.EndTime}
@@ -65,31 +68,58 @@ func (s *Service) backupFor(r *http.Request, perm string) (*backupRecord, error)
 }
 
 // maxTTLDays is how far ahead, in days, a backup's expiry can be, as in
-// Cloud SQL.
+// Cloud SQL: from now, or for a Final backup from its instance's deletion.
 const maxTTLDays = 365
 
-// expiryOf returns the expiry time a request asks for: ttlDays from now,
-// or expiryTime. ttlDays 0 cannot be told from an absent ttlDays and
-// means none; an expiryTime in the past is accepted, and the next sweep
-// deletes the backup.
-func (s *Service) expiryOf(b *sqladmin.Backup) (string, error) {
-	now := s.env.Clock.Now().UTC()
+// days is n days.
+func days(n int64) time.Duration { return time.Duration(n) * 24 * time.Hour }
+
+// expiryAsk is the ttlDays or expiryTime a request asks for, with the
+// names the request gives them. TTLDays 0 cannot be told from an absent
+// ttlDays and means none.
+type expiryAsk struct {
+	TTLDays         int64
+	ExpiryTime      string
+	ttlName, atName string
+}
+
+// resolve returns the expiry time asked for, ttlDays counting from now,
+// at most maxTTLDays after from; none is "". An expiryTime in the past is
+// accepted, and the next sweep deletes the backup.
+func (a expiryAsk) resolve(now, from time.Time, limit string) (string, error) {
+	var expiry time.Time
+	out := a.ExpiryTime
 	switch {
-	case b.TtlDays < 0 || b.TtlDays > maxTTLDays:
-		return "", errInvalid("ttlDays must be between 1 and %d.", maxTTLDays)
-	case b.TtlDays > 0:
-		return now.Add(time.Duration(b.TtlDays) * 24 * time.Hour).Format(time.RFC3339Nano), nil
-	case b.ExpiryTime != "":
-		t, err := time.Parse(time.RFC3339Nano, b.ExpiryTime)
+	case a.TTLDays < 0 || a.TTLDays > maxTTLDays:
+		return "", errInvalid("%s must be between 1 and %d.", a.ttlName, maxTTLDays)
+	case a.TTLDays > 0:
+		expiry = now.Add(days(a.TTLDays))
+		out = expiry.Format(time.RFC3339Nano)
+	case a.ExpiryTime != "":
+		t, err := time.Parse(time.RFC3339Nano, a.ExpiryTime)
 		if err != nil {
-			return "", errInvalid("Invalid value for expiryTime: %q is not an RFC 3339 timestamp.", b.ExpiryTime)
+			return "", errInvalid("Invalid value for %s: %q is not an RFC 3339 timestamp.", a.atName, a.ExpiryTime)
 		}
-		if t.Sub(now) > maxTTLDays*24*time.Hour {
-			return "", errInvalid("expiryTime must be at most %d days from now.", maxTTLDays)
-		}
-		return b.ExpiryTime, nil
+		expiry = t
+	default:
+		return "", nil
 	}
-	return "", nil
+	if expiry.Sub(from) > days(maxTTLDays) {
+		return "", errInvalid("The backup's expiry must be at most %d days %s.", maxTTLDays, limit)
+	}
+	return out, nil
+}
+
+// expiryOf returns the expiry time a backups API request asks for. A Final
+// backup's limit counts from its instance's deletion, deleted; otherwise
+// (deleted zero) from now.
+func (s *Service) expiryOf(b *sqladmin.Backup, deleted time.Time) (string, error) {
+	now := s.env.Clock.Now().UTC()
+	from, limit := now, "from now"
+	if !deleted.IsZero() {
+		from, limit = deleted, "after the instance's deletion"
+	}
+	return expiryAsk{TTLDays: b.TtlDays, ExpiryTime: b.ExpiryTime, ttlName: "ttlDays", atName: "expiryTime"}.resolve(now, from, limit)
 }
 
 func (s *Service) createBackup(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +142,7 @@ func (s *Service) createBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	expiry, err := s.expiryOf(&req)
+	expiry, err := s.expiryOf(&req, time.Time{})
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -204,7 +234,12 @@ func (s *Service) updateBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	expiry, err := s.expiryOf(&req)
+	deleted, err := b.deletedAt()
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	expiry, err := s.expiryOf(&req, deleted)
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -213,10 +248,10 @@ func (s *Service) updateBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errInvalid("updateMask names expiryTime or ttlDays, but the backup sets neither."))
 		return
 	}
-	project, inst := r.PathValue("project"), b.Run.Instance
-	op := s.newOp(r.Context(), project, inst, "UPDATE_BACKUP")
+	project := r.PathValue("project")
+	op := s.newOp(r.Context(), project, b.Run.Instance, "UPDATE_BACKUP")
 	writeJSON(w, r, s.runOp(op, false, func(_ context.Context) error {
-		return s.updateBackupRecord(project, inst, b.Run.Id, func(b *backupRecord) {
+		return s.updateBackupRecord(project, b.owner(), b.Run.Id, func(b *backupRecord) {
 			if setDesc {
 				b.Run.Description = req.Description
 			}

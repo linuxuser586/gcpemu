@@ -350,7 +350,7 @@ Each instance is a real PostgreSQL server in a container, so SQL behaviour is ex
 | FR-SQL-005 | Cloud SQL Auth Proxy and the Go connector (`cloud.google.com/go/cloudsqlconn`) work: the emulator implements `connectSettings` and `generateEphemeralCert` and terminates the connector's TLS on the instance's server-side proxy port (3307). | M |
 | FR-SQL-006 | IAM database authentication: `CLOUD_IAM_USER` and `CLOUD_IAM_SERVICE_ACCOUNT` users log in with an emulator access token as password, checked for `roles/cloudsql.instanceUser`. | M |
 | FR-SQL-007 | Server CA and SSL modes (`ALLOW_UNENCRYPTED_AND_ENCRYPTED`, `ENCRYPTED_ONLY`, `TRUSTED_CLIENT_CERTIFICATE_REQUIRED`); client certs via `sslCerts`. | S |
-| FR-SQL-008 | On-demand backups, restore and clone, implemented as volume snapshots or `pg_dump`/`pg_restore`. | S |
+| FR-SQL-008 | On-demand backups, final backups taken when an instance is deleted, restore and clone, implemented as volume snapshots or `pg_dump`/`pg_restore`. | S |
 | FR-SQL-009 | `import`/`export` of SQL dumps from and to emulated GCS. | S |
 | FR-SQL-010 | Read replicas (streaming replication) and point-in-time recovery. | C |
 

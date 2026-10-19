@@ -505,6 +505,9 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
+	var final *finalBackupRequest
+	// toDelete is the record as the delete found it, for its Final backup.
+	var toDelete *instanceRecord
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		rec, ok := getInstance(tx, project, name)
 		if !ok {
@@ -516,7 +519,12 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		if rec.Instance.State == "PENDING_DELETE" {
 			return errInProgress()
 		}
+		var err error
+		if final, err = finalBackupOf(r.URL.Query(), rec, s.env.Clock.Now().UTC()); err != nil {
+			return err
+		}
 		rec.Instance.State = "PENDING_DELETE"
+		toDelete = rec
 		return store.PutJSON(tx, nsInstances, instKey(project, name), rec)
 	})
 	if err != nil {
@@ -525,6 +533,11 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	op := s.newOp(ctx, project, name, "DELETE")
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
+		if final != nil {
+			if err := s.takeFinalBackup(ctx, toDelete, final); err != nil {
+				return err
+			}
+		}
 		return s.destroyInstance(ctx, project, name)
 	}))
 }
