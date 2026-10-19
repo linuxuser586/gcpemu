@@ -12,6 +12,7 @@ import (
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -261,16 +262,33 @@ func (s *Service) challenge(w http.ResponseWriter, r *http.Request, name, action
 		writeRegError(w, regErr(http.StatusUnauthorized, "UNAUTHORIZED", "authentication required"))
 		return
 	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	c := fmt.Sprintf(`Bearer realm="%s://%s/v2/token",service="%s"`, scheme, realmHost(r.Host), r.Host)
+	c := fmt.Sprintf(`Bearer realm="%s://%s/v2/token",service="%s"`, requestScheme(r), realmHost(r.Host), r.Host)
 	if name != "" {
 		c += fmt.Sprintf(`,scope="repository:%s:%s"`, name, action)
 	}
 	w.Header().Set("WWW-Authenticate", c)
 	writeRegError(w, regErr(http.StatusUnauthorized, "UNAUTHORIZED", "authentication required"))
+}
+
+// requestScheme returns the scheme the client used. The Google front end
+// (internal/frontend) terminates TLS for LOCATION-docker.pkg.dev and pipes
+// the plain bytes here, so r.TLS is nil for those requests; a registry
+// hostname on the default or 443 port only arrives through it (port 80 of
+// those names is the GKE metadata server or the host-mode gateway). A
+// client that dials the registry directly and sets such a Host by hand
+// gets an https realm too.
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	h, port, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		h, port = r.Host, ""
+	}
+	if frontend.IsRegistryHost(h) && (port == "" || port == "443") {
+		return "https"
+	}
+	return "http"
 }
 
 // realmHost returns the host for the token realm. Loopback IP literals are

@@ -370,6 +370,30 @@ func TestRegistryAmbiguousAndHostMode(t *testing.T) {
 	}
 }
 
+// The Google front end terminates TLS for LOCATION-docker.pkg.dev and pipes
+// the plain bytes to the registry, so the challenge's realm must still be
+// https: go-containerregistry (crane, Trivy) refuses an http realm for a
+// secure registry (#426).
+func TestRegistryChallengeRealmBehindFrontend(t *testing.T) {
+	e := start(t)
+	for host, want := range map[string]string{
+		"us-central1-docker.pkg.dev":     `Bearer realm="https://us-central1-docker.pkg.dev/v2/token",service="us-central1-docker.pkg.dev"`,
+		"us-central1-docker.pkg.dev:443": `Bearer realm="https://us-central1-docker.pkg.dev:443/v2/token",service="us-central1-docker.pkg.dev:443"`,
+		"us-central1-docker.pkg.dev:80":  `Bearer realm="http://us-central1-docker.pkg.dev:80/v2/token",service="us-central1-docker.pkg.dev:80"`,
+	} {
+		req, _ := http.NewRequest("GET", "http://"+e.registry()+"/v2/", nil)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("WWW-Authenticate"); resp.StatusCode != 401 || got != want {
+			t.Errorf("Host %s: ping = %d %q, want 401 %q", host, resp.StatusCode, got, want)
+		}
+	}
+}
+
 func TestRegistryAuth(t *testing.T) {
 	e := start(t)
 	e.createRepo(testLoc, "images")

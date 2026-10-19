@@ -52,6 +52,9 @@ import (
 //     it into a Kubernetes Secret;
 //  6. bucket notification and app message arrive by push with a verified
 //     OIDC token;
+//     6b. the app calls its own public host through the load balancer;
+//     6c. the app resolves its own image in Artifact Registry over HTTPS
+//     with go-containerregistry, as crane and Trivy do in CI;
 //  7. pod egress works through Cloud NAT and stops without it;
 //  8. revoking roles/storage.objectAdmin makes step 5 fail with
 //     PERMISSION_DENIED;
@@ -95,6 +98,7 @@ func TestReferenceStack(t *testing.T) {
 		r.step("5b secrets csi and sync", false, r.step5b)
 		r.step("6 push oidc", false, r.step6)
 		r.step("6b pod calls lb", false, r.step6b)
+		r.step("6c pod reads registry", false, r.step6c)
 		r.step("7 egress via nat", false, r.step7)
 		r.step("8 iam enforce", false, r.step8)
 	} else {
@@ -158,6 +162,7 @@ type run struct {
 	last    time.Time
 	times   []string
 	workID  string
+	digest  string // the app image's index digest (step 2)
 }
 
 func (r *run) mark(what string) {
@@ -204,6 +209,11 @@ func (r *run) step2(t *testing.T) {
 	idx := buildAppImage(t)
 	image := r.out["image_repo"] + "/api:v1"
 	pushIndex(t, r.inst.Endpoint("ar"), image, r.token(t), idx)
+	d, err := idx.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.digest = d.String()
 	r.mark("  app image built and pushed")
 
 	r.kube = newKube(t, r.inst.Endpoint("gateway"), r.out["cluster"])
@@ -532,6 +542,21 @@ func (r *run) step6b(t *testing.T) {
 		body = b
 		return ok
 	}, func() string { return body })
+}
+
+// step6c: the app resolves its own image by its real hostname with
+// go-containerregistry and no insecure option; the registry's Bearer
+// challenge must name an https realm (#426).
+func (r *run) step6c(t *testing.T) {
+	ref := r.out["image_repo"] + "/api:v1"
+	var body string
+	eventually(t, time.Minute, "a pod resolving "+ref, func() bool {
+		var resp *http.Response
+		resp, body = r.get(t, "/api/digest?ref="+url.QueryEscape(ref))
+		var out struct{ Digest string }
+		_ = json.Unmarshal([]byte(body), &out)
+		return resp != nil && resp.StatusCode == 200 && out.Digest == r.digest
+	}, func() string { return "want " + r.digest + ", got " + body })
 }
 
 // podGet has the app GET url from its pod (/api/egress); ok is true when
