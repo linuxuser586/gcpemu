@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { cacheableImages, imagesKey, jobFailed, listJobsReason, normalizeTag, parseEnv, parseSums, platform, retryDelay, shouldUpload, splitArgs, startArgs, unknownNotice } from './lib.js'
+import { cacheableImages, imagesKey, jobFailed, jobMismatch, listJobsReason, normalizeTag, parseEnv, parseSums, platform, retryDelay, shouldUpload, splitArgs, startArgs, unknownNotice } from './lib.js'
 
 test('platform', () => {
   assert.deepEqual(platform('linux', 'arm64'), { os: 'linux', arch: 'arm64', asset: 'gcpemu-linux-arm64' })
@@ -84,6 +84,17 @@ test('retryDelay', () => {
   assert.equal(retryDelay(1, { status: 503, retryAfter: 'Tue, 13 Oct 2026 11:00:00 GMT' }, now), 0)
   assert.equal(retryDelay(1, { status: 503, retryAfter: 'soon' }), 1000)
   assert.equal(retryDelay(3, { status: 429, retryAfter: '1' }), null)
+})
+
+test('jobMismatch', () => {
+  const jobs = [
+    { name: 'a', status: 'in_progress', runner_name: 'GitHub Actions 1' },
+    { name: 'b', status: 'in_progress', runner_name: 'GitHub Actions 2' },
+    { name: 'c', status: 'completed', runner_name: 'GitHub Actions 3' },
+  ]
+  assert.equal(jobMismatch(jobs, 'GitHub Actions 3'),
+    'RUNNER_NAME "GitHub Actions 3"; jobs on it: c (completed); in progress: a on "GitHub Actions 1", b on "GitHub Actions 2"')
+  assert.equal(jobMismatch([], 'r'), 'RUNNER_NAME "r"; jobs on it: none; in progress: none')
 })
 
 test('listJobsReason', () => {

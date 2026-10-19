@@ -78,6 +78,15 @@ export function jobFailed(jobs, runnerName) {
   return (mine[0].steps || []).some((s) => s.conclusion === 'failure')
 }
 
+// jobMismatch describes why jobFailed found no single job for runnerName:
+// the jobs on that runner, and the jobs in progress on any runner.
+export function jobMismatch(jobs, runnerName) {
+  const list = (js, fmt) => (js.length ? js.map(fmt).join(', ') : 'none')
+  const on = (jobs || []).filter((j) => j.runner_name === runnerName)
+  const running = (jobs || []).filter((j) => j.status === 'in_progress')
+  return `RUNNER_NAME "${runnerName}"; jobs on it: ${list(on, (j) => `${j.name} (${j.status})`)}; in progress: ${list(running, (j) => `${j.name} on "${j.runner_name}"`)}`
+}
+
 // listJobsAttempts is how many times the post step tries each request
 // listing the run's jobs.
 export const listJobsAttempts = 3

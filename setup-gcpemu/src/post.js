@@ -13,7 +13,7 @@ import path from 'node:path'
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { cacheableImages, jobFailed, listJobsReason, retryDelay, shouldUpload, unknownNotice } from './lib.js'
+import { cacheableImages, jobFailed, jobMismatch, listJobsReason, retryDelay, shouldUpload, unknownNotice } from './lib.js'
 
 async function run() {
   const bin = core.getState('bin')
@@ -54,7 +54,7 @@ async function currentJobFailed() {
     if (jobs.length >= body.total_count || got.length === 0) break
   }
   const failed = jobFailed(jobs, RUNNER_NAME)
-  return failed === null ? { failed, reason: { cause: 'job' } } : { failed }
+  return failed === null ? { failed, reason: { cause: 'job', detail: jobMismatch(jobs, RUNNER_NAME) } } : { failed }
 }
 
 // listJobs fetches one page of the run's jobs, retrying transient
