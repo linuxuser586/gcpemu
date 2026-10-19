@@ -41,9 +41,14 @@ func runAgent(ctx context.Context, _ []string) error {
 // relayAgent is the container side: it dials and listens on the
 // container networks for the emulator.
 type relayAgent struct {
-	mu        sync.Mutex
-	sess      *yamux.Session
+	mu   sync.Mutex
+	sess *yamux.Session
+	// swapped is closed, and replaced, when sess is.
+	swapped   chan struct{}
 	listeners map[string]*agentListener // endpoint name → its listener
+	// wait bounds how long a connection or datagram waits for a session
+	// to carry it to the emulator.
+	wait time.Duration
 }
 
 // agentListener is what the agent listens on for one endpoint.
@@ -52,7 +57,13 @@ type agentListener struct {
 	close func()
 }
 
-func newRelayAgent() *relayAgent { return &relayAgent{listeners: map[string]*agentListener{}} }
+// inwardWait is how long an inward connection or datagram waits for a
+// control session, over all its attempts.
+const inwardWait = 10 * time.Second
+
+func newRelayAgent() *relayAgent {
+	return &relayAgent{swapped: make(chan struct{}), listeners: map[string]*agentListener{}, wait: inwardWait}
+}
 
 // serve accepts control connections until l closes. A new connection
 // replaces the current one: the emulator reconnects after a drop.
@@ -71,6 +82,8 @@ func (a *relayAgent) serve(l net.Listener) {
 		a.mu.Lock()
 		old := a.sess
 		a.sess = s
+		close(a.swapped)
+		a.swapped = make(chan struct{})
 		a.mu.Unlock()
 		if old != nil {
 			old.Close()
@@ -153,10 +166,25 @@ func (a *relayAgent) handle(st net.Conn) {
 	}
 }
 
-func (a *relayAgent) current() *yamux.Session {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.sess
+// next returns the live session, waiting for one until deadline (nil
+// then). A closed session, or failed, the one an attempt just failed
+// on, counts as none: the emulator is reconnecting.
+func (a *relayAgent) next(deadline time.Time, failed *yamux.Session) *yamux.Session {
+	t := time.NewTimer(time.Until(deadline))
+	defer t.Stop()
+	for {
+		a.mu.Lock()
+		s, swapped := a.sess, a.swapped
+		a.mu.Unlock()
+		if s != nil && s != failed && !s.IsClosed() {
+			return s
+		}
+		select {
+		case <-swapped:
+		case <-t.C:
+			return nil
+		}
+	}
 }
 
 // listen binds addr for the named endpoint, or another port on its host
@@ -268,23 +296,51 @@ func (a *relayAgent) serveTCP(name string, l net.Listener) {
 			return
 		}
 		go func() {
-			s := a.current()
-			if s == nil {
-				c.Close()
-				return
-			}
-			st, err := s.Open()
-			if err != nil {
-				c.Close()
-				return
-			}
-			if err := writeLine(st, "tcp", name); err != nil {
-				st.Close()
+			st := a.inward("tcp", name)
+			if st == nil {
 				c.Close()
 				return
 			}
 			pipe(c, st)
 		}()
+	}
+}
+
+// inward opens a stream to the emulator with header, and returns it once
+// the emulator answers "OK". Until it answers, a failed attempt is tried
+// again on the next session, within the agent's wait; after the answer,
+// nothing is: the caller then sends what it cannot take back. It returns
+// nil on "ERR" or once the wait runs out.
+func (a *relayAgent) inward(header ...string) *bufConn {
+	deadline := time.Now().Add(a.wait)
+	var failed *yamux.Session
+	for {
+		s := a.next(deadline, failed)
+		if s == nil {
+			return nil
+		}
+		failed = s
+		st, err := s.Open()
+		if err != nil {
+			continue
+		}
+		c := newBufConn(st)
+		_ = c.SetDeadline(deadline)
+		if writeLine(c, header...) != nil {
+			c.Close()
+			continue
+		}
+		line, err := c.readLine()
+		if err != nil {
+			c.Close()
+			continue
+		}
+		if line != "OK" {
+			c.Close()
+			return nil
+		}
+		_ = c.SetDeadline(time.Time{})
+		return c
 	}
 }
 
@@ -299,17 +355,13 @@ func (a *relayAgent) serveUDP(name string, pc net.PacketConn) {
 		}
 		q := append([]byte(nil), buf[:n]...)
 		go func() {
-			s := a.current()
-			if s == nil {
-				return
-			}
-			st, err := s.Open()
-			if err != nil {
+			st := a.inward("udp", name)
+			if st == nil {
 				return
 			}
 			defer st.Close()
 			_ = st.SetDeadline(time.Now().Add(10 * time.Second))
-			if writeLine(st, "udp", name) != nil || writeFrame(st, q) != nil {
+			if writeFrame(st, q) != nil {
 				return
 			}
 			for {

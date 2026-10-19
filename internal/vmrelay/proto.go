@@ -27,8 +27,16 @@ import (
 //	                              that address, for an Offered port
 //	  withdraw <name>           → "OK": stop listening for name
 //	relay → emulator
-//	  tcp <name>                  a connection to the named emulator endpoint
-//	  udp <name>                  framed datagrams: one query, then its answers
+//	  tcp <name>                → "OK" or "ERR <reason>", then a connection
+//	                              to the named emulator endpoint
+//	  udp <name>                → "OK" or "ERR <reason>", then framed
+//	                              datagrams: one query, then its answers
+//
+// The emulator answers a relay stream once it holds the endpoint
+// connection, and only then do bytes flow. Until the answer, the relay
+// tries a stream that fails again on the next session, since nothing of
+// it reached the endpoint; an inward connection or datagram waits for a
+// session while the emulator reconnects. After "OK" there is no retry.
 //
 // A datagram is framed as a 2-byte big-endian length and the payload.
 
