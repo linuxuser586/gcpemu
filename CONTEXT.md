@@ -251,6 +251,17 @@ _Avoid_: instance (unqualified)
 A backup of a Cloud SQL instance taken as part of deleting it. It outlives the Cloud SQL instance and is deleted when it expires. Always qualify it, so it is not confused with an on-demand backup taken while the Cloud SQL instance exists.
 _Avoid_: last backup, deletion backup
 
+**Recovery window**:
+The span from the earliest to the latest time a Cloud SQL instance with point-in-time recovery can be recovered to. Its start is set by the transaction log retention period, measured on the Cloud SQL instance's own database clock.
+_Avoid_: retention window, PITR window
+
+**Base backup**:
+A physical copy of a Cloud SQL instance's data that point-in-time recovery replays the transaction log on top of. It is kept or discarded by transaction log retention alone. Always qualify it, so it is not confused with an on-demand backup or a Final backup.
+
+**WAL archive**:
+A Cloud SQL instance's archived transaction log together with its Base backups: everything its Recovery window is built from.
+_Avoid_: archive (unqualified), transaction log storage
+
 **Request log**:
 The emulator's log of API requests it has received.
 _Avoid_: recording, records
