@@ -10,6 +10,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listfilter"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -251,10 +252,15 @@ func (s *Service) listInstances(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
+	match, err := listfilter.Compile(r.URL.Query().Get("filter"), instanceFilterFields, errInvalid)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	items := map[string]*sqladmin.DatabaseInstance{}
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		scanJSON(tx, nsInstances, project+"/", func(_ string, rec *instanceRecord) {
-			if rec.Instance != nil && matchesFilter(rec.Instance, r.URL.Query().Get("filter")) {
+			if rec.Instance != nil && match(rec.Instance) {
 				items[rec.Instance.Name] = rec.Instance
 			}
 		})
@@ -266,46 +272,6 @@ func (s *Service) listInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, &sqladmin.InstancesListResponse{Kind: "sql#instancesList", Items: page, NextPageToken: next})
-}
-
-// matchesFilter supports the simple "field:value" / "field=value" terms
-// gcloud and the console use (name, state, region, databaseVersion,
-// settings.userLabels.KEY), ANDed.
-func matchesFilter(in *sqladmin.DatabaseInstance, filter string) bool {
-	for _, term := range strings.Fields(filter) {
-		if strings.EqualFold(term, "AND") {
-			continue
-		}
-		k, v, ok := strings.Cut(term, ":")
-		if !ok {
-			k, v, ok = strings.Cut(term, "=")
-		}
-		if !ok {
-			continue
-		}
-		v = strings.Trim(v, `"'`)
-		var got string
-		switch {
-		case k == "name":
-			got = in.Name
-		case k == "state":
-			got = in.State
-		case k == "region":
-			got = in.Region
-		case k == "databaseVersion":
-			got = in.DatabaseVersion
-		case strings.HasPrefix(k, "settings.userLabels."):
-			if in.Settings != nil {
-				got = in.Settings.UserLabels[strings.TrimPrefix(k, "settings.userLabels.")]
-			}
-		default:
-			continue
-		}
-		if got != v {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *Service) patchInstance(w http.ResponseWriter, r *http.Request) {
