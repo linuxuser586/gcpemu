@@ -134,8 +134,8 @@ A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
 
 **Datastore**:
-A GKE cluster's k3s server state: the k3s server's `server/` directory, holding the kine sqlite database, the cluster CA and credentials, and the join token. A State snapshot saves the datastore of each RUNNING cluster, so the cluster keeps its Kubernetes objects and CA when the snapshot is restored, including into another Instance. Node volumes (pulled images and local-path PersistentVolume data) are not part of it. A cluster that is not RUNNING when the snapshot is saved comes back with a fresh data plane.
-_Avoid_: seed (collides with Seed file and Seeding), etcd (k3s here uses kine on sqlite), cluster state
+A GKE cluster's k3s server state: the k3s server's `server/` directory, holding the kine sqlite database, the cluster CA and credentials, and the join token. A State snapshot saves the Datastore of each RUNNING cluster, so the cluster keeps its Kubernetes objects and CA when the snapshot is restored, including into another Instance. Node volumes (pulled images and local-path PersistentVolume data) are not part of it. A cluster that is not RUNNING when the snapshot is saved comes back with a new Datastore: none of its earlier Kubernetes objects and a new cluster CA.
+_Avoid_: seed (collides with Seed file and Seeding), etcd (k3s here uses kine on sqlite)
 
 **Staged datastore**:
 A Datastore restored from a State snapshot that has not yet been written into its cluster's server volume. The cluster's server takes it on its next start, before the server container first runs. Reset and deleting the cluster drop it.
