@@ -256,8 +256,12 @@ A Cloud SQL database server resource. Always write it in full so it is not confu
 _Avoid_: instance (unqualified)
 
 **Final backup**:
-A backup of a Cloud SQL instance taken as part of deleting it. It outlives the Cloud SQL instance and is deleted when it expires. Always qualify it, so it is not confused with an on-demand backup taken while the Cloud SQL instance exists.
+A backup of a Cloud SQL instance taken as part of deleting it. It outlives the Cloud SQL instance and is deleted when it expires. Unlike a Retained backup, the delete takes it. Always qualify it, so it is not confused with an on-demand backup taken while the Cloud SQL instance exists.
 _Avoid_: last backup, deletion backup
+
+**Retained backup**:
+An on-demand backup that outlives its deleted Cloud SQL instance because the Cloud SQL instance was set to keep its backups on delete. A Final backup also outlives its Cloud SQL instance, but it is not a Retained backup. Always qualify it.
+_Avoid_: orphaned backup, kept backup
 
 **Recovery window**:
 The span from the earliest to the latest time a Cloud SQL instance with point-in-time recovery can be recovered to. Its start is set by the transaction log retention period, measured on the Cloud SQL instance's own database clock.
