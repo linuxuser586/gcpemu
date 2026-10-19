@@ -12,6 +12,7 @@ import (
 
 	_ "cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
 	"cloud.google.com/go/certificatemanager/apiv1/certificatemanagerpb"
+	_ "cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
 	_ "cloud.google.com/go/container/apiv1/containerpb"
 	_ "cloud.google.com/go/iam/apiv1/iampb"
 	_ "cloud.google.com/go/iam/credentials/apiv1/credentialspb"

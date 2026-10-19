@@ -296,3 +296,46 @@ func TestNoSQLHostClientsNotFromEnv(t *testing.T) {
 		t.Fatal("an env var set NoSQLHostClients")
 	}
 }
+
+// Cloud Build is a Runtime Service over Cloud Storage, Artifact Registry,
+// IAM, Pub/Sub and Secret Manager (#392).
+func TestBuildService(t *testing.T) {
+	got := ResolveServices([]string{"build"})
+	want := []string{"iam", "ar", "pubsub", "secrets", "gcs", "build"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ResolveServices(build) = %v, want %v", got, want)
+	}
+	if !RuntimeServices["build"] {
+		t.Error("build is not a Runtime Service")
+	}
+}
+
+// build.concurrency caps the WORKING Builds: 4 unless set, from the
+// config file or GCPEMU_BUILD_CONCURRENCY, and at least 1.
+func TestBuildConcurrency(t *testing.T) {
+	c := Defaults()
+	if c.Build.Concurrency != 4 {
+		t.Errorf("default = %d, want 4", c.Build.Concurrency)
+	}
+	f := filepath.Join(t.TempDir(), "gcpemu.yaml")
+	if err := os.WriteFile(f, []byte("build:\n  concurrency: 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.LoadFile(f); err != nil || c.Build.Concurrency != 2 {
+		t.Errorf("from file = %d, %v; want 2", c.Build.Concurrency, err)
+	}
+	env := map[string]string{"GCPEMU_BUILD_CONCURRENCY": "1"}
+	if err := c.LoadEnv(func(k string) string { return env[k] }); err != nil || c.Build.Concurrency != 1 {
+		t.Errorf("from env = %d, %v; want 1", c.Build.Concurrency, err)
+	}
+	flags := Defaults()
+	flags.Build.Concurrency = 3
+	c.ApplyFlags(&flags, map[string]bool{"Build.Concurrency": true})
+	if c.Build.Concurrency != 3 {
+		t.Errorf("from --build-concurrency = %d, want 3", c.Build.Concurrency)
+	}
+	c.Build.Concurrency = 0
+	if err := c.Validate(); err == nil {
+		t.Error("concurrency 0 accepted")
+	}
+}

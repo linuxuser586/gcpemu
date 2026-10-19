@@ -31,6 +31,7 @@ func TestRefuseRuntime(t *testing.T) {
 			{services: []string{"gcs", "pubsub"}},
 			{services: []string{"sql"}, named: "services sql "},
 			{services: []string{"gcs", "gke", "nat", "gke"}, named: "services gke,nat "},
+			{services: []string{"build"}, named: "services build "},
 			{hostMode: true, named: "--host-mode"},
 		} {
 			cfg := &config.Config{Services: tc.services, HostMode: tc.hostMode}
@@ -107,7 +108,7 @@ func TestDefaultServices(t *testing.T) {
 		if !slices.Equal(got, tc.want) || why != tc.why || detected != tc.detected {
 			t.Errorf("%s detect=%v: %v %v detected=%v", tc.goos, tc.detect, got, why, detected)
 		}
-		if tc.why != nil && !slices.Equal(skipped, []string{"sql", "gke", "nat"}) {
+		if tc.why != nil && !slices.Equal(skipped, []string{"sql", "gke", "nat", "build"}) {
 			t.Errorf("%s skipped %v", tc.goos, skipped)
 		}
 	}

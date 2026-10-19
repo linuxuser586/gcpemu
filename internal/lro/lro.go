@@ -67,6 +67,12 @@ type Manager struct {
 	work   inflight.Tracker
 	server *Server
 	closed bool
+
+	// OnCancel, when set before Register, handles every request to cancel
+	// one of the manager's pending Operations: the service stops the work
+	// and calls Finish, instead of the Operation ending CANCELLED at once.
+	// Services whose Operations come from Begin set it.
+	OnCancel func(name string)
 }
 
 // NewManager returns a manager for service.
@@ -130,12 +136,8 @@ func (m *Manager) Latency() time.Duration { return m.env.Config.LRO(m.service) }
 // pending. The ctx values (principal) are kept for the deferred run.
 func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message, run RunFunc) (*longrunningpb.Operation, error) {
 	op := &longrunningpb.Operation{Name: parent + "/operations/" + m.newID()}
-	if metadata != nil {
-		a, err := anypb.New(metadata)
-		if err != nil {
-			return nil, err
-		}
-		op.Metadata = a
+	if err := setMetadata(op, metadata); err != nil {
+		return nil, err
 	}
 	start := m.env.Clock.Now()
 	d := m.Latency()
@@ -176,11 +178,37 @@ func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message
 			}
 			defer m.work.Exit()
 			resp, err := run(bg)
-			m.complete(op.Name, resp, err)
+			m.Finish(op.Name, nil, resp, err)
 		})
 	}
 	m.mu.Unlock()
 	return proto.Clone(op).(*longrunningpb.Operation), nil
+}
+
+// Begin records a pending operation under parent with the given metadata,
+// for work whose end the service decides rather than the LRO latency (a
+// Build). The service completes it with Finish.
+func (m *Manager) Begin(parent string, metadata proto.Message) (*longrunningpb.Operation, error) {
+	op := &longrunningpb.Operation{Name: parent + "/operations/" + m.newID()}
+	if err := setMetadata(op, metadata); err != nil {
+		return nil, err
+	}
+	if err := m.put(op, m.env.Clock.Now(), time.Time{}); err != nil {
+		return nil, err
+	}
+	return op, nil
+}
+
+func setMetadata(op *longrunningpb.Operation, metadata proto.Message) error {
+	if metadata == nil {
+		return nil
+	}
+	a, err := anypb.New(metadata)
+	if err != nil {
+		return err
+	}
+	op.Metadata = a
+	return nil
 }
 
 // newID returns a UUID-formatted operation ID.
@@ -235,11 +263,16 @@ func getOp(tx store.Tx, name string) (*longrunningpb.Operation, record, error) {
 	return op, rec, nil
 }
 
-// complete records the outcome of a pending operation.
-func (m *Manager) complete(name string, resp proto.Message, runErr error) {
+// Finish records the outcome of a pending operation, replacing its
+// metadata when metadata is not nil. A done or missing operation is left
+// as it is.
+func (m *Manager) Finish(name string, metadata, resp proto.Message, runErr error) {
 	err := m.env.Store.Update(func(tx store.Tx) error {
 		op, rec, err := getOp(tx, name)
 		if err != nil || op.Done {
+			return err
+		}
+		if err := setMetadata(op, metadata); err != nil {
 			return err
 		}
 		if err := finish(op, resp, runErr); err != nil {
@@ -255,13 +288,17 @@ func (m *Manager) complete(name string, resp proto.Message, runErr error) {
 
 // cancel stops a pending operation and marks it CANCELLED.
 func (m *Manager) cancel(name string) {
+	if m.OnCancel != nil {
+		m.OnCancel(name)
+		return
+	}
 	m.mu.Lock()
 	if t, ok := m.pending[name]; ok {
 		t.Stop()
 		delete(m.pending, name)
 	}
 	m.mu.Unlock()
-	m.complete(name, nil, apierr.New(codes.Canceled, "Operation was cancelled."))
+	m.Finish(name, nil, nil, apierr.New(codes.Canceled, "Operation was cancelled."))
 }
 
 // recover aborts operations of this service that a previous process left

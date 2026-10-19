@@ -10,6 +10,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listfilter"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -169,7 +170,7 @@ func (s *Service) listBackups(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	match, err := compileFilter(r.URL.Query().Get("filter"), backupFilterFields)
+	match, err := listfilter.Compile(r.URL.Query().Get("filter"), backupFilterFields, errInvalid)
 	if err != nil {
 		apierr.Write(w, err)
 		return

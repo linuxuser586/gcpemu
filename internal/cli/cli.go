@@ -55,6 +55,7 @@ var flagFields = map[string]string{
 	"console":                       "Console",
 	"vm-runtime":                    "VMRuntime",
 	"loopback-aliases":              "LoopbackAliases",
+	"build-concurrency":             "Build.Concurrency",
 }
 
 type rootOpts struct {
@@ -162,6 +163,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.BoolVar(&o.console, "console", true, "serve the Web console under /console on the API gateway (default false when CI=true)")
 	f.StringVar(&o.flags.VMRuntime, "vm-runtime", "auto", "for a Containerized Instance: whether the runtime runs in a VM, so LoadBalancer Services are served on this container's published --port-range ports: auto, true or false")
 	f.StringVar(&o.flags.LoopbackAliases, "loopback-aliases", "auto", "for a Containerized Instance on a VM runtime: whether Cloud SQL instances may use the host's loopback aliases 127.0.0.2-127.0.0.254: auto (Docker Desktop only), true or false")
+	f.IntVar(&o.flags.Build.Concurrency, "build-concurrency", 4, "how many Cloud Builds run at once; the rest wait QUEUED")
 	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (Linux only; see gcpemu env and gcpemu hosts)")
 	return cmd
 }

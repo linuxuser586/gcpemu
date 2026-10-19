@@ -101,6 +101,16 @@ type Config struct {
 	// an instance's reported address don't contend for 127.0.0.1 (#316).
 	// Only emutest sets it: it has no flag, env var or config key.
 	NoSQLHostClients bool `yaml:"-" env:"-"`
+	// Build configures Cloud Build: the build: section of gcpemu.yaml and
+	// the GCPEMU_BUILD_* variables.
+	Build BuildConfig `yaml:"build" env:"BUILD"`
+}
+
+// BuildConfig configures Cloud Build.
+type BuildConfig struct {
+	// Concurrency caps how many Builds are WORKING at once; further
+	// Builds wait QUEUED (build.concurrency, default 4).
+	Concurrency int `yaml:"concurrency" env:"CONCURRENCY"`
 }
 
 // MinAdminTokenLen is the shortest AdminToken accepted.
@@ -127,7 +137,7 @@ var DefaultPorts = map[string]int{
 
 // AllServices lists every service name in start order (also the seed
 // order: a peer a service depends on at seed time must come first).
-var AllServices = []string{"iam", "compute", "dns", "certs", "ar", "pubsub", "secrets", "gcs", "sql", "gke", "lb", "cdn", "nat"}
+var AllServices = []string{"iam", "compute", "dns", "certs", "ar", "pubsub", "secrets", "gcs", "sql", "gke", "lb", "cdn", "nat", "build"}
 
 // Defaults returns the default configuration. CI=true switches on the CI
 // defaults of FR-CI-003.
@@ -144,6 +154,7 @@ func Defaults() Config {
 		LROLatency:       map[string]string{},
 		VMRuntime:        "auto",
 		LoopbackAliases:  "auto",
+		Build:            BuildConfig{Concurrency: 4},
 	}
 	if os.Getenv("CI") == "true" {
 		c.Ephemeral = true
@@ -261,12 +272,22 @@ func (c *Config) LoadFile(path string) error {
 // overlay copies non-zero fields of src onto c (all of them when set is nil,
 // otherwise only names present in set).
 func (c *Config) overlay(src *Config, set map[string]bool) {
-	dv := reflect.ValueOf(c).Elem()
-	sv := reflect.ValueOf(src).Elem()
+	overlayStruct(reflect.ValueOf(c).Elem(), reflect.ValueOf(src).Elem(), set, "")
+}
+
+// overlayStruct is overlay for any struct value. A nested section
+// (BuildConfig) is overlaid field by field, its fields named in set after
+// the section and a dot ("Build.Concurrency").
+func overlayStruct(dv, sv reflect.Value, set map[string]bool, prefix string) {
 	t := dv.Type()
 	for i := 0; i < t.NumField(); i++ {
 		f := sv.Field(i)
-		if set != nil && !set[t.Field(i).Name] {
+		name := prefix + t.Field(i).Name
+		if f.Kind() == reflect.Struct {
+			overlayStruct(dv.Field(i), f, set, name+".")
+			continue
+		}
+		if set != nil && !set[name] {
 			continue
 		}
 		if set == nil && f.IsZero() {
@@ -289,14 +310,26 @@ func (c *Config) overlay(src *Config, set map[string]bool) {
 
 // LoadEnv overlays GCPEMU_* environment variables onto c.
 func (c *Config) LoadEnv(getenv func(string) string) error {
-	dv := reflect.ValueOf(c).Elem()
+	return loadEnv(reflect.ValueOf(c).Elem(), "GCPEMU_", getenv)
+}
+
+// loadEnv overlays the variables named prefix plus each field's env tag
+// onto the struct dv; a nested section's fields take its tag and "_" as
+// their prefix (GCPEMU_BUILD_CONCURRENCY).
+func loadEnv(dv reflect.Value, prefix string, getenv func(string) string) error {
 	t := dv.Type()
 	for i := 0; i < t.NumField(); i++ {
 		tag := t.Field(i).Tag.Get("env")
 		if tag == "-" {
 			continue
 		}
-		name := "GCPEMU_" + tag
+		name := prefix + tag
+		if dv.Field(i).Kind() == reflect.Struct {
+			if err := loadEnv(dv.Field(i), name+"_", getenv); err != nil {
+				return err
+			}
+			continue
+		}
 		v := getenv(name)
 		if v == "" {
 			continue
@@ -320,6 +353,12 @@ func setString(f reflect.Value, v string) error {
 			return err
 		}
 		f.SetBool(b)
+	case reflect.Int:
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return err
+		}
+		f.SetInt(int64(n))
 	case reflect.Int64:
 		if f.Type() == reflect.TypeOf(time.Duration(0)) {
 			d, err := time.ParseDuration(v)
@@ -462,6 +501,9 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if c.Build.Concurrency < 1 {
+		return fmt.Errorf("invalid --build-concurrency (GCPEMU_BUILD_CONCURRENCY, build.concurrency) %d (want at least 1)", c.Build.Concurrency)
+	}
 	if c.AdminToken != "" && len(c.AdminToken) < MinAdminTokenLen {
 		return fmt.Errorf("GCPEMU_ADMIN_TOKEN is %d characters; use at least %d", len(c.AdminToken), MinAdminTokenLen)
 	}
@@ -491,7 +533,7 @@ func IsLoopback(bind string) bool {
 }
 
 // RuntimeServices need a container runtime to do anything.
-var RuntimeServices = map[string]bool{"sql": true, "gke": true, "nat": true}
+var RuntimeServices = map[string]bool{"sql": true, "gke": true, "nat": true, "build": true}
 
 // Dependencies of each service (FR-CORE-003).
 var Dependencies = map[string][]string{
@@ -501,6 +543,7 @@ var Dependencies = map[string][]string{
 	"certs":   {"iam", "dns"},
 	"cdn":     {"lb", "compute"},
 	"nat":     {"compute"},
+	"build":   {"iam", "gcs", "ar", "pubsub", "secrets"},
 	"gcs":     {"iam"},
 	"ar":      {"iam"},
 	"pubsub":  {"iam"},

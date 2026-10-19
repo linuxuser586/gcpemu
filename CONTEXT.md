@@ -28,7 +28,7 @@ The short canonical name of a Service (e.g. `gcs`, `sql`, `gke`, `ar`). It is us
 _Avoid_: using the API name (`storage`, `sqladmin`, `container`) except where GCP's wire format requires it
 
 **Runtime Service**:
-A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT). An Instance with no usable runtime runs every other Service.
+A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT, Cloud Build). An Instance with no usable runtime runs every other Service.
 _Avoid_: container service, container-backed service
 
 **API name**:

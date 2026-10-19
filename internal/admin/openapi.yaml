@@ -851,6 +851,26 @@ paths:
               schema: { $ref: "#/components/schemas/NatSink" }
         "400": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /_emu/v1/build/projects/{project}/locations/{location}/builds/{id}/log:
+    get:
+      summary: A Build's log, as its logUrl points to (build service).
+      operationId: buildLog
+      description: >-
+        Each step's output, line by line after "Step #N" (and its id), with
+        the lines Cloud Build adds around the steps. Logs are kept in
+        memory until the Instance stops or resets; a Build of the global
+        location (projects/*/builds) is under locations/global.
+      parameters:
+        - { name: project, in: path, required: true, schema: { type: string } }
+        - { name: location, in: path, required: true, schema: { type: string } }
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The log so far.
+          content:
+            text/plain:
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
   /_emu/v1/sql/hosts:
     get:
       summary: How host clients reach each running public Cloud SQL instance (sql service; gcpemu doctor).

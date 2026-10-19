@@ -26,6 +26,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings; system metrics over OTLP |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
+| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; step logs at `/_emu/v1/build/<build name>/log` |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
 ## Quick start
@@ -316,6 +317,12 @@ so the emulator serves them instead: on a loopback address, reported as the Serv
 and by `gcpemu env` as `GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`, and relayed to the
 Service's node port. Only TCP ports are served. When the emulator itself runs in a container, see
 "Container image".
+
+Cloud Build knobs: `build.concurrency` in `gcpemu.yaml` (`GCPEMU_BUILD_CONCURRENCY`,
+`--build-concurrency`, default 4) caps how many Builds are `WORKING` at once; the rest wait
+`QUEUED` until their `queueTtl` passes. A Reset cancels every Build and removes its containers
+and volumes; a Build that was `QUEUED` or `WORKING` when a State snapshot was saved restores as
+`INTERNAL_ERROR`.
 
 Pods reach an external load balancer by its public address, as on GCP: the emulated DNS answers
 them with the forwarding rule's own IP (host clients still get the local listener), and the
