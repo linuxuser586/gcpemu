@@ -18,3 +18,4 @@ A GET or HEAD of a bucket the Instance doesn't have, carrying none of the Instan
 - Keys that Seeding creates and the key behind the host's application-default credentials keep the gateway's form.
 - An authenticated request for a bucket the Instance doesn't have is answered by the Instance, as not found.
 - Without a container runtime, on a VM runtime, or with `--port gfe-lan` set, an unprivileged emulator on Linux still binds 443 only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`.
+- As with `--gke-bind` and `--ar-bind`, a Containerized Instance on a bridge network serves `--gfe-bind` only to container networks, not the LAN (ADR 0011).
