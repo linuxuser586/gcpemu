@@ -33,15 +33,12 @@ func perfGate(t *testing.T, ok bool, format string, args ...any) {
 
 // perfServices returns the Services NFR-PERF-001/004 cover: the SRS
 // scope is every Service except GKE and Cloud SQL. nat is a Runtime
-// Service, so it is left out where no container runtime can be used:
-// native Windows (ADR 0008) and hosts without one, such as hosted macOS
-// runners (#186).
+// Service, so it is left out on hosts without a usable container runtime,
+// such as hosted macOS runners (#186).
 func perfServices() string {
 	s := "iam,compute,dns,certs,ar,pubsub,secrets,gcs,lb,cdn"
-	if runtime.Unusable() == nil {
-		if _, err := runtime.Detect(); err == nil {
-			s += ",nat"
-		}
+	if _, err := runtime.Detect(); err == nil {
+		s += ",nat"
 	}
 	return s
 }

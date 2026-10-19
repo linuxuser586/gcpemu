@@ -27,9 +27,6 @@ func (o *rootOpts) pruneCmd() *cobra.Command {
 			"IDs with a running container are never touched. It lists everything first and asks before removing anything.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := emuruntime.Unusable(); err != nil {
-				return fmt.Errorf("no container runtime: %w", err)
-			}
 			cl, err := emuruntime.Detect()
 			if err != nil {
 				return fmt.Errorf("no container runtime: %w", err)

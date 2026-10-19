@@ -10,31 +10,16 @@ import (
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
-// Native Windows is supported, with the Runtime Services and host mode
-// left to WSL2 and the runtime not checked (ADR 0008).
+// Linux, macOS and native Windows are supported, Windows with the Runtime
+// Services on a VM runtime like macOS (ADR 0015).
 func TestCheckPlatform(t *testing.T) {
-	for _, tc := range []struct {
-		goos       string
-		ok, checks bool
-		note       string
-	}{
-		{goos: "linux", ok: true, checks: true},
-		{goos: "darwin", ok: true, checks: true},
-		{goos: "windows", ok: true, note: "Cloud SQL, GKE, Cloud NAT and host mode: the container runtime is not usable on native Windows; run gcpemu in WSL2"},
-		{goos: "plan9", checks: true},
-	} {
-		var out strings.Builder
+	for goos, want := range map[string]bool{"linux": true, "darwin": true, "windows": true, "plan9": false} {
 		ok := true
-		report := func(pass bool, what, fix string) { ok = ok && pass }
-		checks := checkPlatform(&out, report, tc.goos, "amd64")
-		if ok != tc.ok || checks != tc.checks || !strings.Contains(out.String(), tc.note) {
-			t.Errorf("%s: ok=%v checks=%v %q", tc.goos, ok, checks, out.String())
-		}
-		if tc.goos == "darwin" && strings.Contains(out.String(), "Linux-only") {
-			t.Errorf("darwin still calls something Linux-only: %q", out.String())
-		}
-		if tc.goos != "windows" && strings.Contains(out.String(), "WSL2") {
-			t.Errorf("%s mentions WSL2: %q", tc.goos, out.String())
+		var whats []string
+		report := func(pass bool, what, fix string) { ok = ok && pass; whats = append(whats, what) }
+		checkPlatform(report, goos, "amd64")
+		if ok != want || len(whats) != 1 || whats[0] != "platform "+goos+"/amd64" {
+			t.Errorf("%s: ok=%v %q", goos, ok, whats)
 		}
 	}
 }

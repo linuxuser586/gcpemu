@@ -55,25 +55,23 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			hasRuntime := false
-			if checkPlatform(out, report, runtime.GOOS, runtime.GOARCH) {
-				cl, det, rtErr := emuruntime.Locate()
-				checkRuntimeDetection(out, report, det, rtErr)
-				hasRuntime = rtErr == nil
-				if hasRuntime {
-					checkVMRelay(cmd.Context(), out, cl)
-					info, infoErr := cl.Info(cmd.Context())
-					if cl.Self() != "" && infoErr != nil {
-						fmt.Fprintf(out, "[--  ] VM runtime: undetermined (cannot read the runtime's info: %v)\n", infoErr)
-					} else if cl.Self() != "" {
-						checkVMRuntime(cmd.Context(), out, cl, cfg, info)
-					}
-					if infoErr == nil {
-						checkRuntimeArch(out, runtime.GOOS, machineArch(), info.Arch)
-					}
-					found, err := findAbandoned(cmd.Context(), cl)
-					checkAbandoned(out, found, err)
+			checkPlatform(report, runtime.GOOS, runtime.GOARCH)
+			cl, det, rtErr := emuruntime.Locate()
+			checkRuntimeDetection(out, report, det, rtErr)
+			hasRuntime := rtErr == nil
+			if hasRuntime {
+				checkVMRelay(cmd.Context(), out, cl)
+				info, infoErr := cl.Info(cmd.Context())
+				if cl.Self() != "" && infoErr != nil {
+					fmt.Fprintf(out, "[--  ] VM runtime: undetermined (cannot read the runtime's info: %v)\n", infoErr)
+				} else if cl.Self() != "" {
+					checkVMRuntime(cmd.Context(), out, cl, cfg, info)
 				}
+				if infoErr == nil {
+					checkRuntimeArch(out, runtime.GOOS, machineArch(), info.Arch)
+				}
+				found, err := findAbandoned(cmd.Context(), cl)
+				checkAbandoned(out, found, err)
 			}
 
 			_, running := readEndpoints(cfg)
@@ -227,17 +225,10 @@ func reportExcludedPorts(out io.Writer, network string, ranges []loopback.PortRa
 	}
 }
 
-// checkPlatform reports goos/goarch and what it supports, and whether an
-// Instance there can use a container runtime (emuruntime.UnusableOn), so
-// the runtime is worth checking.
-func checkPlatform(out io.Writer, report func(bool, string, string), goos, goarch string) bool {
+// checkPlatform reports goos/goarch and whether it is supported.
+func checkPlatform(report func(bool, string, string), goos, goarch string) {
 	platform := fmt.Sprintf("platform %s/%s", goos, goarch)
 	report(goos == "linux" || goos == "darwin" || goos == "windows", platform, "run on Linux, macOS or Windows")
-	if err := emuruntime.UnusableOn(goos); err != nil {
-		fmt.Fprintf(out, "[--  ] Cloud SQL, GKE, Cloud NAT and host mode: %v (ADR 0008); every other Service runs here\n", err)
-		return false
-	}
-	return true
 }
 
 // checkVMRelay prints whether an Instance started now uses the VM relay

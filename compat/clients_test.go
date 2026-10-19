@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
-	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 const project = "compat-proj"
@@ -44,7 +43,7 @@ func start(t *testing.T) *emulator {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	services := "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn"
-	if emuruntime.Unusable() == nil && exec.Command("docker", "info").Run() == nil {
+	if exec.Command("docker", "info").Run() == nil {
 		e.runtime = true
 		services += ",sql,gke,build"
 	}
@@ -381,12 +380,7 @@ func TestClients(t *testing.T) {
 			t.Fatalf("ko image index: %+v %v", idx, err)
 		}
 
-		// Docker: login with the gcloud token, push, pull. On native
-		// Windows the daemon is in the WSL2 VM, where the registry's
-		// loopback address is not the host's.
-		if err := emuruntime.Unusable(); err != nil {
-			t.Skipf("docker: %v", err)
-		}
+		// Docker: login with the gcloud token, push, pull.
 		docker := onPath(t, "docker")
 		dl := exec.Command(docker, "login", "-u", "oauth2accesstoken", "--password-stdin", reg)
 		dl.Env, dl.Stdin = e.env, strings.NewReader(tok)

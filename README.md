@@ -83,16 +83,19 @@ Download `gcpemu-windows-amd64.exe` or `gcpemu-windows-arm64.exe` from a
 (`certutil -hashfile gcpemu-windows-amd64.exe SHA256`), and rename it to `gcpemu.exe` somewhere
 on `PATH`. No installer, zip or administrator rights are needed.
 
-Natively, every Service runs in-process except Cloud SQL, GKE and Cloud NAT, which need a
-container runtime that native Windows can't use (ADR 0008). Docker Desktop's networks live
-inside its WSL2 VM, where the host can't route, so `gcpemu.exe` ignores the runtime even when
-`DOCKER_HOST` is set. With the default Service list it skips those three and logs that they
-need WSL2. Naming one of them in `--services`, or passing `--host-mode`, fails at start. For
-those, run the Linux binary inside WSL2. The load balancer runs natively, and Windows has no
-privileged ports, so a forwarding rule binds its own port directly. A port in one of Windows'
-excluded port ranges, which Hyper-V, WSL and others reserve, can't be bound at all: a forwarding
-rule on one fails, pointing at `netsh int ipv4 show excludedportrange protocol=tcp`, and
-`gcpemu doctor` lists the ports that fall in a range.
+`gcpemu.exe` runs every Service natively, Cloud SQL, GKE, Cloud NAT and Cloud Build included,
+with Docker Desktop or Podman machine in Linux-containers mode as its container runtime
+(ADR 0015). As on macOS, that runtime is a VM runtime: the emulator reaches its containers
+through the VM relay, and you never install or enter a WSL2 distribution yourself. Without a
+runtime, or with one serving Windows containers, the default Service list skips the Runtime
+Services and logs why. Host mode is Linux-only and fails at start.
+
+Windows has no privileged ports, so a forwarding rule binds its own port directly. A port in one
+of Windows' excluded port ranges, which Hyper-V, WSL and others reserve, can't be bound at all: a
+forwarding rule on one fails, pointing at `netsh int ipv4 show excludedportrange protocol=tcp`,
+and `gcpemu doctor` lists the ports that fall in a range.
+
+Running the Linux binary inside a WSL2 distribution also works: to the emulator, that is Linux.
 
 State lives under `%LOCALAPPDATA%\gcpemu\<instance>` unless `XDG_STATE_HOME` or `--data-dir`
 says otherwise. Windows doesn't enforce file modes such as 0600, so the per-user ACL on that
@@ -243,10 +246,13 @@ the admin API and every other listener stay on `--bind`, and neither flag needs
 
 ### Container runtime
 
-Cloud SQL, GKE and Cloud NAT need Docker Engine (>= 24) or Podman (>= 4.9, Docker-compatible
-socket), and on Windows they need WSL2 (see "Windows" above). On macOS, Docker Desktop, OrbStack, Colima and Podman machine work too. The emulator
-uses `DOCKER_HOST` first, then the Docker context (`DOCKER_CONTEXT`, or the current context in
-`~/.docker/config.json`), then the first well-known socket that responds. If `DOCKER_HOST` or a
+Cloud SQL, GKE, Cloud NAT and Cloud Build need Docker Engine (>= 24) or Podman (>= 4.9,
+Docker-compatible socket). On macOS, Docker Desktop, OrbStack, Colima and Podman machine work too,
+and on Windows Docker Desktop and Podman machine, in Linux-containers mode. The emulator uses
+`DOCKER_HOST` first, then the Docker context (`DOCKER_CONTEXT`, or the current context in
+`~/.docker/config.json`), then the first well-known endpoint that responds and serves Linux
+containers: a socket, or on Windows the named pipes `//./pipe/dockerDesktopLinuxEngine`,
+`//./pipe/docker_engine` and `//./pipe/podman-machine-default`, in that order. If `DOCKER_HOST` or a
 context other than `default` names a runtime that doesn't respond, start fails rather than using
 another one, so `gcpemu` and `docker` always agree. `gcpemu doctor` shows the runtime it picked
 and why. Everything the emulator creates is labelled

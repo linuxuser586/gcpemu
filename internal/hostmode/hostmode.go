@@ -29,8 +29,7 @@
 // (or SSL_CERT_FILE from `gcpemu env --trust`). `gcpemu env` prints these
 // instructions (to stderr) when host mode is on. On macOS and Windows the
 // container IP is not routable from the host, so host mode is Linux-only:
-// an Instance elsewhere refuses it at start (UnsupportedOn; on native
-// Windows runtime.Unusable says so first, ADR 0008).
+// an Instance elsewhere refuses it at start (UnsupportedOn).
 package hostmode
 
 import (
