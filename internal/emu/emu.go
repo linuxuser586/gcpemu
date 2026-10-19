@@ -5,6 +5,7 @@ package emu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -329,11 +330,26 @@ type LoopbackHolder interface {
 	LoopbackAddrs() []string
 }
 
+// ErrNoRuntime marks a permanent Containers.Runtime failure (see
+// NoRuntime).
+var ErrNoRuntime = errors.New("no container runtime")
+
+// NoRuntime marks err as a permanent Containers.Runtime failure: it
+// matches ErrNoRuntime as well as err, and keeps err's message.
+func NoRuntime(err error) error { return noRuntime{err} }
+
+type noRuntime struct{ error }
+
+func (e noRuntime) Unwrap() []error { return []error{e.error, ErrNoRuntime} }
+
 // Containers gives services lazy access to the container runtime and the
 // instance's container networks (Section 3.3). It is nil-safe: services
 // that need a runtime call Netplane and report not-ready on error.
 type Containers interface {
-	// Runtime detects the runtime on first use and reclaims orphans.
+	// Runtime detects the runtime on first use and reclaims orphans. An
+	// error matching ErrNoRuntime is permanent: the instance has no usable
+	// runtime and returns the same error on every later call. Any other
+	// error is transient, and a later call tries again.
 	Runtime(ctx context.Context) (*runtime.Manager, error)
 	// Netplane returns the instance's services/external network manager.
 	Netplane(ctx context.Context) (*netplane.Plane, error)

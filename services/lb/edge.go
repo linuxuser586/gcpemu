@@ -31,7 +31,10 @@ import (
 // "lb" network (forwarding rule addresses), the services network (to reach
 // the emulator's edge ingress) and every VPC subnetwork with pod routes.
 // The in-process proxy stays the only L7 implementation: the edge only
-// relays TCP (edgeagent.go).
+// relays TCP (edgeagent.go). The edge needs a container runtime: without
+// one for good (emu.ErrNoRuntime) its callers fall back for the
+// Instance's life; after a transient failure they fall back for now, and
+// the runtime is asked again after rtRetryAfter (#313).
 //
 // VPC workloads reach external forwarding rules by their own address, as
 // on GCP (#187). The emulated DNS answers them with it (dnsmap.go), and
@@ -53,9 +56,11 @@ const edgeImage = "rancher/k3s:v1.36.5-k3s1"
 type edge struct {
 	d *dataplane
 
-	mu      sync.Mutex
-	rtTried bool
-	rtOK    bool
+	mu sync.Mutex
+	// rt is what the runtime check found; after a transient failure it
+	// stays rtUnknown and is not tried again before rtRetry.
+	rt      rtState
+	rtRetry time.Time
 	id      string
 	ip      string // container address on the lb network
 	subnet  *net.IPNet
@@ -107,20 +112,54 @@ func (e *edge) control() *http.Client {
 	return e.ctl
 }
 
-// available reports whether a container runtime can run the edge.
-func (e *edge) available(ctx context.Context) bool {
+// rtState is what the edge knows of the container runtime.
+type rtState int
+
+const (
+	// rtUnknown: not asked yet, or the last try failed transiently (the
+	// socket not ready yet, a timeout); asked again after rtRetryAfter.
+	rtUnknown rtState = iota
+	// rtUp: the runtime answered.
+	rtUp
+	// rtNone: no runtime at all (emu.ErrNoRuntime), for good.
+	rtNone
+)
+
+// rtRetryAfter is how long the edge waits before asking the runtime again
+// after a transient failure. Callers of runtimeState hold the data plane's
+// mutex and each try can block for 5s, so it is not asked on every call.
+const rtRetryAfter = 30 * time.Second
+
+// runtimeState reports what the edge knows of the container runtime,
+// asking it when unknown and not backing off, or with retry whatever the
+// backoff (a caller with its own backoff). Only an answer or a permanent
+// failure is kept. Callers hold d.mu.
+func (e *edge) runtimeState(ctx context.Context, retry bool) rtState {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.rtTried {
-		e.rtTried = true
-		if e.env().Containers != nil {
-			c, cancel := context.WithTimeout(ctx, 5*time.Second)
-			_, err := e.env().Containers.Runtime(c)
-			cancel()
-			e.rtOK = err == nil
-		}
+	if e.rt != rtUnknown || (!retry && time.Now().Before(e.rtRetry)) {
+		return e.rt
 	}
-	return e.rtOK
+	c, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err := e.d.containerRuntime(c)
+	cancel()
+	switch {
+	case err == nil:
+		e.rt = rtUp
+	case errors.Is(err, emu.ErrNoRuntime):
+		e.rt = rtNone
+	default:
+		e.rtRetry = time.Now().Add(rtRetryAfter)
+		e.env().Log.Debug("lb: container runtime not reachable; trying again later", "err", err, "retryAfter", rtRetryAfter)
+	}
+	return e.rt
+}
+
+// available reports whether a container runtime can run the edge now.
+// After a transient failure it is false until a later try succeeds.
+// Callers hold d.mu.
+func (e *edge) available(ctx context.Context) bool {
+	return e.runtimeState(ctx, false) == rtUp
 }
 
 // add maps a frontend onto an edge address and returns "alias:port".

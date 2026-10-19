@@ -24,7 +24,7 @@ func TestExcludedPortNeverEdge(t *testing.T) {
 		s := &Service{env: &emu.Env{Config: &emuconfig.Config{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 		s.opts.Store(&Options{Edge: true})
 		d := &dataplane{s: s, listeners: map[string]*listener{}, loopX: map[string]int{}, single: true, goos: "windows"}
-		d.edge = &edge{d: d, rtTried: true, rtOK: true, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}}
+		d.edge = &edge{d: d, rt: rtUp, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}}
 		d.bind = func(addr string) (net.Listener, error) {
 			return nil, &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", syscall.EACCES)}
 		}

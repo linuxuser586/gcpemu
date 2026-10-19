@@ -43,8 +43,8 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	}
 	cl, err := runtime.Detect()
 	if err != nil {
-		c.err = err
-		return nil, err
+		c.err = emu.NoRuntime(err)
+		return nil, c.err
 	}
 	info, err := cl.Info(ctx)
 	if err != nil {

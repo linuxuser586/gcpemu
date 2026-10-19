@@ -64,6 +64,9 @@ type dataplane struct {
 	// bind (tests).
 	goos string
 	bind func(addr string) (net.Listener, error)
+	// self, when set, replaces how the data plane asks the runtime about
+	// the Instance and its own container (published.go; tests).
+	self *selfProbe
 }
 
 // config is a snapshot of the load-balancing resources.
