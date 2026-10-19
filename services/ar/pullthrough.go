@@ -75,13 +75,11 @@ func (s *Service) SetMirrorTagTTL(d time.Duration) {
 // Instance resets it fails.
 func (s *Service) upstreamFetch(fn func(ctx context.Context) (any, error)) (any, error) {
 	s.mu.Lock()
-	if s.resetting {
-		s.mu.Unlock()
+	bg, ok := s.enterFetchLocked()
+	s.mu.Unlock()
+	if !ok {
 		return nil, errResetting
 	}
-	bg := s.bgCtx
-	s.fetchRuns.Enter()
-	s.mu.Unlock()
 	defer s.fetchRuns.Exit()
 	ctx, cancel := context.WithTimeout(bg, fetchTimeout)
 	defer cancel()
@@ -472,6 +470,18 @@ type scopeImg struct {
 	img   string
 }
 
+// enterFetchLocked counts an upstream fetch that starts, for Reset to wait
+// for, and returns the context it runs under; it reports false while the
+// Instance resets. The fetch calls s.fetchRuns.Exit when it returns.
+// Callers hold s.mu.
+func (s *Service) enterFetchLocked() (context.Context, bool) {
+	if s.resetting {
+		return nil, false
+	}
+	s.fetchRuns.Enter()
+	return s.bgCtx, true
+}
+
 // joinFetch returns the in-flight fetch for digest, starting one if none
 // is running, with a reference held for the caller. While the Instance
 // resets, the fetch returned has failed.
@@ -481,13 +491,11 @@ func (s *Service) joinFetch(pt *pullThrough, digest string) *blobFetch {
 	f := s.fetches[digest]
 	if f == nil {
 		f = &blobFetch{s: s, digest: digest, ready: make(chan struct{}), size: -1, notify: make(chan struct{}), refs: 1}
-		if s.resetting {
+		if ctx, ok := s.enterFetchLocked(); !ok {
 			f.done, f.err = true, errResetting
 			close(f.ready)
 		} else {
 			s.fetches[digest] = f
-			s.fetchRuns.Enter()
-			ctx := s.bgCtx
 			go func() {
 				defer s.fetchRuns.Exit()
 				f.run(ctx, pt.up)

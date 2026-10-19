@@ -85,9 +85,9 @@ type background struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 	wg     sync.WaitGroup
-	// expiry is set once the generation runs the backup expiry loop, which
-	// Reset starts again in the next one. Guarded by Service.bgMu.
-	expiry bool
+	// runsExpiry is set once the generation runs the backup expiry loop,
+	// which Reset starts again in the next one. Guarded by Service.bgMu.
+	runsExpiry bool
 }
 
 func newBackground() *background {
@@ -148,7 +148,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if s.bg.ctx.Err() != nil {
 		s.bg = newBackground()
 	}
-	s.bg.expiry = true
+	s.bg.runsExpiry = true
 	s.bgMu.Unlock()
 	s.failInterruptedOps()
 	s.goBackground(s.expiryLoop)
@@ -241,18 +241,21 @@ func (s *Service) ResourceCounts() map[string]int {
 func (s *Service) Reset(ctx context.Context) error {
 	s.bgMu.Lock()
 	old := s.bg
-	expiry := false
 	if old.ctx.Err() == nil {
-		s.bg = newBackground()
-		s.bg.expiry, expiry = old.expiry, old.expiry
+		next := newBackground()
+		if old.runsExpiry {
+			next.runsExpiry = true
+			next.wg.Add(1)
+			go func() {
+				defer next.wg.Done()
+				s.expiryLoop(next.ctx)
+			}()
+		}
+		s.bg = next
 	}
 	old.cancel(errReset)
 	s.bgMu.Unlock()
-	err := old.wait(ctx)
-	if expiry {
-		s.goBackground(s.expiryLoop)
-	}
-	if err != nil {
+	if err := old.wait(ctx); err != nil {
 		return fmt.Errorf("sql: waiting for background work: %w", err)
 	}
 	s.closeAllLoopback()

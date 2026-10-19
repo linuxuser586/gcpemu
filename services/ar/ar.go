@@ -278,7 +278,7 @@ func (s *Service) IsStoreCache(ns, key string) bool {
 // upstream fetches (blob downloads and manifests) and waits for them, so
 // none writes to the blob store while it is emptied (#397) or caches
 // anything afterwards (#306), and removes every blob and upload; the
-// store is reset by the instance. Fetches after Reset run on a fresh
+// store is reset by the Instance. Fetches after Reset run on a fresh
 // background context.
 func (s *Service) Reset(ctx context.Context) error {
 	err := s.ops.Reset(ctx)
