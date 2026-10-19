@@ -1,10 +1,13 @@
 // Package listfilter evaluates the filter of a list call, as gcloud and
 // the client libraries send it: field OP value terms (value bare or
 // double-quoted) combined with AND, OR, NOT and parentheses, adjacent
-// terms ANDed. String fields take =, != and : (contains), and a
+// terms ANDed. String fields take =, != and : (contains, or equality on
+// an Exact field, which refuses AIP-160's :* key-exists test), and a
 // many-valued field matches when any of its values does (!= when none
-// does); time fields take = != < <= > >= against RFC 3339 timestamps, and
-// a resource without the time matches only !=. An unknown field, an
+// does). A prefix field (settings.userLabels.) takes every longer field
+// name, the rest of the name a key; a resource without the key reads as
+// empty. Time fields take = != < <= > >= against RFC 3339 timestamps,
+// and a resource without the time matches only !=. An unknown field, an
 // operator a field does not take or a syntax error is the Service's
 // INVALID_ARGUMENT.
 package listfilter
@@ -19,18 +22,42 @@ import (
 type Field[T any] struct {
 	// Time compares the field as an RFC 3339 timestamp.
 	Time bool
+	// Exact makes : compare a string field for equality, like =.
+	Exact bool
 	// Get returns the field's value.
 	Get func(T) string
 	// Values, when set instead of Get, returns a many-valued field's
 	// values (a Build's tags).
 	Values func(T) []string
+	// Key, when set instead of Get, makes the field a prefix field: its
+	// name in the map is a prefix (settings.userLabels.) that every
+	// longer field name matches, and Key gets the rest of that name (a
+	// label key). A field name in the map is looked up before a prefix
+	// field.
+	Key func(v T, key string) string
 }
 
-func (f Field[T]) values(v T) []string {
-	if f.Values != nil {
-		return f.Values(v)
+// lookup finds the field called name and returns it with its values
+// getter.
+func lookup[T any](fields map[string]Field[T], name string) (Field[T], func(T) []string, bool) {
+	f, ok := fields[name]
+	if ok && f.Key == nil {
+		if f.Values != nil {
+			return f, f.Values, true
+		}
+		return f, func(v T) []string { return []string{f.Get(v)} }, true
 	}
-	return []string{f.Get(v)}
+	prefix := ""
+	for p, pf := range fields {
+		if pf.Key != nil && len(name) > len(p) && strings.HasPrefix(name, p) && len(p) > len(prefix) {
+			f, prefix = pf, p
+		}
+	}
+	if prefix == "" {
+		return f, nil, false
+	}
+	key := name[len(prefix):]
+	return f, func(v T) []string { return []string{f.Key(v, key)} }, true
 }
 
 // Compile parses filter into a predicate over T; an empty filter matches
@@ -220,20 +247,27 @@ func (p *parser[T]) term() (func(T) bool, error) {
 		return nil, p.errorf("expected a field, an operator and a value at %q", name.text)
 	}
 	p.pos += 3
-	f, ok := p.fields[name.text]
+	f, values, ok := lookup(p.fields, name.text)
 	if !ok {
 		return nil, p.errorf("unknown field %q", name.text)
 	}
 	if !f.Time {
+		eq := func(v T) bool { return slices.Contains(values(v), val.text) }
 		switch op.text {
 		case "=":
-			return func(v T) bool { return slices.Contains(f.values(v), val.text) }, nil
+			return eq, nil
 		case "!=":
-			return func(v T) bool { return !slices.Contains(f.values(v), val.text) }, nil
+			return func(v T) bool { return !eq(v) }, nil
 		case ":":
-			return func(v T) bool {
-				return slices.ContainsFunc(f.values(v), func(s string) bool { return strings.Contains(s, val.text) })
-			}, nil
+			if !f.Exact {
+				return func(v T) bool {
+					return slices.ContainsFunc(values(v), func(s string) bool { return strings.Contains(s, val.text) })
+				}, nil
+			}
+			if val.kind == tokWord && val.text == "*" {
+				return nil, p.errorf("field %q does not support \":*\"", name.text)
+			}
+			return eq, nil
 		}
 		return nil, p.errorf("field %q does not support %q", name.text, op.text)
 	}
@@ -259,7 +293,7 @@ func (p *parser[T]) term() (func(T) bool, error) {
 		return nil, p.errorf("%q is not an RFC 3339 timestamp", val.text)
 	}
 	return func(v T) bool {
-		got, err := time.Parse(time.RFC3339Nano, f.Get(v))
+		got, err := time.Parse(time.RFC3339Nano, values(v)[0])
 		if err != nil {
 			return op.text == "!="
 		}

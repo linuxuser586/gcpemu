@@ -374,23 +374,6 @@ func TestPKI(t *testing.T) {
 	}
 }
 
-func TestMatchesFilter(t *testing.T) {
-	in := &sqladmin.DatabaseInstance{Name: "a", State: "RUNNABLE", Region: "us-east1", Settings: &sqladmin.Settings{UserLabels: map[string]string{"env": "dev"}}}
-	for f, want := range map[string]bool{
-		"":                                     true,
-		"name:a":                               true,
-		"name:b":                               false,
-		"state:RUNNABLE AND region:us-east1":   true,
-		"settings.userLabels.env:dev":          true,
-		`settings.userLabels.env="prod"`:       false,
-		"databaseVersion=POSTGRES_17 region:x": false,
-	} {
-		if got := matchesFilter(in, f); got != want {
-			t.Errorf("filter %q = %v", f, got)
-		}
-	}
-}
-
 func TestBootstrapSQL(t *testing.T) {
 	rec := &instanceRecord{RootPassword: "it's", Instance: &sqladmin.DatabaseInstance{Settings: &sqladmin.Settings{
 		DatabaseFlags: []*sqladmin.DatabaseFlags{{Name: "work_mem", Value: "8192"}},
