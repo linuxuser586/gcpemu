@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix || windows
 
 package netplane
 
@@ -37,7 +37,7 @@ func mdnsHolder(t *testing.T, port string) net.PacketConn {
 	switch {
 	case err == nil:
 		t.Cleanup(func() { pc6.Close() })
-	case errors.Is(err, syscall.EADDRNOTAVAIL), errors.Is(err, syscall.EAFNOSUPPORT):
+	case isAny(err, noIPv6Errs):
 		// No IPv6 (as in some CI containers): a wildcard bind is IPv4-only
 		// and clashes with the IPv4 socket.
 	default:
@@ -72,7 +72,8 @@ func freeUDPPort(t *testing.T) string {
 // plain bind of a specific address fails, ListenUDP succeeds, and unicast
 // queries to that address reach the emulator rather than the mDNS daemon.
 // A wildcard bind does not use SO_REUSEADDR, so it can't take over the
-// daemon's traffic.
+// daemon's traffic. The plain binds are only checked where the test's
+// holder refuses them (see holderRefusesPlainBinds).
 func TestListenUDPBesideMDNS(t *testing.T) {
 	port := freeUDPPort(t)
 	holder := mdnsHolder(t, port)
@@ -80,8 +81,10 @@ func TestListenUDPBesideMDNS(t *testing.T) {
 
 	if pc, err := net.ListenPacket("udp4", "127.0.0.1:"+port); err == nil {
 		pc.Close()
-		t.Fatal("a plain bind beside the mDNS socket succeeded; the scenario is not reproduced")
-	} else if !errors.Is(err, syscall.EADDRINUSE) {
+		if holderRefusesPlainBinds {
+			t.Fatal("a plain bind beside the mDNS socket succeeded; the scenario is not reproduced")
+		}
+	} else if !isAny(err, plainBindErrs) {
 		t.Fatalf("plain bind: %v", err)
 	}
 	ours, err := ListenUDP(ctx, "127.0.0.1", port)
@@ -108,6 +111,9 @@ func TestListenUDPBesideMDNS(t *testing.T) {
 		t.Errorf("the mDNS socket also received %q", buf[:n])
 	}
 
+	if !holderRefusesPlainBinds {
+		return
+	}
 	for _, host := range []string{"0.0.0.0", ""} {
 		if pc, err := ListenUDP(ctx, host, port); err == nil {
 			pc.Close()
@@ -159,4 +165,13 @@ func TestForwarderBesideMDNS(t *testing.T) {
 	if n, err := c.Read(buf); err != nil || string(buf[:n]) != "re:q" {
 		t.Fatalf("relayed answer %q %v", buf[:n], err)
 	}
+}
+
+func isAny(err error, targets []error) bool {
+	for _, t := range targets {
+		if errors.Is(err, t) {
+			return true
+		}
+	}
+	return false
 }

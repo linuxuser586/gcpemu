@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix || windows
 
 package dns_test
 
@@ -22,8 +22,9 @@ import (
 )
 
 // TestStartBesideMDNS: the DNS service starts on a port an mDNS daemon
-// holds on the wildcard address (5353 on most Linux desktops, and on macOS
-// where mDNSResponder holds it) and answers UDP queries on its loopback bind.
+// holds on the wildcard address (5353 on most Linux desktops, on macOS
+// where mDNSResponder holds it, and on Windows where Chrome or the DNS
+// Client service does) and answers UDP queries on its loopback bind.
 func TestStartBesideMDNS(t *testing.T) {
 	inst, port := startBesideMDNS(t)
 	c := newClient(t, inst.GatewayURL()+"/")
@@ -79,7 +80,7 @@ func mdnsStandIn(t *testing.T) (int, net.PacketConn) {
 	tcp.Close()
 	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
 		var serr error
-		_ = c.Control(func(fd uintptr) { serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1) })
+		_ = c.Control(func(fd uintptr) { serr = setReuseAddr(fd) })
 		return serr
 	}}
 	holder, err := lc.ListenPacket(context.Background(), "udp4", "0.0.0.0:"+strconv.Itoa(port))

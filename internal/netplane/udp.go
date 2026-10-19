@@ -12,7 +12,9 @@ import (
 // SO_REUSEADDR on most Linux desktops, as mDNSResponder and browsers do on
 // macOS, so a plain bind of 127.0.0.1:5353 (or of the services gateway)
 // fails with "address already in use". Darwin behaves the same as Linux
-// here (checked on macOS 26.6; TestStartBesideMDNS runs on both). Setting
+// here (checked on macOS 26.6; TestStartBesideMDNS runs on both). On
+// Windows, Chrome and the DNS Client service hold the port the same way and
+// the plain bind fails with WSAEACCES instead. Setting
 // SO_REUSEADDR on our socket lets it coexist; unicast queries to the
 // specific bind address reach our socket while multicast mDNS traffic keeps
 // going to the wildcard sockets. On a wildcard bind we would share (and
