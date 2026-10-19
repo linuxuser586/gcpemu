@@ -41,7 +41,7 @@ func TestResetWaitsForOperations(t *testing.T) {
 	started := make(chan struct{})
 	var returned atomic.Bool
 	r := ref{Project: "p", Location: "us-central1-a", Cluster: "c"}
-	if _, err := s.startOp(r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error {
+	if _, err := s.startOp(context.Background(), r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error {
 		close(started)
 		<-ctx.Done()
 		time.Sleep(100 * time.Millisecond) // slow to stop, like removing a container
@@ -87,7 +87,7 @@ func TestMarkErrorAfterCancel(t *testing.T) {
 		key := putTestCluster(t, s, containerpb.Cluster_PROVISIONING)
 		started := make(chan struct{})
 		r := ref{Project: "p", Location: "us-central1-a", Cluster: "c"}
-		if _, err := s.startOp(r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error {
+		if _, err := s.startOp(context.Background(), r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error {
 			close(started)
 			<-ctx.Done()
 			s.markError(ctx, key, ctx.Err())
@@ -141,7 +141,7 @@ func TestResetRenewsBackground(t *testing.T) {
 	live := make(chan error, 2)
 	s.goBackground(func(ctx context.Context) { live <- ctx.Err() })
 	r := ref{Project: "p", Location: "us-central1-a", Cluster: "c"}
-	if _, err := s.startOp(r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error {
+	if _, err := s.startOp(context.Background(), r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error {
 		live <- ctx.Err()
 		return nil
 	}); err != nil {
@@ -206,7 +206,7 @@ func TestStopRefusesOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := ref{Project: "p", Location: "us-central1-a", Cluster: "c"}
-	if _, err := s.startOp(r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error { return nil }); err == nil {
+	if _, err := s.startOp(context.Background(), r, containerpb.Operation_CREATE_CLUSTER, "t", true, func(ctx context.Context) error { return nil }); err == nil {
 		t.Fatal("operation started after Stop")
 	}
 	if _, ok := s.tryLock(r.key(), "x"); !ok {
