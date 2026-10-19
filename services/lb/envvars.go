@@ -5,15 +5,16 @@ import (
 	"strings"
 )
 
-// Forwarding rule env vars (ADR 0013, #314). Each rule's endpoint is
-// "lb:<project>/<region|global>/<name>", which depends only on the rule.
+// Forwarding rule env vars (ADR 0013, #314). Each rule's Service endpoint
+// is named "lb:<project>/<region|global>/<name>", which depends only on
+// the rule.
 // `gcpemu env` prints it as GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>,
 // and as GCPEMU_LB_<NAME> while the name is unique across all projects
 // and scopes. A variable more than one rule would print (a shared name,
 // or two qualified keys that flatten alike) is withheld, never pointed at
 // either rule. The short variable is derived here, never stored.
 
-// endpointKey is the Service endpoint of a frontend's rule.
+// endpointKey is the name of a frontend's rule's Service endpoint.
 func endpointKey(fe *frontend) string {
 	sc := fe.region
 	if sc == "" {
@@ -23,32 +24,31 @@ func endpointKey(fe *frontend) string {
 }
 
 // withheldVar is a GCPEMU_LB_* variable that more than one rule would
-// print, with the endpoint keys of those rules in order.
+// print, with the Service endpoint names of those rules in order.
 type withheldVar struct {
 	name string
 	keys []string
 }
 
 // lbEnv derives the GCPEMU_LB_* variables from the lb: entries of
-// endpoints, and the ones withheld as ambiguous, by variable.
+// endpoints, and the ones withheld as ambiguous, sorted by variable.
 func lbEnv(endpoints map[string]string) (map[string]string, []withheldVar) {
-	by := map[string][]string{}
+	keysOf := map[string][]string{} // variable → the keys that print it
 	for k := range endpoints {
-		rest, ok := strings.CutPrefix(k, "lb:")
-		if !ok {
+		if !strings.HasPrefix(k, "lb:") {
 			continue
 		}
-		vars := []string{"GCPEMU_LB_" + envName(rest)}
-		if i := strings.LastIndex(rest, "/"); i >= 0 {
-			vars = append(vars, "GCPEMU_LB_"+envName(rest[i+1:]))
+		vars := []string{qualifiedVar(k)}
+		if i := strings.LastIndex(k, "/"); i >= 0 {
+			vars = append(vars, "GCPEMU_LB_"+envName(k[i+1:]))
 		}
 		for _, v := range vars {
-			by[v] = append(by[v], k)
+			keysOf[v] = append(keysOf[v], k)
 		}
 	}
 	out := map[string]string{}
 	var withheld []withheldVar
-	for v, keys := range by {
+	for v, keys := range keysOf {
 		if len(keys) == 1 {
 			out[v] = endpoints[keys[0]]
 			continue
@@ -65,22 +65,28 @@ func (w withheldVar) info() withheldInfo {
 	out := withheldInfo{Variable: w.name}
 	for _, k := range w.keys {
 		out.ForwardingRules = append(out.ForwardingRules, rulePath(k))
-		out.Qualified = append(out.Qualified, "GCPEMU_LB_"+envName(strings.TrimPrefix(k, "lb:")))
+		out.Qualified = append(out.Qualified, qualifiedVar(k))
 	}
 	return out
 }
 
-// rulePath is the forwarding rule resource path of an endpoint key.
+// qualifiedVar is GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME> for a Service
+// endpoint name.
+func qualifiedVar(key string) string { return "GCPEMU_LB_" + envName(strings.TrimPrefix(key, "lb:")) }
+
+// rulePath is the forwarding rule resource path of a Service endpoint
+// name.
 func rulePath(key string) string {
 	project, rest, _ := strings.Cut(strings.TrimPrefix(key, "lb:"), "/")
-	scope, name, _ := strings.Cut(rest, "/")
-	if scope != "global" {
-		scope = "regions/" + scope
+	region, name, _ := strings.Cut(rest, "/")
+	if region == "global" {
+		region = ""
 	}
-	return "projects/" + project + "/" + scope + "/forwardingRules/" + name
+	return scope{project: project, region: region}.coll("forwardingRules") + "/" + name
 }
 
-// envName upper-cases a forwarding rule name for an env var.
+// envName upper-cases a forwarding rule name or Service endpoint name
+// for an env var.
 func envName(s string) string {
 	var b strings.Builder
 	for _, c := range s {

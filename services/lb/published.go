@@ -22,7 +22,7 @@ import (
 // served on a port its container publishes, on the wildcard address of
 // the container, beside its loopback listener (which clients inside the
 // container and the emulated DNS keep using), much as --lb-bind serves it
-// on more addresses. Its endpoint "lb:<project>/<region|global>/<name>"
+// on more addresses. Its Service endpoint "lb:<project>/<region|global>/<name>"
 // is the host side of that binding instead of the loopback listener.
 //
 // The rule's own port comes first, when the container publishes it at any

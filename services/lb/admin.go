@@ -72,13 +72,13 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 		failed = append(failed, unavailableInfo{ForwardingRule: fe.frPath, IPAddress: fe.ip, Port: fe.port, Error: why})
 	}
 	s.dp.mu.Unlock()
-	_, ws := lbEnv(s.env.Endpoints.All())
+	_, vars := lbEnv(s.env.Endpoints.All())
 	withheld := []withheldInfo{}
-	for _, w := range ws {
-		info := w.info()
+	for _, v := range vars {
+		info := v.info()
 		in := project == ""
-		for _, r := range info.ForwardingRules {
-			in = in || scopeOfPath(r).project == project
+		for _, fr := range info.ForwardingRules {
+			in = in || scopeOfPath(fr).project == project
 		}
 		if in {
 			withheld = append(withheld, info)
