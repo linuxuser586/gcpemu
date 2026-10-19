@@ -46,6 +46,9 @@ import (
 
 const proj = "lb-test"
 
+// ep is the endpoint of global forwarding rule name in proj (ADR 0013).
+func ep(name string) string { return "lb:" + proj + "/global/" + name }
+
 type env struct {
 	t    *testing.T
 	inst *emutest.Instance
@@ -242,7 +245,7 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	if err != nil || addr.Status != "IN_USE" || addr.Address != fr.IPAddress {
 		t.Fatalf("address = %+v, %v", addr, err)
 	}
-	listener := e.inst.Endpoint("lb:https-fr")
+	listener := e.inst.Endpoint(ep("https-fr"))
 	if listener == "" {
 		t.Fatal("no listener endpoint recorded")
 	}
@@ -460,7 +463,7 @@ func TestManagedCertificate(t *testing.T) {
 		!strings.Contains(cert.Certificate, "BEGIN CERTIFICATE") || cert.ExpireTime == "" || cert.PrivateKey != "" {
 		t.Fatalf("managed cert = %+v", cert)
 	}
-	resp, body := get(t, e.client(e.inst.Endpoint("lb:fr")), "https://shop.example.test:8080/x")
+	resp, body := get(t, e.client(e.inst.Endpoint(ep("fr"))), "https://shop.example.test:8080/x")
 	if resp.StatusCode != 200 || body != "backend:shop.example.test:8080/x" {
 		t.Fatalf("via managed cert: %d %q", resp.StatusCode, body)
 	}
@@ -571,7 +574,7 @@ lb:
 	if err != nil || fr.IPAddress == "" {
 		t.Fatalf("seeded forwarding rule = %+v, %v", fr, err)
 	}
-	if e.inst.Endpoint("lb:web") == "" {
+	if e.inst.Endpoint(ep("web")) == "" {
 		t.Error("seeded forwarding rule has no listener")
 	}
 }
@@ -649,7 +652,7 @@ func TestBackendMTLS(t *testing.T) {
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
 
 	cl := &http.Client{Timeout: 10 * time.Second}
-	resp, body := get(t, cl, "http://"+e.inst.Endpoint("lb:fr")+"/api/health")
+	resp, body := get(t, cl, "http://"+e.inst.Endpoint(ep("fr"))+"/api/health")
 	if resp.StatusCode != 200 || body != "mtls ok from lb.client.test" {
 		t.Fatalf("through LB: %d %q", resp.StatusCode, body)
 	}
@@ -664,7 +667,7 @@ func TestBackendMTLS(t *testing.T) {
 	bs, _ := c.BackendServices.Get(proj, "mesh").Do()
 	bs.TlsSettings.SubjectAltNames = []*computev1.BackendServiceTlsSettingsSubjectAltName{{DnsName: "other.mesh.test"}}
 	e.do(c.BackendServices.Update(proj, "mesh", bs).Do())
-	resp, _ = get(t, cl, "http://"+e.inst.Endpoint("lb:fr")+"/api/health")
+	resp, _ = get(t, cl, "http://"+e.inst.Endpoint(ep("fr"))+"/api/health")
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("SAN mismatch: %d", resp.StatusCode)
 	}
@@ -696,7 +699,7 @@ func TestFrontendMTLS(t *testing.T) {
 		SslCertificates: []string{"global/sslCertificates/cert"}, ServerTlsPolicy: "//networksecurity.googleapis.com/" + loc + "/serverTlsPolicies/strict"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpsProxies/p"}).Do())
 
-	listener := e.inst.Endpoint("lb:fr")
+	listener := e.inst.Endpoint(ep("fr"))
 	cl := e.client(listener)
 	if _, err := cl.Get("https://secure.example.test:8080/"); err == nil {
 		t.Fatal("request without client certificate accepted under REJECT_INVALID")
@@ -761,7 +764,7 @@ func TestProtocols(t *testing.T) {
 		PathMatchers: []*computev1.PathMatcher{{Name: "m", DefaultService: "global/backendServices/h2c", PathRules: []*computev1.PathRule{{Paths: []string{"/ws"}, Service: "global/backendServices/http1"}}}}}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
-	listener := e.inst.Endpoint("lb:fr")
+	listener := e.inst.Endpoint(ep("fr"))
 
 	_, body := get(t, &http.Client{}, "http://"+listener+"/")
 	if body != "HTTP/2.0" {
@@ -841,7 +844,7 @@ func TestWebSocketBackends(t *testing.T) {
 	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "p", UrlMap: "global/urlMaps/map",
 		SslCertificates: []string{"global/sslCertificates/cert"}}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpsProxies/p"}).Do())
-	listener := e.inst.Endpoint("lb:fr")
+	listener := e.inst.Endpoint(ep("fr"))
 	cl := e.client(listener)
 	// Each path routes to its own backend service, so a 200 on one says
 	// nothing about the others' health checks: wait for every path.
@@ -991,7 +994,7 @@ func TestRetriesAndTimeouts(t *testing.T) {
 				RouteAction: &computev1.HttpRouteAction{RetryPolicy: &computev1.HttpRetryPolicy{RetryConditions: []string{"5xx"}, NumRetries: 2}}}}}}}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
-	base := "http://" + e.inst.Endpoint("lb:fr")
+	base := "http://" + e.inst.Endpoint(ep("fr"))
 	cl := &http.Client{Timeout: 10 * time.Second}
 	if resp, body := get(t, cl, base+"/flaky"); resp.StatusCode != 200 || body != "ok" {
 		t.Fatalf("retried request: %d %q", resp.StatusCode, body)
@@ -1034,7 +1037,7 @@ func TestInstanceGroupBackend(t *testing.T) {
 	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/ig"}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
-	url := "http://" + e.inst.Endpoint("lb:fr") + "/hello"
+	url := "http://" + e.inst.Endpoint(ep("fr")) + "/hello"
 
 	poll := func(want func(int, string) bool) (int, string) {
 		t.Helper()
@@ -1179,7 +1182,7 @@ func testHealthTransitions(t *testing.T, kind string) {
 	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/svc"}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
-	url := "http://" + e.inst.Endpoint("lb:fr") + "/"
+	url := "http://" + e.inst.Endpoint(ep("fr")) + "/"
 
 	stateOfA := func() string {
 		h, err := c.BackendServices.GetHealth(proj, "svc", &computev1.ResourceGroupReference{Group: "zones/us-central1-a/networkEndpointGroups/neg"}).Do()

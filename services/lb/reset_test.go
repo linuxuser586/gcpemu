@@ -218,8 +218,8 @@ func TestResetClosesListeners(t *testing.T) {
 	if err := e.inst.Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.inst.Endpoint("lb:fr"); got != "" {
-		t.Errorf("lb:fr = %q after Reset, want none", got)
+	if got := e.inst.Endpoint(ep("fr")); got != "" {
+		t.Errorf("endpoint = %q after Reset, want none", got)
 	}
 	if conn, err := net.DialTimeout("tcp", before, time.Second); err == nil {
 		conn.Close()
@@ -251,7 +251,7 @@ func TestDeleteDropsListenerEntry(t *testing.T) {
 		t.Fatal("no listener")
 	}
 	e.do(e.c.GlobalForwardingRules.Delete(proj, "fr").Do())
-	if got := e.inst.Endpoint("lb:fr"); got != "" {
-		t.Fatalf("lb:fr = %q after the forwarding rule was deleted, want none", got)
+	if got := e.inst.Endpoint(ep("fr")); got != "" {
+		t.Fatalf("endpoint = %q after the forwarding rule was deleted, want none", got)
 	}
 }

@@ -79,7 +79,7 @@ func (e *env) httpLB(bs *computev1.BackendService) string {
 	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/" + bs.Name}).Do())
 	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "p", UrlMap: "global/urlMaps/map"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: bs.LoadBalancingScheme, PortRange: "8080", Target: "global/targetHttpProxies/p"}).Do())
-	return e.inst.Endpoint("lb:fr")
+	return e.inst.Endpoint(ep("fr"))
 }
 
 // TestCertificateMapSNI is FR-LB-004: a target HTTPS proxy with a
@@ -113,7 +113,7 @@ func TestCertificateMapSNI(t *testing.T) {
 	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "https", UrlMap: "global/urlMaps/map",
 		CertificateMap: "//certificatemanager.googleapis.com/" + loc + "/certificateMaps/m"}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "443", Target: "global/targetHttpsProxies/https"}).Do())
-	listener := e.inst.Endpoint("lb:fr")
+	listener := e.inst.Endpoint(ep("fr"))
 
 	for sni, want := range map[string]string{"a.example.test": "a.example.test", "b.example.test": "b.example.test", "other.test": "primary.example.test"} {
 		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: sni, RootCAs: e.inst.Env.CA.Pool(), InsecureSkipVerify: sni == "other.test"})
@@ -152,7 +152,7 @@ func TestRegionalLoadBalancers(t *testing.T) {
 			fr.Network, fr.Subnetwork = "global/networks/vpc", "regions/us-central1/subnetworks/sub"
 		}
 		e.do(c.ForwardingRules.Insert(proj, "us-central1", fr).Do())
-		listener := e.inst.Endpoint("lb:" + fr.Name)
+		listener := e.inst.Endpoint("lb:" + proj + "/us-central1/" + fr.Name)
 		if listener == "" {
 			t.Fatalf("%s: no listener", scheme)
 		}
@@ -274,7 +274,7 @@ func TestGRPCThroughLB(t *testing.T) {
 	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "https", UrlMap: "global/urlMaps/map", SslCertificates: []string{"global/sslCertificates/cert"}}).Do())
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "443", Target: "global/targetHttpsProxies/https"}).Do())
 
-	conn, err := grpc.NewClient("passthrough:///"+e.inst.Endpoint("lb:fr"),
+	conn, err := grpc.NewClient("passthrough:///"+e.inst.Endpoint(ep("fr")),
 		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{ServerName: "grpc.example.test", RootCAs: e.inst.Env.CA.Pool()})))
 	if err != nil {
 		t.Fatal(err)

@@ -171,6 +171,31 @@ func TestReportUnpublished(t *testing.T) {
 	}
 }
 
+// A running Instance lists the GCPEMU_LB_* variables `gcpemu env` withholds
+// because more than one forwarding rule would print them (ADR 0013), with
+// the qualified variables to use instead, or a rename when those are
+// withheld too.
+func TestReportWithheldLBVars(t *testing.T) {
+	body := `{"listeners":[],"withheld":[
+		{"variable":"GCPEMU_LB_P_A_GLOBAL_X","forwardingRules":["projects/p-a/global/forwardingRules/global-x","projects/p-a-global/global/forwardingRules/x"],
+		 "qualified":["GCPEMU_LB_P_A_GLOBAL_X","GCPEMU_LB_P_A_GLOBAL_X"]},
+		{"variable":"GCPEMU_LB_WEB","forwardingRules":["projects/p/global/forwardingRules/web","projects/p/regions/us-central1/forwardingRules/web"],
+		 "qualified":["GCPEMU_LB_P_GLOBAL_WEB","GCPEMU_LB_P_US_CENTRAL1_WEB"]}]}`
+	var out strings.Builder
+	reportUnpublished(&out, []byte(body))
+	got := out.String()
+	for _, want := range []string{
+		"[WARN] `gcpemu env` does not print GCPEMU_LB_WEB: forwarding rules projects/p/global/forwardingRules/web and projects/p/regions/us-central1/forwardingRules/web share it",
+		"fix: use GCPEMU_LB_P_GLOBAL_WEB or GCPEMU_LB_P_US_CENTRAL1_WEB",
+		"[WARN] `gcpemu env` does not print GCPEMU_LB_P_A_GLOBAL_X: forwarding rules projects/p-a/global/forwardingRules/global-x and projects/p-a-global/global/forwardingRules/x share it",
+		"fix: rename one of the forwarding rules",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 // A running Instance lists each public Cloud SQL instance's host address,
 // and flags one that needs a loopback address and has none (ADR 0005,
 // ADR 0012).

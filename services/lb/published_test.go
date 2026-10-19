@@ -94,7 +94,7 @@ func (e *env) unpublished(name string) string {
 }
 
 // In a Containerized Instance each forwarding rule is also served on a
-// port its container publishes, and GCPEMU_LB_<NAME> is the host side:
+// port its container publishes, and its endpoint is the host side:
 // the rule's own port first (here published at another host port), then
 // a free port of --port-range. A rule with none free has no endpoint and
 // a publish hint, and is served once a port frees, whether another rule
@@ -113,7 +113,7 @@ func TestPublishedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.forwardingRule("a", 8080)
-	e.waitEndpoint("lb:a", "127.0.0.1:28080")
+	e.waitEndpoint(ep("a"), "127.0.0.1:28080")
 	e.serves(dial(8080))
 	e.serves(net.JoinHostPort(lb.ListenerAddr(svc, "a"), "8080"))
 	if h := e.unpublished("a"); h != "" {
@@ -121,14 +121,14 @@ func TestPublishedPorts(t *testing.T) {
 	}
 
 	e.forwardingRule("b", 8080)
-	if got := e.inst.Endpoint("lb:b"); got != "" {
+	if got := e.inst.Endpoint(ep("b")); got != "" {
 		t.Fatalf("rule b, no port free: endpoint %q, want none", got)
 	}
 	if h := e.unpublished("b"); !strings.Contains(h, "--port-range "+strconv.Itoa(rng)) {
 		t.Errorf("rule b: hint %q, want one naming the range", h)
 	}
 	other.Close()
-	e.waitEndpoint("lb:b", "127.0.0.1:40001")
+	e.waitEndpoint(ep("b"), "127.0.0.1:40001")
 	e.serves(dial(rng))
 	if l, err := net.Listen("tcp", dial(rng)); err == nil {
 		l.Close()
@@ -136,12 +136,12 @@ func TestPublishedPorts(t *testing.T) {
 	}
 
 	e.forwardingRule("c", 8080)
-	if got := e.inst.Endpoint("lb:c"); got != "" {
+	if got := e.inst.Endpoint(ep("c")); got != "" {
 		t.Fatalf("rule c, no port free: endpoint %q, want none", got)
 	}
 	e.do(e.c.GlobalForwardingRules.Delete(proj, "a").Do())
-	e.waitEndpoint("lb:a", "")
-	e.waitEndpoint("lb:c", "127.0.0.1:28080")
+	e.waitEndpoint(ep("a"), "")
+	e.waitEndpoint(ep("c"), "127.0.0.1:28080")
 	e.serves(dial(8080))
 }
 
@@ -151,17 +151,17 @@ func TestPublishedPorts(t *testing.T) {
 func TestPublishedNoSocket(t *testing.T) {
 	e, dial := startPublished(t, "", nil)
 	e.forwardingRule("a", 8080)
-	e.waitEndpoint("lb:a", "127.0.0.1:8080")
+	e.waitEndpoint(ep("a"), "127.0.0.1:8080")
 	e.serves(dial(8080))
 	e.forwardingRule("b", 8080)
-	if got := e.inst.Endpoint("lb:b"); got != "" {
+	if got := e.inst.Endpoint(ep("b")); got != "" {
 		t.Fatalf("rule b: endpoint %q, want none", got)
 	}
 	if h := e.unpublished("b"); !strings.Contains(h, "-p 127.0.0.1:8080:8080") {
 		t.Errorf("rule b: hint %q", h)
 	}
 	e.do(e.c.GlobalForwardingRules.Delete(proj, "a").Do())
-	e.waitEndpoint("lb:b", "127.0.0.1:8080")
+	e.waitEndpoint(ep("b"), "127.0.0.1:8080")
 	e.serves(dial(8080))
 }
 
@@ -208,7 +208,7 @@ func TestPublishedRuntimeTransient(t *testing.T) {
 	})
 	svc, _ := e.inst.Env.Lookup("lb")
 	e.forwardingRule("a", 8080)
-	if got := e.inst.Endpoint("lb:a"); got != "" {
+	if got := e.inst.Endpoint(ep("a")); got != "" {
 		t.Fatalf("runtime not yet known: endpoint %q, want none", got)
 	}
 	time.Sleep(1500 * time.Millisecond) // the data plane retries each second
@@ -218,12 +218,12 @@ func TestPublishedRuntimeTransient(t *testing.T) {
 	if n := rt.count(); n != 1 {
 		t.Errorf("runtime tried %d times within the backoff, want 1", n)
 	}
-	if got := e.inst.Endpoint("lb:a"); got != "" {
+	if got := e.inst.Endpoint(ep("a")); got != "" {
 		t.Fatalf("runtime not yet known: endpoint %q, want none", got)
 	}
 
 	lb.RetryPublishedNow(svc)
-	e.waitEndpoint("lb:a", "127.0.0.1:40001")
+	e.waitEndpoint(ep("a"), "127.0.0.1:40001")
 	e.serves(dial(rng))
 	if !lb.RuntimeAvailable(svc) {
 		t.Error("runtime not available once it answers")
@@ -242,7 +242,7 @@ func TestPublishedRuntimeNone(t *testing.T) {
 	})
 	svc, _ := e.inst.Env.Lookup("lb")
 	e.forwardingRule("a", 8080)
-	e.waitEndpoint("lb:a", "127.0.0.1:8080")
+	e.waitEndpoint(ep("a"), "127.0.0.1:8080")
 	e.serves(dial(8080))
 	lb.RetryPublishedNow(svc)
 	time.Sleep(1500 * time.Millisecond)
@@ -252,7 +252,7 @@ func TestPublishedRuntimeNone(t *testing.T) {
 	if n := rt.count(); n != 1 {
 		t.Errorf("runtime tried %d times, want 1", n)
 	}
-	if got := e.inst.Endpoint("lb:a"); got != "127.0.0.1:8080" {
+	if got := e.inst.Endpoint(ep("a")); got != "127.0.0.1:8080" {
 		t.Errorf("endpoint %q moved from no-socket mode's", got)
 	}
 }

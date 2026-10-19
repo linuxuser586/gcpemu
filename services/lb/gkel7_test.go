@@ -109,7 +109,7 @@ func TestGKEIngressAndGateway(t *testing.T) {
 		}
 		for _, fr := range l.Items {
 			if fr.IPAddress == ip {
-				return inst.Endpoint("lb:" + fr.Name)
+				return inst.Endpoint(ep(fr.Name))
 			}
 		}
 		return ""

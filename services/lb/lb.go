@@ -18,8 +18,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -182,37 +180,11 @@ func (s *Service) Restore(ctx context.Context, dir string) error {
 	return nil
 }
 
-// EnvVars implements emu.EnvVarer: one GCPEMU_LB_<NAME>=host:port per
-// forwarding rule listener (FR-LB-002).
+// EnvVars implements emu.EnvVarer: the GCPEMU_LB_* variables of the
+// forwarding rule listeners (FR-LB-002, ADR 0013; envvars.go).
 func (s *Service) EnvVars(gateway string, endpoints map[string]string) map[string]string {
-	out := map[string]string{}
-	var names []string
-	for k := range endpoints {
-		if strings.HasPrefix(k, "lb:") {
-			names = append(names, k)
-		}
-	}
-	sort.Strings(names)
-	for _, k := range names {
-		out["GCPEMU_LB_"+envName(strings.TrimPrefix(k, "lb:"))] = endpoints[k]
-	}
+	out, _ := lbEnv(endpoints)
 	return out
-}
-
-// envName upper-cases a forwarding rule name for an env var.
-func envName(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z':
-			b.WriteRune(c - 32)
-		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			b.WriteRune(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
 }
 
 // changed re-reads the configuration and reconciles the data plane. It is
