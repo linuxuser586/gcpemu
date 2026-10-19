@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
+	"google.golang.org/grpc/codes"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -49,10 +50,11 @@ func (s *Service) saveOp(op *sqladmin.Operation) {
 	})
 }
 
-// runOp records op and runs fn under the instance lock. With async=false
-// and instant LRO latency the work is done before the response, which is
-// returned DONE; otherwise op is returned PENDING and completes in the
-// background.
+// runOp records op and runs fn under the instance lock, on the background
+// context. With async=false and instant LRO latency the work is done
+// before the response, which is returned DONE; otherwise op is returned
+// PENDING and completes in the background. Work that Reset stops records
+// nothing more (#306).
 func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.Context) error) *sqladmin.Operation {
 	s.saveOp(op)
 	latency := s.env.Config.LRO("sql")
@@ -69,16 +71,31 @@ func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.
 			case <-ctx.Done():
 			}
 		}
+		if wasReset(ctx) {
+			return op
+		}
 		s.finishOp(op, err)
 		return op
 	}
 	if !async && latency == 0 {
-		return exec(s.bgCtx)
+		g := s.track()
+		if g == nil {
+			s.finishOp(op, errStopped)
+			return op
+		}
+		defer g.wg.Done()
+		return exec(g.ctx)
 	}
 	cp := *op
-	s.goBackground(func(ctx context.Context) { exec(ctx) })
+	if !s.goBackground(func(ctx context.Context) { exec(ctx) }) {
+		s.finishOp(op, errStopped)
+		return op
+	}
 	return &cp
 }
+
+// errStopped fails an operation asked for after the service stopped.
+var errStopped = apierr.New(codes.Unavailable, "The service is shutting down.")
 
 // finishOp marks op DONE with err (if any).
 func (s *Service) finishOp(op *sqladmin.Operation, err error) {

@@ -171,23 +171,23 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 			if hooks.files != nil {
 				var err error
 				if files, err = hooks.files(ctx); err != nil {
-					_ = s.setState(project, name, "FAILED")
+					s.markFailed(ctx, project, name)
 					return err
 				}
 			}
 			if err := s.startContainerWith(ctx, project, name, files); err != nil {
-				_ = s.setState(project, name, "FAILED")
+				s.markFailed(ctx, project, name)
 				return err
 			}
 			if after != nil {
 				if err := after(ctx); err != nil {
-					_ = s.setState(project, name, "FAILED")
+					s.markFailed(ctx, project, name)
 					return err
 				}
 			}
 			if pitrEnabled(&in) {
 				if err := s.takeBaseBackup(ctx, project, name); err != nil {
-					_ = s.setState(project, name, "FAILED")
+					s.markFailed(ctx, project, name)
 					return err
 				}
 			}

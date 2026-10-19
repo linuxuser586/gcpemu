@@ -129,6 +129,9 @@ func (s *Service) takeFinalBackup(ctx context.Context, rec *instanceRecord, fb *
 		return err
 	}
 	file, err := s.dumpFinal(ctx, project, name, b)
+	if err != nil && wasReset(ctx) {
+		return err
+	}
 	dbs, users := s.snapshotAPIState(project, name)
 	return s.updateBackupRecord(project, b.owner(), run.Id, func(b *backupRecord) {
 		if err != nil {

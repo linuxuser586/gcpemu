@@ -281,7 +281,7 @@ func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, descript
 	op.BackupContext = &sqladmin.BackupContext{Kind: "sql#backupContext", BackupId: id, Name: backupName(project, id)}
 	return s.runOp(op, true, func(ctx context.Context) error {
 		err := s.fillBackup(ctx, project, name, id)
-		if err != nil {
+		if err != nil && !wasReset(ctx) {
 			_ = s.updateBackupRecord(project, name, id, func(b *backupRecord) { s.fail(b, err) })
 		}
 		return err

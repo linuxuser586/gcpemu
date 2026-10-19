@@ -36,9 +36,12 @@ type Service struct {
 	env *emu.Env
 	mux *http.ServeMux
 
-	bgCtx    context.Context
-	bgCancel context.CancelFunc
-	wg       sync.WaitGroup
+	// bgMu guards bg, the current generation of background work
+	// (operations, recovery, the expiry loop). Reset cancels it, waits for
+	// it and starts the next; Stop cancels it until Start starts the next.
+	// A generation's own fields are safe to use once read.
+	bgMu sync.Mutex
+	bg   *background
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -69,8 +72,59 @@ func New(env *emu.Env) emu.Service {
 	s := &Service{env: env, locks: map[string]*sync.Mutex{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases,
 		inUse: map[string]int{}}
 	s.mux = s.routes()
-	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+	s.bg = newBackground()
 	return s
+}
+
+// errReset is the cause of a background context that Reset cancelled.
+// Work stopped by it records no failure: the store is reset after it.
+var errReset = errors.New("sql: background work cancelled by Reset")
+
+// background is one generation of the service's background work.
+type background struct {
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	wg     sync.WaitGroup
+	// expiry is set once the generation runs the backup expiry loop, which
+	// Reset starts again in the next one. Guarded by Service.bgMu.
+	expiry bool
+}
+
+func newBackground() *background {
+	g := &background{}
+	g.ctx, g.cancel = context.WithCancelCause(context.Background())
+	return g
+}
+
+// wait waits for the generation's goroutines, or for ctx to end.
+func (g *background) wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { g.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// track counts one goroutine into the current background generation and
+// returns it, or nil if Stop cancelled it; the goroutine calls g.wg.Done
+// when it returns. Reset and Stop cancel a generation under bgMu, so a
+// cancelled generation gains no goroutines while it is waited for.
+func (s *Service) track() *background {
+	s.bgMu.Lock()
+	defer s.bgMu.Unlock()
+	if s.bg.ctx.Err() != nil {
+		return nil
+	}
+	s.bg.wg.Add(1)
+	return s.bg
+}
+
+// wasReset reports whether ctx was cancelled by Reset.
+func wasReset(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errReset)
 }
 
 func (s *Service) Name() string { return "sql" }
@@ -90,9 +144,12 @@ func (s *Service) Register(r emu.Router) error {
 // brings back the containers of running instances (FR-CORE-031) in the
 // background; Ready reports not-ready until they are up.
 func (s *Service) Start(ctx context.Context) error {
-	if s.bgCtx.Err() != nil {
-		s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
+	s.bgMu.Lock()
+	if s.bg.ctx.Err() != nil {
+		s.bg = newBackground()
 	}
+	s.bg.expiry = true
+	s.bgMu.Unlock()
 	s.failInterruptedOps()
 	s.goBackground(s.expiryLoop)
 	var recs []*instanceRecord
@@ -123,7 +180,7 @@ func (s *Service) Start(ctx context.Context) error {
 				defer mu.Unlock()
 				if err := s.startContainer(ctx, p, n); err != nil {
 					s.env.Log.Error("sql: recovering instance failed", "instance", p+":"+n, "err", err)
-					_ = s.setState(p, n, "FAILED")
+					s.markFailed(ctx, p, n)
 					return
 				}
 				_ = s.setState(p, n, "RUNNABLE")
@@ -152,16 +209,12 @@ func (s *Service) ReservedAddrs() []string {
 
 // Stop cancels background work and waits for it.
 func (s *Service) Stop(ctx context.Context) error {
-	s.bgCancel()
+	s.bgMu.Lock()
+	g := s.bg
+	g.cancel(context.Canceled)
+	s.bgMu.Unlock()
 	defer s.closeAllLoopback()
-	done := make(chan struct{})
-	go func() { s.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return g.wait(ctx)
 }
 
 // Ready reports not-ready while instances are being recovered after a
@@ -180,9 +233,28 @@ func (s *Service) ResourceCounts() map[string]int {
 	})
 }
 
-// Reset removes every instance container and volume and the backup files
-// (`gcpemu reset`).
+// Reset cancels the background work started before it and waits for it
+// (bounded by ctx), so none of it creates a container or writes a record
+// afterwards (#306). It then removes every instance container and volume
+// and the backup files (`gcpemu reset`). Work started after Reset runs on
+// a fresh background context, unless the service is stopped.
 func (s *Service) Reset(ctx context.Context) error {
+	s.bgMu.Lock()
+	old := s.bg
+	expiry := false
+	if old.ctx.Err() == nil {
+		s.bg = newBackground()
+		s.bg.expiry, expiry = old.expiry, old.expiry
+	}
+	old.cancel(errReset)
+	s.bgMu.Unlock()
+	err := old.wait(ctx)
+	if expiry {
+		s.goBackground(s.expiryLoop)
+	}
+	if err != nil {
+		return fmt.Errorf("sql: waiting for background work: %w", err)
+	}
 	s.closeAllLoopback()
 	s.sweepMu.Lock()
 	s.removeAllBackupFiles()
@@ -262,13 +334,18 @@ func (s *Service) lock(project, name string) *sync.Mutex {
 	return mu
 }
 
-// goBackground runs fn on the service's background context.
-func (s *Service) goBackground(fn func(ctx context.Context)) {
-	s.wg.Add(1)
+// goBackground runs fn on the background context. It reports false, and
+// does not run fn, if the service is stopped.
+func (s *Service) goBackground(fn func(ctx context.Context)) bool {
+	g := s.track()
+	if g == nil {
+		return false
+	}
 	go func() {
-		defer s.wg.Done()
-		fn(s.bgCtx)
+		defer g.wg.Done()
+		fn(g.ctx)
 	}()
+	return true
 }
 
 // clearFailed marks a FAILED instance RUNNABLE once its container has been
@@ -280,6 +357,15 @@ func (s *Service) clearFailed(project, name string) error {
 		}
 		return nil
 	})
+}
+
+// markFailed marks an instance FAILED after its work on ctx failed,
+// unless Reset stopped that work.
+func (s *Service) markFailed(ctx context.Context, project, name string) {
+	if wasReset(ctx) {
+		return
+	}
+	_ = s.setState(project, name, "FAILED")
 }
 
 // setState updates an instance's state.
