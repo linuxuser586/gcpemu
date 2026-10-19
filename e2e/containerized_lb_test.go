@@ -120,11 +120,11 @@ func TestContainerizedForwardingRules(t *testing.T) {
 // LoadBalancer Services take Published ports (ADR 0012) from the same
 // --port-range, and the first to bind a port holds it. With one port to
 // compete for, exactly one of a rule and a Service holds it at a time;
-// the other has no endpoint, and takes the port once the holder goes.
+// the other has no Published port, and takes it once the holder goes.
 //
 // Services take Published ports only on a VM runtime, which
-// GCPEMU_VM_RUNTIME=true forces. Neither the rule's port nor the
-// Service's is published, so both can only take the range's port.
+// GCPEMU_VM_RUNTIME=true forces. Neither the rule's nor the Service's
+// Own port is published, so both can only take the range's port.
 //
 // It builds the image from the repository's Dockerfile, whose base image
 // comes from the internet, so it runs only with GCPEMU_NET_TESTS=1.
@@ -184,7 +184,8 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 	}
 	answers(t, addr)
 
-	// 2. A Service finds it taken: no ingress, no endpoint, one warning.
+	// 2. A Service finds it taken: no ingress, no Service endpoint, one
+	// warning.
 	k := clusterKube(t, gw, lbProject, "contend")
 	lbWeb(t, k)
 	eventually(t, 30*time.Second, "a warning about Service web", func() bool { return svcWarnings() > 0 }, nil)
@@ -215,12 +216,11 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 
 	// 4. A new rule finds it taken: no GCPEMU_LB_SECOND, and doctor lists it.
 	lb.rule("second")
-	time.Sleep(2 * time.Second)
+	eventually(t, 30*time.Second, "gcpemu doctor lists rule second", func() bool {
+		return strings.Contains(doctor(), "forwardingRules/second (port 8080) has no published port")
+	}, doctor)
 	if out := gcpemuEnv(); strings.Contains(out, "GCPEMU_LB_SECOND=") {
 		t.Fatalf("rule second has no free published port, but gcpemu env prints it:\n%s", out)
-	}
-	if out := doctor(); !strings.Contains(out, "forwardingRules/second (port 8080) has no published port") {
-		t.Errorf("gcpemu doctor does not list rule second:\n%s", out)
 	}
 	if _, svcHolds := holders("second"); !svcHolds {
 		t.Fatalf("Service web no longer holds %s:\n%s", addr, gcpemuEnv())
@@ -232,7 +232,16 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 		ruleHolds, _ := holders("second")
 		return ruleHolds
 	}, gcpemuEnv)
-	answers(t, addr)
+	// The rule's backend service has no backends, so it answers 503, where
+	// Service web answered 200.
+	eventually(t, 30*time.Second, "a 503 from rule second at "+addr, func() bool {
+		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusServiceUnavailable
+	}, nil)
 }
 
 // runEmulator runs the image as an Ephemeral Instance in container name,
@@ -247,6 +256,7 @@ func runEmulator(t *testing.T, name, image string, args []string, start ...strin
 			out, _ := exec.Command("docker", "logs", "--tail", "80", name).CombinedOutput()
 			t.Logf("emulator logs:\n%s", out)
 		}
+		// An Ephemeral Instance removes its containers and networks on stop.
 		_, _ = exec.Command("docker", "stop", "-t", "60", name).CombinedOutput()
 		_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
 	})
