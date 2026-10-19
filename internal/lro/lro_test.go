@@ -315,3 +315,35 @@ func TestResetDuringRunAbortsOperation(t *testing.T) {
 		t.Fatalf("after reset: %d ran, operations %+v", len(ran), m.Operations())
 	}
 }
+
+// An Operation begun by the caller stays pending until the caller
+// finishes it, with new metadata; cancelling it asks the caller (#392).
+func TestBeginAndFinish(t *testing.T) {
+	m, srv := setup(t, "")
+	var cancelled string
+	m.OnCancel = func(name string) { cancelled = name }
+	op, err := m.Begin("projects/p/locations/l", structpb.NewStringValue("queued"))
+	if err != nil || op.Done {
+		t.Fatalf("begin = %v %v", op, err)
+	}
+	ctx := context.Background()
+	if _, err := srv.CancelOperation(ctx, &longrunningpb.CancelOperationRequest{Name: op.Name}); err != nil || cancelled != op.Name {
+		t.Fatalf("cancel = %v, hook saw %q", err, cancelled)
+	}
+	if got, _ := srv.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: op.Name}); got.Done {
+		t.Fatalf("done after the hook alone: %v", got)
+	}
+	m.Finish(op.Name, structpb.NewStringValue("done"), structpb.NewStringValue("result"), nil)
+	got, err := srv.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: op.Name})
+	if err != nil || !got.Done || got.GetResponse() == nil {
+		t.Fatalf("finished = %v %v", got, err)
+	}
+	var md structpb.Value
+	if err := got.Metadata.UnmarshalTo(&md); err != nil || md.GetStringValue() != "done" {
+		t.Errorf("metadata = %v %v, want done", &md, err)
+	}
+	m.Finish(op.Name, nil, nil, apierr.Aborted("late"))
+	if again, _ := srv.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: op.Name}); again.GetError() != nil {
+		t.Errorf("a finished Operation changed: %v", again)
+	}
+}

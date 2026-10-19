@@ -145,6 +145,27 @@ var protoServices = []*Service{
 		{Name: "FetchNodePoolUpgradeInfo", Input: "google.container.v1.FetchNodePoolUpgradeInfoRequest", Output: "google.container.v1.NodePoolUpgradeInfo", HTTP: []Binding{{"GET", "/v1/{name=projects/*/locations/*/clusters/*/nodePools/*}:fetchNodePoolUpgradeInfo", ""}, {"GET", "/v1/{name=projects/*/zones/*/clusters/*/nodePools/*}:fetchNodePoolUpgradeInfo", ""}}},
 		{Name: "CompleteControlPlaneUpgrade", Input: "google.container.v1.CompleteControlPlaneUpgradeRequest", Output: "google.container.v1.Operation", HTTP: []Binding{{"POST", "/v1/{name=projects/*/locations/*/clusters/*}:completeControlPlaneUpgrade", "*"}, {"POST", "/v1/{name=projects/*/zones/*/clusters/*}:completeControlPlaneUpgrade", "*"}}},
 	}},
+	{Name: "google.devtools.cloudbuild.v1.CloudBuild", File: "google/devtools/cloudbuild/v1/cloudbuild.proto", Methods: []*Method{
+		{Name: "CreateBuild", Input: "google.devtools.cloudbuild.v1.CreateBuildRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"POST", "/v1/projects/{project_id}/builds", "build"}, {"POST", "/v1/{parent=projects/*/locations/*}/builds", "build"}}},
+		{Name: "GetBuild", Input: "google.devtools.cloudbuild.v1.GetBuildRequest", Output: "google.devtools.cloudbuild.v1.Build", HTTP: []Binding{{"GET", "/v1/projects/{project_id}/builds/{id}", ""}, {"GET", "/v1/{name=projects/*/locations/*/builds/*}", ""}}},
+		{Name: "ListBuilds", Input: "google.devtools.cloudbuild.v1.ListBuildsRequest", Output: "google.devtools.cloudbuild.v1.ListBuildsResponse", HTTP: []Binding{{"GET", "/v1/projects/{project_id}/builds", ""}, {"GET", "/v1/{parent=projects/*/locations/*}/builds", ""}}},
+		{Name: "CancelBuild", Input: "google.devtools.cloudbuild.v1.CancelBuildRequest", Output: "google.devtools.cloudbuild.v1.Build", HTTP: []Binding{{"POST", "/v1/projects/{project_id}/builds/{id}:cancel", "*"}, {"POST", "/v1/{name=projects/*/locations/*/builds/*}:cancel", "*"}}},
+		{Name: "RetryBuild", Input: "google.devtools.cloudbuild.v1.RetryBuildRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"POST", "/v1/projects/{project_id}/builds/{id}:retry", "*"}, {"POST", "/v1/{name=projects/*/locations/*/builds/*}:retry", "*"}}},
+		{Name: "ApproveBuild", Input: "google.devtools.cloudbuild.v1.ApproveBuildRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"POST", "/v1/{name=projects/*/builds/*}:approve", "*"}, {"POST", "/v1/{name=projects/*/locations/*/builds/*}:approve", "*"}}},
+		{Name: "CreateBuildTrigger", Input: "google.devtools.cloudbuild.v1.CreateBuildTriggerRequest", Output: "google.devtools.cloudbuild.v1.BuildTrigger", HTTP: []Binding{{"POST", "/v1/projects/{project_id}/triggers", "trigger"}, {"POST", "/v1/{parent=projects/*/locations/*}/triggers", "trigger"}}},
+		{Name: "GetBuildTrigger", Input: "google.devtools.cloudbuild.v1.GetBuildTriggerRequest", Output: "google.devtools.cloudbuild.v1.BuildTrigger", HTTP: []Binding{{"GET", "/v1/projects/{project_id}/triggers/{trigger_id}", ""}, {"GET", "/v1/{name=projects/*/locations/*/triggers/*}", ""}}},
+		{Name: "ListBuildTriggers", Input: "google.devtools.cloudbuild.v1.ListBuildTriggersRequest", Output: "google.devtools.cloudbuild.v1.ListBuildTriggersResponse", HTTP: []Binding{{"GET", "/v1/projects/{project_id}/triggers", ""}, {"GET", "/v1/{parent=projects/*/locations/*}/triggers", ""}}},
+		{Name: "DeleteBuildTrigger", Input: "google.devtools.cloudbuild.v1.DeleteBuildTriggerRequest", Output: "google.protobuf.Empty", HTTP: []Binding{{"DELETE", "/v1/projects/{project_id}/triggers/{trigger_id}", ""}, {"DELETE", "/v1/{name=projects/*/locations/*/triggers/*}", ""}}},
+		{Name: "UpdateBuildTrigger", Input: "google.devtools.cloudbuild.v1.UpdateBuildTriggerRequest", Output: "google.devtools.cloudbuild.v1.BuildTrigger", HTTP: []Binding{{"PATCH", "/v1/projects/{project_id}/triggers/{trigger_id}", "trigger"}, {"PATCH", "/v1/{trigger.resource_name=projects/*/locations/*/triggers/*}", "trigger"}}},
+		{Name: "RunBuildTrigger", Input: "google.devtools.cloudbuild.v1.RunBuildTriggerRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"POST", "/v1/projects/{project_id}/triggers/{trigger_id}:run", "source"}, {"POST", "/v1/{name=projects/*/locations/*/triggers/*}:run", "*"}}},
+		{Name: "ReceiveTriggerWebhook", Input: "google.devtools.cloudbuild.v1.ReceiveTriggerWebhookRequest", Output: "google.devtools.cloudbuild.v1.ReceiveTriggerWebhookResponse", HTTP: []Binding{{"POST", "/v1/projects/{project_id}/triggers/{trigger}:webhook", "body"}, {"POST", "/v1/{name=projects/*/locations/*/triggers/*}:webhook", "body"}}},
+		{Name: "CreateWorkerPool", Input: "google.devtools.cloudbuild.v1.CreateWorkerPoolRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"POST", "/v1/{parent=projects/*/locations/*}/workerPools", "worker_pool"}}},
+		{Name: "GetWorkerPool", Input: "google.devtools.cloudbuild.v1.GetWorkerPoolRequest", Output: "google.devtools.cloudbuild.v1.WorkerPool", HTTP: []Binding{{"GET", "/v1/{name=projects/*/locations/*/workerPools/*}", ""}}},
+		{Name: "DeleteWorkerPool", Input: "google.devtools.cloudbuild.v1.DeleteWorkerPoolRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"DELETE", "/v1/{name=projects/*/locations/*/workerPools/*}", ""}}},
+		{Name: "UpdateWorkerPool", Input: "google.devtools.cloudbuild.v1.UpdateWorkerPoolRequest", Output: "google.longrunning.Operation", HTTP: []Binding{{"PATCH", "/v1/{worker_pool.name=projects/*/locations/*/workerPools/*}", "worker_pool"}}},
+		{Name: "ListWorkerPools", Input: "google.devtools.cloudbuild.v1.ListWorkerPoolsRequest", Output: "google.devtools.cloudbuild.v1.ListWorkerPoolsResponse", HTTP: []Binding{{"GET", "/v1/{parent=projects/*/locations/*}/workerPools", ""}}},
+		{Name: "GetDefaultServiceAccount", Input: "google.devtools.cloudbuild.v1.GetDefaultServiceAccountRequest", Output: "google.devtools.cloudbuild.v1.DefaultServiceAccount", HTTP: []Binding{{"GET", "/v1/{name=projects/*/locations/*/defaultServiceAccount}", ""}}},
+	}},
 	{Name: "google.devtools.artifactregistry.v1.ArtifactRegistry", File: "google/devtools/artifactregistry/v1/service.proto", Methods: []*Method{
 		{Name: "ListDockerImages", Input: "google.devtools.artifactregistry.v1.ListDockerImagesRequest", Output: "google.devtools.artifactregistry.v1.ListDockerImagesResponse", HTTP: []Binding{{"GET", "/v1/{parent=projects/*/locations/*/repositories/*}/dockerImages", ""}}},
 		{Name: "GetDockerImage", Input: "google.devtools.artifactregistry.v1.GetDockerImageRequest", Output: "google.devtools.artifactregistry.v1.DockerImage", HTTP: []Binding{{"GET", "/v1/{name=projects/*/locations/*/repositories/*/dockerImages/*}", ""}}},
@@ -1406,6 +1427,227 @@ var protoFields = map[string]map[string]Behavior{
 		"metadata":     OutputOnly,
 		"annotations":  Optional,
 		"fingerprints": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.ApprovalResult": {
+		"approver_account": OutputOnly,
+		"approval_time":    OutputOnly,
+		"decision":         Required,
+		"comment":          Optional,
+		"url":              Optional,
+	},
+	"google.devtools.cloudbuild.v1.ApproveBuildRequest": {
+		"name": Required,
+	},
+	"google.devtools.cloudbuild.v1.Artifacts": {
+		"go_modules": Optional,
+	},
+	"google.devtools.cloudbuild.v1.Artifacts.ArtifactObjects": {
+		"timing": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.Artifacts.GoModule": {
+		"repository_name":       Optional,
+		"repository_location":   Optional,
+		"repository_project_id": Optional,
+		"source_path":           Optional,
+		"module_path":           Optional,
+		"module_version":        Optional,
+	},
+	"google.devtools.cloudbuild.v1.Artifacts.MavenArtifact": {
+		"path": Optional,
+	},
+	"google.devtools.cloudbuild.v1.Artifacts.NpmPackage": {
+		"package_path": Optional,
+	},
+	"google.devtools.cloudbuild.v1.Build": {
+		"name":              OutputOnly,
+		"id":                OutputOnly,
+		"project_id":        OutputOnly,
+		"status":            OutputOnly,
+		"status_detail":     OutputOnly,
+		"source":            Optional,
+		"results":           OutputOnly,
+		"create_time":       OutputOnly,
+		"start_time":        OutputOnly,
+		"finish_time":       OutputOnly,
+		"source_provenance": OutputOnly,
+		"build_trigger_id":  OutputOnly,
+		"log_url":           OutputOnly,
+		"timing":            OutputOnly,
+		"approval":          OutputOnly,
+		"warnings":          OutputOnly,
+		"git_config":        Optional,
+		"failure_info":      OutputOnly,
+		"dependencies":      Optional,
+	},
+	"google.devtools.cloudbuild.v1.BuildApproval": {
+		"state":  OutputOnly,
+		"config": OutputOnly,
+		"result": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.BuildOptions": {
+		"pool":                         Optional,
+		"default_logs_bucket_behavior": Optional,
+		"enable_structured_logging":    Optional,
+	},
+	"google.devtools.cloudbuild.v1.BuildStep": {
+		"timing":      OutputOnly,
+		"pull_timing": OutputOnly,
+		"status":      OutputOnly,
+		"exit_code":   OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.BuildTrigger": {
+		"id":          OutputOnly,
+		"create_time": OutputOnly,
+		"filter":      Optional,
+	},
+	"google.devtools.cloudbuild.v1.BuiltImage": {
+		"push_timing":               OutputOnly,
+		"artifact_registry_package": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.ConnectedRepository": {
+		"repository": Required,
+		"dir":        Optional,
+		"revision":   Required,
+	},
+	"google.devtools.cloudbuild.v1.CreateBuildRequest": {
+		"build": Required,
+	},
+	"google.devtools.cloudbuild.v1.CreateBuildTriggerRequest": {
+		"project_id": Required,
+		"trigger":    Required,
+	},
+	"google.devtools.cloudbuild.v1.CreateWorkerPoolRequest": {
+		"parent":         Required,
+		"worker_pool":    Required,
+		"worker_pool_id": Immutable | Required,
+	},
+	"google.devtools.cloudbuild.v1.DeleteBuildTriggerRequest": {
+		"project_id": Required,
+		"trigger_id": Required,
+	},
+	"google.devtools.cloudbuild.v1.DeleteWorkerPoolRequest": {
+		"name": Required,
+		"etag": Optional,
+	},
+	"google.devtools.cloudbuild.v1.Dependency.GitSourceDependency": {
+		"repository":         Required,
+		"revision":           Required,
+		"recurse_submodules": Optional,
+		"depth":              Optional,
+		"dest_path":          Required,
+		"fetch_tags":         Optional,
+	},
+	"google.devtools.cloudbuild.v1.GetBuildTriggerRequest": {
+		"project_id": Required,
+		"trigger_id": Required,
+	},
+	"google.devtools.cloudbuild.v1.GetDefaultServiceAccountRequest": {
+		"name": Required,
+	},
+	"google.devtools.cloudbuild.v1.GetWorkerPoolRequest": {
+		"name": Required,
+	},
+	"google.devtools.cloudbuild.v1.GitSource": {
+		"url":      Required,
+		"dir":      Optional,
+		"revision": Optional,
+	},
+	"google.devtools.cloudbuild.v1.ListBuildTriggersRequest": {
+		"project_id": Required,
+	},
+	"google.devtools.cloudbuild.v1.ListWorkerPoolsRequest": {
+		"parent": Required,
+	},
+	"google.devtools.cloudbuild.v1.PrivatePoolV1Config": {
+		"private_service_connect": Immutable,
+	},
+	"google.devtools.cloudbuild.v1.PrivatePoolV1Config.NetworkConfig": {
+		"peered_network":          Immutable | Required,
+		"peered_network_ip_range": Immutable,
+	},
+	"google.devtools.cloudbuild.v1.PrivatePoolV1Config.PrivateServiceConnect": {
+		"network_attachment":         Immutable | Required,
+		"public_ip_address_disabled": Required | Immutable,
+		"route_all_traffic":          Immutable,
+	},
+	"google.devtools.cloudbuild.v1.PrivatePoolV1Config.WorkerConfig": {
+		"machine_type":                 Optional,
+		"enable_nested_virtualization": Optional,
+	},
+	"google.devtools.cloudbuild.v1.PubsubConfig": {
+		"subscription": OutputOnly,
+		"topic":        Optional,
+	},
+	"google.devtools.cloudbuild.v1.RepoSource": {
+		"project_id":    Optional,
+		"repo_name":     Required,
+		"dir":           Optional,
+		"invert_regex":  Optional,
+		"substitutions": Optional,
+	},
+	"google.devtools.cloudbuild.v1.RepositoryEventConfig": {
+		"repository_type": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.Results": {
+		"go_modules": Optional,
+	},
+	"google.devtools.cloudbuild.v1.RunBuildTriggerRequest": {
+		"project_id": Required,
+		"trigger_id": Required,
+	},
+	"google.devtools.cloudbuild.v1.Source": {
+		"connected_repository": Optional,
+	},
+	"google.devtools.cloudbuild.v1.SourceProvenance": {
+		"resolved_connected_repository": OutputOnly,
+		"resolved_git_source":           OutputOnly,
+		"file_hashes":                   OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.StorageSource": {
+		"object":         Required,
+		"generation":     Optional,
+		"source_fetcher": Optional,
+	},
+	"google.devtools.cloudbuild.v1.StorageSourceManifest": {
+		"bucket": Required,
+		"object": Required,
+	},
+	"google.devtools.cloudbuild.v1.UpdateBuildTriggerRequest": {
+		"project_id": Required,
+		"trigger_id": Required,
+		"trigger":    Required,
+	},
+	"google.devtools.cloudbuild.v1.UpdateWorkerPoolRequest": {
+		"worker_pool": Required,
+		"update_mask": Optional,
+	},
+	"google.devtools.cloudbuild.v1.UploadedGoModule": {
+		"push_timing":               OutputOnly,
+		"artifact_registry_package": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.UploadedMavenArtifact": {
+		"push_timing":               OutputOnly,
+		"artifact_registry_package": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.UploadedNpmPackage": {
+		"push_timing":               OutputOnly,
+		"artifact_registry_package": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.UploadedPythonPackage": {
+		"push_timing":               OutputOnly,
+		"artifact_registry_package": OutputOnly,
+	},
+	"google.devtools.cloudbuild.v1.WebhookConfig": {
+		"secret": Required,
+	},
+	"google.devtools.cloudbuild.v1.WorkerPool": {
+		"name":        OutputOnly,
+		"uid":         OutputOnly,
+		"create_time": OutputOnly,
+		"update_time": OutputOnly,
+		"delete_time": OutputOnly,
+		"state":       OutputOnly,
+		"etag":        OutputOnly,
 	},
 	"google.iam.credentials.v1.GenerateAccessTokenRequest": {
 		"name":  Required,

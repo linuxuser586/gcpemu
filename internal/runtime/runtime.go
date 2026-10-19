@@ -750,6 +750,9 @@ type ContainerSpec struct {
 	CgroupnsHost bool
 	// Memory limit in bytes (0 = unlimited).
 	Memory int64
+	// WorkingDir is the directory the command runs in; "" keeps the
+	// image's.
+	WorkingDir string
 	// Init runs a tiny init as PID 1 to reap zombies.
 	Init bool
 	// Platform picks the image variant ("linux/arm64"); "" lets the
@@ -818,6 +821,9 @@ func (c *Client) CreateContainer(ctx context.Context, s ContainerSpec) (string, 
 		"Hostname":     s.Hostname,
 		"ExposedPorts": exposed,
 		"HostConfig":   host,
+	}
+	if s.WorkingDir != "" {
+		body["WorkingDir"] = s.WorkingDir
 	}
 	if s.Entrypoint != nil {
 		body["Entrypoint"] = s.Entrypoint
@@ -1233,25 +1239,77 @@ func (c *Client) hijack(ctx context.Context, p string, payload []byte) (net.Conn
 // demux splits Docker's multiplexed stdout/stderr stream.
 func demux(r io.Reader, res *ExecResult) error {
 	var stdout, stderr bytes.Buffer
+	if err := demuxTo(r, &stdout, &stderr); err != nil {
+		return err
+	}
+	res.Stdout, res.Stderr = stdout.Bytes(), stderr.Bytes()
+	return nil
+}
+
+// demuxTo copies each frame of Docker's multiplexed stream to stdout or
+// stderr as it arrives, until the stream ends.
+func demuxTo(r io.Reader, stdout, stderr io.Writer) error {
 	hdr := make([]byte, 8)
 	for {
 		if _, err := io.ReadFull(r, hdr); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				break
+				return nil
 			}
 			return err
 		}
 		n := binary.BigEndian.Uint32(hdr[4:])
-		dst := &stdout
+		dst := stdout
 		if hdr[0] == 2 {
-			dst = &stderr
+			dst = stderr
 		}
 		if _, err := io.CopyN(dst, r, int64(n)); err != nil {
 			return err
 		}
 	}
-	res.Stdout, res.Stderr = stdout.Bytes(), stderr.Bytes()
-	return nil
+}
+
+// WaitContainer waits until a started container stops, or ctx ends, and
+// returns its exit code.
+func (c *Client) WaitContainer(ctx context.Context, id string) (int, error) {
+	var v struct {
+		StatusCode int
+		Error      *struct{ Message string }
+	}
+	if err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/wait",
+		url.Values{"condition": {"not-running"}}, nil, &v); err != nil {
+		return 0, err
+	}
+	if v.Error != nil && v.Error.Message != "" {
+		return v.StatusCode, fmt.Errorf("wait for container %s: %s", id, v.Error.Message)
+	}
+	return v.StatusCode, nil
+}
+
+// FollowLogs streams a container's combined output from its start until
+// it stops. Closing the stream, or ctx ending, stops following.
+func (c *Client) FollowLogs(ctx context.Context, id string) (io.ReadCloser, error) {
+	q := url.Values{"stdout": {"true"}, "stderr": {"true"}, "follow": {"true"}}
+	resp, err := c.raw(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/logs", q, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		pw.CloseWithError(demuxTo(resp.Body, pw, pw))
+		resp.Body.Close()
+	}()
+	return &followed{PipeReader: pr, body: resp.Body}, nil
+}
+
+// followed is a FollowLogs stream; Close also ends the request.
+type followed struct {
+	*io.PipeReader
+	body io.Closer
+}
+
+func (f *followed) Close() error {
+	_ = f.body.Close()
+	return f.PipeReader.Close()
 }
 
 // Logs returns the last tail lines of a container's combined output.

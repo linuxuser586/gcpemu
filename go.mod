@@ -6,6 +6,7 @@ require (
 	cel.dev/cel-go v0.32.0
 	cloud.google.com/go/artifactregistry v1.27.0
 	cloud.google.com/go/certificatemanager v1.16.0
+	cloud.google.com/go/cloudbuild v1.35.0
 	cloud.google.com/go/cloudsqlconn v1.25.3
 	cloud.google.com/go/compute/metadata v0.10.0
 	cloud.google.com/go/container v1.55.0

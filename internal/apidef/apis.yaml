@@ -12,6 +12,7 @@ googleapis:
     - google/cloud/networksecurity/v1/network_security.proto
     - google/cloud/secretmanager/v1/service.proto
     - google/container/v1/cluster_service.proto
+    - google/devtools/cloudbuild/v1/cloudbuild.proto
     - google/devtools/artifactregistry/v1/service.proto
     - google/iam/credentials/v1/iamcredentials.proto
     - google/iam/v1/iam_policy.proto
@@ -29,6 +30,17 @@ googleapis:
     # TimeSeriesView has no UNSPECIFIED value: its zero is FULL, which is
     # what a request that omits view (the REST examples, curl) asks for.
     google.monitoring.v3.ListTimeSeriesRequest.view: [REQUIRED]
+    # Cloud Build's regional paths (projects/*/locations/*/builds) name
+    # the project in parent or name instead; gcloud --region sends no
+    # project_id or id, and the API accepts that.
+    google.devtools.cloudbuild.v1.CreateBuildRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.GetBuildRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.GetBuildRequest.id: [REQUIRED]
+    google.devtools.cloudbuild.v1.ListBuildsRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.CancelBuildRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.CancelBuildRequest.id: [REQUIRED]
+    google.devtools.cloudbuild.v1.RetryBuildRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.RetryBuildRequest.id: [REQUIRED]
 
 # Discovery documents, read from the google.golang.org/api module version
 # pinned in go.mod (each revision is recorded in zz_discovery.go).

@@ -148,6 +148,8 @@ permissions:
     - "certissuanceconfigs: create delete get list use"
     - "locations: get list"
     - "operations: cancel delete get list"
+  cloudbuild:
+    - "builds: approve create get list update"
   secretmanager:
     - "secrets: create delete get getIamPolicy list setIamPolicy update"
     - "versions: access add destroy disable enable get list"
@@ -475,6 +477,18 @@ roles:
     title: Certificate Manager Viewer
     description: Read-only access to Certificate Manager resources.
     permissions: ["certificatemanager.*.get", "certificatemanager.*.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.builds.editor
+    title: Cloud Build Editor
+    description: Can create and cancel builds.
+    permissions: ["cloudbuild.builds.create", "cloudbuild.builds.get", "cloudbuild.builds.list", "cloudbuild.builds.update", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.builds.viewer
+    title: Cloud Build Viewer
+    description: Can view builds.
+    permissions: ["cloudbuild.builds.get", "cloudbuild.builds.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.builds.approver
+    title: Cloud Build Approver
+    description: Can approve or reject pending builds.
+    permissions: ["cloudbuild.builds.approve", "cloudbuild.builds.get", "cloudbuild.builds.list", resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/secretmanager.admin
     title: Secret Manager Admin
     description: Full access to administer Secret Manager resources.

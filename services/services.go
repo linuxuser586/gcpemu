@@ -4,6 +4,7 @@ package services
 import (
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/services/ar"
+	"github.com/linuxuser586/gcpemu/services/build"
 	"github.com/linuxuser586/gcpemu/services/cdn"
 	"github.com/linuxuser586/gcpemu/services/certs"
 	"github.com/linuxuser586/gcpemu/services/compute"
@@ -34,5 +35,6 @@ func Factories() map[string]instance.Factory {
 		"certs":   certs.New,
 		"lb":      lb.New,
 		"cdn":     cdn.New,
+		"build":   build.New,
 	}
 }
