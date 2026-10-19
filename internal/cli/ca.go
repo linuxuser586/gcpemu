@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	goruntime "runtime"
 	"strings"
@@ -376,12 +377,34 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 // dry run, been listed for the user to run).
 func printVMTrust(out io.Writer, instance string, c *ca.CA, install, dryRun bool) (afterPlan func()) {
 	_, det, _ := emuruntime.Locate()
-	v := vmTrustCommand(det.Endpoint, instance, c, install)
-	if v.restart {
+	v := vmTrustCommand(socketTarget(det.Endpoint), instance, c, install)
+	if v.store != "" {
 		return func() { writeVMTrust(out, v, install, dryRun) }
 	}
 	writeVMTrust(out, v, install, dryRun)
 	return func() {}
+}
+
+// socketTarget returns endpoint with a Unix socket's symlinks followed, so
+// /var/run/docker.sock, which Docker Desktop on macOS links to its own
+// socket by default, names the runtime behind it. Any other endpoint, or
+// one that does not resolve, comes back as it is.
+func socketTarget(endpoint string) string {
+	if strings.Contains(endpoint, "://") && !strings.HasPrefix(endpoint, "unix://") {
+		return endpoint
+	}
+	sock, unix := strings.CutPrefix(endpoint, "unix://")
+	if sock == "" {
+		return endpoint
+	}
+	real, err := filepath.EvalSymlinks(sock)
+	if err != nil {
+		return endpoint
+	}
+	if unix {
+		return "unix://" + real
+	}
+	return real
 }
 
 // writeVMTrust writes the advice for v; nothing when v is empty. On a dry
@@ -392,12 +415,12 @@ func writeVMTrust(out io.Writer, v vmTrust, install, dryRun bool) {
 		verb = "remove the CA from it"
 	}
 	switch {
-	case v.restart:
+	case v.store != "":
 		restart := "Restart " + v.what
 		if dryRun {
 			restart = "After running these commands, restart " + v.what
 		}
-		fmt.Fprintf(out, "%s rebuilds its container trust store from the Windows certificate store when it starts. %s to %s.\n\n", v.what, restart, verb)
+		fmt.Fprintf(out, "%s rebuilds its container trust store from %s when it starts. %s to %s.\n\n", v.what, v.store, restart, verb)
 	case v.command != "":
 		run := "run"
 		if v.shell != "" {
@@ -417,24 +440,26 @@ var (
 
 // vmTrust is how a VM runtime's own container trust store gains or loses
 // the CA: by command, run on the host from shell ("" for any POSIX shell),
-// or by restarting the runtime. The zero value means nothing to do.
+// or by restarting the runtime, which rebuilds it from the host's store
+// (named by store, "" for no restart). The zero value means nothing to do.
 type vmTrust struct {
-	what, command, shell string
-	restart              bool
+	what, command, shell, store string
 }
 
 // vmTrustCommand returns how the trust store inside the VM of the runtime
 // at endpoint gains (install) or loses the CA. A VM runtime that keeps its
 // own registry trust there (Colima, Podman machine) gets the command, run
 // on the host, that installs or removes it; gcpemu never runs anything in
-// the VM itself (#175). Docker Desktop and OrbStack on macOS read the
-// keychain, which `ca install` already covers, so they (and every other
-// runtime endpoint) get the zero vmTrust. Docker Desktop on Windows builds
-// its bundle from the Windows certificate store, which `ca install` also
-// covers, but only when it starts, when it also copies ~/.docker/certs.d
-// over the VM's /etc/docker/certs.d; so it gets a restart, not a command
-// (#377). docker_engine is Docker Desktop too: Docker Engine for Windows
-// serves only Windows containers, which detection refuses (ADR 0015).
+// the VM itself (#175). Docker Desktop builds its bundle from the store
+// `ca install` changes (the keychain on macOS, the Windows certificate
+// store on Windows) but only when it starts, when on Windows it also
+// copies ~/.docker/certs.d over the VM's /etc/docker/certs.d; so it gets a
+// restart, not a command (#377, #453). OrbStack also imports the keychain,
+// but nothing says it needs a restart for that, so it (and every other
+// runtime endpoint) gets the zero vmTrust; printVMTrust follows
+// /var/run/docker.sock to the socket behind it first. docker_engine is
+// Docker Desktop too: Docker Engine for Windows serves only Windows
+// containers, which detection refuses (ADR 0015).
 func vmTrustCommand(endpoint, instance string, c *ca.CA, install bool) vmTrust {
 	var v vmTrust
 	var ssh string
@@ -444,7 +469,7 @@ func vmTrustCommand(endpoint, instance string, c *ca.CA, install bool) vmTrust {
 		// The pipe's own name, from //./pipe/NAME or \\.\pipe\NAME.
 		switch pipe[strings.LastIndexAny(pipe, `/\`)+1:] {
 		case "dockerDesktopLinuxEngine", "docker_engine":
-			return vmTrust{what: "Docker Desktop", restart: true}
+			return vmTrust{what: "Docker Desktop", store: "the Windows certificate store"}
 		case "podman-machine-default":
 			// The heredoc needs Git Bash: PowerShell has none, and piping
 			// a here-string to a native command sends CRLFs, which break sh.
@@ -453,6 +478,8 @@ func vmTrustCommand(endpoint, instance string, c *ca.CA, install bool) vmTrust {
 		default:
 			return vmTrust{}
 		}
+	} else if strings.HasSuffix(sock, "/.docker/run/docker.sock") {
+		return vmTrust{what: "Docker Desktop", store: "the keychain"}
 	} else if m := colimaSock.FindStringSubmatch(sock); m != nil {
 		v.what, ssh = "Colima (profile "+m[1]+")", "colima ssh -p "+m[1]+" --"
 		dirs = []string{"/etc/docker/certs.d"}

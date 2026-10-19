@@ -436,10 +436,11 @@ on Linux it also goes in Docker's and containerd's per-registry trust for every
 `LOCATION-docker.pkg.dev`, and, with `certutil` (`libnss3-tools`), in the browser NSS databases:
 Chrome's `~/.pki/nssdb` and every native, snap and flatpak Firefox profile. Colima and Podman
 machine keep their own registry trust inside their VM, so for them `ca install` prints the
-command to run there; Docker Desktop and OrbStack use the macOS keychain. On Windows it adds the
-CA to the current user's ROOT certificate store with `certutil -user -addstore Root`, which needs
-no administrator rights. Windows shows a security dialog to confirm the change, and another for
-`gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
+command to run there; Docker Desktop and OrbStack use the macOS keychain. Docker Desktop reads
+it only when it starts, so `ca install` and `ca uninstall` tell you to restart it. On Windows it
+adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
+which needs no administrator rights. Windows shows a security dialog to confirm the change, and
+another for `gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
 databases, and `gcpemu doctor` reports where it is trusted. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
 holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator
