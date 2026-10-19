@@ -46,6 +46,7 @@ type Gateway struct {
 	grpcOwners map[string]string       // gRPC service name → emu service
 	srv        *http.Server
 	adminToken string // see SetAdminToken
+	gate       gate   // see CloseGate
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -78,9 +79,15 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
 			start := time.Now()
 			timer := clock.StartStopwatch()
+			ctx, leave, err := g.gate.enter(ctx)
+			if err == nil {
+				defer leave()
+			}
 			ctx, ci := emu.WithCallInfo(ctx)
 			ci.SetCall(owner(info.FullMethod), info.FullMethod)
-			ctx, err = g.authGRPC(ctx)
+			if err == nil {
+				ctx, err = g.authGRPC(ctx)
+			}
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
 			}
@@ -100,6 +107,9 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 					resp, err = h(ctx, req)
 				}()
 			}
+			if cutOff(ctx) {
+				resp, err = nil, errUnavailable
+			}
 			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, timer, err,
 				&reqlog.Bodies{Request: grpcBody(req), Response: grpcBody(resp)})
 			return resp, toGRPC(err)
@@ -107,14 +117,23 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
 			start := time.Now()
 			timer := clock.StartStopwatch()
-			ctx, ci := emu.WithCallInfo(ss.Context())
+			ctx, leave, err := g.gate.enter(ss.Context())
+			if err == nil {
+				defer leave()
+			}
+			ctx, ci := emu.WithCallInfo(ctx)
 			ci.SetCall(owner(info.FullMethod), info.FullMethod)
-			ctx, err := g.authGRPC(ctx)
+			if err == nil {
+				ctx, err = g.authGRPC(ctx)
+			}
 			if err == nil {
 				err = g.injectGRPC(ctx, owner(info.FullMethod), info.FullMethod)
 			}
 			if err == nil {
 				err = h(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
+			}
+			if cutOff(ctx) {
+				err = errUnavailable
 			}
 			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, timer, err, nil)
 			return toGRPC(err)
@@ -341,17 +360,24 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		timer := clock.StartStopwatch()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		ctx, leave, err := g.gate.enter(r.Context())
+		if err == nil {
+			defer leave()
+		}
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK, gateCtx: ctx}
 		var reqBody reqlog.Capture
 		if r.Body != nil && r.Body != http.NoBody {
 			r.Body = &teeBody{ReadCloser: r.Body, c: &reqBody}
 		}
-		ctx, ci := emu.WithCallInfo(r.Context())
+		ctx, ci := emu.WithCallInfo(ctx)
 		ci.SetCall(service, r.Method+" "+r.URL.Path)
 		r = r.WithContext(ctx)
-		p, err := g.principal(r.Context(), r.Header.Get("Authorization"))
+		var p emu.Principal
+		if err == nil {
+			p, err = g.principal(r.Context(), r.Header.Get("Authorization"))
+		}
 		if err != nil {
-			apierr.Write(sw, err)
+			writeError(sw, err)
 		} else if g.injectHTTP(sw, r, service) {
 			// fault injected; response already written or connection dropped
 		} else if f, ferr := formatFor(r); ferr != nil {
@@ -382,6 +408,7 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 				}
 			}()
 		}
+		sw.answerCutOff()
 		g.log.Add(reqlog.Entry{
 			Time: start, Service: service, Protocol: "http",
 			Method: r.Method + " " + r.URL.Path, Resource: ci.Resource(), Principal: string(p),
@@ -440,9 +467,32 @@ type statusWriter struct {
 	status int
 	wrote  bool
 	body   reqlog.Capture // what was written, for the Request log
+	// gateCtx is the request's context from the gate: once the gate cuts
+	// the request off, a handler that has not yet responded cannot, so that
+	// Middleware answers UNAVAILABLE instead (answerCutOff).
+	gateCtx context.Context
+}
+
+// refused reports whether a handler's response is dropped as cut off.
+func (w *statusWriter) refused() bool {
+	return !w.wrote && w.gateCtx != nil && cutOff(w.gateCtx)
+}
+
+// answerCutOff answers UNAVAILABLE, without any headers the handler set,
+// when the gate cut the request off before its handler responded.
+func (w *statusWriter) answerCutOff() {
+	if !w.refused() {
+		return
+	}
+	w.gateCtx = nil
+	clear(w.Header())
+	writeError(w, errUnavailable)
 }
 
 func (w *statusWriter) WriteHeader(code int) {
+	if w.refused() {
+		return
+	}
 	if !w.wrote {
 		w.status, w.wrote = code, true
 	}
@@ -450,6 +500,9 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.refused() {
+		return 0, errCutOff
+	}
 	w.wrote = true
 	n, err := w.ResponseWriter.Write(b)
 	_, _ = w.body.Write(b[:n])
@@ -459,6 +512,9 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *statusWriter) Flush() {
+	if w.refused() {
+		return
+	}
 	w.wrote = true
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

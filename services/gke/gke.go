@@ -121,6 +121,9 @@ type Service struct {
 	// beforeServerStart, set by tests, runs before a bring-up touches the
 	// cluster's server container or volume.
 	beforeServerStart func(ctx context.Context, key string)
+	// beforeResetTeardown, set by tests, runs once Reset has started a new
+	// background generation, before it tears data planes down.
+	beforeResetTeardown func()
 	// pubVia and pubIPs are the load balancer's public routes
 	// (RoutePublic), programmed into nodes with external IPs.
 	pubMu  sync.Mutex
@@ -331,6 +334,9 @@ func (s *Service) Reset(ctx context.Context) error {
 	s.mu.Unlock()
 	if err := old.wait(ctx); err != nil {
 		return fmt.Errorf("gke: waiting for background work: %w", err)
+	}
+	if s.beforeResetTeardown != nil {
+		s.beforeResetTeardown()
 	}
 	var keys []string
 	_ = s.env.Store.View(func(tx store.Tx) error {

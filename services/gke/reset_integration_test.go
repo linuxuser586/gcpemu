@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
@@ -145,4 +147,59 @@ func TestResetStopsOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitOp(t, cm, zone, op.Name)
+}
+
+// TestCreateClusterDuringReset issues CreateCluster while a Reset is
+// tearing GKE down, after GKE has started its new background generation:
+// the API gateway refuses it as UNAVAILABLE, so no bring-up outlives the wipe
+// and nothing is left in the Store or the runtime (#302).
+func TestCreateClusterDuringReset(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	emutest.HoldClusterSlot(t)
+	ctx := context.Background()
+	inst := emutest.Start(t, []string{"gke"})
+	gsvc, _ := inst.Env.Lookup("gke")
+	cm := newClient(t, inst)
+	var createErr error
+	gke.SetBeforeResetTeardown(gsvc, func() {
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		_, createErr = cm.CreateCluster(cctx, &containerpb.CreateClusterRequest{Parent: parent, Cluster: &containerpb.Cluster{
+			Name: "racer", NodePools: []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
+		}})
+	})
+	if err := inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gke.SetBeforeResetTeardown(gsvc, nil)
+	if status.Code(createErr) != codes.Unavailable {
+		t.Errorf("CreateCluster during Reset: %v, want UNAVAILABLE", createErr)
+	}
+
+	resp, err := cm.ListClusters(ctx, &containerpb.ListClustersRequest{Parent: parent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Clusters) > 0 {
+		t.Errorf("clusters after Reset: %v", resp.Clusters)
+	}
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := map[string]string{runtime.LabelInstance: inst.ID, runtime.LabelService: "gke"}
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		cs, err := cl.ListContainers(ctx, sel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vs, err := cl.ListVolumes(ctx, sel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cs) > 0 || len(vs) > 0 {
+			t.Fatalf("runtime objects after Reset: %d containers %v, volumes %v", len(cs), cs, vs)
+		}
+	}
 }

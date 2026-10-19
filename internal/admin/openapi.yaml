@@ -442,6 +442,10 @@ paths:
     post:
       summary: Wipe all state, keeping configuration (`gcpemu reset`).
       operationId: reset
+      description: |
+        While it runs the Instance is not ready, and every request but the
+        Admin API's is refused, and any in progress cut off, as UNAVAILABLE
+        (HTTP 503 with Retry-After).
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "500": { $ref: "#/components/responses/Error" }
@@ -504,6 +508,9 @@ paths:
         Fault rules and the Emulator clock. Cloud SQL instances are running
         again when it returns; GKE clusters report RECONCILING until their
         data planes are back. Event streams get a `reset` event.
+        While it runs the Instance is not ready, and every request but the
+        Admin API's is refused, and any in progress cut off, as UNAVAILABLE
+        (HTTP 503 with Retry-After).
       parameters:
         - name: name
           in: path
