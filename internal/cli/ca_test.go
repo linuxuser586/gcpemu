@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path"
@@ -37,6 +39,16 @@ func TestTrustPlan(t *testing.T) {
 	plan, _ = trustPlan(mac, "x", c, true)
 	if !strings.HasPrefix(plan[0].String(), "sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ") {
 		t.Fatalf("mac: %v", plan)
+	}
+	win := trustHost{goos: "windows"}
+	plan, err = trustPlan(win, "x", c, true)
+	if err != nil || len(plan) != 1 || plan[0].String() != "certutil -user -addstore Root "+c.Path() {
+		t.Fatalf("windows install: %v %v", plan, err)
+	}
+	sum := sha1.Sum(c.Certificate().Raw)
+	plan, err = trustPlan(win, "x", c, false)
+	if err != nil || len(plan) != 1 || plan[0].String() != "certutil -user -delstore Root "+hex.EncodeToString(sum[:]) {
+		t.Fatalf("windows uninstall: %v %v", plan, err)
 	}
 	if _, err := trustPlan(trustHost{goos: "linux", lookPath: func(string) bool { return false }, isDir: func(string) bool { return false }}, "x", c, true); err == nil {
 		t.Fatal("expected error without tooling")

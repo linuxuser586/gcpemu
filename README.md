@@ -408,13 +408,16 @@ sudo resolvectl dns <bridge-if> <ip> && sudo resolvectl domain <bridge-if> ~goog
 gcpemu hosts | sudo tee -a /etc/hosts
 ```
 
-Then trust the CA system-wide with `gcpemu ca install`. On Linux it also adds the CA to Docker's
-and containerd's per-registry trust for every `LOCATION-docker.pkg.dev`, and, with `certutil`
-(`libnss3-tools`), to the browser NSS databases: Chrome's `~/.pki/nssdb` and every native, snap
-and flatpak Firefox profile. Colima and Podman machine keep their own registry trust inside
-their VM, so for them `ca install` prints the command to run there; Docker Desktop and OrbStack
-use the macOS keychain. `gcpemu ca rotate` replaces it in those databases, and `gcpemu
-doctor` reports where it is trusted. Or trust it per shell with
+Then trust the CA with `gcpemu ca install`. On Linux and macOS it goes in the system trust store;
+on Linux it also goes in Docker's and containerd's per-registry trust for every
+`LOCATION-docker.pkg.dev`, and, with `certutil` (`libnss3-tools`), in the browser NSS databases:
+Chrome's `~/.pki/nssdb` and every native, snap and flatpak Firefox profile. Colima and Podman
+machine keep their own registry trust inside their VM, so for them `ca install` prints the
+command to run there; Docker Desktop and OrbStack use the macOS keychain. On Windows it adds the
+CA to the current user's ROOT certificate store with `certutil -user -addstore Root`, which needs
+no administrator rights. Windows shows a security dialog to confirm the change, and another for
+`gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
+databases, and `gcpemu doctor` reports where it is trusted. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
 holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator
 CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the host, use `curl
