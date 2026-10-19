@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -20,6 +21,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -215,6 +217,9 @@ var helmSHA256 = map[string]string{
 	"linux-arm64":  "8de5a0c9a47431e59fd560e91e0779c8cf9316c383da7efb84128a4c339ecb2d",
 	"darwin-amd64": "8bc0c1f85f8738cc3cda4a2cc73047145bcdcb1f4d9cdcc29073037bfb22fa2e",
 	"darwin-arm64": "68bfbdc022c543a2a022597b20298216877e98abe6e4a345d3ecf114d79cae5f",
+	// Windows archives are .zip.
+	"windows-amd64": "3ea6b8383e6c0b7ce45d06a5746313b8e9225edd88d42f4f64582ff3792d7b55",
+	"windows-arm64": "90d8c87e07267e6c71e678c9e33dd11cc121789c823ccc380de9d1dd521c8cba",
 }
 
 // helm downloads the pinned helm for the host into the cache directory
@@ -222,7 +227,11 @@ var helmSHA256 = map[string]string{
 func helm(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(cacheDir(t), "helm-"+helmVersion)
-	bin := filepath.Join(dir, "helm")
+	name, ext, extract := "helm", ".tar.gz", untar
+	if goruntime.GOOS == "windows" {
+		name, ext, extract = "helm.exe", ".zip", unzip
+	}
+	bin := filepath.Join(dir, name)
 	if _, err := os.Stat(bin); err == nil {
 		return bin
 	}
@@ -231,13 +240,13 @@ func helm(t *testing.T) string {
 	if !ok {
 		t.Skipf("no pinned helm for %s", plat)
 	}
-	asset := "helm-" + helmVersion + "-" + plat + ".tar.gz"
+	asset := "helm-" + helmVersion + "-" + plat + ext
 	archive := fetch(t, "https://get.helm.sh/"+asset)
 	if got := sha256.Sum256(archive); hex.EncodeToString(got[:]) != want {
 		t.Fatalf("%s: checksum mismatch (got %x, want %s)", asset, got, want)
 	}
-	if err := untar(archive, dir, func(name string) (string, bool) {
-		return "helm", filepath.Base(name) == "helm"
+	if err := extract(archive, dir, func(n string) (string, bool) {
+		return name, path.Base(n) == name
 	}); err != nil {
 		t.Fatalf("%s: %v", asset, err)
 	}
@@ -253,11 +262,16 @@ func istioCharts(t *testing.T) string {
 	if _, err := os.Stat(filepath.Join(dir, "gateway", "Chart.yaml")); err == nil {
 		return dir
 	}
-	osName := goruntime.GOOS
-	if osName == "darwin" {
+	// The charts are the same in every release archive; Windows takes them
+	// from the Linux one rather than unpacking a .zip.
+	osName, arch := goruntime.GOOS, goruntime.GOARCH
+	switch osName {
+	case "darwin":
 		osName = "osx"
+	case "windows":
+		osName, arch = "linux", "amd64"
 	}
-	asset := fmt.Sprintf("istio-%s-%s-%s.tar.gz", istioVersion, osName, goruntime.GOARCH)
+	asset := fmt.Sprintf("istio-%s-%s-%s.tar.gz", istioVersion, osName, arch)
 	base := "https://github.com/istio/istio/releases/download/" + istioVersion + "/"
 	archive := fetch(t, base+asset)
 	sum := strings.Fields(string(fetch(t, base+asset+".sha256")))
@@ -281,6 +295,39 @@ func istioCharts(t *testing.T) string {
 	return dir
 }
 
+// unzip extracts the regular files of a .zip that pick maps to a relative
+// path into dir.
+func unzip(archive []byte, dir string, pick func(name string) (string, bool)) error {
+	zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, f := range zr.File {
+		rel, ok := pick(f.Name)
+		if !ok || !f.Mode().IsRegular() {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return err
+		}
+		if err := writeExtracted(dir, f.Name, rel, b, f.Mode()); err != nil {
+			return err
+		}
+		n++
+	}
+	if n == 0 {
+		return errors.New("nothing extracted")
+	}
+	return nil
+}
+
 // untar extracts the regular files of a .tar.gz that pick maps to a
 // relative path into dir.
 func untar(archive []byte, dir string, pick func(name string) (string, bool)) error {
@@ -302,22 +349,11 @@ func untar(archive []byte, dir string, pick func(name string) (string, bool)) er
 		if !ok || h.Typeflag != tar.TypeReg {
 			continue
 		}
-		rel = filepath.Clean(rel)
-		if filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
-			return fmt.Errorf("unsafe path %q", h.Name)
-		}
-		p := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return err
-		}
 		b, err := io.ReadAll(tr)
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(p+".tmp", b, os.FileMode(h.Mode)&0o755|0o600); err != nil {
-			return err
-		}
-		if err := os.Rename(p+".tmp", p); err != nil {
+		if err := writeExtracted(dir, h.Name, rel, b, os.FileMode(h.Mode)); err != nil {
 			return err
 		}
 		n++
@@ -326,6 +362,22 @@ func untar(archive []byte, dir string, pick func(name string) (string, bool)) er
 		return errors.New("nothing extracted")
 	}
 	return nil
+}
+
+// writeExtracted writes archive member name, picked as rel, into dir.
+func writeExtracted(dir, name, rel string, b []byte, mode os.FileMode) error {
+	rel = filepath.Clean(rel)
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("unsafe path %q", name)
+	}
+	p := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(p+".tmp", b, mode.Perm()&0o755|0o600); err != nil {
+		return err
+	}
+	return os.Rename(p+".tmp", p)
 }
 
 func fetch(t *testing.T, u string) []byte {

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -771,8 +772,14 @@ func (r *run) curl(t *testing.T, path string) (string, bool) {
 	if err != nil || len(ips) == 0 {
 		t.Fatalf("resolve %s: %v", r.appHost(), err)
 	}
-	out, err := exec.Command(bin, "-sS", "-i", "--max-time", "20", "--cacert", r.inst.Env.CA.Path(),
-		"--resolve", r.appHost()+":443:"+ips[0], "https://"+r.appHost()+path).CombinedOutput()
+	args := []string{"-sS", "-i", "--max-time", "20", "--cacert", r.inst.Env.CA.Path(),
+		"--resolve", r.appHost() + ":443:" + ips[0], "https://" + r.appHost() + path}
+	if goruntime.GOOS == "windows" {
+		// Windows' curl (Schannel) checks revocation, which the
+		// emulator CA does not publish.
+		args = append(args, "--ssl-no-revoke")
+	}
+	out, err := exec.Command(bin, args...).CombinedOutput()
 	if err != nil {
 		t.Errorf("curl %s: %v\n%s", path, err, out)
 	}
