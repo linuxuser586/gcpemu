@@ -91,6 +91,11 @@ type Config struct {
 	// published ports (ADR 0012): "auto" guesses from the runtime's info,
 	// "true" and "false" override the guess.
 	VMRuntime string `yaml:"vmRuntime" env:"VM_RUNTIME"`
+	// LoopbackAliases says whether a Containerized Instance on a VM runtime
+	// publishes Cloud SQL instances on 127.0.0.2-127.0.0.254, which it
+	// can't see on the host (ADR 0012): "auto" says yes on Docker Desktop
+	// only, "true" and "false" override it.
+	LoopbackAliases string `yaml:"loopbackAliases" env:"LOOPBACK_ALIASES"`
 	// NoSQLHostClients stops Cloud SQL serving host clients on a loopback
 	// address on a VM runtime (ADR 0005), so that tests which never dial
 	// an instance's reported address don't contend for 127.0.0.1 (#316).
@@ -138,6 +143,7 @@ func Defaults() Config {
 		Ports:            map[string]int{},
 		LROLatency:       map[string]string{},
 		VMRuntime:        "auto",
+		LoopbackAliases:  "auto",
 	}
 	if os.Getenv("CI") == "true" {
 		c.Ephemeral = true
@@ -427,6 +433,11 @@ func (c *Config) Validate() error {
 	case "", "auto", "true", "false":
 	default:
 		return fmt.Errorf("invalid --vm-runtime (GCPEMU_VM_RUNTIME, vmRuntime) %q (want auto, true or false)", c.VMRuntime)
+	}
+	switch strings.ToLower(c.LoopbackAliases) {
+	case "", "auto", "true", "false":
+	default:
+		return fmt.Errorf("invalid --loopback-aliases (GCPEMU_LOOPBACK_ALIASES, loopbackAliases) %q (want auto, true or false)", c.LoopbackAliases)
 	}
 	for name, p := range c.Ports {
 		if p < 0 || p > 65535 {

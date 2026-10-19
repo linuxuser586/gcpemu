@@ -50,6 +50,9 @@ type Service struct {
 	exposed map[string][]*netplane.Exposed // "P/I" → its loopback listeners
 	// aliases reports whether the host has loopback aliases.
 	aliases func() bool
+	// aliasRefused says the runtime refused to publish on a loopback
+	// alias, so a Containerized Instance uses only 127.0.0.1 (ADR 0012).
+	aliasRefused atomic.Bool
 
 	recovering atomic.Int32
 
@@ -79,6 +82,7 @@ func (s *Service) Name() string { return "sql" }
 func (s *Service) Register(r emu.Router) error {
 	r.Handle("/sql/v1beta4/", s)
 	r.Mount("sqladmin", []string{apiHost}, s)
+	r.Handle("GET /_emu/v1/sql/hosts", http.HandlerFunc(s.serveHosts))
 	return nil
 }
 

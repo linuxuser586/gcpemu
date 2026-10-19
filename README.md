@@ -265,7 +265,9 @@ instance is reachable and forwarding rules and `LoadBalancer` Services share `12
 its own port, or a free one when an earlier one holds it, as `gcpemu env` shows.
 That needs no container runtime. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
 a LaunchDaemon that adds them again at boot; `sudo gcpemu loopback uninstall` removes both.
-`gcpemu doctor` reports whether they are present.
+`gcpemu doctor` reports whether they are present. A Cloud SQL instance needs port 3307 free on its
+address; 5432 is served there too while it is free, so a local PostgreSQL on `127.0.0.1:5432`
+doesn't keep connectors out.
 
 When a subnetwork's range overlaps another network on the host, its container network runs on a
 free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
@@ -536,8 +538,9 @@ network as well as with `--network host`. Privileged GKE nodes get their privile
 Docker daemon, not from the emulator's container. From the host:
 
 - Cloud SQL instances are published on `127.0.0.1` (`GCPEMU_SQL_*` ports, as on the host).
-  The Cloud SQL Auth Proxy and connectors dial the instance IPs on the emulator's bridge
-  networks, which a Linux host reaches directly (Docker Desktop does not).
+  The Cloud SQL Auth Proxy and connectors dial an instance's `PRIMARY` address on port 3307:
+  off a VM runtime its IP on the emulator's bridge networks, which a Linux host reaches
+  directly. On a VM runtime, see below.
 - `GET /container/_emu/kubeconfig?cluster=projects/P/locations/L/clusters/C` returns a
   kubeconfig whose server is the cluster's API published on `127.0.0.1`; the Connect gateway
   (`/connectgateway/v1/...`) works through the API gateway port.
@@ -576,6 +579,28 @@ Podman machine, or `false` to keep node addresses; the default is `auto`. `docke
 forwarding rules with no published port, and flags clusters last started under the other decision; restarting the emulator recreates their servers
 with the current one.
 On Docker Desktop the socket belongs to `root` inside the VM, hence `--group-add 0`.
+
+On a VM runtime each Cloud SQL instance with a public IP publishes port 3307, and 5432 when it
+is free, on a `127.0.0.x` of its own, and reports that address as its `PRIMARY` IP, so the Auth
+Proxy, the connectors and `psql` work from the host as with the native binary (ADR 0012). Every
+connector dials port 3307, so instances can't share an address, and the emulator can't see from
+inside its container whether the host has the loopback aliases `127.0.0.2`–`127.0.0.254`.
+`GCPEMU_LOOPBACK_ALIASES` (`--loopback-aliases`, `loopbackAliases`) says whether to use them:
+
+- `auto` (the default) uses them on Docker Desktop, and falls back to `127.0.0.1` when Docker
+  Desktop refuses a loopback alias the host lacks. Elsewhere it uses only `127.0.0.1`: OrbStack and
+  Colima accept a loopback alias binding and never forward it, so the address would time out.
+- `true` uses them on any runtime, with the same fallback.
+- `false` uses only `127.0.0.1`.
+
+With only `127.0.0.1`, one public instance at a time serves host clients there, and creating or
+starting a second fails with `FAILED_PRECONDITION` naming the first. macOS has no loopback aliases until
+`sudo gcpemu loopback install` is run from the native binary; after that, set
+`GCPEMU_LOOPBACK_ALIASES=true` on runtimes other than Docker Desktop. A local PostgreSQL on
+`127.0.0.1:5432` doesn't get in the way: the instance is then served on 3307 only.
+`gcpemu doctor` prints the decision next to the VM-runtime one, each public instance's host
+address, and whether the runtime has refused a loopback alias. Instance containers are recreated on
+every start, so a changed setting takes effect when the emulator restarts.
 
 As a GitHub Actions service container (the job waits for the health check):
 

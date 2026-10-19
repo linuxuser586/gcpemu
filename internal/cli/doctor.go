@@ -268,7 +268,7 @@ func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, c
 	defer cancel()
 	// `start` may have had the settings as flags, which doctor lacks and
 	// which win over env and file there.
-	setting, portRange := cfg.VMRuntime, cfg.PortRange
+	setting, portRange, aliasSetting := cfg.VMRuntime, cfg.PortRange, cfg.LoopbackAliases
 	self, err := cl.InspectContainer(ctx, cl.Self())
 	if err == nil {
 		if v := startFlag(self.Cmd, "vm-runtime"); v != "" {
@@ -277,13 +277,17 @@ func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, c
 		if v := startFlag(self.Cmd, "port-range"); v != "" {
 			portRange = v
 		}
+		if v := startFlag(self.Cmd, "loopback-aliases"); v != "" {
+			aliasSetting = v
+		}
 	}
 	d := emuruntime.DecideVM(setting, true, info)
+	aliases := emuruntime.DecideLoopbackAliases(aliasSetting, info)
 	published, perr := cl.SelfPorts(ctx)
 	if err = errors.Join(err, perr); err != nil {
 		fmt.Fprintf(out, "[--  ] VM runtime: %s; cannot read this container's published ports: %v\n", d, err)
 	} else {
-		reportVMRuntime(out, d, portRange, published)
+		reportVMRuntime(out, d, aliases, portRange, published)
 	}
 	dir, err := filepath.Abs(cfg.InstanceDir())
 	if err != nil {
@@ -314,6 +318,37 @@ func checkUnpublished(out io.Writer, cfg *config.Config) {
 	}
 	if b, err := c.get("/_emu/v1/host/services"); err == nil {
 		reportHostServices(out, b)
+	}
+	if b, err := c.get("/_emu/v1/sql/hosts"); err == nil {
+		reportSQLHosts(out, b)
+	}
+}
+
+// reportSQLHosts prints each public Cloud SQL instance's host address, and
+// flags the instances that have none and a runtime that refused a
+// loopback alias (ADR 0005, ADR 0012).
+func reportSQLHosts(out io.Writer, body []byte) {
+	var v struct {
+		Instances []struct {
+			Instance string `json:"instance"`
+			Address  string `json:"address"`
+			Missing  string `json:"missing"`
+		} `json:"instances"`
+		AliasesRefused bool `json:"aliasesRefused"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return
+	}
+	if v.AliasesRefused {
+		fmt.Fprintln(out, "[WARN] the runtime refused a loopback alias, so Cloud SQL instances use only 127.0.0.1 and one at a time serves host clients")
+		fmt.Fprintf(out, "       fix: add loopback aliases on the host (`%s`, from the native binary on macOS) and restart the emulator\n", loopback.InstallHint)
+	}
+	for _, in := range v.Instances {
+		if in.Address == "" {
+			fmt.Fprintf(out, "[WARN] Cloud SQL instance %s has no host address, so host clients cannot reach it: %s\n", in.Instance, in.Missing)
+			continue
+		}
+		fmt.Fprintf(out, "[ok  ] Cloud SQL instance %s: host clients reach it on %s\n", in.Instance, in.Address)
 	}
 }
 
@@ -353,12 +388,14 @@ func startFlag(cmd []string, name string) string {
 }
 
 // reportVMRuntime prints the VM-runtime decision d and, on a VM runtime,
-// how many ports of portRange the container publishes, warning when none.
-func reportVMRuntime(out io.Writer, d emuruntime.VMDecision, portRange string, published map[int]string) {
+// the loopback-alias decision for Cloud SQL and how many ports of
+// portRange the container publishes, warning when none.
+func reportVMRuntime(out io.Writer, d emuruntime.VMDecision, aliases emuruntime.AliasDecision, portRange string, published map[int]string) {
 	fmt.Fprintf(out, "[ok  ] VM runtime: %s\n", d)
 	if !d.On {
 		return
 	}
+	fmt.Fprintf(out, "[ok  ] loopback aliases for Cloud SQL: %s\n", aliases)
 	n := 0
 	c := config.Config{PortRange: portRange}
 	lo, hi, ranged, _ := c.ParsePortRange()

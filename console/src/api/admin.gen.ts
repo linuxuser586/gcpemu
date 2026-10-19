@@ -683,6 +683,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/sql/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How host clients reach each running public Cloud SQL instance (sql service; gcpemu doctor).
+         * @description Where the host can't reach an instance's public IP (a VM runtime, ADR 0005 and ADR 0012), the address is the loopback address the instance serves ports 3307 and 5432 on, and an instance without one is listed with why. Otherwise it is the instance's public IP.
+         */
+        get: operations["sqlHosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/ca/rotate": {
         parameters: {
             query?: never;
@@ -997,6 +1017,16 @@ export interface components {
              */
             mode: "loopback" | "edge" | "fallback";
             https: boolean;
+        };
+        SqlHost: {
+            /** @description The instance's connection name, PROJECT:REGION:NAME. */
+            instance: string;
+            /** @description The address host clients dial; absent when the instance has none. */
+            address?: string;
+            /** @description The address is a loopback address standing in for the public IP. */
+            loopback?: boolean;
+            /** @description Why the instance has no address. */
+            missing?: string;
         };
         LbUnavailable: {
             /** @description The forwarding rule's resource path. */
@@ -2241,6 +2271,30 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    sqlHosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The public instances, by connection name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        instances: components["schemas"]["SqlHost"][];
+                        /** @description The runtime refused to publish on a loopback alias, so a Containerized Instance uses only 127.0.0.1 until it restarts, whatever GCPEMU_LOOPBACK_ALIASES says. */
+                        aliasesRefused?: boolean;
+                    };
+                };
+            };
         };
     };
     caRotate: {

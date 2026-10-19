@@ -39,6 +39,9 @@ type Manager struct {
 	// VM says whether a Containerized Instance is on a VM runtime, whose
 	// host reaches it only through its published ports (ADR 0012).
 	VM VMDecision
+	// LoopbackAliases says whether, on a VM runtime, Cloud SQL instances
+	// may publish their ports on 127.0.0.2-127.0.0.254 (ADR 0012).
+	LoopbackAliases AliasDecision
 
 	addrMu    sync.Mutex
 	agentOnce sync.Once
