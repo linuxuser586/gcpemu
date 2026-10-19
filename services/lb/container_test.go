@@ -61,8 +61,8 @@ import (
 //     public address.
 func TestGKEBackends(t *testing.T) {
 	emutest.RequireRuntime(t)
-	if goruntime.GOOS == "darwin" {
-		t.Skip("macOS serves privileged ports on the wildcard address, never through lb-edge")
+	if goruntime.GOOS != "linux" {
+		t.Skip("only Linux serves privileged ports through lb-edge: macOS binds them on the wildcard address, and Windows has none (ADR 0015)")
 	}
 	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
@@ -488,8 +488,8 @@ func mustPool(pemBytes []byte) *x509.CertPool {
 // balancer leaves no containers (SRS 11.2 step 10).
 func TestEdgeRetired(t *testing.T) {
 	emutest.RequireRuntime(t)
-	if goruntime.GOOS == "darwin" {
-		t.Skip("macOS serves privileged ports on the wildcard address, never through lb-edge")
+	if goruntime.GOOS != "linux" {
+		t.Skip("only Linux serves privileged ports through lb-edge: macOS binds them on the wildcard address, and Windows has none (ADR 0015)")
 	}
 	e := start(t)
 	svc, _ := e.inst.Env.Lookup("lb")

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // EnvVar selects the agent to run.
@@ -77,17 +78,38 @@ func Main() {
 // BuildForTests compiles ./cmd/gcpemu for linux/arch with CGO_ENABLED=0
 // into dir (once per process) and sets GCPEMU_AGENT_BINARY. moduleRoot is
 // the repository root; arch is the runtime's, or "" for the host's.
+//
+// go test runs packages in parallel, each building to the same path, so
+// the build goes to a directory of its own and is renamed into place: the
+// shared path only ever holds a whole binary. On Windows the rename fails
+// while another package is copying that binary into a container; it is
+// retried, and this process falls back to its own build if it never
+// succeeds.
 func BuildForTests(moduleRoot, dir, arch string) (string, error) {
 	if arch == "" {
 		arch = runtime.GOARCH
 	}
 	out := filepath.Join(dir, "gcpemu-agent-"+arch)
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/gcpemu")
+	tmp, err := os.MkdirTemp(dir, "build-")
+	if err != nil {
+		return "", err
+	}
+	built := filepath.Join(tmp, filepath.Base(out))
+	cmd := exec.Command("go", "build", "-o", built, "./cmd/gcpemu")
 	cmd.Dir = moduleRoot
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if b, err := cmd.CombinedOutput(); err != nil {
+		os.RemoveAll(tmp)
 		return "", fmt.Errorf("build Sidecar agent binary: %v\n%s", err, b)
 	}
-	os.Setenv(BinaryEnv, out)
-	return out, nil
+	for range 20 {
+		if err = os.Rename(built, out); err == nil {
+			os.RemoveAll(tmp)
+			built = out
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	os.Setenv(BinaryEnv, built)
+	return built, nil
 }
