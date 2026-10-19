@@ -209,8 +209,13 @@ func (d *dataplane) reconcile() {
 		if fe == nil || fe.https != l.https || fe.fr.Name != l.name {
 			l.close()
 			delete(d.listeners, key)
-			// A global and a regional rule may share the name.
-			if l.pub != nil && d.s.env.Endpoints.Get("lb:"+l.name) == l.pubHost {
+			// A global and a regional rule may share the name: drop the
+			// lb: entry only while it still names this listener.
+			advertised := l.addr
+			if l.pub != nil {
+				advertised = l.pubHost
+			}
+			if d.s.env.Endpoints.Get("lb:"+l.name) == advertised {
 				d.s.env.Endpoints.Delete("lb:" + l.name)
 			}
 		}

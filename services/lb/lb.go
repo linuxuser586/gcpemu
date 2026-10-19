@@ -148,16 +148,14 @@ func (s *Service) ResourceCounts() map[string]int {
 // Reset stops the managed-certificate and edge route passes in flight,
 // waiting for them (bounded by ctx), so none writes a certificate or
 // creates an edge container or attachment from the state before the
-// Reset after it (#307); they run again from ResetDone. It drops the data
-// plane's runtime state; the store is wiped by the core.
+// Reset after it (#307); they run again from ResetDone. The store is
+// wiped by the core.
 func (s *Service) Reset(ctx context.Context) error {
 	select {
 	case <-s.certKick:
 	default:
 	}
-	err := s.loops.Reset(ctx)
-	s.changed()
-	if err != nil {
+	if err := s.loops.Reset(ctx); err != nil {
 		return fmt.Errorf("lb: waiting for background work: %w", err)
 	}
 	return nil
@@ -165,9 +163,13 @@ func (s *Service) Reset(ctx context.Context) error {
 
 var _ emu.ResetFinisher = (*Service)(nil)
 
-// ResetDone runs the managed-certificate and edge route loops again once
-// the store is reset too.
-func (s *Service) ResetDone() { s.loops.Resume() }
+// ResetDone rebuilds the data plane from the reset store, dropping the
+// listeners and backend runtime state from before the Reset (#450), and
+// runs the managed-certificate and edge route loops again.
+func (s *Service) ResetDone() {
+	s.changed()
+	s.loops.Resume()
+}
 
 // Snapshot implements emu.Snapshotter: the load balancer's resources are
 // in the store.
