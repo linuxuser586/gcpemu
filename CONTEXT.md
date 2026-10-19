@@ -329,6 +329,10 @@ Tests that apply, re-plan and destroy OpenTofu configurations covering every res
 An end-to-end deployment of a representative application across all Products, used as the final acceptance test.
 _Avoid_: "acceptance" on its own, e2e
 
+**Containerized Instance tests**:
+Tests that build the OCI image and drive a Containerized Instance from the host.
+_Avoid_: image tests
+
 **Escape guard**:
 A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it.
 _Avoid_: egress check, leak detector
