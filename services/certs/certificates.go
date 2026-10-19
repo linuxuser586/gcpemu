@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -413,6 +414,9 @@ func (s *Service) reconcileCert(ctx context.Context, name string) bool {
 	}
 	changed := false
 	err = s.env.Store.Update(func(tx store.Tx) error {
+		if inflight.Halted(ctx) {
+			return nil // read before a Reset
+		}
 		cur := load(tx, name)
 		if cur == nil || !jsonEqual(cur["managed"], o["managed"]) || cur["pemCertificate"] != o["pemCertificate"] {
 			return nil // changed concurrently; the next pass retries
@@ -567,13 +571,13 @@ func (s *Service) reconcileLoop(ctx context.Context) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
-		s.reconcileAll(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		case <-s.kickC:
 		}
+		s.reconcileAll(ctx)
 	}
 }
 

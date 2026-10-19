@@ -7,6 +7,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/published"
+	"github.com/linuxuser586/gcpemu/services/gke"
 )
 
 // JoinSubnetwork starts the edge if needed and attaches it to subnetwork's
@@ -102,4 +103,16 @@ func ListenerAddr(svc emu.Service, name string) string {
 		}
 	}
 	return ""
+}
+
+// SetBeforeCertWrite makes f run before each managed-certificate pass
+// writes a certificate's new status (exported to the external tests).
+func SetBeforeCertWrite(svc emu.Service, f func(ctx context.Context, path string)) {
+	svc.(*Service).beforeCertWrite = f
+}
+
+// SetPodRoutes makes f the edge's source of pod routes in place of GKE
+// (exported to the external tests).
+func SetPodRoutes(svc emu.Service, f func(ctx context.Context) []gke.PodRoute) {
+	svc.(*Service).podRoutes = f
 }

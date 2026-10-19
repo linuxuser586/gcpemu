@@ -410,9 +410,27 @@ type target struct {
 // attached subscription and snapshot whose filter matches (FR-PS-002,
 // FR-PS-005, NFR-REL-001). It returns the message IDs.
 func (s *Service) publish(topicName string, in []*pubsubpb.PubsubMessage) ([]string, error) {
+	return s.publishUnlessReset(anyGen, topicName, in)
+}
+
+// anyGen is the generation of a publish that no Reset aborts (API
+// requests; #302).
+const anyGen = ^uint64(0)
+
+// publishUnlessReset is publish for background work that read the state
+// of Reset generation gen: once a Reset overtakes it, it publishes nothing
+// into the state after it (#307).
+func (s *Service) publishUnlessReset(gen uint64, topicName string, in []*pubsubpb.PubsubMessage) ([]string, error) {
+	// overtaken reports, under s.mu, whether a Reset ran since gen.
+	overtaken := func() bool { return gen != anyGen && s.work.Gen() != gen }
+	aborted := apierr.Aborted("The publish was aborted by an emulator reset.")
 	now := s.env.Clock.Now()
 	ts := timestamppb.New(now)
 	s.mu.Lock()
+	if overtaken() {
+		s.mu.Unlock()
+		return nil, aborted
+	}
 	t, ok := s.topics[topicName]
 	if !ok {
 		s.mu.Unlock()
@@ -430,6 +448,10 @@ func (s *Service) publish(topicName string, in []*pubsubpb.PubsubMessage) ([]str
 	}
 
 	s.mu.Lock()
+	if overtaken() {
+		s.mu.Unlock()
+		return nil, aborted
+	}
 	t, ok = s.topics[topicName]
 	if !ok {
 		s.mu.Unlock()
@@ -511,6 +533,10 @@ func (s *Service) publish(topicName string, in []*pubsubpb.PubsubMessage) ([]str
 	// Make the committed messages visible.
 	var cleanup writes
 	s.mu.Lock()
+	if overtaken() {
+		s.mu.Unlock()
+		return nil, aborted
+	}
 	now2 := time.Now()
 	for i, m := range msgs {
 		if needed[i] || retain {

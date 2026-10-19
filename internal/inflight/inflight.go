@@ -1,8 +1,9 @@
-// Package inflight tracks a service's deferred work across Instance Resets
-// (#301). Work started before a Reset must not write into the store the
-// instance resets afterwards: Reset starts a new generation, so work that
-// noted the old one knows to drop itself, and waits for work already
-// running.
+// Package inflight tracks a service's background work across Instance
+// Resets. Work started before a Reset must not write into the store the
+// instance resets afterwards. Tracker counts deferred work (#301): Reset
+// starts a new generation, so work that noted the old one knows to drop
+// itself, and waits for work already running. Loops runs background loops
+// that Reset halts, waits for and later resumes (#307).
 package inflight
 
 import (

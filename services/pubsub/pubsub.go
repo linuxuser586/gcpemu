@@ -11,6 +11,7 @@ package pubsub
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/inflight"
 )
 
 // Service is the Pub/Sub service module.
@@ -39,6 +41,12 @@ type Service struct {
 	msgs    map[uint64]*message
 	seq     uint64 // last assigned message sequence (= message ID)
 	leaseN  uint64
+
+	// work counts background work (retention passes, push
+	// acknowledgements, dead-letter forwards) between its change under mu
+	// and its store commit; Reset starts its next generation under mu and
+	// waits for it (#307).
+	work inflight.Tracker
 
 	dlqMu   sync.Mutex
 	dlqQ    []dlqItem
@@ -239,14 +247,21 @@ func (s *Service) Restore(ctx context.Context, dir string) error {
 	return nil
 }
 
-// Reset drops all in-memory state (FR-CORE-002); the store is wiped by the caller.
+// Reset drops all in-memory state (FR-CORE-002) and waits, bounded by
+// ctx, for background work that changed the state before it to commit,
+// so none of it writes to the store afterwards (#307); the store is wiped
+// by the caller.
 func (s *Service) Reset(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.resetMemory()
+	s.work.Next()
 	s.dlqMu.Lock()
 	s.dlqQ = nil
 	s.dlqMu.Unlock()
+	s.mu.Unlock()
+	if err := s.work.Wait(ctx); err != nil {
+		return fmt.Errorf("pubsub: waiting for background work: %w", err)
+	}
 	return nil
 }
 
@@ -334,7 +349,9 @@ func (s *Service) gc() {
 			s.dropSnapshot(name, &w)
 		}
 	}
+	s.work.Enter()
 	s.mu.Unlock()
+	defer s.work.Exit()
 	if err := s.commit(&w); err != nil {
 		s.env.Log.Warn("pubsub: retention gc", "err", err)
 	}

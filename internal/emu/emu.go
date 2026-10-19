@@ -49,6 +49,14 @@ type Resetter interface {
 	Reset(ctx context.Context) error
 }
 
+// ResetFinisher is implemented by Resetters whose background work must not
+// resume before the Store is reset as well: a pass started in between would
+// read the state the Reset removes (#307). The instance calls ResetDone at
+// the end of every Reset, after the Store's.
+type ResetFinisher interface {
+	ResetDone()
+}
+
 // Router is the gateway surface a service registers on (FR-CORE-040).
 type Router interface {
 	// Mount serves h for the API: under the path prefix "/<api>/" (prefix
