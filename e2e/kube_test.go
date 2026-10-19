@@ -144,6 +144,14 @@ func (k *kube) apply(obj map[string]any) {
 	k.t.Fatalf("apply %s %s/%s: %d %s", obj["kind"], ns, md["name"], code, resp)
 }
 
+// delete deletes kind ns/name, and fails unless the API accepts it.
+func (k *kube) delete(kind, ns, name string) {
+	k.t.Helper()
+	if code, resp := k.do(http.MethodDelete, objPath(kind, ns, name), "", nil, nil); code/100 != 2 {
+		k.t.Fatalf("delete %s %s/%s: %d %s", kind, ns, name, code, resp)
+	}
+}
+
 func (k *kube) get(path string, out any) bool {
 	code, _ := k.do(http.MethodGet, path, "", nil, out)
 	return code == http.StatusOK

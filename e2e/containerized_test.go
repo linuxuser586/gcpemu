@@ -81,27 +81,13 @@ const (
 // addresses.
 func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env []string) {
 	const plainRange = "10.213.0.0/20"
-	args := []string{"run", "-d", "--name", name, "-p", "127.0.0.1::4510", "-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid}
-	args = append(args, env...)
-	start := []string{"start", "--ephemeral"}
+	args := append([]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid}, env...)
+	var start []string
 	if vm {
 		args = append(args, "-p", "127.0.0.1:"+vmRange+":"+vmRange, "-p", "127.0.0.1:"+vmOwnPort+":"+vmOwnPort)
 		start = append(start, "--port-range", vmRange)
 	}
-	docker(t, append(append(args, image), start...)...)
-	t.Cleanup(func() {
-		if t.Failed() {
-			out, _ := exec.Command("docker", "logs", "--tail", "80", name).CombinedOutput()
-			t.Logf("emulator logs:\n%s", out)
-		}
-		// An Ephemeral Instance removes its containers and networks on stop.
-		_, _ = exec.Command("docker", "stop", "-t", "60", name).CombinedOutput()
-		_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
-	})
-	eventually(t, 3*time.Minute, "emulator healthy", func() bool {
-		return docker(t, "inspect", "-f", "{{.State.Health.Status}}", name) == "healthy"
-	}, nil)
-	gateway := strings.TrimSpace(strings.Split(docker(t, "port", name, "4510/tcp"), "\n")[0])
+	gateway := runEmulator(t, name, image, args, start...)
 	gcpemuEnv := func() string { return docker(t, "exec", name, "/gcpemu", "env") }
 	if vm {
 		if out := docker(t, "exec", name, "/gcpemu", "doctor"); !strings.Contains(out, "VM runtime: yes") || strings.Contains(out, "[WARN] VM runtime") {
@@ -109,42 +95,25 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 		}
 	}
 
-	const project, region, zone = "e2e-containerized", "us-central1", "us-central1-a"
-	post := func(path string, body any) {
-		t.Helper()
-		b, _ := json.Marshal(body)
-		resp, err := http.Post("http://"+gateway+path, "application/json", bytes.NewReader(b))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if out, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusOK {
-			t.Fatalf("POST %s: %d %s", path, resp.StatusCode, out)
-		}
-	}
-	post("/compute/v1/projects/"+project+"/global/networks", map[string]any{"name": "plain", "autoCreateSubnetworks": false})
+	const project, region = "e2e-containerized", "us-central1"
+	post(t, gateway, "/compute/v1/projects/"+project+"/global/networks", map[string]any{"name": "plain", "autoCreateSubnetworks": false})
 	eventually(t, 30*time.Second, "network plain", func() bool { return getOK(gateway, "/compute/v1/projects/"+project+"/global/networks/plain") }, nil)
-	post("/compute/v1/projects/"+project+"/regions/"+region+"/subnetworks", map[string]any{
+	post(t, gateway, "/compute/v1/projects/"+project+"/regions/"+region+"/subnetworks", map[string]any{
 		"name": "plain", "network": "projects/" + project + "/global/networks/plain", "ipCidrRange": plainRange})
 	eventually(t, 30*time.Second, "subnetwork plain", func() bool {
 		return getOK(gateway, "/compute/v1/projects/"+project+"/regions/"+region+"/subnetworks/plain")
 	}, nil)
-	clusters := "/container/v1/projects/" + project + "/locations/" + zone + "/clusters"
-	post(clusters, map[string]any{"cluster": map[string]any{"name": "plain", "network": "plain", "subnetwork": "plain",
-		"nodePools": []map[string]any{{"name": "np", "initialNodeCount": 1}}}})
-	post(clusters, map[string]any{"cluster": map[string]any{"name": "trans",
-		"nodePools": []map[string]any{{"name": "np", "initialNodeCount": 2}}}})
+	createCluster(t, gateway, project, map[string]any{"name": "plain", "network": "plain", "subnetwork": "plain",
+		"nodePools": []map[string]any{{"name": "np", "initialNodeCount": 1}}})
+	createCluster(t, gateway, project, map[string]any{"name": "trans",
+		"nodePools": []map[string]any{{"name": "np", "initialNodeCount": 2}}})
 
 	for _, tc := range []struct {
 		cluster    string
 		translated bool
 	}{{"plain", false}, {"trans", true}} {
 		t.Run(tc.cluster, func(t *testing.T) {
-			eventually(t, 5*time.Minute, "cluster "+tc.cluster+" RUNNING", func() bool {
-				var c struct{ Status string }
-				return getJSON(gateway, clusters+"/"+tc.cluster, &c) && c.Status == "RUNNING"
-			}, nil)
-			k := newKube(t, gateway, "projects/"+project+"/locations/"+zone+"/clusters/"+tc.cluster)
+			k := clusterKube(t, gateway, project, tc.cluster)
 			lbWeb(t, k)
 			envKey := "GCPEMU_GKE_" + strings.ToUpper(tc.cluster) + "_DEFAULT_WEB_8081"
 			if vm {
@@ -200,6 +169,42 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 			}
 		})
 	}
+}
+
+// gkeZone is the zone of the clusters the containerized tests create.
+const gkeZone = "us-central1-a"
+
+// post POSTs body as JSON to path on the API gateway, and fails unless it
+// answers 200.
+func post(t *testing.T, gateway, path string, body any) {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	resp, err := http.Post("http://"+gateway+path, "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if out, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST %s: %d %s", path, resp.StatusCode, out)
+	}
+}
+
+// createCluster starts creating GKE cluster c in project, in gkeZone.
+func createCluster(t *testing.T, gateway, project string, c map[string]any) {
+	t.Helper()
+	post(t, gateway, "/container/v1/projects/"+project+"/locations/"+gkeZone+"/clusters", map[string]any{"cluster": c})
+}
+
+// clusterKube waits for cluster name of project to be RUNNING, and returns
+// a client of its kube API.
+func clusterKube(t *testing.T, gateway, project, name string) *kube {
+	t.Helper()
+	cluster := "projects/" + project + "/locations/" + gkeZone + "/clusters/" + name
+	eventually(t, 5*time.Minute, "cluster "+name+" RUNNING", func() bool {
+		var c struct{ Status string }
+		return getJSON(gateway, "/container/v1/"+cluster, &c) && c.Status == "RUNNING"
+	}, nil)
+	return newKube(t, gateway, cluster)
 }
 
 // socketGroup returns the group that owns the runtime's socket where the
