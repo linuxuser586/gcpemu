@@ -223,3 +223,41 @@ func TestLocateWindowsContainersEngine(t *testing.T) {
 		t.Errorf("Detection = %+v", d)
 	}
 }
+
+// TestNamedPipeEndpointForm: New accepts only the npipe:////<host>/pipe/<name>
+// form `docker` accepts, and rejects any other with an error naming the
+// endpoint and the expected form (#418).
+func TestNamedPipeEndpointForm(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		// want lists what the error must contain; nil means New succeeds.
+		want []string
+	}{
+		{"npipe:////./pipe/docker_engine", nil},
+		{"npipe:////server/pipe/x", nil},
+		{"npipe://./pipe/docker_engine", []string{"npipe://./pipe/docker_engine", "npipe:////./pipe/docker_engine"}},
+		{"npipe://docker_engine", []string{"npipe://docker_engine", "npipe:////./pipe/<name>"}},
+		{"npipe:////./pipe/", []string{"npipe:////./pipe/", "npipe:////./pipe/<name>"}},
+		{"npipe:////./notpipe/x", []string{"npipe:////./notpipe/x", "npipe:////./pipe/<name>"}},
+		{"npipe:////./pipe/a/b", []string{"npipe:////./pipe/a/b", "npipe:////./pipe/<name>"}},
+		{"npipe:///./pipe/x", []string{"npipe:///./pipe/x", "npipe:////./pipe/x"}},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			cl, err := New(tc.endpoint)
+			if tc.want == nil {
+				if err != nil || cl == nil {
+					t.Fatalf("New = %v, %v; want a client", cl, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("New succeeded; want an error")
+			}
+			for _, s := range tc.want {
+				if !strings.Contains(err.Error(), s) {
+					t.Errorf("New = %v; want it to contain %q", err, s)
+				}
+			}
+		})
+	}
+}
