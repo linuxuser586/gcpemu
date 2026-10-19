@@ -36,7 +36,7 @@ type finalBackupRequest struct {
 }
 
 // finalDeletedAt is a Final backup's instanceDeletionTime, which its
-// expiry is capped from; zero for another backup, a Retained backup too.
+// expiry is capped from; zero for another backup.
 func (b *backupRecord) finalDeletedAt() (time.Time, error) {
 	if b.Run.Type != "FINAL" || b.InstanceDeletionTime == "" {
 		return time.Time{}, nil

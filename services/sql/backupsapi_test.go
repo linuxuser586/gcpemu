@@ -38,6 +38,13 @@ func putBackup(t *testing.T, s *Service, project string, b *backupRecord) {
 	}
 }
 
+// finalBackup is a Final backup run id of instance a, its instance deleted
+// at deleted.
+func finalBackup(id int64, deleted time.Time) *backupRecord {
+	return &backupRecord{Run: &sqladmin.BackupRun{Id: id, Instance: "a", Type: "FINAL"},
+		InstanceDeletionTime: deleted.UTC().Format(time.RFC3339Nano)}
+}
+
 // listIDs lists the project's backups with filter, following pages, and
 // returns their IDs (the last element of each name).
 func listIDs(t *testing.T, s *Service, project, filter, pageSize string) []string {
@@ -148,8 +155,7 @@ func advance(t *testing.T, s *Service, clk *clock.Offset, d time.Duration) {
 
 func TestBackupExpiryValidation(t *testing.T) {
 	s, clk := clockService(t)
-	putInstance(t, s, "proj-one", "a", false)
-	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 1, Instance: "a"}})
+	putBackup(t, s, "proj-one", finalBackup(1, clk.Now()))
 	at := func(d time.Duration) string { return clk.Now().Add(d).Format(time.RFC3339Nano) }
 	const day = 24 * time.Hour
 	for _, c := range []struct {
@@ -157,12 +163,11 @@ func TestBackupExpiryValidation(t *testing.T) {
 		code                     int
 		msg                      string
 	}{
-		{"create with ttlDays 366", "POST", "/projects/proj-one/backups", `{"instance":"a","ttlDays":"366"}`, 400, "ttlDays must be between 1 and 365"},
 		{"update with ttlDays 366", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"366"}`, 400, "ttlDays must be between 1 and 365"},
 		{"update with ttlDays -1", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"-1"}`, 400, "ttlDays must be between 1 and 365"},
 		{"update with expiryTime 366 days ahead", "PATCH", "/projects/proj-one/backups/1?updateMask=expiryTime",
-			`{"expiryTime":"` + at(366*day) + `"}`, 400, "at most 365 days from now"},
-		{"update with ttlDays 365", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"365"}`, 200, "UPDATE_BACKUP"},
+			`{"expiryTime":"` + at(366*day) + `"}`, 400, "at most 365 days after the instance's deletion"},
+		{"update with ttlDays 364", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"364"}`, 200, "UPDATE_BACKUP"},
 		{"update with expiryTime 364 days ahead", "PATCH", "/projects/proj-one/backups/1?updateMask=expiryTime",
 			`{"expiryTime":"` + at(364*day) + `"}`, 200, "UPDATE_BACKUP"},
 	} {
@@ -173,9 +178,91 @@ func TestBackupExpiryValidation(t *testing.T) {
 	}
 }
 
+func TestStoredExpiryOfAnOnDemandBackupIsIgnored(t *testing.T) {
+	// As an older state snapshot can hold.
+	s, clk := clockService(t)
+	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 1, Instance: "a"},
+		ExpiryTime: clk.Now().Add(time.Hour).Format(time.RFC3339Nano)})
+	advance(t, s, clk, 2*time.Hour)
+	got := getBackups(t, s, "proj-one", "")
+	if len(got) != 1 {
+		t.Fatalf("backups %d, want the on-demand backup kept", len(got))
+	}
+	if got[0].ExpiryTime != "" {
+		t.Errorf("list: expiryTime %q, want none", got[0].ExpiryTime)
+	}
+	if _, body := call(s, "GET", "/projects/proj-one/backups/1", ""); strings.Contains(body, "expiryTime") {
+		t.Errorf("get: %s, want no expiryTime", body)
+	}
+}
+
+func TestOnDemandBackupWithAnExpiryIsRefused(t *testing.T) {
+	s, clk := clockService(t)
+	putInstance(t, s, "proj-one", "a", false)
+	at := clk.Now().Add(time.Hour).Format(time.RFC3339Nano)
+	for _, req := range []string{
+		`{"instance":"a","ttlDays":"1"}`,
+		`{"instance":"a","expiryTime":"` + at + `"}`,
+	} {
+		code, body := call(s, "POST", "/projects/proj-one/backups", req)
+		if code != 400 || !strings.Contains(body, "INVALID_ARGUMENT") || !strings.Contains(body, "on-demand backup") {
+			t.Errorf("insert %s: %d %s, want 400 INVALID_ARGUMENT naming an on-demand backup", req, code, body)
+		}
+	}
+	if got := listIDs(t, s, "proj-one", "", ""); len(got) != 0 {
+		t.Errorf("backups %v, want none", got)
+	}
+	if _, body := call(s, "GET", "/projects/proj-one/operations", ""); strings.Contains(body, "BACKUP_VOLUME") {
+		t.Errorf("a refused insert started an operation: %s", body)
+	}
+
+	code, body := call(s, "POST", "/projects/proj-one/backups", `{"instance":"a"}`)
+	if code != 200 || !strings.Contains(body, "BACKUP_VOLUME") {
+		t.Fatalf("insert without an expiry: %d %s, want 200 BACKUP_VOLUME", code, body)
+	}
+	waitOpDone(t, s, "proj-one", body)
+	if got := getBackups(t, s, "proj-one", ""); len(got) != 1 || got[0].ExpiryTime != "" {
+		t.Errorf("after the insert: %+v, want one backup without an expiryTime", got)
+	}
+}
+
+func TestOnDemandBackupExpiryUpdateIsRefused(t *testing.T) {
+	s, clk := clockService(t)
+	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 1, Instance: "a", Description: "first"}})
+	at := clk.Now().Add(time.Hour).Format(time.RFC3339Nano)
+	for _, c := range []struct{ mask, body string }{
+		{"ttlDays", `{"ttlDays":"1"}`},
+		{"ttl_days", `{"ttlDays":"1"}`},
+		{"expiryTime", `{"expiryTime":"` + at + `"}`},
+		{"expiry_time", `{"expiryTime":"` + at + `"}`},
+		{"description,ttlDays", `{"description":"changed","ttlDays":"1"}`},
+	} {
+		code, body := call(s, "PATCH", "/projects/proj-one/backups/1?updateMask="+c.mask, c.body)
+		if code != 400 || !strings.Contains(body, "INVALID_ARGUMENT") || !strings.Contains(body, "final backup") {
+			t.Errorf("updateMask=%s: %d %s, want 400 INVALID_ARGUMENT naming a final backup", c.mask, code, body)
+		}
+	}
+	if _, body := call(s, "GET", "/projects/proj-one/operations", ""); strings.Contains(body, "UPDATE_BACKUP") {
+		t.Errorf("a refused update started an operation: %s", body)
+	}
+	b := getBackups(t, s, "proj-one", "")[0]
+	if b.Description != "first" || b.ExpiryTime != "" {
+		t.Errorf("after the refused updates: description %q, expiryTime %q; want first and none", b.Description, b.ExpiryTime)
+	}
+
+	code, body := call(s, "PATCH", "/projects/proj-one/backups/1?updateMask=description", `{"description":"second"}`)
+	if code != 200 || !strings.Contains(body, "UPDATE_BACKUP") {
+		t.Fatalf("updateMask=description: %d %s, want 200 UPDATE_BACKUP", code, body)
+	}
+	waitOpDone(t, s, "proj-one", body)
+	if b := getBackups(t, s, "proj-one", "")[0]; b.Description != "second" {
+		t.Errorf("description %q, want second", b.Description)
+	}
+}
+
 func TestBackupExpiresTTLDaysAfterTheUpdate(t *testing.T) {
 	s, clk := clockService(t)
-	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 1, Instance: "a"}})
+	putBackup(t, s, "proj-one", finalBackup(1, clk.Now()))
 	if code, body := call(s, "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"1"}`); code != 200 {
 		t.Fatalf("update: %d %s", code, body)
 	}
@@ -191,7 +278,7 @@ func TestBackupExpiresTTLDaysAfterTheUpdate(t *testing.T) {
 
 func TestBackupWithAPastExpiryGoesOnTheNextSweep(t *testing.T) {
 	s, clk := clockService(t)
-	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 1, Instance: "a"}})
+	putBackup(t, s, "proj-one", finalBackup(1, clk.Now().Add(-48*time.Hour)))
 	past := clk.Now().Add(-24 * time.Hour).Format(time.RFC3339Nano)
 	if code, body := call(s, "PATCH", "/projects/proj-one/backups/1?updateMask=expiryTime", `{"expiryTime":"`+past+`"}`); code != 200 {
 		t.Fatalf("update: %d %s", code, body)
@@ -213,11 +300,15 @@ func TestExpiredBackupsAreDeletedWhenTheClockAdvances(t *testing.T) {
 		return p
 	}
 	expiring := dump("1.sql")
-	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 1, Instance: "a"}, File: expiring,
-		ExpiryTime: start.Add(24 * time.Hour).Format(time.RFC3339Nano)})
-	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 2, Instance: "a", Status: "RUNNING"},
-		ExpiryTime: start.Add(-time.Hour).Format(time.RFC3339Nano)})
-	putBackup(t, s, "proj-one", &backupRecord{Run: &sqladmin.BackupRun{Id: 3, Instance: "a"}, File: dump("3.sql")})
+	b1 := finalBackup(1, start)
+	b1.File, b1.ExpiryTime = expiring, start.Add(24*time.Hour).Format(time.RFC3339Nano)
+	putBackup(t, s, "proj-one", b1)
+	b2 := finalBackup(2, start)
+	b2.Run.Status, b2.ExpiryTime = "RUNNING", start.Add(-time.Hour).Format(time.RFC3339Nano)
+	putBackup(t, s, "proj-one", b2)
+	b3 := finalBackup(3, start)
+	b3.File = dump("3.sql")
+	putBackup(t, s, "proj-one", b3)
 
 	advance(t, s, clk, 23*time.Hour)
 	if got := listIDs(t, s, "proj-one", "", ""); !slices.Equal(got, []string{"1", "2", "3"}) {
@@ -240,7 +331,7 @@ func TestExpiredBackupsAreDeletedWhenTheClockAdvances(t *testing.T) {
 		t.Errorf("expiry recorded an operation: %s", body)
 	}
 
-	if err := s.updateBackupRecord("proj-one", "a", 2, func(b *backupRecord) { b.Run.Status = "SUCCESSFUL" }); err != nil {
+	if err := s.updateBackupRecord("proj-one", b2.owner(), 2, func(b *backupRecord) { b.Run.Status = "SUCCESSFUL" }); err != nil {
 		t.Fatal(err)
 	}
 	advance(t, s, clk, 0)

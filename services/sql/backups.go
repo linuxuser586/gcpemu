@@ -279,9 +279,9 @@ func (s *Service) backupFile(project, owner string, id int64) (string, error) {
 // the BACKUP_VOLUME operation that fills it: a pg_dumpall with the API's
 // users and databases and, with point-in-time recovery enabled, a base
 // backup that later recoveries can start from.
-func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, description, expiry string) (*sqladmin.Operation, error) {
+func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, description string) (*sqladmin.Operation, error) {
 	project, name := rec.Instance.Project, rec.Instance.Name
-	b := &backupRecord{Run: s.newBackupRun(rec, "ON_DEMAND", description), ExpiryTime: expiry}
+	b := &backupRecord{Run: s.newBackupRun(rec, "ON_DEMAND", description)}
 	if err := s.storeNewBackup(project, b); err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (s *Service) insertBackupRun(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	op, err := s.startBackup(r.Context(), rec, req.Description, "")
+	op, err := s.startBackup(r.Context(), rec, req.Description)
 	if err != nil {
 		apierr.Write(w, err)
 		return

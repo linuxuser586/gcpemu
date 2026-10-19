@@ -310,28 +310,19 @@ func TestDeleteTakesAFinalBackupAndRetainsBackups(t *testing.T) {
 	}
 }
 
-func TestRetainedBackupExpiryUpdateIsNotCappedFromTheDeletion(t *testing.T) {
-	const day = 24 * time.Hour
-	s, clk := fileService(t)
+func TestRetainedBackupExpiryUpdateIsRefused(t *testing.T) {
+	s, _ := fileService(t)
 	putRetainingInstance(t, s, "proj-one", "a", true)
 	putBackupWithFile(t, s, "proj-one", &sqladmin.BackupRun{Id: 1, Instance: "a"})
 	deleteAndWait(t, s, "proj-one", "a", "")
-	clk.Advance(100 * day)
 
-	// 300 days from now is 400 days after the deletion: past a Final
-	// backup's cap, within an on-demand backup's.
-	before := clk.Now().UTC()
+	// A Retained backup is an on-demand backup, which has no expiry.
 	code, body := call(s, "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"300"}`)
-	if code != 200 {
-		t.Fatalf("update: %d %s, want 200", code, body)
+	if code != 400 || !strings.Contains(body, "final backup") {
+		t.Fatalf("update: %d %s, want 400 naming a final backup", code, body)
 	}
-	if op := waitOpDone(t, s, "proj-one", body); op.Error != nil {
-		t.Fatalf("update: %+v", op.Error.Errors[0])
-	}
-	b := getBackups(t, s, "proj-one", "")[0]
-	at, err := time.Parse(time.RFC3339Nano, b.ExpiryTime)
-	if err != nil || at.Before(before.Add(300*day)) || at.After(clk.Now().Add(300*day)) {
-		t.Errorf("expiryTime %q, want 300 days after the update", b.ExpiryTime)
+	if b := getBackups(t, s, "proj-one", "")[0]; b.ExpiryTime != "" {
+		t.Errorf("expiryTime %q, want none", b.ExpiryTime)
 	}
 }
 

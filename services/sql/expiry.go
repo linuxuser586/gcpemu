@@ -10,10 +10,10 @@ import (
 )
 
 // Backup expiry (FR-SQL-008), on the emulator clock: a periodic sweep and
-// ClockAdvanced delete, with their dumps, the backups whose expiryTime is
-// not after the clock. Like Cloud SQL it records no operation. A backup
-// still being taken, or held by a restore about to read it, is kept until
-// a later sweep.
+// ClockAdvanced delete, with their dumps, the Final backups whose
+// expiryTime is not after the clock. Like Cloud SQL it records no
+// operation. A backup still being taken, or held by a restore about to
+// read it, is kept until a later sweep.
 
 // expirySweepInterval is how often expired backups are deleted without a
 // clock advance.
@@ -40,12 +40,22 @@ func (s *Service) expiryLoop(ctx context.Context) {
 	}
 }
 
+// expiry is b's expiryTime, "" for none. Only a Final backup expires, as
+// in Cloud SQL; an on-demand backup's stored expiryTime, as an older state
+// snapshot can hold, is ignored.
+func (b *backupRecord) expiry() string {
+	if b.Run.Type != "FINAL" {
+		return ""
+	}
+	return b.ExpiryTime
+}
+
 // expired reports whether b is due for deletion at now.
 func (b *backupRecord) expired(now time.Time) bool {
-	if b.ExpiryTime == "" || b.Run.Status == "RUNNING" || b.Run.Status == "ENQUEUED" {
+	if b.expiry() == "" || b.Run.Status == "RUNNING" || b.Run.Status == "ENQUEUED" {
 		return false
 	}
-	t, err := time.Parse(time.RFC3339Nano, b.ExpiryTime)
+	t, err := time.Parse(time.RFC3339Nano, b.expiry())
 	return err == nil && !t.After(now)
 }
 
