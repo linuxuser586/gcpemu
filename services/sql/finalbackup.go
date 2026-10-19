@@ -12,14 +12,18 @@ import (
 // Final backups (FR-SQL-008, #407): instances.delete can take a backup of
 // the Cloud SQL instance it deletes, asked for by enableFinalBackup or by
 // settings.finalBackupConfig. It is a pg_dumpall like an on-demand backup,
-// taken before the runtime objects go (a stopped instance's container is
-// started for it), and outlives the instance. A dump that fails leaves a
-// FAILED Final backup and the instance is deleted anyway, as in Cloud SQL.
+// taken before the runtime objects go, and outlives the instance. Any
+// instance not running has its container started for it: a stopped one,
+// and a FAILED or SUSPENDED one too, since its data volume is kept and
+// the start often recovers it. A dump that fails leaves a FAILED Final
+// backup and the instance is deleted anyway, as in Cloud SQL.
 //
 // A Final backup is stored under "P/I@final/backupKey" and its dump under
 // backups/P/I@final: instance names cannot contain "@", so neither the
 // instance's teardown nor a later Cloud SQL instance of the same name sees
-// it as one of its backup runs.
+// it as one of its backup runs. Its permissions are still checked on the
+// instance's resource name, so a later instance's IAM policy governs it,
+// as IAM conditions on resource.name would in Cloud SQL.
 
 // finalSuffix marks the key segment of a Final backup's deleted instance.
 const finalSuffix = "@final"
