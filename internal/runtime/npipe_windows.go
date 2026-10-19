@@ -9,7 +9,9 @@ import (
 )
 
 // pipeDialer dials the named pipe at addr, e.g. "//./pipe/docker_engine".
-// go-winio retries a busy pipe until ctx is done.
+// go-winio retries a busy pipe until ctx is done. Its connection can close
+// its write side (ending an exec's stdin) only on a message-mode pipe, which
+// is what Docker Engine and Docker Desktop serve.
 func pipeDialer(addr string) (func(context.Context) (net.Conn, error), error) {
 	p := strings.ReplaceAll(addr, "/", `\`)
 	return func(ctx context.Context) (net.Conn, error) { return winio.DialPipeContext(ctx, p) }, nil

@@ -15,10 +15,16 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
+// testPipe returns a fresh pipe name and its npipe:// endpoint.
+func testPipe() (name, endpoint string) {
+	name = fmt.Sprintf(`\\.\pipe\gcpemu-test-%d`, time.Now().UnixNano())
+	return name, "npipe://" + strings.ReplaceAll(name, `\`, "/")
+}
+
 // pipeDaemon serves h on a fresh named pipe and returns its npipe:// endpoint.
 func pipeDaemon(t *testing.T, h http.Handler) string {
 	t.Helper()
-	name := fmt.Sprintf(`\\.\pipe\gcpemu-test-%d`, time.Now().UnixNano())
+	name, ep := testPipe()
 	l, err := winio.ListenPipe(name, &winio.PipeConfig{MessageMode: true})
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +32,7 @@ func pipeDaemon(t *testing.T, h http.Handler) string {
 	srv := &http.Server{Handler: h}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	return "npipe://" + strings.ReplaceAll(name, `\`, "/")
+	return ep
 }
 
 // TestNamedPipeInfo: a client for an npipe:// endpoint talks to the daemon
@@ -94,8 +100,8 @@ func TestNamedPipeExecDeadline(t *testing.T) {
 	}()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Error("Exec succeeded, want an error")
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Exec = %v, want context.DeadlineExceeded", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Exec still running 5s after its deadline")
@@ -105,14 +111,14 @@ func TestNamedPipeExecDeadline(t *testing.T) {
 // TestNamedPipeDialDeadline: a deadline aborts a dial to a pipe whose
 // instances are all busy.
 func TestNamedPipeDialDeadline(t *testing.T) {
-	name := fmt.Sprintf(`\\.\pipe\gcpemu-test-%d`, time.Now().UnixNano())
+	name, ep := testPipe()
 	l, err := winio.ListenPipe(name, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.Close()
 	// Nothing accepts, so every instance of the pipe is busy.
-	cl, err := New("npipe://" + strings.ReplaceAll(name, `\`, "/"))
+	cl, err := New(ep)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +175,7 @@ func TestNamedPipeDaemon(t *testing.T) {
 			defer cancel()
 			in, err := cl.Info(ctx)
 			if err != nil {
-				t.Skipf("no engine answers on %s: %v", pipe, err)
+				t.Fatal(err)
 			}
 			if in.Version == "" {
 				t.Errorf("Info = %+v, want a version", in)
