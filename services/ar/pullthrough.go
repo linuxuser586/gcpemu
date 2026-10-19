@@ -69,12 +69,21 @@ func (s *Service) SetMirrorTagTTL(d time.Duration) {
 	s.mu.Unlock()
 }
 
-// background returns the context upstream fetches run under; it is
-// cancelled when the service stops.
-func (s *Service) background() context.Context {
+// upstreamFetch runs fn, an upstream manifest fetch, on the background
+// context, bounded by fetchTimeout. Reset cancels it and waits for it, as
+// for blob downloads, so it stores nothing afterwards (#306); while the
+// Instance resets it fails.
+func (s *Service) upstreamFetch(fn func(ctx context.Context) (any, error)) (any, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.bgCtx
+	bg, ok := s.enterFetchLocked()
+	s.mu.Unlock()
+	if !ok {
+		return nil, errResetting
+	}
+	defer s.fetchRuns.Exit()
+	ctx, cancel := context.WithTimeout(bg, fetchTimeout)
+	defer cancel()
+	return fn(ctx)
 }
 
 func (s *Service) offline() bool { return s.env.Config.Offline }
@@ -89,7 +98,7 @@ func (s *Service) tagTTLValue() time.Duration {
 // fetchable because the emulator is offline.
 var errNotCached = errors.New("not cached and the emulator is offline")
 
-// errResetting is returned for a blob fetch asked for while the Instance
+// errResetting is returned for an upstream fetch asked for while the Instance
 // resets.
 var errResetting = errors.New("the emulator is resetting")
 
@@ -107,9 +116,7 @@ func (s *Service) ptManifest(pt *pullThrough, ref string) (*manifestRec, []byte,
 			return nil, nil, errNotCached
 		}
 		v, err := s.flights.do("m|"+pt.scope.key()+"|"+pt.img+"|"+ref, func() (any, error) {
-			ctx, cancel := context.WithTimeout(s.background(), fetchTimeout)
-			defer cancel()
-			return s.fetchManifest(ctx, pt, ref, "")
+			return s.upstreamFetch(func(ctx context.Context) (any, error) { return s.fetchManifest(ctx, pt, ref, "") })
 		})
 		if err != nil {
 			return nil, nil, err
@@ -134,9 +141,7 @@ func (s *Service) ptManifest(pt *pullThrough, ref string) (*manifestRec, []byte,
 		return nil, nil, errNotCached
 	}
 	v, err := s.flights.do("t|"+pt.scope.key()+"|"+pt.img+"|"+ref, func() (any, error) {
-		ctx, cancel := context.WithTimeout(s.background(), fetchTimeout)
-		defer cancel()
-		return s.revalidateTag(ctx, pt, ref, cm)
+		return s.upstreamFetch(func(ctx context.Context) (any, error) { return s.revalidateTag(ctx, pt, ref, cm) })
 	})
 	if err != nil {
 		if cm != nil && !isNotFound(err) {
@@ -465,6 +470,18 @@ type scopeImg struct {
 	img   string
 }
 
+// enterFetchLocked counts an upstream fetch that starts, for Reset to wait
+// for, and returns the context it runs under; it reports false while the
+// Instance resets. The fetch calls s.fetchRuns.Exit when it returns.
+// Callers hold s.mu.
+func (s *Service) enterFetchLocked() (context.Context, bool) {
+	if s.resetting {
+		return nil, false
+	}
+	s.fetchRuns.Enter()
+	return s.bgCtx, true
+}
+
 // joinFetch returns the in-flight fetch for digest, starting one if none
 // is running, with a reference held for the caller. While the Instance
 // resets, the fetch returned has failed.
@@ -474,13 +491,11 @@ func (s *Service) joinFetch(pt *pullThrough, digest string) *blobFetch {
 	f := s.fetches[digest]
 	if f == nil {
 		f = &blobFetch{s: s, digest: digest, ready: make(chan struct{}), size: -1, notify: make(chan struct{}), refs: 1}
-		if s.resetting {
+		if ctx, ok := s.enterFetchLocked(); !ok {
 			f.done, f.err = true, errResetting
 			close(f.ready)
 		} else {
 			s.fetches[digest] = f
-			s.fetchRuns.Enter()
-			ctx := s.bgCtx
 			go func() {
 				defer s.fetchRuns.Exit()
 				f.run(ctx, pt.up)

@@ -105,8 +105,8 @@ type Service struct {
 	fetches      map[string]*blobFetch
 	bgCtx        context.Context
 	bgCancel     context.CancelFunc
-	fetchRuns    inflight.Tracker // running blob downloads, waited for by Reset
-	resetting    bool             // no blob download starts while set
+	fetchRuns    inflight.Tracker // running upstream fetches, waited for by Reset
+	resetting    bool             // no upstream fetch starts while set
 }
 
 // New returns the service.
@@ -275,9 +275,11 @@ func (s *Service) IsStoreCache(ns, key string) bool {
 }
 
 // Reset drops pending operations, waiting for running ones (#301), stops
-// upstream fetches and waits for them, so none writes to the blob store
-// while it is emptied (#397), and removes every blob and upload; the
-// store is reset by the instance.
+// upstream fetches (blob downloads and manifests) and waits for them, so
+// none writes to the blob store while it is emptied (#397) or caches
+// anything afterwards (#306), and removes every blob and upload; the
+// store is reset by the Instance. Fetches after Reset run on a fresh
+// background context.
 func (s *Service) Reset(ctx context.Context) error {
 	err := s.ops.Reset(ctx)
 	s.mu.Lock()
