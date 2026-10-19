@@ -144,6 +144,38 @@ func TestLoopbackWithoutAliases(t *testing.T) {
 	queryVia(t, d, third.ConnectionName, "postgres", "rootpw", "postgres")
 }
 
+// TestLoopbackLocalPostgres: through the VM relay, a local PostgreSQL on
+// 127.0.0.1:5432 doesn't keep an instance off 127.0.0.1, which then
+// serves connectors on 3307 only.
+func TestLoopbackLocalPostgres(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Setenv(vmrelay.Env, "1")
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithSQLHostClients())
+	if l, err := net.Listen("tcp", "127.0.0.1:3307"); err != nil {
+		t.Skipf("127.0.0.1:3307 is taken: %v", err)
+	} else {
+		l.Close()
+	}
+	if l, err := net.Listen("tcp", "127.0.0.1:5432"); err == nil {
+		t.Cleanup(func() { l.Close() })
+	} // else another process holds it already
+	svcMod, _ := inst.Env.Lookup("sql")
+	sql.SetLoopbackAliases(svcMod, false)
+	svc := adminClient(t, inst)
+
+	in := createInstance(t, svc, publicInstance("localpg"))
+	if ip := publicIP(in); ip != "127.0.0.1" {
+		t.Fatalf("PRIMARY %s, want 127.0.0.1", ip)
+	}
+	admin := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "owner", Expiry: time.Now().Add(time.Hour)})
+	d, err := cloudsqlconn.NewDialer(context.Background(), cloudsqlconn.WithAdminAPIEndpoint(inst.GatewayURL()+"/"), cloudsqlconn.WithTokenSource(admin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	queryVia(t, d, in.ConnectionName, "postgres", "rootpw", "postgres")
+}
+
 // TestWithoutHostClients is emutest's default (#316): through the VM
 // relay on a host without loopback aliases, public instances serve no
 // host clients on a loopback address, so any number of them run, each

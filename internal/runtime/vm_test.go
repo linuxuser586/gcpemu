@@ -42,3 +42,41 @@ func TestDecideVM(t *testing.T) {
 		t.Errorf("String() = %q", got)
 	}
 }
+
+// A Containerized Instance on a VM runtime uses loopback aliases for Cloud
+// SQL only where the runtime forwards them, or where the setting says so
+// (ADR 0012): "auto" says yes only on Docker Desktop, since OrbStack and
+// Colima accept a 127.0.0.x binding and never forward it.
+func TestDecideLoopbackAliases(t *testing.T) {
+	desktop := Info{OS: "Docker Desktop", Kernel: "6.10.14-linuxkit"}
+	orb := Info{OS: "OrbStack", Kernel: "6.12.5-orbstack-00287-gf8da5d508983"}
+	colima := Info{OS: "Ubuntu 24.04.1 LTS", Kernel: "6.8.0-45-generic"}
+	for _, tc := range []struct {
+		name, setting string
+		info          Info
+		want          bool
+		reason        string
+	}{
+		{"auto on docker desktop", "auto", desktop, true, "Docker Desktop"},
+		{"default on docker desktop by kernel", "", Info{Kernel: "6.10.14-linuxkit"}, true, "linuxkit"},
+		{"auto on orbstack", "auto", orb, false, "OrbStack"},
+		{"auto on an unknown runtime", "auto", colima, false, "Ubuntu"},
+		{"auto without info", "AUTO", Info{}, false, "unknown"},
+		{"forced on", "true", orb, true, LoopbackAliasesEnv},
+		{"forced off", "false", desktop, false, LoopbackAliasesEnv},
+		{"invalid is auto", "yes", orb, false, "OrbStack"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := DecideLoopbackAliases(tc.setting, tc.info)
+			if d.On != tc.want || !strings.Contains(d.Reason, tc.reason) {
+				t.Errorf("DecideLoopbackAliases(%q, %+v) = %+v; want On=%v, reason naming %q", tc.setting, tc.info, d, tc.want, tc.reason)
+			}
+			if !d.On && tc.setting != "false" && !strings.Contains(d.Reason, LoopbackAliasesEnv+"=true") {
+				t.Errorf("reason %q does not say how to turn it on", d.Reason)
+			}
+		})
+	}
+	if got := (AliasDecision{On: true, Reason: "x"}).String(); got != "yes (x)" {
+		t.Errorf("String() = %q", got)
+	}
+}

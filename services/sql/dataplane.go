@@ -213,6 +213,26 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	}
 	hostPort := s.allocHostPort(project, name, rec.HostPort)
 	publicIP := rec.PublicIP
+	// On a VM runtime a Containerized Instance publishes the instance's
+	// ports for host clients on a loopback address (loopback.go). The
+	// address is allocated, and held, until the container has started.
+	var lp *loopPublish
+	if public && rt.VM.On && s.hostClients() {
+		s.loopMu.Lock()
+		defer func() {
+			if lp != nil {
+				s.loopMu.Unlock()
+			}
+		}()
+		lp, err = newLoopPublish(s.containerAliases(rt),
+			func(aliases bool) []string { return s.loopCandidates(rec, aliases) },
+			func() error { return errNoLoopback(s.loopHolder(project, name, loopbackHost), true) })
+		if err != nil {
+			s.loopMu.Unlock()
+			lp = nil
+			return err
+		}
+	}
 	var id string
 	for attempt := 0; ; attempt++ {
 		nets := []runtime.Attachment{{Network: svc.Name}}
@@ -252,6 +272,9 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 			Init:   true,
 			CapAdd: capAdd,
 		}
+		if lp != nil {
+			spec.Ports = append(spec.Ports, lp.ports()...)
+		}
 		id, err = rt.CreateContainer(ctx, spec)
 		if err != nil && publicIP != "" && attempt < 3 {
 			publicIP = "" // the previous address was taken; let the runtime pick
@@ -269,6 +292,25 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 			break
 		}
 		_ = rt.RemoveContainer(ctx, id, true)
+		if lp != nil {
+			from, refused := lp.addr(), lp.refused
+			retry, lerr := lp.retry(err)
+			if lp.refused && !refused {
+				s.aliasRefused.Store(true)
+				s.env.Log.Warn("sql: the runtime refuses loopback aliases; using "+loopbackHost+" only", "instance", project+":"+name, "err", err)
+			}
+			if lerr != nil {
+				return lerr
+			}
+			if retry {
+				if lp.addr() != from {
+					s.env.Log.Warn("sql: loopback address unavailable; moved", "instance", project+":"+name, "from", from, "to", lp.addr(), "err", err)
+				} else {
+					s.env.Log.Warn("sql: port 5432 is taken; serving host clients on 3307 only", "instance", project+":"+name, "addr", from, "err", err)
+				}
+				continue
+			}
+		}
 		msg := strings.ToLower(err.Error())
 		// The runtime says "Address already in use" both for a taken
 		// container address and for a taken host port: drop the recorded
@@ -286,6 +328,21 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 			return err
 		}
 		if hostPort = s.allocHostPort(project, name, 0); hostPort == 0 {
+			return err
+		}
+	}
+	loopIP := ""
+	if lp != nil {
+		// Recorded before the lock is released, so that the next instance
+		// skips the address.
+		loopIP = lp.addr()
+		err := s.updateRecord(project, name, func(r *instanceRecord) error {
+			r.LoopIP = loopIP
+			return nil
+		})
+		s.loopMu.Unlock()
+		lp = nil
+		if err != nil {
 			return err
 		}
 	}
@@ -314,12 +371,13 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	if err := s.waitReady(ctx, rt, plane, id, addr); err != nil {
 		return err
 	}
-	loopIP := ""
-	if public && relayOn(plane) && s.hostClients() {
+	switch {
+	case loopIP != "": // published with the container
+	case public && relayOn(plane) && s.hostClients():
 		if loopIP, err = s.exposeLoopback(plane, rec, publicIP); err != nil {
 			return err
 		}
-	} else {
+	default:
 		s.closeLoopback(project, name)
 	}
 	return s.updateRecord(project, name, func(r *instanceRecord) error {

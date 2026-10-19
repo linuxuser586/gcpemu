@@ -69,12 +69,16 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	}
 	cl.SetMemberAddr(c.relayAddr)
 	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
+	m.LoopbackAliases = runtime.DecideLoopbackAliases(c.in.Config.LoopbackAliases, info)
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
 	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
 	if cl.Self() != "" {
 		m.Log.Info("VM runtime " + m.VM.String())
+		if m.VM.On {
+			m.Log.Info("loopback aliases " + m.LoopbackAliases.String())
+		}
 	}
 	c.rt = m
 	return m, nil

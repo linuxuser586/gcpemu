@@ -164,6 +164,22 @@ func TestValidate(t *testing.T) {
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "GCPEMU_VM_RUNTIME") {
 		t.Errorf("VMRuntime yes: err = %v", err)
 	}
+
+	// GCPEMU_LOOPBACK_ALIASES is auto, true or false too (ADR 0012).
+	c = Defaults()
+	if c.LoopbackAliases != "auto" {
+		t.Errorf("default LoopbackAliases = %q, want auto", c.LoopbackAliases)
+	}
+	for _, ok := range []string{"auto", "true", "false", "False", ""} {
+		c.LoopbackAliases = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("LoopbackAliases %q: %v", ok, err)
+		}
+	}
+	c.LoopbackAliases = "yes"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "GCPEMU_LOOPBACK_ALIASES") {
+		t.Errorf("LoopbackAliases yes: err = %v", err)
+	}
 }
 
 func TestLRO(t *testing.T) {

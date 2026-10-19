@@ -51,3 +51,42 @@ func DecideVM(setting string, inContainer bool, info Info) VMDecision {
 	}
 	return VMDecision{Reason: "runtime OS unknown; set " + VMRuntimeEnv + "=true on a VM runtime"}
 }
+
+// LoopbackAliasesEnv names the setting for loopback aliases: "auto" (the
+// default), "true" or "false".
+const LoopbackAliasesEnv = "GCPEMU_LOOPBACK_ALIASES"
+
+// AliasDecision says whether a Containerized Instance on a VM runtime
+// publishes Cloud SQL instances on 127.0.0.2-127.0.0.254, or only on
+// 127.0.0.1, and why (ADR 0012).
+type AliasDecision struct {
+	On     bool
+	Reason string
+}
+
+// String says "yes" or "no", with the reason.
+func (d AliasDecision) String() string { return VMDecision(d).String() }
+
+// DecideLoopbackAliases chooses for a Containerized Instance on a VM
+// runtime, whose container can't see the host's loopback aliases: as
+// setting says ("true", "false"), or otherwise yes only on Docker Desktop,
+// which refuses a binding on a missing alias. OrbStack and Colima accept
+// it and never forward it, so the address would time out.
+func DecideLoopbackAliases(setting string, info Info) AliasDecision {
+	switch strings.ToLower(setting) {
+	case "true":
+		return AliasDecision{On: true, Reason: "forced by " + LoopbackAliasesEnv}
+	case "false":
+		return AliasDecision{Reason: "disabled by " + LoopbackAliasesEnv}
+	}
+	hint := "; set " + LoopbackAliasesEnv + "=true once the host has them"
+	switch {
+	case strings.Contains(strings.ToLower(info.OS), "docker desktop"):
+		return AliasDecision{On: true, Reason: "runtime OS " + info.OS}
+	case strings.Contains(strings.ToLower(info.Kernel), "linuxkit"):
+		return AliasDecision{On: true, Reason: "runtime kernel " + info.Kernel}
+	case info.OS != "":
+		return AliasDecision{Reason: "runtime OS " + info.OS + " may not forward them" + hint}
+	}
+	return AliasDecision{Reason: "runtime OS unknown" + hint}
+}

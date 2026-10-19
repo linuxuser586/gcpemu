@@ -81,8 +81,10 @@ func TestCheckRuntimeArch(t *testing.T) {
 }
 
 // In a Containerized Instance doctor prints the VM-runtime decision, and
-// on a VM runtime warns when no --port-range port is published (ADR 0012).
+// on a VM runtime the loopback-alias decision, and warns when no
+// --port-range port is published (ADR 0012).
 func TestReportVMRuntime(t *testing.T) {
+	aliases := emuruntime.AliasDecision{Reason: "disabled by GCPEMU_LOOPBACK_ALIASES"}
 	on := emuruntime.VMDecision{On: true, Reason: "runtime OS Docker Desktop"}
 	off := emuruntime.VMDecision{Reason: "runtime OS Ubuntu"}
 	ranged := map[int]string{4510: "127.0.0.1:4510", 20000: "127.0.0.1:20000", 20001: "127.0.0.1:20001"}
@@ -93,13 +95,14 @@ func TestReportVMRuntime(t *testing.T) {
 		published map[int]string
 		want, not []string
 	}{
-		{"off", off, "", nil, []string{"[ok  ] VM runtime: no (runtime OS Ubuntu)"}, []string{"WARN"}},
-		{"published", on, "20000-20019", ranged, []string{"[ok  ] VM runtime: yes (runtime OS Docker Desktop)", "2 --port-range port(s) published"}, []string{"WARN"}},
+		{"off", off, "", nil, []string{"[ok  ] VM runtime: no (runtime OS Ubuntu)"}, []string{"WARN", "loopback aliases"}},
+		{"published", on, "20000-20019", ranged, []string{"[ok  ] VM runtime: yes (runtime OS Docker Desktop)", "2 --port-range port(s) published",
+			"[ok  ] loopback aliases for Cloud SQL: no (disabled by GCPEMU_LOOPBACK_ALIASES)"}, []string{"WARN"}},
 		{"no range", on, "", ranged, []string{"[WARN]", "--port-range", "-p 127.0.0.1:"}, nil},
 		{"range unpublished", on, "21000-21019", ranged, []string{"[WARN]", "-p 127.0.0.1:21000-21019:21000-21019"}, nil},
 	} {
 		var out strings.Builder
-		reportVMRuntime(&out, tc.d, tc.portRange, tc.published)
+		reportVMRuntime(&out, tc.d, aliases, tc.portRange, tc.published)
 		for _, w := range tc.want {
 			if !strings.Contains(out.String(), w) {
 				t.Errorf("%s: output lacks %q:\n%s", tc.name, w, out.String())
@@ -180,6 +183,40 @@ func TestReportUnpublished(t *testing.T) {
 	}
 	if strings.Contains(got, "forwardingRules/a") || strings.Contains(got, "forwardingRules/c") {
 		t.Errorf("output names a served rule:\n%s", got)
+	}
+}
+
+// A running Instance lists each public Cloud SQL instance's host address,
+// and flags one that needs a loopback address and has none (ADR 0005,
+// ADR 0012).
+func TestReportSQLHosts(t *testing.T) {
+	body := `{"instances":[
+		{"instance":"p:us-central1:a","address":"127.0.0.7","loopback":true},
+		{"instance":"p:us-central1:b","loopback":true,"missing":"no free loopback address"},
+		{"instance":"p:us-central1:c","address":"172.18.0.4"}]}`
+	var out strings.Builder
+	reportSQLHosts(&out, []byte(body))
+	got := out.String()
+	for _, want := range []string{
+		"[ok  ] Cloud SQL instance p:us-central1:a: host clients reach it on 127.0.0.7",
+		"[WARN] Cloud SQL instance p:us-central1:b has no host address, so host clients cannot reach it: no free loopback address",
+		"[ok  ] Cloud SQL instance p:us-central1:c: host clients reach it on 172.18.0.4",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "refused") {
+		t.Errorf("output reports a refused loopback alias:\n%s", got)
+	}
+
+	// The runtime refused a loopback alias, so Cloud SQL now uses only
+	// 127.0.0.1, whatever the decision said.
+	out.Reset()
+	reportSQLHosts(&out, []byte(`{"instances":[],"aliasesRefused":true}`))
+	if got := out.String(); !strings.Contains(got, "[WARN] the runtime refused a loopback alias, so Cloud SQL instances use only 127.0.0.1") ||
+		!strings.Contains(got, "sudo gcpemu loopback install") {
+		t.Errorf("output lacks the refusal and its fix:\n%s", got)
 	}
 }
 

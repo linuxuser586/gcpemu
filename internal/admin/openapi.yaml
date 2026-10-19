@@ -844,6 +844,33 @@ paths:
               schema: { $ref: "#/components/schemas/NatSink" }
         "400": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /_emu/v1/sql/hosts:
+    get:
+      summary: How host clients reach each running public Cloud SQL instance (sql service; gcpemu doctor).
+      operationId: sqlHosts
+      description: >-
+        Where the host can't reach an instance's public IP (a VM runtime,
+        ADR 0005 and ADR 0012), the address is the loopback address the
+        instance serves ports 3307 and 5432 on, and an instance without one
+        is listed with why. Otherwise it is the instance's public IP.
+      responses:
+        "200":
+          description: The public instances, by connection name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [instances]
+                properties:
+                  instances:
+                    type: array
+                    items: { $ref: "#/components/schemas/SqlHost" }
+                  aliasesRefused:
+                    type: boolean
+                    description: >-
+                      The runtime refused to publish on a loopback alias, so
+                      a Containerized Instance uses only 127.0.0.1 until it
+                      restarts, whatever GCPEMU_LOOPBACK_ALIASES says.
   /_emu/v1/ca/rotate:
     post:
       summary: Replace the instance CA and re-issue managed certificates (`gcpemu ca rotate`; certs service).
@@ -1275,6 +1302,14 @@ components:
             loopback is 127.0.0.x on the rule's port, edge the lb-edge
             container (privileged ports), fallback 127.0.0.x on a high port.
         https: { type: boolean }
+    SqlHost:
+      type: object
+      required: [instance]
+      properties:
+        instance: { type: string, description: "The instance's connection name, PROJECT:REGION:NAME." }
+        address: { type: string, description: The address host clients dial; absent when the instance has none. }
+        loopback: { type: boolean, description: The address is a loopback address standing in for the public IP. }
+        missing: { type: string, description: Why the instance has no address. }
     LbUnavailable:
       type: object
       required: [forwardingRule, ipAddress, port, error]
