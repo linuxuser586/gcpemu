@@ -51,8 +51,12 @@ Client-side configuration (an env var, provider setting or SDK option) that poin
 A request that a client configured against an Instance still sends to a real Google host, because no Endpoint override or Host mode covers it.
 _Avoid_: leak, outbound call
 
+**Read-through**:
+A read of a bucket the Instance doesn't have that the Google front end makes from real Cloud Storage for a caller on a `--gfe-bind` address carrying none of the Instance's credentials, such as the Go module proxy's downloads (ADR 0021).
+_Avoid_: escape, passthrough, proxying (unqualified)
+
 **Invalid universe**:
-The universe domain `gcpemu.invalid` that the emulator gives clients, so that an API with no Endpoint override goes to a host that can never resolve and fails loudly instead of becoming an Escaped request. It does not reach hosts a client hard-codes outside any universe, such as the mTLS endpoints some libraries hard-code. Service-account keys the emulator issues and the metadata server that host processes use belong to it, and gcloud refuses credentials stored for real Google.
+The universe domain `gcpemu.invalid` that the emulator gives clients, so that an API with no Endpoint override goes to a host that can never resolve and fails loudly instead of becoming an Escaped request. It does not reach hosts a client hard-codes outside any universe, such as the mTLS endpoints some libraries hard-code. Service-account keys created at the API gateway's address and the metadata server that host processes use belong to it, and gcloud refuses credentials stored for real Google. Keys created through the Google front end belong to Google's universe instead, since their clients reach the Instance by Google's hostnames (ADR 0021).
 _Avoid_: fake universe, emulator universe
 
 **Foreign credentials**:
@@ -68,7 +72,7 @@ A way of running an Instance so that it answers on real Google hostnames, using 
 _Avoid_: "mode" for anything else
 
 **Google front end**:
-The component that terminates TLS for real Google hostnames in Host mode and hands requests to the API gateway. Its in-container piece is the *host-mode relay*. With `--gfe-bind` it also serves another machine on the LAN, to real credentials only (ADR 0021).
+The component that terminates TLS for real Google hostnames in Host mode and hands requests to the API gateway. Its in-container piece is the *host-mode relay*. With `--gfe-bind` it also serves another machine on the LAN, to real credentials only, and makes Read-throughs there (ADR 0021).
 _Avoid_: frontend (unqualified)
 
 **Managed container**:

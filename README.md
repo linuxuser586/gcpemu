@@ -262,11 +262,12 @@ this. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
   a pod or Host mode) has `token_uri` `https://oauth2.googleapis.com/token` and
   `universe_domain` `googleapis.com`, so it works unmodified on the other machine. Keys created at
   the API gateway's address keep the gateway's `token_uri` and the Invalid universe. To make one
-  on the emulator's machine, call `iam.googleapis.com` through the Google front end, for instance in
-  Host mode.
+  on the emulator's machine, call `iam.googleapis.com` through the Google front end in Host mode.
+  With OpenTofu, set `iam_custom_endpoint = "https://iam.googleapis.com/v1/"` in the provider
+  that creates the `google_service_account_key`.
 - A read of a bucket the Instance doesn't have that carries none of the Instance's credentials,
-  such as the Go module proxy's downloads from `proxy-golang-org-prod`, is read through from real
-  Cloud Storage. This is the one case in which the emulator calls Google, and it never does with
+  such as the Go module proxy's downloads from `proxy-golang-org-prod`, is a Read-through: the
+  Instance reads it from real Cloud Storage. This is the one case in which the emulator calls Google, and it never does with
   `--offline`.
 - The admin API and the Web console are not served there.
 
