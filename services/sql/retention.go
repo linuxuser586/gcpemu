@@ -15,6 +15,9 @@ import (
 // ones are dropped, and so is every archived WAL segment before the oldest
 // kept Base backup's start segment. Timeline history files are always kept.
 
+// defaultLogRetentionDays is transactionLogRetentionDays when unset.
+const defaultLogRetentionDays = 7
+
 // baseBackup is one Base backup in a WAL archive.
 type baseBackup struct {
 	// End is PostgreSQL's clock (Unix microseconds) once the backup was

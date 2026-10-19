@@ -14,6 +14,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/services/sql"
+	"github.com/linuxuser586/gcpemu/services/sql/proxy"
 )
 
 // TestBackupsAPIAndPointInTimeClone covers FR-SQL-008: the backups API
@@ -90,7 +91,7 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 		t.Helper()
 		end := now.AddDate(0, 0, -days).UnixMicro()
 		if _, err := sql.ExecIn(ctx, sqlSvc, testProject, "pitr", "mv",
-			"/var/lib/gcpemu-archive/base/"+strconv.FormatInt(b.End, 10), "/var/lib/gcpemu-archive/base/"+strconv.FormatInt(end, 10)); err != nil {
+			proxy.ArchiveDir+"/base/"+strconv.FormatInt(b.End, 10), proxy.ArchiveDir+"/base/"+strconv.FormatInt(end, 10)); err != nil {
 			t.Fatal(err)
 		}
 		return end
@@ -133,7 +134,7 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 	if err != nil || len(bases) != 2 {
 		t.Fatalf("source Base backups = %+v, %v", bases, err)
 	}
-	out, err := sql.ExecIn(ctx, sqlSvc, testProject, "pitr-clone", "ls", "-1", "/gcpemu/restore/wal")
+	out, err := sql.ExecIn(ctx, sqlSvc, testProject, "pitr-clone", "ls", "-1", proxy.Dir+"/restore/wal")
 	if err != nil || strings.TrimSpace(out) == "" {
 		t.Fatalf("WAL in the clone's restore bundle: %q, %v", out, err)
 	}

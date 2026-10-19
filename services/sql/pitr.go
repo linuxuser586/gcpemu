@@ -26,7 +26,7 @@ import (
 // the backup was complete: one when the instance is created or PITR is
 // turned on (the earliest recovery time), and one with every backup.
 // Transaction log retention (retention.go) prunes the WAL archive after
-// every base backup and before the recovery window is read or a restore
+// every Base backup and before the Recovery window is read or a restore
 // bundle is built, always under the instance's lock.
 //
 // A clone with pointInTime archives the source's current WAL segment, packs
@@ -197,7 +197,7 @@ func (s *Service) pruneArchive(ctx context.Context, project, name string) (walAr
 	if err != nil {
 		return walArchive{}, err
 	}
-	days := int64(7)
+	days := int64(defaultLogRetentionDays)
 	if bc := rec.Instance.Settings.BackupConfiguration; bc != nil && bc.TransactionLogRetentionDays > 0 {
 		days = bc.TransactionLogRetentionDays
 	}
@@ -224,9 +224,8 @@ func (s *Service) pruneArchive(ctx context.Context, project, name string) (walAr
 	return a, nil
 }
 
-// recoveryWindow prunes the WAL archive and returns the earliest and
-// latest times the instance can be recovered to: the end of its oldest
-// base backup and now.
+// recoveryWindow prunes the WAL archive and returns the Recovery window:
+// the end of the instance's oldest Base backup and now.
 func (s *Service) recoveryWindow(ctx context.Context, project, name string) (earliest, latest time.Time, err error) {
 	mu := s.lock(project, name)
 	defer mu.Unlock()
@@ -277,7 +276,9 @@ func (s *Service) archiveNow(ctx context.Context, project, name string) error {
 // source's data as of target (proxy/restore.go), and a function that
 // removes the bundle's temporary file once the container has them. It
 // holds the source's lock, so that no prune removes what the bundle is
-// built from.
+// built from. A clone's operation already holds the destination's lock;
+// nothing takes the two in the other order, since nothing can clone from
+// a destination still being created.
 func (s *Service) restoreBundle(ctx context.Context, project, src string, target time.Time) ([]runtime.File, func(), error) {
 	mu := s.lock(project, src)
 	defer mu.Unlock()
@@ -332,7 +333,7 @@ func (s *Service) stageBundle(ctx context.Context, project, src string, base bas
 	if err != nil {
 		return "", newOpError("INTERNAL_ERROR", "stage restore bundle: %v", err)
 	}
-	err = copyArchived(ctx, rt, containerName(rt, project, src), stagedBundle, f)
+	err = copyFileFrom(ctx, rt, containerName(rt, project, src), stagedBundle, f)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -343,8 +344,8 @@ func (s *Service) stageBundle(ctx context.Context, project, src string, base bas
 	return f.Name(), nil
 }
 
-// copyArchived streams the single file p in container id to w.
-func copyArchived(ctx context.Context, rt *runtime.Manager, id, p string, w io.Writer) error {
+// copyFileFrom streams the single file p in container id to w.
+func copyFileFrom(ctx context.Context, rt *runtime.Manager, id, p string, w io.Writer) error {
 	pr, pw := io.Pipe()
 	go func() { pw.CloseWithError(rt.ArchiveFrom(ctx, id, p, pw)) }()
 	defer pr.Close()
