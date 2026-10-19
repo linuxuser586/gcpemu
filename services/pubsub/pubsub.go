@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 )
@@ -271,7 +272,9 @@ func (s *Service) ClockAdvanced(ctx context.Context) error {
 }
 
 // tickLoop expires leases, promotes delayed redeliveries, samples the
-// backlog for Cloud Monitoring and runs retention garbage collection.
+// backlog for Cloud Monitoring and runs retention garbage collection. Leases
+// run on wall time; sampling and GC peek at the emulator clock so wall time
+// never advances a fake clock.
 func (s *Service) tickLoop() {
 	defer s.wg.Done()
 	t := time.NewTicker(50 * time.Millisecond)
@@ -290,7 +293,7 @@ func (s *Service) tickLoop() {
 			s.promote(sb, now)
 		}
 		s.mu.Unlock()
-		s.sample(s.env.Clock.Now())
+		s.sample(clock.Peek(s.env.Clock))
 		if now.Sub(lastGC) >= 5*time.Second {
 			lastGC = now
 			s.gc()
@@ -300,7 +303,7 @@ func (s *Service) tickLoop() {
 
 // gc enforces message retention on topics, subscriptions and snapshots.
 func (s *Service) gc() {
-	now := s.env.Clock.Now()
+	now := clock.Peek(s.env.Clock)
 	var w writes
 	s.mu.Lock()
 	for _, t := range s.topics {

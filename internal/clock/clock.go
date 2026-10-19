@@ -12,6 +12,22 @@ type Clock interface {
 	Now() time.Time
 }
 
+// Peeker reports the current instant without advancing the clock.
+// Background (wall-clock-driven) readers use it so that, under
+// --deterministic, only request-driven reads move the fake clock.
+type Peeker interface {
+	Peek() time.Time
+}
+
+// Peek reports c's current instant without advancing it, falling back to
+// Now for clocks that are not Peekers.
+func Peek(c Clock) time.Time {
+	if p, ok := c.(Peeker); ok {
+		return p.Peek()
+	}
+	return c.Now()
+}
+
 // Real is the wall clock.
 type Real struct{}
 
@@ -31,6 +47,13 @@ func (o *Offset) Now() time.Time {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	return o.base.Now().Add(o.offset)
+}
+
+// Peek is Now without advancing a fake base clock.
+func (o *Offset) Peek() time.Time {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return Peek(o.base).Add(o.offset)
 }
 
 // Advance moves the clock forward by d.
@@ -59,4 +82,11 @@ func (f *Fake) Now() time.Time {
 	t := f.t
 	f.t = f.t.Add(f.Step)
 	return t
+}
+
+// Peek returns the instant the next Now will return, without advancing.
+func (f *Fake) Peek() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.t
 }

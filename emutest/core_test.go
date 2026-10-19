@@ -148,6 +148,21 @@ func TestDeterministic(t *testing.T) {
 	}
 }
 
+// TestDeterministicIgnoresWallTime is NFR-REL-002 (#436): under
+// --deterministic, wall time passing before a request (background tickers
+// firing) must not change the timestamps that request sees.
+func TestDeterministicIgnoresWallTime(t *testing.T) {
+	run := func(delay time.Duration) []byte {
+		inst := emutest.Start(t, []string{"compute", "pubsub"}, emutest.WithDeterministic())
+		time.Sleep(delay)
+		return call(t, "POST", inst.GatewayURL()+"/compute/v1/projects/det-proj/global/networks", `{"name":"net","autoCreateSubnetworks":false}`)
+	}
+	a, b := run(0), run(300*time.Millisecond)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("runs differ:\n%s\n---\n%s", a, b)
+	}
+}
+
 // TestResourceCounts is FR-UI-010: /_emu/v1/resources/counts reports each
 // enabled service's resources by user-facing type.
 func TestResourceCounts(t *testing.T) {
