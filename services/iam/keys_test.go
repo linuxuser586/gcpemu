@@ -302,3 +302,63 @@ func TestRefreshTokenGrantForeign(t *testing.T) {
 		})
 	}
 }
+
+// viaFrontEnd sends every request to the gateway with its Host kept, as
+// the Google front end delivers a request for a real hostname.
+type viaFrontEnd struct{ gateway string }
+
+func (v viaFrontEnd) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Host = r.URL.Host
+	r.URL.Scheme, r.URL.Host = "http", v.gateway
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestKeyFileByCaller covers #462: a key created through a real Google
+// hostname (through the Google front end: from the LAN, a pod or Host
+// mode) names Google's token endpoint and universe, which that caller
+// reaches by the same names; one created at the gateway's own address
+// keeps the gateway's and the Invalid universe.
+func TestKeyFileByCaller(t *testing.T) {
+	inst := startIAM(t)
+	sa := createSA(t, iamClient(t, inst), "ci-runner")
+	hc := &http.Client{Transport: viaFrontEnd{gateway: strings.TrimPrefix(inst.GatewayURL(), "http://")}}
+	c, err := iamv1.NewService(context.Background(), option.WithHTTPClient(hc), option.WithEndpoint("https://iam.googleapis.com/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, kf := createKeyFile(t, c, sa)
+	var f map[string]string
+	if err := json.Unmarshal(kf, &f); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{
+		"token_uri":                   "https://oauth2.googleapis.com/token",
+		"universe_domain":             "googleapis.com",
+		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+		"client_x509_cert_url":        "https://www.googleapis.com/robot/v1/metadata/x509/" + url.PathEscape(sa.Email),
+	} {
+		if f[k] != want {
+			t.Errorf("key %s = %q, want %q", k, f[k], want)
+		}
+	}
+
+	// The key, unmodified, gets a token from oauth2.googleapis.com.
+	cfg, err := google.JWTConfigFromJSON(kf, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := cfg.TokenSource(context.WithValue(context.Background(), oauth2.HTTPClient, hc)).Token()
+	if err != nil || tok.AccessToken == "" {
+		t.Fatalf("token from the key: %v, %v", tok, err)
+	}
+
+	_, kf = createKeyFile(t, iamClient(t, inst), sa)
+	f = nil
+	if err := json.Unmarshal(kf, &f); err != nil {
+		t.Fatal(err)
+	}
+	if f["token_uri"] != inst.GatewayURL()+"/oauth2/token" || f["universe_domain"] != emu.InvalidUniverse {
+		t.Errorf("key created at the gateway: token_uri %q, universe_domain %q", f["token_uri"], f["universe_domain"])
+	}
+}

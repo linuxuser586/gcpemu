@@ -149,6 +149,19 @@ func TestValidate(t *testing.T) {
 		t.Errorf("--ar-bind ::: err = %v", err)
 	}
 
+	// --gfe-bind too (#462).
+	c.ARBind = nil
+	c.GFEBind = []string{"192.168.1.20"}
+	if err := c.Validate(); err != nil {
+		t.Error(err)
+	}
+	for _, bad := range []string{"0.0.0.0", "lan.example"} {
+		c.GFEBind = []string{bad}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "--gfe-bind") {
+			t.Errorf("--gfe-bind %s: err = %v", bad, err)
+		}
+	}
+
 	// GCPEMU_VM_RUNTIME is auto, true or false (ADR 0012).
 	c = Defaults()
 	if c.VMRuntime != "auto" {

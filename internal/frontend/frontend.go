@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,6 +95,7 @@ type Frontend struct {
 	mu     sync.Mutex
 	ln     net.Listener
 	conns  map[net.Conn]struct{}
+	lan    []*http.Server // --gfe-bind listeners (lan.go)
 	closed bool
 	wg     sync.WaitGroup
 }
@@ -170,6 +172,7 @@ func (f *Frontend) Close() error {
 	for c := range f.conns {
 		c.Close()
 	}
+	f.closeLAN()
 	f.mu.Unlock()
 	f.wg.Wait()
 	return nil

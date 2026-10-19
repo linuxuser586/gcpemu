@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/trust"
 )
@@ -24,6 +25,31 @@ func (in *Instance) startHostNames() {
 		in.hm = hostmode.New(in.Env, in.gw.Hosts)
 		in.hm.Start()
 	}
+}
+
+// startGFELAN serves the Google front end on the --gfe-bind addresses, with
+// Artifact Registry's authenticating registry and Cloud Storage's view of
+// which buckets are the Instance's (ADR 0021). Offline, nothing is read
+// through from real GCS.
+func (in *Instance) startGFELAN() {
+	if len(in.Config.GFEBind) == 0 {
+		return
+	}
+	lan := frontend.LAN{Gateway: in.gw}
+	if !in.Config.Offline {
+		lan.ReadThrough = frontend.NewReadThrough(hostmode.UpstreamResolvers(false))
+	}
+	if s, ok := in.Env.Lookup("ar"); ok {
+		if r, ok := s.(interface{ LANHandler() http.Handler }); ok {
+			lan.Registry = r.LANHandler
+		}
+	}
+	if s, ok := in.Env.Lookup("gcs"); ok {
+		if st, ok := s.(frontend.Storage); ok {
+			lan.Storage = st
+		}
+	}
+	in.fe.StartLAN(lan)
 }
 
 // WriteCABundle (re)writes <instance-dir>/ca-bundle.pem: the host's system

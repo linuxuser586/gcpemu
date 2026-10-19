@@ -82,6 +82,11 @@ type Config struct {
 	// is also served, over TLS from the instance CA and only to
 	// authenticated callers, whatever the IAM enforcement level.
 	ARBind []string `yaml:"arBind" env:"AR_BIND"`
+	// GFEBind lists extra addresses on which the Google front end also
+	// serves real Google hostnames, on port 443 over TLS from the instance
+	// CA and only to authenticated callers, whatever the IAM enforcement
+	// level (ADR 0021).
+	GFEBind []string `yaml:"gfeBind" env:"GFE_BIND"`
 	// AdminToken is the Admin token used when the API gateway is bound
 	// beyond loopback (FR-UI-009); empty means a random one per start.
 	// There is no flag, so that it never shows in a process listing.
@@ -489,7 +494,7 @@ func (c *Config) Validate() error {
 	for _, b := range []struct {
 		flag  string
 		addrs []string
-	}{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}} {
+	}{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}} {
 		flag := b.flag
 		for _, a := range b.addrs {
 			ip := net.ParseIP(a)

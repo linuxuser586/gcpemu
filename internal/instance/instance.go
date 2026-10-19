@@ -115,6 +115,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if len(cfg.ARBind) > 0 {
 		logger.Info("the Artifact Registry registry is also served beyond loopback, over TLS to authenticated callers only", "arBind", cfg.ARBind)
 	}
+	if len(cfg.GFEBind) > 0 {
+		logger.Info("the Google front end is also served beyond loopback, over TLS to authenticated callers only", "gfeBind", cfg.GFEBind)
+	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, holds: map[string]error{}, done: make(chan struct{})}
 	in.ID = instanceID(dir, cfg.Ephemeral)
@@ -301,6 +304,7 @@ func (in *Instance) Start(ctx context.Context) error {
 			in.Env.Log.Error("service failed to start", "service", s.Name(), "err", err)
 		}
 	}
+	in.startGFELAN()
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
 	}

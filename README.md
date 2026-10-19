@@ -244,6 +244,35 @@ the admin API and every other listener stay on `--bind`, and neither flag needs
 
 `gcpemu status` lists the addresses as `gke-lan:<context>` and `ar-lan`.
 
+For clients on another machine that call Google by its real hostnames and take no Endpoint override, such
+as Argo Workflows' GCS artifact driver, pass `--gfe-bind <address>` (repeatable; `gfeBind` /
+`GCPEMU_GFE_BIND`). The Google front end is then also served on `<address>:443`
+(`--port gfe-lan=N` for another port), with certificates from the instance CA, for every name it
+serves: `storage.googleapis.com`, `oauth2.googleapis.com`, `iam.googleapis.com`,
+`LOCATION-docker.pkg.dev` and the rest. Point that machine's DNS for those names at the address
+and have it trust `<data-dir>/ca.pem`. Port 443 is privileged on Linux, so an unprivileged
+emulator needs `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`; `gcpemu doctor` checks
+this. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
+
+- Every request needs credentials, whatever the IAM enforcement level: a bearer token the
+  Instance issued, or a signed URL or V4 signature for the Cloud Storage XML API. The token
+  endpoint (`https://oauth2.googleapis.com/token`) takes only a service account key's JWT-bearer
+  grant, in the request body. The registry behaves as with `--ar-bind`, so containerd pulls with `_json_key`.
+- A service account key created through a real hostname (through the Google front end, from the LAN,
+  a pod or Host mode) has `token_uri` `https://oauth2.googleapis.com/token` and
+  `universe_domain` `googleapis.com`, so it works unmodified on the other machine. Keys created at
+  the API gateway's address keep the gateway's `token_uri` and the Invalid universe. To make one
+  on the emulator's machine, call `iam.googleapis.com` through the Google front end in Host mode.
+  With OpenTofu, set `iam_custom_endpoint = "https://iam.googleapis.com/v1/"` in the provider
+  that creates the `google_service_account_key`.
+- A read of a bucket the Instance doesn't have that carries none of the Instance's credentials,
+  such as the Go module proxy's downloads from `proxy-golang-org-prod`, is a Read-through: the
+  Instance reads it from real Cloud Storage. This is the one case in which the emulator calls Google, and it never does with
+  `--offline`.
+- The admin API and the Web console are not served there.
+
+`gcpemu status` lists the addresses as `gfe-lan`.
+
 ### Container runtime
 
 Cloud SQL, GKE, Cloud NAT and Cloud Build need Docker Engine (>= 24) or Podman (>= 4.9,

@@ -63,6 +63,16 @@ func (s *Service) lanHandler(next http.Handler) http.Handler {
 	})
 }
 
+// LANHandler returns the registry as the --ar-bind listeners serve it,
+// requiring credentials, or nil while the registry isn't running. The
+// Google front end's --gfe-bind listeners serve LOCATION-docker.pkg.dev
+// with it (ADR 0021).
+func (s *Service) LANHandler() http.Handler {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lanH
+}
+
 // startLAN serves h on every --ar-bind address. A failed address is
 // logged and skipped.
 func (s *Service) startLAN(port int, h http.Handler) []*http.Server {

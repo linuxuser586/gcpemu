@@ -91,6 +91,7 @@ type Service struct {
 	mu      sync.Mutex
 	srv     *http.Server
 	lan     []*http.Server // --ar-bind listeners (lan.go)
+	lanH    http.Handler   // what they serve, also behind --gfe-bind
 	conns   connTracker
 	ready   bool
 	uploads map[string]*upload
@@ -152,12 +153,13 @@ func (s *Service) Start(ctx context.Context) error {
 	h := s.env.Middleware("ar", http.HandlerFunc(s.serveRegistry))
 	srv := gateway.NewServer(s.withRegistryAuth(h), s.env.Log)
 	srv.ConnState = s.conns.track
-	lan := s.startLAN(l.Addr().(*net.TCPAddr).Port, s.lanHandler(h))
+	lanH := s.lanHandler(h)
+	lan := s.startLAN(l.Addr().(*net.TCPAddr).Port, lanH)
 	s.mu.Lock()
 	if s.bgCtx.Err() != nil {
 		s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	}
-	s.srv, s.lan, s.ready = srv, lan, true
+	s.srv, s.lan, s.lanH, s.ready = srv, lan, lanH, true
 	s.mu.Unlock()
 	go func() {
 		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -172,7 +174,7 @@ func (s *Service) Stop(ctx context.Context) error {
 	s.ops.Close()
 	s.mu.Lock()
 	srv, lan := s.srv, s.lan
-	s.srv, s.lan, s.ready = nil, nil, false
+	s.srv, s.lan, s.lanH, s.ready = nil, nil, nil, false
 	s.bgCancel()
 	s.mu.Unlock()
 	for _, l := range lan {

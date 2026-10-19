@@ -14,3 +14,4 @@ GKE pods reach emulated Services by their real hostnames. The node's DNS relay a
 - Cloud DNS private zones bound to the cluster's network still apply to labelled pods. A private `googleapis.com` zone (Private Google Access) therefore behaves as on GCP.
 - The label works only on pods the webhook admits: not in `kube-system`, and not with `gcpemu.dev/inject=disabled`. A pod that sets `dnsPolicy: None` keeps its own DNS. A `dnsConfig` of its own is merged in, the way kubelet merges one under `ClusterFirst`.
 - The resolver finds the cluster's DNS at the tenth address of the Service range. k3s puts it there because the emulator passes no `--cluster-dns`.
+- ADR 0021 takes the rejected read-through option for `--gfe-bind` addresses only, where a machine on the LAN has no per-workload choice. Pods are unchanged.
