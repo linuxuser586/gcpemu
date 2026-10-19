@@ -81,11 +81,18 @@ type backupRecord struct {
 	// ExpiryTime is the backups API's expiryTime; the backup is deleted
 	// once the emulator clock passes it.
 	ExpiryTime string `json:"expiryTime,omitempty"`
+	// InstanceDeletionTime is set on a Final backup (finalbackup.go): when
+	// its instance was deleted.
+	InstanceDeletionTime string `json:"instanceDeletionTime,omitempty"`
+	// InstanceSettings is, for a Final backup, the deleted instance as it
+	// was: the backups API's instanceSettings.
+	InstanceSettings *sqladmin.DatabaseInstance `json:"instanceSettings,omitempty"`
 }
 
-// key is the backup's store key "P/I/backupKey" in project.
+// key is the backup's store key "P/I/backupKey" in project ("P/I@final/
+// backupKey" for a Final backup).
 func (b *backupRecord) key(project string) string {
-	return childKey(project, b.Run.Instance, backupKey(b.Run.Id))
+	return childKey(project, b.owner(), backupKey(b.Run.Id))
 }
 
 // instKey is the store key "P/I".

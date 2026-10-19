@@ -161,7 +161,7 @@ func TestBackupExpiryValidation(t *testing.T) {
 		{"update with ttlDays 366", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"366"}`, 400, "ttlDays must be between 1 and 365"},
 		{"update with ttlDays -1", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"-1"}`, 400, "ttlDays must be between 1 and 365"},
 		{"update with expiryTime 366 days ahead", "PATCH", "/projects/proj-one/backups/1?updateMask=expiryTime",
-			`{"expiryTime":"` + at(366*day) + `"}`, 400, "at most 365 days"},
+			`{"expiryTime":"` + at(366*day) + `"}`, 400, "at most 365 days from now"},
 		{"update with ttlDays 365", "PATCH", "/projects/proj-one/backups/1?updateMask=ttlDays", `{"ttlDays":"365"}`, 200, "UPDATE_BACKUP"},
 		{"update with expiryTime 364 days ahead", "PATCH", "/projects/proj-one/backups/1?updateMask=expiryTime",
 			`{"expiryTime":"` + at(364*day) + `"}`, 200, "UPDATE_BACKUP"},

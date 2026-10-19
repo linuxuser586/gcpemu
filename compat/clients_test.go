@@ -489,6 +489,10 @@ func TestClients(t *testing.T) {
 				t.Fatalf("IAM login via the auth proxy: %q", got)
 			}
 		})
+
+		// A Final backup outlives the instance (FR-SQL-008).
+		e.run(t, g, "sql", "instances", "delete", "compat-pg", "--enable-final-backup", "--final-backup-retention-days=7", "--final-backup-description=compat")
+		contains(t, "backups list", e.run(t, g, "sql", "backups", "list", "--filter=type=FINAL", "--format=value(instance,type,description)"), "compat-pg\tFINAL\tcompat")
 	})
 
 	t.Run("gcloud/container+kubectl+helm", func(t *testing.T) {
