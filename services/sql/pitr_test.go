@@ -27,31 +27,25 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 			BackupConfiguration: &sqladmin.BackupConfiguration{Enabled: true, PointInTimeRecoveryEnabled: true},
 		}
 	}
-	in := createInstance(t, svc, &sqladmin.DatabaseInstance{
+	createInstance(t, svc, &sqladmin.DatabaseInstance{
 		Name: "pitr", DatabaseVersion: "POSTGRES_18", RootPassword: "rootpw", Settings: settings(),
 	})
 	waitOp(t, svc, must(svc.Databases.Insert(testProject, "pitr", &sqladmin.Database{Name: "app"}).Do()))
-	exec := func(ip, q string) {
+	exec := func(instance, q string) {
 		t.Helper()
-		c, err := connect(ctx, ip, 5432, "postgres", "rootpw", "app")
-		if err != nil {
-			t.Fatal(err)
-		}
+		c := connectHost(t, inst, instance, "postgres", "rootpw", "app")
 		defer c.Close(ctx)
 		if _, err := c.Exec(ctx, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	rows := func(ip string) int {
+	rows := func(instance string) int {
 		t.Helper()
-		c, err := connect(ctx, ip, 5432, "postgres", "rootpw", "app")
-		if err != nil {
-			t.Fatal(err)
-		}
+		c := connectHost(t, inst, instance, "postgres", "rootpw", "app")
 		defer c.Close(ctx)
 		return count(t, c, "SELECT count(*) FROM items")
 	}
-	exec(publicIP(in), "CREATE TABLE items (id int PRIMARY KEY); INSERT INTO items SELECT generate_series(1, 5)")
+	exec("pitr", "CREATE TABLE items (id int PRIMARY KEY); INSERT INTO items SELECT generate_series(1, 5)")
 
 	// Backups API.
 	parent := "projects/" + testProject
@@ -73,29 +67,28 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 	}
 
 	// Point in time: five rows, then five more.
-	exec(publicIP(in), "SELECT 1") // a separate commit before the target
+	exec("pitr", "SELECT 1") // a separate commit before the target
 	rt := must(svc.Projects.Instances.GetLatestRecoveryTime(testProject, "pitr").Do())
 	if !parseTime(t, rt.LatestRecoveryTime).After(parseTime(t, rt.EarliestRecoveryTime)) {
 		t.Fatalf("recovery window = %+v", rt)
 	}
 	target := rt.LatestRecoveryTime
 	time.Sleep(50 * time.Millisecond)
-	exec(publicIP(in), "INSERT INTO items SELECT generate_series(6, 10)")
-	if n := rows(publicIP(in)); n != 10 {
+	exec("pitr", "INSERT INTO items SELECT generate_series(6, 10)")
+	if n := rows("pitr"); n != 10 {
 		t.Fatalf("source rows = %d", n)
 	}
 	waitOp(t, svc, must(svc.Instances.Clone(testProject, "pitr", &sqladmin.InstancesCloneRequest{CloneContext: &sqladmin.CloneContext{
 		DestinationInstanceName: "pitr-clone", PointInTime: target,
 	}}).Do()))
-	cl := must(svc.Instances.Get(testProject, "pitr-clone").Do())
-	if n := rows(publicIP(cl)); n != 5 {
+	if n := rows("pitr-clone"); n != 5 {
 		t.Fatalf("rows in the point-in-time clone = %d, want 5", n)
 	}
 	if dbs := must(svc.Databases.List(testProject, "pitr-clone").Do()); len(dbs.Items) != 2 {
 		t.Fatalf("clone databases = %+v", dbs.Items)
 	}
 	// The clone is writable and keeps its own recovery window.
-	exec(publicIP(cl), "INSERT INTO items VALUES (100)")
+	exec("pitr-clone", "INSERT INTO items VALUES (100)")
 	if rt := must(svc.Projects.Instances.GetLatestRecoveryTime(testProject, "pitr-clone").Do()); rt.EarliestRecoveryTime == "" {
 		t.Fatalf("clone recovery window = %+v", rt)
 	}
@@ -111,11 +104,7 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 		Enabled: true, PointInTimeRecoveryEnabled: false, ForceSendFields: []string{"PointInTimeRecoveryEnabled"},
 	}})
 	patch(&sqladmin.Settings{ActivationPolicy: "ALWAYS"})
-	cl = must(svc.Instances.Get(testProject, "pitr-clone").Do())
-	c, err := connect(ctx, publicIP(cl), 5432, "postgres", "rootpw", "app")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := connectHost(t, inst, "pitr-clone", "postgres", "rootpw", "app")
 	var mode string
 	if err := c.QueryRow(ctx, "SHOW archive_mode").Scan(&mode); err != nil || mode != "off" {
 		t.Fatalf("archive_mode after turning PITR off while stopped = %q, %v", mode, err)
@@ -126,10 +115,9 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 	}
 
 	// Restore by backup name.
-	exec(publicIP(in), "DELETE FROM items")
+	exec("pitr", "DELETE FROM items")
 	waitOp(t, svc, must(svc.Instances.RestoreBackup(testProject, "pitr", &sqladmin.InstancesRestoreBackupRequest{Backup: name}).Do()))
-	in = must(svc.Instances.Get(testProject, "pitr").Do())
-	if n := rows(publicIP(in)); n != 5 {
+	if n := rows("pitr"); n != 5 {
 		t.Fatalf("rows after restoring %s = %d, want 5", name, n)
 	}
 	// The restored cluster starts a new recovery window.
