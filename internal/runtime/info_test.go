@@ -17,7 +17,7 @@ func TestInfo(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/version"):
 			_, _ = io.WriteString(w, `{"Version":"27.3.1","Arch":"arm64"}`)
 		case strings.HasSuffix(r.URL.Path, "/info"):
-			_, _ = io.WriteString(w, `{"OperatingSystem":"Docker Desktop","KernelVersion":"6.10.14-linuxkit"}`)
+			_, _ = io.WriteString(w, `{"OperatingSystem":"Docker Desktop","KernelVersion":"6.10.14-linuxkit","OSType":"linux"}`)
 		default:
 			w.WriteHeader(404)
 		}
@@ -33,6 +33,9 @@ func TestInfo(t *testing.T) {
 	}
 	if got, want := in.String(), "docker 27.3.1 (Docker Desktop, kernel 6.10.14-linuxkit)"; got != want {
 		t.Errorf("String() = %q; want %q", got, want)
+	}
+	if in.OSType != "linux" {
+		t.Errorf("OSType = %q; want linux", in.OSType)
 	}
 	if got := (Info{Name: "podman", Version: "5.2.0"}).String(); got != "podman 5.2.0" {
 		t.Errorf("without /info: %q", got)

@@ -92,6 +92,10 @@ type Info struct {
 	// VM runtime, the VM's.
 	OS     string
 	Kernel string
+	// OSType is the kind of containers the runtime serves: "linux", or
+	// "windows" for Docker Engine in Windows containers mode; "" if /info
+	// did not answer.
+	OSType string
 }
 
 // String names the runtime for messages, e.g. "docker 27.3.1 (Docker
@@ -227,9 +231,10 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 		SecurityOptions []string
 		OperatingSystem string
 		KernelVersion   string
+		OSType          string
 	}
 	if err := c.do(ctx, http.MethodGet, "/info", nil, nil, &info); err == nil {
-		in.OS, in.Kernel = info.OperatingSystem, info.KernelVersion
+		in.OS, in.Kernel, in.OSType = info.OperatingSystem, info.KernelVersion, info.OSType
 		for _, o := range info.SecurityOptions {
 			if strings.Contains(o, "rootless") {
 				in.Rootless = true

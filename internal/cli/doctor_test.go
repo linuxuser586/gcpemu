@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -208,5 +210,66 @@ func TestReportHostServices(t *testing.T) {
 	reportHostServices(&out, []byte(`{"services":[],"collisions":[],"unserved":[],"poolExhausted":false}`))
 	if out.String() != "" {
 		t.Errorf("nothing to report: %q", out.String())
+	}
+}
+
+// doctor names the runtime endpoint it picked and why, and any it skipped
+// because it serves Windows containers (#375).
+func TestCheckRuntimeDetection(t *testing.T) {
+	pipe := func(n string) string { return "npipe:////./pipe/" + n }
+	for _, tc := range []struct {
+		name      string
+		det       emuruntime.Detection
+		err       error
+		want, not []string
+	}{
+		{name: "picked with others",
+			det: emuruntime.Detection{Endpoint: pipe("podman-machine-default"), Source: "socket list",
+				Found:   []string{pipe("dockerDesktopLinuxEngine"), pipe("docker_engine"), pipe("podman-machine-default")},
+				Skipped: []string{pipe("docker_engine")}},
+			want: []string{"[ok  ] container runtime " + pipe("podman-machine-default") + " (chosen by socket list)",
+				"also found: " + pipe("dockerDesktopLinuxEngine") + "\n",
+				"skipped " + pipe("docker_engine") + ": serves Windows containers"}},
+		{name: "unix", det: emuruntime.Detection{Endpoint: "unix:///var/run/docker.sock", Source: "socket list",
+			Found: []string{"unix:///var/run/docker.sock", "unix:///home/u/.docker/run/docker.sock"}},
+			want: []string{"also found: unix:///home/u/.docker/run/docker.sock\n"}, not: []string{"skipped"}},
+		{name: "explicit windows containers",
+			det:  emuruntime.Detection{Endpoint: pipe("docker_engine"), Source: "$DOCKER_HOST"},
+			err:  fmt.Errorf("%s chosen by $DOCKER_HOST: %w", pipe("docker_engine"), emuruntime.ErrWindowsContainers),
+			want: []string{"[FAIL] container runtime: ", "serves Windows containers; switch Docker Desktop to Linux containers", "fix: or choose a runtime serving Linux containers (unset DOCKER_HOST"},
+			not:  []string{"start that runtime"}},
+		{name: "probed windows containers only",
+			det:  emuruntime.Detection{Found: []string{pipe("docker_engine")}, Skipped: []string{pipe("docker_engine")}},
+			err:  fmt.Errorf("no container runtime found but %s: %w", pipe("docker_engine"), emuruntime.ErrWindowsContainers),
+			want: []string{"[FAIL]", "switch Docker Desktop to Linux containers", "skipped " + pipe("docker_engine")},
+			not:  []string{"fix:", "DOCKER_HOST", "also found"}},
+		{name: "explicit down", det: emuruntime.Detection{Endpoint: "unix:///gone", Source: "$DOCKER_HOST"}, err: errors.New("gone"),
+			want: []string{"[FAIL]", "fix: start that runtime"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			report := func(ok bool, what, fix string) {
+				mark := "ok  "
+				if !ok {
+					mark = "FAIL"
+				}
+				fmt.Fprintf(&out, "[%s] %s\n", mark, what)
+				if fix != "" {
+					fmt.Fprintf(&out, "       fix: %s\n", fix)
+				}
+			}
+			checkRuntimeDetection(&out, report, tc.det, tc.err)
+			got := out.String()
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("%q lacks %q", got, w)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(got, n) {
+					t.Errorf("%q has %q", got, n)
+				}
+			}
+		})
 	}
 }
