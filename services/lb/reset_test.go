@@ -2,6 +2,8 @@ package lb_test
 
 import (
 	"context"
+	"io"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -201,4 +203,55 @@ func TestManagedCertPassRunsAfterReset(t *testing.T) {
 		cert, err := c.SslCertificates.Get(proj, "managed").Do()
 		return err == nil && cert.Managed.Status == "ACTIVE"
 	})
+}
+
+// After an Instance Reset the data plane matches the reset Store: a
+// forwarding rule from before it keeps no listener, and one created
+// afterwards on the same port serves (#450).
+func TestResetClosesListeners(t *testing.T) {
+	e := start(t)
+	e.neg(named(t, "before", nil))
+	before := e.httpLB(&computev1.BackendService{Name: "bs"})
+	if before == "" {
+		t.Fatal("no listener before Reset")
+	}
+	if err := e.inst.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.inst.Endpoint("lb:fr"); got != "" {
+		t.Errorf("lb:fr = %q after Reset, want none", got)
+	}
+	if conn, err := net.DialTimeout("tcp", before, time.Second); err == nil {
+		conn.Close()
+		t.Errorf("%s still accepts connections after Reset", before)
+	}
+
+	e.neg(named(t, "after", nil))
+	l := e.httpLB(&computev1.BackendService{Name: "bs"})
+	if l == "" {
+		t.Fatal("a forwarding rule created after Reset has no listener")
+	}
+	eventually(t, 10*time.Second, "forwarding rule created after Reset serves", func() bool {
+		resp, err := e.client(l).Get("http://shop.example.test:8080/x")
+		if err != nil {
+			return false
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode == 200 && string(body) == "after"
+	})
+}
+
+// Deleting a forwarding rule drops its lb: entry with its listener
+// (#450).
+func TestDeleteDropsListenerEntry(t *testing.T) {
+	e := start(t)
+	e.neg(named(t, "x", nil))
+	if e.httpLB(&computev1.BackendService{Name: "bs"}) == "" {
+		t.Fatal("no listener")
+	}
+	e.do(e.c.GlobalForwardingRules.Delete(proj, "fr").Do())
+	if got := e.inst.Endpoint("lb:fr"); got != "" {
+		t.Fatalf("lb:fr = %q after the forwarding rule was deleted, want none", got)
+	}
 }
