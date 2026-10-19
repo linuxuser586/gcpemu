@@ -38,3 +38,28 @@ func MarkFailed(ctx context.Context, svc emu.Service, project, name string) erro
 func SetLoopbackAliases(svc emu.Service, aliases bool) {
 	svc.(*Service).aliases = func() bool { return aliases }
 }
+
+// BaseBackup is a Base backup in a WAL archive (exported to the external
+// tests).
+type BaseBackup = baseBackup
+
+// WALArchive lists an instance's Base backups and archived WAL file names
+// without pruning (exported to the external tests).
+func WALArchive(ctx context.Context, svc emu.Service, project, name string) ([]BaseBackup, []string, error) {
+	a, err := svc.(*Service).readArchive(ctx, project, name)
+	return a.Bases, a.WAL, err
+}
+
+// ExecIn runs a command in an instance's container (exported to the
+// external tests).
+func ExecIn(ctx context.Context, svc emu.Service, project, name string, cmd ...string) (string, error) {
+	return svc.(*Service).execIn(ctx, project, name, "", cmd...)
+}
+
+// SegmentBefore reports whether a WAL file name is a segment positioned
+// before the segment start, on any timeline (exported to the external
+// tests).
+func SegmentBefore(name, start string) bool {
+	_, drop := walFrom(start, []string{name})
+	return len(drop) == 1
+}

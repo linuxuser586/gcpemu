@@ -135,7 +135,7 @@ func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone, vers
 		bc.BackupRetentionSettings = &sqladmin.BackupRetentionSettings{RetentionUnit: "COUNT", RetainedBackups: 7}
 	}
 	if bc.TransactionLogRetentionDays == 0 {
-		bc.TransactionLogRetentionDays = 7
+		bc.TransactionLogRetentionDays = defaultLogRetentionDays
 	}
 	if bc.TransactionalLogStorageState == "" && bc.PointInTimeRecoveryEnabled {
 		bc.TransactionalLogStorageState = "CLOUD_STORAGE"

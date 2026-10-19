@@ -43,8 +43,9 @@ func (s *Service) insertInstance(w http.ResponseWriter, r *http.Request) {
 // createHooks customise a CREATE (or CLONE) operation.
 type createHooks struct {
 	// files, if set, returns files for the first container, before it
-	// starts (a point-in-time clone's restore bundle).
-	files func(ctx context.Context) ([]runtime.File, error)
+	// starts (a point-in-time clone's restore bundle), and a function run
+	// once the container has them, whether or not it was created.
+	files func(ctx context.Context) ([]runtime.File, func(), error)
 	// after, if set, runs once the instance is running (clone and seed use
 	// it to load data).
 	after func(ctx context.Context) error
@@ -168,14 +169,17 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	return s.runOp(op, true, func(ctx context.Context) error {
 		if in.Settings.ActivationPolicy != "NEVER" || after != nil {
 			var files []runtime.File
+			done := func() {}
 			if hooks.files != nil {
 				var err error
-				if files, err = hooks.files(ctx); err != nil {
+				if files, done, err = hooks.files(ctx); err != nil {
 					s.markFailed(ctx, project, name)
 					return err
 				}
 			}
-			if err := s.startContainerWith(ctx, project, name, files); err != nil {
+			err := s.startContainerWith(ctx, project, name, files)
+			done()
+			if err != nil {
 				s.markFailed(ctx, project, name)
 				return err
 			}
