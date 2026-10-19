@@ -1186,12 +1186,11 @@ func (c *Client) execStart(ctx context.Context, execID string, stdin []byte) (Ex
 		err = demux(resp.Body, &res)
 		return res, err
 	}
-	conn, br, stop, err := c.hijack(ctx, "/exec/"+execID+"/start", payload)
+	conn, br, release, err := c.hijack(ctx, "/exec/"+execID+"/start", payload)
 	if err != nil {
 		return res, err
 	}
-	defer stop()
-	defer conn.Close()
+	defer release()
 	go func() {
 		_, _ = conn.Write(stdin)
 		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
@@ -1205,16 +1204,19 @@ func (c *Client) execStart(ctx context.Context, execID string, stdin []byte) (Ex
 }
 
 // hijack issues an upgrade request and returns the raw connection, which is
-// closed when ctx is done until stop is called.
-func (c *Client) hijack(ctx context.Context, p string, payload []byte) (net.Conn, *bufio.Reader, func() bool, error) {
+// closed when ctx is done. release closes it and stops watching ctx.
+func (c *Client) hijack(ctx context.Context, p string, payload []byte) (net.Conn, *bufio.Reader, func(), error) {
 	conn, err := c.dial(ctx)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	fail := func(err error) (net.Conn, *bufio.Reader, func() bool, error) {
+	release := func() {
 		stop()
-		conn.Close()
+		_ = conn.Close()
+	}
+	fail := func(err error) (net.Conn, *bufio.Reader, func(), error) {
+		release()
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -1233,7 +1235,7 @@ func (c *Client) hijack(ctx context.Context, p string, payload []byte) (net.Conn
 	if resp.StatusCode != http.StatusSwitchingProtocols && resp.StatusCode != http.StatusOK {
 		return fail(fmt.Errorf("exec start: HTTP %d", resp.StatusCode))
 	}
-	return conn, br, stop, nil
+	return conn, br, release, nil
 }
 
 // demux splits Docker's multiplexed stdout/stderr stream.

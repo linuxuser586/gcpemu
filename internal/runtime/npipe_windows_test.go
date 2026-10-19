@@ -181,7 +181,10 @@ func TestNamedPipeDaemon(t *testing.T) {
 				t.Errorf("Info = %+v, want a version", in)
 			}
 			// The engine answers an upgrade for an exec it doesn't know.
-			_, _, _, err = cl.hijack(ctx, "/exec/gcpemu-no-such-exec/start", []byte(`{"Detach":false,"Tty":false}`))
+			_, _, release, err := cl.hijack(ctx, "/exec/gcpemu-no-such-exec/start", []byte(`{"Detach":false,"Tty":false}`))
+			if err == nil {
+				release()
+			}
 			if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
 				t.Errorf("hijack = %v, want HTTP 404", err)
 			}
