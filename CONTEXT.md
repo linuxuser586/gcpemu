@@ -94,6 +94,10 @@ _Avoid_: egress gateway
 The Managed container that relays clients to the load balancer's Data plane on forwarding rule ports the emulator cannot bind itself, serves external forwarding rule addresses to VPC workloads, and relays the Data plane to backends the host cannot route to, such as GKE pods.
 _Avoid_: edge (unqualified), LB proxy
 
+**LAN front-end relay**:
+The Managed container that listens on `--gfe-bind` addresses at port 443 when the emulator cannot bind them itself, and relays each connection to the Google front end, which checks its credentials as on any `--gfe-bind` listener.
+_Avoid_: gfe relay, Edge relay (that is the load balancer's)
+
 **VM runtime**:
 A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, and Docker Desktop or Podman machine on Windows.
 
