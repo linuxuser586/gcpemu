@@ -2,6 +2,7 @@ package vmrelay
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -172,6 +173,75 @@ func TestInwardThroughRelay(t *testing.T) {
 	st := r.Streams()
 	if st["gateway"] != 1 || st["dns/udp"] != 1 {
 		t.Fatalf("streams %v", st)
+	}
+}
+
+// TestInwardUDPTwinRefused: on Windows the UDP twin of every port TCP
+// picks can sit in one excluded port range, since the kernel picks nearby
+// ports (#459). The relay still finds a port both protocols hold.
+func TestInwardUDPTwinRefused(t *testing.T) {
+	a := newRelayAgent()
+	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
+		if _, port, _ := net.SplitHostPort(addr); port != "0" {
+			return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: forbidden by its access permissions")}
+		}
+		return net.ListenPacket(network, addr)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startOn(t, l, a, map[string]string{"dns": echoUDP(t)})
+	daddr, err := r.Listen(context.Background(), "dns", "127.0.0.1:0", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := net.Dial("tcp", daddr)
+	if err != nil {
+		t.Fatalf("no TCP listener on %s: %v", daddr, err)
+	}
+	c.Close()
+	u, err := net.Dial("udp", daddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Close()
+	_ = u.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := u.Write([]byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 64)
+	if n, err := u.Read(buf); err != nil || string(buf[:n]) != "re:q" {
+		t.Fatalf("datagram answer %q %v", buf[:n], err)
+	}
+}
+
+// TestInwardKeepsFreePort: a free port asked for over TCP and UDP is the
+// one the relay listens on.
+func TestInwardKeepsFreePort(t *testing.T) {
+	r := startInProcess(t, map[string]string{"dns": echoUDP(t)})
+	want := freePort(t, "udp")
+	got, err := r.Listen(context.Background(), "dns", want, true)
+	if err != nil || got != want {
+		t.Fatalf("listen = %q, %v; want %q", got, err, want)
+	}
+}
+
+// TestInwardNoUsablePort: when no port takes UDP, the error names the
+// port tried last and the UDP bind that failed.
+func TestInwardNoUsablePort(t *testing.T) {
+	a := newRelayAgent()
+	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
+		return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: forbidden by its access permissions")}
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startOn(t, l, a, map[string]string{"dns": echoUDP(t)})
+	_, err = r.Listen(context.Background(), "dns", "127.0.0.1:0", true)
+	if err == nil || !strings.Contains(err.Error(), "udp on 127.0.0.1:") || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("listen error = %v; want the port and the refused UDP bind", err)
 	}
 }
 
