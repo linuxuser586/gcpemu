@@ -125,6 +125,10 @@ _Avoid_: exposed port, mapped port
 The port a GKE `LoadBalancer` Service or a forwarding rule declares, as opposed to the Published port it ends up served on. A Service is served on its own port only when the container publishes it at the same host port, since its clients expect that port on the host; a forwarding rule is served on it at any host port, since its clients learn the host side from the rule's environment variable.
 _Avoid_: service port, rule port (unqualified)
 
+**Excluded port range**:
+A range of ports that Windows reserves for Hyper-V, WSL and others, which no process on the host can bind. Windows has no privileged ports, so a port it refuses is in one of these ranges. A forwarding rule or Kubernetes Service on such a port is unavailable to host clients; the Edge relay is never used for it, since its host port would hit the same reservation (ADR 0015).
+_Avoid_: reserved port, privileged port (on Windows)
+
 **State snapshot**:
 A named, saved copy of all of an Instance's state that can be restored later.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
