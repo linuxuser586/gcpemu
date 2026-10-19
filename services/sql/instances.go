@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
@@ -510,8 +511,10 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var final *finalBackupRequest
-	// toDelete is the record as the delete found it, for its Final backup.
+	// toDelete is the record as the delete found it, for its Final and
+	// Retained backups.
 	var toDelete *instanceRecord
+	var deletedAt string
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		rec, ok := getInstance(tx, project, name)
 		if !ok {
@@ -523,10 +526,12 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		if rec.Instance.State == "PENDING_DELETE" {
 			return errInProgress()
 		}
+		now := s.env.Clock.Now().UTC()
 		var err error
-		if final, err = finalBackupOf(r.URL.Query(), rec, s.env.Clock.Now().UTC()); err != nil {
+		if final, err = finalBackupOf(r.URL.Query(), rec, now); err != nil {
 			return err
 		}
+		deletedAt = now.Format(time.RFC3339Nano)
 		rec.Instance.State = "PENDING_DELETE"
 		toDelete = rec
 		return store.PutJSON(tx, nsInstances, instKey(project, name), rec)
@@ -539,6 +544,11 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		if final != nil {
 			if err := s.takeFinalBackup(ctx, toDelete, final); err != nil {
+				return err
+			}
+		}
+		if toDelete.Instance.Settings != nil && toDelete.Instance.Settings.RetainBackupsOnDelete {
+			if err := s.retainBackups(toDelete.Instance, deletedAt); err != nil {
 				return err
 			}
 		}

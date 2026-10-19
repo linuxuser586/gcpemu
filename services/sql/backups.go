@@ -258,12 +258,21 @@ func (s *Service) writeDump(ctx context.Context, project, name, owner string, id
 	if err != nil {
 		return "", err
 	}
+	file, err := s.backupFile(project, owner, id)
+	if err != nil {
+		return "", err
+	}
+	return file, writeFileAtomic(file, []byte(dump))
+}
+
+// backupFile returns the dump file of the backup with the ID stored under
+// owner, creating its directory.
+func (s *Service) backupFile(project, owner string, id int64) (string, error) {
 	dir, err := s.backupDir(project, owner)
 	if err != nil {
 		return "", err
 	}
-	file := filepath.Join(dir, strconv.FormatInt(id, 10)+".sql")
-	return file, writeFileAtomic(file, []byte(dump))
+	return filepath.Join(dir, strconv.FormatInt(id, 10)+".sql"), nil
 }
 
 // startBackup stores a RUNNING on-demand backup of the instance and starts
@@ -335,9 +344,12 @@ func (s *Service) insertBackupRun(w http.ResponseWriter, r *http.Request) {
 // backupKey sorts newest first.
 func backupKey(id int64) string { return fmt.Sprintf("%019d", math.MaxInt64-id) }
 
+// loadBackup loads a backup run of the instance. A backup of a deleted
+// instance is never one: its key segment has an "@" (deletedSuffix, or
+// v0.9.0's legacyFinalSuffix), which instance names cannot.
 func (s *Service) loadBackup(project, name, id string) (*backupRecord, bool) {
 	n, err := strconv.ParseInt(id, 10, 64)
-	if err != nil {
+	if err != nil || strings.Contains(name, "@") {
 		return nil, false
 	}
 	var b backupRecord

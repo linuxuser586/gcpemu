@@ -18,15 +18,10 @@ import (
 // the start often recovers it. A dump that fails leaves a FAILED Final
 // backup and the instance is deleted anyway, as in Cloud SQL.
 //
-// A Final backup is stored under "P/I@final/backupKey" and its dump under
-// backups/P/I@final: instance names cannot contain "@", so neither the
-// instance's teardown nor a later Cloud SQL instance of the same name sees
-// it as one of its backup runs. Its permissions are still checked on the
-// instance's resource name, so a later instance's IAM policy governs it,
-// as IAM conditions on resource.name would in Cloud SQL.
-
-// finalSuffix marks the key segment of a Final backup's deleted instance.
-const finalSuffix = "@final"
+// A Final backup is stored as a backup of a deleted instance
+// (retainedbackup.go). Its permissions are checked on the instance's
+// resource name, so a later instance's IAM policy governs it, as IAM
+// conditions on resource.name would in Cloud SQL.
 
 // defaultFinalRetention is how long a Final backup is kept when neither
 // the delete nor settings.finalBackupConfig says, as in Cloud SQL.
@@ -40,19 +35,10 @@ type finalBackupRequest struct {
 	DeletionTime string
 }
 
-// owner is the key segment the backup is stored under: its instance's
-// name, or for a Final backup the deleted instance's.
-func (b *backupRecord) owner() string {
-	if b.InstanceDeletionTime != "" {
-		return b.Run.Instance + finalSuffix
-	}
-	return b.Run.Instance
-}
-
-// deletedAt is a Final backup's instanceDeletionTime; zero for another
-// backup.
-func (b *backupRecord) deletedAt() (time.Time, error) {
-	if b.InstanceDeletionTime == "" {
+// finalDeletedAt is a Final backup's instanceDeletionTime, which its
+// expiry is capped from; zero for another backup, a Retained backup too.
+func (b *backupRecord) finalDeletedAt() (time.Time, error) {
+	if b.Run.Type != "FINAL" || b.InstanceDeletionTime == "" {
 		return time.Time{}, nil
 	}
 	t, err := time.Parse(time.RFC3339Nano, b.InstanceDeletionTime)
