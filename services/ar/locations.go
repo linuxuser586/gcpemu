@@ -7,6 +7,7 @@ import (
 	"google.golang.org/genproto/googleapis/cloud/location"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 )
 
 // arLocations are the locations Artifact Registry serves: every GCP region
@@ -107,15 +108,14 @@ func (l *locationsServer) ListLocations(ctx context.Context, req *location.ListL
 		return nil, err
 	}
 	names := locationNames()
-	start, size, err := pageBounds(req.GetPageToken(), req.GetPageSize(), len(names))
+	pg, next, err := listpage.Offset(names, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}
-	resp := &location.ListLocationsResponse{}
-	for _, n := range names[start:min(start+size, len(names))] {
+	resp := &location.ListLocationsResponse{NextPageToken: next}
+	for _, n := range pg {
 		resp.Locations = append(resp.Locations, locationProto(p, n))
 	}
-	resp.NextPageToken = nextToken(start+size, len(names))
 	return resp, nil
 }
 

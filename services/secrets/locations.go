@@ -7,6 +7,7 @@ import (
 	"google.golang.org/genproto/googleapis/cloud/location"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 )
 
@@ -37,7 +38,7 @@ func (l *locationsServer) ListLocations(ctx context.Context, req *location.ListL
 	for _, r := range locations.Regions() {
 		all = append(all, locationProto(p, r))
 	}
-	pg, next, err := page(all, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(all, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}

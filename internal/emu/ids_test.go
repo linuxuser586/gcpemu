@@ -1,6 +1,9 @@
 package emu
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 // TestDeterministicHex: counter-derived hex IDs of any length (compute
 // operation names use 7 bytes) are reproducible and distinct.
@@ -17,5 +20,29 @@ func TestDeterministicHex(t *testing.T) {
 	}
 	if got := NewIDs(true).Hex(7); got != "00000000000001" {
 		t.Fatalf("Hex(7) = %q", got)
+	}
+}
+
+// TestUUID: UUID-formatted IDs are 8-4-4-4-12 lower-case hex, counter-derived
+// in deterministic mode and random otherwise.
+func TestUUID(t *testing.T) {
+	g := NewIDs(true)
+	if got := g.UUID(); got != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("UUID() = %q", got)
+	}
+	if got := g.UUID(); got != "00000000-0000-0000-0000-000000000002" {
+		t.Fatalf("second UUID() = %q", got)
+	}
+	r := NewIDs(false)
+	a, b := r.UUID(), r.UUID()
+	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`).MatchString(a) || a == b {
+		t.Fatalf("random UUID() = %q, %q", a, b)
+	}
+}
+
+// TestFormatUUID: 32 hex digits are grouped 8-4-4-4-12.
+func TestFormatUUID(t *testing.T) {
+	if got := FormatUUID("0123456789abcdef0123456789abcdef"); got != "01234567-89ab-cdef-0123-456789abcdef" {
+		t.Fatalf("FormatUUID = %q", got)
 	}
 }

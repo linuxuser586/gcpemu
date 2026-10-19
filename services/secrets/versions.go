@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -178,7 +179,7 @@ func (a *api) ListSecretVersions(ctx context.Context, req *secretmanagerpb.ListS
 	if err != nil {
 		return nil, err
 	}
-	pg, next, err := page(all, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(all, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}

@@ -24,8 +24,7 @@ import (
 
 // newOp returns a PENDING operation on an instance.
 func (s *Service) newOp(ctx context.Context, project, instance, opType string) *sqladmin.Operation {
-	h := s.env.IDs.Hex(16)
-	name := fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
+	name := s.env.IDs.UUID()
 	user := emu.PrincipalFrom(ctx).Email()
 	if user == "" {
 		user = "cloudsql@system"

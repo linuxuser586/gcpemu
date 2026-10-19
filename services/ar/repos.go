@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -168,7 +169,7 @@ func (a *api) ListRepositories(ctx context.Context, req *artifactregistrypb.List
 		return nil, err
 	}
 	sortByName(repos, req.GetOrderBy(), func(r *artifactregistrypb.Repository) string { return r.GetName() })
-	pg, next, err := page(repos, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(repos, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}

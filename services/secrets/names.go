@@ -2,12 +2,12 @@ package secrets
 
 import (
 	"context"
-	"encoding/base64"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 	"github.com/linuxuser586/gcpemu/internal/project"
 )
@@ -161,27 +161,5 @@ func (s *Service) check(ctx context.Context, perm, resource string) error {
 	return s.env.Auth.Check(ctx, perm, resource)
 }
 
-// page slices items by an opaque offset token.
-func page[T any](items []T, token string, size int32) ([]T, string, error) {
-	start := 0
-	if token != "" {
-		b, err := base64.RawURLEncoding.DecodeString(token)
-		n, err2 := strconv.Atoi(string(b))
-		if err != nil || err2 != nil || n < 0 || n > len(items) {
-			return nil, "", apierr.InvalidArgument("Invalid page token.")
-		}
-		start = n
-	}
-	if size < 0 {
-		return nil, "", apierr.InvalidArgument("page_size must not be negative.")
-	}
-	if size == 0 || size > 25000 {
-		size = 25000
-	}
-	end := min(start+int(size), len(items))
-	next := ""
-	if end < len(items) {
-		next = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
-	}
-	return items[start:end], next, nil
-}
+// pageOpts is how Secret Manager pages its lists.
+var pageOpts = listpage.Options{Max: 25000, Strict: true}

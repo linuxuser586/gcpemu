@@ -2,13 +2,12 @@ package ar
 
 import (
 	"context"
-	"encoding/base64"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 )
 
 // API identifiers.
@@ -181,41 +180,8 @@ func dockerImageName(r repoRef, img, digest string) string {
 	return r.name() + "/dockerImages/" + escapeImage(img) + "@" + digest
 }
 
-// pageBounds decodes an offset page token and clamps the page size.
-func pageBounds(token string, size int32, total int) (start, n int, err error) {
-	if token != "" {
-		b, derr := base64.RawURLEncoding.DecodeString(token)
-		v, perr := strconv.Atoi(string(b))
-		if derr != nil || perr != nil || v < 0 {
-			return 0, 0, apierr.InvalidArgument("Invalid page token.")
-		}
-		start = v
-	}
-	start = min(start, total)
-	n = int(size)
-	if n <= 0 || n > 1000 {
-		n = 1000
-	}
-	return start, n, nil
-}
-
-// nextToken returns the token for offset next, or "" at the end.
-func nextToken(next, total int) string {
-	if next >= total {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(next)))
-}
-
-// page slices items by token and size.
-func page[T any](items []T, token string, size int32) ([]T, string, error) {
-	start, n, err := pageBounds(token, size, len(items))
-	if err != nil {
-		return nil, "", err
-	}
-	end := min(start+n, len(items))
-	return items[start:end], nextToken(end, len(items)), nil
-}
+// pageOpts is how Artifact Registry pages its lists.
+var pageOpts = listpage.Options{Max: 1000}
 
 // project validates and auto-creates a project and checks a project-level
 // permission.

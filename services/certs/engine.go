@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -276,7 +277,7 @@ func (s *Service) list(ctx context.Context, k *kind, parent string, size int32, 
 		}
 	}
 	sortItems(out, orderBy)
-	pg, next, err := page(out, token, size)
+	pg, next, err := listpage.Offset(out, token, size, pageOpts)
 	if err != nil {
 		return listResult{}, err
 	}

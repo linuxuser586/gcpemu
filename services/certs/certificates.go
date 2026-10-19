@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -258,8 +259,7 @@ func (s *Service) prepareDNSAuth(n resName, res, old obj) error {
 // re-created authorization keeps working with an existing record.
 func dnsRecord(project, domain, typ string) *cmv1.DnsResourceRecord {
 	sum := sha256.Sum256([]byte(project + "|" + domain + "|" + typ))
-	h := hex.EncodeToString(sum[:16])
-	uid := h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+	uid := emu.FormatUUID(hex.EncodeToString(sum[:16]))
 	name := "_acme-challenge." + domain + "."
 	if typ == "PER_PROJECT_RECORD" {
 		ps := sha256.Sum256([]byte(project))

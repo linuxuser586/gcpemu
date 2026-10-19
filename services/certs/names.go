@@ -2,14 +2,13 @@ package certs
 
 import (
 	"context"
-	"encoding/base64"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 )
 
@@ -236,38 +235,5 @@ func notFound(name string) error {
 	return apierr.NotFound("Resource '%s' was not found", name)
 }
 
-// ---- pagination ----
-
-const maxPageSize = 1000
-
-func pageBounds(token string, size int32, total int) (int, int, error) {
-	start := 0
-	if token != "" {
-		b, err := base64.RawURLEncoding.DecodeString(token)
-		if err != nil {
-			return 0, 0, apierr.InvalidArgument("Invalid page token.")
-		}
-		if start, err = strconv.Atoi(string(b)); err != nil || start < 0 {
-			return 0, 0, apierr.InvalidArgument("Invalid page token.")
-		}
-	}
-	n := int(size)
-	if n <= 0 || n > maxPageSize {
-		n = maxPageSize
-	}
-	return min(start, total), n, nil
-}
-
-// page slices items by token and size.
-func page[T any](items []T, token string, size int32) ([]T, string, error) {
-	start, n, err := pageBounds(token, size, len(items))
-	if err != nil {
-		return nil, "", err
-	}
-	end := min(start+n, len(items))
-	next := ""
-	if end < len(items) {
-		next = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
-	}
-	return items[start:end], next, nil
-}
+// pageOpts is how Certificate Manager pages its lists.
+var pageOpts = listpage.Options{Max: 1000}

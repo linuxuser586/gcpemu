@@ -2,10 +2,8 @@ package build
 
 import (
 	"context"
-	"encoding/base64"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +16,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/listfilter"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -111,37 +110,15 @@ func (a *api) ListBuilds(ctx context.Context, req *cloudbuildpb.ListBuildsReques
 	slices.SortStableFunc(builds, func(x, y *cloudbuildpb.Build) int {
 		return y.GetCreateTime().AsTime().Compare(x.GetCreateTime().AsTime())
 	})
-	builds, next, err := page(builds, req.GetPageToken(), req.GetPageSize())
+	builds, next, err := listpage.Offset(builds, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}
 	return &cloudbuildpb.ListBuildsResponse{Builds: builds, NextPageToken: next}, nil
 }
 
-// page slices items by an opaque offset token.
-func page[T any](items []T, token string, size int32) ([]T, string, error) {
-	start := 0
-	if token != "" {
-		b, err := base64.RawURLEncoding.DecodeString(token)
-		n, err2 := strconv.Atoi(string(b))
-		if err != nil || err2 != nil || n < 0 || n > len(items) {
-			return nil, "", apierr.InvalidArgument("Invalid page token.")
-		}
-		start = n
-	}
-	if size < 0 {
-		return nil, "", apierr.InvalidArgument("page_size must not be negative.")
-	}
-	if size == 0 || size > 1000 {
-		size = 1000
-	}
-	end := min(start+int(size), len(items))
-	next := ""
-	if end < len(items) {
-		next = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
-	}
-	return items[start:end], next, nil
-}
+// pageOpts is how Cloud Build pages its lists.
+var pageOpts = listpage.Options{Max: 1000, Strict: true}
 
 // CancelBuild cancels a QUEUED or WORKING Build; a finished one is
 // returned as it is.
@@ -199,8 +176,7 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 		return nil, err
 	}
 	b := proto.Clone(in).(*cloudbuildpb.Build)
-	h := s.env.IDs.Hex(16)
-	r := buildRef{project, location, h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]}
+	r := buildRef{project, location, s.env.IDs.UUID()}
 	b.Id, b.Name, b.ProjectId = r.ID, r.name(), project
 	b.Status, b.StatusDetail = cloudbuildpb.Build_QUEUED, ""
 	b.CreateTime, b.StartTime, b.FinishTime = timestamppb.New(s.env.Clock.Now()), nil, nil
