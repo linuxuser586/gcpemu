@@ -35,6 +35,13 @@ func SetBeforeServerStart(svc emu.Service, f func(ctx context.Context, key strin
 	svc.(*Service).beforeServerStart = f
 }
 
+// SetBeforeResetTeardown makes f run in each Reset once it has started a
+// new background generation, before it tears data planes down (exported to
+// the external tests).
+func SetBeforeResetTeardown(svc emu.Service, f func()) {
+	svc.(*Service).beforeResetTeardown = f
+}
+
 // AddonCRDs returns the names of the CRDs in the embedded add-on manifest
 // name (exported to the external tests).
 func AddonCRDs(name string) ([]string, error) {

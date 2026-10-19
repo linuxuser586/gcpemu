@@ -508,7 +508,22 @@ func (in *Instance) WaitReady(ctx context.Context) error {
 func (in *Instance) Reset(ctx context.Context) error {
 	in.stateMu.Lock()
 	defer in.stateMu.Unlock()
-	return in.reset(ctx)
+	return in.gated(ctx, "reset", "reset in progress", func() error { return in.reset(ctx) })
+}
+
+// gated runs change, a Reset or State snapshot restore, with the Instance
+// not ready (hold, with reason) and the API gateway's gate closed: every request
+// but the Admin API's is refused as UNAVAILABLE, and change starts only
+// once those in progress, cut off, have returned (#302). Callers hold
+// stateMu.
+func (in *Instance) gated(ctx context.Context, hold, reason string, change func() error) error {
+	release := in.HoldReady(hold, reason)
+	defer release()
+	defer in.gw.OpenGate()
+	if err := in.gw.CloseGate(ctx); err != nil {
+		return fmt.Errorf("cutting off requests in progress: %w", err)
+	}
+	return change()
 }
 
 func (in *Instance) reset(ctx context.Context) error {

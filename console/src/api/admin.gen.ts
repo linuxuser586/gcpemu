@@ -379,7 +379,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Wipe all state, keeping configuration (`gcpemu reset`). */
+        /**
+         * Wipe all state, keeping configuration (`gcpemu reset`).
+         * @description While it runs the Instance is not ready, and every request but the
+         *     Admin API's is refused, and any in progress cut off, as UNAVAILABLE
+         *     (HTTP 503 with Retry-After).
+         */
         post: operations["reset"];
         delete?: never;
         options?: never;
@@ -432,6 +437,9 @@ export interface paths {
          *     Fault rules and the Emulator clock. Cloud SQL instances are running
          *     again when it returns; GKE clusters report RECONCILING until their
          *     data planes are back. Event streams get a `reset` event.
+         *     While it runs the Instance is not ready, and every request but the
+         *     Admin API's is refused, and any in progress cut off, as UNAVAILABLE
+         *     (HTTP 503 with Retry-After).
          */
         post: operations["restoreSnapshot"];
         delete?: never;

@@ -141,7 +141,7 @@ _Avoid_: seed (collides with Seed file and Seeding), etcd (k3s here uses kine on
 A Datastore restored from a State snapshot that has not yet been written into its cluster's server volume. The cluster's server takes it on its next start, before the server container first runs. Reset and deleting the cluster drop it.
 
 **Reset**:
-Removing all resources and data from an Instance while keeping its configuration. It does not re-apply the Seed file. To get back to a known state, restore a State snapshot instead.
+Removing all resources and data from an Instance while keeping its configuration. It does not re-apply the Seed file. To get back to a known state, restore a State snapshot instead. While a Reset or a State snapshot restore runs, the Instance is not ready and refuses every request but the Admin API's as unavailable, cutting off those already in progress.
 
 **Seed file**:
 A declarative file listing the Projects, resources and Fault rules an Instance should contain.

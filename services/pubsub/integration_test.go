@@ -613,3 +613,35 @@ func TestStreamingPullFlowControl(t *testing.T) {
 	}
 	_ = stream.CloseSend()
 }
+
+// A StreamingPull open when the Instance is reset ends UNAVAILABLE, which
+// client libraries retry, and the Reset does not wait on it (#302).
+func TestStreamingPullCutOffByReset(t *testing.T) {
+	inst, c := newEmulatorClient(t)
+	mustTopic(t, c, "topic-r")
+	sub := subName("sub-r")
+	mustSub(t, c, &pubsubpb.Subscription{Name: sub, Topic: topicName("topic-r")})
+	publish(t, c, topicName("topic-r"), &pubsub.Message{Data: []byte("x")})
+	ctx := ctxT(t, 20*time.Second)
+	stream, err := c.SubscriptionAdminClient.StreamingPull(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&pubsubpb.StreamingPullRequest{Subscription: sub, StreamAckDeadlineSeconds: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil { // the stream is in its handler
+		t.Fatal(err)
+	}
+	if err := inst.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err = stream.Recv(); err != nil {
+			break
+		}
+	}
+	if status.Code(err) != codes.Unavailable {
+		t.Errorf("stream ended with %v, want UNAVAILABLE", err)
+	}
+}

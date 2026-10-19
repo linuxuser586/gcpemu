@@ -239,21 +239,23 @@ func (in *Instance) RestoreSnapshot(ctx context.Context, name string) error {
 	if err := readJSONFile(filepath.Join(dir, snapshotStore), &data); err != nil {
 		return err
 	}
-	if err := in.reset(ctx); err != nil {
-		return fmt.Errorf("reset: %w", err)
-	}
-	if err := in.Env.Store.Load(data); err != nil {
-		return err
-	}
-	var errs []error
-	for _, s := range in.services {
-		if sn, ok := s.(emu.Snapshotter); ok {
-			if err := sn.Restore(ctx, filepath.Join(dir, snapshotServices, s.Name())); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
+	return in.gated(ctx, "restore", "restoring State snapshot "+name, func() error {
+		if err := in.reset(ctx); err != nil {
+			return fmt.Errorf("reset: %w", err)
+		}
+		if err := in.Env.Store.Load(data); err != nil {
+			return err
+		}
+		var errs []error
+		for _, s := range in.services {
+			if sn, ok := s.(emu.Snapshotter); ok {
+				if err := sn.Restore(ctx, filepath.Join(dir, snapshotServices, s.Name())); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
+				}
 			}
 		}
-	}
-	return errors.Join(errs...)
+		return errors.Join(errs...)
+	})
 }
 
 // Snapshots lists the saved State snapshots by name.
