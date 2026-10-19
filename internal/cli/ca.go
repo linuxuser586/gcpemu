@@ -77,7 +77,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, true)...)
-			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, true)
+			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, true, dryRun)
 			nss, note := nssPlan(h, cfg.Instance, c, nssInstall)
 			if note != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
@@ -106,7 +106,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
-			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false)
+			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false, dryRun)
 			nss, _ := nssPlan(h, cfg.Instance, c, nssUninstall)
 			windowsTrustNote(cmd.ErrOrStderr(), h, false)
 			if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
@@ -372,26 +372,32 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 // printVMTrust prints what to do so the container trust store inside the
 // detected runtime's VM gains (install) or loses the CA, if it keeps one;
 // see vmTrustCommand. A restart is printed only by the returned afterPlan,
-// once the plan has changed the store the runtime rebuilds from.
-func printVMTrust(out io.Writer, instance string, c *ca.CA, install bool) (afterPlan func()) {
+// once the plan has changed the store the runtime rebuilds from (or, on a
+// dry run, been listed for the user to run).
+func printVMTrust(out io.Writer, instance string, c *ca.CA, install, dryRun bool) (afterPlan func()) {
 	_, det, _ := emuruntime.Locate()
 	v := vmTrustCommand(det.Endpoint, instance, c, install)
 	if v.restart {
-		return func() { writeVMTrust(out, v, install) }
+		return func() { writeVMTrust(out, v, install, dryRun) }
 	}
-	writeVMTrust(out, v, install)
+	writeVMTrust(out, v, install, dryRun)
 	return func() {}
 }
 
-// writeVMTrust writes the advice for v; nothing when v is empty.
-func writeVMTrust(out io.Writer, v vmTrust, install bool) {
+// writeVMTrust writes the advice for v; nothing when v is empty. On a dry
+// run a restart waits for the user to run the listed commands first.
+func writeVMTrust(out io.Writer, v vmTrust, install, dryRun bool) {
 	verb := "trust the CA for image pulls there"
 	if !install {
 		verb = "remove the CA from it"
 	}
 	switch {
 	case v.restart:
-		fmt.Fprintf(out, "%s rebuilds its container trust store from the Windows certificate store when it starts. Restart %s to %s.\n\n", v.what, v.what, verb)
+		restart := "Restart " + v.what
+		if dryRun {
+			restart = "After running these commands, restart " + v.what
+		}
+		fmt.Fprintf(out, "%s rebuilds its container trust store from the Windows certificate store when it starts. %s to %s.\n\n", v.what, restart, verb)
 	case v.command != "":
 		run := "run"
 		if v.shell != "" {

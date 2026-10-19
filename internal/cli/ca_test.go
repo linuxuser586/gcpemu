@@ -179,29 +179,34 @@ func TestVMTrustCommand(t *testing.T) {
 }
 
 // writeVMTrust's advice: unchanged for Unix sockets, naming the shell for
-// a Podman machine on Windows and asking for a Docker Desktop restart.
+// a Podman machine on Windows and asking for a Docker Desktop restart, once
+// the plan's commands have run (by the user, on a dry run).
 func TestWriteVMTrust(t *testing.T) {
 	for _, tc := range []struct {
-		v       vmTrust
-		install bool
-		want    string
+		v               vmTrust
+		install, dryRun bool
+		want            string
 	}{
-		{vmTrust{}, true, ""},
-		{vmTrust{what: "Colima (profile default)", command: "CMD"}, true,
+		{vmTrust{}, true, false, ""},
+		{vmTrust{what: "Colima (profile default)", command: "CMD"}, true, false,
 			"Colima (profile default) keeps its own container trust store inside its VM, which gcpemu does not change. To trust the CA for image pulls there, run:\n\nCMD\n\n"},
-		{vmTrust{what: "Podman machine", command: "CMD"}, false,
+		{vmTrust{what: "Colima (profile default)", command: "CMD"}, true, true,
+			"Colima (profile default) keeps its own container trust store inside its VM, which gcpemu does not change. To trust the CA for image pulls there, run:\n\nCMD\n\n"},
+		{vmTrust{what: "Podman machine", command: "CMD"}, false, false,
 			"Podman machine keeps its own container trust store inside its VM, which gcpemu does not change. To remove the CA from it, run:\n\nCMD\n\n"},
-		{vmTrust{what: "Podman machine work", command: "CMD", shell: "Git Bash"}, true,
+		{vmTrust{what: "Podman machine work", command: "CMD", shell: "Git Bash"}, true, false,
 			"Podman machine work keeps its own container trust store inside its VM, which gcpemu does not change. To trust the CA for image pulls there, run this in Git Bash (PowerShell has no heredocs):\n\nCMD\n\n"},
-		{vmTrust{what: "Docker Desktop", restart: true}, true,
+		{vmTrust{what: "Docker Desktop", restart: true}, true, false,
 			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. Restart Docker Desktop to trust the CA for image pulls there.\n\n"},
-		{vmTrust{what: "Docker Desktop", restart: true}, false,
+		{vmTrust{what: "Docker Desktop", restart: true}, false, false,
 			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. Restart Docker Desktop to remove the CA from it.\n\n"},
+		{vmTrust{what: "Docker Desktop", restart: true}, true, true,
+			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. After running these commands, restart Docker Desktop to trust the CA for image pulls there.\n\n"},
 	} {
 		var b strings.Builder
-		writeVMTrust(&b, tc.v, tc.install)
+		writeVMTrust(&b, tc.v, tc.install, tc.dryRun)
 		if b.String() != tc.want {
-			t.Errorf("%+v install=%v:\n got %q\nwant %q", tc.v, tc.install, b.String(), tc.want)
+			t.Errorf("%+v install=%v dryRun=%v:\n got %q\nwant %q", tc.v, tc.install, tc.dryRun, b.String(), tc.want)
 		}
 	}
 }
