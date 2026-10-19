@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -276,7 +277,7 @@ func (a *api) ListSecrets(ctx context.Context, req *secretmanagerpb.ListSecretsR
 		return nil, err
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].GetName() < all[j].GetName() })
-	pg, next, err := page(all, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(all, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}

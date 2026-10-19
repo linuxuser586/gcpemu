@@ -176,7 +176,7 @@ func (s *Service) startUpload(w http.ResponseWriter, r *http.Request, t *target)
 		s.blobCreated(w, t, d)
 		return
 	}
-	u := &upload{id: s.uploadID(), ref: t.ref, img: t.img, started: s.env.Clock.Now()}
+	u := &upload{id: s.env.IDs.UUID(), ref: t.ref, img: t.img, started: s.env.Clock.Now()}
 	// Under gc, so that Reset does not empty uploads meanwhile (#397).
 	s.blobs.gc.RLock()
 	f, err := os.OpenFile(s.blobs.uploadPath(u.id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -236,11 +236,6 @@ func (s *Service) blobCreated(w http.ResponseWriter, t *target, digest string) {
 	h.Set("Docker-Content-Digest", digest)
 	h.Set("Content-Length", "0")
 	w.WriteHeader(http.StatusCreated)
-}
-
-func (s *Service) uploadID() string {
-	h := s.env.IDs.Hex(16)
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
 func rangeHeader(size int64) string {

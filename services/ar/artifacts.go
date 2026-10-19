@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -91,7 +92,7 @@ func (a *api) ListDockerImages(ctx context.Context, req *artifactregistrypb.List
 	if err := orderImages(out, req.GetOrderBy()); err != nil {
 		return nil, err
 	}
-	pg, next, err := page(out, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(out, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +181,7 @@ func (a *api) ListPackages(ctx context.Context, req *artifactregistrypb.ListPack
 		return nil, err
 	}
 	sortByName(out, req.GetOrderBy(), func(p *artifactregistrypb.Package) string { return p.Name })
-	pg, next, err := page(out, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(out, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +290,7 @@ func (a *api) ListVersions(ctx context.Context, req *artifactregistrypb.ListVers
 	if err := orderVersions(out, req.GetOrderBy()); err != nil {
 		return nil, err
 	}
-	pg, next, err := page(out, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(out, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +424,7 @@ func (a *api) ListTags(ctx context.Context, req *artifactregistrypb.ListTagsRequ
 	if err != nil {
 		return nil, err
 	}
-	pg, next, err := page(out, req.GetPageToken(), req.GetPageSize())
+	pg, next, err := listpage.Offset(out, req.GetPageToken(), req.GetPageSize(), pageOpts)
 	if err != nil {
 		return nil, err
 	}

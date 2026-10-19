@@ -219,11 +219,6 @@ func checkDenyEtag(pol *iampb.Policy, etag string) error {
 	return nil
 }
 
-func (s *Service) newUUID() string {
-	h := s.env.IDs.Hex(16)
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
-}
-
 // --- methods (gRPC and REST share them) ---
 
 func (s *Service) createDenyPolicy(ctx context.Context, parent, id string, in *iampb.Policy) (*longrunningpb.Operation, error) {
@@ -255,7 +250,7 @@ func (s *Service) createDenyPolicy(ctx context.Context, parent, id string, in *i
 	}
 	now := timestamppb.New(s.env.Clock.Now())
 	pol := &iampb.Policy{
-		Name: name, Uid: s.newUUID(), Kind: "DenyPolicy",
+		Name: name, Uid: s.env.IDs.UUID(), Kind: "DenyPolicy",
 		DisplayName: in.DisplayName, Annotations: in.Annotations, Rules: in.Rules,
 		Etag: s.newEtag(), CreateTime: now, UpdateTime: now,
 	}

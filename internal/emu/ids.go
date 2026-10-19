@@ -44,6 +44,12 @@ func (g *IDs) Hex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// UUID returns Hex(16) formatted as a UUID (8-4-4-4-12).
+func (g *IDs) UUID() string {
+	h := g.Hex(16)
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
 // Operation returns an operation name suffix like "operation-1700000000000-5f1a...".
 func (g *IDs) Operation() string {
 	return "operation-" + g.Hex(16)

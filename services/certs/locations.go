@@ -7,6 +7,7 @@ import (
 	"google.golang.org/genproto/googleapis/cloud/location"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 )
 
@@ -38,7 +39,7 @@ func (s *Service) listLocations(ctx context.Context, api, project string, size i
 	for _, id := range locationIDs() {
 		all = append(all, &location.Location{Name: "projects/" + project + "/locations/" + id, LocationId: id, DisplayName: displayName(id)})
 	}
-	pg, next, err := page(all, token, size)
+	pg, next, err := listpage.Offset(all, token, size, pageOpts)
 	if err != nil {
 		return nil, err
 	}

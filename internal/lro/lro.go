@@ -13,10 +13,8 @@ package lro
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +30,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/inflight"
+	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -135,7 +134,7 @@ func (m *Manager) Latency() time.Duration { return m.env.Config.LRO(m.service) }
 // otherwise run executes after the latency and the operation is returned
 // pending. The ctx values (principal) are kept for the deferred run.
 func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message, run RunFunc) (*longrunningpb.Operation, error) {
-	op := &longrunningpb.Operation{Name: parent + "/operations/" + m.newID()}
+	op := &longrunningpb.Operation{Name: parent + "/operations/" + m.env.IDs.UUID()}
 	if err := setMetadata(op, metadata); err != nil {
 		return nil, err
 	}
@@ -189,7 +188,7 @@ func (m *Manager) Run(ctx context.Context, parent string, metadata proto.Message
 // for work whose end the service decides rather than the LRO latency (a
 // Build). The service completes it with Finish.
 func (m *Manager) Begin(parent string, metadata proto.Message) (*longrunningpb.Operation, error) {
-	op := &longrunningpb.Operation{Name: parent + "/operations/" + m.newID()}
+	op := &longrunningpb.Operation{Name: parent + "/operations/" + m.env.IDs.UUID()}
 	if err := setMetadata(op, metadata); err != nil {
 		return nil, err
 	}
@@ -209,12 +208,6 @@ func setMetadata(op *longrunningpb.Operation, metadata proto.Message) error {
 	}
 	op.Metadata = a
 	return nil
-}
-
-// newID returns a UUID-formatted operation ID.
-func (m *Manager) newID() string {
-	h := m.env.IDs.Hex(16)
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
 // finish marks op done with resp or err.
@@ -493,21 +486,16 @@ func listOps(st store.Store, service string, req *longrunningpb.ListOperationsRe
 	if req.GetName() == "" {
 		prefix = ""
 	}
-	offset := 0
-	if t := req.GetPageToken(); t != "" {
-		b, err := base64.RawURLEncoding.DecodeString(t)
-		n, perr := strconv.Atoi(string(b))
-		if err != nil || perr != nil || n < 0 {
-			return nil, apierr.InvalidArgument("Invalid page token.")
-		}
-		offset = n
+	offset, err := listpage.DecodeOffset(req.GetPageToken())
+	if err != nil {
+		return nil, err
 	}
 	size := int(req.GetPageSize())
 	if size <= 0 || size > 1000 {
 		size = 1000
 	}
 	resp := &longrunningpb.ListOperationsResponse{}
-	err := st.View(func(tx store.Tx) error {
+	err = st.View(func(tx store.Tx) error {
 		i := 0
 		var ierr error
 		tx.Scan(Namespace, prefix, func(_ string, b []byte) bool {
@@ -520,7 +508,7 @@ func listOps(st store.Store, service string, req *longrunningpb.ListOperationsRe
 			}
 			if i >= offset {
 				if len(resp.Operations) == size {
-					resp.NextPageToken = base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(i)))
+					resp.NextPageToken = listpage.EncodeOffset(i)
 					return false
 				}
 				op := &longrunningpb.Operation{}
