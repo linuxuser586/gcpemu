@@ -126,40 +126,82 @@ func TestContainerTrustPlan(t *testing.T) {
 }
 
 // A VM runtime that keeps its own trust store gets the command to run in
-// its VM; Docker Desktop, OrbStack and native sockets get none (#175).
+// its VM; Docker Desktop, OrbStack and native sockets get none (#175). On
+// Windows, the default Podman machine's named pipe gets the same command,
+// for Git Bash, and Docker Desktop's pipes get a restart, since it rebuilds
+// its trust from the Windows store `ca install` fills (#377).
 func TestVMTrustCommand(t *testing.T) {
 	c, err := ca.Load(t.TempDir(), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		sock, what, ssh, dir string
+		endpoint, what, ssh, dir, shell string
+		restart                         bool
 	}{
-		{sock: "/Users/u/.colima/default/docker.sock", what: "Colima (profile default)", ssh: "colima ssh -p default -- sudo sh -s <<'GCPEMU_VM'\n", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
-		{sock: "/Users/u/.colima/work/docker.sock", what: "Colima (profile work)", ssh: "colima ssh -p work -- sudo sh -s", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
-		{sock: "/var/folders/xy/T/podman/podman-machine-default-api.sock", what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt"},
-		{sock: "/Users/u/.local/share/containers/podman/machine/qemu/podman.sock", what: "Podman machine", ssh: "podman machine ssh sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt"},
-		{sock: "/Users/u/.docker/run/docker.sock"},
-		{sock: "/Users/u/.orbstack/run/docker.sock"},
-		{sock: "/var/run/docker.sock"},
-		{sock: ""},
+		{endpoint: "/Users/u/.colima/default/docker.sock", what: "Colima (profile default)", ssh: "colima ssh -p default -- sudo sh -s <<'GCPEMU_VM'\n", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
+		{endpoint: "unix:///Users/u/.colima/work/docker.sock", what: "Colima (profile work)", ssh: "colima ssh -p work -- sudo sh -s", dir: "/etc/docker/certs.d/$h/gcpemu-dev.crt"},
+		{endpoint: "/var/folders/xy/T/podman/podman-machine-default-api.sock", what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt"},
+		{endpoint: "/Users/u/.local/share/containers/podman/machine/qemu/podman.sock", what: "Podman machine", ssh: "podman machine ssh sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt"},
+		{endpoint: "npipe:////./pipe/podman-machine-default", what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s <<'GCPEMU_VM'\n", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt", shell: "Git Bash"},
+		{endpoint: `npipe://\\.\pipe\podman-machine-default`, what: "Podman machine podman-machine-default", ssh: "podman machine ssh podman-machine-default sudo sh -s", dir: "/etc/containers/certs.d/$h/gcpemu-dev.crt", shell: "Git Bash"},
+		{endpoint: "npipe:////./pipe/podman-work"}, // machine work or podman-work: ambiguous
+		{endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine", what: "Docker Desktop", restart: true},
+		{endpoint: "npipe:////./pipe/docker_engine", what: "Docker Desktop", restart: true},
+		{endpoint: "npipe:////./pipe/other"},
+		{endpoint: "/Users/u/.docker/run/docker.sock"},
+		{endpoint: "/Users/u/.orbstack/run/docker.sock"},
+		{endpoint: "unix:///var/run/docker.sock"},
+		{endpoint: ""},
 	} {
 		for _, install := range []bool{true, false} {
-			what, cmd := vmTrustCommand(tc.sock, "dev", c, install)
-			if tc.what == "" {
-				if what != "" || cmd != "" {
-					t.Errorf("%s: %q %q, want none", tc.sock, what, cmd)
+			v := vmTrustCommand(tc.endpoint, "dev", c, install)
+			if v.what != tc.what || v.shell != tc.shell || v.restart != tc.restart {
+				t.Errorf("%s install=%v: %+v, want what %q shell %q restart %v", tc.endpoint, install, v, tc.what, tc.shell, tc.restart)
+				continue
+			}
+			if tc.ssh == "" {
+				if v.command != "" {
+					t.Errorf("%s: command %q, want none", tc.endpoint, v.command)
 				}
 				continue
 			}
 			script := certsDirScript("/etc", "dev", c, []string{path.Dir(path.Dir(tc.dir))}, false, install)
-			if what != tc.what || !strings.HasPrefix(cmd, tc.ssh) || !strings.Contains(cmd, tc.dir) ||
-				!strings.HasSuffix(cmd, "\n"+script+"GCPEMU_VM") {
-				t.Errorf("%s install=%v: %q\n%s", tc.sock, install, what, cmd)
+			if !strings.HasPrefix(v.command, tc.ssh) || !strings.Contains(v.command, tc.dir) ||
+				!strings.HasSuffix(v.command, "\n"+script+"GCPEMU_VM") {
+				t.Errorf("%s install=%v: %s", tc.endpoint, install, v.command)
 			}
-			if strings.Contains(cmd, "/etc/containerd") {
-				t.Errorf("%s: writes containerd config: %s", tc.sock, cmd)
+			if strings.Contains(v.command, "/etc/containerd") {
+				t.Errorf("%s: writes containerd config: %s", tc.endpoint, v.command)
 			}
+		}
+	}
+}
+
+// writeVMTrust's advice: unchanged for Unix sockets, naming the shell for
+// a Podman machine on Windows and asking for a Docker Desktop restart.
+func TestWriteVMTrust(t *testing.T) {
+	for _, tc := range []struct {
+		v       vmTrust
+		install bool
+		want    string
+	}{
+		{vmTrust{}, true, ""},
+		{vmTrust{what: "Colima (profile default)", command: "CMD"}, true,
+			"Colima (profile default) keeps its own container trust store inside its VM, which gcpemu does not change. To trust the CA for image pulls there, run:\n\nCMD\n\n"},
+		{vmTrust{what: "Podman machine", command: "CMD"}, false,
+			"Podman machine keeps its own container trust store inside its VM, which gcpemu does not change. To remove the CA from it, run:\n\nCMD\n\n"},
+		{vmTrust{what: "Podman machine work", command: "CMD", shell: "Git Bash"}, true,
+			"Podman machine work keeps its own container trust store inside its VM, which gcpemu does not change. To trust the CA for image pulls there, run this in Git Bash (PowerShell has no heredocs):\n\nCMD\n\n"},
+		{vmTrust{what: "Docker Desktop", restart: true}, true,
+			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. Restart Docker Desktop to trust the CA for image pulls there.\n\n"},
+		{vmTrust{what: "Docker Desktop", restart: true}, false,
+			"Docker Desktop rebuilds its container trust store from the Windows certificate store when it starts. Restart Docker Desktop to remove the CA from it.\n\n"},
+	} {
+		var b strings.Builder
+		writeVMTrust(&b, tc.v, tc.install)
+		if b.String() != tc.want {
+			t.Errorf("%+v install=%v:\n got %q\nwant %q", tc.v, tc.install, b.String(), tc.want)
 		}
 	}
 }

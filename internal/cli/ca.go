@@ -77,13 +77,17 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, true)...)
-			printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, true)
+			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, true)
 			nss, note := nssPlan(h, cfg.Instance, c, nssInstall)
 			if note != "" {
 				fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
 			}
 			windowsTrustNote(cmd.ErrOrStderr(), h, true)
-			return runPlan(cmd, append(plan, nss...), yes, dryRun)
+			if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
+				return err
+			}
+			afterPlan()
+			return nil
 		},
 	}
 	install.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
@@ -102,10 +106,14 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				return err
 			}
 			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
-			printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false)
+			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false)
 			nss, _ := nssPlan(h, cfg.Instance, c, nssUninstall)
 			windowsTrustNote(cmd.ErrOrStderr(), h, false)
-			return runPlan(cmd, append(plan, nss...), yes, dryRun)
+			if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
+				return err
+			}
+			afterPlan()
+			return nil
 		},
 	}
 	uninstall.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
@@ -361,20 +369,36 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 	return []trustStep{{args: args, stdin: []byte(script), script: true}}
 }
 
-// printVMTrust prints the command that adds the CA to (install) or removes
-// it from the trust store inside the detected runtime's VM, if it keeps
-// one; see vmTrustCommand.
-func printVMTrust(out io.Writer, instance string, c *ca.CA, install bool) {
+// printVMTrust prints what to do so the container trust store inside the
+// detected runtime's VM gains (install) or loses the CA, if it keeps one;
+// see vmTrustCommand. A restart is printed only by the returned afterPlan,
+// once the plan has changed the store the runtime rebuilds from.
+func printVMTrust(out io.Writer, instance string, c *ca.CA, install bool) (afterPlan func()) {
 	_, det, _ := emuruntime.Locate()
-	what, command := vmTrustCommand(strings.TrimPrefix(det.Endpoint, "unix://"), instance, c, install)
-	if command == "" {
-		return
+	v := vmTrustCommand(det.Endpoint, instance, c, install)
+	if v.restart {
+		return func() { writeVMTrust(out, v, install) }
 	}
+	writeVMTrust(out, v, install)
+	return func() {}
+}
+
+// writeVMTrust writes the advice for v; nothing when v is empty.
+func writeVMTrust(out io.Writer, v vmTrust, install bool) {
 	verb := "trust the CA for image pulls there"
 	if !install {
 		verb = "remove the CA from it"
 	}
-	fmt.Fprintf(out, "%s keeps its own container trust store inside its VM, which gcpemu does not change. To %s, run:\n\n%s\n\n", what, verb, command)
+	switch {
+	case v.restart:
+		fmt.Fprintf(out, "%s rebuilds its container trust store from the Windows certificate store when it starts. Restart %s to %s.\n\n", v.what, v.what, verb)
+	case v.command != "":
+		run := "run"
+		if v.shell != "" {
+			run = "run this in " + v.shell + " (PowerShell has no heredocs)"
+		}
+		fmt.Fprintf(out, "%s keeps its own container trust store inside its VM, which gcpemu does not change. To %s, %s:\n\n%s\n\n", v.what, verb, run, v.command)
+	}
 }
 
 var (
@@ -385,29 +409,59 @@ var (
 	podmanOldSock = regexp.MustCompile(`/podman/machine/[^/]+/podman\.sock$`)
 )
 
-// vmTrustCommand returns, for a runtime socket of a VM runtime that keeps
-// its own registry trust inside the VM (Colima, Podman machine), the
-// runtime's name and the command, run on the host, that installs or
-// removes the CA there; gcpemu never runs anything in the VM itself
-// (#175). Docker Desktop and OrbStack read the macOS keychain, which `ca
-// install` already covers, so they (and every other socket) get "".
-func vmTrustCommand(sock, instance string, c *ca.CA, install bool) (what, command string) {
+// vmTrust is how a VM runtime's own container trust store gains or loses
+// the CA: by command, run on the host from shell ("" for any POSIX shell),
+// or by restarting the runtime. The zero value means nothing to do.
+type vmTrust struct {
+	what, command, shell string
+	restart              bool
+}
+
+// vmTrustCommand returns how the trust store inside the VM of the runtime
+// at endpoint gains (install) or loses the CA. A VM runtime that keeps its
+// own registry trust there (Colima, Podman machine) gets the command, run
+// on the host, that installs or removes it; gcpemu never runs anything in
+// the VM itself (#175). Docker Desktop and OrbStack on macOS read the
+// keychain, which `ca install` already covers, so they (and every other
+// runtime endpoint) get the zero vmTrust. Docker Desktop on Windows builds
+// its bundle from the Windows certificate store, which `ca install` also
+// covers, but only when it starts, when it also copies ~/.docker/certs.d
+// over the VM's /etc/docker/certs.d; so it gets a restart, not a command
+// (#377). docker_engine is Docker Desktop too: Docker Engine for Windows
+// serves only Windows containers, which detection refuses (ADR 0015).
+func vmTrustCommand(endpoint, instance string, c *ca.CA, install bool) vmTrust {
+	var v vmTrust
 	var ssh string
 	var dirs []string
-	if m := colimaSock.FindStringSubmatch(sock); m != nil {
-		what, ssh = "Colima (profile "+m[1]+")", "colima ssh -p "+m[1]+" --"
+	sock := strings.TrimPrefix(endpoint, "unix://")
+	if pipe, ok := strings.CutPrefix(endpoint, "npipe://"); ok {
+		// The pipe's own name, from //./pipe/NAME or \\.\pipe\NAME.
+		switch pipe[strings.LastIndexAny(pipe, `/\`)+1:] {
+		case "dockerDesktopLinuxEngine", "docker_engine":
+			return vmTrust{what: "Docker Desktop", restart: true}
+		case "podman-machine-default":
+			// The heredoc needs Git Bash: PowerShell has none, and piping
+			// a here-string to a native command sends CRLFs, which break sh.
+			v.what, v.shell, ssh = "Podman machine podman-machine-default", "Git Bash", "podman machine ssh podman-machine-default"
+			dirs = []string{"/etc/containers/certs.d"}
+		default:
+			return vmTrust{}
+		}
+	} else if m := colimaSock.FindStringSubmatch(sock); m != nil {
+		v.what, ssh = "Colima (profile "+m[1]+")", "colima ssh -p "+m[1]+" --"
 		dirs = []string{"/etc/docker/certs.d"}
 	} else if m := podmanSock.FindStringSubmatch(sock); m != nil {
-		what, ssh = "Podman machine "+m[1], "podman machine ssh "+m[1]
+		v.what, ssh = "Podman machine "+m[1], "podman machine ssh "+m[1]
 		dirs = []string{"/etc/containers/certs.d"}
 	} else if podmanOldSock.MatchString(sock) {
-		what, ssh = "Podman machine", "podman machine ssh"
+		v.what, ssh = "Podman machine", "podman machine ssh"
 		dirs = []string{"/etc/containers/certs.d"}
 	} else {
-		return "", ""
+		return vmTrust{}
 	}
 	script := certsDirScript("/etc", instance, c, dirs, false, install)
-	return what, ssh + " sudo sh -s <<'GCPEMU_VM'\n" + script + "GCPEMU_VM"
+	v.command = ssh + " sudo sh -s <<'GCPEMU_VM'\n" + script + "GCPEMU_VM"
+	return v
 }
 
 // certsDirScript is the shell script that adds (install) or removes the CA
