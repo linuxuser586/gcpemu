@@ -49,8 +49,8 @@ type relayAgent struct {
 	// wait bounds how long a connection or datagram waits for a session
 	// to carry it to the emulator.
 	wait time.Duration
-	// listenPacket binds a UDP socket: net.ListenPacket, which tests
-	// replace to refuse binds as Windows does.
+	// listenPacket binds listen's UDP sockets: net.ListenPacket, which
+	// tests replace to refuse binds as Windows does.
 	listenPacket func(network, addr string) (net.PacketConn, error)
 }
 
@@ -273,8 +273,11 @@ func (a *relayAgent) withdraw(name string) {
 }
 
 // udpPairAttempts bounds the kernel-picked ports listen tries for a TCP
-// listener with a UDP socket on the same port.
-const udpPairAttempts = 10
+// listener with a UDP socket on the same port. Each protocol picks half,
+// enough to walk past an excluded port range, which Windows reserves 100
+// ports at a time. It is even, so the last attempt has TCP pick and its
+// error names the port and the UDP bind that failed.
+const udpPairAttempts = 256
 
 // listenPair listens on addr over TCP and, withUDP, over UDP on the port
 // TCP got, or, udpPicks, over UDP first and TCP on the port UDP got.

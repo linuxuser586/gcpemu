@@ -216,6 +216,35 @@ func TestInwardUDPTwinRefused(t *testing.T) {
 	}
 }
 
+// TestInwardKeepsFreePort: a free port asked for over TCP and UDP is the
+// one the relay listens on.
+func TestInwardKeepsFreePort(t *testing.T) {
+	r := startInProcess(t, map[string]string{"dns": echoUDP(t)})
+	want := freePort(t, "udp")
+	got, err := r.Listen(context.Background(), "dns", want, true)
+	if err != nil || got != want {
+		t.Fatalf("listen = %q, %v; want %q", got, err, want)
+	}
+}
+
+// TestInwardNoUsablePort: when no port takes UDP, the error names the
+// port tried last and the UDP bind that failed.
+func TestInwardNoUsablePort(t *testing.T) {
+	a := newRelayAgent()
+	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
+		return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: forbidden by its access permissions")}
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startOn(t, l, a, map[string]string{"dns": echoUDP(t)})
+	_, err = r.Listen(context.Background(), "dns", "127.0.0.1:0", true)
+	if err == nil || !strings.Contains(err.Error(), "udp on 127.0.0.1:") || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("listen error = %v; want the port and the refused UDP bind", err)
+	}
+}
+
 // TestReconnect: after the control connection drops, the emulator
 // reconnects by itself, so containers reach it again, even straight
 // away, and new dials work.
