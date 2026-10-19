@@ -78,8 +78,9 @@ type backupRecord struct {
 	File      string               `json:"file,omitempty"`
 	Databases []*sqladmin.Database `json:"databases,omitempty"`
 	Users     []*userRecord        `json:"users,omitempty"`
-	// ExpiryTime is the backups API's expiryTime; the backup is deleted
-	// once the emulator clock passes it.
+	// ExpiryTime is a Final backup's backups API expiryTime; the backup is
+	// deleted once the emulator clock passes it. Another backup's is
+	// ignored (expiry).
 	ExpiryTime string `json:"expiryTime,omitempty"`
 	// InstanceDeletionTime is set on a Final or Retained backup
 	// (retainedbackup.go): when its instance was deleted.

@@ -17,10 +17,10 @@ import (
 // The backups API (FR-SQL-008): projects/{project}/backups/{backup} is the
 // project-level view of the stored backup runs, with the run's ID as the
 // backup ID. Permissions are the backupRuns ones on the backup's instance,
-// as in Cloud SQL. A backup past its expiryTime (set by expiryTime or
-// ttlDays) is deleted on the emulator clock. Unlike Cloud SQL, which only
-// lets Final backups (finalbackup.go) expire, any backup can, as agreed in
-// #367; #416 decides whether that stays.
+// as in Cloud SQL. Also as in Cloud SQL, only a Final backup
+// (finalbackup.go) has an expiry: its expiryTime or ttlDays can be
+// updated, and once the emulator clock passes its expiryTime it is
+// deleted. An on-demand backup is kept until it is deleted.
 
 // toBackup renders a stored backup as a backups API resource.
 func toBackup(project string, b *backupRecord) *sqladmin.Backup {
@@ -38,7 +38,7 @@ func toBackup(project string, b *backupRecord) *sqladmin.Backup {
 		DatabaseVersion: run.DatabaseVersion,
 		Location:        run.Location,
 		BackupRun:       run.SelfLink,
-		ExpiryTime:      b.ExpiryTime,
+		ExpiryTime:      b.expiry(),
 		Error:           run.Error,
 
 		InstanceDeletionTime: b.InstanceDeletionTime,
@@ -68,8 +68,8 @@ func (s *Service) backupFor(r *http.Request, perm string) (*backupRecord, error)
 	return b, nil
 }
 
-// maxTTLDays is how far ahead, in days, a backup's expiry can be, as in
-// Cloud SQL: from now, or for a Final backup from its instance's deletion.
+// maxTTLDays is how far ahead, in days, a Final backup's expiry can be
+// from its instance's deletion, as in Cloud SQL.
 const maxTTLDays = 365
 
 // days is n days.
@@ -111,9 +111,10 @@ func (a expiryAsk) resolve(now, from time.Time, limit string) (string, error) {
 	return out, nil
 }
 
-// expiryOf returns the expiry time a backups API request asks for. A Final
-// backup's limit counts from its instance's deletion, deleted; otherwise
-// (deleted zero) from now.
+// expiryOf returns the expiry time a backups API request asks for. The
+// limit counts from the Final backup's instance's deletion, deleted, or
+// with deleted zero (an update of only the description of another backup)
+// from now.
 func (s *Service) expiryOf(b *sqladmin.Backup, deleted time.Time) (string, error) {
 	now := s.env.Clock.Now().UTC()
 	from, limit := now, "from now"
@@ -143,16 +144,17 @@ func (s *Service) createBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	expiry, err := s.expiryOf(&req, time.Time{})
-	if err != nil {
-		apierr.Write(w, err)
+	// Cloud SQL's create takes no expiry and documents no error for one;
+	// this 400 and its message are the emulator's own.
+	if req.TtlDays != 0 || req.ExpiryTime != "" {
+		apierr.Write(w, errInvalid("An on-demand backup cannot have expiryTime or ttlDays."))
 		return
 	}
 	if err := requireRunnable(rec); err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	op, err := s.startBackup(r.Context(), rec, req.Description, expiry)
+	op, err := s.startBackup(r.Context(), rec, req.Description)
 	if err != nil {
 		apierr.Write(w, err)
 		return
@@ -205,8 +207,8 @@ func (s *Service) getBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, toBackup(r.PathValue("project"), b))
 }
 
-// updateBackup changes description and expiry (updateMask: description,
-// expiryTime, ttlDays).
+// updateBackup changes description and, of a Final backup, expiry
+// (updateMask: description, expiryTime, ttlDays).
 func (s *Service) updateBackup(w http.ResponseWriter, r *http.Request) {
 	mask := r.URL.Query().Get("updateMask")
 	if mask == "" {
@@ -233,6 +235,12 @@ func (s *Service) updateBackup(w http.ResponseWriter, r *http.Request) {
 	b, err := s.backupFor(r, "cloudsql.backupRuns.update")
 	if err != nil {
 		apierr.Write(w, err)
+		return
+	}
+	// Cloud SQL updates "final backups only" but documents no error for
+	// another backup; this 400 and its message are the emulator's own.
+	if setExpiry && b.Run.Type != "FINAL" {
+		apierr.Write(w, errInvalid("Only a final backup's expiryTime or ttlDays can be updated."))
 		return
 	}
 	deleted, err := b.finalDeletedAt()

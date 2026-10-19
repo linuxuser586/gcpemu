@@ -14,8 +14,9 @@ import (
 // (finalbackup.go, #407) and Retained backups (#366). With
 // settings.retainBackupsOnDelete, instances.delete keeps every on-demand
 // backup of the instance, whatever its state, as a Retained backup: it
-// keeps its type, ID, name, description, state and expiry, and gains the
-// instanceDeletionTime and instanceSettings a Final backup has.
+// keeps its type, ID, name, description and state, and gains the
+// instanceDeletionTime and instanceSettings a Final backup has. Like any
+// on-demand backup it has no expiry.
 //
 // A backup of a deleted instance is stored under "P/I@deleted/backupKey"
 // and its dump under backups/P/I@deleted. Instance names cannot contain
