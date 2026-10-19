@@ -1,8 +1,11 @@
 package sql
 
 import (
+	"archive/tar"
 	"context"
+	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,14 +25,20 @@ import (
 // base/<end>, where <end> is PostgreSQL's clock (Unix microseconds) once
 // the backup was complete: one when the instance is created or PITR is
 // turned on (the earliest recovery time), and one with every backup.
+// Transaction log retention (retention.go) prunes the WAL archive after
+// every base backup and before the recovery window is read or a restore
+// bundle is built, always under the instance's lock.
 //
 // A clone with pointInTime archives the source's current WAL segment, packs
 // the newest base backup that ended at or before that time with the
-// archived WAL into a restore bundle, and creates the clone with the bundle
-// in its container: the agent lays the base backup out as the data
-// directory and PostgreSQL replays the WAL up to the time and promotes
-// (proxy/restore.go). The clone then gets its own settings and starts its
-// own WAL history with a base backup of its own.
+// archived WAL from its start segment on into a restore bundle, and creates
+// the clone with the bundle in its container: the agent lays the base
+// backup out as the data directory and PostgreSQL replays the WAL up to the
+// time and promotes (proxy/restore.go). The bundle is packed inside the
+// source's container and streamed to a temporary file on the emulator's
+// host, removed once the clone's container has it. The clone then gets its
+// own settings and starts its own WAL history with a base backup of its
+// own.
 
 const (
 	archiveWAL  = proxy.ArchiveDir + "/wal"
@@ -53,7 +62,8 @@ func errPITRDisabled(name string) error {
 // pgClockSQL is PostgreSQL's clock in Unix microseconds.
 const pgClockSQL = "SELECT (extract(epoch FROM clock_timestamp()) * 1000000)::bigint"
 
-// takeBaseBackup stores a base backup in the archive volume.
+// takeBaseBackup stores a base backup in the archive volume and prunes the
+// WAL archive. The caller holds the instance's lock.
 func (s *Service) takeBaseBackup(ctx context.Context, project, name string) error {
 	psql := "psql -X -At -h " + proxy.SocketDir + " -p " + strconv.Itoa(proxy.InternalPort) + " -U " + superuser + " -d postgres"
 	script := "set -e\n" +
@@ -66,7 +76,8 @@ func (s *Service) takeBaseBackup(ctx context.Context, project, name string) erro
 	if _, err := s.execIn(ctx, project, name, "", "sh", "-c", script); err != nil {
 		return newOpError("INTERNAL_ERROR", "base backup: %v", err)
 	}
-	return nil
+	_, err := s.pruneArchive(ctx, project, name)
+	return err
 }
 
 // ensureBaseBackup takes a base backup when PITR is enabled and the
@@ -107,27 +118,127 @@ func (s *Service) baseBackups(ctx context.Context, project, name string) ([]int6
 	return ends, nil
 }
 
-// recoveryWindow returns the earliest and latest times an instance can be
-// recovered to: the end of its oldest base backup and now.
+// walArchive is what an instance's WAL archive holds as of Now, on
+// PostgreSQL's clock.
+type walArchive struct {
+	Bases []baseBackup // oldest first
+	WAL   []string
+	Now   time.Time
+}
+
+// listArchiveScript prints each base backup's directory name with the
+// WAL-Ranges section of its backup_manifest, then the archived WAL.
+const listArchiveScript = "cd " + proxy.ArchiveDir + "\n" +
+	"for d in base/*/; do\n" +
+	"  e=${d#base/}; e=${e%/}\n" +
+	"  echo \"@base $e\"\n" +
+	"  [ -f \"base/$e/backup_manifest\" ] && sed -n '/\"WAL-Ranges\"/,$p' \"base/$e/backup_manifest\"\n" +
+	"done\n" +
+	"echo @wal\n" +
+	"ls -1 wal\n"
+
+// readArchive lists the instance's WAL archive.
+func (s *Service) readArchive(ctx context.Context, project, name string) (walArchive, error) {
+	var a walArchive
+	out, err := s.execIn(ctx, project, name, "", "sh", "-c", listArchiveScript)
+	if err != nil {
+		return a, err
+	}
+	clock, err := s.execSQL(ctx, project, name, "postgres", "",
+		pgClockSQL+", setting FROM pg_settings WHERE name = 'wal_segment_size';")
+	if err != nil {
+		return a, err
+	}
+	now, segSize, ok := strings.Cut(strings.TrimSpace(clock), "|")
+	n, err1 := strconv.ParseInt(now, 10, 64)
+	seg, err2 := strconv.ParseUint(segSize, 10, 64)
+	if !ok || err1 != nil || err2 != nil {
+		return a, newOpError("INTERNAL_ERROR", "read PostgreSQL's clock: %q", clock)
+	}
+	a.Now = time.UnixMicro(n).UTC()
+	var cur *baseBackup
+	var ranges strings.Builder
+	flush := func() {
+		if cur != nil {
+			cur.Start = manifestStart(ranges.String(), seg)
+			a.Bases = append(a.Bases, *cur)
+		}
+		cur = nil
+		ranges.Reset()
+	}
+	inWAL := false
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case inWAL:
+			if l = strings.TrimSpace(l); l != "" {
+				a.WAL = append(a.WAL, l)
+			}
+		case strings.HasPrefix(l, "@base "):
+			flush()
+			if e, err := strconv.ParseInt(strings.TrimPrefix(l, "@base "), 10, 64); err == nil {
+				cur = &baseBackup{End: e}
+			}
+		case l == "@wal":
+			flush()
+			inWAL = true
+		default:
+			ranges.WriteString(l + "\n")
+		}
+	}
+	sort.Slice(a.Bases, func(i, j int) bool { return a.Bases[i].End < a.Bases[j].End })
+	return a, nil
+}
+
+// pruneArchive applies the instance's transaction log retention to its
+// WAL archive and returns what is left. The caller holds the instance's
+// lock.
+func (s *Service) pruneArchive(ctx context.Context, project, name string) (walArchive, error) {
+	rec, err := s.loadRecord(project, name)
+	if err != nil {
+		return walArchive{}, err
+	}
+	days := int64(7)
+	if bc := rec.Instance.Settings.BackupConfiguration; bc != nil && bc.TransactionLogRetentionDays > 0 {
+		days = bc.TransactionLogRetentionDays
+	}
+	a, err := s.readArchive(ctx, project, name)
+	if err != nil {
+		return a, err
+	}
+	p := planRetention(a.Bases, a.WAL, a.Now, days)
+	if len(p.DropBase) == 0 && len(p.DropWAL) == 0 {
+		return a, nil
+	}
+	var paths strings.Builder
+	for _, b := range p.DropBase {
+		paths.WriteString("base/" + strconv.FormatInt(b.End, 10) + "\n")
+	}
+	for _, f := range p.DropWAL {
+		paths.WriteString("wal/" + f + "\n")
+	}
+	if _, err := s.execIn(ctx, project, name, paths.String(), "sh", "-c", "cd "+proxy.ArchiveDir+" && xargs rm -rf --"); err != nil {
+		return a, newOpError("INTERNAL_ERROR", "prune WAL archive: %v", err)
+	}
+	a.Bases = p.Keep
+	a.WAL, _ = walFrom(p.Keep[0].Start, a.WAL)
+	return a, nil
+}
+
+// recoveryWindow prunes the WAL archive and returns the earliest and
+// latest times the instance can be recovered to: the end of its oldest
+// base backup and now.
 func (s *Service) recoveryWindow(ctx context.Context, project, name string) (earliest, latest time.Time, err error) {
-	ends, err := s.baseBackups(ctx, project, name)
+	mu := s.lock(project, name)
+	defer mu.Unlock()
+	a, err := s.pruneArchive(ctx, project, name)
 	if err != nil {
 		return
 	}
-	if len(ends) == 0 {
+	if len(a.Bases) == 0 {
 		err = errInvalid("Instance %s has no base backup to recover from yet.", name)
 		return
 	}
-	now, err := s.execSQL(ctx, project, name, "postgres", "", pgClockSQL+";")
-	if err != nil {
-		return
-	}
-	n, perr := strconv.ParseInt(strings.TrimSpace(now), 10, 64)
-	if perr != nil {
-		err = newOpError("INTERNAL_ERROR", "read PostgreSQL's clock: %q", now)
-		return
-	}
-	return time.UnixMicro(ends[0]).UTC(), time.UnixMicro(n).UTC(), nil
+	return time.UnixMicro(a.Bases[0].End).UTC(), a.Now, nil
 }
 
 // archiveNow makes sure the WAL up to now is archived: it writes a commit
@@ -163,32 +274,93 @@ func (s *Service) archiveNow(ctx context.Context, project, name string) error {
 }
 
 // restoreBundle returns the files that make a new container recover the
-// source's data as of target (proxy/restore.go).
-func (s *Service) restoreBundle(ctx context.Context, project, src string, target time.Time) ([]runtime.File, error) {
+// source's data as of target (proxy/restore.go), and a function that
+// removes the bundle's temporary file once the container has them. It
+// holds the source's lock, so that no prune removes what the bundle is
+// built from.
+func (s *Service) restoreBundle(ctx context.Context, project, src string, target time.Time) ([]runtime.File, func(), error) {
+	mu := s.lock(project, src)
+	defer mu.Unlock()
 	if err := s.archiveNow(ctx, project, src); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	ends, err := s.baseBackups(ctx, project, src)
+	a, err := s.pruneArchive(ctx, project, src)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var base int64
-	for _, e := range ends {
-		if e <= target.UnixMicro() {
-			base = e
+	var base *baseBackup
+	for i, b := range a.Bases {
+		if b.End <= target.UnixMicro() {
+			base = &a.Bases[i]
 		}
 	}
-	if base == 0 {
-		return nil, newOpError("INVALID_REQUEST", "No base backup of %s ends at or before %s.", src, target.Format(time.RFC3339Nano))
+	if base == nil {
+		return nil, nil, newOpError("INVALID_REQUEST", "No base backup of %s ends at or before %s.", src, target.Format(time.RFC3339Nano))
 	}
-	tgz, err := s.execIn(ctx, project, src, "", "tar", "-czf", "-", "-C", proxy.ArchiveDir, "base/"+strconv.FormatInt(base, 10), "wal")
+	wal, _ := walFrom(base.Start, a.WAL)
+	file, err := s.stageBundle(ctx, project, src, *base, wal)
 	if err != nil {
-		return nil, newOpError("INTERNAL_ERROR", "pack WAL archive: %v", err)
+		return nil, nil, err
 	}
 	return []runtime.File{
-		{Name: strings.TrimPrefix(proxy.Dir, "/") + "/" + proxy.RestoreBundle, Data: []byte(tgz), Mode: 0o600},
+		{Name: strings.TrimPrefix(proxy.Dir, "/") + "/" + proxy.RestoreBundle, Path: file, Mode: 0o600},
 		{Name: strings.TrimPrefix(proxy.Dir, "/") + "/" + proxy.RestoreTarget, Data: []byte(pgTimestamp(target)), Mode: 0o600},
-	}, nil
+	}, func() { _ = os.Remove(file) }, nil
+}
+
+// stagedBundle is where a restore bundle is packed in the source's archive
+// volume before it is copied out.
+const stagedBundle = proxy.ArchiveDir + "/.bundle.tar.gz"
+
+// stageBundle packs a base backup and WAL files of the source into a
+// gzipped tar inside its container and streams it to a temporary file on
+// the emulator's host, whose path it returns.
+func (s *Service) stageBundle(ctx context.Context, project, src string, base baseBackup, wal []string) (string, error) {
+	rt, _, err := s.plane(ctx)
+	if err != nil {
+		return "", err
+	}
+	paths := "base/" + strconv.FormatInt(base.End, 10) + "\n"
+	for _, f := range wal {
+		paths += "wal/" + f + "\n"
+	}
+	if _, err := s.execIn(ctx, project, src, paths, "sh", "-c", "cd "+proxy.ArchiveDir+" && rm -f "+stagedBundle+" && tar -czf "+stagedBundle+" -T -"); err != nil {
+		return "", newOpError("INTERNAL_ERROR", "pack WAL archive: %v", err)
+	}
+	defer func() { _, _ = s.execIn(context.WithoutCancel(ctx), project, src, "", "rm", "-f", stagedBundle) }()
+	f, err := os.CreateTemp("", "gcpemu-sql-restore-*.tar.gz")
+	if err != nil {
+		return "", newOpError("INTERNAL_ERROR", "stage restore bundle: %v", err)
+	}
+	err = copyArchived(ctx, rt, containerName(rt, project, src), stagedBundle, f)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", newOpError("INTERNAL_ERROR", "copy restore bundle: %v", err)
+	}
+	return f.Name(), nil
+}
+
+// copyArchived streams the single file p in container id to w.
+func copyArchived(ctx context.Context, rt *runtime.Manager, id, p string, w io.Writer) error {
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(rt.ArchiveFrom(ctx, id, p, pw)) }()
+	defer pr.Close()
+	tr := tar.NewReader(pr)
+	h, err := tr.Next()
+	if err != nil {
+		return err
+	}
+	if h.Typeflag != tar.TypeReg {
+		return os.ErrInvalid
+	}
+	if _, err := io.Copy(w, tr); err != nil {
+		return err
+	}
+	_, err = io.Copy(io.Discard, pr)
+	return err
 }
 
 // pgTimestamp renders t for recovery_target_time.
