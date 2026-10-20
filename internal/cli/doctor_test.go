@@ -527,8 +527,8 @@ func TestCheckRuntimeTrustContainerd(t *testing.T) {
 	}
 }
 
-// Next to containerd's hosts.toml line, doctor says whether Kubernetes
-// (CRI) pulls read those files, from checkCRIConfigPath: a note with the
+// Next to containerd's hosts.toml line, doctor says whether a kubelet on
+// the host, pulling through containerd's CRI, reads those files, from checkCRIConfigPath: a note with the
 // fix when they do not or containerd cannot say, nothing when CRI is
 // disabled or there is no etc/containerd (#583).
 func TestCheckRuntimeTrustCRI(t *testing.T) {
@@ -546,9 +546,9 @@ func TestCheckRuntimeTrustCRI(t *testing.T) {
 	}
 
 	h.containerd = fakeContainerd(containerd17, dump17, nil)
-	want := "[--  ] Kubernetes (CRI) image pulls by containerd 1.7.24 do not read the hosts.toml files in " + certsD +
-		", as its CRI config_path does not list that folder (Docker's pulls are not affected)\n" +
-		"       fix: add this to " + h.etc + "/containerd/config.toml (merged with that table if it is already there), then run `sudo systemctl restart containerd`:\n" +
+	want := "[--  ] image pulls by a kubelet on this host (containerd 1.7.24's CRI) do not read the hosts.toml files in " + certsD +
+		", as CRI's config_path does not list that folder; " + criMatters + "\n" +
+		"       fix: add this to " + h.etc + "/containerd/config.toml (skip `version = 2` if the file already has it, and merge with that table if it is already there), then run `sudo systemctl restart containerd`:\n" +
 		"         version = 2\n" +
 		"         [plugins.\"io.containerd.grpc.v1.cri\".registry]\n" +
 		"           config_path = \"" + certsD + "\"\n"
@@ -557,13 +557,13 @@ func TestCheckRuntimeTrustCRI(t *testing.T) {
 	}
 
 	h.containerd = fakeContainerd("containerd github.com/containerd/containerd/v2 v2.2.0 1c4457e\n", strings.ReplaceAll(dump2, "CONFIG_PATH", ""), nil)
-	want = "[ok  ] Kubernetes (CRI) image pulls by containerd 2.2.0 read the hosts.toml files in " + certsD + "\n"
+	want = "[ok  ] image pulls by a kubelet on this host (containerd 2.2.0's CRI) read the hosts.toml files in " + certsD + "\n"
 	if got := run(); got != want {
 		t.Errorf("2.2: output %q, want %q", got, want)
 	}
 
 	h.containerd = func(...string) ([]byte, error) { return nil, &exec.Error{Name: "containerd", Err: exec.ErrNotFound} }
-	want = "[--  ] cannot check whether Kubernetes (CRI) image pulls by containerd read " + certsD + ": containerd is not on PATH\n"
+	want = "[--  ] cannot check whether image pulls by a kubelet on this host (containerd's CRI) read " + certsD + ": containerd is not on PATH; " + criMatters + "\n"
 	if got := run(); got != want {
 		t.Errorf("no binary: output %q, want %q", got, want)
 	}

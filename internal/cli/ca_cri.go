@@ -27,8 +27,8 @@ const (
 	criUnknown
 )
 
-// criCheck is whether Kubernetes (CRI) image pulls by the host's
-// containerd read the hosts.toml files `ca install` writes in
+// criCheck is whether image pulls by a kubelet on the host, through the
+// host's containerd's CRI, read the hosts.toml files `ca install` writes in
 // etc/containerd/certs.d (#583).
 type criCheck struct {
 	kind    criKind
@@ -116,9 +116,13 @@ func checkCRIConfigPath(h trustHost) criCheck {
 			}
 		}
 	}
-	plugin, header := "io.containerd.cri.v1.images", ""
+	// A config file names the plugin by its own version, which can be
+	// older than the daemon's, so the fix says what to do in such a file.
+	plugin, header := "io.containerd.cri.v1.images", "version = 3"
+	where := "skip `version = 3` if the file already has it; in a file with `version = 2`, use `[plugins.\"io.containerd.grpc.v1.cri\".registry]` instead; merge with that table if it is already there"
 	if major < 2 {
 		plugin, header = "io.containerd.grpc.v1.cri", "version = 2"
+		where = "skip `version = 2` if the file already has it, and merge with that table if it is already there"
 	}
 	reg := dump.Plugins[plugin].Registry
 	certsD := etc + "/containerd/certs.d"
@@ -145,10 +149,7 @@ func checkCRIConfigPath(h trustHost) criCheck {
 		c.fix = []string{fmt.Sprintf("move the registry.mirrors of %s into hosts.toml files in %s, then %s and run `sudo systemctl restart containerd`", plugin, certsD, set)}
 		return c
 	}
-	c.fix = []string{"add this to " + etc + "/containerd/config.toml (merged with that table if it is already there), then run `sudo systemctl restart containerd`:"}
-	if header != "" {
-		c.fix = append(c.fix, "  "+header)
-	}
+	c.fix = []string{"add this to " + etc + "/containerd/config.toml (" + where + "), then run `sudo systemctl restart containerd`:", "  " + header}
 	c.fix = append(c.fix,
 		`  [plugins."`+plugin+`".registry]`,
 		`    config_path = "`+strings.Join(append(dirs, certsD), ":")+`"`)
@@ -163,10 +164,14 @@ func containerdError(args string, err error) string {
 	return "`containerd " + args + "` failed: " + err.Error()
 }
 
+// criMatters says whom the CRI line concerns: a kubelet on the host,
+// which pulls through containerd's CRI. Emulated GKE clusters' nodes pull
+// with their own registry settings, nerdctl reads etc/containerd/certs.d
+// whatever config_path says, and Docker reads only etc/docker/certs.d.
+const criMatters = "this matters only if such a kubelet pulls from the emulated registry (emulated GKE clusters and Docker are not affected)"
+
 // writeCRICheck writes c for etc as a doctor line (doctor) or as a `ca
-// install` note; nothing when CRI is disabled. It says it is about
-// Kubernetes (CRI) pulls: nerdctl reads etc/containerd/certs.d whatever
-// config_path says, and Docker reads only etc/docker/certs.d.
+// install` note; nothing when CRI is disabled.
 func writeCRICheck(out io.Writer, c criCheck, etc string, doctor bool) {
 	if etc == "" {
 		etc = "/etc"
@@ -177,12 +182,12 @@ func writeCRICheck(out io.Writer, c criCheck, etc string, doctor bool) {
 	case criDisabled:
 		return
 	case criOK:
-		line = "Kubernetes (CRI) image pulls by containerd " + c.version + " read the hosts.toml files in " + certsD
+		line = "image pulls by a kubelet on this host (containerd " + c.version + "'s CRI) read the hosts.toml files in " + certsD
 	case criNotIncluded:
-		line = "Kubernetes (CRI) image pulls by containerd " + c.version + " do not read the hosts.toml files in " + certsD +
-			", as its CRI config_path does not list that folder (Docker's pulls are not affected)"
+		line = "image pulls by a kubelet on this host (containerd " + c.version + "'s CRI) do not read the hosts.toml files in " + certsD +
+			", as CRI's config_path does not list that folder; " + criMatters
 	case criUnknown:
-		line = "cannot check whether Kubernetes (CRI) image pulls by containerd read " + certsD + ": " + c.reason
+		line = "cannot check whether image pulls by a kubelet on this host (containerd's CRI) read " + certsD + ": " + c.reason + "; " + criMatters
 	}
 	lead, indent := "note: ", "      "
 	if doctor {

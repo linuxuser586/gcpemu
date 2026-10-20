@@ -50,28 +50,31 @@ version = 3
 `
 )
 
-// Kubernetes (CRI) pulls read the hosts.toml files `ca install` writes
+// A kubelet on the host pulls through containerd's CRI, which reads the hosts.toml files `ca install` writes
 // only when containerd's effective CRI config_path lists
 // /etc/containerd/certs.d (#583).
 func TestCheckCRIConfigPath(t *testing.T) {
 	h := testEtc(t, "containerd")
 	certsD := h.etc + "/containerd/certs.d"
 	file := h.etc + "/containerd/config.toml"
-	restart := "add this to " + file + " (merged with that table if it is already there), then run `sudo systemctl restart containerd`:"
+	restart1 := "add this to " + file + " (skip `version = 2` if the file already has it, and merge with that table if it is already there), then run `sudo systemctl restart containerd`:"
+	restart2 := "add this to " + file + " (skip `version = 3` if the file already has it; in a file with `version = 2`, use `[plugins.\"io.containerd.grpc.v1.cri\".registry]` instead; merge with that table if it is already there), then run `sudo systemctl restart containerd`:"
+
 	for _, tc := range []struct {
 		name          string
 		version, dump string
 		want          criCheck
 	}{
 		{"1.7 without config_path", containerd17, dump17, criCheck{kind: criNotIncluded, version: "1.7.24", fix: []string{
-			restart,
+			restart1,
 			"  version = 2",
 			`  [plugins."io.containerd.grpc.v1.cri".registry]`,
 			`    config_path = "` + certsD + `"`,
 		}}},
 		{"2.1 without config_path", "containerd github.com/containerd/containerd/v2 v2.1.4 75cb2b7\n", strings.ReplaceAll(dump2, "CONFIG_PATH", ""),
 			criCheck{kind: criNotIncluded, version: "2.1.4", fix: []string{
-				restart,
+				restart2,
+				"  version = 3",
 				`  [plugins."io.containerd.cri.v1.images".registry]`,
 				`    config_path = "` + certsD + `"`,
 			}}},
@@ -81,7 +84,8 @@ func TestCheckCRIConfigPath(t *testing.T) {
 			criCheck{kind: criOK, version: "2.0.6"}},
 		{"not listed", "containerd github.com/containerd/containerd/v2 v2.2.1 x\n", strings.ReplaceAll(dump2, "CONFIG_PATH", "/opt/certs.d:"+h.etc+"/docker/certs.d"),
 			criCheck{kind: criNotIncluded, version: "2.2.1", fix: []string{
-				restart,
+				restart2,
+				"  version = 3",
 				`  [plugins."io.containerd.cri.v1.images".registry]`,
 				`    config_path = "/opt/certs.d:` + h.etc + `/docker/certs.d:` + certsD + `"`,
 			}}},
@@ -114,7 +118,7 @@ func TestCheckCRIConfigPathUnknown(t *testing.T) {
 }
 
 // After its containerd step, `ca install` prints the check's note unless
-// Kubernetes (CRI) pulls already read etc/containerd/certs.d; it never
+// CRI pulls already read etc/containerd/certs.d; it never
 // changes containerd's config (#583).
 func TestCRIInstallNote(t *testing.T) {
 	h := testEtc(t, "containerd")
@@ -125,9 +129,9 @@ func TestCRIInstallNote(t *testing.T) {
 		return out.String()
 	}
 	h.containerd = fakeContainerd(containerd17, dump17, nil)
-	want := "note: Kubernetes (CRI) image pulls by containerd 1.7.24 do not read the hosts.toml files in " + certsD +
-		", as its CRI config_path does not list that folder (Docker's pulls are not affected)\n" +
-		"      fix: add this to " + h.etc + "/containerd/config.toml (merged with that table if it is already there), then run `sudo systemctl restart containerd`:\n" +
+	want := "note: image pulls by a kubelet on this host (containerd 1.7.24's CRI) do not read the hosts.toml files in " + certsD +
+		", as CRI's config_path does not list that folder; " + criMatters + "\n" +
+		"      fix: add this to " + h.etc + "/containerd/config.toml (skip `version = 2` if the file already has it, and merge with that table if it is already there), then run `sudo systemctl restart containerd`:\n" +
 		"        version = 2\n" +
 		"        [plugins.\"io.containerd.grpc.v1.cri\".registry]\n" +
 		"          config_path = \"" + certsD + "\"\n"
@@ -135,7 +139,7 @@ func TestCRIInstallNote(t *testing.T) {
 		t.Errorf("1.7: note %q, want %q", got, want)
 	}
 	h.containerd = fakeContainerd(containerd17, "", errors.New("boom"))
-	if got, want := note(), "note: cannot check whether Kubernetes (CRI) image pulls by containerd read "+certsD+": `containerd config dump` failed: boom\n"; got != want {
+	if got, want := note(), "note: cannot check whether image pulls by a kubelet on this host (containerd's CRI) read "+certsD+": `containerd config dump` failed: boom; "+criMatters+"\n"; got != want {
 		t.Errorf("failing dump: note %q, want %q", got, want)
 	}
 	h.containerd = fakeContainerd("containerd github.com/containerd/containerd/v2 v2.2.0 x\n", strings.ReplaceAll(dump2, "CONFIG_PATH", ""), nil)
