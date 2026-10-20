@@ -382,6 +382,22 @@ _Avoid_: variable, parameter, template var
 Tests that drive real CLIs and SDKs against an Instance to prove they work unmodified.
 _Avoid_: compat tests (when OpenTofu acceptance is meant too)
 
+**Conformance suite**:
+Tests that make the same requests of an Instance and of a real GCP project and compare the responses field by field, ignoring values that legitimately differ, such as IDs and timestamps. It is how Faithful behaviour is checked against GCP.
+_Avoid_: "conformance" on its own, parity tests
+
+**Recording**:
+GCP's responses to the Conformance suite, captured from a real project and kept so that the emulator's responses can be compared with them without reaching GCP.
+_Avoid_: golden, snapshot
+
+**Drift**:
+GCP's responses changing from one Recording to the next. It means the emulator may no longer be Faithful, even though nothing in the emulator changed.
+_Avoid_: using "drift" for the emulator disagreeing with a Recording; that is a Mismatch
+
+**Mismatch**:
+The emulator's response to a Conformance suite request differing from the Recording.
+_Avoid_: drift, diff
+
 **OpenTofu acceptance**:
 Tests that apply, re-plan and destroy OpenTofu configurations covering every resource type behind the Products.
 
@@ -418,4 +434,4 @@ _Avoid_: egress check, leak detector
 - A *global* certificate is one in location `global`. That is its location, not its scope: a certificate with scope `ALL_REGIONS` is also in `global`, but serves cross-region load balancers.
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
-- "Conformance" on its own is ambiguous: the SRS's conformance suite diffs the emulator's responses against real GCP, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.
+- "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.
