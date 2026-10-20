@@ -16,7 +16,8 @@ import (
 
 // restHandler serves cloudbuild v1 REST (gcloud, OpenTofu) through the
 // generated google.api.http bindings, so REST and gRPC share one code
-// path, and the Build Operations at
+// path, triggers.webhook, whose body is the webhook's own
+// (trigger_events.go), and the Build Operations at
 // /v1/projects/*/locations/*/operations/*. Cloud Build v2 (repository
 // connections) answers UNIMPLEMENTED.
 func (s *Service) restHandler() http.Handler {
@@ -32,6 +33,11 @@ func (s *Service) restHandler() http.Handler {
 			return
 		}
 		if rest, ok := strings.CutPrefix(r.URL.Path, "/v1/"); ok && s.ops.ServeREST(w, r, rest) {
+			return
+		}
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/projects/") &&
+			strings.Contains(r.URL.Path, "/triggers/") && strings.HasSuffix(r.URL.Path, ":webhook") {
+			s.serveWebhook(w, r, r.URL.Path)
 			return
 		}
 		if err := absentRESTSource(r); err != nil {

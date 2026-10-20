@@ -106,6 +106,10 @@ var resourceTypes = map[string][]string{
 		"google_secret_manager_regional_secret", "google_secret_manager_regional_secret_version",
 		"google_pubsub_topic", "google_service_account",
 	},
+	"build": {
+		"google_cloudbuild_trigger", "google_cloudbuild_worker_pool",
+		"google_pubsub_topic", "google_secret_manager_secret", "google_secret_manager_secret_version",
+	},
 	"ar": {
 		"google_artifact_registry_repository",
 		"google_artifact_registry_repository_iam_member", "google_artifact_registry_repository_iam_binding",

@@ -46,6 +46,8 @@ var providerEndpoints = []struct{ setting, service, path string }{
 	{"network_security_custom_endpoint", "certs", "/networksecurity/v1/"},
 	{"secret_manager_custom_endpoint", "secrets", "/secretmanager/v1/"},
 	{"secret_manager_regional_custom_endpoint", "secrets", "/secretmanager/v1/"},
+	// Build triggers and worker pools (#389).
+	{"cloud_build_custom_endpoint", "build", "/cloudbuild/v1/"},
 }
 
 // providerUniverseDomain is the universe_domain the provider blocks set.
