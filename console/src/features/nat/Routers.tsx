@@ -18,7 +18,9 @@ import {
 import { useViewState } from '@/lib/viewState'
 
 import { lastSeg } from '../lb/api'
-import { coverage, routersQuery, subnetsQuery } from './api'
+import { subnetsQuery } from '../vpc/api'
+import { SubnetList } from '../vpc/links'
+import { coverage, routersQuery } from './api'
 import { natPage, NatTabs, routerPage } from './NatLayout'
 import { OfflineSink } from './OfflineSink'
 
@@ -130,17 +132,16 @@ export function Routers() {
                         <span className="text-muted-foreground">None</span>
                       )}
                     </TableCell>
-                    <TableCell className="font-mono">
+                    <TableCell>
                       {subnets.data
-                        ? (r.nats ?? []).map((n, i) => {
-                            const names = coverage(r, n, subnets.data).map((c) => c.subnetwork.name)
-                            return (
-                              <Fragment key={n.name}>
-                                {i > 0 && <br />}
-                                {names.length ? names.join(', ') : '—'}
-                              </Fragment>
-                            )
-                          })
+                        ? (r.nats ?? []).map((n, i) => (
+                            <Fragment key={n.name}>
+                              {i > 0 && <br />}
+                              <SubnetList
+                                subnets={coverage(r, n, subnets.data).map((c) => c.subnetwork)}
+                              />
+                            </Fragment>
+                          ))
                         : null}
                     </TableCell>
                   </TableRow>

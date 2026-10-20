@@ -252,6 +252,7 @@ The web console is a React single-page app compiled into the binary and served a
 | Cloud CDN | Cache settings per backend, hit ratio, cached entries and sizes | Invalidate a path, purge all | M |
 | Certificate Manager | Certificates with per-domain authorization status, maps and map entries with the load balancers using them, DNS authorizations, trust configs, issuance configs, TLS policies | Create, edit, delete; rotate the Instance CA | M |
 | Cloud NAT | Routers, NAT configs, covered subnets, port usage, translation log | Toggle offline sink | S |
+| VPC network | Networks, subnetworks, firewalls, routes, addresses, peering and private services access; per subnetwork its VPC container network (Declared and Fallback range, whether it is Translated, attached Managed containers) | Create, edit, delete | M |
 | Secret Manager | Global and regional secrets, labels, expiry, rotation and topics; versions with state and aliases | CRUD secrets; add a version; reveal a payload (masked by default); enable, disable and destroy versions | M |
 | Cloud Build | Builds per Project with status, duration, Build steps and live per-step logs; Build triggers; the Build daemon's cache size | Cancel and retry a Build; run a Build trigger; prune the Build daemon's cache | M |
 | Load Balancer traffic | Live per-request trace: forwarding rule, matched route, backend, cache status, latency | Filter by host or path | S |

@@ -18,14 +18,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 
 import { lastSeg, relPath } from '../lb/api'
+import { resourceField, subnetsQuery } from '../vpc/api'
 import {
   addressesQuery,
   patchRouter,
   regionSubnets,
-  resourceField,
   routerPath,
   routerQuery,
-  subnetsQuery,
   withNat,
   type LogFilter,
   type RangesToNat,

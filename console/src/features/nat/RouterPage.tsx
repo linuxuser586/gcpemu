@@ -19,12 +19,13 @@ import {
 import { toast } from '@/lib/toast'
 
 import { lastSeg } from '../lb/api'
+import { subnetsQuery } from '../vpc/api'
+import { SubnetList } from '../vpc/links'
 import {
   coverage,
   deleteRouter,
   routerQuery,
   statusQuery,
-  subnetsQuery,
   type NatStatus,
   type Router,
   type RouterNat,
@@ -190,8 +191,8 @@ function Nats({ r, router }: { r: RouterRef; router: Router }) {
                   <TableCell className="font-mono text-xs">
                     {n.sourceSubnetworkIpRangesToNat}
                   </TableCell>
-                  <TableCell className="font-mono">
-                    {covered.map((c) => c.subnetwork.name).join(', ') || '—'}
+                  <TableCell>
+                    <SubnetList subnets={covered.map((c) => c.subnetwork)} />
                   </TableCell>
                   <TableCell className="text-right font-mono">
                     {s?.numVmEndpointsWithNatMappings ?? 0}
