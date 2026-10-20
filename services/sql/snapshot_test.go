@@ -36,14 +36,14 @@ func TestStateSnapshot(t *testing.T) {
 	exec(in, "CREATE TABLE kept (v text); INSERT INTO kept VALUES ('before')")
 	waitOp(t, svc, must(svc.BackupRuns.Insert(testProject, "snap", &sqladmin.BackupRun{Description: "kept"}).Do()))
 
-	if _, err := inst.SaveSnapshot(ctx, "fixture"); err != nil {
+	if _, err := inst.Internal().SaveSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 
 	exec(in, "INSERT INTO kept VALUES ('after')")
 	waitOp(t, svc, must(svc.Users.Insert(testProject, "snap", &sqladmin.User{Name: "later", Password: "pw"}).Do()))
 
-	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
+	if err := inst.Internal().RestoreSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	in = must(svc.Instances.Get(testProject, "snap").Do())

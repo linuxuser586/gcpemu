@@ -3,8 +3,6 @@ package gke_test
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,38 +11,21 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
-	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
-	"github.com/linuxuser586/gcpemu/services"
 )
 
-// startPersistent starts a --data-dir (non-ephemeral) instance in dir.
+// startPersistent starts a Persistent Instance in dir, which lives until
+// Close so the test can stop and restart it.
 func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	t.Helper()
-	cfg := config.Defaults()
-	cfg.DataDir = dir
-	cfg.Ephemeral = false // CI=true defaults to ephemeral
-	cfg.Instance = "gke-restart"
-	cfg.Services = []string{"gke"}
-	cfg.LogLevel = "warn"
-	cfg.Ports[config.AllPorts] = 0
-	var out io.Writer = io.Discard
-	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
-		out = os.Stderr
-	}
-	in, err := instance.New(&cfg, services.Factories(), out)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	inst, err := emutest.New(ctx, []string{"gke"}, emutest.WithDataDir(dir),
+		emutest.WithConfig(func(c *config.Config) { c.Instance = "gke-restart" }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	if err := in.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := in.WaitReady(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return &emutest.Instance{Instance: in}
+	return inst
 }
 
 // TestRestart checks FR-CORE-031: a cluster, its nodes and its Kubernetes
@@ -55,7 +36,7 @@ func TestRestart(t *testing.T) {
 	emutest.HoldClusterSlot(t)
 	dir := t.TempDir()
 	inst := startPersistent(t, dir)
-	id := inst.ID
+	id := inst.Internal().ID
 	t.Cleanup(func() {
 		// The instance is not ephemeral: remove what it leaves behind.
 		cl, err := runtime.Detect()
@@ -70,7 +51,7 @@ func TestRestart(t *testing.T) {
 	stopped := false
 	defer func() {
 		if !stopped {
-			_ = inst.Shutdown(context.Background())
+			_ = inst.Close(context.Background())
 		}
 	}()
 	cm := newClient(t, inst)
@@ -96,15 +77,15 @@ func TestRestart(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := inst.Shutdown(ctx); err != nil {
+	if err := inst.Close(ctx); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
 	stopped = true
 
 	inst = startPersistent(t, dir)
-	defer inst.Shutdown(context.Background())
-	if inst.ID != id {
-		t.Fatalf("instance ID changed: %s → %s", id, inst.ID)
+	defer inst.Close(context.Background())
+	if inst.Internal().ID != id {
+		t.Fatalf("instance ID changed: %s → %s", id, inst.Internal().ID)
 	}
 	cm = newClient(t, inst)
 	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(500 * time.Millisecond) {

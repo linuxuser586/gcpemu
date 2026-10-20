@@ -267,7 +267,7 @@ func TestHostMode(t *testing.T) {
 }
 
 func TestChangeLatency(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.LROLatency["dns"] = "300ms" })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithOperationLatency("dns", 300*time.Millisecond))
 	c := newClient(t, inst.GatewayURL()+"/")
 	if _, err := c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "z", DnsName: "z.test.", Description: "d"}).Do(); err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestChangeLatency(t *testing.T) {
 	// The admin API reports the change as a pending Operation on its zone
 	// (FR-UI-012); the zone's creation is change 0.
 	pending := map[string]bool{}
-	for _, op := range inst.Operations("dns", proj) {
+	for _, op := range inst.Internal().Operations("dns", proj) {
 		if op.Type != "change" || op.Target != "projects/"+proj+"/managedZones/z" || op.StartTime.IsZero() {
 			t.Fatalf("operation = %+v", op)
 		}
@@ -305,7 +305,7 @@ func TestChangeLatency(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	for _, op := range inst.Operations("dns", proj) {
+	for _, op := range inst.Internal().Operations("dns", proj) {
 		if !op.Done || op.Status != "done" || op.EndTime.Before(op.StartTime) {
 			t.Fatalf("operation after completion = %+v", op)
 		}
@@ -384,7 +384,7 @@ func answers(r *mdns.Msg) []string {
 }
 
 func TestDataPlane(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	c := newClient(t, inst.GatewayURL()+"/")
 	dataPlaneFixture(t, c)
 	addr := inst.Endpoint("dns")
@@ -486,7 +486,7 @@ func TestDataPlane(t *testing.T) {
 	}
 
 	// In-process Resolve.
-	svc, ok := inst.Env.Lookup("dns")
+	svc, ok := inst.Internal().Env.Lookup("dns")
 	if !ok {
 		t.Fatal("no dns service")
 	}
@@ -504,8 +504,8 @@ func TestDataPlane(t *testing.T) {
 }
 
 func TestSeedAndReset(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
-	svc, _ := inst.Env.Lookup("dns")
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
+	svc, _ := inst.Internal().Env.Lookup("dns")
 	seed := `
 project: seed-proj
 zones:
@@ -556,7 +556,7 @@ zones:
 	if err != nil || len(cl.Changes) != 3 { // zone creation + two upserts; second seed is a no-op
 		t.Fatalf("changes: %v %d", err, len(cl.Changes))
 	}
-	if err := inst.Reset(context.Background()); err != nil {
+	if err := inst.Internal().Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if r := query(t, addr, "udp", "www.seeded.test.", mdns.TypeA); r.Rcode != mdns.RcodeRefused {
@@ -568,7 +568,7 @@ zones:
 // Instance recreates the zones and their record sets and exports byte for
 // byte the same, without the SOA and default NS records (FR-CORE-013).
 func TestSeedExportRoundTrip(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	ctx := context.Background()
 	seed := []byte(`
 dns:
@@ -590,14 +590,14 @@ dns:
       records:
         - {name: db.priv.test., type: A, rrdatas: [10.0.0.5]}
 `)
-	if err := inst.ApplySeedData(ctx, seed, t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, seed, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	c := newClient(t, inst.GatewayURL()+"/")
 	if _, err := c.ResourceRecordSets.Create("seed-proj", "seeded", rrset("api.seeded.test.", "CNAME", 120, "www.seeded.test.")).Do(); err != nil {
 		t.Fatal(err)
 	}
-	first, err := inst.ExportSeed(ctx)
+	first, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,13 +611,13 @@ dns:
 			t.Fatalf("export has %q:\n%s", unwanted, first)
 		}
 	}
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, first, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := inst.ExportSeed(ctx)
+	second, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +661,7 @@ func TestPublicZoneEmptyPrivateVisibility(t *testing.T) {
 // the networks it is bound to, and there it shadows a public zone of the
 // same name; elsewhere the public zone answers.
 func TestPrivateZoneVisibility(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	c := newClient(t, inst.GatewayURL()+"/")
 	mk := func(z *dnsv1.ManagedZone, ip string) {
 		t.Helper()
@@ -722,7 +722,7 @@ func TestPrivateZoneVisibility(t *testing.T) {
 	}
 	// In-process resolution (load balancer, Certificate Manager) sees the
 	// public view.
-	svc, _ := inst.Env.Lookup("dns")
+	svc, _ := inst.Internal().Env.Lookup("dns")
 	if rrs, err := svc.(*dns.Service).Resolve(context.Background(), "db.corp.test", mdns.TypeA); err != nil || len(rrs) != 1 || rrs[0].(*mdns.A).A.String() != "192.0.2.1" {
 		t.Fatalf("Resolve: %v %v", rrs, err)
 	}
@@ -730,7 +730,7 @@ func TestPrivateZoneVisibility(t *testing.T) {
 	// Queries are in the request log (FR-CORE-061) with the answering zone
 	// and the client's network.
 	var onA, refused bool
-	for _, e := range inst.Env.RequestLog.Entries("dns") {
+	for _, e := range inst.Internal().Env.RequestLog.Entries("dns") {
 		if e.Protocol != "dns" {
 			continue
 		}
@@ -742,7 +742,7 @@ func TestPrivateZoneVisibility(t *testing.T) {
 		}
 	}
 	if !onA || !refused {
-		t.Errorf("dns request log: %+v", inst.Env.RequestLog.Entries("dns"))
+		t.Errorf("dns request log: %+v", inst.Internal().Env.RequestLog.Entries("dns"))
 	}
 }
 
@@ -778,7 +778,7 @@ func TestStandardParameters(t *testing.T) {
 // TestReverseZone is FR-DNS-002/003 for PTR records: a reverse zone
 // answers PTR queries over UDP and TCP.
 func TestReverseZone(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	c := newClient(t, inst.GatewayURL()+"/")
 	if _, err := c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "rev", DnsName: "2.0.192.in-addr.arpa.", Description: "reverse"}).Do(); err != nil {
 		t.Fatal(err)

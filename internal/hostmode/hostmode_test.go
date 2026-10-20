@@ -43,10 +43,10 @@ func TestHostMode(t *testing.T) {
 		t.Skip(err)
 	}
 	emutest.RequireRuntime(t)
-	inst := emutest.Start(t, []string{"gcs", "pubsub", "ar", "dns"}, func(c *config.Config) { c.HostMode = true })
+	inst := emutest.Start(t, []string{"gcs", "pubsub", "ar", "dns"}, emutest.WithConfig(func(c *config.Config) { c.HostMode = true }))
 	var st hostmode.Status
 	deadline := time.Now().Add(90 * time.Second)
-	for st = inst.HostMode(); st.State == hostmode.StateStarting; st = inst.HostMode() {
+	for st = inst.Internal().HostMode(); st.State == hostmode.StateStarting; st = inst.Internal().HostMode() {
 		if time.Now().After(deadline) {
 			t.Fatal("host mode not ready after 90s")
 		}
@@ -55,7 +55,7 @@ func TestHostMode(t *testing.T) {
 	if st.State != hostmode.StateReady || st.IP == "" {
 		t.Fatalf("host mode = %+v", st)
 	}
-	if env := inst.EnvVars(); env["GCPEMU_HOST_MODE_IP"] != st.IP || env["GCPEMU_CA_FILE"] != inst.Env.CA.Path() {
+	if env := inst.EnvVars(); env["GCPEMU_HOST_MODE_IP"] != st.IP || env["GCPEMU_CA_FILE"] != inst.Internal().Env.CA.Path() {
 		t.Errorf("env = %v", env)
 	}
 	dnsAddr := net.JoinHostPort(st.IP, "53")
@@ -82,7 +82,7 @@ func TestHostMode(t *testing.T) {
 	}}
 	tr := &http.Transport{
 		DialContext:       (&net.Dialer{Resolver: res, Timeout: 10 * time.Second}).DialContext,
-		TLSClientConfig:   &tls.Config{RootCAs: inst.Env.CA.Pool()},
+		TLSClientConfig:   &tls.Config{RootCAs: inst.Internal().Env.CA.Pool()},
 		ForceAttemptHTTP2: true,
 	}
 	hc := &http.Client{Transport: tr, Timeout: 30 * time.Second}
@@ -113,7 +113,7 @@ func TestHostMode(t *testing.T) {
 		if _, err := exec.LookPath("curl"); err != nil {
 			t.Skip("curl not installed")
 		}
-		out, err := exec.Command("curl", "-sS", "--http2", "--cacert", inst.Env.CA.Path(),
+		out, err := exec.Command("curl", "-sS", "--http2", "--cacert", inst.Internal().Env.CA.Path(),
 			"--resolve", "storage.googleapis.com:443:"+st.IP,
 			"-o", "/dev/null", "-w", "%{http_code} %{http_version}",
 			"https://storage.googleapis.com/storage/v1/b?project=hostmode").CombinedOutput()

@@ -40,7 +40,7 @@ func denyDestroy(e *env) string {
 // under audit the destroy succeeds and the denials log names the policy.
 func TestDenyPolicy(t *testing.T) {
 	e := start(t, []string{"iam"}, emutest.WithIAMMode(config.IAMEnforce))
-	svc, _ := e.inst.Env.Lookup("iam")
+	svc, _ := e.inst.Internal().Env.Lookup("iam")
 	keys := svc.(emu.ServiceAccountKeys)
 	token := func(p string) string {
 		tok, _, err := keys.AccessToken(e.ctx, emu.Principal(p))
@@ -49,7 +49,7 @@ func TestDenyPolicy(t *testing.T) {
 		}
 		return tok
 	}
-	owner, breakglass := token(e.inst.Config.DefaultPrincipal), token("user:breakglass@example.com")
+	owner, breakglass := token(e.inst.Internal().Config.DefaultPrincipal), token("user:breakglass@example.com")
 	call := func(tok, method, path, body string) (int, string) {
 		req, _ := http.NewRequestWithContext(e.ctx, method, e.inst.GatewayURL()+path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -108,7 +108,7 @@ func TestDenyPolicy(t *testing.T) {
 		}
 		v := d.Resource[strings.LastIndexByte(d.Resource, '/')+1:]
 		levels[v] = d.Level
-		if d.DenyPolicy != policy || d.Principal != e.inst.Config.DefaultPrincipal ||
+		if d.DenyPolicy != policy || d.Principal != e.inst.Internal().Config.DefaultPrincipal ||
 			d.Permission != "secretmanager.versions.destroy" || d.Count != 1 ||
 			d.Role != "" || d.Granted || d.Project != testProject {
 			t.Errorf("denial = %+v", d)

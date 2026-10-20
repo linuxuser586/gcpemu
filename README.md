@@ -644,10 +644,61 @@ Top-level keys are `projects`, `faults` and Service IDs (`iam`, `compute`, `gcs`
 
 ### Go tests
 
+`github.com/linuxuser586/gcpemu/emutest` runs an in-process Instance with the Services you name
+(plus their dependencies), on dynamic ports, Ephemeral by default. `emutest.Start(t, …)` runs one
+for a test and stops it at the test's cleanup:
+
 ```go
-inst := emutest.Start(t, []string{"gcs", "pubsub"})
-inst.Setenv(t) // client env vars for this test
+inst := emutest.Start(t, []string{"gcs", "pubsub", "secrets", "dns"})
+
+sc := inst.Storage(t)              // *storage.Client, closed at cleanup
+ps := inst.PubSub(t, "my-project") // *pubsub.Client (cloud.google.com/go/pubsub/v2)
+
+// Endpoint overrides for any gRPC client library: the API gateway, no authentication, insecure transport.
+sm, err := secretmanager.NewClient(ctx, inst.GRPCOptions()...)
+
+// Endpoint overrides for any REST client library, by API name: "storage", "compute", "dns", "sqladmin", …
+opts, err := inst.HTTPOptions("dns") // fails for an API the Instance doesn't serve
+svc, err := dns.NewService(ctx, opts...)
+
+inst.Setenv(t) // or the client env vars (STORAGE_EMULATOR_HOST, …) for this test
 ```
+
+To share one Instance across a package's tests, start it in `TestMain` with `emutest.New` and
+stop it with `Close`, which also removes its temporary data dir:
+
+```go
+var inst *emutest.Instance
+
+func TestMain(m *testing.M) {
+	ctx := context.Background()
+	var err error
+	if inst, err = emutest.New(ctx, []string{"gcs"}); err != nil {
+		log.Fatal(err)
+	}
+	code := m.Run()
+	_ = inst.Close(ctx)
+	os.Exit(code)
+}
+```
+
+Options, for `Start` and `New`:
+
+| Option | Effect |
+| --- | --- |
+| `WithSeed(path)` | Applies a Seed file before the Instance is ready |
+| `WithDataDir(dir)` | A Persistent Instance in `dir` instead of an Ephemeral one |
+| `WithOperationLatency(serviceID, d)` | The Service's Operations complete after `d` (`--lro-latency`) |
+| `WithStrictProjects()` | Refuses undeclared projects (`--strict-projects`) |
+| `WithOffline()` | Never reaches the internet (`--offline`) |
+| `WithIAMMode(mode)` | `off`, `audit` or `enforce` |
+| `WithDeterministic()` | A Deterministic Instance (see above) |
+| `WithConsole()` | Serves the Web console |
+| `WithSQLHostClients()` | Cloud SQL host clients on loopback (below) |
+
+Set `GCPEMU_TEST_LOG=1` to see the emulator's logs. `RequireRuntime(t)` skips a test without a
+container runtime; GKE tests call `HoldClusterSlot(t)` to limit how many clusters run at once
+(`GCPEMU_TEST_CLUSTERS`, default 2).
 
 On a VM runtime, Cloud SQL instances started by `emutest` serve no host clients on a loopback
 address, so a test reaches each one on its published port (`GCPEMU_SQL_<INSTANCE>`).

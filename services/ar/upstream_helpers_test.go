@@ -176,7 +176,7 @@ func (u *fakeUpstream) putIndex(repoTag string) v1.ImageIndex {
 // arService returns the running ar service of an instance.
 func arService(t *testing.T, inst *emutest.Instance) *ar.Service {
 	t.Helper()
-	svc, ok := inst.Env.Lookup("ar")
+	svc, ok := inst.Internal().Env.Lookup("ar")
 	if !ok {
 		t.Fatal("ar service not running")
 	}

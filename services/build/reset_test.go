@@ -15,7 +15,7 @@ func TestResetMidBuild(t *testing.T) {
 	_, working := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "sleep 600")}})
 	e.awaitStep(working.GetId(), 0)
 	_, queued := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "true")}})
-	if err := e.inst.Reset(e.ctx); err != nil {
+	if err := e.inst.Internal().Reset(e.ctx); err != nil {
 		t.Fatal(err)
 	}
 	e.noBuildObjects()
@@ -38,10 +38,10 @@ func TestSnapshotMidBuild(t *testing.T) {
 	_, working := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "sleep 600")}})
 	e.awaitStep(working.GetId(), 0)
 	queuedOp, queued := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "true")}})
-	if _, err := e.inst.SaveSnapshot(e.ctx, "mid-build"); err != nil {
+	if _, err := e.inst.Internal().SaveSnapshot(e.ctx, "mid-build"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.inst.RestoreSnapshot(e.ctx, "mid-build"); err != nil {
+	if err := e.inst.Internal().RestoreSnapshot(e.ctx, "mid-build"); err != nil {
 		t.Fatal(err)
 	}
 	for _, b := range []*cloudbuildpb.Build{working, queued} {

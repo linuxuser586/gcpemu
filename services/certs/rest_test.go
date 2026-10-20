@@ -106,7 +106,7 @@ func TestBackendAuthenticationREST(t *testing.T) {
 	// PUBLIC_ROOTS: the instance CA is trusted.
 	e.restOp("PATCH", nsBase+"/backendAuthenticationConfigs/bac?updateMask=wellKnownRoots", map[string]any{"wellKnownRoots": "PUBLIC_ROOTS"})
 	_, roots, _ = e.mgr().BackendAuthentication(e.ctx, globalLoc+"/backendAuthenticationConfigs/bac")
-	issued, _ := e.inst.Env.CA.ServerCert("svc.test")
+	issued, _ := e.inst.Internal().Env.CA.ServerCert("svc.test")
 	if _, err := issued.Leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "svc.test"}); err != nil {
 		t.Fatalf("public roots: %v", err)
 	}

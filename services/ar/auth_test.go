@@ -22,7 +22,7 @@ import (
 func TestRegistryEnforceWithCredentials(t *testing.T) {
 	e := start(t, emutest.WithIAMMode(config.IAMEnforce))
 	e.createRepo(testLoc, "images")
-	svc, ok := e.inst.Env.Lookup("iam")
+	svc, ok := e.inst.Internal().Env.Lookup("iam")
 	if !ok {
 		t.Skip("iam service not running")
 	}
@@ -31,7 +31,7 @@ func TestRegistryEnforceWithCredentials(t *testing.T) {
 		t.Skip("iam does not provide ServiceAccountKeys")
 	}
 	// The default principal holds every permission.
-	tok, _, err := keys.AccessToken(e.ctx, emu.Principal(e.inst.Config.DefaultPrincipal))
+	tok, _, err := keys.AccessToken(e.ctx, emu.Principal(e.inst.Internal().Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}

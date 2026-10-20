@@ -48,7 +48,7 @@ func readAll(t *testing.T, store emu.ObjectStore, bucket, name string, gen int64
 // generation back; a generation that is gone answers NOT_FOUND.
 func TestObjectStoreInProcess(t *testing.T) {
 	inst := start(t)
-	store := objectStore(t, inst.Env)
+	store := objectStore(t, inst.Internal().Env)
 	ctx := context.Background()
 	const bucket = "123.cloudbuild-logs.googleusercontent.com"
 	for range 2 {
@@ -93,7 +93,7 @@ func TestObjectStoreInProcess(t *testing.T) {
 // reports is the data's.
 func TestWriteObjectInProcess(t *testing.T) {
 	inst := start(t)
-	store := objectStore(t, inst.Env)
+	store := objectStore(t, inst.Internal().Env)
 	ctx := context.Background()
 	const bucket = "artifacts"
 	if err := store.EnsureServiceBucket(ctx, testProject, bucket); err != nil {
@@ -139,7 +139,7 @@ func httpStatus(t *testing.T, method, url, body string) int {
 // 206 with the new bytes while it has grown past N, 416 at its end.
 func TestRangedReadsOfAGrowingObject(t *testing.T) {
 	inst := start(t)
-	store := objectStore(t, inst.Env)
+	store := objectStore(t, inst.Internal().Env)
 	ctx := context.Background()
 	const bucket = "123.cloudbuild-logs.googleusercontent.com"
 	if err := store.EnsureServiceBucket(ctx, testProject, bucket); err != nil {

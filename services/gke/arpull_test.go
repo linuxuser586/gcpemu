@@ -31,8 +31,8 @@ func TestNodePullsAsNodeSA(t *testing.T) {
 	if code := gw(t, inst, "POST", repo+"?repositoryId=apps", map[string]any{"format": "DOCKER"}, nil); code != 200 {
 		t.Fatalf("create repository: %d", code)
 	}
-	iam, _ := inst.Env.Lookup("iam")
-	tok, _, err := iam.(emu.ServiceAccountKeys).AccessToken(ctx, emu.Principal(inst.Env.Config.DefaultPrincipal))
+	iam, _ := inst.Internal().Env.Lookup("iam")
+	tok, _, err := iam.(emu.ServiceAccountKeys).AccessToken(ctx, emu.Principal(inst.Internal().Env.Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}

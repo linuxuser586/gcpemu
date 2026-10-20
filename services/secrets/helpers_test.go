@@ -90,7 +90,7 @@ func (e *env) restHost(method, host, path string, body, out any) int {
 
 func (e *env) advance(d time.Duration) {
 	e.t.Helper()
-	if err := e.inst.AdvanceClock(e.ctx, d); err != nil {
+	if err := e.inst.Internal().AdvanceClock(e.ctx, d); err != nil {
 		e.t.Fatal(err)
 	}
 }

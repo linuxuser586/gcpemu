@@ -17,7 +17,6 @@ import (
 	snv1 "google.golang.org/api/servicenetworking/v1"
 
 	"github.com/linuxuser586/gcpemu/emutest"
-	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/project"
 )
@@ -373,7 +372,7 @@ func TestAddressesRoutersAndNAT(t *testing.T) {
 
 func TestOperationsLatency(t *testing.T) {
 	const latency = 300 * time.Millisecond
-	inst, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = latency.String() })
+	inst, c, _ := newClients(t, emutest.WithOperationLatency("compute", latency))
 	start := time.Now()
 	op, err := c.Networks.Insert(proj, &computev1.Network{Name: "slow", AutoCreateSubnetworks: true}).Do()
 	if err != nil {
@@ -435,7 +434,7 @@ func TestOperationsLatency(t *testing.T) {
 
 	// The admin API summarises them (FR-UI-012).
 	ops := map[string]emu.OperationInfo{}
-	for _, op := range inst.Operations("compute", "") {
+	for _, op := range inst.Internal().Operations("compute", "") {
 		ops[op.Type] = op
 	}
 	sum, sub := ops["delete"], ops["insert"]
@@ -482,7 +481,7 @@ func TestNEGs(t *testing.T) {
 	}
 
 	// The emu.VPC NEG methods (GKE NEG sync, FR-GKE-008).
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
 	if err := vpc.UpsertNEG(ctx, proj, "us-central1-b", "k8s1-neg", "projects/"+proj+"/global/networks/vpc", "projects/"+proj+"/regions/us-central1/subnetworks/s", 80, `{"cluster-uid":"x"}`); err != nil {
@@ -714,7 +713,7 @@ func TestServiceNetworking(t *testing.T) {
 	}
 	netName := "projects/" + project.NumberString(proj) + "/global/networks/vpc"
 	ctx := context.Background()
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	if _, err := vpc.PrivateServicesNetwork(ctx, "projects/"+proj+"/global/networks/vpc"); err == nil {
 		t.Fatal("PrivateServicesNetwork without a connection must fail")
@@ -752,12 +751,12 @@ func TestServiceNetworking(t *testing.T) {
 // reset never creates its resource, and leaves no operation behind (#301).
 func TestOperationsResetDropped(t *testing.T) {
 	const latency = 100 * time.Millisecond
-	inst, c, _ := newClients(t, func(cfg *config.Config) { cfg.LROLatency["compute"] = latency.String() })
+	inst, c, _ := newClients(t, emutest.WithOperationLatency("compute", latency))
 	op, err := c.Networks.Insert(proj, &computev1.Network{Name: "late", AutoCreateSubnetworks: true}).Do()
 	if err != nil || op.Status != "RUNNING" {
 		t.Fatalf("insert: %+v %v", op, err)
 	}
-	if err := inst.Reset(context.Background()); err != nil {
+	if err := inst.Internal().Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(3 * latency)
@@ -767,7 +766,7 @@ func TestOperationsResetDropped(t *testing.T) {
 	if _, err := c.GlobalOperations.Get(proj, op.Name).Do(); code(err) != http.StatusNotFound {
 		t.Errorf("operation after reset: %v", err)
 	}
-	if ops := inst.Operations("compute", ""); len(ops) != 0 {
+	if ops := inst.Internal().Operations("compute", ""); len(ops) != 0 {
 		t.Errorf("operations after reset: %+v", ops)
 	}
 }

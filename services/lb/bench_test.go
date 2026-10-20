@@ -39,7 +39,7 @@ func perfStack(tb testing.TB) *perfEnv {
 		t = &testing.T{}
 	}
 	inst := emutest.Start(tb, []string{"lb", "cdn"})
-	svc, _ := inst.Env.Lookup("lb")
+	svc, _ := inst.Internal().Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
 	c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
 	if err != nil {

@@ -93,7 +93,7 @@ func createInstance(t testing.TB, svc *sqladmin.Service, in *sqladmin.DatabaseIn
 func assertNoRuntimeObjects(t testing.TB, inst *emutest.Instance, resource string) {
 	t.Helper()
 	ctx := context.Background()
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

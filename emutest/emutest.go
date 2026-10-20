@@ -1,11 +1,20 @@
 // Package emutest starts an in-process gcpemu instance for Go tests
-// (FR-CI-009). Every port is allocated dynamically and state is ephemeral.
+// (FR-CI-009). Every port is allocated dynamically and state is ephemeral
+// unless WithDataDir says otherwise.
+//
+// Start runs an Instance for one test; New and Close run one for a whole
+// package, from TestMain. An Instance hands out client options for any
+// Google client library (GRPCOptions, HTTPOptions) and ready-made Cloud
+// Storage and Pub/Sub clients (Storage, PubSub).
 package emutest
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,85 +25,177 @@ import (
 
 // Instance is a running test emulator.
 type Instance struct {
-	*instance.Instance
+	in        *instance.Instance
+	ownedDir  string // the temp data dir Close removes, "" with WithDataDir
+	release   func() // drops the host loopback lock, nil when none is held
+	closeOnce sync.Once
+	closeErr  error
+	removeErr error // removing ownedDir, part of closeErr
 }
 
-// Option customises the configuration before start.
-type Option func(*config.Config)
-
-// WithIAMMode sets the IAM enforcement mode.
-func WithIAMMode(mode string) Option { return func(c *config.Config) { c.IAMMode = mode } }
-
-// WithDeterministic enables deterministic IDs and the fake clock.
-func WithDeterministic() Option { return func(c *config.Config) { c.Deterministic = true } }
-
-// WithConsole serves the Web console under /console, as it is even under
-// CI=true.
-func WithConsole() Option {
-	return func(c *config.Config) { on := true; c.Console = &on }
-}
-
-// WithSQLHostClients has Cloud SQL instances with a public IP serve host
-// clients on a loopback address on a VM runtime (ADR 0005), as gcpemu
-// does, for tests that dial the address an instance reports (the Cloud
-// SQL connector, pgx or psql to its PRIMARY IP). Without it they serve
-// none, and the host reaches each instance only on its published port
-// (GCPEMU_SQL_<INSTANCE>). On a host without loopback aliases every
-// instance would serve on 127.0.0.1, so the test then holds a lock shared
-// by the user's test binaries for as long as its emulator runs, and its
-// instances must serve one at a time.
-func WithSQLHostClients() Option { return func(c *config.Config) { c.NoSQLHostClients = false } }
-
-// Start launches an instance running services (plus dependencies) and stops
-// it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs.
+// Start launches an Instance running svcs (plus their dependencies) and
+// stops it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	i, err := start(ctx, svcs, opts, testDeadline(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer scancel()
+		// Shutdown errors are ignored, but a data dir left behind is
+		// reported, as t.TempDir does.
+		_ = i.Close(sctx)
+		if i.removeErr != nil {
+			t.Errorf("emutest: %v", i.removeErr)
+		}
+	})
+	return i
+}
+
+// New launches an Instance running svcs (plus their dependencies) that
+// lives until Close, for sharing one Instance across a package's tests
+// from TestMain. ctx bounds the start only. Unless WithDataDir is given,
+// the Instance keeps its files in a temporary directory that Close
+// removes. Set GCPEMU_TEST_LOG=1 to see emulator logs.
+func New(ctx context.Context, svcs []string, opts ...Option) (*Instance, error) {
+	deadline, _ := ctx.Deadline()
+	return start(ctx, svcs, opts, deadline)
+}
+
+// start launches an Instance running svcs with opts, waiting for the host
+// loopback lock, when it needs one, until lockDeadline (zero: forever).
+func start(ctx context.Context, svcs []string, opts []Option, lockDeadline time.Time) (*Instance, error) {
+	cfg := testConfig(svcs, opts)
+	var release func()
+	if !cfg.NoSQLHostClients {
+		var err error
+		if release, err = holdHostLoopback(lockDeadline); err != nil {
+			return nil, fmt.Errorf("emutest: %w", err)
+		}
+	}
+	i, err := launch(ctx, &cfg, release)
+	if err != nil {
+		return nil, fmt.Errorf("emutest: %w", err)
+	}
+	return i, nil
+}
+
+// testConfig is the configuration of a test Instance running svcs with
+// opts applied.
+func testConfig(svcs []string, opts []Option) config.Config {
 	cfg := config.Defaults()
 	cfg.Ephemeral = true
-	cfg.DataDir = t.TempDir()
 	cfg.Services = svcs
 	cfg.LogLevel = "warn"
 	cfg.Ports[config.AllPorts] = 0
 	cfg.NoSQLHostClients = true
 	for _, o := range opts {
-		o(&cfg)
+		if o.apply != nil {
+			o.apply(&cfg)
+		}
 	}
-	if !cfg.NoSQLHostClients {
-		holdHostLoopback(t) // released after Shutdown, registered later
+	return cfg
+}
+
+// launch starts an Instance from cfg and waits until it is ready; release
+// is called once it stops. With no data dir in cfg, it runs in a temporary
+// one it removes then.
+func launch(ctx context.Context, cfg *config.Config, release func()) (i *Instance, err error) {
+	i = &Instance{release: release}
+	defer func() {
+		if err != nil {
+			i.cleanup()
+		}
+	}()
+	if cfg.DataDir == "" {
+		if cfg.DataDir, err = os.MkdirTemp("", "gcpemu-test-"); err != nil {
+			return nil, err
+		}
+		i.ownedDir = cfg.DataDir
 	}
 	var logOut io.Writer = io.Discard
 	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
 		logOut = os.Stderr
 		cfg.LogLevel = "debug"
 	}
-	in, err := instance.New(&cfg, services.Factories(), logOut)
+	in, err := instance.New(cfg, services.Factories(), logOut)
 	if err != nil {
-		t.Fatalf("emutest: %v", err)
+		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := in.Start(ctx); err != nil {
-		t.Fatalf("emutest: start: %v", err)
-	}
-	t.Cleanup(func() {
-		sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer scancel()
+	stop := func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		_ = in.Shutdown(sctx)
-	})
-	if err := in.WaitReady(ctx); err != nil {
-		t.Fatalf("emutest: %v", err)
 	}
-	return &Instance{in}
+	// Not ready until seeded, as with `gcpemu start --seed`.
+	seeded := func() {}
+	if cfg.Seed != "" {
+		seeded = in.HoldReady("seed", "applying "+cfg.Seed)
+	}
+	if err := in.Start(ctx); err != nil {
+		stop()
+		return nil, fmt.Errorf("start: %w", err)
+	}
+	if cfg.Seed != "" {
+		if err := in.ApplySeed(ctx, cfg.Seed); err != nil {
+			stop()
+			return nil, fmt.Errorf("seed: %w", err)
+		}
+	}
+	seeded()
+	if err := in.WaitReady(ctx); err != nil {
+		stop()
+		return nil, err
+	}
+	i.in = in
+	return i, nil
 }
+
+// Close stops the Instance and removes its temporary data dir. Calling it
+// again returns the first call's error.
+func (i *Instance) Close(ctx context.Context) error {
+	i.closeOnce.Do(func() {
+		err := i.in.Shutdown(ctx)
+		i.removeErr = i.cleanup()
+		i.closeErr = errors.Join(err, i.removeErr)
+	})
+	return i.closeErr
+}
+
+// cleanup drops the host loopback lock and removes the temporary data dir.
+func (i *Instance) cleanup() error {
+	if i.release != nil {
+		i.release()
+		i.release = nil
+	}
+	if i.ownedDir == "" {
+		return nil
+	}
+	return os.RemoveAll(i.ownedDir)
+}
+
+// Internal returns the running emulator. It is for gcpemu's own tests
+// only: instance.Instance is internal to gcpemu and carries no
+// compatibility promise.
+func (i *Instance) Internal() *instance.Instance { return i.in }
 
 // Endpoint returns the address (host:port) of a named listener, e.g.
 // "gateway", "gcs", "pubsub".
-func (i *Instance) Endpoint(name string) string { return i.Env.Endpoints.Get(name) }
+func (i *Instance) Endpoint(name string) string { return i.in.Env.Endpoints.Get(name) }
 
 // GatewayURL returns "http://<gateway>".
 func (i *Instance) GatewayURL() string { return "http://" + i.Endpoint("gateway") }
 
-// Setenv sets every client environment variable the instance advertises
+// EnvVars returns every client environment variable the Instance
+// advertises (`gcpemu env`), such as STORAGE_EMULATOR_HOST and
+// PUBSUB_EMULATOR_HOST.
+func (i *Instance) EnvVars() map[string]string { return i.in.EnvVars() }
+
+// Setenv sets every client environment variable the Instance advertises
 // for the duration of the test.
 func (i *Instance) Setenv(t testing.TB) {
 	for k, v := range i.EnvVars() {

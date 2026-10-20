@@ -213,7 +213,7 @@ func hasSegmentBefore(wal []string, start string) bool {
 
 func serviceNamed(t *testing.T, inst *emutest.Instance, name string) emu.Service {
 	t.Helper()
-	for _, s := range inst.Services() {
+	for _, s := range inst.Internal().Services() {
 		if s.Name() == name {
 			return s
 		}

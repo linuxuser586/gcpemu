@@ -173,12 +173,12 @@ func checkLAN(t *testing.T, hc *http.Client) {
 // Instance issued writes and reads an object, and anonymous requests, the
 // registry's included, are refused.
 func TestLANInstance(t *testing.T) {
-	inst := emutest.Start(t, []string{"iam", "gcs", "ar"}, func(c *config.Config) {
+	inst := emutest.Start(t, []string{"iam", "gcs", "ar"}, emutest.WithConfig(func(c *config.Config) {
 		c.GFEBind = []string{"127.0.0.1"}
 		c.Ports["gfe-lan"] = 0
-	})
+	}))
 	ctx := context.Background()
-	tlsCfg := &tls.Config{RootCAs: inst.Env.CA.Pool()}
+	tlsCfg := &tls.Config{RootCAs: inst.Internal().Env.CA.Pool()}
 	client := func(addr string) *http.Client {
 		return &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
 			DialContext: dialFrontend(addr), TLSClientConfig: tlsCfg, ForceAttemptHTTP2: true,

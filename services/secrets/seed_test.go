@@ -37,7 +37,7 @@ func TestSeedAndEnvVars(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := e.inst.ApplySeed(e.ctx, seed); err != nil {
+		if err := e.inst.Internal().ApplySeed(e.ctx, seed); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
@@ -86,14 +86,14 @@ func TestSeedExportRoundTrip(t *testing.T) {
     - project: ` + testProject + `
       id: empty
 `)
-	if err := e.inst.ApplySeedData(e.ctx, seed, dir); err != nil {
+	if err := e.inst.Internal().ApplySeedData(e.ctx, seed, dir); err != nil {
 		t.Fatal(err)
 	}
 	binary := []byte{0xff, 0x00, 0xfe, 'x'}
 	must(e.sm.AddSecretVersion(e.ctx, &secretmanagerpb.AddSecretVersionRequest{
 		Parent: parent + "/secrets/api-key", Payload: &secretmanagerpb.SecretPayload{Data: binary},
 	}))
-	first, err := e.inst.ExportSeed(e.ctx)
+	first, err := e.inst.Internal().ExportSeed(e.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,13 +105,13 @@ func TestSeedExportRoundTrip(t *testing.T) {
 	if strings.Contains(string(first), "gone") {
 		t.Fatalf("destroyed payload exported:\n%s", first)
 	}
-	if err := e.inst.Reset(e.ctx); err != nil {
+	if err := e.inst.Internal().Reset(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.inst.ApplySeedData(e.ctx, first, dir); err != nil {
+	if err := e.inst.Internal().ApplySeedData(e.ctx, first, dir); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := e.inst.ExportSeed(e.ctx)
+	second, err := e.inst.Internal().ExportSeed(e.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

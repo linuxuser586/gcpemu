@@ -19,7 +19,7 @@ func seedWorkloads(t *testing.T, inst *emutest.Instance, sp, cidr string, ips ..
 	name := "gcpemu-test-nodes"
 	st, _ := json.Marshal(map[string]any{"name": name, "subnet": cidr, "range": cidr,
 		"network": "projects/" + proj + "/global/networks/vpc", "region": "us-central1", "subnetwork": sp})
-	err := inst.Env.Store.Update(func(tx store.Tx) error {
+	err := inst.Internal().Env.Store.Update(func(tx store.Tx) error {
 		if err := tx.Put("compute/vpcnets", sp, st); err != nil {
 			return err
 		}

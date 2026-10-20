@@ -264,7 +264,7 @@ pubsub:
 	}
 	ctx := ctxT(t, 10*time.Second)
 	for range 2 { // idempotent
-		if err := inst.ApplySeed(ctx, path); err != nil {
+		if err := inst.Internal().ApplySeed(ctx, path); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -343,7 +343,7 @@ pubsub:
       topic: orders
       pushConfig: {pushEndpoint: "http://127.0.0.1:1/push", attributes: {x-goog-version: v1}}
 `
-	if err := inst.ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	// A subscription in another project on this project's topic, and a
@@ -351,7 +351,7 @@ pubsub:
 	mustSub(t, c, &pubsubpb.Subscription{Name: "projects/other-proj/subscriptions/mirror", Topic: topicName("orders")})
 	publish(t, c, topicName("dlq"), &pubsub.Message{Data: []byte("not exported")})
 
-	first, err := inst.ExportSeed(ctx)
+	first, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,13 +363,13 @@ pubsub:
 	if !bytes.Contains(first, []byte("topic: projects/"+project+"/topics/orders")) {
 		t.Errorf("cross-project topic not fully qualified:\n%s", first)
 	}
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, first, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := inst.ExportSeed(ctx)
+	second, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

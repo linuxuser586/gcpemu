@@ -24,6 +24,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/project"
@@ -73,7 +74,7 @@ func TestClientsReachTheInstance(t *testing.T) {
 		t.Run("relay="+relay, func(t *testing.T) {
 			t.Setenv(vmrelay.Env, relay)
 			e := start(t)
-			if relay == "0" && emutest.VMRuntime(t, e.inst) {
+			if relay == "0" && emutestx.VMRuntime(t, e.inst) {
 				t.Skip("the VM relay is forced off on a VM runtime, so the host cannot bind the services network's gateway")
 			}
 			sa := e.serviceAccount("builder")
@@ -108,7 +109,7 @@ func TestClientsReachTheInstance(t *testing.T) {
 				t.Errorf("requests left the machine for %v", hosts)
 			}
 			if relay == "1" {
-				emutest.RequireRelayStream(t, e.inst, "the Build agent to the gateway", "gateway")
+				emutestx.RequireRelayStream(t, e.inst, "the Build agent to the gateway", "gateway")
 			}
 		})
 	}
@@ -121,7 +122,7 @@ func TestClientsReachTheInstance(t *testing.T) {
 // Service Account.
 func TestServiceAccountUnderEnforce(t *testing.T) {
 	e := start(t, emutest.WithIAMMode(config.IAMEnforce))
-	e.ctx = e.as(e.inst.Config.DefaultPrincipal)
+	e.ctx = e.as(e.inst.Internal().Config.DefaultPrincipal)
 	sa := "projects/" + testProject + "/serviceAccounts/" + e.serviceAccount("noread")
 	bucket := "enforced"
 	e.upload(bucket, "hello.txt", []byte("hello from gcs"))
@@ -171,7 +172,7 @@ func TestServiceAccountUnderEnforce(t *testing.T) {
 // as returns e's context calling as principal.
 func (e *env) as(principal string) context.Context {
 	e.t.Helper()
-	svc, _ := e.inst.Env.Lookup("iam")
+	svc, _ := e.inst.Internal().Env.Lookup("iam")
 	tok, _, err := svc.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(principal))
 	if err != nil {
 		e.t.Fatal(err)
@@ -223,7 +224,7 @@ func (e *env) serviceAccount(id string) string {
 func (e *env) grant(role, member string) {
 	e.t.Helper()
 	e.send(http.MethodPost, "/cloudresourcemanager/v1/projects/"+testProject+":setIamPolicy", `{"policy":{"bindings":[
-		{"role":"roles/owner","members":["`+e.inst.Config.DefaultPrincipal+`"]},
+		{"role":"roles/owner","members":["`+e.inst.Internal().Config.DefaultPrincipal+`"]},
 		{"role":"`+role+`","members":["`+member+`"]}]}}`)
 }
 
@@ -241,7 +242,7 @@ func (e *env) guard() []string {
 	e.run(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "true")}}) // creates the Build network
 	g := escapeguard.New(e.t)
 	guards.Store(e.t, g)
-	np, err := e.inst.Env.Containers.Netplane(e.ctx)
+	np, err := e.inst.Internal().Env.Containers.Netplane(e.ctx)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -259,7 +260,7 @@ func (e *env) guard() []string {
 	for _, kv := range g.Env() {
 		k, v, _ := strings.Cut(kv, "=")
 		if strings.EqualFold(k, "NO_PROXY") {
-			v += ",metadata.google.internal,metadata," + strings.Join(e.inst.FrontendHosts(), ",")
+			v += ",metadata.google.internal,metadata," + strings.Join(e.inst.Internal().FrontendHosts(), ",")
 		} else {
 			_, p, _ := net.SplitHostPort(strings.TrimPrefix(v, "http://"))
 			port, _ = strconv.Atoi(p)
@@ -289,7 +290,7 @@ var (
 func (e *env) probeSource() *cloudbuildpb.Source {
 	e.t.Helper()
 	probeOnce.Do(func() {
-		rt, err := e.inst.Env.Containers.Runtime(e.ctx)
+		rt, err := e.inst.Internal().Env.Containers.Runtime(e.ctx)
 		if err != nil {
 			probeErr = err
 			return

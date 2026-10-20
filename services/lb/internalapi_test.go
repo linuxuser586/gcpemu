@@ -20,7 +20,7 @@ import (
 // once nothing uses them.
 func TestLoadBalancerResources(t *testing.T) {
 	e := start(t)
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	lbr, ok := svc.(emu.LoadBalancerResources)
 	if !ok {
 		t.Fatal("the lb service does not implement emu.LoadBalancerResources")

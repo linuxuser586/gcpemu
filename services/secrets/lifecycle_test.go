@@ -85,7 +85,7 @@ func TestTimeDrivenAndEvents(t *testing.T) {
 		Rotation: &secretmanagerpb.Rotation{NextRotationTime: timestamppb.New(time.Now().Add(time.Minute))}}})
 	wantCode(t, "rotation too soon", err, codes.InvalidArgument)
 
-	now := e.inst.Env.Clock.Now()
+	now := e.inst.Internal().Env.Clock.Now()
 	rot := must(e.sm.CreateSecret(e.ctx, &secretmanagerpb.CreateSecretRequest{Parent: parent, SecretId: "rot", Secret: &secretmanagerpb.Secret{
 		Replication: automatic, Topics: topics,
 		Rotation:          &secretmanagerpb.Rotation{NextRotationTime: timestamppb.New(now.Add(time.Hour)), RotationPeriod: durationpb.New(24 * time.Hour)},
@@ -151,14 +151,14 @@ func TestTimeDrivenAndEvents(t *testing.T) {
 func TestClockAdvancedWaitsForSweep(t *testing.T) {
 	e := start(t, nil)
 	var svc emu.Service
-	for _, s := range e.inst.Services() {
+	for _, s := range e.inst.Internal().Services() {
 		if s.Name() == "secrets" {
 			svc = s
 		}
 	}
 	release := secrets.HoldSweep(svc)
 	done := make(chan error, 1)
-	go func() { done <- e.inst.AdvanceClock(e.ctx, time.Hour) }()
+	go func() { done <- e.inst.Internal().AdvanceClock(e.ctx, time.Hour) }()
 	select {
 	case err := <-done:
 		release()

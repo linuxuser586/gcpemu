@@ -50,11 +50,11 @@ func TestResetRestoreDuringBringUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	putConfigMap(t, inst, c, "saved")
-	if _, err := inst.SaveSnapshot(ctx, "fixture"); err != nil {
+	if _, err := inst.Internal().SaveSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 
-	gsvc, _ := inst.Env.Lookup("gke")
+	gsvc, _ := inst.Internal().Env.Lookup("gke")
 	var calls atomic.Int32
 	var earlierDone atomic.Bool
 	entered := make(chan struct{})
@@ -70,11 +70,11 @@ func TestResetRestoreDuringBringUp(t *testing.T) {
 		}
 	})
 	// The first restore's bring-up stalls before touching the server.
-	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
+	if err := inst.Internal().RestoreSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	<-entered
-	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
+	if err := inst.Internal().RestoreSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	c = waitRunning(t, inst, name)
@@ -94,7 +94,7 @@ func TestResetStopsOperation(t *testing.T) {
 	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	inst := emutest.Start(t, []string{"gke"})
-	gsvc, _ := inst.Env.Lookup("gke")
+	gsvc, _ := inst.Internal().Env.Lookup("gke")
 	var stopped atomic.Bool
 	entered := make(chan struct{})
 	gke.SetBeforeServerStart(gsvc, func(ctx context.Context, key string) {
@@ -114,7 +114,7 @@ func TestResetStopsOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-entered
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if !stopped.Load() {
@@ -125,7 +125,7 @@ func TestResetStopsOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel := map[string]string{runtime.LabelInstance: inst.ID, runtime.LabelService: "gke"}
+	sel := map[string]string{runtime.LabelInstance: inst.Internal().ID, runtime.LabelService: "gke"}
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
 		cs, err := cl.ListContainers(ctx, sel)
 		if err != nil {
@@ -159,7 +159,7 @@ func TestCreateClusterDuringReset(t *testing.T) {
 	emutest.HoldClusterSlot(t)
 	ctx := context.Background()
 	inst := emutest.Start(t, []string{"gke"})
-	gsvc, _ := inst.Env.Lookup("gke")
+	gsvc, _ := inst.Internal().Env.Lookup("gke")
 	cm := newClient(t, inst)
 	var createErr error
 	gke.SetBeforeResetTeardown(gsvc, func() {
@@ -169,7 +169,7 @@ func TestCreateClusterDuringReset(t *testing.T) {
 			Name: "racer", NodePools: []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
 		}})
 	})
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
 	gke.SetBeforeResetTeardown(gsvc, nil)
@@ -188,7 +188,7 @@ func TestCreateClusterDuringReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel := map[string]string{runtime.LabelInstance: inst.ID, runtime.LabelService: "gke"}
+	sel := map[string]string{runtime.LabelInstance: inst.Internal().ID, runtime.LabelService: "gke"}
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
 		cs, err := cl.ListContainers(ctx, sel)
 		if err != nil {

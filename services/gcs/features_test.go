@@ -119,7 +119,7 @@ func TestSignedURL(t *testing.T) {
 	}
 
 	// Expiry is checked against the emulator clock.
-	_ = inst.AdvanceClock(context.Background(), 2*time.Hour)
+	_ = inst.Internal().AdvanceClock(context.Background(), 2*time.Hour)
 	resp, _ = http.Get(u)
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -330,7 +330,7 @@ func TestLifecycle(t *testing.T) {
 	if _, err := b.Object("tmp/x").Attrs(ctx); err != nil {
 		t.Fatalf("deleted too early: %v", err)
 	}
-	_ = inst.AdvanceClock(context.Background(), 3*24*time.Hour)
+	_ = inst.Internal().AdvanceClock(context.Background(), 3*24*time.Hour)
 	if err := svc.EvaluateLifecycle(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ gcs:
       iamConfiguration: {publicAccessPrevention: enforced}
       softDeletePolicy: {retentionDurationSeconds: "0"}
 `
-	if err := inst.ApplySeedData(ctx, []byte(doc), t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, []byte(doc), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	// Binary content written through the API; the overwritten generation
@@ -469,7 +469,7 @@ gcs:
 			t.Fatal(err)
 		}
 	}
-	first, err := inst.ExportSeed(ctx)
+	first, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,13 +483,13 @@ gcs:
 			t.Errorf("export contains %q:\n%s", unwanted, first)
 		}
 	}
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, first, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := inst.ExportSeed(ctx)
+	second, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

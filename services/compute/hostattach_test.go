@@ -17,8 +17,8 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/linuxuser586/gcpemu/emutest"
-	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -115,7 +115,7 @@ func TestHostAttachmentOffers(t *testing.T) {
 		t.Fatalf("host address: %d %+v, want %s", code, addr, got.HostAddress)
 	}
 
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
 	sn, err := vpc.SubnetNetwork(ctx, sp)
@@ -132,7 +132,7 @@ func TestHostAttachmentOffers(t *testing.T) {
 		out := get(t, rt, id, at(offered))
 		return strings.Contains(out, "hello-from-host"), out
 	})
-	emutest.RequireRelayStream(t, inst, "the offered port", ":"+strconv.Itoa(offered)+"/tcp")
+	emutestx.RequireRelayStream(t, inst, "the offered port", ":"+strconv.Itoa(offered)+"/tcp")
 	if out := get(t, rt, id, at(other)); !strings.Contains(out, "refused") {
 		t.Fatalf("a port that is not offered: %s", out)
 	}
@@ -158,7 +158,7 @@ func TestHostAttachmentSurvivesRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	dir := t.TempDir()
-	persistent := func(cfg *config.Config) { cfg.Ephemeral = false; cfg.DataDir = dir }
+	persistent := emutest.WithDataDir(dir)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
 	port := hostListener(t)
@@ -169,16 +169,16 @@ func TestHostAttachmentSurvivesRestart(t *testing.T) {
 		customNet(t, c, "vpc")
 		subnet(t, c, "vpc", "s", "us-central1", "10.118.0.0/24")
 		first = offer(t, inst, sp, strconv.Itoa(port))
-		svc, _ := inst.Env.Lookup("compute")
+		svc, _ := inst.Internal().Env.Lookup("compute")
 		sn, err := svc.(emu.VPC).SubnetNetwork(ctx, sp)
 		if err != nil {
 			t.Fatal(err)
 		}
-		rt, _ := inst.Env.Containers.Runtime(ctx)
+		rt, _ := inst.Internal().Env.Containers.Runtime(ctx)
 		t.Cleanup(func() { _ = rt.RemoveNetwork(context.Background(), sn.Name) })
 		sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if err := inst.Shutdown(sctx); err != nil {
+		if err := inst.Internal().Shutdown(sctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -188,7 +188,7 @@ func TestHostAttachmentSurvivesRestart(t *testing.T) {
 	if len(list.Subnetworks) != 1 || list.Subnetworks[0].HostAddress != first.HostAddress || len(list.Subnetworks[0].Offers) != 1 {
 		t.Fatalf("offers after a restart: %+v, want %+v", list, first)
 	}
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	sn, err := vpc.SubnetNetwork(ctx, sp)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestOfferHeldOnWildcard(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	inst, c, _ := newClients(t)
-	p, err := inst.Env.Containers.Netplane(context.Background())
+	p, err := inst.Internal().Env.Containers.Netplane(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

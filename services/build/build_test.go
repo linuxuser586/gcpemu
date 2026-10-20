@@ -110,7 +110,7 @@ func TestStepTimeout(t *testing.T) {
 	s.Timeout = durationpb.New(time.Minute)
 	_, b := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{s}})
 	e.awaitStep(b.GetId(), 0)
-	if err := e.inst.AdvanceClock(e.ctx, 61*time.Second); err != nil {
+	if err := e.inst.Internal().AdvanceClock(e.ctx, 61*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	b = e.await(b.GetId(), cloudbuildpb.Build_TIMEOUT, cloudbuildpb.Build_FAILURE, cloudbuildpb.Build_SUCCESS)

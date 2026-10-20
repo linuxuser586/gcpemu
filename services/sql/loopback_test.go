@@ -105,7 +105,7 @@ func TestLoopbackWithoutAliases(t *testing.T) {
 	} else {
 		l.Close()
 	}
-	svcMod, _ := inst.Env.Lookup("sql")
+	svcMod, _ := inst.Internal().Env.Lookup("sql")
 	sql.SetLoopbackAliases(svcMod, false)
 	svc := adminClient(t, inst)
 
@@ -159,7 +159,7 @@ func TestLoopbackLocalPostgres(t *testing.T) {
 	if l, err := net.Listen("tcp", "127.0.0.1:5432"); err == nil {
 		t.Cleanup(func() { l.Close() })
 	} // else another process holds it already
-	svcMod, _ := inst.Env.Lookup("sql")
+	svcMod, _ := inst.Internal().Env.Lookup("sql")
 	sql.SetLoopbackAliases(svcMod, false)
 	svc := adminClient(t, inst)
 
@@ -184,7 +184,7 @@ func TestWithoutHostClients(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Setenv(vmrelay.Env, "1")
 	inst := emutest.Start(t, []string{"sql"})
-	svcMod, _ := inst.Env.Lookup("sql")
+	svcMod, _ := inst.Internal().Env.Lookup("sql")
 	sql.SetLoopbackAliases(svcMod, false)
 	svc := adminClient(t, inst)
 	for _, name := range []string{"nohost-a", "nohost-b"} {

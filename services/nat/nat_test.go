@@ -17,14 +17,14 @@ import (
 func TestNATServicePullsInCompute(t *testing.T) {
 	emutest.RequireRuntime(t)
 	inst := emutest.Start(t, []string{"nat"})
-	svc, ok := inst.Env.Lookup("compute")
+	svc, ok := inst.Internal().Env.Lookup("compute")
 	if !ok {
 		t.Fatal("compute not started with nat")
 	}
 	if _, ok := svc.(emu.VPC); !ok {
 		t.Fatal("compute does not implement emu.VPC")
 	}
-	n, ok := inst.Env.Lookup("nat")
+	n, ok := inst.Internal().Env.Lookup("nat")
 	if !ok {
 		t.Fatal("nat not running")
 	}
@@ -72,7 +72,7 @@ func TestSinkSwitch(t *testing.T) {
 	call(inst, "PUT", `{}`, 400)
 	call(inst, "PUT", `not json`, 400)
 
-	off := emutest.Start(t, []string{"nat"}, func(c *config.Config) { c.Offline = true; c.NATSinkResponse = "418:teapot" })
+	off := emutest.Start(t, []string{"nat"}, emutest.WithConfig(func(c *config.Config) { c.Offline = true; c.NATSinkResponse = "418:teapot" }))
 	if s := call(off, "GET", "", 200); s != (state{true, 418, "teapot"}) {
 		t.Fatalf("--offline: %+v", s)
 	}

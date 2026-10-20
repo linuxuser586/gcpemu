@@ -25,6 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	gcpproject "github.com/linuxuser586/gcpemu/internal/project"
 )
 
@@ -737,11 +738,11 @@ func testNEG(t *testing.T, e *env) {
 	})
 	addr := net.JoinHostPort(ingress, "8081")
 	if net.ParseIP(ingress).IsLoopback() {
-		addr = e.inst.Env.Endpoints.Get("gke:c1/default/web-lb/8081")
+		addr = e.inst.Endpoint("gke:c1/default/web-lb/8081")
 		if h, _, _ := net.SplitHostPort(addr); h != ingress {
 			t.Fatalf("ingress %s, endpoint %q; want the endpoint on the ingress loopback address", ingress, addr)
 		}
-	} else if emutest.RelayStreams(t, e.inst) != nil {
+	} else if emutestx.RelayStreams(t, e.inst) != nil {
 		t.Fatalf("on the VM relay: ingress %s, want a loopback address", ingress)
 	}
 	eventually(t, 30*time.Second, "LoadBalancer Service reachable from the host at "+addr, func() bool {

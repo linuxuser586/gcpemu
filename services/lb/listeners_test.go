@@ -20,7 +20,7 @@ import (
 // high port that DNS cannot express (#193).
 func TestLoopbackInUse(t *testing.T) {
 	e := start(t)
-	if svc, _ := e.inst.Env.Lookup("lb"); lb.SingleLoopback(svc) {
+	if svc, _ := e.inst.Internal().Env.Lookup("lb"); lb.SingleLoopback(svc) {
 		t.Skip("127.0.0.1 is the only loopback address here (single-loopback mode)")
 	}
 	origin := newBackend(t)
@@ -68,7 +68,7 @@ func TestLoopbackInUse(t *testing.T) {
 // DNS maps each rule's IP to its listener IP, and that both serve.
 func (e *env) twoRules(port string) {
 	e.t.Helper()
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	for _, name := range []string{"a", "b"} {
 		e.do(e.c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: name, LoadBalancingScheme: "EXTERNAL_MANAGED",
 			PortRange: port, Target: "global/targetHttpProxies/p"}).Do())
@@ -106,7 +106,7 @@ func TestSingleLoopback(t *testing.T) {
 		t.Skip("127.0.0.1:8080 is in use")
 	}
 	e := start(t)
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	lb.SetSingleLoopback(svc, true)
 	e.lanLB(newBackend(t))
 	e.twoRules("8080")

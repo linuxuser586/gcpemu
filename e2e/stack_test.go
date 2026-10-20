@@ -398,7 +398,7 @@ func (r *run) step4(t *testing.T) {
 	if len(ips) == 0 {
 		t.Fatal("no ingress gateway pod")
 	}
-	svc, _ := r.inst.Env.Lookup("lb")
+	svc, _ := r.inst.Internal().Env.Lookup("lb")
 	raw, err := svc.(*lb.Service).DialBackend(context.Background(), net.JoinHostPort(ips[0], "8443"))
 	if err != nil {
 		t.Fatalf("dial gateway pod: %v", err)
@@ -644,7 +644,7 @@ func (r *run) step10(t *testing.T) {
 	// resources any more.
 	var left []string
 	eventually(t, time.Minute, "no leftover containers", func() bool {
-		cts, err := r.inst.Containers(context.Background())
+		cts, err := r.inst.Internal().Containers(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -703,8 +703,8 @@ func obj(kind, ns, name string, annotations map[string]string, extra map[string]
 
 // token returns an access token of the default principal (owner).
 func (r *run) token(t *testing.T) string {
-	keys, _ := r.inst.Env.Lookup("iam")
-	tok, _, err := keys.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(r.inst.Config.DefaultPrincipal))
+	keys, _ := r.inst.Internal().Env.Lookup("iam")
+	tok, _, err := keys.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(r.inst.Internal().Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +726,7 @@ func (r *run) lbClient() *http.Client {
 	return &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: r.inst.Env.CA.Pool()},
+			TLSClientConfig: &tls.Config{RootCAs: r.inst.Internal().Env.CA.Pool()},
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, port, _ := net.SplitHostPort(addr)
 				ips, err := res.LookupHost(ctx, host)
@@ -772,7 +772,7 @@ func (r *run) curl(t *testing.T, path string) (string, bool) {
 	if err != nil || len(ips) == 0 {
 		t.Fatalf("resolve %s: %v", r.appHost(), err)
 	}
-	args := []string{"-sS", "-i", "--max-time", "20", "--cacert", r.inst.Env.CA.Path(),
+	args := []string{"-sS", "-i", "--max-time", "20", "--cacert", r.inst.Internal().Env.CA.Path(),
 		"--resolve", r.appHost() + ":443:" + ips[0], "https://" + r.appHost() + path}
 	if goruntime.GOOS == "windows" {
 		// Windows' curl (Schannel) checks revocation, which the

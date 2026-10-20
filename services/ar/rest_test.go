@@ -16,7 +16,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
-	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/emutest"
 )
 
 // rest issues a JSON request against the gateway REST surface.
@@ -98,7 +98,7 @@ func TestRESTRepositoryAndOperations(t *testing.T) {
 }
 
 func TestRESTOperationPollingWithLatency(t *testing.T) {
-	e := start(t, func(c *config.Config) { c.LROLatency["ar"] = "200ms" })
+	e := start(t, emutest.WithOperationLatency("ar", 200*time.Millisecond))
 	parent := "/v1/projects/" + testProject + "/locations/" + testLoc
 	st, op := rest(t, e, "POST", parent+"/repositories?repositoryId=slow", `{"format":"DOCKER"}`)
 	if st != 200 || op["done"] == true {

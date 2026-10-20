@@ -47,7 +47,7 @@ certs:
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ { // idempotent
-		if err := e.inst.ApplySeed(e.ctx, path); err != nil {
+		if err := e.inst.Internal().ApplySeed(e.ctx, path); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
 	}
@@ -97,7 +97,7 @@ certs:
 		t.Fatal(err)
 	}
 	want := `Certificate projects/test-proj/locations/us-central1/certificates/web must be in location "global" to be used in a certificate map entry.`
-	if err := e.inst.ApplySeed(e.ctx, path); err == nil || !strings.Contains(err.Error(), want) {
+	if err := e.inst.Internal().ApplySeed(e.ctx, path); err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("seed: %v", err)
 	}
 }
@@ -139,7 +139,7 @@ certs:
 		if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		err := e.inst.ApplySeed(e.ctx, path)
+		err := e.inst.Internal().ApplySeed(e.ctx, path)
 		if tc.want == "" && err != nil {
 			t.Errorf("seed with scope %q: %v", tc.scope, err)
 		}
@@ -183,10 +183,10 @@ certs:
   serverTlsPolicies:
     - {project: test-proj, id: frontend, mtlsPolicy: {clientValidationMode: REJECT_INVALID, clientValidationTrustConfig: backends}}
 `
-	if err := e.inst.ApplySeedData(e.ctx, []byte(seed), dir); err != nil {
+	if err := e.inst.Internal().ApplySeedData(e.ctx, []byte(seed), dir); err != nil {
 		t.Fatal(err)
 	}
-	first, err := e.inst.ExportSeed(e.ctx)
+	first, err := e.inst.Internal().ExportSeed(e.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,13 +195,13 @@ certs:
 			t.Errorf("export contains %q:\n%s", unwanted, first)
 		}
 	}
-	if err := e.inst.Reset(e.ctx); err != nil {
+	if err := e.inst.Internal().Reset(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.inst.ApplySeedData(e.ctx, first, t.TempDir()); err != nil {
+	if err := e.inst.Internal().ApplySeedData(e.ctx, first, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := e.inst.ExportSeed(e.ctx)
+	second, err := e.inst.Internal().ExportSeed(e.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

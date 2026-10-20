@@ -40,7 +40,7 @@ func TestFrontendRealClients(t *testing.T) {
 	if fe == "" {
 		t.Fatal("no frontend endpoint")
 	}
-	pool := inst.Env.CA.Pool()
+	pool := inst.Internal().Env.CA.Pool()
 	ctx := context.Background()
 
 	tr := &http.Transport{

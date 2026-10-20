@@ -67,7 +67,7 @@ func start(t *testing.T, opts ...emutest.Option) *env {
 // mgr returns the CertManager the load balancer would use.
 func (e *env) mgr() emu.CertManager {
 	e.t.Helper()
-	s, ok := e.inst.Env.Lookup("certs")
+	s, ok := e.inst.Internal().Env.Lookup("certs")
 	if !ok {
 		e.t.Fatal("certs service not running")
 	}

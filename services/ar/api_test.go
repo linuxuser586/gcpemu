@@ -142,7 +142,7 @@ func TestLocations(t *testing.T) {
 }
 
 func TestLROLatency(t *testing.T) {
-	e := start(t, func(c *config.Config) { c.LROLatency["ar"] = "300ms" })
+	e := start(t, emutest.WithOperationLatency("ar", 300*time.Millisecond))
 	op, err := e.c.CreateRepository(e.ctx, &artifactregistrypb.CreateRepositoryRequest{
 		Parent: "projects/" + testProject + "/locations/" + testLoc, RepositoryId: "slow",
 		Repository: &artifactregistrypb.Repository{Format: artifactregistrypb.Repository_DOCKER},

@@ -75,7 +75,7 @@ func TestACLs(t *testing.T) {
 		}
 		o := b.Object("dir/a.txt")
 		write(t, ctx, o, []byte("a"), 0)
-		owner := "OWNER:user-" + emu.Principal(inst.Config.DefaultPrincipal).Email()
+		owner := "OWNER:user-" + emu.Principal(inst.Internal().Config.DefaultPrincipal).Email()
 		rules, err = o.ACL().List(ctx)
 		if want := append([]string{owner, "READER:allAuthenticatedUsers"}, team...); err != nil || !slices.Equal(aclStrings(rules), sorted(want)) {
 			t.Fatalf("object ACL = %v %v, want %v", aclStrings(rules), err, sorted(want))
@@ -330,7 +330,7 @@ func TestManagedFolders(t *testing.T) {
 // access to the objects in it and nothing outside it.
 func TestManagedFolderIAM(t *testing.T) {
 	inst := start(t, emutest.WithIAMMode(config.IAMEnforce))
-	svc, _ := inst.Env.Lookup("iam")
+	svc, _ := inst.Internal().Env.Lookup("iam")
 	keys := svc.(emu.ServiceAccountKeys)
 	token := func(p string) string {
 		tok, _, err := keys.AccessToken(context.Background(), emu.Principal(p))
@@ -339,7 +339,7 @@ func TestManagedFolderIAM(t *testing.T) {
 		}
 		return tok
 	}
-	owner, reader := token(inst.Config.DefaultPrincipal), token("user:reader@example.com")
+	owner, reader := token(inst.Internal().Config.DefaultPrincipal), token("user:reader@example.com")
 	call := func(tok, method, path, body string) int {
 		t.Helper()
 		req, _ := http.NewRequest(method, inst.GatewayURL()+path, strings.NewReader(body))

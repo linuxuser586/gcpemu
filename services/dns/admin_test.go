@@ -16,7 +16,7 @@ import (
 // /_emu/v1/dns/query asks the DNS server, from the host or from a VPC
 // network, and reports the response's sections and the answering zone.
 func TestConsoleQuery(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	c := newClient(t, inst.GatewayURL()+"/")
 	dataPlaneFixture(t, c)
 	vpc := "projects/" + proj + "/global/networks/vpc-a"

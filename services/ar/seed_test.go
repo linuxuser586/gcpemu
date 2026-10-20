@@ -28,7 +28,7 @@ func TestSeedEnvVarsAndReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ { // idempotent
-		if err := e.inst.ApplySeed(context.Background(), seed); err != nil {
+		if err := e.inst.Internal().ApplySeed(context.Background(), seed); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
@@ -49,11 +49,11 @@ func TestSeedEnvVarsAndReset(t *testing.T) {
 	if err := remote.Write(e.ref(testProject+"/seeded/app:v1"), img); err != nil {
 		t.Fatal(err)
 	}
-	blobs := filepath.Join(e.inst.Env.DataDir, "ar", "blobs", "sha256")
+	blobs := filepath.Join(e.inst.Internal().Env.DataDir, "ar", "blobs", "sha256")
 	if n := countFiles(t, blobs); n == 0 {
 		t.Fatal("no blob files after push")
 	}
-	if err := e.inst.Reset(context.Background()); err != nil {
+	if err := e.inst.Internal().Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if n := countFiles(t, blobs); n != 0 {
@@ -105,10 +105,10 @@ func TestExportSeedRoundTrip(t *testing.T) {
         - {id: mine, repository: ` + repos + `images, priority: 100}
         - {id: hub, repository: ` + repos + `dockerhub, priority: 10}
 `
-	if err := e.inst.ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
+	if err := e.inst.Internal().ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := e.inst.ExportSeed(ctx)
+	got, err := e.inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,13 +148,13 @@ func TestExportSeedRoundTrip(t *testing.T) {
 	if !strings.Contains(string(got), want) {
 		t.Fatalf("export =\n%s\nwant section\n%s", got, want)
 	}
-	if err := e.inst.Reset(ctx); err != nil {
+	if err := e.inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.inst.ApplySeedData(ctx, got, t.TempDir()); err != nil {
+	if err := e.inst.Internal().ApplySeedData(ctx, got, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v", err)
 	}
-	again, err := e.inst.ExportSeed(ctx)
+	again, err := e.inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

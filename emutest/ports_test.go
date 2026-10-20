@@ -18,14 +18,14 @@ import (
 // listener port from the range, recorded in endpoints.json.
 func TestPortRangeSideBySide(t *testing.T) {
 	const lo, hi = 42100, 42299
-	withRange := func(c *config.Config) { c.PortRange = strconv.Itoa(lo) + "-" + strconv.Itoa(hi) }
+	withRange := emutest.WithConfig(func(c *config.Config) { c.PortRange = strconv.Itoa(lo) + "-" + strconv.Itoa(hi) })
 	svcs := []string{"gcs", "pubsub", "dns"}
 	a := emutest.Start(t, svcs, withRange)
 	b := emutest.Start(t, svcs, withRange)
 
 	seen := map[string]string{}
 	for _, inst := range []*emutest.Instance{a, b} {
-		eps := inst.Env.Endpoints.All()
+		eps := inst.Internal().Env.Endpoints.All()
 		for _, name := range []string{"gateway", "gcs", "pubsub", "dns", "metadata"} {
 			addr := eps[name]
 			_, ps, err := net.SplitHostPort(addr)
@@ -40,7 +40,7 @@ func TestPortRangeSideBySide(t *testing.T) {
 			}
 			seen[addr] = name
 		}
-		raw, err := os.ReadFile(filepath.Join(inst.Env.Config.DataDir, instance.EndpointsFile))
+		raw, err := os.ReadFile(filepath.Join(inst.Internal().Env.Config.DataDir, instance.EndpointsFile))
 		if err != nil {
 			t.Fatal(err)
 		}
