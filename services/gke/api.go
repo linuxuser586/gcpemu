@@ -657,10 +657,10 @@ func (a *api) mutate(ctx context.Context, r ref, typ containerpb.Operation_Type,
 	if r.Pool != "" {
 		target += "/nodePools/" + r.Pool
 	}
+	if work == nil {
+		return a.s.runOp(r, name, typ, target, true, nil)
+	}
 	return a.s.runOp(r, name, typ, target, true, func(ctx context.Context) error {
-		if work == nil {
-			return nil
-		}
 		err := work(ctx)
 		_ = a.s.updateCluster(r.key(), func(rec *clusterRecord, c *containerpb.Cluster) error {
 			if c.Status == containerpb.Cluster_RECONCILING {
@@ -908,7 +908,13 @@ func (a *api) ListOperations(ctx context.Context, req *containerpb.ListOperation
 		return nil, err
 	}
 	ops := a.s.listOps(r.Project, r.Location)
-	sort.Slice(ops, func(i, j int) bool { return ops[i].StartTime < ops[j].StartTime })
+	// Operations started within one request share a deterministic instant.
+	sort.Slice(ops, func(i, j int) bool {
+		if ops[i].StartTime != ops[j].StartTime {
+			return ops[i].StartTime < ops[j].StartTime
+		}
+		return ops[i].Name < ops[j].Name
+	})
 	return &containerpb.ListOperationsResponse{Operations: ops}, nil
 }
 

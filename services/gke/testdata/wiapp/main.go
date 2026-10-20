@@ -8,10 +8,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -41,7 +43,7 @@ func main() {
 }
 
 func run(project, bucket, topic string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	sc, err := storage.NewClient(ctx)
 	if err != nil {
@@ -55,6 +57,9 @@ func run(project, bucket, topic string) error {
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("storage write: %w", err)
 	}
+	if err := bigObject(ctx, sc.Bucket(bucket).Object("big.bin")); err != nil {
+		return err
+	}
 	pc, err := pubsub.NewClient(ctx, project)
 	if err != nil {
 		return fmt.Errorf("pubsub client: %w", err)
@@ -66,6 +71,40 @@ func run(project, bucket, topic string) error {
 		return fmt.Errorf("pubsub publish: %w", err)
 	}
 	return allowedLocations(ctx)
+}
+
+// bigSize spans two chunks of the Writer's default 16 MiB, so the upload
+// is resumable and the client follows the session URI the service
+// returned, which must be https (#440).
+const bigSize = 20 << 20
+
+// bigObject uploads bigSize random bytes and reads them back.
+func bigObject(ctx context.Context, o *storage.ObjectHandle) error {
+	data := make([]byte, bigSize)
+	r := rand.New(rand.NewPCG(440, 440))
+	for i := range data {
+		data[i] = byte(r.Uint32())
+	}
+	w := o.NewWriter(ctx)
+	if _, err := w.Write(data); err != nil {
+		return fmt.Errorf("big write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("big write: %w", err)
+	}
+	rd, err := o.NewReader(ctx)
+	if err != nil {
+		return fmt.Errorf("big read: %w", err)
+	}
+	defer rd.Close()
+	got, err := io.ReadAll(rd)
+	if err != nil {
+		return fmt.Errorf("big read: %w", err)
+	}
+	if !bytes.Equal(got, data) {
+		return fmt.Errorf("big read: %d bytes differ from the %d written", len(got), len(data))
+	}
+	return nil
 }
 
 // allowedLocations checks that the metadata server keeps a pod in Google's

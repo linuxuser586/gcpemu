@@ -47,6 +47,9 @@ func (a *api) CreateBuild(ctx context.Context, req *cloudbuildpb.CreateBuildRequ
 	if req.GetBuild() == nil {
 		return nil, apierr.InvalidArgument("build is required.")
 	}
+	if err := a.s.checkActAs(ctx, project, req.GetBuild()); err != nil {
+		return nil, err
+	}
 	return a.s.submit(project, location, req.GetBuild())
 }
 
@@ -146,6 +149,9 @@ func (a *api) RetryBuild(ctx context.Context, req *cloudbuildpb.RetryBuildReques
 	if err != nil {
 		return nil, err
 	}
+	if err := a.s.checkActAs(ctx, r.Project, st.request); err != nil {
+		return nil, err
+	}
 	return a.s.submit(r.Project, r.Location, st.request)
 }
 
@@ -186,6 +192,9 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 	}
 	if b.QueueTtl == nil {
 		b.QueueTtl = durationpb.New(defaultQueueTTL)
+	}
+	if b.ServiceAccount == "" {
+		b.ServiceAccount = defaultServiceAccount(project)
 	}
 	for _, st := range b.Steps {
 		st.Status, st.ExitCode, st.Timing, st.PullTiming = cloudbuildpb.Build_QUEUED, 0, nil, nil
@@ -248,6 +257,11 @@ func validate(b *cloudbuildpb.Build) error {
 	}
 	if err := validateSource(b.GetSource()); err != nil {
 		return err
+	}
+	if sa := b.GetServiceAccount(); sa != "" {
+		if _, err := serviceAccountEmail(sa); err != nil {
+			return err
+		}
 	}
 	if len(b.GetSecrets()) > 0 || b.GetAvailableSecrets() != nil {
 		return apierr.New(codes.Unimplemented, "Build secrets are not emulated yet.")

@@ -45,8 +45,9 @@ type Gateway struct {
 	hosts      map[string]http.Handler // Host → handler (host mode)
 	grpcOwners map[string]string       // gRPC service name → emu service
 	srv        *http.Server
-	adminToken string // see SetAdminToken
-	gate       gate   // see CloseGate
+	adminToken string   // see SetAdminToken
+	gate       gate     // see CloseGate
+	front      *handoff // see ServeFrontend
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -60,6 +61,7 @@ func New(env *emu.Env, log *reqlog.Log) *Gateway {
 		mux:        http.NewServeMux(),
 		hosts:      map[string]http.Handler{},
 		grpcOwners: map[string]string{},
+		front:      newHandoff(),
 	}
 	g.grpc = grpc.NewServer(g.GRPCOptions("")...)
 	reflection.Register(g.grpc)
@@ -79,6 +81,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
 			start := time.Now()
 			timer := clock.StartStopwatch()
+			clock.RequestStep(g.env.Clock)
 			ctx, leave, err := g.gate.enter(ctx)
 			if err == nil {
 				defer leave()
@@ -117,6 +120,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
 			start := time.Now()
 			timer := clock.StartStopwatch()
+			clock.RequestStep(g.env.Clock) // once, when the stream opens
 			ctx, leave, err := g.gate.enter(ss.Context())
 			if err == nil {
 				defer leave()
@@ -334,6 +338,7 @@ func (g *Gateway) HandleConsole(h http.Handler) {
 
 // ServeHTTP dispatches gRPC, host-mode and path-routed requests.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	markFrontend(r)
 	if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 		g.grpc.ServeHTTP(w, r)
 		return
@@ -360,6 +365,10 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		timer := clock.StartStopwatch()
+		if isAPIRequest(r.URL.Path) {
+			// Before authentication, which reads the clock (ADR 0020).
+			clock.RequestStep(g.env.Clock)
+		}
 		ctx, leave, err := g.gate.enter(r.Context())
 		if err == nil {
 			defer leave()
@@ -419,6 +428,17 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 			},
 		})
 	})
+}
+
+// isAPIRequest reports whether an HTTP request to a service handler is a
+// GCP API call, which moves a deterministic clock one step (ADR 0020).
+// Service-owned admin routes and internal endpoints (/_emu/...) and
+// in-container agent callbacks (/_agent/..., .../_gcpemu/...) arrive on
+// wall-clock schedules and do not. path is as the service handler sees
+// it, so a mount's API prefix may already be stripped.
+func isAPIRequest(path string) bool {
+	return !strings.HasPrefix(path, "/_emu/") && !strings.HasPrefix(path, "/_agent/") &&
+		!strings.Contains(path, "/_gcpemu/")
 }
 
 // teeBody copies what the handler reads of a request body to c.
@@ -535,12 +555,18 @@ func NewServer(h http.Handler, log *slog.Logger) *http.Server {
 	return s
 }
 
-// Serve serves on l until Shutdown.
+// Serve serves on l, and connections from ServeFrontend, until Shutdown.
 func (g *Gateway) Serve(l net.Listener) error {
 	g.mu.Lock()
 	g.srv = NewServer(g, g.env.Log)
+	g.srv.ConnContext = connContext
 	srv := g.srv
 	g.mu.Unlock()
+	go func() {
+		if err := srv.Serve(g.front); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			g.env.Log.Error("API gateway stopped serving the Google front end", "err", err)
+		}
+	}()
 	err := srv.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -553,6 +579,7 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.RLock()
 	srv := g.srv
 	g.mu.RUnlock()
+	g.front.Close()
 	g.grpc.Stop()
 	if srv == nil {
 		return nil

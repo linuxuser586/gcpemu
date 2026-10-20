@@ -109,6 +109,16 @@ func (e *env) await(id string, want ...cloudbuildpb.Build_Status) *cloudbuildpb.
 	}
 }
 
+// cancel cancels a Build with CancelBuild and returns the Build it
+// answers.
+func (e *env) cancel(id string) *cloudbuildpb.Build {
+	b, err := e.cb.CancelBuild(e.ctx, &cloudbuildpb.CancelBuildRequest{ProjectId: testProject, Id: id})
+	if err != nil {
+		e.t.Errorf("CancelBuild: %v", err)
+	}
+	return b
+}
+
 // awaitStep polls until step i of the Build is WORKING.
 func (e *env) awaitStep(id string, i int) {
 	e.t.Helper()
@@ -135,7 +145,9 @@ func (e *env) buildObjects() (containers, volumes []string) {
 		e.t.Fatal(err)
 	}
 	for _, c := range cs {
-		containers = append(containers, c.Name)
+		if c.Labels[runtime.LabelResource] != "" { // not the Build agent, which is the Instance's
+			containers = append(containers, c.Name)
+		}
 	}
 	vs, err := rt.ListVolumes(e.ctx, sel)
 	if err != nil {

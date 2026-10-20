@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
-	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -65,9 +64,8 @@ func (r *liveBuild) stopStep(i int, cause error) {
 }
 
 // now is the Emulator clock's time for the scheduler and the Builds it
-// runs, which are background work: under --deterministic only requests
-// move the fake clock.
-func (s *Service) now() time.Time { return clock.Peek(s.env.Clock) }
+// runs.
+func (s *Service) now() time.Time { return s.env.Clock.Now() }
 
 // kick asks the scheduler for a pass.
 func (s *Service) kick() {
@@ -183,16 +181,21 @@ func (s *Service) execute(r *liveBuild, b *cloudbuildpb.Build) {
 		defer close(flushed)
 		s.flushLogs(r, b, stopFlush)
 	}()
-	o := s.runSteps(r, b)
+	o, ranToEnd := s.runSteps(r, b)
+	s.reach(r.ctx, b, "ended")
 	close(stopFlush)
 	<-flushed
 	s.removeObjects(r.ref)
 	if !r.halted() {
-		switch c := context.Cause(r.ctx); {
-		case errors.Is(c, errCancelled):
-			o = outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}
-		case errors.Is(c, errTimeout):
-			o = outcome{status: cloudbuildpb.Build_TIMEOUT, detail: "Build timed out."}
+		// A cancel or timeout arriving once the Build ran to its own end,
+		// as late as during the cleanup above, leaves its outcome (#455).
+		if !ranToEnd {
+			switch c := context.Cause(r.ctx); {
+			case errors.Is(c, errCancelled):
+				o = outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}
+			case errors.Is(c, errTimeout):
+				o = outcome{status: cloudbuildpb.Build_TIMEOUT, detail: "Build timed out."}
+			}
 		}
 		s.end(r.ref, o)
 	}
@@ -201,6 +204,13 @@ func (s *Service) execute(r *liveBuild, b *cloudbuildpb.Build) {
 	s.mu.Unlock()
 	r.stop(nil)
 	s.kick()
+}
+
+// reach runs the tests' checkpoint at, if any.
+func (s *Service) reach(ctx context.Context, b *cloudbuildpb.Build, at string) {
+	if s.checkpoint != nil {
+		s.checkpoint(ctx, b.GetId(), at)
+	}
 }
 
 // outcome is how a Build ended.

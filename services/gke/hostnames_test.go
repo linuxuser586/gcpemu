@@ -32,7 +32,8 @@ import (
 // TestRealHostnames is FR-INT-007 end to end: a pod running unmodified Go
 // client libraries (testdata/wiapp, a static binary in an image without CA
 // certificates, pulled from emulated Artifact Registry) writes an object
-// to storage.googleapis.com and publishes to pubsub.googleapis.com (gRPC)
+// to storage.googleapis.com (one larger than a resumable chunk, #440) and
+// publishes to pubsub.googleapis.com (gRPC)
 // with Workload Identity credentials from the metadata server and no
 // endpoint configuration. IAM is enforced, so the GSA's token must flow.
 // It also looks up its Regional Access Boundary at
@@ -181,6 +182,11 @@ func TestRealHostnames(t *testing.T) {
 		resp.Body.Close()
 		if string(b) != "hello from a GKE pod" {
 			t.Errorf("object = %d %q", resp.StatusCode, b)
+		}
+		var big struct{ Size string }
+		mustGW(t, inst, "GET", "/storage/v1/b/hn-bucket/o/big.bin", nil, &big)
+		if big.Size != "20971520" {
+			t.Errorf("big.bin size = %q, want 20 MiB (resumable upload in chunks)", big.Size)
 		}
 		var pulled struct {
 			ReceivedMessages []struct {

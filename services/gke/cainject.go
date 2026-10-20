@@ -13,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/trust"
+	"github.com/linuxuser586/gcpemu/internal/workload"
 )
 
 // CA injection into pods (FR-INT-007, Section 7.4).
@@ -54,10 +55,10 @@ import (
 const (
 	caInjectorName   = "gcpemu-ca-injector"
 	caBundleName     = "gcpemu-ca-bundle"
-	caBundleKey      = "ca-certificates.crt"
-	caBundleDir      = "/etc/gcpemu/certs"
-	caBundlePath     = caBundleDir + "/" + caBundleKey
-	systemBundlePath = "/etc/ssl/certs/ca-certificates.crt"
+	caBundleKey      = workload.CABundleKey
+	caBundleDir      = workload.CABundleDir
+	caBundlePath     = workload.CABundlePath
+	systemBundlePath = workload.SystemBundlePath
 	injectLabel      = "gcpemu.dev/inject"
 	// googleAPIsLabel=googleAPIsReal gives a pod real Google APIs (see above).
 	googleAPIsLabel = "gcpemu.dev/googleapis"
@@ -67,15 +68,11 @@ const (
 )
 
 // caEnvVars are set to the bundle path in every container.
-var caEnvVars = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"}
+var caEnvVars = workload.CAEnvVars
 
-// metadataHostEnv tells Google client libraries (Go, Python, Java, Node)
-// that they run on GCE, so they use the metadata server without probing.
-// On GKE the probe is reliable because nodes report a Google DMI product
-// name; emulated nodes cannot, and a probe racing a still-starting
-// CoreDNS would make a process decide once and for all that it has no
-// credentials.
-const metadataHostEnv = "GCE_METADATA_HOST"
+// metadataHostEnv tells client libraries they run on GCE (see
+// workload.MetadataHostEnv).
+const metadataHostEnv = workload.MetadataHostEnv
 
 // installCAInjector registers (or updates) the CA-injecting webhook in a
 // running cluster. Errors are logged: injection is best effort.
