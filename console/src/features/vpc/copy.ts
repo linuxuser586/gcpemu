@@ -1,13 +1,27 @@
-import { block, gcloud, omit, resource, type Recipe } from '@/lib/copyAs'
+import { block, gcloud, keyValues, omit, resource, type Recipe } from '@/lib/copyAs'
 
 import { lastSeg, relPath } from '../lb/api'
-import type { Firewall, Network, Route, Subnetwork } from './api'
+import {
+  CONNECTIONS,
+  networkPath,
+  PSA_SERVICE,
+  type Address,
+  type Connection,
+  type Firewall,
+  type Network,
+  type NetworkPeering,
+  type Route,
+  type Subnetwork,
+} from './api'
 import { formatRules } from './form'
 
 // Copy as (FR-UI-015) for the VPC view's resources: gcloud compute
-// networks (subnets) create, firewall-rules create and routes create, the
-// compute/v1 requests, and the google_compute_network, _subnetwork,
-// _firewall and _route resources.
+// networks (subnets) create, firewall-rules create, routes create and
+// addresses create, networks peerings create and services vpc-peerings
+// connect; the compute/v1 and servicenetworking/v1 requests; and the
+// google_compute_network, _subnetwork, _firewall, _route, _address,
+// _global_address and _network_peering resources and
+// google_service_networking_connection.
 
 const API = '/compute/v1/'
 
@@ -138,6 +152,75 @@ export function firewallRecipe(f: Firewall, project: string): Recipe {
   }
 }
 
+/**
+ * addressRecipe copies an address. An external one leaves its IP to the
+ * API, which picks one from its pool; an internal one keeps it. Only a
+ * regional address has a network tier, and gcloud sets labels after the
+ * address is created.
+ */
+export function addressRecipe(a: Address, project: string): Recipe {
+  const region = lastSeg(a.region)
+  const internal = a.addressType === 'INTERNAL'
+  const scope = region ? { region } : { global: true }
+  const create = gcloud(['compute', 'addresses', 'create', a.name], {
+    project,
+    ...scope,
+    description: a.description,
+    addresses: internal ? a.address : undefined,
+    'prefix-length': a.prefixLength,
+    subnet: a.subnetwork && lastSeg(a.subnetwork),
+    network: a.network && lastSeg(a.network),
+    purpose: a.purpose,
+    'network-tier': region ? a.networkTier : undefined,
+    'ip-version': region ? undefined : a.ipVersion,
+  })
+  const labels = keyValues(a.labels)
+  return {
+    gcloud: labels.length
+      ? [
+          create,
+          gcloud(['compute', 'addresses', 'update', a.name], {
+            project,
+            ...scope,
+            'update-labels': labels,
+          }),
+        ]
+      : create,
+    rest: {
+      method: 'POST',
+      path: `${API}projects/${project}/${region ? `regions/${region}` : 'global'}/addresses`,
+      body: {
+        ...omit(a, [
+          ...OUTPUT,
+          'region',
+          'status',
+          'users',
+          'labelFingerprint',
+          ...(internal ? [] : ['address']),
+          ...(region ? [] : ['networkTier']),
+        ]),
+        ...(a.subnetwork ? { subnetwork: relPath(a.subnetwork) } : {}),
+        ...(a.network ? { network: relPath(a.network) } : {}),
+      },
+    },
+    tofu: resource(region ? 'google_compute_address' : 'google_compute_global_address', a.name, {
+      project,
+      name: a.name,
+      region: region || undefined,
+      description: a.description,
+      address: internal ? a.address : undefined,
+      address_type: a.addressType,
+      purpose: a.purpose,
+      prefix_length: a.prefixLength,
+      subnetwork: a.subnetwork && relPath(a.subnetwork),
+      network: a.network && relPath(a.network),
+      network_tier: region ? a.networkTier : undefined,
+      ip_version: region ? undefined : a.ipVersion,
+      labels: a.labels,
+    }),
+  }
+}
+
 /** scopeOfHop is the zone or region a next hop's path names. */
 const scopeOfHop = (link?: string) => /\/(?:zones|regions)\/([^/]+)\//.exec(relPath(link))?.[1]
 
@@ -185,6 +268,74 @@ export function routeRecipe(r: Route, project: string): Recipe {
       next_hop_ilb: hop(r.nextHopIlb),
       next_hop_vpn_tunnel: hop(r.nextHopVpnTunnel),
       tags: r.tags,
+    }),
+  }
+}
+
+/** projectOf is the Project a resource path names. */
+const projectOf = (link?: string) => /^projects\/([^/]+)\//.exec(relPath(link))?.[1]
+
+/** peeringRecipe copies a peering of network (a name in project). */
+export function peeringRecipe(p: NetworkPeering, network: string, project: string): Recipe {
+  const peerProject = projectOf(p.network)
+  return {
+    gcloud: gcloud(['compute', 'networks', 'peerings', 'create', p.name], {
+      project,
+      network,
+      'peer-network': lastSeg(p.network),
+      'peer-project': peerProject !== project ? peerProject : undefined,
+      'import-custom-routes': p.importCustomRoutes,
+      'export-custom-routes': p.exportCustomRoutes,
+      'import-subnet-routes-with-public-ip': p.importSubnetRoutesWithPublicIp,
+      // Exporting them is gcloud's default.
+      'no-export-subnet-routes-with-public-ip': p.exportSubnetRoutesWithPublicIp === false,
+      'stack-type': p.stackType,
+    }),
+    rest: {
+      method: 'POST',
+      path: `${API}${networkPath({ project, network })}/addPeering`,
+      body: {
+        networkPeering: {
+          ...omit(p, ['state', 'stateDetails', 'autoCreateRoutes', 'peerMtu', 'connectionStatus']),
+          network: relPath(p.network),
+        },
+      },
+    },
+    tofu: resource('google_compute_network_peering', p.name, {
+      name: p.name,
+      network: networkPath({ project, network }),
+      peer_network: relPath(p.network),
+      export_custom_routes: p.exportCustomRoutes,
+      import_custom_routes: p.importCustomRoutes,
+      export_subnet_routes_with_public_ip: p.exportSubnetRoutesWithPublicIp,
+      import_subnet_routes_with_public_ip: p.importSubnetRoutesWithPublicIp,
+      stack_type: p.stackType,
+    }),
+  }
+}
+
+/**
+ * connectionRecipe copies network's private services access connection.
+ * The API names the network by Project number; the copy names it by ID.
+ */
+export function connectionRecipe(c: Connection, network: string, project: string): Recipe {
+  const path = networkPath({ project, network })
+  return {
+    gcloud: gcloud(['services', 'vpc-peerings', 'connect'], {
+      project,
+      service: PSA_SERVICE,
+      network,
+      ranges: c.reservedPeeringRanges,
+    }),
+    rest: {
+      method: 'POST',
+      path: CONNECTIONS,
+      body: { network: path, reservedPeeringRanges: c.reservedPeeringRanges },
+    },
+    tofu: resource('google_service_networking_connection', network, {
+      network: path,
+      service: PSA_SERVICE,
+      reserved_peering_ranges: c.reservedPeeringRanges,
     }),
   }
 }

@@ -55,6 +55,18 @@ func TestProviderEndpointsServiceUsage(t *testing.T) {
 	t.Fatal("tofu-provider does not set service_usage_custom_endpoint")
 }
 
+// google_cloudbuild_trigger and google_cloudbuild_worker_pool call Cloud
+// Build; without the setting tofu would call cloudbuild.googleapis.com
+// (#389).
+func TestProviderEndpointsCloudBuild(t *testing.T) {
+	for _, e := range providerEndpoints {
+		if e.setting == "cloud_build_custom_endpoint" && e.service == "build" && e.path == "/cloudbuild/v1/" {
+			return
+		}
+	}
+	t.Fatal("tofu-provider does not set cloud_build_custom_endpoint")
+}
+
 // TestTofuProviderBeta is #112: --beta adds a google-beta block with the
 // same endpoints except container's v1beta1, and the default output stays a
 // single google block.

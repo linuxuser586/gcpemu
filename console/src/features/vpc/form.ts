@@ -38,6 +38,12 @@ export function mtuError(v: string): string | undefined {
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/
 
+/** isIPv4 is whether s is a dotted IPv4 address. */
+export function isIPv4(s: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim())
+  return !!m && m.slice(1).every((o) => Number(o) <= 255)
+}
+
 /**
  * parseCidr reads an IPv4 CIDR network address range, as the API does:
  * a host address with bits set past the prefix is not one.

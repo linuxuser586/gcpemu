@@ -2,11 +2,15 @@ import { Fragment } from 'react'
 
 import { Link } from '@/components/Link'
 
-import { lastSeg } from '../lb/api'
-import type { SubnetRef, Subnetwork } from './api'
+import { lastSeg, parseRef, relPath } from '../lb/api'
+import { lbPath } from '../lb/LbLayout'
+import { routerRefOf } from '../nat/api'
+import { routerPage } from '../nat/NatLayout'
+import type { AddressRef, SubnetRef, Subnetwork } from './api'
 
-// The VPC network view's paths, and links to networks and subnetworks
-// that other views (Cloud NAT) show too.
+// The VPC network view's paths, links to networks and subnetworks that
+// other views (Cloud NAT) show too, and links from an address to the
+// resources that use it in their own views (Load Balancer, Cloud NAT).
 
 const enc = encodeURIComponent
 
@@ -22,8 +26,29 @@ export const subnetPage = (r: Pick<SubnetRef, 'region' | 'subnetwork'>, sub = ''
 export const firewallPage = (name: string, sub = '') =>
   `/compute/global/firewalls/${enc(name)}${sub ? `/${sub}` : ''}`
 
+/** peeringEditPage is the console path of the form that edits a network's peering. */
+export const peeringEditPage = (network: string, peering: string) =>
+  networkPage(network, `peerings/${enc(peering)}/edit`)
+
+/** addPeeringPage is the console path of the form that adds a peering to network. */
+export const addPeeringPage = (network: string) => networkPage(network, 'add-peering')
+
+/** connectionPage is the console path of network's private services access connection form. */
+export const connectionPage = (network: string) => networkPage(network, 'connection')
+
+/** allocatePage is the reserve form, set for a private services access range of network. */
+export const allocatePage = (network: string) =>
+  `/compute/create-address?network=${enc(network)}&purpose=VPC_PEERING`
+
+/** containerNetworkAnchor is the id of a VPC container network's row in its network's panel. */
+export const containerNetworkAnchor = (bridge: string) => `container-network-${bridge}`
+
 /** routePage is the console path of a route. */
 export const routePage = (name: string) => `/compute/global/routes/${enc(name)}`
+
+/** addressPage is the console path of a regional or global address. */
+export const addressPage = (r: Pick<AddressRef, 'region' | 'address'>) =>
+  `/compute/${r.region ? `regions/${r.region}` : 'global'}/addresses/${enc(r.address)}`
 
 const linkClass = 'font-mono text-primary underline-offset-4 hover:underline'
 
@@ -76,6 +101,48 @@ export function SubnetList({ subnets }: { subnets: Pick<Subnetwork, 'name' | 're
           <SubnetLink region={lastSeg(s.region)} name={s.name} />
         </Fragment>
       ))}
+    </span>
+  )
+}
+
+/** AddressLink links an address to its page. */
+export function AddressLink({ region, name }: { region: string; name: string }) {
+  return (
+    <Link className={linkClass} to={addressPage({ region, address: name })}>
+      {name}
+    </Link>
+  )
+}
+
+/**
+ * userPage is the console path of a resource that uses an address, where
+ * the console has a view of it: a forwarding rule in Load Balancer, a
+ * router (whose NATs use it) in Cloud NAT.
+ */
+function userPage(link: string): string | undefined {
+  const lb = parseRef(link)
+  if (lb?.coll === 'forwardingRules') return lbPath(lb)
+  const router = routerRefOf(link)
+  return router ? routerPage(router) : undefined
+}
+
+/** AddressUsers lists the resources that use an address, linked where the console has a view. */
+export function AddressUsers({ users }: { users?: string[] }) {
+  if (!users?.length) return <span className="font-mono">—</span>
+  return (
+    <span className="flex flex-col">
+      {users.map((u) => {
+        const to = userPage(u)
+        return to ? (
+          <Link key={u} className={linkClass} to={to}>
+            {lastSeg(u)}
+          </Link>
+        ) : (
+          <span key={u} className="font-mono break-all">
+            {relPath(u)}
+          </span>
+        )
+      })}
     </span>
   )
 }

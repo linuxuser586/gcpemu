@@ -19,7 +19,7 @@
 // cluster's VPC subnetwork (realised by compute's emu.VPC), on the
 // instance's services network (to reach the emulator) and, unless the
 // nodes are private, on the external network for egress. Private nodes'
-// default route points at the VPC egress gateway, so they reach the
+// default route points at the VPC's NAT egress proxy, so they reach the
 // internet only through Cloud NAT (FR-GKE-007, FR-INT-009). State lives in
 // labelled volumes, so clusters survive emulator restarts with --data-dir.
 // NetworkPolicy objects are enforced, by k3s's kube-router controller,

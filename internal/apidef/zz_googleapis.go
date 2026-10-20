@@ -1513,17 +1513,12 @@ var protoFields = map[string]map[string]Behavior{
 		"build": Required,
 	},
 	"google.devtools.cloudbuild.v1.CreateBuildTriggerRequest": {
-		"project_id": Required,
-		"trigger":    Required,
+		"trigger": Required,
 	},
 	"google.devtools.cloudbuild.v1.CreateWorkerPoolRequest": {
 		"parent":         Required,
 		"worker_pool":    Required,
 		"worker_pool_id": Immutable | Required,
-	},
-	"google.devtools.cloudbuild.v1.DeleteBuildTriggerRequest": {
-		"project_id": Required,
-		"trigger_id": Required,
 	},
 	"google.devtools.cloudbuild.v1.DeleteWorkerPoolRequest": {
 		"name": Required,
@@ -1537,10 +1532,6 @@ var protoFields = map[string]map[string]Behavior{
 		"dest_path":          Required,
 		"fetch_tags":         Optional,
 	},
-	"google.devtools.cloudbuild.v1.GetBuildTriggerRequest": {
-		"project_id": Required,
-		"trigger_id": Required,
-	},
 	"google.devtools.cloudbuild.v1.GetDefaultServiceAccountRequest": {
 		"name": Required,
 	},
@@ -1552,9 +1543,6 @@ var protoFields = map[string]map[string]Behavior{
 		"dir":      Optional,
 		"revision": Optional,
 	},
-	"google.devtools.cloudbuild.v1.ListBuildTriggersRequest": {
-		"project_id": Required,
-	},
 	"google.devtools.cloudbuild.v1.ListWorkerPoolsRequest": {
 		"parent": Required,
 	},
@@ -1562,7 +1550,7 @@ var protoFields = map[string]map[string]Behavior{
 		"private_service_connect": Immutable,
 	},
 	"google.devtools.cloudbuild.v1.PrivatePoolV1Config.NetworkConfig": {
-		"peered_network":          Immutable | Required,
+		"peered_network":          Immutable,
 		"peered_network_ip_range": Immutable,
 	},
 	"google.devtools.cloudbuild.v1.PrivatePoolV1Config.PrivateServiceConnect": {
@@ -1580,7 +1568,6 @@ var protoFields = map[string]map[string]Behavior{
 	},
 	"google.devtools.cloudbuild.v1.RepoSource": {
 		"project_id":    Optional,
-		"repo_name":     Required,
 		"dir":           Optional,
 		"invert_regex":  Optional,
 		"substitutions": Optional,
@@ -1590,10 +1577,6 @@ var protoFields = map[string]map[string]Behavior{
 	},
 	"google.devtools.cloudbuild.v1.Results": {
 		"go_modules": Optional,
-	},
-	"google.devtools.cloudbuild.v1.RunBuildTriggerRequest": {
-		"project_id": Required,
-		"trigger_id": Required,
 	},
 	"google.devtools.cloudbuild.v1.Source": {
 		"connected_repository": Optional,
@@ -1613,9 +1596,7 @@ var protoFields = map[string]map[string]Behavior{
 		"object": Required,
 	},
 	"google.devtools.cloudbuild.v1.UpdateBuildTriggerRequest": {
-		"project_id": Required,
-		"trigger_id": Required,
-		"trigger":    Required,
+		"trigger": Required,
 	},
 	"google.devtools.cloudbuild.v1.UpdateWorkerPoolRequest": {
 		"worker_pool": Required,

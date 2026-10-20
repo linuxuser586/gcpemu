@@ -12,7 +12,7 @@ import (
 
 // TestAliasScript: a Translated network's Managed containers carry their
 // Declared address on a VLAN of the VPC interface, and routes via the
-// egress gateway go via its Declared address (ADR 0004).
+// NAT egress proxy go via its Declared address (ADR 0004).
 func TestAliasScript(t *testing.T) {
 	n := SubnetNet{Subnet: "10.0.0.0/20", ContainerSubnet: "10.241.0.0/20"}
 	if s := n.AliasScript("10.0.0.2", "10.241.0.2"); s != "" {

@@ -26,7 +26,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings; system metrics over OTLP |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
-| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket`; steps run as the Build's `serviceAccount` (the Compute Engine default without one; naming one needs `iam.serviceAccounts.actAs`) and reach the Instance by real hostname through the Build agent, with the metadata server, the Instance CA trusted and an Artifact Registry proxy; substitutions (`substitutionOption`, `dynamicSubstitutions`) and `availableSecrets.secretManager` |
+| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket`; steps run as the Build's `serviceAccount` (the Compute Engine default without one; naming one needs `iam.serviceAccounts.actAs`) and reach the Instance by real hostname through the Build agent, with the metadata server, the Instance CA trusted and an Artifact Registry proxy; substitutions (`substitutionOption`, `dynamicSubstitutions`) and `availableSecrets.secretManager`; Build triggers (global and regional) run by `triggers.run`, Pub/Sub messages (`pubsubConfig`) and webhooks (`webhookConfig`), with SCM events Recorded; worker pools Recorded |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
 ## Development
@@ -443,6 +443,30 @@ a multi-line payload that is 8 characters or longer. Unlike on GCP as far as is 
 is deliberate emulator behaviour. Cloud KMS `secrets` and `availableSecrets.inline` answer
 `UNIMPLEMENTED`.
 
+Build triggers are created, read (by ID or name), listed, patched and deleted at
+`projects/*/triggers` and `projects/*/locations/*/triggers`. A Build trigger's Build is its inline
+`build`, or the Build config file its `filename` (with `sourceToBuild`) or `gitFileSource` names,
+read from the public Git repository with the `alpine/git` image. Its source is `sourceToBuild`, or
+else the `build`'s own `gitSource` or `storageSource`; `triggers.run` builds at the branch, tag or
+commit its source names, and adds that source's `substitutions`. A `pubsubConfig` Build trigger makes
+the push subscription `gcb-TRIGGER` (`gcb-LOCATION-TRIGGER` for a regional one) to its topic,
+reported in `pubsubConfig.subscription` and deleted with the Build trigger, and starts one Build per
+message, a Cloud Storage notification to the topic included. `triggers.webhook` starts a Build of a
+`webhookConfig` Build trigger when its `secret` query parameter is the payload of the Build trigger's
+Secret Manager secret version, read as `service-PROJECT_NUMBER@gcp-sa-cloudbuild.iam.gserviceaccount.com`;
+a wrong or missing secret is refused with `PERMISSION_DENIED`. The Build trigger's `substitutions` bind
+to the push or webhook body, as on GCP: `$(body.message.data)` (the decoded data as sent, with JSON
+data walked further, as in `$(body.message.data.tag)`), `$(body.message.attributes.KEY)`, `$(body.ref)`. Its
+Builds get `$TRIGGER_NAME`, `$TRIGGER_BUILD_CONFIG_PATH` and, from the Git revision they build,
+`$BRANCH_NAME`, `$TAG_NAME`, `$REF_NAME`, `$COMMIT_SHA`, `$REVISION_ID`, `$REPO_NAME` and
+`$REPO_FULL_NAME`, `buildTriggerId` and the tag `trigger-ID`. `github`, `triggerTemplate` and
+`repositoryEventConfig` are Recorded: no SCM event fires them, and running one without
+`sourceToBuild` answers `UNIMPLEMENTED`, as do `autodetect` and Cloud Source Repositories. `filter`,
+`includedFiles` and `ignoredFiles` are Recorded. Worker pools are Recorded: they are created,
+patched and deleted through Operations, and a Build naming one in `options.pool.name` runs on the
+Build daemon like any other. A Seed file's `build` section declares Build triggers and worker pools,
+which `gcpemu export` writes back.
+
 gcloud can't stream the log outside Host mode (SRS 11.3): it reads it from
 `storage.UNIVERSE_DOMAIN`, ignoring endpoint overrides, so `gcloud builds submit` fails even when
 the Build succeeds, and `--suppress-logs` doesn't help, since gcloud still reads the log. Pass
@@ -576,7 +600,11 @@ it only when it starts, so `ca install` and `ca uninstall` tell you to restart i
 adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
 which needs no administrator rights. Windows shows a security dialog to confirm the change, and
 another for `gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
-databases, and `gcpemu doctor` reports where it is trusted. Or trust it per shell with
+databases, and `gcpemu doctor` reports where it is trusted. `ca install --cert FILE` and
+`ca uninstall --cert FILE` (`-` for stdin) do the same for another CA certificate, such as a
+Containerized Instance's (see "Trusting the CA on the host"). The Web console's Certificate Manager
+view rotates a running Instance's CA too (Rotate CA), but changes no Host trust: run `gcpemu ca install`
+afterwards. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
 holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator
 CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the host, use `curl
@@ -682,6 +710,28 @@ the emulator warns at start. Publishing a port on a LAN address is no substitute
 listeners are `--bind`'s, which don't require credentials, and the certificates don't name the
 host's address. On a VM runtime (Docker Desktop, Podman machine), use the native binary instead
 (`docs/adr/0011-lan-binding-requires-credentials.md`).
+
+#### Trusting the CA on the host
+
+The container creates its own CA in `/data`, which the host doesn't trust, so HTTPS from the host
+to load balancers and the Google front end fails verification until you trust it. Print the CA
+certificate and install it with the native binary on the host:
+
+```sh
+docker exec gcpemu /gcpemu ca print > gcpemu-ca.pem
+gcpemu --instance container ca install --cert gcpemu-ca.pem
+```
+
+`podman exec` works the same, as does `docker cp gcpemu:/data/ca.pem gcpemu-ca.pem`; `--cert -`
+reads the certificate from stdin, and then needs `--yes`, since stdin can't also confirm.
+`--cert` needs `--instance`, which names the trust entries, so the container's CA doesn't replace
+a native instance's; `ca install --cert` trusts it in the same stores as `gcpemu ca install`
+and never touches an instance data directory. Keep `gcpemu-ca.pem`: remove the trust with
+`gcpemu --instance container ca uninstall --cert gcpemu-ca.pem`, or run that before removing the
+container or its volume. After `ca rotate` in the container, uninstall with the old file, then
+print the new certificate and install it again. A persistent `/data` volume keeps the same CA
+across containers, while a container without one has a new CA each time. To trust it per client
+without installing it, use `curl --cacert gcpemu-ca.pem` or `SSL_CERT_FILE=gcpemu-ca.pem`.
 
 A load balancer forwarding rule listens on a loopback address inside the container, which `-p`
 never forwards to, so each rule is also served on a port the container publishes (ADR 0012), and

@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
+import { admin, unwrap } from '@/api/admin'
 import { ApiError } from '@/api/errors'
 import { gcpFetch } from '@/api/fetch'
 
@@ -55,17 +56,29 @@ export interface Certificate {
   usedBy?: { name?: string }[]
 }
 
+/** DnsAuthorization proves control of a domain with a CNAME record. */
 export interface DnsAuthorization {
   name: string
   domain?: string
   type?: string
   description?: string
+  labels?: Record<string, string>
+  createTime?: string
+  updateTime?: string
   dnsResourceRecord?: { name?: string; type?: string; data?: string }
 }
 
+/** IssuanceConfig has a CA Service CA pool issue the certificates that name it. */
 export interface IssuanceConfig {
   name: string
   description?: string
+  labels?: Record<string, string>
+  createTime?: string
+  updateTime?: string
+  certificateAuthorityConfig?: { certificateAuthorityServiceConfig?: { caPool?: string } }
+  lifetime?: string
+  rotationWindowPercentage?: number
+  keyAlgorithm?: string
 }
 
 /** TrustConfig is the CAs and certificates that verify the other side of mTLS. */
@@ -75,6 +88,7 @@ export interface TrustConfig {
   labels?: Record<string, string>
   createTime?: string
   updateTime?: string
+  etag?: string
   trustStores?: {
     trustAnchors?: { pemCertificate?: string }[]
     intermediateCas?: { pemCertificate?: string }[]
@@ -233,6 +247,36 @@ export function certState(c: Certificate): string {
 export const certDomains = (c: Certificate) =>
   c.sanDnsnames?.length ? c.sanDnsnames : (c.managed?.domains ?? [])
 
+/** caPoolOf is the CA Service CA pool a certificate issuance config issues from. */
+export const caPoolOf = (c: IssuanceConfig) =>
+  c.certificateAuthorityConfig?.certificateAuthorityServiceConfig?.caPool ?? ''
+
+/**
+ * keyAlgorithmLabel is a certificate issuance config's key algorithm. The
+ * Service applies no default to a config that names none.
+ */
+export const keyAlgorithmLabel = (c: IssuanceConfig) => c.keyAlgorithm || 'Unspecified'
+
+const DAY = 86400
+
+/** lifetimeLabel is a duration such as "2592000s" in days, when it is whole days. */
+export function lifetimeLabel(d?: string): string | undefined {
+  if (!d) return undefined
+  const s = Number(d.replace(/s$/, ''))
+  if (!Number.isFinite(s) || s <= 0 || s % DAY !== 0) return d
+  const days = s / DAY
+  return `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+/** trustCount is how many certificates of one role a trust config holds. */
+export function trustCount(
+  t: TrustConfig,
+  role: 'trustAnchors' | 'intermediateCas' | 'allowlistedCertificates',
+): number {
+  if (role === 'allowlistedCertificates') return t.allowlistedCertificates?.length ?? 0
+  return (t.trustStores ?? []).reduce((n, s) => n + (s[role]?.length ?? 0), 0)
+}
+
 // ---- reads ----
 
 export async function listAll<T>(url: string, field: string): Promise<T[]> {
@@ -322,6 +366,44 @@ export const trustConfigQuery = (r: TrustRef) =>
   queryOptions({
     queryKey: ['certs', 'trustConfig', r],
     queryFn: () => gcpFetch<TrustConfig>(`${API}/${path(trustName(r))}`),
+  })
+
+/** DnsAuthRef names a DNS authorization. */
+export interface DnsAuthRef {
+  project: string
+  location: string
+  auth: string
+}
+
+export const dnsAuthName = (r: DnsAuthRef) =>
+  `${locationName(r.project, r.location)}/dnsAuthorizations/${r.auth}`
+
+export const dnsAuthorizationQuery = (r: DnsAuthRef) =>
+  queryOptions({
+    queryKey: ['certs', 'dnsAuthorization', r],
+    queryFn: () => gcpFetch<DnsAuthorization>(`${API}/${path(dnsAuthName(r))}`),
+  })
+
+/** DNS_AUTH_TYPES name the kinds of record a DNS authorization asks for. */
+export const DNS_AUTH_TYPES: Record<string, string> = {
+  FIXED_RECORD: 'Fixed record',
+  PER_PROJECT_RECORD: 'Per-project record',
+}
+
+/** IssuanceRef names a certificate issuance config. */
+export interface IssuanceRef {
+  project: string
+  location: string
+  config: string
+}
+
+export const issuanceName = (r: IssuanceRef) =>
+  `${locationName(r.project, r.location)}/certificateIssuanceConfigs/${r.config}`
+
+export const issuanceConfigQuery = (r: IssuanceRef) =>
+  queryOptions({
+    queryKey: ['certs', 'issuanceConfig', r],
+    queryFn: () => gcpFetch<IssuanceConfig>(`${API}/${path(issuanceName(r))}`),
   })
 
 /** mapsQuery lists the certificate maps, which are all global. */
@@ -471,3 +553,49 @@ export const patchEntry = (r: EntryRef, body: unknown, mask: string[]) =>
   patch<CertificateMapEntry>(entryName(r), body, mask)
 
 export const deleteEntry = (r: EntryRef) => remove(entryName(r))
+
+export const createDnsAuthorization = (r: DnsAuthRef, body: unknown) =>
+  create<DnsAuthorization>(
+    locationName(r.project, r.location),
+    'dnsAuthorizations',
+    'dnsAuthorizationId',
+    r.auth,
+    body,
+  )
+
+export const patchDnsAuthorization = (r: DnsAuthRef, body: unknown, mask: string[]) =>
+  patch<DnsAuthorization>(dnsAuthName(r), body, mask)
+
+export const deleteDnsAuthorization = (r: DnsAuthRef) => remove(dnsAuthName(r))
+
+export const createTrustConfig = (r: TrustRef, body: unknown) =>
+  create<TrustConfig>(
+    locationName(r.project, r.location),
+    'trustConfigs',
+    'trustConfigId',
+    r.trust,
+    body,
+  )
+
+/** patchTrustConfig patches a trust config; an etag in body must be its current one. */
+export const patchTrustConfig = (r: TrustRef, body: unknown, mask: string[]) =>
+  patch<TrustConfig>(trustName(r), body, mask)
+
+export const deleteTrustConfig = (r: TrustRef) => remove(trustName(r))
+
+export const createIssuanceConfig = (r: IssuanceRef, body: unknown) =>
+  create<IssuanceConfig>(
+    locationName(r.project, r.location),
+    'certificateIssuanceConfigs',
+    'certificateIssuanceConfigId',
+    r.config,
+    body,
+  )
+
+export const deleteIssuanceConfig = (r: IssuanceRef) => remove(issuanceName(r))
+
+/**
+ * rotateCa replaces the Instance CA and resolves once every Google-managed
+ * certificate is re-issued, with the path of the new ca.pem.
+ */
+export const rotateCa = () => unwrap(admin.POST('/_emu/v1/ca/rotate'))

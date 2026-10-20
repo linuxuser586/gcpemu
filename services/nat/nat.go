@@ -1,8 +1,8 @@
 // Package nat is the Cloud NAT service module (SRS 5.10). Cloud NAT's
 // control plane is part of compute.googleapis.com (routers and their
 // nats[], FR-NAT-001) and is served by the compute module, as is the
-// egress gateway data plane (FR-NAT-002..005), which compute's emu.VPC
-// starts when workloads ask for their egress gateway. This module exists
+// NAT egress proxy data plane (FR-NAT-002..005), which compute's emu.VPC
+// starts when workloads ask for their NAT egress proxy. This module exists
 // so `--services nat` selects Cloud NAT (pulling in compute through
 // config.Dependencies), so readiness reflects whether a container
 // runtime is available for the data plane, and for the admin API's
@@ -52,7 +52,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 func (s *Service) Stop(ctx context.Context) error { return nil }
 
-// Ready reports whether the egress gateway data plane can run: compute
+// Ready reports whether the NAT egress proxy data plane can run: compute
 // must be running and a container runtime reachable. The result is
 // cached for a few seconds.
 func (s *Service) Ready() error {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
@@ -68,6 +69,22 @@ type Publisher interface {
 	PublishInternal(ctx context.Context, topic string, data []byte, attrs map[string]string) (string, error)
 	// TopicExists reports whether the topic exists.
 	TopicExists(ctx context.Context, topic string) bool
+}
+
+// Subscriber is provided by the "pubsub" service: push subscriptions
+// that another Service owns and serves in process, such as those of
+// Cloud Build's pubsubConfig Build triggers. No IAM checks are made.
+type Subscriber interface {
+	// ServePushHost has h serve, in process, the pushes to
+	// https://host/... instead of sending them over the network.
+	ServePushHost(host string, h http.Handler)
+	// EnsurePushSubscription creates the push subscription name on topic
+	// with endpoint, or points an existing one at them. A topic that does
+	// not exist is NOT_FOUND.
+	EnsurePushSubscription(ctx context.Context, name, topic, endpoint string) error
+	// DeleteSubscriptionInternal deletes a subscription; one that does
+	// not exist is not an error.
+	DeleteSubscriptionInternal(ctx context.Context, name string) error
 }
 
 // ObjectStore is provided by the "gcs" service: Cloud Storage objects for
@@ -245,8 +262,8 @@ const AliasVLAN = 4000
 // Managed container on a Translated network its Declared address ip: on a
 // VLAN (AliasVLAN) of the interface holding cip, its address on the
 // container network, with an on-link route for the Declared range sourced
-// from ip. Each of routes ("default", or a CIDR) then goes via the egress
-// gateway's Declared address, also sourced from ip. The commands are
+// from ip. Each of routes ("default", or a CIDR) then goes via the NAT egress
+// proxy's Declared address, also sourced from ip. The commands are
 // idempotent. It returns "" when n is not Translated.
 func (n SubnetNet) AliasScript(ip, cip string, routes ...string) string {
 	if !n.Translated {
@@ -261,7 +278,7 @@ func (n SubnetNet) AliasScript(ip, cip string, routes ...string) string {
 	for i, v := range ipn.IP.To4() {
 		tail[i] = v | ^ipn.Mask[i]
 	}
-	tail[3]-- // GCP's reserved second-to-last address, the egress gateway
+	tail[3]-- // GCP's reserved second-to-last address, the NAT egress proxy
 	if ones >= bits-1 {
 		routes = nil
 	}
@@ -325,7 +342,7 @@ func (n SubnetNet) AliasError(runtime, out string, err error) error {
 
 // PublicRouter is implemented by services whose Managed containers send
 // traffic for public addresses over the external network: GKE nodes with
-// external IPs, and the Cloud NAT egress gateways. The external network's
+// external IPs, and the NAT egress proxies. The external network's
 // gateway is the host, which cannot serve the load balancer's forwarding
 // rule addresses, so the load balancer has its Edge relay serve them on
 // the external network at via and asks for host routes to ips via it
@@ -363,7 +380,7 @@ type NEGEndpoint struct {
 }
 
 // VPC is provided by the "compute" service. It realises VPC subnetworks as
-// container networks (Section 3.3), runs the Cloud NAT egress gateway
+// container networks (Section 3.3), runs the NAT egress proxy
 // (FR-NAT-002) and owns network endpoint groups (FR-GKE-008).
 type VPC interface {
 	// ResolveSubnetwork returns the canonical subnetwork name
@@ -382,10 +399,10 @@ type VPC interface {
 	// owner); ReleaseIP frees it.
 	AllocateIP(ctx context.Context, net SubnetNet, owner string) (string, error)
 	ReleaseIP(ctx context.Context, net SubnetNet, owner string) error
-	// EgressGateway returns the address workloads without external IPs on
+	// EgressProxy returns the address workloads without external IPs on
 	// subnetwork must use as their default route. Traffic is forwarded to the
 	// internet only while a Cloud NAT covers the subnetwork (FR-NAT-002).
-	EgressGateway(ctx context.Context, subnetwork string) (string, error)
+	EgressProxy(ctx context.Context, subnetwork string) (string, error)
 	// UpsertNEG creates a zonal GCE_VM_IP_PORT NEG if absent; SetNEGEndpoints
 	// replaces its endpoints; DeleteNEG removes it. Used by GKE NEG sync.
 	UpsertNEG(ctx context.Context, project, zone, name, network, subnetwork string, defaultPort int, description string) error

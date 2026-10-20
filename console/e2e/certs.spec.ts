@@ -289,3 +289,83 @@ test('Certificate Manager: a server TLS policy verifies an HTTPS proxy’s clien
 
   await expectConsoleRequests(requests, { allowed })
 })
+
+test('Certificate Manager: a DNS authorization, a trust config and an issuance config are created, the trust config edited, and all three deleted', async ({
+  page,
+  browserName,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-cmres${testInfo.retry}`, browserName)
+  const domain = `${id}.e2e.test`
+  const confirmDelete = async (what: string) => {
+    await page.getByRole('button', { name: `Delete ${what}` }).click()
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: `Delete ${what}` })
+      .click()
+  }
+
+  // A DNS authorization, with the record it asks for, which no zone has yet.
+  await page.goto(`/console/certs?project=${id}`)
+  await page.getByRole('link', { name: 'DNS authorizations' }).click()
+  await expect(page.getByText('No DNS authorizations in this Project yet.')).toBeVisible()
+  await page.getByRole('link', { name: 'Create DNS authorization' }).click()
+  await page.getByLabel('Name').fill('www')
+  await page.getByLabel('Domain').fill(`www.${domain}`)
+  await page.getByRole('button', { name: 'Create' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/certs/locations/global/dnsAuthorizations/www\\?project=${id}$`),
+  )
+  const record = page.getByLabel('DNS record')
+  await expect(record).toContainText(`_acme-challenge.www.${domain}.`)
+  await expect(record).toContainText(/Does not resolve/)
+
+  // A trust config whose trust anchor is read from a file, then edited.
+  await page.goto(`/console/certs/trustConfigs?project=${id}`)
+  await page.getByRole('link', { name: 'Create trust config' }).click()
+  await page.getByLabel('Name').fill('corp')
+  await page.getByLabel('Read trust anchor 1 from a file').setInputFiles(testdata('self-cert.pem'))
+  await expect(page.getByTestId('pem-summary')).toContainText('CN=self.e2e.test')
+  await page.getByRole('button', { name: 'Create' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/certs/locations/global/trustConfigs/corp\\?project=${id}$`),
+  )
+  await expect(page.getByTestId('trust-certificate')).toContainText('CN=self.e2e.test')
+  await page.getByRole('link', { name: 'Edit trust config' }).click()
+  await page.getByLabel('Description').fill('Corporate CA')
+  await page.getByRole('button', { name: 'Add intermediate CA' }).click()
+  await page
+    .getByLabel('Intermediate CA 1', { exact: true })
+    .fill(readFileSync(testdata('self-cert.pem'), 'utf8'))
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page).toHaveURL(/\/trustConfigs\/corp\?/)
+  const details = page.getByLabel('Trust config details')
+  await expect(details).toContainText('Corporate CA')
+  await expect(page.getByTestId('trust-certificate')).toHaveCount(2)
+
+  // A certificate issuance config.
+  await page.goto(`/console/certs/issuanceConfigs?project=${id}`)
+  await page.getByRole('link', { name: 'Create certificate issuance config' }).click()
+  await page.getByLabel('Name').fill('web')
+  await page.getByLabel('CA pool').fill(`projects/${id}/locations/us-central1/caPools/web`)
+  await page.getByRole('button', { name: 'Create' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/certs/locations/global/certificateIssuanceConfigs/web\\?project=${id}$`),
+  )
+  await expect(page.getByLabel('Certificate issuance config details')).toContainText('30 days')
+
+  // All three are deleted.
+  await confirmDelete('certificate issuance config')
+  await expect(page).toHaveURL(new RegExp(`/console/certs/issuanceConfigs\\?project=${id}$`))
+  await expect(page.getByText('No certificate issuance configs in this Project yet.')).toBeVisible()
+  await page.goto(`/console/certs/locations/global/trustConfigs/corp?project=${id}`)
+  await confirmDelete('trust config')
+  await expect(page).toHaveURL(new RegExp(`/console/certs/trustConfigs\\?project=${id}$`))
+  await expect(page.getByText('No trust configs in this Project yet.')).toBeVisible()
+  await page.goto(`/console/certs/locations/global/dnsAuthorizations/www?project=${id}`)
+  await confirmDelete('DNS authorization')
+  await expect(page).toHaveURL(new RegExp(`/console/certs/dnsAuthorizations\\?project=${id}$`))
+  await expect(page.getByText('No DNS authorizations in this Project yet.')).toBeVisible()
+
+  await expectConsoleRequests(requests, { allowed })
+})

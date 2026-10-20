@@ -1,5 +1,10 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { createBrowserRouter, type LoaderFunctionArgs, type RouteObject } from 'react-router'
+import {
+  createBrowserRouter,
+  redirect,
+  type LoaderFunctionArgs,
+  type RouteObject,
+} from 'react-router'
 
 import {
   containersQuery,
@@ -29,25 +34,42 @@ import { CdnLayout } from '@/features/cdn/CdnLayout'
 import { AddOrigin, EditOrigin } from '@/features/cdn/OriginForm'
 import { OriginPage } from '@/features/cdn/OriginPage'
 import { Origins } from '@/features/cdn/Origins'
+import { buildQuery, buildsQuery, daemonQuery, GLOBAL, triggersQuery } from '@/features/build/api'
+import { BuildLayout } from '@/features/build/BuildLayout'
+import { BuildPage } from '@/features/build/BuildPage'
+import { Builds } from '@/features/build/Builds'
+import { Daemon } from '@/features/build/Daemon'
+import { Triggers } from '@/features/build/Triggers'
 import {
   certificateQuery,
   certificatesQuery,
+  dnsAuthorizationQuery,
   entriesQuery,
+  issuanceConfigQuery,
   mapQuery,
   mapsQuery,
+  trustConfigQuery,
 } from '@/features/certs/api'
 import { CreateCertificate, EditCertificate } from '@/features/certs/CertificateForm'
 import { CertificatePage } from '@/features/certs/CertificatePage'
 import { Certificates } from '@/features/certs/Certificates'
 import { CertsLayout } from '@/features/certs/CertsLayout'
+import { CreateDnsAuthorization, EditDnsAuthorization } from '@/features/certs/DnsAuthorizationForm'
+import { DnsAuthorizationPage } from '@/features/certs/DnsAuthorizationPage'
+import { DnsAuthorizations, dnsAuthorizationsAll } from '@/features/certs/DnsAuthorizations'
 import { CreateEntry, EditEntry } from '@/features/certs/EntryForm'
+import { CreateIssuanceConfig } from '@/features/certs/IssuanceConfigForm'
+import { IssuanceConfigPage } from '@/features/certs/IssuanceConfigPage'
+import { IssuanceConfigs, issuanceConfigsAll } from '@/features/certs/IssuanceConfigs'
 import { CreateMap, EditMap } from '@/features/certs/MapForm'
 import { MapPage } from '@/features/certs/MapPage'
 import { Maps } from '@/features/certs/Maps'
 import { TlsPolicies } from '@/features/certs/TlsPolicies'
 import { CreateTlsPolicy, EditTlsPolicy } from '@/features/certs/TlsPolicyForm'
 import { TlsPolicyPage } from '@/features/certs/TlsPolicyPage'
+import { CreateTrustConfig, EditTrustConfig } from '@/features/certs/TrustConfigForm'
 import { TrustConfigPage } from '@/features/certs/TrustConfigPage'
+import { TrustConfigs, trustConfigsAll } from '@/features/certs/TrustConfigs'
 import { collOf, TLS_COLLS, tlsListQuery, tlsQuery } from '@/features/certs/tls'
 import { Dashboard } from '@/features/dashboard/Dashboard'
 import { changesQuery, rrsetsQuery, zoneQuery, zonesQuery } from '@/features/dns/api'
@@ -167,6 +189,8 @@ import { SaveSnapshot } from '@/features/state/SaveSnapshot'
 import { State } from '@/features/state/State'
 import {
   firewallQuery,
+  addressQuery,
+  allAddressesQuery,
   firewallsQuery,
   hostOffersQuery,
   networkQuery,
@@ -176,13 +200,18 @@ import {
   subnetQuery,
   subnetsQuery,
 } from '@/features/vpc/api'
+import { CreateAddress } from '@/features/vpc/AddressForm'
+import { AddressPage } from '@/features/vpc/AddressPage'
+import { Addresses } from '@/features/vpc/Addresses'
 import { CreateFirewall, EditFirewall } from '@/features/vpc/FirewallForm'
 import { FirewallPage } from '@/features/vpc/FirewallPage'
 import { Firewalls } from '@/features/vpc/Firewalls'
+import { ConnectionPage } from '@/features/vpc/ConnectionForm'
 import { CreateNetwork, EditNetwork } from '@/features/vpc/NetworkForm'
 import { NetworkPage } from '@/features/vpc/NetworkPage'
 import { Networks } from '@/features/vpc/Networks'
 import { OfferedPorts } from '@/features/vpc/OfferedPorts'
+import { AddPeering, EditPeering } from '@/features/vpc/PeeringForm'
 import { CreateRoute } from '@/features/vpc/RouteForm'
 import { RoutePage } from '@/features/vpc/RoutePage'
 import { Routes } from '@/features/vpc/Routes'
@@ -269,6 +298,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'ar',
           element: <ArLayout />,
           children: arRoutes(queryClient),
+        },
+        {
+          path: 'build',
+          element: <BuildLayout />,
+          children: buildRoutes(queryClient),
         },
         {
           path: 'gke',
@@ -645,6 +679,64 @@ function pubsubRoutes(queryClient: QueryClient): RouteObject[] {
   ]
 }
 
+// The Cloud Build view (SRS 4.8.3). A Build's page is at its resource
+// name, which its logUrl points to; the Project in its path is put in
+// ?project= too, so that a logUrl lands in the Project like any link.
+// Lists show one location (?location=, global by default).
+function buildRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const locationOf = (request: Request) =>
+    new URL(request.url).searchParams.get('location') || GLOBAL
+  return [
+    {
+      index: true,
+      element: <Builds />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(queryClient.ensureQueryData(buildsQuery(project, locationOf(request))))
+          : null
+      },
+    },
+    {
+      path: 'triggers',
+      element: <Triggers />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(queryClient.ensureQueryData(triggersQuery(project, locationOf(request))))
+          : null
+      },
+    },
+    {
+      path: 'daemon',
+      element: <Daemon />,
+      loader: () => warm(queryClient.ensureQueryData(daemonQuery())),
+    },
+    {
+      path: 'projects/:project/locations/:location/builds/:id',
+      element: <BuildPage />,
+      loader: ({ request, params }) => {
+        const url = new URL(request.url)
+        const project = params.project ?? ''
+        if (url.searchParams.get('project') !== project) {
+          url.searchParams.set('project', project)
+          // Loader redirects are under the basename already.
+          const path = url.pathname.startsWith(`${BASENAME}/`)
+            ? url.pathname.slice(BASENAME.length)
+            : url.pathname
+          return redirect(`${path}${url.search}`)
+        }
+        return warm(
+          queryClient.ensureQueryData(
+            buildQuery({ project, location: params.location ?? '', id: params.id ?? '' }),
+          ),
+        )
+      },
+    },
+  ]
+}
+
 // The Secret Manager view (SRS 4.8.3). Paths follow the API's resource
 // names, with the Project in ?project=; the list shows one location
 // (?location=, global by default).
@@ -915,6 +1007,14 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
     },
     { path: 'maps/create', element: <CreateMap /> },
     {
+      path: 'dnsAuthorizations',
+      element: <DnsAuthorizations />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(dnsAuthorizationsAll(project))) : null
+      },
+    },
+    {
       path: 'tls/:coll?',
       element: <TlsPolicies />,
       loader: ({ request, params }) => {
@@ -961,7 +1061,63 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
         return r.project ? warm(queryClient.ensureQueryData(tlsQuery(r))) : null
       },
     })),
-    { path: 'locations/:location/trustConfigs/:trust', element: <TrustConfigPage /> },
+    {
+      path: 'trustConfigs',
+      element: <TrustConfigs />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(trustConfigsAll(project))) : null
+      },
+    },
+    { path: 'trustConfigs/create', element: <CreateTrustConfig /> },
+    {
+      path: 'issuanceConfigs',
+      element: <IssuanceConfigs />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(issuanceConfigsAll(project))) : null
+      },
+    },
+    { path: 'issuanceConfigs/create', element: <CreateIssuanceConfig /> },
+    { path: 'dnsAuthorizations/create', element: <CreateDnsAuthorization /> },
+    { path: 'locations/:location/dnsAuthorizations/:auth/edit', element: <EditDnsAuthorization /> },
+    {
+      path: 'locations/:location/dnsAuthorizations/:auth',
+      element: <DnsAuthorizationPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          auth: params.auth ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(dnsAuthorizationQuery(r))) : null
+      },
+    },
+    {
+      path: 'locations/:location/certificateIssuanceConfigs/:config',
+      element: <IssuanceConfigPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          config: params.config ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(issuanceConfigQuery(r))) : null
+      },
+    },
+    { path: 'locations/:location/trustConfigs/:trust/edit', element: <EditTrustConfig /> },
+    {
+      path: 'locations/:location/trustConfigs/:trust',
+      element: <TrustConfigPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          trust: params.trust ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(trustConfigQuery(r))) : null
+      },
+    },
     { path: 'locations/:location/certificates/:cert/edit', element: <EditCertificate /> },
     {
       path: 'locations/:location/certificates/:cert',
@@ -1030,9 +1186,10 @@ function natRoutes(queryClient: QueryClient): RouteObject[] {
 
 // The VPC network view (SRS 4.8.3), the compute Service. Paths follow the
 // API's resource names, global/networks/N, regions/R/subnetworks/S,
-// global/firewalls/F and global/routes/R, with the Project in ?project=;
-// create pages are not under them, so that no name is shadowed, and the
-// subnetwork, firewall rule and route ones take the network in ?network=.
+// global/firewalls/F, global/routes/R and global/addresses/A or
+// regions/R/addresses/A, with the Project in ?project=; create pages are
+// not under them, so that no name is shadowed, and the subnetwork,
+// firewall rule and route ones take the network in ?network=.
 // Offered ports are the Instance's, at /compute/offers.
 function vpcRoutes(queryClient: QueryClient): RouteObject[] {
   const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
@@ -1044,6 +1201,14 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
           queryClient.ensureQueryData(subnetsQuery(project)),
         )
       : null
+  }
+  const address: RouteObject['loader'] = ({ request, params }) => {
+    const r = {
+      project: projectOf(request),
+      region: params.region ?? '',
+      address: params.address ?? '',
+    }
+    return r.project ? warm(queryClient.ensureQueryData(addressQuery(r))) : null
   }
   return [
     { index: true, element: <Networks />, loader: lists },
@@ -1069,6 +1234,9 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
       },
     },
     { path: 'global/networks/:network/edit', element: <EditNetwork /> },
+    { path: 'global/networks/:network/add-peering', element: <AddPeering /> },
+    { path: 'global/networks/:network/connection', element: <ConnectionPage /> },
+    { path: 'global/networks/:network/peerings/:peering/edit', element: <EditPeering /> },
     {
       path: 'regions/:region/subnetworks/:subnetwork',
       element: <SubnetworkPage />,
@@ -1121,6 +1289,17 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
           : null
       },
     },
+    {
+      path: 'addresses',
+      element: <Addresses />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(allAddressesQuery(project))) : null
+      },
+    },
+    { path: 'create-address', element: <CreateAddress /> },
+    { path: 'global/addresses/:address', element: <AddressPage />, loader: address },
+    { path: 'regions/:region/addresses/:address', element: <AddressPage />, loader: address },
   ]
 }
 

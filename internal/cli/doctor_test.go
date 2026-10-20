@@ -372,8 +372,8 @@ func TestReportExcludedPorts(t *testing.T) {
 	}
 }
 
-// In a Containerized Instance, CA trust is the host's: doctor notes where
-// the CA is, and checks neither the container's bundles nor its NSS
+// In a Containerized Instance, CA trust is the host's: doctor notes how to
+// trust the CA there, and checks neither the container's bundles nor its NSS
 // databases (#493).
 func TestCheckCATrust(t *testing.T) {
 	saved := systemBundles
@@ -388,11 +388,13 @@ func TestCheckCATrust(t *testing.T) {
 		inContainer bool
 		want        string
 	}{
-		{true, "[--  ] Instance CA trust is the host's in a Containerized Instance: trust /data/default/ca.pem on the host, not in the container\n"},
+		{true, "[--  ] Instance CA trust is the host's in a Containerized Instance: on the host, not in the container, run " +
+			"`docker exec CONTAINER /gcpemu ca print > gcpemu-ca.pem` and `gcpemu --instance container ca install --cert gcpemu-ca.pem` " +
+			"(README: \"Trusting the CA on the host\")\n"},
 		{false, "[ok  ] emulator CA trusted by the OS trust store\n"},
 	} {
 		var out strings.Builder
-		checkCATrust(&out, "default", "/data/default/ca.pem", pemBytes, tc.inContainer)
+		checkCATrust(&out, "default", pemBytes, tc.inContainer)
 		got := out.String()
 		if tc.inContainer && got != tc.want {
 			t.Errorf("inContainer: output %q, want %q", got, tc.want)

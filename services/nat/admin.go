@@ -12,7 +12,7 @@ import (
 //	PUT /_emu/v1/nat/sink {"enabled": true}
 //
 // While it is on, egress a Cloud NAT allows is answered by the sink in
-// the egress gateway instead of reaching the internet. `--offline` turns
+// the NAT egress proxy instead of reaching the internet. `--offline` turns
 // it on at start; a switch lasts until the Instance stops. The data plane
 // is compute's, which implements sinkSwitch.
 
@@ -52,7 +52,7 @@ func (s *Service) getSink(w http.ResponseWriter, r *http.Request) {
 }
 
 // putSink is PUT /_emu/v1/nat/sink: it switches the sink and re-programs
-// the egress gateways.
+// the NAT egress proxies.
 func (s *Service) putSink(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Enabled *bool `json:"enabled"`

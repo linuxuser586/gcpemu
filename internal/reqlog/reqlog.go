@@ -31,7 +31,7 @@ type Entry struct {
 	LatencyMS float64 `json:"latencyMs"`
 	// LB is the load balancer's trace of a data-plane request.
 	LB *LBTrace `json:"lb,omitempty"`
-	// NAT is the egress gateway's trace of an internet egress attempt.
+	// NAT is the NAT egress proxy's trace of an internet egress attempt.
 	NAT *NATTrace `json:"nat,omitempty"`
 	// Bodies are the API call's request and response bodies. They are left
 	// out of Entries and of the event stream, and read with Get.
@@ -110,7 +110,7 @@ func (c *Capture) Body(contentType string) *Body {
 	return NewBody(contentType, c.head, c.size)
 }
 
-// NATTrace is one connection the NAT egress gateway saw leave a VPC
+// NATTrace is one connection the NAT egress proxy saw leave a VPC
 // network: translated, dropped or answered by the offline sink (the
 // Entry's Code). The Cloud NAT gateway, or the network when no NAT covers
 // the source, is the Entry's Resource. Fields follow Cloud NAT's log

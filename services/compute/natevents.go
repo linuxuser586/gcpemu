@@ -17,9 +17,9 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
-// NAT gateway → emulator event channel. The in-container agent posts
+// NAT egress proxy → emulator event channel. The in-container agent posts
 // connection events (NAT translations seen by conntrack, connections the
-// gateway drops, and --offline sink attempts) to
+// proxy drops, and --offline sink attempts) to
 // POST /compute/v1/_gcpemu/natEvents through the services network;
 // requests carry a per-process token. Translations and drops of covered
 // sources are logged in Cloud Logging JSON shape when the NAT's logConfig
@@ -34,7 +34,7 @@ const (
 	natTokenHdr   = "X-Gcpemu-Nat-Token"
 )
 
-// natEvent is one connection event from the gateway agent.
+// natEvent is one connection event from the NAT egress proxy's Sidecar agent.
 type natEvent struct {
 	Type    string `json:"type"` // "translation", "dropped" or "sink"
 	Time    string `json:"time"`
@@ -76,7 +76,7 @@ func (s *Service) NATSink() (on bool, status int, body string) {
 
 // SetNATSink switches the offline sink on or off until the Instance stops
 // (the Web console Cloud NAT view; --offline sets it at start) and
-// re-programs every running egress gateway.
+// re-programs every running NAT egress proxy.
 func (s *Service) SetNATSink(on bool) {
 	if s.sinkOn.Swap(on) == on {
 		return
@@ -110,7 +110,7 @@ func (s *Service) sinkReportURL(ctx context.Context) (string, error) {
 func (s *Service) natEvents(w http.ResponseWriter, r *http.Request) {
 	tok := r.Header.Get(natTokenHdr)
 	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.sinkToken())) != 1 {
-		apierr.Write(w, apierr.PermissionDenied("invalid NAT gateway token"))
+		apierr.Write(w, apierr.PermissionDenied("invalid NAT egress proxy token"))
 		return
 	}
 	var rep natReport
@@ -184,7 +184,7 @@ func (s *Service) logEgress(network string, ev natEvent, c *coverage, vm, subnet
 }
 
 // natIPOf is the address a NAT translates src to: the NAT IP of src's
-// port block (FR-NAT-003), else the NAT's first IP, else the gateway's
+// port block (FR-NAT-003), else the NAT's first IP, else the proxy's
 // own (seen) address.
 func (s *Service) natIPOf(c *coverage, src, seen string) string {
 	natIP := seen
