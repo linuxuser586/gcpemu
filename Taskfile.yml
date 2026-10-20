@@ -17,10 +17,117 @@ vars:
   RESTORE_PLACEHOLDER: git checkout -- {{.CONSOLE_PLACEHOLDER}} 2>/dev/null || true
 
 tasks:
+  # #541: a bare `task` lists the tasks rather than building.
   default:
-    desc: Build bin/gcpemu (same as task build)
+    desc: List the tasks (task doctor checks the tools they need)
+    silent: true
     cmds:
-      - task: build
+      - task --list
+
+  # #541: the tools for building and testing gcpemu; `gcpemu doctor` checks
+  # a host for running it. Required tools fail the task, optional ones warn
+  # and name the tasks they block. Nothing is installed.
+  doctor:
+    desc: Check the tools for building and testing gcpemu (bin/gcpemu doctor checks running it)
+    silent: true
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    cmds:
+      - cmd: |
+          fails=0 warns=0
+          ok() { echo "ok    $1"; }
+          fail() { echo "FAIL  $1"; fails=$((fails + 1)); }
+          warn() { echo "warn  $1"; warns=$((warns + 1)); }
+          # vge HAVE NEED: version HAVE >= NEED, field by field; a field's
+          # non-digit suffix (1.28rc1) is dropped.
+          vge() {
+            h=$1 n=$2
+            while [ -n "$h$n" ]; do
+              hf=${h%%.*} nf=${n%%.*}
+              case $h in *.*) h=${h#*.} ;; *) h= ;; esac
+              case $n in *.*) n=${n#*.} ;; *) n= ;; esac
+              hf=${hf%%[!0-9]*} nf=${nf%%[!0-9]*}
+              [ "${hf:-0}" -gt "${nf:-0}" ] && return 0
+              [ "${hf:-0}" -lt "${nf:-0}" ] && return 1
+            done
+            return 0
+          }
+
+          # Required. 3.54.0 is the version CI pins.
+          have={{.TASK_VERSION}}
+          have=${have#v}
+          if vge "$have" 3.54.0; then ok "task $have"
+          else fail "task $have: need >= 3.54.0; install: https://taskfile.dev/installation"; fi
+
+          need=
+          while IFS= read -r line; do
+            case $line in "go "*) need=${line#go } ;; esac
+          done < go.mod
+          gook=
+          if ! command -v go >/dev/null; then
+            fail "go: not found, need >= $need; install: https://go.dev/dl"
+          elif ! have=$(go env GOVERSION 2>&1); then
+            fail "go: $have"
+          else
+            have=${have%% *}
+            have=${have#go}
+            if vge "$have" "$need"; then ok "go $have"; gook=1
+            else fail "go $have: need >= $need; install: https://go.dev/dl"; fi
+          fi
+
+          if have=$(git --version 2>/dev/null); then ok "${have% (*}"
+          else fail "git: not found; install: https://git-scm.com/downloads"; fi
+
+          # Optional: the tasks each one blocks.
+          need= pin=
+          while IFS= read -r line; do
+            case $line in
+              *'"node": ">='*) need=${line#*>=} need=${need%%\"*} ;;
+              *'"packageManager": "pnpm@'*) pin=${line#*pnpm@} pin=${pin%%\"*} ;;
+            esac
+          done < console/package.json
+          if ! have=$(node --version 2>/dev/null); then
+            warn "node: not found, need >= $need (task console, console-e2e, release); install: https://nodejs.org"
+          elif vge "${have#v}" "$need"; then ok "node $have"
+          else warn "node $have: need >= $need (task console, console-e2e, release); install: https://nodejs.org"; fi
+
+          if ! have=$(cd console && pnpm --version 2>/dev/null); then
+            warn "pnpm: not found, console pins $pin (task console, console-e2e, release); run: corepack enable"
+          elif [ "${have%%.*}" = "${pin%%.*}" ]; then ok "pnpm $have"
+          else warn "pnpm $have: console pins $pin (task console, console-e2e, release); run: corepack enable"; fi
+
+          if ! command -v docker >/dev/null; then
+            warn "docker: not found (task agent, e2e, compat, tofu); install Docker, Colima or Podman"
+          elif have=$(docker version --format '{{"{{"}}.Server.Version{{"}}"}}' 2>/dev/null) && [ -n "$have" ]; then
+            ok "docker (server $have)"
+          else
+            warn "docker: no daemon answers (task agent, e2e, compat, tofu); start Docker, Colima or Podman"
+          fi
+
+          # The check task race's precondition makes.
+          if [ -n "$gook" ]; then
+            if [ "$(go env CGO_ENABLED)" = 1 ]; then ok "cgo (CC=$(go env CC))"
+            else warn "cgo: off, no C compiler $(go env CC) (task race); install one, e.g. xcode-select --install, build-essential or MinGW-w64"; fi
+          fi
+
+          if have=$(npm --version 2>/dev/null); then ok "npm $have"
+          else warn "npm: not found (task action); it comes with Node.js"; fi
+
+          if command -v tofu >/dev/null; then ok "tofu"
+          else warn "tofu: not found (task tofu, e2e); install: https://opentofu.org/docs/intro/install/"; fi
+
+          # task compat downloads its other clients; these must be on PATH,
+          # and each test skips without its own.
+          missing=
+          for c in gcloud kubectl dig; do
+            command -v $c >/dev/null || missing=${missing:+$missing, }$c
+          done
+          if [ -z "$missing" ]; then ok "gcloud, kubectl, dig"
+          else warn "task compat: missing $missing; install: https://cloud.google.com/sdk/docs/install (gcloud components install kubectl), dig from BIND (dnsutils, bind-utils, brew install bind)"; fi
+
+          echo
+          echo "$fails required and $warns optional tools missing or too old. For running the emulator: bin/gcpemu doctor"
+          [ "$fails" -eq 0 ]
 
   # Builds the console first when pnpm is on PATH; without it the binary
   # embeds the "console not built" placeholder.
