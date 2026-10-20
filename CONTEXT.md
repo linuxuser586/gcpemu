@@ -169,6 +169,10 @@ A declarative file listing the Projects, resources and Fault rules an Instance s
 **Seeding**:
 Applying a Seed file to an Instance. It is idempotent, and at startup it finishes before the Instance reports ready.
 
+**Wait condition**:
+A named state of an emulated resource, written `KIND=TARGET`, that a script can block on until it holds or can no longer hold, e.g. a GKE cluster that is running or a backend service that can take traffic. A resource that does not exist yet has not met its Wait condition; one that has failed or is being deleted never will.
+_Avoid_: condition (on its own), readiness check
+
 **Ephemeral Instance**:
 An Instance whose state disappears when it exits.
 
@@ -438,4 +442,5 @@ _Avoid_: egress check, leak detector
 - A *global* certificate is one in location `global`. That is its location, not its scope: a certificate with scope `ALL_REGIONS` is also in `global`, but serves cross-region load balancers.
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
+- "Condition" on its own is ambiguous: Kubernetes objects inside a GKE cluster have their own conditions. Use *Wait condition* for what a script blocks on.
 - "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.
