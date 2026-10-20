@@ -21,13 +21,17 @@ type record struct {
 	Request json.RawMessage `json:"request"`
 	// Op names the Operation that ends with the Build.
 	Op string `json:"op"`
+	// Substitutions are the values the Build's substitutions resolved to
+	// when it was created, for its automapped steps.
+	Substitutions map[string]string `json:"substitutions,omitempty"`
 }
 
 // stored is a decoded record.
 type stored struct {
-	build   *cloudbuildpb.Build
-	request *cloudbuildpb.Build
-	op      string
+	build         *cloudbuildpb.Build
+	request       *cloudbuildpb.Build
+	op            string
+	substitutions map[string]string
 }
 
 func decode(b []byte) (*stored, error) {
@@ -35,7 +39,7 @@ func decode(b []byte) (*stored, error) {
 	if err := json.Unmarshal(b, &rec); err != nil {
 		return nil, err
 	}
-	st := &stored{build: &cloudbuildpb.Build{}, request: &cloudbuildpb.Build{}, op: rec.Op}
+	st := &stored{build: &cloudbuildpb.Build{}, request: &cloudbuildpb.Build{}, op: rec.Op, substitutions: rec.Substitutions}
 	if err := protojson.Unmarshal(rec.Build, st.build); err != nil {
 		return nil, err
 	}
@@ -54,7 +58,7 @@ func put(tx store.Tx, st *stored) error {
 	if err != nil {
 		return err
 	}
-	return store.PutJSON(tx, nsBuilds, refOf(st.build).key(), record{Build: b, Request: req, Op: st.op})
+	return store.PutJSON(tx, nsBuilds, refOf(st.build).key(), record{Build: b, Request: req, Op: st.op, Substitutions: st.substitutions})
 }
 
 func get(tx store.Tx, r buildRef) (*stored, error) {

@@ -36,6 +36,9 @@ type liveBuild struct {
 	// secrets are the Build's secret payloads by env, once its setup read
 	// them (secrets.go).
 	secrets map[string]string
+	// substitutions are the Build's resolved substitutions, for its
+	// automapped steps.
+	substitutions map[string]string
 
 	mu sync.Mutex
 	// stepStops stops the running steps, by index, for a step timeout.
@@ -154,10 +157,12 @@ func (s *Service) schedule(ctx context.Context) {
 // Callers hold mu.
 func (s *Service) begin(ref buildRef) {
 	var b *cloudbuildpb.Build
+	var substs map[string]string
 	err := s.update(ref, func(st *stored) {
 		st.build.Status = cloudbuildpb.Build_WORKING
 		st.build.StartTime = timestamppb.New(s.now())
 		b = proto.Clone(st.build).(*cloudbuildpb.Build)
+		substs = st.substitutions
 	})
 	if err != nil {
 		s.env.Log.Error("build: start", "build", ref.name(), "err", err)
@@ -166,7 +171,7 @@ func (s *Service) begin(ref buildRef) {
 	}
 	s.notify(b)
 	ctx, stop := context.WithCancelCause(context.Background())
-	r := &liveBuild{ref: ref, ctx: ctx, stop: stop, done: make(chan struct{}), stepStops: map[int]context.CancelCauseFunc{}}
+	r := &liveBuild{ref: ref, ctx: ctx, stop: stop, done: make(chan struct{}), stepStops: map[int]context.CancelCauseFunc{}, substitutions: substs}
 	s.live[ref.key()] = r
 	s.work.Enter()
 	go s.execute(r, b)
