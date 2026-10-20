@@ -93,13 +93,15 @@ export function CreateAddress() {
   const qc = useQueryClient()
   const networks = useQuery(networksQuery(project))
   const subnets = useQuery(subnetsQuery(project))
+  const peering = params.get('purpose') === 'VPC_PEERING'
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: '',
-      scope: params.get('global') ? 'global' : 'regional',
+      // ?purpose=VPC_PEERING is a private services access range.
+      scope: peering ? 'global' : 'regional',
       region: 'us-central1',
-      addressType: 'EXTERNAL',
+      addressType: peering ? 'INTERNAL' : 'EXTERNAL',
       networkTier: '',
       subnetwork: '',
       purpose: 'VPC_PEERING',
