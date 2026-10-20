@@ -2,6 +2,7 @@ import type { FieldValues, Path, UseFormReturn } from 'react-hook-form'
 
 import { errorMessage } from '@/api/errors'
 
+import { lastSeg, relPath } from '../lb/api'
 import { invalid, requiredMessage } from '../lb/spec'
 import { resourceField, type SecondaryRange } from './api'
 
@@ -15,6 +16,16 @@ export const str = (v: unknown) =>
 
 /** NAME is the API's rule for a resource name. */
 export const NAME = /^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$/
+
+/** networkRef writes a network field: a bare name is in project. */
+export const networkRef = (v: string, project: string) =>
+  NAME.test(v.trim()) ? `projects/${project}/global/networks/${v.trim()}` : v.trim()
+
+/** networkValue reads a network field: a name for project's networks. */
+export function networkValue(link: unknown, project: string) {
+  const p = relPath(str(link))
+  return p.startsWith(`projects/${project}/global/networks/`) ? lastSeg(p) : p
+}
 
 /** mtuError is the API's message for an MTU out of range, if v is one. */
 export function mtuError(v: string): string | undefined {

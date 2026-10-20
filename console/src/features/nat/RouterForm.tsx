@@ -1,10 +1,9 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useId } from 'react'
-import { useForm, useWatch, type Path, type UseFormReturn } from 'react-hook-form'
+import { useForm, useWatch, type UseFormReturn } from 'react-hook-form'
 import { z } from 'zod'
 
-import { errorMessage } from '@/api/errors'
 import { useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { Field, fieldAria } from '@/components/resource/Field'
@@ -16,7 +15,8 @@ import { useViewState } from '@/lib/viewState'
 
 import { lastSeg, relPath } from '../lb/api'
 import { invalid, nameMessage, requiredMessage } from '../lb/spec'
-import { networksQuery, resourceField, subnetsQuery } from '../vpc/api'
+import { networksQuery, subnetsQuery } from '../vpc/api'
+import { NAME, networkRef, networkValue, withFieldError } from '../vpc/form'
 import { insertRouter, patchRouter, routerQuery, type Router, type RouterRef } from './api'
 import { routerPage, useRouterRef } from './NatLayout'
 
@@ -29,8 +29,6 @@ type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj =>
   typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Obj) : {}
 const str = (v: unknown) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '')
-
-const NAME = /^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$/
 
 /** privateAsn is the API's rule for a router's BGP ASN. */
 const privateAsn = (a: number) =>
@@ -67,34 +65,7 @@ export type CreateValues = z.infer<typeof createSchema>
 const editSchema = z.object({ description: z.string(), asn: asnField })
 export type EditValues = z.infer<typeof editSchema>
 
-/** networkRef writes the network field: a bare name is in project. */
-export const networkRef = (v: string, project: string) =>
-  NAME.test(v.trim()) ? `projects/${project}/global/networks/${v.trim()}` : v.trim()
-
-/** networkValue reads the network field: a name for project's networks. */
-export function networkValue(link: unknown, project: string) {
-  const p = relPath(str(link))
-  return p.startsWith(`projects/${project}/global/networks/`) ? lastSeg(p) : p
-}
-
 const FIELD: Record<string, string> = { name: 'name', network: 'network', bgp: 'asn' }
-
-/**
- * withFieldError shows an API error on the field it names, then rethrows
- * it for the editor to show above the buttons.
- */
-async function withFieldError<V extends Obj>(form: UseFormReturn<V>, send: () => Promise<unknown>) {
-  try {
-    return await send()
-  } catch (e) {
-    const head = resourceField(errorMessage(e))?.split(/[.[]/)[0]
-    const f = head && FIELD[head]
-    if (f && f in form.getValues()) {
-      form.setError(f as Path<V>, { type: 'server', message: errorMessage(e) })
-    }
-    throw e
-  }
-}
 
 /** setBgp writes the ASN onto body's bgp, keeping its other fields. */
 function setBgp(out: Body, base: Body, asn: string) {
@@ -145,7 +116,7 @@ export function CreateRouter() {
   const create = useMutation({
     meta: { toast: false },
     mutationFn: ({ body, region }: { body: Body; region: string }) =>
-      withFieldError(form, () => insertRouter(project, region.trim(), body)),
+      withFieldError(form, FIELD, () => insertRouter(project, region.trim(), body)),
     onSuccess: (_, { body, region }) => {
       void qc.invalidateQueries({ queryKey: ['compute'] })
       toast.success(`Created router ${str(body.name)}.`)
@@ -314,7 +285,7 @@ function EditRouterForm({ router, r }: { router: Router; r: RouterRef }) {
     meta: { toast: false },
     mutationFn: async (body: Body) => {
       if (Object.keys(body).filter((k) => k !== 'fingerprint').length === 0) return false
-      await withFieldError(form, () => patchRouter(r, body))
+      await withFieldError(form, FIELD, () => patchRouter(r, body))
       return true
     },
     onSuccess: (changed) => {

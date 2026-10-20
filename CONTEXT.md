@@ -92,7 +92,11 @@ _Avoid_: agent (unqualified)
 
 **NAT egress proxy**:
 The Managed container through which Cloud NAT traffic leaves the emulated network.
-_Avoid_: egress gateway
+_Avoid_: egress gateway, NAT gateway
+
+**NAT gateway**:
+One Cloud NAT configuration on a Cloud Router, as GCP names it: which subnetwork ranges it translates and with which NAT IPs. The NAT egress proxy carries out what the NAT gateways of a VPC network say.
+_Avoid_: NAT config (unqualified), NAT (unqualified, when the configuration is meant)
 
 **Edge relay**:
 The Managed container that relays clients to the load balancer's Data plane on forwarding rule ports the emulator cannot bind itself, serves external forwarding rule addresses to VPC workloads, and relays the Data plane to backends the host cannot route to, such as GKE pods.
@@ -118,7 +122,7 @@ The development aid, not modelled on GCP, that links the host with an Instance's
 _Avoid_: VPN, tunnel, bridge
 
 **Host address**:
-The address at which workloads on one VPC container network reach the host: the network's gateway IP where the host can route to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance.
+The address at which workloads on one VPC container network reach the host: the VPC container network's own gateway IP where the host can route to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance. It is not the subnetwork's Gateway address, though the two can be the same IP when there is no Fallback range.
 _Avoid_: host IP, gateway (unqualified)
 
 **Offered port**:
@@ -288,6 +292,10 @@ _Avoid_: recording, records
 
 **Declared range**:
 The CIDR that a subnetwork or a private services access allocation has in GCP's API, as the user declared it.
+
+**Gateway address**:
+The address GCP reports as a subnetwork's gateway: the second address of its Declared range, after the network address, whatever range its VPC container network uses.
+_Avoid_: gateway (unqualified), Host address
 
 **VPC container network**:
 The container network that backs one subnetwork or one private services access allocation of a VPC network. A VPC network has as many as it has subnetworks and allocations, and the Managed containers attached to a subnetwork hold their addresses on it.

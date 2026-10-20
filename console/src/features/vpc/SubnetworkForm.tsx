@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
 
-import { lastSeg, relPath } from '../lb/api'
+import { lastSeg } from '../lb/api'
 import { nameMessage, requiredMessage } from '../lb/spec'
 import {
   insertSubnetwork,
@@ -29,13 +29,16 @@ import {
 import {
   formatRanges,
   NAME,
+  networkRef,
+  networkValue,
   parseRanges,
   primaryRangeError,
   rangesError,
   str,
   withFieldError,
 } from './form'
-import { subnetPage, useSubnetRef } from './VpcLayout'
+import { subnetPage } from './links'
+import { useSubnetRef } from './VpcLayout'
 
 // Create and edit forms for subnetworks (FR-UI-011): create sends
 // subnetworks.insert; edit sends subnetworks.patch with the fields that
@@ -76,16 +79,6 @@ const FIELD: Record<string, string> = {
   ipCidrRange: 'ipCidrRange',
   description: 'description',
   secondaryIpRanges: 'secondary',
-}
-
-/** networkRef writes the network field: a bare name is in project. */
-export const networkRef = (v: string, project: string) =>
-  NAME.test(v.trim()) ? `projects/${project}/global/networks/${v.trim()}` : v.trim()
-
-/** networkValue reads the network field: a name for project's networks. */
-export function networkValue(link: unknown, project: string) {
-  const p = relPath(str(link))
-  return p.startsWith(`projects/${project}/global/networks/`) ? lastSeg(p) : p
 }
 
 const rangesOf = (body: Body) =>

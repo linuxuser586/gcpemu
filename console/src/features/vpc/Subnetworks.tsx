@@ -17,7 +17,8 @@ import { useViewState } from '@/lib/viewState'
 
 import { lastSeg } from '../lb/api'
 import { subnetsQuery, type Subnetwork } from './api'
-import { NetworkLink, SubnetLink, VpcHeader } from './VpcLayout'
+import { NetworkLink, SubnetLink } from './links'
+import { VpcHeader } from './VpcLayout'
 
 /** bySubnet orders subnetworks by name, then region. */
 export const bySubnet = (a: Subnetwork, b: Subnetwork) =>

@@ -19,7 +19,7 @@ import { useViewState } from '@/lib/viewState'
 
 import { lastSeg } from '../lb/api'
 import { subnetsQuery } from '../vpc/api'
-import { SubnetList } from '../vpc/VpcLayout'
+import { SubnetList } from '../vpc/links'
 import { coverage, routersQuery } from './api'
 import { natPage, NatTabs, routerPage } from './NatLayout'
 import { OfflineSink } from './OfflineSink'

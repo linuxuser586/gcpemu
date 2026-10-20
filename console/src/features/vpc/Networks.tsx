@@ -17,7 +17,8 @@ import { useViewState } from '@/lib/viewState'
 
 import { lastSeg, relPath } from '../lb/api'
 import { networksQuery, subnetsQuery, type Network } from './api'
-import { networkPage, SubnetLink, VpcHeader } from './VpcLayout'
+import { networkPage, SubnetLink } from './links'
+import { VpcHeader } from './VpcLayout'
 
 /** subnetMode describes how a network gets its subnetworks. */
 export const subnetMode = (n: Network) => (n.autoCreateSubnetworks ? 'Auto' : 'Custom')

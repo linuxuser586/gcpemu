@@ -35,7 +35,8 @@ import {
 } from './api'
 import { subnetRecipe } from './copy'
 import { CIDR_INVALID, parseCidr } from './form'
-import { networkPage, NetworkLink, subnetPage, useSubnetRef } from './VpcLayout'
+import { networkPage, NetworkLink, subnetPage } from './links'
+import { useSubnetRef } from './VpcLayout'
 
 /**
  * SubnetworkPage is one subnetwork: its ranges and settings, the custom
@@ -106,7 +107,7 @@ export function SubnetworkPage() {
               rows={[
                 ['Network', <NetworkLink key="n" link={s.network} />],
                 ['Primary range', <Mono key="r">{s.ipCidrRange}</Mono>],
-                ['Gateway', s.gatewayAddress && <Mono key="g">{s.gatewayAddress}</Mono>],
+                ['Gateway address', s.gatewayAddress && <Mono key="g">{s.gatewayAddress}</Mono>],
                 [
                   'Secondary ranges',
                   s.secondaryIpRanges?.length ? (

@@ -15,11 +15,11 @@ import { hostOffersQuery } from './api'
 import { VpcHeader } from './VpcLayout'
 
 /**
- * Offers is the Offered ports of the Host attachment (ADR 0014), at which
+ * OfferedPorts is the Offered ports of the Host attachment (ADR 0014), at which
  * VPC workloads reach listeners on the host's 127.0.0.1. They are the
  * Instance's, for every Project.
  */
-export function Offers() {
+export function OfferedPorts() {
   const offers = useQuery(hostOffersQuery())
   return (
     <div className="flex flex-col gap-6">

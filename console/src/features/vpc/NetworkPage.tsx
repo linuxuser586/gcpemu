@@ -15,7 +15,8 @@ import { deleteNetwork, networkQuery, subnetsQuery, switchToCustomMode, type Net
 import { networkRecipe } from './copy'
 import { routingMode } from './Networks'
 import { bySubnet, SubnetTable } from './Subnetworks'
-import { networkPage, useNetworkRef } from './VpcLayout'
+import { networkPage } from './links'
+import { useNetworkRef } from './VpcLayout'
 
 /**
  * NetworkPage is one VPC network: its settings, its subnetworks, and the

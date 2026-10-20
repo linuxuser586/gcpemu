@@ -155,7 +155,7 @@ import {
 import { CreateNetwork, EditNetwork } from '@/features/vpc/NetworkForm'
 import { NetworkPage } from '@/features/vpc/NetworkPage'
 import { Networks } from '@/features/vpc/Networks'
-import { Offers } from '@/features/vpc/Offers'
+import { OfferedPorts } from '@/features/vpc/OfferedPorts'
 import { CreateSubnetwork, EditSubnetwork } from '@/features/vpc/SubnetworkForm'
 import { SubnetworkPage } from '@/features/vpc/SubnetworkPage'
 import { Subnetworks } from '@/features/vpc/Subnetworks'
@@ -924,7 +924,7 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
     { path: 'subnetworks', element: <Subnetworks />, loader: lists },
     {
       path: 'offers',
-      element: <Offers />,
+      element: <OfferedPorts />,
       loader: () => warm(queryClient.ensureQueryData(hostOffersQuery())),
     },
     { path: 'create-network', element: <CreateNetwork /> },

@@ -20,7 +20,7 @@ import { toast } from '@/lib/toast'
 
 import { lastSeg } from '../lb/api'
 import { subnetsQuery } from '../vpc/api'
-import { SubnetList } from '../vpc/VpcLayout'
+import { SubnetList } from '../vpc/links'
 import {
   coverage,
   deleteRouter,

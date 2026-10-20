@@ -17,7 +17,8 @@ import { isObj } from '../lb/api'
 import { nameMessage } from '../lb/spec'
 import { insertNetwork, networkQuery, patchNetwork, type Network, type NetworkRef } from './api'
 import { mtuError, NAME, str, withFieldError, type Obj } from './form'
-import { networkPage, useNetworkRef } from './VpcLayout'
+import { networkPage } from './links'
+import { useNetworkRef } from './VpcLayout'
 
 // Create and edit forms for VPC networks (FR-UI-011): create sends
 // networks.insert; edit sends networks.patch with the fields that

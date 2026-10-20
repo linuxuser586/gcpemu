@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Fragment, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Outlet, useLocation, useParams } from 'react-router'
 
 import { infoQuery } from '@/api/queries'
@@ -8,9 +8,8 @@ import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
-import { lastSeg } from '../lb/api'
 import { NotEnabled } from '../services/ServicePage'
-import type { NetworkRef, SubnetRef, Subnetwork } from './api'
+import type { NetworkRef, SubnetRef } from './api'
 
 /**
  * VpcLayout gates the VPC network view (SRS 4.8.3): the compute Service
@@ -39,16 +38,6 @@ export function VpcLayout() {
   return <Outlet />
 }
 
-const enc = encodeURIComponent
-
-/** networkPage is the console path of a network, or of a page under it. */
-export const networkPage = (network: string, sub = '') =>
-  `/compute/global/networks/${enc(network)}${sub ? `/${sub}` : ''}`
-
-/** subnetPage is the console path of a subnetwork, or of a page under it. */
-export const subnetPage = (r: Pick<SubnetRef, 'region' | 'subnetwork'>, sub = '') =>
-  `/compute/regions/${r.region}/subnetworks/${enc(r.subnetwork)}${sub ? `/${sub}` : ''}`
-
 /** useNetworkRef is the network the route names, in the chosen Project. */
 export function useNetworkRef(): NetworkRef {
   const { network = '' } = useParams()
@@ -61,43 +50,6 @@ export function useSubnetRef(): SubnetRef {
   const { region = '', subnetwork = '' } = useParams()
   const [view] = useViewState()
   return { project: view.project ?? '', region, subnetwork }
-}
-
-const linkClass = 'font-mono text-primary underline-offset-4 hover:underline'
-
-/** NetworkLink links a network's selfLink or name to its page. */
-export function NetworkLink({ link }: { link?: string }) {
-  const name = lastSeg(link)
-  if (!name) return <>—</>
-  return (
-    <Link className={linkClass} to={networkPage(name)}>
-      {name}
-    </Link>
-  )
-}
-
-/** SubnetLink links a subnetwork to its page. */
-export function SubnetLink({ region, name }: { region: string; name: string }) {
-  return (
-    <Link className={linkClass} to={subnetPage({ region, subnetwork: name })}>
-      {name}
-    </Link>
-  )
-}
-
-/** SubnetList links subnetworks to their pages, comma-separated, or "—" for none. */
-export function SubnetList({ subnets }: { subnets: Pick<Subnetwork, 'name' | 'region'>[] }) {
-  if (!subnets.length) return <span className="font-mono">—</span>
-  return (
-    <span>
-      {subnets.map((s, i) => (
-        <Fragment key={`${s.region}/${s.name}`}>
-          {i > 0 && ', '}
-          <SubnetLink region={lastSeg(s.region)} name={s.name} />
-        </Fragment>
-      ))}
-    </span>
-  )
 }
 
 const TABS = [
