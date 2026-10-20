@@ -55,13 +55,6 @@ export interface Router extends Resource {
   nats?: RouterNat[]
 }
 
-export interface Address extends Resource {
-  address?: string
-  addressType?: string
-  status?: string
-  users?: string[]
-}
-
 /** RouterRef names a router: a Project, its region and its name. */
 export interface RouterRef {
   project: string
@@ -263,21 +256,6 @@ export const mappingsQuery = (r: RouterRef, nat: string) =>
   queryOptions({
     queryKey: ['compute', 'nat', 'mappings', r, nat],
     queryFn: () => natMappings(r, nat),
-  })
-
-/** addressesQuery lists a region's external addresses, which can be NAT IPs. */
-export const addressesQuery = (project: string, region: string) =>
-  queryOptions({
-    queryKey: ['compute', 'nat', 'addresses', project, region],
-    queryFn: async () =>
-      (
-        (
-          await gcpFetch<{ items?: Address[] }>(
-            `${API}projects/${enc(project)}/regions/${enc(region)}/addresses`,
-          )
-        ).items ?? []
-      ).filter((a) => (a.addressType ?? 'EXTERNAL') === 'EXTERNAL'),
-    enabled: !!project && !!region,
   })
 
 export const sinkQuery = () =>

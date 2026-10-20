@@ -1,13 +1,13 @@
-import { block, gcloud, omit, resource, type Recipe } from '@/lib/copyAs'
+import { block, gcloud, keyValues, omit, resource, type Recipe } from '@/lib/copyAs'
 
 import { lastSeg, relPath } from '../lb/api'
-import type { Firewall, Network, Route, Subnetwork } from './api'
+import type { Address, Firewall, Network, Route, Subnetwork } from './api'
 import { formatRules } from './form'
 
 // Copy as (FR-UI-015) for the VPC view's resources: gcloud compute
-// networks (subnets) create, firewall-rules create and routes create, the
-// compute/v1 requests, and the google_compute_network, _subnetwork,
-// _firewall and _route resources.
+// networks (subnets) create, firewall-rules create, routes create and
+// addresses create, the compute/v1 requests, and the google_compute_network,
+// _subnetwork, _firewall, _route, _address and _global_address resources.
 
 const API = '/compute/v1/'
 
@@ -134,6 +134,73 @@ export function firewallRecipe(f: Firewall, project: string): Recipe {
         block({ protocol: r.IPProtocol, ports: r.ports }),
       ),
       log_config: logged ? block({ metadata: metadata || 'INCLUDE_ALL_METADATA' }) : undefined,
+    }),
+  }
+}
+
+/**
+ * addressRecipe copies an address. An external one leaves its IP to the
+ * API, which picks one from its pool; an internal one keeps it. gcloud
+ * sets labels after the address is created.
+ */
+export function addressRecipe(a: Address, project: string): Recipe {
+  const region = lastSeg(a.region)
+  const internal = a.addressType === 'INTERNAL'
+  const scope = region ? { region } : { global: true }
+  const create = gcloud(['compute', 'addresses', 'create', a.name], {
+    project,
+    ...scope,
+    description: a.description,
+    addresses: internal ? a.address : undefined,
+    'prefix-length': a.prefixLength,
+    subnet: a.subnetwork && lastSeg(a.subnetwork),
+    network: a.network && lastSeg(a.network),
+    purpose: a.purpose,
+    'network-tier': a.networkTier,
+    'ip-version': region ? undefined : a.ipVersion,
+  })
+  const labels = keyValues(a.labels)
+  return {
+    gcloud: labels.length
+      ? [
+          create,
+          gcloud(['compute', 'addresses', 'update', a.name], {
+            project,
+            ...scope,
+            'update-labels': labels,
+          }),
+        ]
+      : create,
+    rest: {
+      method: 'POST',
+      path: `${API}projects/${project}/${region ? `regions/${region}` : 'global'}/addresses`,
+      body: {
+        ...omit(a, [
+          ...OUTPUT,
+          'region',
+          'status',
+          'users',
+          'labelFingerprint',
+          ...(internal ? [] : ['address']),
+        ]),
+        ...(a.subnetwork ? { subnetwork: relPath(a.subnetwork) } : {}),
+        ...(a.network ? { network: relPath(a.network) } : {}),
+      },
+    },
+    tofu: resource(region ? 'google_compute_address' : 'google_compute_global_address', a.name, {
+      project,
+      name: a.name,
+      region: region || undefined,
+      description: a.description,
+      address: internal ? a.address : undefined,
+      address_type: a.addressType,
+      purpose: a.purpose,
+      prefix_length: a.prefixLength,
+      subnetwork: a.subnetwork && relPath(a.subnetwork),
+      network: a.network && relPath(a.network),
+      network_tier: a.networkTier,
+      ip_version: region ? undefined : a.ipVersion,
+      labels: a.labels,
     }),
   }
 }

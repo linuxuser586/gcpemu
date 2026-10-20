@@ -4,14 +4,15 @@ import { admin, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 import { gcpFetch } from '@/api/fetch'
 
-import { waitOperation, type Operation, type Resource } from '../lb/api'
+import { relPath, waitOperation, type Operation, type Resource } from '../lb/api'
 
 // The VPC network view's reads and writes: networks and subnetworks on
 // compute v1, with their custom methods (switchToCustomMode,
-// expandIpCidrRange, setPrivateIpGoogleAccess), firewall rules and routes. The Host attachment
-// (ADR 0014) is not modelled on GCP: its Offered ports are on the admin
-// API only. Other views (Cloud NAT, Cloud DNS) read networks and
-// subnetworks from here.
+// expandIpCidrRange, setPrivateIpGoogleAccess), firewall rules, routes,
+// and regional and global addresses. The Host attachment (ADR 0014) is
+// not modelled on GCP: its Offered ports are on the admin API only. Other
+// views (Cloud NAT, Cloud DNS) read networks, subnetworks and addresses
+// from here.
 
 export type HostOffers = components['schemas']['HostOffers']
 export type ContainerNetwork = components['schemas']['ContainerNetwork']
@@ -77,6 +78,26 @@ export interface Route extends Resource {
   routeType?: string
 }
 
+/**
+ * Address is a regional or global address: an external IP, an internal
+ * IP of a subnetwork, or a global range reserved for private services
+ * access (purpose VPC_PEERING, with prefixLength).
+ */
+export interface Address extends Resource {
+  address?: string
+  addressType?: 'EXTERNAL' | 'INTERNAL'
+  purpose?: string
+  network?: string
+  subnetwork?: string
+  prefixLength?: number
+  networkTier?: string
+  ipVersion?: string
+  status?: string
+  users?: string[]
+  labels?: Record<string, string>
+  labelFingerprint?: string
+}
+
 /** DEFAULT_PRIORITY is a firewall rule's or route's priority when it is sent none. */
 export const DEFAULT_PRIORITY = 1000
 
@@ -98,6 +119,13 @@ export interface SubnetRef {
   project: string
   region: string
   subnetwork: string
+}
+
+/** AddressRef names an address: a Project, its region ("" for global) and its name. */
+export interface AddressRef {
+  project: string
+  region: string
+  address: string
 }
 
 const API = '/compute/v1/'
@@ -206,6 +234,57 @@ export const insertRoute = (project: string, body: unknown) =>
 export const deleteRoute = (project: string, name: string) =>
   write(routePath(project, name), 'DELETE')
 
+// ---- addresses ----
+
+/** addressesPath is the path of a region's addresses, or the global ones. */
+const addressesPath = (project: string, region: string) =>
+  `projects/${project}/${region ? `regions/${region}` : 'global'}/addresses`
+
+export const addressPath = (r: AddressRef) =>
+  `${addressesPath(r.project, r.region)}/${enc(r.address)}`
+
+/** addressRefOf is the AddressRef of an address's selfLink. */
+export function addressRefOf(link: string | undefined): AddressRef | undefined {
+  const m = /^projects\/([^/]+)\/(?:global|regions\/([^/]+))\/addresses\/([^/]+)$/.exec(
+    relPath(link),
+  )
+  return m ? { project: m[1]!, region: m[2] ?? '', address: decodeURIComponent(m[3]!) } : undefined
+}
+
+/**
+ * listAddresses lists a Project's regional and global addresses: the
+ * aggregated list, and global/addresses for an API whose aggregated list
+ * leaves the global ones out.
+ */
+export async function listAddresses(project: string): Promise<Address[]> {
+  const [regional, global] = await Promise.all([
+    aggregated<'addresses', Address>(project, 'addresses'),
+    gcpFetch<{ items?: Address[] }>(`${API}projects/${enc(project)}/global/addresses`),
+  ])
+  const seen = new Set<string>()
+  return [...regional, ...(global.items ?? [])].filter((a) => {
+    const key = relPath(a.selfLink) || a.name
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export const getAddress = (r: AddressRef) => gcpFetch<Address>(API + addressPath(r))
+
+/** insertAddress reserves an address in region, or a global one for "". */
+export const insertAddress = (project: string, region: string, body: unknown) =>
+  write(addressesPath(project, region), 'POST', body)
+
+export const deleteAddress = (r: AddressRef) => write(addressPath(r), 'DELETE')
+
+/** setAddressLabels replaces an address's labels; the fingerprint must be its current one. */
+export const setAddressLabels = (
+  r: AddressRef,
+  labels: Record<string, string>,
+  labelFingerprint?: string,
+) => write(`${addressPath(r)}/setLabels`, 'POST', { labels, labelFingerprint })
+
 // ---- queries ----
 
 // Keys are under "compute": the events bridge marks them stale when a
@@ -261,6 +340,34 @@ export const routeQuery = (project: string, name: string) =>
   queryOptions({
     queryKey: ['compute', 'vpc', 'route', project, name],
     queryFn: () => getRoute(project, name),
+  })
+
+export const allAddressesQuery = (project: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'addresses', project],
+    queryFn: () => listAddresses(project),
+    enabled: !!project,
+  })
+
+export const addressQuery = (r: AddressRef) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'address', r],
+    queryFn: () => getAddress(r),
+  })
+
+/** addressesQuery lists a region's external addresses, which can be NAT IPs. */
+export const addressesQuery = (project: string, region: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'regionAddresses', project, region],
+    queryFn: async () =>
+      (
+        (
+          await gcpFetch<{ items?: Address[] }>(
+            `${API}projects/${enc(project)}/regions/${enc(region)}/addresses`,
+          )
+        ).items ?? []
+      ).filter((a) => (a.addressType ?? 'EXTERNAL') === 'EXTERNAL'),
+    enabled: !!project && !!region,
   })
 
 /** OFFERS_POLL_MS: offers change from the CLI, outside the console. */

@@ -18,9 +18,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 
 import { lastSeg, relPath } from '../lb/api'
-import { resourceField, subnetsQuery } from '../vpc/api'
+import { addressesQuery, resourceField, subnetsQuery } from '../vpc/api'
 import {
-  addressesQuery,
   patchRouter,
   regionSubnets,
   routerPath,
