@@ -182,6 +182,9 @@ func (o *rootOpts) caTrustCmd(install bool, loadCA func(*cobra.Command) (*config
 			return err
 		}
 		afterPlan()
+		if install {
+			criInstallNote(cmd.ErrOrStderr(), h)
+		}
 		return nil
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
@@ -223,6 +226,8 @@ type trustHost struct {
 	etc      string // "/etc" unless set (tests)
 	lookPath func(string) bool
 	isDir    func(string) bool
+	// containerd runs the containerd binary (checkCRIConfigPath).
+	containerd func(args ...string) ([]byte, error)
 
 	// NSS (browser) databases: home holds them, nssUser owns them when
 	// gcpemu runs as root under sudo, nssHas reports whether a database
@@ -241,6 +246,7 @@ func hostTrust() trustHost {
 		isDir:      func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
 		nssHas:     nssHas,
 		fileExists: fileExists,
+		containerd: runContainerd,
 	}
 	h.home, h.nssUser = nssUser(h.root)
 	return h
@@ -369,10 +375,13 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 // own per-registry trust, read on every pull, so no daemon restart is
 // needed. Docker reads every *.crt in certs.d/HOST, so the CA goes in as
 // gcpemu-INSTANCE.crt next to the user's files; containerd's hosts.toml
-// is written only where none exists or gcpemu wrote it (config_path must
-// point at /etc/containerd/certs.d, as on GKE and k3s). Linux only: Docker
-// Desktop on macOS uses the system keychain, and a VM runtime's own store
-// is left to the command from vmTrustCommand.
+// is written only where none exists or gcpemu wrote it. Kubernetes (CRI)
+// pulls read those files only when CRI's config_path includes
+// /etc/containerd/certs.d, which it does by default only from containerd
+// 2.2 on Linux (checkCRIConfigPath; nerdctl reads them whatever it says);
+// k3s and GKE nodes keep their own folders, which this does not cover
+// (#583). Linux only: Docker Desktop on macOS uses the system keychain,
+// and a VM runtime's own store is left to the command from vmTrustCommand.
 func containerTrustPlan(h trustHost, instance string, c trustCert, install bool) []trustStep {
 	if h.goos != "linux" {
 		return nil

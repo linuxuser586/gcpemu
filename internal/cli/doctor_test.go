@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -422,7 +423,8 @@ func TestCheckCATrust(t *testing.T) {
 }
 
 // testEtc returns a temporary /etc with the given subdirectories, for
-// checkRuntimeTrust.
+// checkRuntimeTrust, and a containerd with CRI disabled, as Docker's
+// containerd.io package ships it.
 func testEtc(t *testing.T, dirs ...string) trustHost {
 	t.Helper()
 	etc := t.TempDir()
@@ -431,7 +433,8 @@ func testEtc(t *testing.T, dirs ...string) trustHost {
 			t.Fatal(err)
 		}
 	}
-	return trustHost{goos: "linux", etc: etc, isDir: func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }}
+	return trustHost{goos: "linux", etc: etc, isDir: func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
+		containerd: fakeContainerd("containerd containerd.io 1.7.27 05044ec\n", "disabled_plugins = [\"cri\"]\nversion = 2\n", nil)}
 }
 
 // writeTestFile writes b to name, creating its directory.
@@ -521,6 +524,57 @@ func TestCheckRuntimeTrustContainerd(t *testing.T) {
 	want = notTrusted(2) + " (run `gcpemu ca install`; add `ca = \"" + shared + "\"` to " + toml(hosts[0]) + ", which `gcpemu ca install` does not change)\n"
 	if got := run(); got != want {
 		t.Errorf("user-written and missing hosts.toml: output %q, want %q", got, want)
+	}
+}
+
+// Next to containerd's hosts.toml line, doctor says whether Kubernetes
+// (CRI) pulls read those files, from checkCRIConfigPath: a note with the
+// fix when they do not or containerd cannot say, nothing when CRI is
+// disabled or there is no etc/containerd (#583).
+func TestCheckRuntimeTrustCRI(t *testing.T) {
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")})
+	h := testEtc(t, "containerd")
+	certsD := h.etc + "/containerd/certs.d"
+	run := func() string {
+		var out strings.Builder
+		checkRuntimeTrust(&out, h, "dev", pemBytes, "")
+		_, cri, _ := strings.Cut(out.String(), "registry hosts (run `gcpemu ca install`)\n")
+		return cri
+	}
+	if got := run(); got != "" {
+		t.Errorf("CRI disabled: output %q, want no CRI line", got)
+	}
+
+	h.containerd = fakeContainerd(containerd17, dump17, nil)
+	want := "[--  ] Kubernetes (CRI) image pulls by containerd 1.7.24 do not read the hosts.toml files in " + certsD +
+		", as its CRI config_path does not list that folder (Docker's pulls are not affected)\n" +
+		"       fix: add this to " + h.etc + "/containerd/config.toml (merged with that table if it is already there), then run `sudo systemctl restart containerd`:\n" +
+		"         version = 2\n" +
+		"         [plugins.\"io.containerd.grpc.v1.cri\".registry]\n" +
+		"           config_path = \"" + certsD + "\"\n"
+	if got := run(); got != want {
+		t.Errorf("1.7: output %q, want %q", got, want)
+	}
+
+	h.containerd = fakeContainerd("containerd github.com/containerd/containerd/v2 v2.2.0 1c4457e\n", strings.ReplaceAll(dump2, "CONFIG_PATH", ""), nil)
+	want = "[ok  ] Kubernetes (CRI) image pulls by containerd 2.2.0 read the hosts.toml files in " + certsD + "\n"
+	if got := run(); got != want {
+		t.Errorf("2.2: output %q, want %q", got, want)
+	}
+
+	h.containerd = func(...string) ([]byte, error) { return nil, &exec.Error{Name: "containerd", Err: exec.ErrNotFound} }
+	want = "[--  ] cannot check whether Kubernetes (CRI) image pulls by containerd read " + certsD + ": containerd is not on PATH\n"
+	if got := run(); got != want {
+		t.Errorf("no binary: output %q, want %q", got, want)
+	}
+
+	for name, h := range map[string]trustHost{"no etc/containerd": testEtc(t, "docker"), "darwin": {goos: "darwin"}} {
+		h.containerd = fakeContainerd(containerd17, dump17, nil)
+		var out strings.Builder
+		checkRuntimeTrust(&out, h, "dev", pemBytes, "")
+		if strings.Contains(out.String(), "CRI") {
+			t.Errorf("%s: output %q, want no CRI line", name, out.String())
+		}
 	}
 }
 
