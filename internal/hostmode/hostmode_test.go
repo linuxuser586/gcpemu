@@ -135,3 +135,19 @@ func TestHostMode(t *testing.T) {
 		}
 	})
 }
+
+// TestHostInterface checks how Status.Interface is chosen: the interface
+// the emulator's own process sees wins, then the bridge the runtime
+// reports for the external network (a Containerized Instance, #495).
+func TestHostInterface(t *testing.T) {
+	for _, c := range []struct{ own, bridge, want string }{
+		{"br-own", "br-runtime", "br-own"},
+		{"br-own", "", "br-own"},
+		{"", "br-runtime", "br-runtime"},
+		{"", "", ""},
+	} {
+		if got := hostmode.HostInterface(c.own, c.bridge); got != c.want {
+			t.Errorf("HostInterface(%q, %q) = %q, want %q", c.own, c.bridge, got, c.want)
+		}
+	}
+}
