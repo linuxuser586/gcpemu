@@ -6,10 +6,8 @@ import { SERVICES } from '../src/lib/services'
 const allowed = /^\/(console\/|_emu\/v1\/|[a-z]+\/v\d[a-z0-9]*\/)/
 
 test.describe('FR-UI-002 serving', () => {
-  test('/console redirects and deep links survive a hard reload', async ({ page }, testInfo) => {
+  test('/console redirects and deep links survive a hard reload', async ({ page }) => {
     await page.goto('/console?project=deep-link-project')
-    // TEMPORARY (#477): fail the first attempt only, to show the flaky upload.
-    expect(testInfo.retry).toBe(1)
     await expect(page).toHaveURL(/\/console\/\?project=deep-link-project$/)
 
     await page.goto('/console/pubsub?project=deep-link-project')
