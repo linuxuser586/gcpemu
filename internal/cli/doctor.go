@@ -121,7 +121,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			caPath := filepath.Join(dir, ca.CertFile)
 			if pemBytes, err := os.ReadFile(caPath); err == nil {
 				fmt.Fprintf(out, "[ok  ] emulator CA present at %s\n", caPath)
-				checkCATrust(out, cfg.Instance, caPath, pemBytes, inContainer)
+				checkCATrust(out, cfg.Instance, pemBytes, inContainer)
 			} else {
 				fmt.Fprintln(out, "[--  ] emulator CA not created yet (created on first start)")
 			}
@@ -549,10 +549,12 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 // store. Missing trust is a note, not a failure, since only HTTPS to
 // load balancers and host mode need it. In a Containerized Instance
 // (inContainer) trust is the host's, which the container cannot see, so
-// it notes that the CA at caPath is to be trusted there.
-func checkCATrust(out io.Writer, instance, caPath string, pemBytes []byte, inContainer bool) {
+// it notes the commands that trust the CA there (#496).
+func checkCATrust(out io.Writer, instance string, pemBytes []byte, inContainer bool) {
 	if inContainer {
-		fmt.Fprintf(out, "[--  ] Instance CA trust is the host's in a Containerized Instance: trust %s on the host, not in the container\n", caPath)
+		fmt.Fprintln(out, "[--  ] Instance CA trust is the host's in a Containerized Instance: on the host, not in the container, run "+
+			"`docker exec CONTAINER /gcpemu ca print > gcpemu-ca.pem` and `gcpemu --instance container ca install --cert gcpemu-ca.pem` "+
+			"(README: \"Trusting the CA on the host\")")
 		return
 	}
 	block, _ := pem.Decode(pemBytes)
