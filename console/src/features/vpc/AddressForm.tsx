@@ -20,20 +20,12 @@ import { useViewState } from '@/lib/viewState'
 import { lastSeg, relPath } from '../lb/api'
 import { invalid, nameMessage, requiredMessage } from '../lb/spec'
 import { insertAddress, networksQuery, subnetsQuery } from './api'
-import { NAME, networkRef, networkValue, str, withFieldError, type Obj } from './form'
+import { isIPv4, NAME, networkRef, networkValue, str, withFieldError, type Obj } from './form'
 import { addressPage } from './links'
 
 // The create form for addresses (FR-UI-011), which sends addresses.insert
 // in a region or globalAddresses.insert. An address cannot be changed
 // once it is reserved, but for its labels (setLabels, on its page).
-
-const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
-
-/** isIPv4 is whether s is a dotted IPv4 address. */
-const isIPv4 = (s: string) => {
-  const m = IPV4.exec(s.trim())
-  return !!m && m.slice(1).every((o) => Number(o) <= 255)
-}
 
 const PURPOSES = ['VPC_PEERING', 'PRIVATE_SERVICE_CONNECT'] as const
 
@@ -59,11 +51,11 @@ const schema = z
     if (v.scope === 'regional' && !v.region.trim()) add('region', 'Choose a region.')
     const peering = v.scope === 'global' && v.addressType === 'INTERNAL'
     const ip = v.address.trim()
-    if (ip && !isIPv4(ip)) add('address', invalid('address', ip, 'Must be a valid IPv4 address.'))
+    // A Private Service Connect address names its IP.
+    if ((ip || (peering && v.purpose === 'PRIVATE_SERVICE_CONNECT')) && !isIPv4(ip))
+      add('address', invalid('address', ip, 'Must be a valid IPv4 address.'))
     if (peering) {
       if (!v.network.trim()) add('network', requiredMessage('network'))
-      if (v.purpose === 'PRIVATE_SERVICE_CONNECT' && !ip)
-        add('address', invalid('address', ip, 'Must be a valid IPv4 address.'))
       if (v.purpose === 'VPC_PEERING') {
         const p = v.prefixLength.trim()
         if (!p) add('prefixLength', requiredMessage('prefixLength'))
@@ -147,7 +139,8 @@ export function CreateAddress() {
       'prefixLength',
       peering && v.purpose === 'VPC_PEERING' && v.prefixLength.trim() ? Number(v.prefixLength) : '',
     )
-    put('networkTier', !isInternal ? v.networkTier : '')
+    // Only a regional external address has a network tier.
+    put('networkTier', !isGlobal && !isInternal ? v.networkTier : '')
     put('description', v.description)
     const labels = parseLabels(v.labels)
     put('labels', Object.keys(labels).length ? labels : '')
@@ -268,7 +261,7 @@ export function CreateAddress() {
               />
             </Field>
           )}
-          {!internal && (
+          {!internal && !global && (
             <Field
               id="address-tier"
               label="Network tier"

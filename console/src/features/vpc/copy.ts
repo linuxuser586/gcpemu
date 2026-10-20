@@ -140,8 +140,9 @@ export function firewallRecipe(f: Firewall, project: string): Recipe {
 
 /**
  * addressRecipe copies an address. An external one leaves its IP to the
- * API, which picks one from its pool; an internal one keeps it. gcloud
- * sets labels after the address is created.
+ * API, which picks one from its pool; an internal one keeps it. Only a
+ * regional address has a network tier, and gcloud sets labels after the
+ * address is created.
  */
 export function addressRecipe(a: Address, project: string): Recipe {
   const region = lastSeg(a.region)
@@ -156,7 +157,7 @@ export function addressRecipe(a: Address, project: string): Recipe {
     subnet: a.subnetwork && lastSeg(a.subnetwork),
     network: a.network && lastSeg(a.network),
     purpose: a.purpose,
-    'network-tier': a.networkTier,
+    'network-tier': region ? a.networkTier : undefined,
     'ip-version': region ? undefined : a.ipVersion,
   })
   const labels = keyValues(a.labels)
@@ -182,6 +183,7 @@ export function addressRecipe(a: Address, project: string): Recipe {
           'users',
           'labelFingerprint',
           ...(internal ? [] : ['address']),
+          ...(region ? [] : ['networkTier']),
         ]),
         ...(a.subnetwork ? { subnetwork: relPath(a.subnetwork) } : {}),
         ...(a.network ? { network: relPath(a.network) } : {}),
@@ -198,7 +200,7 @@ export function addressRecipe(a: Address, project: string): Recipe {
       prefix_length: a.prefixLength,
       subnetwork: a.subnetwork && relPath(a.subnetwork),
       network: a.network && relPath(a.network),
-      network_tier: a.networkTier,
+      network_tier: region ? a.networkTier : undefined,
       ip_version: region ? undefined : a.ipVersion,
       labels: a.labels,
     }),

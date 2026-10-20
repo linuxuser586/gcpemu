@@ -8,8 +8,9 @@ import { routerRefOf } from '../nat/api'
 import { routerPage } from '../nat/NatLayout'
 import type { AddressRef, SubnetRef, Subnetwork } from './api'
 
-// The VPC network view's paths, and links to networks and subnetworks
-// that other views (Cloud NAT) show too.
+// The VPC network view's paths, links to networks and subnetworks that
+// other views (Cloud NAT) show too, and links from an address to the
+// resources that use it in their own views (Load Balancer, Cloud NAT).
 
 const enc = encodeURIComponent
 

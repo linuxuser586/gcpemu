@@ -113,6 +113,42 @@ describe('Copy as', () => {
     expect(r.tofu).toContain('  address      = "10.40.0.9"\n')
   })
 
+  it('copies a global external address, which has no network tier', () => {
+    const r = addressRecipe(
+      webIp({
+        name: 'lb-ip',
+        selfLink: link('global/addresses/lb-ip'),
+        region: undefined,
+        address: '34.120.0.1',
+        ipVersion: 'IPV4',
+      }),
+      P,
+    )
+    expect(r.gcloud).toBe(
+      [
+        'gcloud compute addresses create lb-ip \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --ip-version=IPV4',
+      ].join('\n'),
+    )
+    expect(r.rest).toEqual({
+      method: 'POST',
+      path: `/compute/v1/projects/${P}/global/addresses`,
+      body: { name: 'lb-ip', addressType: 'EXTERNAL', ipVersion: 'IPV4' },
+    })
+    expect(r.tofu).toBe(
+      [
+        'resource "google_compute_global_address" "lb-ip" {',
+        `  project      = "${P}"`,
+        '  name         = "lb-ip"',
+        '  address_type = "EXTERNAL"',
+        '  ip_version   = "IPV4"',
+        '}',
+      ].join('\n'),
+    )
+  })
+
   it('copies a global private services access allocation', () => {
     const r = addressRecipe(
       webIp({
@@ -497,6 +533,7 @@ describe('addresses', () => {
     await user.type(await screen.findByLabelText('Name'), 'psa-two')
     await user.selectOptions(screen.getByLabelText('Scope'), 'global')
     expect(screen.queryByLabelText('Region')).toBeNull()
+    expect(screen.queryByLabelText('Network tier')).toBeNull()
     await user.selectOptions(screen.getByLabelText('Type'), 'INTERNAL')
     await user.type(screen.getByLabelText('Prefix length'), '30')
     await user.click(screen.getByRole('button', { name: 'Reserve' }))

@@ -63,7 +63,7 @@ export function AddressPage() {
           <h1 className="text-2xl font-semibold">
             <span className="font-mono">{ref.address}</span>{' '}
             <span className="text-sm font-normal text-muted-foreground">
-              {ref.region || 'global'}
+              {ref.region || 'Global'}
             </span>
           </h1>
         </div>
@@ -189,7 +189,7 @@ function SetLabels({ r, address }: { r: AddressRef; address: Address }) {
               className="font-mono"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              {...fieldAria('address-labels', error, 'key=value')}
+              {...fieldAria('address-labels', error, 'hint')}
             />
           </Field>
           <DialogFooter>

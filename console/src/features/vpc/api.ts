@@ -252,9 +252,9 @@ export function addressRefOf(link: string | undefined): AddressRef | undefined {
 }
 
 /**
- * listAddresses lists a Project's regional and global addresses: the
- * aggregated list, and global/addresses for an API whose aggregated list
- * leaves the global ones out.
+ * listAddresses lists a Project's regional and global addresses, each
+ * once: the aggregated list, which has the global ones too, and
+ * global/addresses, so that they are listed even where it has not.
  */
 export async function listAddresses(project: string): Promise<Address[]> {
   const [regional, global] = await Promise.all([
@@ -355,8 +355,8 @@ export const addressQuery = (r: AddressRef) =>
     queryFn: () => getAddress(r),
   })
 
-/** addressesQuery lists a region's external addresses, which can be NAT IPs. */
-export const addressesQuery = (project: string, region: string) =>
+/** externalAddressesQuery lists a region's external addresses, which can be NAT IPs. */
+export const externalAddressesQuery = (project: string, region: string) =>
   queryOptions({
     queryKey: ['compute', 'vpc', 'regionAddresses', project, region],
     queryFn: async () =>
