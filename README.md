@@ -620,8 +620,8 @@ shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints i
 `-e GCPEMU_ADMIN_TOKEN=...` sets it.
 
 `docker exec gcpemu /gcpemu doctor` checks the container, not the host: CA trust and the
-host-only checks (loopback aliases, Windows' excluded port ranges) are notes to act on on the
-host, and every fix names a `docker run` flag or a host command.
+host-only checks (loopback aliases, Windows' excluded port ranges) are notes for the host, and
+every fix names a `docker run` flag or a host command.
 
 A load balancer forwarding rule listens on a loopback address inside the container, which `-p`
 never forwards to, so each rule is also served on a port the container publishes (ADR 0012), and

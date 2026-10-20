@@ -387,7 +387,7 @@ func TestCheckCATrust(t *testing.T) {
 		inContainer bool
 		want        string
 	}{
-		{true, "[--  ] emulator CA trust is the host's in a Containerized Instance: trust /data/default/ca.pem on the host, not in the container\n"},
+		{true, "[--  ] Instance CA trust is the host's in a Containerized Instance: trust /data/default/ca.pem on the host, not in the container\n"},
 		{false, "[ok  ] emulator CA trusted by the OS trust store\n"},
 	} {
 		var out strings.Builder

@@ -518,7 +518,7 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 // it notes that the CA at caPath is to be trusted there.
 func checkCATrust(out io.Writer, instance, caPath string, pemBytes []byte, inContainer bool) {
 	if inContainer {
-		fmt.Fprintf(out, "[--  ] emulator CA trust is the host's in a Containerized Instance: trust %s on the host, not in the container\n", caPath)
+		fmt.Fprintf(out, "[--  ] Instance CA trust is the host's in a Containerized Instance: trust %s on the host, not in the container\n", caPath)
 		return
 	}
 	block, _ := pem.Decode(pemBytes)
@@ -639,7 +639,7 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 		for _, a := range addrs {
 			if ipn, ok := a.(*net.IPNet); ok {
 				local[ipn.IP.String()] = true
-				if !ipn.IP.IsLoopback() {
+				if !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
 					lan = append(lan, ipn.IP.String())
 				}
 			}
@@ -677,16 +677,18 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 
 // checkLBPort reports whether --lb-bind's ports below start, the
 // unprivileged port start, are relayed by the lb-lan container, which
-// needs hasRuntime.
+// needs hasRuntime. In a Containerized Instance (inContainer) the runtime
+// is the host's, reached through its socket mounted in the container.
 func checkLBPort(report func(bool, string, string), start int, hasRuntime, inContainer bool) {
 	if start <= 80 {
 		return
 	}
-	fix := "install a container runtime, or let the emulator bind them: " + sysctlFix(80, inContainer)
+	runtimeFix := "install a container runtime"
 	if inContainer {
-		fix = "mount the container runtime's socket, or let the emulator bind them: " + sysctlFix(80, inContainer)
+		runtimeFix = "mount the container runtime's socket (`docker run -v /var/run/docker.sock:/var/run/docker.sock`)"
 	}
-	report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start), fix)
+	report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
+		runtimeFix+", or let the emulator bind them: "+sysctlFix(80, inContainer))
 }
 
 // sysctlFix is the command that lets the emulator bind ports from port
