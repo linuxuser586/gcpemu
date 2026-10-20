@@ -9,6 +9,7 @@ import (
 	computev1 "google.golang.org/api/compute/v1"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -35,7 +36,7 @@ type containerNetworkJSON struct {
 	FallbackRange string `json:"fallbackRange"`
 	Translated    bool   `json:"translated"`
 	// HostAddress is empty when it is not known yet, or the host has none
-	// (an Instance inside a container).
+	// (a Containerized Instance).
 	HostAddress string          `json:"hostAddress"`
 	Containers  []containerJSON `json:"containers"`
 }
@@ -75,7 +76,7 @@ func ipOwner(ct runtime.Container) string {
 // containerNetwork is st in the admin API, with those of cts attached to
 // it; owners are its IP allocations. hostAttached is the Host address last
 // served for it, and direct says whether the host routes to it (no VM
-// relay, and not inside a container), where the Host address is its
+// relay, and not a Containerized Instance), where the Host address is its
 // gateway.
 func containerNetwork(st *vpcNet, owners []ownedIP, cts []runtime.Container, hostAttached string, direct bool) containerNetworkJSON {
 	out := containerNetworkJSON{
@@ -99,15 +100,16 @@ func containerNetwork(st *vpcNet, owners []ownedIP, cts []runtime.Container, hos
 			Name: ct.Name, Service: ct.Labels[runtime.LabelService], Role: ct.Labels[runtime.LabelRole],
 			Address: ip, DeclaredAddress: ip,
 		}
+		owner := ipOwner(ct)
 		if st.translated() {
-			c.DeclaredAddress = declared[ipOwner(ct)]
-			if c.Service == "compute" && c.Role == "nat" {
+			c.DeclaredAddress = declared[owner]
+			if c.Service == "compute" && c.Role == natRole {
 				// The NAT egress proxy is aliased at the reserved tail.
 				dc, _ := parseCIDR(st.Range, false)
 				c.DeclaredAddress = ipString(dc.reservedTail())
 			}
 		}
-		if ipOwner(ct) == hostOwner {
+		if owner == hostOwner {
 			relay = ip
 		}
 		out.Containers = append(out.Containers, c)
@@ -179,16 +181,18 @@ func (s *Service) serveContainerNetworks(w http.ResponseWriter, r *http.Request)
 }
 
 // vpcContainers lists the Instance's containers, and whether the host
-// routes to its VPC container networks. Without a runtime there are none.
+// routes to its VPC container networks. It never connects the runtime
+// (which reclaims orphans): until something has, there are none.
 func (s *Service) vpcContainers(r *http.Request) ([]runtime.Container, bool) {
-	if s.env.Containers == nil {
+	c, ok := s.env.Containers.(emu.ConnectedRuntime)
+	if !ok {
+		return nil, false
+	}
+	rt := c.Connected()
+	if rt == nil {
 		return nil, false
 	}
 	ctx := r.Context()
-	rt, err := s.env.Containers.Runtime(ctx)
-	if err != nil {
-		return nil, false
-	}
 	cts, err := rt.ListContainers(ctx, map[string]string{runtime.LabelInstance: rt.InstanceID})
 	if err != nil {
 		s.env.Log.Warn("compute: listing the containers on VPC container networks", "err", err)

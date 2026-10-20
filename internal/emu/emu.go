@@ -362,3 +362,11 @@ type Containers interface {
 	// when no relay runs.
 	RelayIP() string
 }
+
+// ConnectedRuntime is implemented by Containers that can report the
+// runtime without connecting it: Connected is nil until a first Runtime
+// call has connected it. Read-only views use it so that looking never
+// detects the runtime or reclaims orphans.
+type ConnectedRuntime interface {
+	Connected() *runtime.Manager
+}

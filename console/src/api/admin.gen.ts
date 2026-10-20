@@ -842,7 +842,7 @@ export interface paths {
         };
         /**
          * The VPC container networks of a Project (compute service; Web console VPC network view).
-         * @description The emulator's own view of each VPC container network: the container network that backs one subnetwork or private services access allocation, its Declared range, the Fallback range it uses instead when the Declared range overlapped another network on the host, and the Managed containers attached to it with the address each reports and the one it holds. A subnetwork gets its VPC container network when a Managed container first uses it; listing never realises one.
+         * @description The emulator's own view of each VPC container network: the container network that backs one subnetwork or private services access allocation, its Declared range, the Fallback range it uses instead when the Declared range overlapped another network on the host, and the Managed containers attached to it with the address each reports and the one it holds. A subnetwork gets its VPC container network when a Managed container first uses it; listing never realises one, nor connects the container runtime: until a Service has, no containers are listed.
          */
         get: operations["listContainerNetworks"];
         put?: never;
@@ -1043,7 +1043,7 @@ export interface components {
             fallbackRange: string;
             /** @description On a Fallback range, whether Managed containers still hold and report Declared-range addresses, aliased onto their interfaces (ADR 0004). When false, they report Fallback-range addresses. */
             translated: boolean;
-            /** @description The Host address of a subnetwork's network, at which its workloads reach the host. It is not the subnetwork's gatewayAddress, though the two are the same IP on the Declared range where the host routes to the network. Empty when it is not known yet (on a VM runtime, until the VM relay joins the network), inside a container, and for a private services access allocation. */
+            /** @description The Host address of a subnetwork's network, at which its workloads reach the host. It is not the subnetwork's gatewayAddress, though the two are the same IP on the Declared range where the host routes to the network. Empty when it is not known yet (on a VM runtime, until the VM relay joins the network), for a Containerized Instance, and for a private services access allocation. */
             hostAddress: string;
             containers: {
                 /** @description The container's name. */

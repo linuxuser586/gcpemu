@@ -1067,7 +1067,9 @@ paths:
         when the Declared range overlapped another network on the host, and
         the Managed containers attached to it with the address each reports
         and the one it holds. A subnetwork gets its VPC container network
-        when a Managed container first uses it; listing never realises one.
+        when a Managed container first uses it; listing never realises one,
+        nor connects the container runtime: until a Service has, no
+        containers are listed.
       parameters:
         - name: project
           in: query
@@ -1374,8 +1376,8 @@ components:
             reach the host. It is not the subnetwork's gatewayAddress, though
             the two are the same IP on the Declared range where the host routes
             to the network. Empty when it is not known yet (on a VM runtime,
-            until the VM relay joins the network), inside a container, and for
-            a private services access allocation.
+            until the VM relay joins the network), for a Containerized
+            Instance, and for a private services access allocation.
         containers:
           type: array
           items:
