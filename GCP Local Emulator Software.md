@@ -581,7 +581,7 @@ In CI the emulator must start in one step, need no cloud credentials, and leave 
 | FR-CI-006 | Works inside a CI job container when the Docker socket is mounted (Docker-outside-of-Docker) and directly in GitLab CI, Buildkite and plain Docker. | S |
 | FR-CI-007 | `gcpemu wait --for 'gke/cluster=PROJECT/LOCATION/NAME' --for 'lb/health=BACKEND_SERVICE'` blocks until conditions hold, for scripting. | S |
 | FR-CI-008 | Exit code of `gcpemu run -- <cmd>` is the command's; the emulator is started before and torn down after. | S |
-| FR-CI-009 | Go test helper package (`gcpemu/testing`) starts an in-process instance per test or package with chosen services and returns configured clients. Not available for GKE/Cloud SQL without a runtime. | S |
+| FR-CI-009 | Go test helper package (`emutest`) starts an in-process instance per test or package with chosen services and returns configured clients. Not available for GKE/Cloud SQL without a runtime. | S |
 | FR-CI-010 | Pre-pulled image bundle (`gcpemu images save/load`) for air-gapped runners. | C |
 
 Illustrative workflow:

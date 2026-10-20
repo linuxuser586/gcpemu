@@ -60,7 +60,7 @@ func startWith(t *testing.T, svcs []string, opts ...emutest.Option) *env {
 
 // withConcurrency sets build.concurrency.
 func withConcurrency(n int) emutest.Option {
-	return func(c *config.Config) { c.Build.Concurrency = n }
+	return emutest.WithConfig(func(c *config.Config) { c.Build.Concurrency = n })
 }
 
 // step is a busybox step running a shell command.
@@ -135,7 +135,7 @@ func (e *env) awaitStep(id string, i int) {
 // belong to Builds.
 func (e *env) buildObjects() (containers, volumes []string) {
 	e.t.Helper()
-	rt, err := e.inst.Env.Containers.Runtime(e.ctx)
+	rt, err := e.inst.Internal().Env.Containers.Runtime(e.ctx)
 	if err != nil {
 		e.t.Fatal(err)
 	}

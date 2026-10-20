@@ -41,6 +41,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/services/dns"
 	"github.com/linuxuser586/gcpemu/services/lb"
 )
@@ -67,7 +68,7 @@ func TestGKEBackends(t *testing.T) {
 	emutest.HoldClusterSlot(t)
 	inst := emutest.Start(t, []string{"gke", "lb", "cdn", "ar"})
 	// Force the edge: some hosts let the emulator bind port 443 itself.
-	svc, _ := inst.Env.Lookup("lb")
+	svc, _ := inst.Internal().Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{Edge: true})
 	ctx := context.Background()
 	const zone = "us-central1-a"
@@ -129,7 +130,7 @@ func TestGKEBackends(t *testing.T) {
 		HostRules: []*computev1.HostRule{{Hosts: []string{"*"}, PathMatcher: "m"}},
 		PathMatchers: []*computev1.PathMatcher{{Name: "m", DefaultService: "global/backendServices/web",
 			PathRules: []*computev1.PathRule{{Paths: []string{"/api/*"}, Service: "global/backendServices/secure"}}}}}).Do())
-	leaf, _ := inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
+	leaf, _ := inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
 	chain, key, _ := ca.EncodeCert(leaf)
 	e.do(c.SslCertificates.Insert(proj, &computev1.SslCertificate{Name: "app", Certificate: string(chain), PrivateKey: string(key)}).Do())
 	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "https", UrlMap: "global/urlMaps/map", SslCertificates: []string{"global/sslCertificates/app"}}).Do())
@@ -152,13 +153,13 @@ func TestGKEBackends(t *testing.T) {
 	if lp != "443" || net.ParseIP(lh).IsLoopback() {
 		t.Fatalf("listener %s: want the edge on port 443", listener)
 	}
-	ds, _ := inst.Env.Lookup("dns")
+	ds, _ := inst.Internal().Env.Lookup("dns")
 	rrs, _ := ds.(*dns.Service).Resolve(ctx, "app.example.test", mdns.TypeA)
 	if len(rrs) != 1 || rrs[0].(*mdns.A).A.String() != lh {
 		t.Fatalf("app.example.test resolves to %v, want %s", rrs, lh)
 	}
 	cl := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: inst.Env.CA.Pool()},
+		TLSClientConfig: &tls.Config{RootCAs: inst.Internal().Env.CA.Pool()},
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(lh, "443"))
 		},
@@ -184,7 +185,7 @@ func TestGKEBackends(t *testing.T) {
 	if !strings.Contains(body, "path=/hello") || strings.Contains(body, "xff=127.0.0.1") {
 		t.Errorf("web response %q", body)
 	}
-	if out, err := exec.Command("curl", "-sS", "--max-time", "10", "--cacert", inst.Env.CA.Path(),
+	if out, err := exec.Command("curl", "-sS", "--max-time", "10", "--cacert", inst.Internal().Env.CA.Path(),
 		"--resolve", "app.example.test:443:"+lh, "https://app.example.test/curl").CombinedOutput(); err != nil || !strings.Contains(string(out), "path=/curl") {
 		t.Errorf("curl https://app.example.test/curl: %v %s", err, out)
 	}
@@ -273,9 +274,9 @@ func TestGKEBackends(t *testing.T) {
 	// Under the VM relay (ADR 0005), the edge's control, its data path
 	// (which health checks to pods also take) and its ingress went
 	// through it.
-	emutest.RequireRelayStream(t, inst, "the edge control port", fmt.Sprintf(":%d", lb.EdgeControlPort))
-	emutest.RequireRelayStream(t, inst, "edge data and health checks", fmt.Sprintf(":%d", lb.EdgeRelayPort))
-	emutest.RequireRelayStream(t, inst, "the edge ingress", "lb-edge-in")
+	emutestx.RequireRelayStream(t, inst, "the edge control port", fmt.Sprintf(":%d", lb.EdgeControlPort))
+	emutestx.RequireRelayStream(t, inst, "edge data and health checks", fmt.Sprintf(":%d", lb.EdgeRelayPort))
+	emutestx.RequireRelayStream(t, inst, "the edge ingress", "lb-edge-in")
 }
 
 func eventually(t *testing.T, timeout time.Duration, what string, cond func() bool) {
@@ -430,7 +431,7 @@ func negService(name string, port int) map[string]any {
 // LOCATION-docker.pkg.dev reference.
 func pushEchoImage(t *testing.T, inst *emutest.Instance) string {
 	t.Helper()
-	rt, err := inst.Env.Containers.Runtime(context.Background())
+	rt, err := inst.Internal().Env.Containers.Runtime(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,8 +462,8 @@ func pushEchoImage(t *testing.T, inst *emutest.Instance) string {
 	}
 	e := &env{t: t, inst: inst}
 	e.rest("POST", "/artifactregistry/v1/projects/"+proj+"/locations/us-central1/repositories?repositoryId=lb", map[string]any{"format": "DOCKER"})
-	keys, _ := inst.Env.Lookup("iam")
-	tok, _, err := keys.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(inst.Config.DefaultPrincipal))
+	keys, _ := inst.Internal().Env.Lookup("iam")
+	tok, _, err := keys.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(inst.Internal().Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +493,7 @@ func TestEdgeRetired(t *testing.T) {
 		t.Skip("only Linux serves privileged ports through lb-edge: macOS binds them on the wildcard address, and Windows has none (ADR 0015)")
 	}
 	e := start(t)
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true, Edge: true})
 	c := e.c
 	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "be", LoadBalancingScheme: "EXTERNAL_MANAGED"}).Do())
@@ -503,7 +504,7 @@ func TestEdgeRetired(t *testing.T) {
 		t.Fatalf("listener %s: want the edge on port 80", e.inst.Endpoint(ep("fr")))
 	}
 	edges := func() int {
-		cts, err := e.inst.Containers(context.Background())
+		cts, err := e.inst.Internal().Containers(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -532,7 +533,7 @@ func TestEdgeSubnetworkAddress(t *testing.T) {
 	e := start(t)
 	c := e.c
 	ctx := context.Background()
-	vpcSvc, _ := e.inst.Env.Lookup("compute")
+	vpcSvc, _ := e.inst.Internal().Env.Lookup("compute")
 	vpc := vpcSvc.(emu.VPC)
 	subnetwork, err := vpc.ResolveSubnetwork(ctx, proj, "us-central1", "", "")
 	if err != nil {
@@ -545,7 +546,7 @@ func TestEdgeSubnetworkAddress(t *testing.T) {
 	if sn.Translated {
 		t.Skipf("subnetwork %s is Translated on this host", subnetwork)
 	}
-	lbSvc, _ := e.inst.Env.Lookup("lb")
+	lbSvc, _ := e.inst.Internal().Env.Lookup("lb")
 	ip, err := lb.JoinSubnetwork(ctx, lbSvc, subnetwork)
 	if err != nil {
 		t.Fatal(err)

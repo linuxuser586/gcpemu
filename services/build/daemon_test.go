@@ -49,7 +49,7 @@ func TestStepsUseTheBuildDaemon(t *testing.T) {
 // hostContainers returns the host runtime's containers named name.
 func (e *env) hostContainers(name string) []string {
 	e.t.Helper()
-	rt, err := e.inst.Env.Containers.Runtime(e.ctx)
+	rt, err := e.inst.Internal().Env.Containers.Runtime(e.ctx)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func dockerfile(what string) string {
 // account too.
 func TestImagesArePushed(t *testing.T) {
 	e := startWith(t, []string{"ar", "iam"}, emutest.WithIAMMode(config.IAMEnforce))
-	e.ctx = e.as(e.inst.Config.DefaultPrincipal)
+	e.ctx = e.as(e.inst.Internal().Config.DefaultPrincipal)
 	e.repository("us-central1", "apps")
 	sa := e.serviceAccount("pusher")
 	e.grant("roles/artifactregistry.writer", "serviceAccount:"+sa)
@@ -175,7 +175,7 @@ func TestBuildDaemonCache(t *testing.T) {
 	if !e.cachedRun() {
 		t.Error("the second Build built its layer again")
 	}
-	if err := e.inst.Reset(e.ctx); err != nil {
+	if err := e.inst.Internal().Reset(e.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if !e.cachedRun() {
@@ -204,7 +204,7 @@ func TestBuildDaemonCache(t *testing.T) {
 // so, and the Admin API reports it for gcpemu doctor.
 func TestBuildDaemonRefused(t *testing.T) {
 	e := start(t)
-	svc, _ := e.inst.Env.Lookup("build")
+	svc, _ := e.inst.Internal().Env.Lookup("build")
 	build.SetUnprivileged(svc)
 	op, created := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "true")}})
 	_, _ = op.Wait(e.ctx)

@@ -16,11 +16,11 @@ import (
 // timed with a clock.Stopwatch (#259).
 
 func TestDataPlaneQueryLatency(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	dataPlaneFixture(t, newClient(t, inst.GatewayURL()+"/"))
 	query(t, inst.Endpoint("dns"), "udp", "alias.app.test.", mdns.TypeA)
 	var found bool
-	for _, e := range inst.Env.RequestLog.Entries("dns") {
+	for _, e := range inst.Internal().Env.RequestLog.Entries("dns") {
 		if e.Protocol == "dns" && e.Method == "UDP A alias.app.test." {
 			found = true
 			if e.LatencyMS <= 0 {
@@ -29,12 +29,12 @@ func TestDataPlaneQueryLatency(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("query not in the request log: %+v", inst.Env.RequestLog.Entries("dns"))
+		t.Fatalf("query not in the request log: %+v", inst.Internal().Env.RequestLog.Entries("dns"))
 	}
 }
 
 func TestConsoleQueryLatency(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	dataPlaneFixture(t, newClient(t, inst.GatewayURL()+"/"))
 	resp, err := http.Get(inst.GatewayURL() + "/_emu/v1/dns/query?name=alias.app.test.")
 	if err != nil {

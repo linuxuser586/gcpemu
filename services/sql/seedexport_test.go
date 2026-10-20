@@ -29,10 +29,10 @@ func TestExportSeedRoundTrip(t *testing.T) {
         - {name: app, password: apppw}
         - {name: sa@` + testProject + `.iam, type: CLOUD_IAM_SERVICE_ACCOUNT}
 `
-	if err := inst.ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, []byte(seed), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := inst.ExportSeed(ctx)
+	got, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,13 +57,13 @@ func TestExportSeedRoundTrip(t *testing.T) {
 	if !strings.Contains(string(got), want) {
 		t.Fatalf("export =\n%s\nwant section\n%s", got, want)
 	}
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := inst.ApplySeedData(ctx, got, t.TempDir()); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, got, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v", err)
 	}
-	again, err := inst.ExportSeed(ctx)
+	again, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

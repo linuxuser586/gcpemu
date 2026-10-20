@@ -633,7 +633,7 @@ func TestStreamingPullCutOffByReset(t *testing.T) {
 	if _, err := stream.Recv(); err != nil { // the stream is in its handler
 		t.Fatal(err)
 	}
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for {

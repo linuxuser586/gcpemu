@@ -15,6 +15,7 @@ import (
 	iamv1 "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
 
+	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
@@ -23,13 +24,13 @@ import (
 // callers whose credentials authenticate, even in audit mode, while the
 // loopback registry keeps serving anonymous callers.
 func TestRegistryLANRequiresAuth(t *testing.T) {
-	e := start(t, func(c *config.Config) { c.ARBind = []string{"127.0.0.1"} })
+	e := start(t, emutest.WithConfig(func(c *config.Config) { c.ARBind = []string{"127.0.0.1"} }))
 	e.createRepo(testLoc, "images")
 	lan := e.inst.Endpoint("ar-lan")
 	if lan == "" || lan == e.registry() {
 		t.Fatalf("ar-lan endpoint = %q (registry %s)", lan, e.registry())
 	}
-	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: e.inst.Env.CA.Pool()}}
+	tr := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: e.inst.Internal().Env.CA.Pool()}}
 	hc := &http.Client{Transport: tr}
 	ref, err := name.ParseReference(lan + "/" + testProject + "/images/app:v1")
 	if err != nil {
@@ -77,12 +78,12 @@ func TestRegistryLANRequiresAuth(t *testing.T) {
 	}
 
 	// An access token from the emulator's IAM pushes and pulls.
-	svc, ok := e.inst.Env.Lookup("iam")
+	svc, ok := e.inst.Internal().Env.Lookup("iam")
 	if !ok {
 		t.Fatal("iam service not running")
 	}
 	keys := svc.(emu.ServiceAccountKeys)
-	tok, _, err := keys.AccessToken(e.ctx, emu.Principal(e.inst.Config.DefaultPrincipal))
+	tok, _, err := keys.AccessToken(e.ctx, emu.Principal(e.inst.Internal().Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}

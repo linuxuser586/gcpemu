@@ -17,7 +17,7 @@ import (
 // basic role does not.
 func TestEnforce(t *testing.T) {
 	e := start(t, nil, emutest.WithIAMMode(config.IAMEnforce))
-	svc, _ := e.inst.Env.Lookup("iam")
+	svc, _ := e.inst.Internal().Env.Lookup("iam")
 	keys := svc.(emu.ServiceAccountKeys)
 	token := func(p string) string {
 		tok, _, err := keys.AccessToken(e.ctx, emu.Principal(p))
@@ -26,7 +26,7 @@ func TestEnforce(t *testing.T) {
 		}
 		return tok
 	}
-	owner, reader, editor := token(e.inst.Config.DefaultPrincipal), token("user:reader@example.com"), token("user:editor@example.com")
+	owner, reader, editor := token(e.inst.Internal().Config.DefaultPrincipal), token("user:reader@example.com"), token("user:editor@example.com")
 	call := func(tok, method, path string, body string) int {
 		req, _ := http.NewRequestWithContext(e.ctx, method, e.inst.GatewayURL()+"/secretmanager/v1/"+path, strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -70,7 +70,7 @@ func TestEnforce(t *testing.T) {
 	// The project's Editor reads metadata but not payloads.
 	crm := e.inst.GatewayURL() + "/cloudresourcemanager/v1/projects/" + testProject
 	req, _ := http.NewRequestWithContext(e.ctx, "POST", crm+":setIamPolicy", strings.NewReader(`{"policy":{"bindings":[
-		{"role":"roles/owner","members":["`+e.inst.Config.DefaultPrincipal+`"]},
+		{"role":"roles/owner","members":["`+e.inst.Internal().Config.DefaultPrincipal+`"]},
 		{"role":"roles/editor","members":["user:editor@example.com"]}]}}`))
 	req.Header.Set("Authorization", "Bearer "+owner)
 	resp, err := http.DefaultClient.Do(req)

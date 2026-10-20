@@ -13,12 +13,12 @@ import (
 // certificatemanager.* permissions; a principal without roles is denied.
 func TestEnforce(t *testing.T) {
 	e := start(t, emutest.WithIAMMode(config.IAMEnforce))
-	svc, ok := e.inst.Env.Lookup("iam")
+	svc, ok := e.inst.Internal().Env.Lookup("iam")
 	if !ok {
 		t.Skip("iam not running")
 	}
 	keys := svc.(emu.ServiceAccountKeys)
-	owner, _, err := keys.AccessToken(e.ctx, emu.Principal(e.inst.Config.DefaultPrincipal))
+	owner, _, err := keys.AccessToken(e.ctx, emu.Principal(e.inst.Internal().Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,8 +41,8 @@ func startContainerized(t *testing.T, portRange string, set func(svc emu.Service
 		t.Skip("127.0.0.1:8080 is in use")
 	}
 	e := start(t, opts...)
-	e.inst.Env.Config.PortRange = portRange
-	svc, _ := e.inst.Env.Lookup("lb")
+	e.inst.Internal().Env.Config.PortRange = portRange
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	host, bind := "127.0.0.1", "127.0.0.1"
 	if goruntime.GOOS == "linux" {
 		bind = ""
@@ -107,7 +107,7 @@ func TestPublishedPorts(t *testing.T) {
 	e, dial := startPublished(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), map[int]string{
 		8080: "127.0.0.1:28080", rng: "127.0.0.1:40001",
 	})
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 
 	// Something else holds the range port at first.
 	other, err := net.Listen("tcp", dial(rng))
@@ -208,7 +208,7 @@ func TestPublishedRuntimeTransient(t *testing.T) {
 			return "self", true, map[int]string{rng: "127.0.0.1:40001"}, nil
 		}, bind)
 	})
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	e.forwardingRule("a", 8080)
 	if got := e.inst.Endpoint(ep("a")); got != "" {
 		t.Fatalf("runtime not yet known: endpoint %q, want none", got)
@@ -242,7 +242,7 @@ func TestPublishedRuntimeNone(t *testing.T) {
 			return "", false, nil, nil
 		}, bind)
 	})
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	e.forwardingRule("a", 8080)
 	e.waitEndpoint(ep("a"), "127.0.0.1:8080")
 	e.serves(dial(8080))
@@ -270,7 +270,7 @@ func TestPublishedNoRuntimeNotContainerized(t *testing.T) {
 			return "", false, nil, nil
 		}, bind)
 	}, containerized("false"))
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	e.forwardingRule("a", 8080)
 	want := net.JoinHostPort(lb.ListenerAddr(svc, "a"), "8080")
 	e.waitEndpoint(ep("a"), want)
@@ -317,7 +317,7 @@ func TestPublishedSelfNotFound(t *testing.T) {
 
 // containerized sets --containerized.
 func containerized(setting string) emutest.Option {
-	return func(c *config.Config) { c.Containerized = setting }
+	return emutest.WithConfig(func(c *config.Config) { c.Containerized = setting })
 }
 
 // freePort returns a TCP port free on 127.0.0.1.

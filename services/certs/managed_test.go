@@ -99,7 +99,7 @@ func TestManagedCertificateDNSAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, host := range []string{"example.test", "www.example.test"} {
-		if _, err := tc.Leaf.Verify(x509.VerifyOptions{Roots: e.inst.Env.CA.Pool(), DNSName: host}); err != nil {
+		if _, err := tc.Leaf.Verify(x509.VerifyOptions{Roots: e.inst.Internal().Env.CA.Pool(), DNSName: host}); err != nil {
 			t.Fatalf("verify %s: %v", host, err)
 		}
 	}
@@ -112,7 +112,7 @@ func TestManagedCertificateDNSAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tc2.Leaf.Verify(x509.VerifyOptions{Roots: e.inst.Env.CA.Pool(), DNSName: "example.test"}); err != nil {
+	if _, err := tc2.Leaf.Verify(x509.VerifyOptions{Roots: e.inst.Internal().Env.CA.Pool(), DNSName: "example.test"}); err != nil {
 		t.Fatalf("after rotate: %v", err)
 	}
 }

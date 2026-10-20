@@ -70,7 +70,7 @@ func TestPolicies(t *testing.T) {
 }
 
 func TestResponsePolicies(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	c := newClient(t, inst.GatewayURL()+"/")
 	vpc, other := "projects/"+proj+"/global/networks/vpc", "projects/"+proj+"/global/networks/other"
 
@@ -169,11 +169,11 @@ func TestResponsePolicies(t *testing.T) {
 	check("", "www.corp.test.", mdns.TypeA, mdns.RcodeSuccess, "www.corp.test. 192.0.2.1")
 
 	var logged bool
-	for _, e := range inst.Env.RequestLog.Entries("dns") {
+	for _, e := range inst.Internal().Env.RequestLog.Entries("dns") {
 		logged = logged || (e.Method == "UDP A www.corp.test." && e.Principal == vpc && e.Resource == "projects/"+proj+"/responsePolicies/rp")
 	}
 	if !logged {
-		t.Errorf("request log: %+v", inst.Env.RequestLog.Entries("dns"))
+		t.Errorf("request log: %+v", inst.Internal().Env.RequestLog.Entries("dns"))
 	}
 
 	// Rule patch and update; then rebinding the policy moves the override.

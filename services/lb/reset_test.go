@@ -26,7 +26,7 @@ func resetAcross(t *testing.T, e *env, release chan struct{}, after func() error
 	t.Helper()
 	done := make(chan error, 1)
 	go func() {
-		if err := e.inst.Reset(context.Background()); err != nil {
+		if err := e.inst.Internal().Reset(context.Background()); err != nil {
 			done <- err
 			return
 		}
@@ -52,7 +52,7 @@ func resetAcross(t *testing.T, e *env, release chan struct{}, after func() error
 func TestResetWaitsForManagedCertPass(t *testing.T) {
 	e := start(t)
 	c := e.c
-	svc, _ := e.inst.Env.Lookup("lb")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
 	var armed atomic.Bool
 	armed.Store(true)
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -121,8 +121,8 @@ func TestResetWaitsForEdgeRoutePass(t *testing.T) {
 	e := start(t)
 	c := e.c
 	ctx := context.Background()
-	svc, _ := e.inst.Env.Lookup("lb")
-	vpcSvc, _ := e.inst.Env.Lookup("compute")
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
+	vpcSvc, _ := e.inst.Internal().Env.Lookup("compute")
 	subnetwork, err := vpcSvc.(emu.VPC).ResolveSubnetwork(ctx, proj, "us-central1", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestResetWaitsForEdgeRoutePass(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Fatal("the edge route pass from before the Reset did not finish")
 	}
-	cts, err := e.inst.Containers(ctx)
+	cts, err := e.inst.Internal().Containers(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestResetWaitsForEdgeRoutePass(t *testing.T) {
 func TestManagedCertPassRunsAfterReset(t *testing.T) {
 	e := start(t)
 	c := e.c
-	if err := e.inst.Reset(context.Background()); err != nil {
+	if err := e.inst.Internal().Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "bs", LoadBalancingScheme: "EXTERNAL_MANAGED"}).Do())
@@ -215,7 +215,7 @@ func TestResetClosesListeners(t *testing.T) {
 	if before == "" {
 		t.Fatal("no listener before Reset")
 	}
-	if err := e.inst.Reset(context.Background()); err != nil {
+	if err := e.inst.Internal().Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.inst.Endpoint(ep("fr")); got != "" {

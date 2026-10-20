@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/linuxuser586/gcpemu/emutest"
-	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/sql"
@@ -27,11 +26,11 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	dir := t.TempDir()
-	persistent := func(c *config.Config) { c.Ephemeral = false; c.DataDir = dir }
+	persistent := emutest.WithDataDir(dir)
 	ctx := context.Background()
 
 	inst := emutest.Start(t, []string{"sql"}, persistent)
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +58,7 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 
 	sctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if err := inst.Shutdown(sctx); err != nil {
+	if err := inst.Internal().Shutdown(sctx); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
 
@@ -92,11 +91,11 @@ func TestRecoveryWithGKE(t *testing.T) {
 	t.Parallel()
 	emutest.HoldClusterSlot(t)
 	dir := t.TempDir()
-	persistent := func(c *config.Config) { c.Ephemeral = false; c.DataDir = dir }
+	persistent := emutest.WithDataDir(dir)
 	ctx := context.Background()
 
 	inst := emutest.Start(t, []string{"sql", "gke"}, persistent)
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +146,7 @@ func TestRecoveryWithGKE(t *testing.T) {
 		}
 	}
 	sqlService := func(inst *emutest.Instance) emu.Service {
-		for _, s := range inst.Services() {
+		for _, s := range inst.Internal().Services() {
 			if s.Name() == "sql" {
 				return s
 			}
@@ -164,7 +163,7 @@ func TestRecoveryWithGKE(t *testing.T) {
 			}
 		}
 		sctx, cancel := context.WithTimeout(ctx, time.Minute)
-		err := inst.Shutdown(sctx)
+		err := inst.Internal().Shutdown(sctx)
 		cancel()
 		if err != nil {
 			t.Fatalf("shutdown: %v", err)

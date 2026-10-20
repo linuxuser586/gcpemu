@@ -54,7 +54,7 @@ func TestSeed(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(seedYAML), &node); err != nil {
 		t.Fatal(err)
 	}
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	seeder := svc.(emu.Seeder)
 	for i := 0; i < 2; i++ { // idempotent
 		if err := seeder.ApplySeed(context.Background(), node.Content[0], "."); err != nil {
@@ -121,10 +121,10 @@ compute:
     - network: vpc
       reservedPeeringRanges: [psa-range]
 `
-	if err := inst.ApplySeedData(ctx, []byte(seed), "."); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, []byte(seed), "."); err != nil {
 		t.Fatalf("%v\n%s", err, seed)
 	}
-	first, err := inst.ExportSeed(ctx)
+	first, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,13 +133,13 @@ compute:
 			t.Errorf("export contains %q:\n%s", unwanted, first)
 		}
 	}
-	if err := inst.Reset(ctx); err != nil {
+	if err := inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := inst.ApplySeedData(ctx, first, "."); err != nil {
+	if err := inst.Internal().ApplySeedData(ctx, first, "."); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := inst.ExportSeed(ctx)
+	second, err := inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

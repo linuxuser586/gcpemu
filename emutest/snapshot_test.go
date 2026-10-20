@@ -49,7 +49,7 @@ func pulled(t *testing.T, gw, sub string) []string {
 // later Instance of the same instance dir restores it too.
 func TestStateSnapshots(t *testing.T) {
 	dir := t.TempDir()
-	sameDir := func(c *config.Config) { c.DataDir = dir }
+	sameDir := emutest.WithConfig(func(c *config.Config) { c.DataDir = dir })
 	inst := emutest.Start(t, []string{"gcs", "pubsub"}, sameDir)
 	gw := inst.GatewayURL()
 	publish := func(data string) {
@@ -118,7 +118,7 @@ func TestStateSnapshots(t *testing.T) {
 	}
 
 	// A new Instance of the same instance dir, with none of the state.
-	if err := inst.Shutdown(t.Context()); err != nil {
+	if err := inst.Internal().Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	inst2 := emutest.Start(t, []string{"gcs", "pubsub"}, sameDir)

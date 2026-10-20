@@ -14,7 +14,6 @@ import (
 	mdns "github.com/miekg/dns"
 	dnsv1 "google.golang.org/api/dns/v1"
 
-	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
@@ -26,18 +25,18 @@ import (
 // where mDNSResponder holds it, and on Windows where Chrome or the DNS
 // Client service does) and answers UDP queries on its loopback bind.
 func TestStartBesideMDNS(t *testing.T) {
-	inst, port := startBesideMDNS(t)
-	c := newClient(t, inst.GatewayURL()+"/")
+	in, port := startBesideMDNS(t)
+	c := newClient(t, "http://"+in.Env.Endpoints.Get("gateway")+"/")
 	if _, err := c.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "z", DnsName: "mdns.test.", Description: "d"}).Do(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.ResourceRecordSets.Create(proj, "z", &dnsv1.ResourceRecordSet{Name: "a.mdns.test.", Type: "A", Ttl: 60, Rrdatas: []string{"192.0.2.9"}}).Do(); err != nil {
 		t.Fatal(err)
 	}
-	if got := inst.Endpoint("dns"); got != "127.0.0.1:"+strconv.Itoa(port) {
+	if got := in.Env.Endpoints.Get("dns"); got != "127.0.0.1:"+strconv.Itoa(port) {
 		t.Fatalf("dns endpoint %s", got)
 	}
-	r := query(t, inst.Endpoint("dns"), "udp", "a.mdns.test.", mdns.TypeA)
+	r := query(t, in.Env.Endpoints.Get("dns"), "udp", "a.mdns.test.", mdns.TypeA)
 	if len(r.Answer) != 1 || r.Answer[0].(*mdns.A).A.String() != "192.0.2.9" {
 		t.Fatalf("UDP answer beside mDNS: %v", r)
 	}
@@ -47,7 +46,7 @@ func TestStartBesideMDNS(t *testing.T) {
 // socket (the mDNS stand-in, held until the test ends) holds. The TCP port
 // is free only between its pick and the service's bind, so a parallel
 // package can take it; that attempt fails fast and a fresh port is tried.
-func startBesideMDNS(t *testing.T) (*emutest.Instance, int) {
+func startBesideMDNS(t *testing.T) (*instance.Instance, int) {
 	t.Helper()
 	const attempts = 5
 	var lastErr error
@@ -94,7 +93,7 @@ func mdnsStandIn(t *testing.T) (int, net.PacketConn) {
 // configures one, and returns the dns service's readiness failure within
 // seconds rather than after emutest.Start's minute, shutting the Instance
 // down. Failures before the services start end the test.
-func startDNS(t *testing.T, port int) (*emutest.Instance, error) {
+func startDNS(t *testing.T, port int) (*instance.Instance, error) {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Ephemeral = true
@@ -133,5 +132,5 @@ func startDNS(t *testing.T, port int) (*emutest.Instance, error) {
 		return nil, err
 	}
 	t.Cleanup(shutdown)
-	return &emutest.Instance{Instance: in}, nil
+	return in, nil
 }

@@ -16,7 +16,7 @@ func TestSeedExport(t *testing.T) {
 	e := start(t)
 	ctx := context.Background()
 	dir := t.TempDir()
-	leaf, _ := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"seed.example.test"}})
+	leaf, _ := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"seed.example.test"}})
 	chain, key, _ := ca.EncodeCert(leaf)
 	_ = os.WriteFile(filepath.Join(dir, "c.pem"), chain, 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "k.pem"), key, 0o600)
@@ -65,10 +65,10 @@ lb:
     - {name: web-ephemeral, loadBalancingScheme: EXTERNAL_MANAGED, portRange: "443", target: global/targetHttpsProxies/web}
     - {name: internal, region: us-central1, loadBalancingScheme: INTERNAL_MANAGED, portRange: "80", target: regions/us-central1/targetHttpProxies/internal, network: vpc, subnetwork: nodes}
 `
-	if err := e.inst.ApplySeedData(ctx, []byte(seed), dir); err != nil {
+	if err := e.inst.Internal().ApplySeedData(ctx, []byte(seed), dir); err != nil {
 		t.Fatal(err)
 	}
-	first, err := e.inst.ExportSeed(ctx)
+	first, err := e.inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,13 +77,13 @@ lb:
 			t.Errorf("export contains %q:\n%s", unwanted, first)
 		}
 	}
-	if err := e.inst.Reset(ctx); err != nil {
+	if err := e.inst.Internal().Reset(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.inst.ApplySeedData(ctx, first, t.TempDir()); err != nil {
+	if err := e.inst.Internal().ApplySeedData(ctx, first, t.TempDir()); err != nil {
 		t.Fatalf("apply export: %v\n%s", err, first)
 	}
-	second, err := e.inst.ExportSeed(ctx)
+	second, err := e.inst.Internal().ExportSeed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

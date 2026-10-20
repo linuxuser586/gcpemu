@@ -40,10 +40,10 @@ func TestRetainedBackupRestoresADeletedInstance(t *testing.T) {
 	waitOp(t, svc, must(svc.Instances.Delete(testProject, "src").Do()))
 	assertNoRuntimeObjects(t, inst, "projects/"+testProject+"/instances/src")
 
-	if _, err := inst.SaveSnapshot(ctx, "retained"); err != nil {
+	if _, err := inst.Internal().SaveSnapshot(ctx, "retained"); err != nil {
 		t.Fatal(err)
 	}
-	if err := inst.RestoreSnapshot(ctx, "retained"); err != nil {
+	if err := inst.Internal().RestoreSnapshot(ctx, "retained"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -82,7 +82,7 @@ func TestSecretEnv(t *testing.T) {
 // secretmanager.versions.access on the Secret.
 func TestSecretEnvUnderEnforce(t *testing.T) {
 	e := startWith(t, []string{"secrets", "iam"}, emutest.WithIAMMode(config.IAMEnforce))
-	e.ctx = e.as(e.inst.Config.DefaultPrincipal)
+	e.ctx = e.as(e.inst.Internal().Config.DefaultPrincipal)
 	e.secret("token", "s3cr3t-value")
 	b := secretBuild("token")
 	b.ServiceAccount = "projects/" + testProject + "/serviceAccounts/" + e.serviceAccount("nosecrets")

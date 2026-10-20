@@ -16,6 +16,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/compute"
@@ -29,7 +30,7 @@ const probeImage = "rancher/k3s:v1.36.5-k3s1"
 func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw string) (*runtime.Manager, string) {
 	t.Helper()
 	ctx := context.Background()
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,10 +182,10 @@ func TestEgressThroughNATTranslated(t *testing.T) {
 }
 
 func testEgressThroughNAT(t *testing.T, rng string, overlapped bool) {
-	inst, c, _ := newClients(t, func(cfg *config.Config) { cfg.NATReject = true })
+	inst, c, _ := newClients(t, emutest.WithConfig(func(cfg *config.Config) { cfg.NATReject = true }))
 	customNet(t, c, "vpc")
 	subnet(t, c, "vpc", "nodes", "us-central1", rng, &computev1.SubnetworkSecondaryRange{RangeName: "pods", IpCidrRange: "10.124.0.0/16"})
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
 
@@ -226,7 +227,7 @@ func testEgressThroughNAT(t *testing.T, rng string, overlapped bool) {
 	natRouter(t, c)
 	eventually(t, "egress with NAT", func() (bool, string) { out := fetch(t, rt, id); return connected(out), out })
 	natLogged(t, inst, "OK")
-	emutest.RequireRelayStream(t, inst, "NAT events", "gateway")
+	emutestx.RequireRelayStream(t, inst, "NAT events", "gateway")
 
 	// Port reporting (FR-NAT-003).
 	m, err := c.Routers.GetNatMappingInfo(proj, "us-central1", "router").Do()
@@ -276,13 +277,13 @@ func TestOfflineSink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	inst, c, _ := newClients(t, func(cfg *config.Config) {
+	inst, c, _ := newClients(t, emutest.WithConfig(func(cfg *config.Config) {
 		cfg.Offline = true
 		cfg.NATSinkResponse = "418:offline sink"
-	})
+	}))
 	customNet(t, c, "vpc")
 	subnet(t, c, "vpc", "nodes", "us-central1", "10.125.0.0/24")
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/nodes"
@@ -304,7 +305,7 @@ func TestOfflineSink(t *testing.T) {
 	eventually(t, "sink attempt recorded", func() (bool, string) {
 		var n int
 		var last string
-		_ = inst.Env.Store.View(func(tx store.Tx) error {
+		_ = inst.Internal().Env.Store.View(func(tx store.Tx) error {
 			tx.Scan("compute/natsink", "", func(_ string, v []byte) bool { n++; last = string(v); return true })
 			return nil
 		})
@@ -324,7 +325,7 @@ func natLogged(t *testing.T, inst *emutest.Instance, code string) {
 func egressLogged(t *testing.T, inst *emutest.Instance, code, resource string) {
 	t.Helper()
 	eventually(t, "nat request log entry "+code, func() (bool, string) {
-		es := inst.Env.RequestLog.Entries("nat")
+		es := inst.Internal().Env.RequestLog.Entries("nat")
 		for _, e := range es {
 			if e.Code == code && e.Resource == resource &&
 				strings.HasPrefix(e.Method, "EGRESS ") && strings.Contains(e.Method, " -> ") {
@@ -347,7 +348,7 @@ func TestSubnetOverlapFallback(t *testing.T) {
 		inst, c, _ := newClients(t)
 		customNet(t, c, "vpc")
 		subnet(t, c, "vpc", "s", "us-central1", "10.126.0.0/24")
-		svc, _ := inst.Env.Lookup("compute")
+		svc, _ := inst.Internal().Env.Lookup("compute")
 		vpc := svc.(emu.VPC)
 		n, err := vpc.SubnetNetwork(ctx, "projects/"+proj+"/regions/us-central1/subnetworks/s")
 		if err != nil {
@@ -395,7 +396,7 @@ func TestIntraVPCRouting(t *testing.T) {
 		Network: "projects/" + proj + "/global/networks/vpc", ReservedPeeringRanges: []string{"psa"}}).Do(); err != nil {
 		t.Fatal(err)
 	}
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
 	start := func(sp, owner string) (*runtime.Manager, string, string) {
@@ -451,7 +452,7 @@ func TestNetworksSurviveRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	dir := t.TempDir()
-	persistent := func(cfg *config.Config) { cfg.Ephemeral = false; cfg.DataDir = dir }
+	persistent := emutest.WithDataDir(dir)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
 	var first emu.SubnetNet
@@ -461,22 +462,22 @@ func TestNetworksSurviveRestart(t *testing.T) {
 		c, _ := computev1.NewService(ctx, option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
 		customNet(t, c, "vpc")
 		subnet(t, c, "vpc", "s", "us-central1", "10.122.0.0/24")
-		svc, _ := inst.Env.Lookup("compute")
+		svc, _ := inst.Internal().Env.Lookup("compute")
 		var err error
 		if first, err = svc.(emu.VPC).SubnetNetwork(ctx, sp); err != nil {
 			t.Fatal(err)
 		}
 		firstIP, _ = svc.(emu.VPC).AllocateIP(ctx, first, "vm")
-		rt, _ := inst.Env.Containers.Runtime(ctx)
+		rt, _ := inst.Internal().Env.Containers.Runtime(ctx)
 		t.Cleanup(func() { _ = rt.RemoveNetwork(context.Background(), first.Name) })
 		sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if err := inst.Shutdown(sctx); err != nil {
+		if err := inst.Internal().Shutdown(sctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	inst := emutest.Start(t, []string{"compute"}, persistent)
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	again, err := svc.(emu.VPC).SubnetNetwork(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
@@ -502,7 +503,7 @@ func TestTranslatedNetworkSurvivesRestart(t *testing.T) {
 	reserved := fmt.Sprintf("10.%d.%d.2", o2, o3)
 	overlap(t, rng)
 	dir := t.TempDir()
-	persistent := func(cfg *config.Config) { cfg.Ephemeral = false; cfg.DataDir = dir }
+	persistent := emutest.WithDataDir(dir)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
 	var first emu.SubnetNet
@@ -514,7 +515,7 @@ func TestTranslatedNetworkSurvivesRestart(t *testing.T) {
 		subnet(t, c, "vpc", "s", "us-central1", rng)
 		waitDo(t, c)(c.Addresses.Insert(proj, "us-central1", &computev1.Address{Name: "res", AddressType: "INTERNAL",
 			Subnetwork: "regions/us-central1/subnetworks/s", Address: reserved}).Do())
-		svc, _ := inst.Env.Lookup("compute")
+		svc, _ := inst.Internal().Env.Lookup("compute")
 		var err error
 		if first, err = svc.(emu.VPC).SubnetNetwork(ctx, sp); err != nil {
 			t.Fatal(err)
@@ -528,7 +529,7 @@ func TestTranslatedNetworkSurvivesRestart(t *testing.T) {
 		}
 		sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		if err := inst.Shutdown(sctx); err != nil {
+		if err := inst.Internal().Shutdown(sctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -542,8 +543,8 @@ func TestTranslatedNetworkSurvivesRestart(t *testing.T) {
 	}
 	overlap(t, first.ContainerSubnet)
 	inst := emutest.Start(t, []string{"compute"}, persistent)
-	rt, _ := inst.Env.Containers.Runtime(ctx)
-	svc, _ := inst.Env.Lookup("compute")
+	rt, _ := inst.Internal().Env.Containers.Runtime(ctx)
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	again, err := svc.(emu.VPC).SubnetNetwork(ctx, sp)
 	if err != nil {
 		t.Fatal(err)

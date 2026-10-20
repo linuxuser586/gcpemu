@@ -110,7 +110,7 @@ func TestManagedRotation(t *testing.T) {
 	}
 
 	// A schedule rotates when it falls due on the Emulator clock.
-	now := e.inst.Env.Clock.Now()
+	now := e.inst.Internal().Env.Clock.Now()
 	must(e.sm.UpdateSecret(e.ctx, &secretmanagerpb.UpdateSecretRequest{
 		Secret:     &secretmanagerpb.Secret{Name: sec.GetName(), Rotation: &secretmanagerpb.Rotation{NextRotationTime: timestamppb.New(now.Add(time.Hour)), RotationPeriod: durationpb.New(30 * 24 * time.Hour)}},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"rotation"}},

@@ -17,7 +17,7 @@ import (
 // holds the Build there until stop has stopped it.
 func (e *env) stopAt(at string, stop func()) {
 	e.t.Helper()
-	svc, ok := e.inst.Env.Lookup("build")
+	svc, ok := e.inst.Internal().Env.Lookup("build")
 	if !ok {
 		e.t.Fatal("no build Service")
 	}
@@ -89,7 +89,7 @@ func TestLateTimeoutKeepsOutcome(t *testing.T) {
 		t.Run(tc.want.String(), func(t *testing.T) {
 			e := start(t)
 			e.stopAt("ended", func() {
-				if err := e.inst.AdvanceClock(e.ctx, 61*time.Second); err != nil {
+				if err := e.inst.Internal().AdvanceClock(e.ctx, 61*time.Second); err != nil {
 					t.Error(err)
 				}
 			})

@@ -134,7 +134,7 @@ func testPrivateIP(t *testing.T, psa string) {
 	}
 	ga := must(c.GlobalAddresses.Get(testProject, "psa").Do())
 	declared := ga.Address + "/20"
-	cvc, _ := inst.Env.Lookup("compute")
+	cvc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := cvc.(emu.VPC)
 	psaNet, err := vpc.PrivateServicesNetwork(ctx, "projects/"+testProject+"/global/networks/vpc")
 	if err != nil {
@@ -149,7 +149,7 @@ func testPrivateIP(t *testing.T, psa string) {
 	if privIP == "" || !cidrHas(declared, privIP) {
 		t.Fatalf("private IP %q not in the PSA range %s", privIP, declared)
 	}
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func vpcWorkload(t *testing.T, inst *emutest.Instance, vpc emu.VPC, net emu.Subn
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = vpc.ReleaseIP(context.Background(), net, owner) })
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

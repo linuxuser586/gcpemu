@@ -27,7 +27,7 @@ func start(t *testing.T, opts ...emutest.Option) *emutest.Instance {
 // gcsService returns the running gcs service.
 func gcsService(t *testing.T, inst *emutest.Instance) *gcs.Service {
 	t.Helper()
-	svc, ok := inst.Env.Lookup("gcs")
+	svc, ok := inst.Internal().Env.Lookup("gcs")
 	if !ok {
 		t.Fatal("gcs not running")
 	}
@@ -37,11 +37,11 @@ func gcsService(t *testing.T, inst *emutest.Instance) *gcs.Service {
 // inject adds (or replaces) a peer service visible through env.Lookup.
 func inject(inst *emutest.Instance, svc emu.Service) {
 	m := map[string]emu.Service{}
-	for _, s := range inst.Services() {
+	for _, s := range inst.Internal().Services() {
 		m[s.Name()] = s
 	}
 	m[svc.Name()] = svc
-	inst.Env.SetServices(m)
+	inst.Internal().Env.SetServices(m)
 }
 
 // emulatorClient connects through STORAGE_EMULATOR_HOST (per-service port,

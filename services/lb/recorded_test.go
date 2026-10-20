@@ -129,7 +129,7 @@ func TestL4AndGRPCProxies(t *testing.T) {
 		t.Errorf("deleting a backend service used by a TCP proxy: %v", err)
 	}
 
-	leaf, err := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"db.example.test"}})
+	leaf, err := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"db.example.test"}})
 	if err != nil {
 		t.Fatal(err)
 	}

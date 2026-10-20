@@ -67,7 +67,7 @@ func TestNodeAddressHeld(t *testing.T) {
 	}
 
 	inst := emutest.Start(t, []string{"gke", "compute"})
-	gsvc, _ := inst.Env.Lookup("gke")
+	gsvc, _ := inst.Internal().Env.Lookup("gke")
 	var race atomic.Bool
 	gke.SetBeforeNodeStart(gsvc, func(ctx context.Context, sn emu.SubnetNet, node, ip string) {
 		if race.CompareAndSwap(true, false) {
@@ -114,7 +114,7 @@ func TestNodeAddressHeld(t *testing.T) {
 	}
 	waitOp(t, cm, zone, op.Name)
 
-	cvc, _ := inst.Env.Lookup("compute")
+	cvc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := cvc.(emu.VPC)
 	sn, err := vpc.SubnetNetwork(ctx, "projects/"+project+"/regions/us-central1/subnetworks/nodes")
 	if err != nil {

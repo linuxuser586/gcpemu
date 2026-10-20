@@ -104,7 +104,7 @@ func TestEnvForeignCredentials(t *testing.T) {
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
-		cmd.SetArgs(append(args, "--data-dir", inst.Config.DataDir, "--config", os.DevNull))
+		cmd.SetArgs(append(args, "--data-dir", inst.Internal().Config.DataDir, "--config", os.DevNull))
 		err := cmd.Execute()
 		return out.String(), errOut.String(), err
 	}
@@ -165,7 +165,7 @@ func TestEnvForeignCredentials(t *testing.T) {
 		t.Errorf("a second env gave a different key")
 	}
 	// A new one once Reset removes it.
-	if err := inst.Reset(context.Background()); err != nil {
+	if err := inst.Internal().Reset(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	out, _, _ = run("env")

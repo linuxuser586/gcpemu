@@ -71,6 +71,6 @@ func TestImageCacheAcrossClusters(t *testing.T) {
 	// the cache, stale if need be. The second cluster's nodes are private
 	// (no route to the internet), so containerd can't fall back to pulling
 	// from Docker Hub itself.
-	inst.Env.Config.Offline = true
+	inst.Internal().Env.Config.Offline = true
 	run("second", true)
 }

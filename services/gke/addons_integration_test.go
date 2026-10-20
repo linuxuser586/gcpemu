@@ -57,7 +57,7 @@ func TestClusterAddons(t *testing.T) {
 	}
 	mustGW(t, inst, "GET", "/cloudresourcemanager/v1/projects/"+proj, nil, &p)
 	mustGW(t, inst, "POST", "/cloudresourcemanager/v1/projects/"+proj+":setIamPolicy", map[string]any{"policy": map[string]any{"bindings": []map[string]any{
-		{"role": "roles/owner", "members": []string{inst.Config.DefaultPrincipal}},
+		{"role": "roles/owner", "members": []string{inst.Internal().Config.DefaultPrincipal}},
 		{"role": "roles/artifactregistry.reader", "members": []string{"serviceAccount:" + p.ProjectNumber + "-compute@developer.gserviceaccount.com"}},
 	}}}, nil)
 	sm := "/secretmanager/v1/projects/" + proj

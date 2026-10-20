@@ -15,7 +15,7 @@ func TestTimeoutOnTheEmulatorClock(t *testing.T) {
 	e := start(t)
 	op, b := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("", "sleep 600")}})
 	e.awaitStep(b.GetId(), 0)
-	if err := e.inst.AdvanceClock(e.ctx, 601*time.Second); err != nil {
+	if err := e.inst.Internal().AdvanceClock(e.ctx, 601*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	b = e.get(b.GetId())
@@ -45,7 +45,7 @@ func TestQueue(t *testing.T) {
 		}
 	}
 
-	if err := e.inst.AdvanceClock(e.ctx, 61*time.Second); err != nil {
+	if err := e.inst.Internal().AdvanceClock(e.ctx, 61*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.get(third.GetId()).GetStatus(); got != cloudbuildpb.Build_EXPIRED {

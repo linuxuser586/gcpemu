@@ -90,7 +90,7 @@ func TestCertificateMapSNI(t *testing.T) {
 	c := e.c
 	loc := "projects/" + proj + "/locations/global"
 	for id, host := range map[string]string{"a": "a.example.test", "b": "b.example.test", "p": "primary.example.test"} {
-		leaf, err := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{host}})
+		leaf, err := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{host}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestCertificateMapSNI(t *testing.T) {
 	listener := e.inst.Endpoint(ep("fr"))
 
 	for sni, want := range map[string]string{"a.example.test": "a.example.test", "b.example.test": "b.example.test", "other.test": "primary.example.test"} {
-		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: sni, RootCAs: e.inst.Env.CA.Pool(), InsecureSkipVerify: sni == "other.test"})
+		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: sni, RootCAs: e.inst.Internal().Env.CA.Pool(), InsecureSkipVerify: sni == "other.test"})
 		if err != nil {
 			t.Fatalf("SNI %s: %v", sni, err)
 		}
@@ -186,7 +186,7 @@ type logLine struct {
 // accessLog waits for at least n entries in <data-dir>/lb/requests.log.
 func accessLog(t *testing.T, e *env, n int) []logLine {
 	t.Helper()
-	dir, err := e.inst.Env.ServiceDir("lb")
+	dir, err := e.inst.Internal().Env.ServiceDir("lb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestGRPCThroughLB(t *testing.T) {
 	go gs.Serve(ln)
 	t.Cleanup(gs.Stop)
 	e.neg(int64(ln.Addr().(*net.TCPAddr).Port))
-	leaf, _ := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"grpc.example.test"}})
+	leaf, _ := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"grpc.example.test"}})
 	chain, key, _ := ca.EncodeCert(leaf)
 	e.do(c.SslCertificates.Insert(proj, &computev1.SslCertificate{Name: "cert", Certificate: string(chain), PrivateKey: string(key)}).Do())
 	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "svc", LoadBalancingScheme: "EXTERNAL_MANAGED", Protocol: "H2C",
@@ -275,7 +275,7 @@ func TestGRPCThroughLB(t *testing.T) {
 	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED", PortRange: "443", Target: "global/targetHttpsProxies/https"}).Do())
 
 	conn, err := grpc.NewClient("passthrough:///"+e.inst.Endpoint(ep("fr")),
-		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{ServerName: "grpc.example.test", RootCAs: e.inst.Env.CA.Pool()})))
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{ServerName: "grpc.example.test", RootCAs: e.inst.Internal().Env.CA.Pool()})))
 	if err != nil {
 		t.Fatal(err)
 	}

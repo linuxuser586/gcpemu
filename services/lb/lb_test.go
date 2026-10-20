@@ -58,7 +58,7 @@ type env struct {
 func start(t *testing.T, opts ...emutest.Option) *env {
 	t.Helper()
 	inst := emutest.Start(t, []string{"lb", "cdn"}, opts...)
-	svc, _ := inst.Env.Lookup("lb")
+	svc, _ := inst.Internal().Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
 	c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
 	if err != nil {
@@ -186,7 +186,7 @@ func (e *env) stack(origin *backend) (fr *computev1.ForwardingRule) {
 		Tests: []*computev1.UrlMapTest{{Host: "app.example.test", Path: "/api/x", Service: "global/backendServices/api"}},
 	}).Do())
 
-	leaf, err := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
+	leaf, err := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func (e *env) stack(origin *backend) (fr *computev1.ForwardingRule) {
 func (e *env) client(listener string) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: e.inst.Env.CA.Pool()},
+			TLSClientConfig: &tls.Config{RootCAs: e.inst.Internal().Env.CA.Pool()},
 			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, network, listener)
 			},
@@ -314,7 +314,7 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	}
 
 	// SSL policy: TLS 1.1 is refused.
-	old := &tls.Config{ServerName: "app.example.test", RootCAs: e.inst.Env.CA.Pool(), MaxVersion: tls.VersionTLS11, MinVersion: tls.VersionTLS10}
+	old := &tls.Config{ServerName: "app.example.test", RootCAs: e.inst.Internal().Env.CA.Pool(), MaxVersion: tls.VersionTLS11, MinVersion: tls.VersionTLS10}
 	if conn, err := tls.Dial("tcp", listener, old); err == nil {
 		conn.Close()
 		t.Error("TLS 1.1 handshake succeeded despite minTlsVersion TLS_1_2")
@@ -343,7 +343,7 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	}
 
 	// Access log in Cloud Logging shape.
-	entries := e.inst.Env.RequestLog.Entries("lb")
+	entries := e.inst.Internal().Env.RequestLog.Entries("lb")
 	if len(entries) < 5 {
 		t.Errorf("request log has %d lb entries", len(entries))
 	}
@@ -387,7 +387,7 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 		{Name: "app.example.test.", Type: "A", Ttl: 60, Rrdatas: []string{fr.IPAddress}}}}).Do(); err != nil {
 		t.Fatal(err)
 	}
-	ds, _ := e.inst.Env.Lookup("dns")
+	ds, _ := e.inst.Internal().Env.Lookup("dns")
 	rrs, err := ds.(*dns.Service).Resolve(context.Background(), "app.example.test", mdns.TypeA)
 	lh, _, _ := net.SplitHostPort(listener)
 	if err != nil || len(rrs) != 1 || rrs[0].(*mdns.A).A.String() != lh {
@@ -537,7 +537,7 @@ func TestValidationAndLists(t *testing.T) {
 func TestSeed(t *testing.T) {
 	e := start(t)
 	dir := t.TempDir()
-	leaf, _ := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"seed.example.test"}})
+	leaf, _ := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"seed.example.test"}})
 	chain, key, _ := ca.EncodeCert(leaf)
 	_ = os.WriteFile(filepath.Join(dir, "c.pem"), chain, 0o600)
 	_ = os.WriteFile(filepath.Join(dir, "k.pem"), key, 0o600)
@@ -566,7 +566,7 @@ lb:
 	path := filepath.Join(dir, "seed.yaml")
 	_ = os.WriteFile(path, []byte(seed), 0o600)
 	for i := 0; i < 2; i++ { // idempotent
-		if err := e.inst.ApplySeed(context.Background(), path); err != nil {
+		if err := e.inst.Internal().ApplySeed(context.Background(), path); err != nil {
 			t.Fatalf("apply %d: %v", i, err)
 		}
 	}
@@ -692,7 +692,7 @@ func TestFrontendMTLS(t *testing.T) {
 		Backends:             []*computev1.Backend{{Group: "zones/us-central1-a/networkEndpointGroups/neg"}},
 		CustomRequestHeaders: []string{"X-Client-Cert-Present:{client_cert_present}", "X-Client-Cert-Verified:{client_cert_chain_verified}"}}).Do())
 	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/bs"}).Do())
-	leaf, _ := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"secure.example.test"}})
+	leaf, _ := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"secure.example.test"}})
 	chain, key, _ := ca.EncodeCert(leaf)
 	e.do(c.SslCertificates.Insert(proj, &computev1.SslCertificate{Name: "cert", Certificate: string(chain), PrivateKey: string(key)}).Do())
 	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "p", UrlMap: "global/urlMaps/map",
@@ -838,7 +838,7 @@ func TestWebSocketBackends(t *testing.T) {
 		PathMatchers: []*computev1.PathMatcher{{Name: "m", DefaultService: "global/backendServices/hybrid", PathRules: []*computev1.PathRule{
 			{Paths: []string{"/zonal"}, Service: "global/backendServices/zonal"},
 			{Paths: []string{"/cdn"}, Service: "global/backendServices/cdn"}}}}}).Do())
-	leaf, _ := e.inst.Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
+	leaf, _ := e.inst.Internal().Env.CA.Issue(ca.Leaf{DNSNames: []string{"app.example.test"}})
 	chain, key, _ := ca.EncodeCert(leaf)
 	e.do(c.SslCertificates.Insert(proj, &computev1.SslCertificate{Name: "cert", Certificate: string(chain), PrivateKey: string(key)}).Do())
 	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "p", UrlMap: "global/urlMaps/map",
@@ -867,7 +867,7 @@ func TestWebSocketBackends(t *testing.T) {
 	}
 
 	for _, path := range paths {
-		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: "app.example.test", RootCAs: e.inst.Env.CA.Pool(), NextProtos: []string{"http/1.1"}})
+		conn, err := tls.Dial("tcp", listener, &tls.Config{ServerName: "app.example.test", RootCAs: e.inst.Internal().Env.CA.Pool(), NextProtos: []string{"http/1.1"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -895,7 +895,7 @@ func TestWebSocketBackends(t *testing.T) {
 	deadline = time.Now().Add(5 * time.Second)
 	for {
 		logged := map[string]int{}
-		for _, en := range e.inst.Env.RequestLog.Entries("lb") {
+		for _, en := range e.inst.Internal().Env.RequestLog.Entries("lb") {
 			if strings.Contains(en.Method, "?token=x") {
 				logged[en.Method] = en.Status
 			}
@@ -918,7 +918,7 @@ func TestWebSocketBackends(t *testing.T) {
 // is served by the load balancer delivers through it with an OIDC token.
 func TestPushViaLB(t *testing.T) {
 	inst := emutest.Start(t, []string{"lb", "cdn", "pubsub"})
-	svc, _ := inst.Env.Lookup("lb")
+	svc, _ := inst.Internal().Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
 	c, _ := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
 	e := &env{t: t, inst: inst, c: c}
@@ -1023,7 +1023,7 @@ func TestInstanceGroupBackend(t *testing.T) {
 
 	var ports atomic.Pointer[map[string]int]
 	ports.Store(&map[string]int{"web": int(origin.port())})
-	svc, _ := e.inst.Env.Lookup("compute")
+	svc, _ := e.inst.Internal().Env.Lookup("compute")
 	svc.(*compute.Service).AddInstanceGroupResolver(func(_ context.Context, p string) (compute.InstanceGroup, bool) {
 		if p != group {
 			return compute.InstanceGroup{}, false
@@ -1236,7 +1236,7 @@ func testHealthTransitions(t *testing.T, kind string) {
 // latency configured for "lb", independent of compute's.
 func TestOperationLatency(t *testing.T) {
 	insert := func(lro map[string]string) (bucket, network string) {
-		inst := emutest.Start(t, []string{"lb"}, func(c *config.Config) { maps.Copy(c.LROLatency, lro) })
+		inst := emutest.Start(t, []string{"lb"}, emutest.WithConfig(func(c *config.Config) { maps.Copy(c.LROLatency, lro) }))
 		c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
 		if err != nil {
 			t.Fatal(err)

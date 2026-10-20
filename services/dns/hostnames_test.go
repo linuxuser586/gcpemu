@@ -17,11 +17,11 @@ import (
 // suffixes leaves to the zones; a query from a VPC network, a name outside
 // the suffixes and Resolve never reach it.
 func TestHostNames(t *testing.T) {
-	inst := emutest.Start(t, []string{"dns"}, func(c *config.Config) { c.DNSNoForward = true })
+	inst := emutest.Start(t, []string{"dns"}, emutest.WithConfig(func(c *config.Config) { c.DNSNoForward = true }))
 	c := newClient(t, inst.GatewayURL()+"/")
 	dataPlaneFixture(t, c)
 	addr := inst.Endpoint("dns")
-	svc, _ := inst.Env.Lookup("dns")
+	svc, _ := inst.Internal().Env.Lookup("dns")
 	hn := svc.(interface {
 		SetHostNames([]string, func(context.Context, string, uint16) ([]mdns.RR, int))
 	})

@@ -47,17 +47,17 @@ func TestStateSnapshot(t *testing.T) {
 	}
 	putConfigMap(t, inst, saved, "saved")
 
-	if _, err := inst.SaveSnapshot(ctx, "fixture"); err != nil {
+	if _, err := inst.Internal().SaveSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
-	checkArchive(t, filepath.Join(inst.Dir, instance.SnapshotsDir, "fixture"), saved.Id)
+	checkArchive(t, filepath.Join(inst.Internal().Dir, instance.SnapshotsDir, "fixture"), saved.Id)
 	op, err = cm.DeleteCluster(ctx, &containerpb.DeleteClusterRequest{Name: name})
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitOp(t, cm, zone, op.Name)
 
-	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
+	if err := inst.Internal().RestoreSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	c := waitRunning(t, inst, name)
@@ -90,7 +90,7 @@ func TestStateSnapshotErrorCluster(t *testing.T) {
 	name := parent + "/clusters/snaperr"
 	saved := waitRunning(t, inst, name)
 	putConfigMap(t, inst, saved, "saved")
-	gsvc, ok := inst.Env.Lookup("gke")
+	gsvc, ok := inst.Internal().Env.Lookup("gke")
 	if !ok {
 		t.Fatal("gke service not found")
 	}
@@ -98,12 +98,12 @@ func TestStateSnapshotErrorCluster(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := inst.SaveSnapshot(ctx, "fixture"); err != nil {
+	if _, err := inst.Internal().SaveSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	// The only cluster is skipped, so the snapshot holds no gke files.
 	var files []string
-	_ = filepath.WalkDir(filepath.Join(inst.Dir, instance.SnapshotsDir, "fixture", "services", "gke"), func(p string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(filepath.Join(inst.Internal().Dir, instance.SnapshotsDir, "fixture", "services", "gke"), func(p string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			files = append(files, p)
 		}
@@ -113,7 +113,7 @@ func TestStateSnapshotErrorCluster(t *testing.T) {
 		t.Fatalf("gke snapshot files of the ERROR cluster %s = %v, want none", saved.Id, files)
 	}
 
-	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
+	if err := inst.Internal().RestoreSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	c := waitRunning(t, inst, name)
@@ -153,13 +153,13 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 	})
 	start := func() *emutest.Instance {
 		inst := startPersistent(t, dir)
-		ids = append(ids, inst.ID)
+		ids = append(ids, inst.Internal().ID)
 		return inst
 	}
 	stop := func(inst *emutest.Instance) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := inst.Shutdown(ctx); err != nil {
+		if err := inst.Internal().Shutdown(ctx); err != nil {
 			t.Fatalf("shutdown: %v", err)
 		}
 	}
@@ -170,7 +170,7 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 		Name: "moved", NodePools: []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
 	}})
 	if err != nil {
-		_ = inst.Shutdown(ctx)
+		_ = inst.Internal().Shutdown(ctx)
 		t.Fatal(err)
 	}
 	waitOp(t, cm, zone, op.Name)
@@ -180,7 +180,7 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	putConfigMap(t, inst, c, "saved")
-	if _, err := inst.SaveSnapshot(ctx, "fixture"); err != nil {
+	if _, err := inst.Internal().SaveSnapshot(ctx, "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	stop(inst)
@@ -189,14 +189,14 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 	}
 
 	inst = start()
-	if inst.ID == ids[0] {
-		t.Fatalf("Instance ID kept: %s", inst.ID)
+	if inst.Internal().ID == ids[0] {
+		t.Fatalf("Instance ID kept: %s", inst.Internal().ID)
 	}
 	// Restore deliberately during the Store-recovery bring-up, as a user
 	// restoring right after a restart would. Nothing makes sure it is still
 	// in flight; TestResetRestoreDuringBringUp checks that ordering reliably.
-	if err := inst.RestoreSnapshot(ctx, "fixture"); err != nil {
-		_ = inst.Shutdown(ctx)
+	if err := inst.Internal().RestoreSnapshot(ctx, "fixture"); err != nil {
+		_ = inst.Internal().Shutdown(ctx)
 		t.Fatal(err)
 	}
 	c = waitRunning(t, inst, name)
@@ -207,7 +207,7 @@ func TestStateSnapshotOtherInstance(t *testing.T) {
 	stop(inst)
 
 	inst = start()
-	defer inst.Shutdown(context.Background())
+	defer inst.Internal().Shutdown(context.Background())
 	c = waitRunning(t, inst, name)
 	e = masterAuthEnv(t, inst, c)
 	checkConfigMap(t, e, "saved")
@@ -224,7 +224,7 @@ func waitRunning(t *testing.T, inst *emutest.Instance, name string) *containerpb
 			return c
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cluster not RUNNING after 3m: %v %v %q\n%s", err, c.GetStatus(), c.GetStatusMessage(), containerDiagnostics(inst.ID))
+			t.Fatalf("cluster not RUNNING after 3m: %v %v %q\n%s", err, c.GetStatus(), c.GetStatusMessage(), containerDiagnostics(inst.Internal().ID))
 		}
 	}
 }

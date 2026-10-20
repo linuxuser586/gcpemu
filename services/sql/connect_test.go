@@ -28,7 +28,7 @@ import (
 // accessToken mints an emulator access token for principal.
 func accessToken(t testing.TB, inst *emutest.Instance, principal string) *oauth2.Token {
 	t.Helper()
-	iam, _ := inst.Env.Lookup("iam")
+	iam, _ := inst.Internal().Env.Lookup("iam")
 	keys, ok := iam.(emu.ServiceAccountKeys)
 	if !ok {
 		t.Fatal("iam service does not provide tokens")
@@ -43,7 +43,7 @@ func accessToken(t testing.TB, inst *emutest.Instance, principal string) *oauth2
 // grantProjectRole adds a project-level IAM binding.
 func grantProjectRole(t testing.TB, inst *emutest.Instance, role, member string) {
 	t.Helper()
-	iam, _ := inst.Env.Lookup("iam")
+	iam, _ := inst.Internal().Env.Lookup("iam")
 	ps := iam.(emu.IAMPolicyStore)
 	pol := fmt.Sprintf(`{"bindings":[{"role":%q,"members":[%q]}]}`, role, member)
 	if _, err := ps.SetPolicyJSON(context.Background(), "//cloudresourcemanager.googleapis.com/projects/"+testProject, []byte(pol)); err != nil {
@@ -102,7 +102,7 @@ func TestConnectivityAndIAM(t *testing.T) {
 	}
 	// Connections are in the request log (FR-CORE-061).
 	var admitted, refused bool
-	for _, e := range inst.Env.RequestLog.Entries("sql") {
+	for _, e := range inst.Internal().Env.RequestLog.Entries("sql") {
 		if e.Protocol != "postgres" || e.Resource != "projects/"+testProject+"/instances/conn" || e.Principal != "postgres" {
 			continue
 		}
@@ -110,7 +110,7 @@ func TestConnectivityAndIAM(t *testing.T) {
 		refused = refused || (e.Status == 1 && e.Code == "28000")
 	}
 	if !admitted || !refused {
-		t.Errorf("sql request log: %+v", inst.Env.RequestLog.Entries("sql"))
+		t.Errorf("sql request log: %+v", inst.Internal().Env.RequestLog.Entries("sql"))
 	}
 
 	// IAM database users.
@@ -178,7 +178,7 @@ func TestConnectivityAndIAM(t *testing.T) {
 	if _, err := connect(ctx, ip, 5432, "alice@example.com", aliceTok.AccessToken, "postgres"); err == nil || !strings.Contains(err.Error(), "cloudsql.instances.login") {
 		t.Fatalf("user IAM login without roles/cloudsql.instanceUser: %v", err)
 	}
-	iam, _ := inst.Env.Lookup("iam")
+	iam, _ := inst.Internal().Env.Lookup("iam")
 	both := `{"bindings":[{"role":"roles/cloudsql.instanceUser","members":["serviceAccount:` + sa + `","user:alice@example.com"]}]}`
 	if _, err := iam.(emu.IAMPolicyStore).SetPolicyJSON(ctx, "//cloudresourcemanager.googleapis.com/projects/"+testProject, []byte(both)); err != nil {
 		t.Fatal(err)

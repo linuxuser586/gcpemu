@@ -68,7 +68,7 @@ func realise(t *testing.T, rng string) (*emutest.Instance, emu.SubnetNet, string
 	customNet(t, c, "vpc")
 	customNet(t, c, "other")
 	subnet(t, c, "vpc", "s", "us-central1", rng)
-	svc, _ := inst.Env.Lookup("compute")
+	svc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := svc.(emu.VPC)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"

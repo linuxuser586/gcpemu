@@ -221,7 +221,7 @@ func TestResetStopsMirrorFetch(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the upstream blob download never started")
 	}
-	if err := e.inst.Reset(e.ctx); err != nil {
+	if err := e.inst.Internal().Reset(e.ctx); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	select {
@@ -229,7 +229,7 @@ func TestResetStopsMirrorFetch(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the upstream blob download kept running after Reset")
 	}
-	if ents, err := os.ReadDir(filepath.Join(e.inst.Env.DataDir, "ar", "tmp")); err != nil || len(ents) != 0 {
+	if ents, err := os.ReadDir(filepath.Join(e.inst.Internal().Env.DataDir, "ar", "tmp")); err != nil || len(ents) != 0 {
 		t.Fatalf("ar tmp after Reset = %d entries, %v", len(ents), err)
 	}
 	pullAll(t, base, "library/big", "v1", up.host(), img)
@@ -310,14 +310,14 @@ func TestMirrorOfflinePersistentCache(t *testing.T) {
 	img := up.put("library/pause:3.10", 256, 1)
 	dir := t.TempDir()
 	persistent := func(offline bool) emutest.Option {
-		return func(c *config.Config) { c.Ephemeral, c.DataDir, c.Offline = false, dir, offline }
+		return emutest.WithConfig(func(c *config.Config) { c.Ephemeral, c.DataDir, c.Offline = false, dir, offline })
 	}
 	e1 := start(t, persistent(false))
 	ref := "127.0.0.1:" + strings.Split(up.host(), ":")[1]
 	pullAll(t, "http://"+e1.registry(), "library/pause", "3.10", ref, img)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := e1.inst.Shutdown(ctx); err != nil {
+	if err := e1.inst.Internal().Shutdown(ctx); err != nil {
 		t.Fatal(err)
 	}
 	up.pub.Close()
@@ -345,10 +345,10 @@ func TestMirrorCacheSnapshot(t *testing.T) {
 	// A blob is linked in the cache only after it was streamed to the
 	// client, so wait for the links before saving.
 	waitLinked(t, e, "library/app", cached)
-	if _, err := e.inst.SaveSnapshot(e.ctx, "s"); err != nil {
+	if _, err := e.inst.Internal().SaveSnapshot(e.ctx, "s"); err != nil {
 		t.Fatal(err)
 	}
-	orphan := filepath.Join(e.inst.Dir, instance.SnapshotsDir, "s", "services", "ar", "blobs", "sha256", "ff", "ff"+strings.Repeat("0", 62))
+	orphan := filepath.Join(e.inst.Internal().Dir, instance.SnapshotsDir, "s", "services", "ar", "blobs", "sha256", "ff", "ff"+strings.Repeat("0", 62))
 	if err := os.MkdirAll(filepath.Dir(orphan), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestMirrorCacheSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	pullAll(t, base, "library/later", "v1", up.host(), later)
-	if err := e.inst.RestoreSnapshot(e.ctx, "s"); err != nil {
+	if err := e.inst.Internal().RestoreSnapshot(e.ctx, "s"); err != nil {
 		t.Fatal(err)
 	}
 	blobs := up.blobGETs.Load()
@@ -381,7 +381,7 @@ func waitLinked(t *testing.T, e *env, repo string, img v1.Image) {
 	}
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		linked := map[string]bool{}
-		_ = e.inst.Env.Store.View(func(tx store.Tx) error {
+		_ = e.inst.Internal().Env.Store.View(func(tx store.Tx) error {
 			tx.Scan("ar/links", "_mirror/", func(k string, _ []byte) bool {
 				if p := strings.SplitN(k, "|", 3); len(p) == 3 && p[1] == repo {
 					linked[p[2]] = true

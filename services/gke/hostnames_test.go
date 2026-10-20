@@ -89,7 +89,7 @@ func TestRealHostnames(t *testing.T) {
 
 	t.Run("NodeTrustsCA", func(t *testing.T) {
 		out := nodeExec(t, inst, "cat", "/etc/ssl/certs/ca-certificates.crt")
-		if !strings.Contains(out, strings.TrimSpace(string(inst.Env.CA.PEM()))) {
+		if !strings.Contains(out, strings.TrimSpace(string(inst.Internal().Env.CA.PEM()))) {
 			t.Error("node system bundle lacks the emulator CA")
 		}
 	})
@@ -273,8 +273,8 @@ func buildWIApp(t *testing.T, inst *emutest.Instance, proj string) string {
 
 	mustGW(t, inst, "POST", "/artifactregistry/v1/projects/"+proj+"/locations/us-central1/repositories?repositoryId=apps",
 		map[string]any{"format": "DOCKER"}, nil)
-	keysSvc, _ := inst.Env.Lookup("iam")
-	tok, _, err := keysSvc.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(inst.Config.DefaultPrincipal))
+	keysSvc, _ := inst.Internal().Env.Lookup("iam")
+	tok, _, err := keysSvc.(emu.ServiceAccountKeys).AccessToken(context.Background(), emu.Principal(inst.Internal().Config.DefaultPrincipal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func buildWIApp(t *testing.T, inst *emutest.Instance, proj string) string {
 func nodeExec(t *testing.T, inst *emutest.Instance, cmd ...string) string {
 	t.Helper()
 	ctx := context.Background()
-	rt, err := inst.Env.Containers.Runtime(ctx)
+	rt, err := inst.Internal().Env.Containers.Runtime(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

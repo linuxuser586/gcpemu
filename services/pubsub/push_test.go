@@ -44,12 +44,12 @@ func (f *fakeIAM) IDToken(_ context.Context, email, aud string) (string, error) 
 // installFakeIAM replaces the "iam" peer seen through env.Lookup.
 func installFakeIAM(inst *emutest.Instance) *fakeIAM {
 	m := map[string]emu.Service{}
-	for _, s := range inst.Services() {
+	for _, s := range inst.Internal().Services() {
 		m[s.Name()] = s
 	}
 	f := &fakeIAM{Service: m["iam"]}
 	m["iam"] = f
-	inst.Env.SetServices(m)
+	inst.Internal().Env.SetServices(m)
 	return f
 }
 

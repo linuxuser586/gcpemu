@@ -30,7 +30,7 @@ func TestEnvTrust(t *testing.T) {
 		var out, errOut bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetErr(&errOut)
-		cmd.SetArgs(append(args, "--data-dir", inst.Config.DataDir, "--config", os.DevNull))
+		cmd.SetArgs(append(args, "--data-dir", inst.Internal().Config.DataDir, "--config", os.DevNull))
 		err := cmd.Execute()
 		return out.String(), errOut.String(), err
 	}
@@ -38,7 +38,7 @@ func TestEnvTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "export GCPEMU_CA_FILE='"+inst.Env.CA.Path()+"'") || strings.Contains(out, "SSL_CERT_FILE") {
+	if !strings.Contains(out, "export GCPEMU_CA_FILE='"+inst.Internal().Env.CA.Path()+"'") || strings.Contains(out, "SSL_CERT_FILE") {
 		t.Errorf("env =\n%s", out)
 	}
 	if !strings.Contains(out, "export STORAGE_EMULATOR_HOST=") {
@@ -58,8 +58,8 @@ func TestEnvTrust(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SSL_CERT_FILE %q: %v\n%s", bundle, err, out)
 	}
-	if !bytes.Contains(b, bytes.TrimSpace(inst.Env.CA.PEM())) || bytes.Count(b, []byte("BEGIN CERTIFICATE")) < 2 {
-		t.Errorf("bundle has %d certificates and CA=%v", bytes.Count(b, []byte("BEGIN CERTIFICATE")), bytes.Contains(b, inst.Env.CA.PEM()))
+	if !bytes.Contains(b, bytes.TrimSpace(inst.Internal().Env.CA.PEM())) || bytes.Count(b, []byte("BEGIN CERTIFICATE")) < 2 {
+		t.Errorf("bundle has %d certificates and CA=%v", bytes.Count(b, []byte("BEGIN CERTIFICATE")), bytes.Contains(b, inst.Internal().Env.CA.PEM()))
 	}
 	if _, _, err := run("hosts"); err == nil || !strings.Contains(err.Error(), "--host-mode") {
 		t.Errorf("hosts without host mode: %v", err)

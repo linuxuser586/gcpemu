@@ -19,7 +19,6 @@ import (
 	reflectionpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
 
 	"github.com/linuxuser586/gcpemu/emutest"
-	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
 // TestGRPCReflection is Section 7.2: the gateway's gRPC server has server
@@ -82,7 +81,7 @@ func call(t *testing.T, method, url, body string) []byte {
 // store and stored data are readable by the owner only.
 func TestDataDirPermissions(t *testing.T) {
 	dir := t.TempDir()
-	inst := emutest.Start(t, []string{"iam", "gcs", "pubsub"}, func(c *config.Config) { c.Ephemeral, c.DataDir = false, dir })
+	inst := emutest.Start(t, []string{"iam", "gcs", "pubsub"}, emutest.WithDataDir(dir))
 	gw := inst.GatewayURL()
 	call(t, "POST", gw+"/iam/v1/projects/perm-proj/serviceAccounts", `{"accountId":"perm-sa"}`)
 	call(t, "POST", gw+"/iam/v1/projects/perm-proj/serviceAccounts/perm-sa@perm-proj.iam.gserviceaccount.com/keys", `{}`)

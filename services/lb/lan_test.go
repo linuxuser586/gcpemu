@@ -27,8 +27,8 @@ func startLBBind(t *testing.T, bind ...string) *env {
 	if len(bind) == 0 {
 		bind = []string{"127.0.0.1"}
 	}
-	inst := emutest.Start(t, []string{"lb", "cdn"}, func(c *config.Config) { c.LBBind = bind })
-	svc, _ := inst.Env.Lookup("lb")
+	inst := emutest.Start(t, []string{"lb", "cdn"}, emutest.WithConfig(func(c *config.Config) { c.LBBind = bind }))
+	svc, _ := inst.Internal().Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
 	c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())
 	if err != nil {
@@ -128,7 +128,7 @@ func TestLBBindRelay(t *testing.T) {
 		t.Fatalf("via lb-lan: %d %q", resp.StatusCode, body)
 	}
 	relays := func() int {
-		cts, err := e.inst.Containers(context.Background())
+		cts, err := e.inst.Internal().Containers(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}

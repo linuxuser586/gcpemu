@@ -237,7 +237,7 @@ sql:
 	}
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		if err := inst.ApplySeed(ctx, path); err != nil {
+		if err := inst.Internal().ApplySeed(ctx, path); err != nil {
 			t.Fatalf("apply %d: %v", i, err)
 		}
 	}

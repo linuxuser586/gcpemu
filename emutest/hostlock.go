@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"testing"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/loopback"
@@ -17,19 +16,15 @@ import (
 // 127.0.0.1 (ADR 0005, #316).
 var hostLockFile = filepath.Join(os.TempDir(), "gcpemu-test-host-loopback.lock")
 
-// holdHostLoopback takes the host's loopback lock for the rest of the
-// test when the host has no loopback aliases, waiting for other tests
-// (in any process) that hold it, up to the test's deadline.
-func holdHostLoopback(t testing.TB) {
-	t.Helper()
+// holdHostLoopback takes the host's loopback lock when the host has no
+// loopback aliases, waiting for other tests (in any process) that hold it
+// until deadline (zero: forever). release drops it; it is nil when no lock
+// was needed.
+func holdHostLoopback(deadline time.Time) (release func(), err error) {
 	if loopback.Aliases() {
-		return
+		return nil, nil
 	}
-	release, err := acquireHostLock(hostLockFile, testDeadline(t))
-	if err != nil {
-		t.Fatalf("emutest: %v", err)
-	}
-	t.Cleanup(release)
+	return acquireHostLock(hostLockFile, deadline)
 }
 
 // errLockHeld is acquireLock reaching its deadline with every file held.

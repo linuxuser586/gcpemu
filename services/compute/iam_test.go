@@ -26,7 +26,7 @@ func TestIAMEnforce(t *testing.T) {
 	inst, admin, _ := newClients(t, emutest.WithIAMMode(config.IAMEnforce))
 	ctx := context.Background()
 	customNet(t, admin, "vpc")
-	svc, _ := inst.Env.Lookup("iam")
+	svc, _ := inst.Internal().Env.Lookup("iam")
 	keys := svc.(emu.ServiceAccountKeys)
 	tok, _, err := keys.AccessToken(ctx, emu.Principal("user:viewer@example.com"))
 	if err != nil {

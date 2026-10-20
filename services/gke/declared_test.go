@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -89,7 +90,7 @@ func TestDeclaredAddressesOverlap(t *testing.T) {
 		t.Fatalf("servicenetworking: %+v %v", op, err)
 	}
 
-	cvc, _ := inst.Env.Lookup("compute")
+	cvc, _ := inst.Internal().Env.Lookup("compute")
 	vpc := cvc.(emu.VPC)
 	for _, n := range []struct {
 		what, rng string
@@ -167,7 +168,7 @@ func TestDeclaredAddressesOverlap(t *testing.T) {
 	// On a VM runtime host clients reach the control plane on loopback
 	// (ADR 0005); it still advertises its subnetwork address.
 	pe := cluster.GetPrivateClusterConfig().GetPrivateEndpoint()
-	if emutest.RelayStreams(t, inst) != nil {
+	if emutestx.RelayStreams(t, inst) != nil {
 		if h, _, err := net.SplitHostPort(pe); err != nil || !net.ParseIP(h).IsLoopback() {
 			t.Errorf("control plane private endpoint %q on the VM relay, want a loopback address", pe)
 		}
