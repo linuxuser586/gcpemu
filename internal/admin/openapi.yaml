@@ -408,6 +408,50 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ResourceCounts" }
+  /_emu/v1/conditions:
+    get:
+      summary: The state of Wait conditions (`gcpemu wait`, FR-CI-007).
+      operationId: conditions
+      description: |
+        Evaluates each Wait condition, written KIND=TARGET with TARGET
+        PROJECT/LOCATION/NAME, against the Instance's current state, once.
+        The kinds are:
+
+        - `gke/cluster`: met when the GKE cluster's status is RUNNING,
+          failed when it is ERROR or STOPPING. LOCATION is its zone or
+          region.
+        - `lb/health`: met when every backend group of the backend service
+          has at least one HEALTHY endpoint, as backendServices.getHealth
+          reports it. LOCATION is `global` or a region.
+
+        A resource that does not exist is pending: it may still be being
+        created. Not subject to IAM.
+      parameters:
+        - name: for
+          in: query
+          required: true
+          description: A Wait condition, KIND=TARGET; repeat for several.
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+      responses:
+        "200":
+          description: Each Wait condition's state, in the order asked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [met, conditions]
+                properties:
+                  met:
+                    type: boolean
+                    description: Whether every Wait condition is met.
+                  conditions:
+                    type: array
+                    items: { $ref: "#/components/schemas/WaitCondition" }
+        "400": { $ref: "#/components/responses/Error" }
   /_emu/v1/operations:
     get:
       summary: Every Operation of every service (Web console Operations view, FR-UI-012).
@@ -1287,6 +1331,21 @@ components:
             properties:
               ready: { type: boolean }
               reason: { type: string }
+    WaitCondition:
+      type: object
+      required: [for, state]
+      properties:
+        for:
+          type: string
+          description: The Wait condition as asked, KIND=TARGET.
+        state:
+          type: string
+          enum: [met, pending, failed]
+          description: >-
+            pending may still become met; failed can no longer.
+        reason:
+          type: string
+          description: Why it is not met, e.g. "not found" or "status PROVISIONING".
     Operation:
       type: object
       required: [service, name, done]
