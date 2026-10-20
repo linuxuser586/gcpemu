@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -13,6 +14,10 @@ import (
 func main() {
 	agent.Main() // runs an in-container agent and exits when GCPEMU_AGENT is set
 	if err := cli.New(services.Factories()).Execute(); err != nil {
+		var exit *cli.ExitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.Code)
+		}
 		fmt.Fprintln(os.Stderr, "gcpemu:", err)
 		os.Exit(1)
 	}

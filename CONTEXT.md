@@ -76,7 +76,7 @@ The root certificate authority an Instance creates the first time it starts. It 
 _Avoid_: local CA, root CA, emulator CA
 
 **Host trust**:
-The places on the user's machine that trust the Instance CA: the OS certificate store, container runtimes' registry trust and browser certificate databases. `gcpemu ca install` adds the Instance CA to them and `gcpemu doctor` reports where it is.
+The places on the user's machine that trust the Instance CA: the OS certificate store, container runtimes' registry trust and browser certificate databases. `gcpemu ca install` adds the Instance CA to them and `gcpemu doctor` reports where it is. A place is part of Host trust once it holds the Instance CA, even if a client on the host is set up not to read it, such as a kubelet whose containerd does not read the registry trust; doctor reports that client separately.
 _Avoid_: trust store (that is part of a Trust config)
 
 **Google front end**:
@@ -443,4 +443,5 @@ _Avoid_: egress check, leak detector
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
 - "Condition" on its own is ambiguous: Kubernetes objects inside a GKE cluster have their own conditions. Use *Wait condition* for what a script blocks on.
+- "Kubernetes pulls" on its own is ambiguous: an emulated GKE cluster's nodes pull with their own registry settings, apart from Host trust. Say *a kubelet on the host* for a Kubernetes cluster that runs directly on the user's machine and pulls through the host's containerd.
 - "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.

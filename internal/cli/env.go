@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func (o *rootOpts) envCmd() *cobra.Command {
@@ -26,26 +27,10 @@ func (o *rootOpts) envCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			q := url.Values{}
-			if trustCA {
-				q.Set("trust", "true")
-			}
-			if noUniverse {
-				q.Set("universe", "false")
-			}
-			path := "/_emu/v1/env"
-			if len(q) > 0 {
-				path += "?" + q.Encode()
-			}
-			b, err := c.get(path)
+			vars, err := clientEnv(c, trustCA, noUniverse, cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
-			vars := map[string]string{}
-			if err := json.Unmarshal(b, &vars); err != nil {
-				return err
-			}
-			guardADC(c, vars, cmd.ErrOrStderr())
 			out := cmd.OutOrStdout()
 			if shell == "github" {
 				if p := os.Getenv("GITHUB_ENV"); p != "" {
@@ -66,9 +51,41 @@ func (o *rootOpts) envCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&shell, "shell", "bash", "output format: bash, fish, powershell (or pwsh), github")
-	cmd.Flags().BoolVar(&trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
-	cmd.Flags().BoolVar(&noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials; GOOGLE_CLOUD_UNIVERSE_DOMAIN stays, since emulator keys need it")
+	envFlags(cmd.Flags(), &trustCA, &noUniverse)
 	return cmd
+}
+
+// envFlags registers the flags that choose clientEnv's variables, for
+// `env` and `run`.
+func envFlags(f *pflag.FlagSet, trustCA, noUniverse *bool) {
+	f.BoolVar(trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
+	f.BoolVar(noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials; GOOGLE_CLOUD_UNIVERSE_DOMAIN stays, since emulator keys need it")
+}
+
+// clientEnv returns the variables that point clients at the Instance
+// behind c, which `gcpemu env` prints. Warnings about credentials go to w.
+func clientEnv(c *adminClient, trustCA, noUniverse bool, w io.Writer) (map[string]string, error) {
+	q := url.Values{}
+	if trustCA {
+		q.Set("trust", "true")
+	}
+	if noUniverse {
+		q.Set("universe", "false")
+	}
+	path := "/_emu/v1/env"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	b, err := c.get(path)
+	if err != nil {
+		return nil, err
+	}
+	vars := map[string]string{}
+	if err := json.Unmarshal(b, &vars); err != nil {
+		return nil, err
+	}
+	guardADC(c, vars, w)
+	return vars, nil
 }
 
 // buildLogHints says how to run `gcloud builds submit` when gcloud can't

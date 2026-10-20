@@ -17,6 +17,9 @@ import (
 var bin string
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv("GCPEMU_TEST_CHILD"); mode != "" {
+		os.Exit(runChild(mode))
+	}
 	dir, err := os.MkdirTemp("", "gcpemu-cli-test-")
 	if err != nil {
 		panic(err)
