@@ -111,7 +111,7 @@ The Managed container that listens on `--gfe-bind` addresses at port 443 when th
 _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 
 **VM runtime**:
-A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, and Docker Desktop or Podman machine on Windows.
+A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, Docker Desktop or Podman machine on Windows, and Docker Desktop on Linux.
 
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
