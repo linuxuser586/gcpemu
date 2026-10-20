@@ -12,6 +12,8 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: process.env.GCPEMU_E2E_URL,
+    // CI's console-e2e job uploads the report when a trace.zip is left in
+    // test-results, so it relies on traces being kept only for failures.
     trace: 'retain-on-failure',
   },
   projects: [
