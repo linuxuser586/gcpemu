@@ -758,6 +758,11 @@ type ContainerSpec struct {
 	// Platform picks the image variant ("linux/arm64"); "" lets the
 	// runtime choose.
 	Platform string
+	// DNS are the resolvers of the container's names that its network's
+	// do not resolve.
+	DNS []string
+	// ExtraHosts are "name:ip" lines added to the container's /etc/hosts.
+	ExtraHosts []string
 }
 
 // Container is an inspected container.
@@ -810,6 +815,12 @@ func (c *Client) CreateContainer(ctx context.Context, s ContainerSpec) (string, 
 		"Tmpfs":        s.Tmpfs,
 		"Memory":       s.Memory,
 		"Init":         s.Init,
+	}
+	if len(s.DNS) > 0 {
+		host["Dns"] = s.DNS
+	}
+	if len(s.ExtraHosts) > 0 {
+		host["ExtraHosts"] = s.ExtraHosts
 	}
 	if s.CgroupnsHost {
 		host["CgroupnsMode"] = "host"

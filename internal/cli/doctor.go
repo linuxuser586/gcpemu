@@ -60,8 +60,12 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			cl, det, rtErr := emuruntime.Locate()
 			checkRuntimeDetection(out, report, det, rtErr)
 			hasRuntime := rtErr == nil
+			// hostRuntime: a runtime whose host network is this host's,
+			// for a relay container there.
+			hostRuntime := false
 			if hasRuntime {
-				checkVMRelay(cmd.Context(), out, cl)
+				vm, known := checkVMRelay(cmd.Context(), out, cl)
+				hostRuntime = known && !vm && cl.Self() == ""
 				info, infoErr := cl.Info(cmd.Context())
 				if cl.Self() != "" && infoErr != nil {
 					fmt.Fprintf(out, "[--  ] VM runtime: undetermined (cannot read the runtime's info: %v)\n", infoErr)
@@ -97,7 +101,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLANBind(out, report, cfg, running == nil, hasRuntime)
+			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime)
 			if running == nil {
 				checkUnpublished(out, cfg)
 			}
@@ -234,8 +238,9 @@ func checkPlatform(report func(bool, string, string), goos, goarch string) {
 
 // checkVMRelay prints whether an Instance started now uses the VM relay
 // (ADR 0005), and why. Its services network does not exist before it
-// starts, so the runtime's default bridge network stands in for it.
-func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) {
+// starts, so the runtime's default bridge network stands in for it. It
+// reports whether the runtime is a VM runtime, if that was determined.
+func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) (vm, known bool) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	gw := ""
@@ -247,9 +252,11 @@ func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) {
 	}
 	if gw == "" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
 		fmt.Fprintln(out, "[--  ] VM relay: undetermined (no default bridge network to probe)")
-		return
+		return false, false
 	}
-	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", vmrelay.Decide(cl.Self() != "", gw))
+	d := vmrelay.Decide(cl.Self() != "", gw)
+	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", d)
+	return d.VM, true
 }
 
 // checkVMRuntime prints, for a Containerized Instance, whether it treats
@@ -572,8 +579,10 @@ func osTrustsCA(der []byte) bool {
 // addresses: what the running instance serves on them, otherwise whether
 // the configured ones can be bound (an address of this host; privileged
 // --lb-bind ports need the lb-lan relay, and --gfe-bind's 443 an
-// unprivileged port start at or below it).
-func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime bool) {
+// unprivileged port start at or below it, or the gfe-lan relay, which
+// needs hostRuntime: a container runtime that is not a VM runtime, for an
+// emulator not in a container).
+func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime bool) {
 	if running {
 		c, err := clientFor(cfg)
 		if err != nil {
@@ -628,8 +637,7 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	}
 	start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if _, set := cfg.PortSet(frontend.LANEndpoint); len(cfg.GFEBind) > 0 && !set {
-		report(start <= 443 || os.Geteuid() == 0, fmt.Sprintf("--gfe-bind port 443 can be bound (net.ipv4.ip_unprivileged_port_start is %d)", start),
-			"sudo sysctl net.ipv4.ip_unprivileged_port_start=443")
+		checkGFEPort(report, start, os.Geteuid() == 0, hostRuntime)
 	}
 	if len(cfg.LBBind) > 0 {
 		if start > 80 {
@@ -637,6 +645,19 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")
 		}
 	}
+}
+
+// checkGFEPort reports how --gfe-bind's port 443 is served on Linux,
+// whose unprivileged port start is start: by the emulator, when it may bind
+// it, otherwise by the gfe-lan relay (the LAN front-end relay) when there is
+// a hostRuntime for it, otherwise not until the sysctl is lowered.
+func checkGFEPort(report func(bool, string, string), start int, root, hostRuntime bool) {
+	if start > 443 && !root && hostRuntime {
+		report(true, "--gfe-bind port 443 relayed by the gfe-lan container", "")
+		return
+	}
+	report(start <= 443 || root, fmt.Sprintf("--gfe-bind port 443 can be bound (net.ipv4.ip_unprivileged_port_start is %d)", start),
+		"sudo sysctl net.ipv4.ip_unprivileged_port_start=443")
 }
 
 // listAddrsCmd is the command that lists this host's addresses on goos.

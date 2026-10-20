@@ -46,12 +46,29 @@ func (stubStorage) ForeignBucket(r *http.Request) bool {
 
 func (stubStorage) Signed(r *http.Request) bool { return r.URL.Query().Get("X-Goog-Signature") != "" }
 
-// answer is a stub backend naming itself, the Host it saw and the body.
+// answer is a stub backend naming itself, the Host it saw and the body,
+// and the client address it saw in X-Remote-Addr.
 func answer(name string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("X-Remote-Addr", r.RemoteAddr)
 		io.WriteString(w, name+" "+r.Host+" "+string(b))
 	})
+}
+
+// lanNames are the hostnames the LAN tests' front end serves.
+func lanNames() []string {
+	return []string{"iam.googleapis.com", "oauth2.googleapis.com", "storage.googleapis.com", "www.googleapis.com"}
+}
+
+// lanStubs are the stub backends of the LAN tests.
+func lanStubs() frontend.LAN {
+	return frontend.LAN{
+		Gateway:     answer("gateway"),
+		Registry:    func() http.Handler { return answer("registry") },
+		Storage:     stubStorage{},
+		ReadThrough: answer("google"),
+	}
 }
 
 // TestLAN covers #462: on a --gfe-bind address the Google front end serves
@@ -67,26 +84,24 @@ func TestLAN(t *testing.T) {
 	cfg.GFEBind = []string{"127.0.0.1"}
 	cfg.Ports["gfe-lan"] = 0
 	env := &emu.Env{Config: &cfg, CA: authority, Auth: tokenAuth{}, Endpoints: emu.NewEndpoints(), Log: slog.New(slog.DiscardHandler)}
-	fe := frontend.New(env, func() []string {
-		return []string{"iam.googleapis.com", "oauth2.googleapis.com", "storage.googleapis.com", "www.googleapis.com"}
-	})
-	fe.StartLAN(frontend.LAN{
-		Gateway:     answer("gateway"),
-		Registry:    func() http.Handler { return answer("registry") },
-		Storage:     stubStorage{},
-		ReadThrough: answer("google"),
-	})
+	fe := frontend.New(env, lanNames)
+	fe.StartLAN(lanStubs())
 	t.Cleanup(func() { fe.Close() })
 	addr := env.Endpoints.Get("gfe-lan")
 	if !strings.HasPrefix(addr, "127.0.0.1:") {
 		t.Fatalf("gfe-lan endpoint = %q", addr)
 	}
-	hc := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+	checkLAN(t, &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
 		DialContext:       dialFrontend(addr),
 		TLSClientConfig:   &tls.Config{RootCAs: authority.Pool()},
 		ForceAttemptHTTP2: true,
-	}}
+	}})
+}
 
+// checkLAN runs the requests a --gfe-bind listener admits and refuses
+// through hc, whose transport reaches one.
+func checkLAN(t *testing.T, hc *http.Client) {
+	t.Helper()
 	jwtGrant := url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"}, "assertion": {"a.b.c"}}.Encode()
 	for _, tc := range []struct {
 		name, method, url, bearer, ctype, body string

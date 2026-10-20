@@ -26,7 +26,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings; system metrics over OTLP |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
-| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket` |
+| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket`; steps run as the Build's `serviceAccount` (the Compute Engine default without one; naming one needs `iam.serviceAccounts.actAs`) and reach the Instance by real hostname through the Build agent, with the metadata server, the Instance CA trusted and an Artifact Registry proxy |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
 ## Quick start
@@ -258,9 +258,12 @@ as Argo Workflows' GCS artifact driver, pass `--gfe-bind <address>` (repeatable;
 (`--port gfe-lan=N` for another port), with certificates from the instance CA, for every name it
 serves: `storage.googleapis.com`, `oauth2.googleapis.com`, `iam.googleapis.com`,
 `LOCATION-docker.pkg.dev` and the rest. Point that machine's DNS for those names at the address
-and have it trust `<data-dir>/ca.pem`. Port 443 is privileged on Linux, so an unprivileged
-emulator needs `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`; `gcpemu doctor` checks
-this. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
+and have it trust `<data-dir>/ca.pem`. Port 443 is privileged on Linux: when an unprivileged
+emulator can't bind it, a labelled `gcpemu-<id>-gfe-lan` container on the host network listens
+there instead and relays each connection, still encrypted, to the Google front end. That needs a
+container runtime that isn't a VM runtime, an emulator not running in a container and no
+`--port gfe-lan`; otherwise run `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`.
+`gcpemu doctor` checks which applies. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
 
 - Every request needs credentials, whatever the IAM enforcement level: a bearer token the
   Instance issued, or a signed URL or V4 signature for the Cloud Storage XML API. The token
@@ -366,6 +369,18 @@ Cloud Build knobs: `build.concurrency` in `gcpemu.yaml` (`GCPEMU_BUILD_CONCURREN
 `QUEUED` until their `queueTtl` passes. A Reset cancels every Build and removes its containers
 and volumes; a Build that was `QUEUED` or `WORKING` when a State snapshot was saved restores as
 `INTERNAL_ERROR`.
+
+Build steps get the environment of a GKE pod from the Build agent, one Sidecar agent per Instance
+on the Build network: `gcloud` and client-library steps need no Endpoint override. The agent is
+the steps' DNS server and answers `metadata.google.internal`, the Google front end's hostnames
+and every `LOCATION-docker.pkg.dev` with its own address, where it relays `:443` to the front end,
+serves the metadata server as the step's Build's service account on `:80` and proxies Artifact
+Registry over plain HTTP on `:5000` with that account's token. Every step gets the Instance CA
+bundle at `/etc/gcpemu/certs/ca-certificates.crt` and over `/etc/ssl/certs/ca-certificates.crt`,
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` set to it, and `GCE_METADATA_HOST`
+and `GCE_METADATA_IP` set to the agent's address; unlike on GCP, the metadata server is not at
+169.254.169.254, which steps cannot route to. The legacy `PROJECT_NUMBER@cloudbuild.gserviceaccount.com`
+exists in every Project with Cloud Build Service Account (`roles/cloudbuild.builds.builder`) on it.
 
 A Build's source is a `storageSource` tarball (gzipped, plain or zip), extracted into `/workspace`
 at the `generation` given (a generation that is gone fails the Build `FETCH_SOURCE_FAILED`), or a
@@ -525,6 +540,18 @@ before any allow policy and bind every Principal they name, the Default principa
 internal calls with no Principal are exempt. Under `audit` a denied call is logged and allowed.
 Denial conditions on `request.time` and `resource.*` are evaluated; conditions on resource tags
 are refused, since the emulator has no tags.
+
+### Deterministic Instances
+
+`--deterministic` (`emutest.WithDeterministic()`) makes generated IDs and timestamps the same run
+to run, for golden-file tests. The clock starts at 2026-01-01T00:00:00Z and moves 1 ms each time
+an API request arrives; every timestamp within one request is the same, and real time passing
+never moves it. `gcpemu time advance` still moves it on purpose. The guarantee holds for a client
+that sends one API request at a time. Console and admin API traffic (`/_emu/`) does not move the
+clock, so it does not affect the output. Operations with no `--lro-latency` come back `DONE` from
+the call that started them. Operations backed by runtime containers (GKE clusters, Cloud SQL
+instances, backups, imports and exports) and any operation once latency is configured are outside
+the guarantee.
 
 ### Seed files
 

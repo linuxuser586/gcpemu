@@ -61,7 +61,7 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) (o outcome, ranT
 	if err != nil {
 		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build network: " + err.Error()}, false
 	}
-	if err := s.fetchSource(r.ctx, rt, r, b, vols, network); err != nil {
+	if err := s.fetchSource(r.ctx, rt, r, b, vols, network.name); err != nil {
 		var f *stepFailure
 		if errors.As(err, &f) {
 			return f.o, true
@@ -146,19 +146,25 @@ func dependencies(steps []*cloudbuildpb.BuildStep, i int) []int {
 }
 
 // network returns the Build network, which the Service owns and every
-// Build's steps join, creating it on first use. Steps reach the internet
-// through it; the Build agent will give them the Instance (#386).
-func (s *Service) network(ctx context.Context, rt *runtime.Manager) (string, error) {
+// Build's steps join, creating it on first use, and the Build agent on it,
+// starting it if needed. Steps reach the internet through the network,
+// and the Instance through the agent.
+func (s *Service) network(ctx context.Context, rt *runtime.Manager) (buildNet, error) {
 	s.netMu.Lock()
 	defer s.netMu.Unlock()
 	name := rt.Name("build")
-	if _, err := rt.InspectNetwork(ctx, name); err == nil {
-		return name, nil
-	} else if !errors.Is(err, runtime.ErrNotFound) {
-		return "", err
+	if _, err := rt.InspectNetwork(ctx, name); errors.Is(err, runtime.ErrNotFound) {
+		if _, err := rt.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Labels: rt.Labels("build", "", "network")}); err != nil {
+			return buildNet{}, err
+		}
+	} else if err != nil {
+		return buildNet{}, err
 	}
-	_, err := rt.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Labels: rt.Labels("build", "", "network")})
-	return name, err
+	addr, err := s.buildAgent(ctx, rt, name)
+	if err != nil {
+		return buildNet{}, fmt.Errorf("starting the Build agent: %w", err)
+	}
+	return buildNet{name: name, agent: addr}, nil
 }
 
 // buildVolumes names the runtime volumes of a Build by mount path.
@@ -218,7 +224,7 @@ func (v buildVolumes) mounts(b *cloudbuildpb.Build, st *cloudbuildpb.BuildStep) 
 // a *stepFailure when the step ends the Build, errStepStopped when the
 // step was stopped, and nil when the step succeeded or failed but was
 // allowed to.
-func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild, b *cloudbuildpb.Build, i int, vols buildVolumes, network string) error {
+func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild, b *cloudbuildpb.Build, i int, vols buildVolumes, network buildNet) error {
 	st := b.GetSteps()[i]
 	ctx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
@@ -279,13 +285,22 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 	if ctx.Err() != nil {
 		return s.stopped(ctx, ended)
 	}
+	files := s.stepFiles()
 	if sc := st.GetScript(); sc != "" {
-		if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(scriptFile, "/"), Mode: 0o755, Data: []byte(sc)}}); err != nil {
-			return failed("writing the script: " + err.Error())
+		files = append(files, runtime.File{Name: strings.TrimPrefix(scriptFile, "/"), Mode: 0o755, Data: []byte(sc)})
+	}
+	if len(files) > 0 {
+		if err := rt.CopyTo(ctx, id, "/", files); err != nil {
+			return failed("writing the step's files: " + err.Error())
 		}
 	}
 	if err := rt.StartContainer(ctx, id); err != nil {
 		return failed(err.Error())
+	}
+	if c, err := rt.InspectContainer(ctx, id); err == nil && c.IPs[network.name] != "" {
+		ip := c.IPs[network.name]
+		s.recordStep(ip, r.ref)
+		defer s.forgetStep(ip) // runs before the container is removed
 	}
 	copied := s.follow(ctx, rt, r.ref, id, label+": ")
 	code, err := rt.WaitContainer(ctx, id)
@@ -329,10 +344,12 @@ func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Sta
 // stepSpec is the container of step i: its image, entrypoint and args or
 // script, env (the Build's options first), dir under the source's, the
 // Build's volumes and the Build network, labelled as the Build's so
-// cleanup finds it.
-func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network string) runtime.ContainerSpec {
+// cleanup finds it. The Build agent is its resolver, and the variables
+// that point clients at the agent come before the Build's own.
+func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network buildNet) runtime.ContainerSpec {
 	st := b.GetSteps()[i]
-	env := append([]string{"HOME=" + home}, b.GetOptions().GetEnv()...)
+	agentEnv, hosts := s.stepEnv(network.agent)
+	env := append(append([]string{"HOME=" + home}, agentEnv...), b.GetOptions().GetEnv()...)
 	spec := runtime.ContainerSpec{
 		Name:       rt.Name("build", b.GetId(), "step", strconv.Itoa(i)),
 		Image:      st.GetName(),
@@ -340,7 +357,9 @@ func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vo
 		Labels:     rt.Labels("build", b.GetName(), "step"),
 		WorkingDir: path.Join(sourceDir(b), st.GetDir()),
 		Mounts:     vols.mounts(b, st),
-		Networks:   []runtime.Attachment{{Network: network}},
+		Networks:   []runtime.Attachment{{Network: network.name}},
+		DNS:        []string{network.agent},
+		ExtraHosts: hosts,
 	}
 	if path.IsAbs(st.GetDir()) {
 		spec.WorkingDir = path.Clean(st.GetDir())
@@ -425,6 +444,7 @@ func (s *Service) removeObjects(ref buildRef) {
 	if err != nil {
 		return
 	}
+	s.forgetSteps(ref)
 	sel := map[string]string{runtime.LabelInstance: rt.InstanceID, runtime.LabelService: "build", runtime.LabelResource: ref.name()}
 	for attempt := 0; ; attempt++ {
 		var errs []error

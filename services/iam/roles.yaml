@@ -150,6 +150,8 @@ permissions:
     - "operations: cancel delete get list"
   cloudbuild:
     - "builds: approve create get list update"
+    - "workerpools: create delete get list update use"
+    - "operations: get list"
   secretmanager:
     - "secrets: create delete get getIamPolicy list setIamPolicy update"
     - "versions: access add destroy disable enable get list"
@@ -489,6 +491,26 @@ roles:
     title: Cloud Build Approver
     description: Can approve or reject pending builds.
     permissions: ["cloudbuild.builds.approve", "cloudbuild.builds.get", "cloudbuild.builds.list", resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.builds.builder
+    title: Cloud Build Service Account
+    description: Can perform builds.
+    permissions: [artifactregistry.*, "cloudbuild.builds.create", "cloudbuild.builds.get", "cloudbuild.builds.list", "cloudbuild.builds.update", cloudbuild.workerpools.use, pubsub.topics.create, pubsub.topics.publish, resourcemanager.projects.get, resourcemanager.projects.list, storage.buckets.create, storage.buckets.get, storage.buckets.list, storage.managedFolders.create, storage.managedFolders.delete, storage.managedFolders.get, storage.managedFolders.list, storage.objects.create, storage.objects.delete, storage.objects.get, storage.objects.list, storage.objects.update]
+  - name: roles/cloudbuild.workerPoolOwner
+    title: Cloud Build WorkerPool Owner
+    description: Can create, delete, update, view and use worker pools.
+    permissions: [cloudbuild.workerpools.*, cloudbuild.operations.get, cloudbuild.operations.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.workerPoolEditor
+    title: Cloud Build WorkerPool Editor
+    description: Can update and view worker pools.
+    permissions: [cloudbuild.workerpools.get, cloudbuild.workerpools.list, cloudbuild.workerpools.update, cloudbuild.operations.get, cloudbuild.operations.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.workerPoolViewer
+    title: Cloud Build WorkerPool Viewer
+    description: Can view worker pools.
+    permissions: [cloudbuild.workerpools.get, cloudbuild.workerpools.list, resourcemanager.projects.get, resourcemanager.projects.list]
+  - name: roles/cloudbuild.workerPoolUser
+    title: Cloud Build WorkerPool User
+    description: Can run builds in worker pools.
+    permissions: [cloudbuild.workerpools.use]
   - name: roles/secretmanager.admin
     title: Secret Manager Admin
     description: Full access to administer Secret Manager resources.

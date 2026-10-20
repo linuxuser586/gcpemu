@@ -10,14 +10,16 @@
 // "frontend", dynamic port unless --port frontend=N). For each connection
 // it completes a TLS handshake with a certificate issued by the
 // instance's local CA (env.CA) for the requested SNI, offering ALPN "h2"
-// and "http/1.1", then pipes the decrypted byte stream unchanged to:
+// and "http/1.1", then passes the decrypted byte stream unchanged to:
 //
 //   - the Artifact Registry listener for LOCATION-docker.pkg.dev, or
-//   - the gateway for every other name.
+//   - the API gateway for every other name, in process (SetGateway), so
+//     the API gateway knows the client used HTTPS and services render
+//     https links (#440).
 //
-// Both backends speak HTTP/1.1 and prior-knowledge h2c on the same port,
-// so whichever protocol the client negotiated works end to end, including
-// gRPC, streaming and trailers, and the Host / :authority header arrives
+// Both backends speak HTTP/1.1 and prior-knowledge h2c, so whichever
+// protocol the client negotiated works end to end, including gRPC,
+// streaming and trailers, and the Host / :authority header arrives
 // untouched; the gateway's host routing (emu.Router Mount hosts) then
 // picks the service. Only names the emulator serves get a certificate:
 // the gateway's mounted hosts and LOCATION-docker.pkg.dev. A connection
@@ -41,6 +43,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,20 +94,47 @@ type Frontend struct {
 	hosts func() []string
 	// inContainer is runtime.InContainer, replaced in tests.
 	inContainer func() bool
+	// goos, listen, relayRuntime, newRelay and relayRetry are how
+	// StartLAN binds the --gfe-bind addresses and relays those it may
+	// not (lanrelay.go), replaced in tests.
+	goos         string
+	listen       func(network, addr string) (net.Listener, error)
+	relayRuntime func(ctx context.Context) (vm bool, err error)
+	newRelay     func() lanRelay
+	relayRetry   []time.Duration
+	// serveGateway serves a connection in the API gateway (SetGateway).
+	serveGateway func(context.Context, net.Conn) error
+	// ctx is cancelled by Close, abandoning hand-offs not yet accepted.
+	ctx    context.Context
+	cancel context.CancelFunc
 
-	mu     sync.Mutex
-	ln     net.Listener
-	conns  map[net.Conn]struct{}
-	lan    []*http.Server // --gfe-bind listeners (lan.go)
-	closed bool
-	wg     sync.WaitGroup
+	mu        sync.Mutex
+	ln        net.Listener
+	conns     map[net.Conn]struct{}
+	lan       []*http.Server // --gfe-bind listeners and the relay's ingress (lan.go)
+	lanAddrs  []string       // the --gfe-bind addresses served, directly or relayed
+	relay     lanRelay       // the LAN front-end relay, once it serves
+	relayStop context.CancelFunc
+	relayDone chan struct{}
+	closed    bool
+	wg        sync.WaitGroup
 }
 
 // New returns a frontend serving the names hosts returns (the gateway's
 // mounted hosts) plus LOCATION-docker.pkg.dev.
 func New(env *emu.Env, hosts func() []string) *Frontend {
-	return &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer}
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer,
+		goos: goruntime.GOOS, listen: net.Listen, relayRetry: relayRetry, ctx: ctx, cancel: cancel}
+	f.relayRuntime, f.newRelay = f.containerRuntime, f.containerRelay
+	return f
 }
+
+// SetGateway makes the frontend hand API gateway connections to serve
+// (Gateway.ServeFrontend) instead of dialing the "gateway" endpoint, where
+// they look like direct plain-HTTP clients. Without it (tests building a
+// Frontend alone) the frontend dials the endpoint. Call it before Start.
+func (f *Frontend) SetGateway(serve func(context.Context, net.Conn) error) { f.serveGateway = serve }
 
 // Hosts returns the exact hostnames served (registry hosts match by
 // pattern; see IsRegistryHost).
@@ -162,17 +192,19 @@ func (f *Frontend) Addr() string {
 	return f.ln.Addr().String()
 }
 
-// Close stops the listener and open connections.
+// Close stops the listener and open connections, and the --gfe-bind
+// listeners (StopLAN).
 func (f *Frontend) Close() error {
+	f.StopLAN()
 	f.mu.Lock()
 	f.closed = true
+	f.cancel()
 	if f.ln != nil {
 		f.ln.Close()
 	}
 	for c := range f.conns {
 		c.Close()
 	}
-	f.closeLAN()
 	f.mu.Unlock()
 	f.wg.Wait()
 	return nil
@@ -263,14 +295,13 @@ func ipNames() []string {
 	return out
 }
 
-// backend returns the address that serves name.
-func (f *Frontend) backend(name string) string {
+// registryAddr returns the Artifact Registry listener's address when it
+// serves name, else "".
+func (f *Frontend) registryAddr(name string) string {
 	if IsRegistryHost(name) {
-		if a := f.env.Endpoints.Get("ar"); a != "" {
-			return a
-		}
+		return f.env.Endpoints.Get("ar")
 	}
-	return f.env.Endpoints.Get("gateway")
+	return ""
 }
 
 func (f *Frontend) handle(raw net.Conn) {
@@ -283,9 +314,18 @@ func (f *Frontend) handle(raw net.Conn) {
 		f.env.Log.Debug("Google front end: handshake failed", "remote", raw.RemoteAddr().String(), "err", err)
 		return
 	}
-	target := f.backend(tc.ConnectionState().ServerName)
-	if target == "" {
+	target := f.registryAddr(tc.ConnectionState().ServerName)
+	switch {
+	case target != "":
+	case f.serveGateway != nil:
+		if err := f.serveGateway(f.ctx, tc); err != nil {
+			f.env.Log.Debug("Google front end: API gateway not serving", "err", err)
+		}
 		return
+	default:
+		if target = f.env.Endpoints.Get("gateway"); target == "" {
+			return
+		}
 	}
 	up, err := net.DialTimeout("tcp", target, 5*time.Second)
 	if err != nil {
