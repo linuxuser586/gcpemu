@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
@@ -29,6 +30,10 @@ const (
 // errStepTimeout stops a step that ran past its own timeout.
 var errStepTimeout = errors.New("build: step timed out")
 
+// errStepStopped is a step stopped while it ran, with the Build or by
+// another step's failure.
+var errStepStopped = errors.New("build: step stopped")
+
 // stepFailure is a step ending a Build that has not been told to stop.
 type stepFailure struct{ o outcome }
 
@@ -38,25 +43,30 @@ func (f *stepFailure) Error() string { return f.o.detail }
 // ended: by default every earlier step, with waitFor the steps named
 // ("-" for none). A step failing stops the steps still running, and no
 // step starts after it.
-func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) outcome {
+//
+// ranToEnd reports whether the Build ran to its own end: setup completed,
+// and every step ended on its own or a step's failure ended the Build.
+// Otherwise the Build was stopped, and its stop's cause decides its status.
+func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) (o outcome, ranToEnd bool) {
+	s.reach(r.ctx, b, "setup")
 	rt, err := s.env.Containers.Runtime(r.ctx)
 	if err != nil {
-		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "No container runtime: " + err.Error()}
+		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "No container runtime: " + err.Error()}, false
 	}
 	vols, err := s.createVolumes(r.ctx, rt, b)
 	if err != nil {
-		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build's volumes: " + err.Error()}
+		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build's volumes: " + err.Error()}, false
 	}
 	network, err := s.network(r.ctx, rt)
 	if err != nil {
-		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build network: " + err.Error()}
+		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build network: " + err.Error()}, false
 	}
 	if err := s.fetchSource(r.ctx, rt, r, b, vols, network); err != nil {
 		var f *stepFailure
 		if errors.As(err, &f) {
-			return f.o
+			return f.o, true
 		}
-		return outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}
+		return outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}, false
 	}
 	s.logs.line(r.ref, "BUILD")
 	ctx, fail := context.WithCancelCause(r.ctx)
@@ -66,6 +76,10 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) outcome {
 	for i := range done {
 		done[i] = make(chan struct{})
 	}
+	// stoppedEarly is set when a step was stopped, or never ran for the
+	// stop. late is the first step failure the Build's stop got ahead of.
+	var stoppedEarly atomic.Bool
+	var late atomic.Pointer[stepFailure]
 	var wg sync.WaitGroup
 	for i := range steps {
 		deps := dependencies(steps, i)
@@ -75,23 +89,41 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) outcome {
 				select {
 				case <-done[d]:
 				case <-ctx.Done():
+					stoppedEarly.Store(true)
 					return
 				}
 			}
+			s.reach(ctx, b, "step "+strconv.Itoa(i))
 			if ctx.Err() != nil {
+				stoppedEarly.Store(true)
 				return
 			}
-			if err := s.runStep(ctx, rt, r, b, i, vols, network); err != nil {
-				fail(err)
+			err := s.runStep(ctx, rt, r, b, i, vols, network)
+			var f *stepFailure
+			switch {
+			case errors.Is(err, errStepStopped):
+				stoppedEarly.Store(true)
+			case errors.As(err, &f):
+				fail(f)
+				if context.Cause(ctx) != error(f) {
+					late.CompareAndSwap(nil, f)
+				}
 			}
 		})
 	}
 	wg.Wait()
 	var f *stepFailure
 	if errors.As(context.Cause(ctx), &f) {
-		return f.o
+		return f.o, true
 	}
-	return outcome{status: cloudbuildpb.Build_SUCCESS}
+	if stoppedEarly.Load() {
+		return outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}, false
+	}
+	// Every step ended on its own, though the Build's stop came first.
+	if f := late.Load(); f != nil {
+		return f.o, true
+	}
+	return outcome{status: cloudbuildpb.Build_SUCCESS}, true
 }
 
 // dependencies returns the indexes of the steps step i waits for.
@@ -183,8 +215,9 @@ func (v buildVolumes) mounts(b *cloudbuildpb.Build, st *cloudbuildpb.BuildStep) 
 }
 
 // runStep runs step i in a container and records its status. It returns
-// a *stepFailure when the step ends the Build, and nil when the step
-// succeeded, failed but was allowed to, or was stopped.
+// a *stepFailure when the step ends the Build, errStepStopped when the
+// step was stopped, and nil when the step succeeded or failed but was
+// allowed to.
 func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild, b *cloudbuildpb.Build, i int, vols buildVolumes, network string) error {
 	st := b.GetSteps()[i]
 	ctx, stop := context.WithCancelCause(ctx)
@@ -206,19 +239,23 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 			step.Timing = &cloudbuildpb.TimeSpan{StartTime: start, EndTime: end}
 		})
 	}
-	failed := func(status cloudbuildpb.Build_Status, code int32, detail string) error {
-		ended(status, code)
+	failure := func(code int32, detail string) error {
+		ended(cloudbuildpb.Build_FAILURE, code)
+		detail = fmt.Sprintf("build step %d %q failed: %s", i, st.GetName(), detail)
+		return &stepFailure{outcome{status: cloudbuildpb.Build_FAILURE, detail: "Build step failure: " + detail,
+			failure: &cloudbuildpb.Build_FailureInfo{Type: cloudbuildpb.Build_FailureInfo_USER_BUILD_STEP, Detail: detail}}}
+	}
+	// failed is a step failing with an error, which may come of its stop.
+	failed := func(detail string) error {
 		if ctx.Err() != nil {
 			return s.stopped(ctx, ended)
 		}
-		detail = fmt.Sprintf("build step %d %q failed: %s", i, st.GetName(), detail)
-		return &stepFailure{outcome{status: status, detail: "Build step failure: " + detail,
-			failure: &cloudbuildpb.Build_FailureInfo{Type: cloudbuildpb.Build_FailureInfo_USER_BUILD_STEP, Detail: detail}}}
+		return failure(0, detail)
 	}
 
 	pullStart := timestamppb.New(s.now())
 	if err := rt.EnsureImage(ctx, st.GetName(), rt.Offline); err != nil {
-		return failed(cloudbuildpb.Build_FAILURE, 0, "pulling the image: "+err.Error())
+		return failed("pulling the image: " + err.Error())
 	}
 	pullEnd := timestamppb.New(s.now())
 	s.setStep(r, i, func(step *cloudbuildpb.BuildStep) {
@@ -232,7 +269,7 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 	id, err := rt.CreateContainer(cctx, s.stepSpec(rt, b, i, vols, network))
 	cancel()
 	if err != nil {
-		return failed(cloudbuildpb.Build_FAILURE, 0, err.Error())
+		return failed(err.Error())
 	}
 	defer func() {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
@@ -244,11 +281,11 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 	}
 	if sc := st.GetScript(); sc != "" {
 		if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(scriptFile, "/"), Mode: 0o755, Data: []byte(sc)}}); err != nil {
-			return failed(cloudbuildpb.Build_FAILURE, 0, "writing the script: "+err.Error())
+			return failed("writing the script: " + err.Error())
 		}
 	}
 	if err := rt.StartContainer(ctx, id); err != nil {
-		return failed(cloudbuildpb.Build_FAILURE, 0, err.Error())
+		return failed(err.Error())
 	}
 	copied := s.follow(ctx, rt, r.ref, id, label+": ")
 	code, err := rt.WaitContainer(ctx, id)
@@ -256,8 +293,9 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 		if ctx.Err() != nil {
 			return s.stopped(ctx, ended)
 		}
-		return failed(cloudbuildpb.Build_FAILURE, 0, err.Error())
+		return failed(err.Error())
 	}
+	s.reach(ctx, b, "step "+strconv.Itoa(i)+" exited")
 	waitCopied(copied)
 	if code == 0 {
 		ended(cloudbuildpb.Build_SUCCESS, 0)
@@ -267,11 +305,14 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 		ended(cloudbuildpb.Build_FAILURE, int32(code))
 		return nil
 	}
-	return failed(cloudbuildpb.Build_FAILURE, int32(code), "step exited with non-zero status: "+strconv.Itoa(code))
+	// The step exited on its own: its failure stands even if the Build
+	// was stopped meanwhile (#455).
+	return failure(int32(code), "step exited with non-zero status: "+strconv.Itoa(code))
 }
 
 // stopped records a step that was stopped while it ran: by its own
-// timeout, which ends the Build TIMEOUT, or with the Build.
+// timeout, which ends the Build TIMEOUT, or with the Build, returning
+// errStepStopped.
 func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Status, int32)) error {
 	if errors.Is(context.Cause(ctx), errStepTimeout) {
 		ended(cloudbuildpb.Build_TIMEOUT, 0)
@@ -282,7 +323,7 @@ func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Sta
 		status = cloudbuildpb.Build_TIMEOUT
 	}
 	ended(status, 0)
-	return nil
+	return errStepStopped
 }
 
 // stepSpec is the container of step i: its image, entrypoint and args or
