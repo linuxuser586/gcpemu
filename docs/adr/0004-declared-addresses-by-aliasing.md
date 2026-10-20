@@ -1,5 +1,7 @@
 # A VPC on a Fallback range keeps its Declared addresses by aliasing them onto Managed containers
 
+Note (#527): the "egress gateway" below is the container CONTEXT.md now calls the NAT egress proxy.
+
 When a subnetwork's or private services access allocation's Declared range overlaps another network on the host, its container network is created on a Fallback range. Until now every address on that network then came from the Fallback range, which real GCP never hands out. We decided that the emulator still allocates addresses from the Declared range and reports them, and that each Managed container holding a Declared address also gets that address on its VPC interface, with an on-link route for the Declared range and the Declared address as the source of its traffic. Docker's Fallback-range address stays on the interface for the runtime's own plumbing, and the emulator keeps dialling it internally. Workloads on the VPC reach Declared addresses directly, with no address translation, so servers see the real client address and the Declared and Fallback ranges need not have the same prefix length.
 
 Only workloads on the VPC are promised a route to a Declared address, as in GCP, where a laptop cannot reach a VPC's private IPs without a VPN. Host processes reach resources the way they would from outside GCP: the Cloud SQL Auth Proxy, public IPs, or the Kubernetes API through the Connect gateway. Routing Declared addresses from the host would need root on the host, which rootless runtimes and CI `services:` containers do not have (ADR 0003).

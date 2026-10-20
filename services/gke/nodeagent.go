@@ -72,12 +72,12 @@ type nodeConfig struct {
 	// the network resolve (FR-DNS-004, FR-INT-005).
 	Network string `json:"network,omitempty"`
 	// DefaultVia replaces the default route (external gateway for public
-	// nodes, the VPC egress gateway for private ones); NoDefaultRoute
-	// removes it (private nodes without an egress gateway).
+	// nodes, the VPC's NAT egress proxy for private ones); NoDefaultRoute
+	// removes it (private nodes without a NAT egress proxy).
 	DefaultVia     string `json:"defaultVia,omitempty"`
 	NoDefaultRoute bool   `json:"noDefaultRoute,omitempty"`
-	// PrivateVia routes the private address ranges through the VPC egress
-	// gateway on public nodes, so pods reach private services access
+	// PrivateVia routes the private address ranges through the VPC's NAT egress
+	// proxy on public nodes, so pods reach private services access
 	// ranges (Cloud SQL private IP, FR-INT-008) like on GCP; connected
 	// and pod routes stay more specific.
 	PrivateVia string `json:"privateVia,omitempty"`
@@ -97,8 +97,8 @@ type nodeConfig struct {
 	CA string `json:"ca,omitempty"`
 	// VPC is set when the node's subnetwork is Translated: the agent
 	// aliases the node's Declared address IP onto its VPC interface
-	// before k3s starts, and routes via the VPC egress gateway go via the
-	// gateway's Declared address, sourced from IP (ADR 0004).
+	// before k3s starts, and routes via the VPC's NAT egress proxy go via
+	// the proxy's Declared address, sourced from IP (ADR 0004).
 	VPC *emu.SubnetNet `json:"vpc,omitempty"`
 	IP  string         `json:"ip,omitempty"`
 	// Runtime names the container runtime, for errors about its kernel.
@@ -241,7 +241,7 @@ func setupNodeNetwork(cfg nodeConfig) error {
 	private := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 	defaultVia, privateVia := cfg.DefaultVia, cfg.PrivateVia
 	if cfg.VPC != nil && cfg.VPC.Translated {
-		// Routes via the VPC egress gateway go via its Declared address,
+		// Routes via the VPC's NAT egress proxy go via its Declared address,
 		// sourced from the node's (ADR 0004).
 		cip, err := addrIn(cfg.VPC.ContainerSubnet)
 		if err != nil {

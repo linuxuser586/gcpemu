@@ -7,13 +7,13 @@ import (
 	"time"
 )
 
-// NFLOG over netlink (linux/netfilter/nfnetlink_log.h). The gateway's
+// NFLOG over netlink (linux/netfilter/nfnetlink_log.h). The proxy's
 // drop chain copies the first packet of every refused connection to NFLOG
 // group natDropGroup; the agent reads them and reports "dropped" events
 // (FR-NAT-004). Parsing is platform-independent so it is unit-tested
 // everywhere; the socket lives in natflog_linux.go.
 
-// natDropGroup is the NFLOG group of the gateway's drop chain.
+// natDropGroup is the NFLOG group of the proxy's drop chain.
 const natDropGroup = 15
 
 const (

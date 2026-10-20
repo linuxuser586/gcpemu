@@ -109,7 +109,7 @@ func (c *Client) SetMemberAddr(addr func(network string) string) {
 // takes the subnet's second-to-last address as AttachSelf does. Without,
 // it takes its pinned address (SetMemberAddr), or else the highest free
 // address below the second-to-last one: on a VPC subnetwork the
-// second-to-last address is the egress gateway's, and compute hands out
+// second-to-last address is the NAT egress proxy's, and compute hands out
 // addresses from the bottom, possibly before their containers start, and
 // none that a container holds (#146).
 func (c *Client) AttachMember(ctx context.Context, network string, reserved bool) error {

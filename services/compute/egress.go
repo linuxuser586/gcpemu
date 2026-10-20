@@ -19,11 +19,11 @@ import (
 )
 
 // Cloud NAT data plane (FR-NAT-002..005). Each VPC network with realised
-// subnetworks gets one egress gateway container, attached to the external
+// subnetworks gets one NAT egress proxy container, attached to the external
 // network (internet egress), the services network (emulator endpoints)
 // and every realised subnetwork / PSA network of the VPC at the range's
 // reserved second-to-last address. Workloads use that address as their
-// default route. The gateway:
+// default route. The proxy:
 //
 //   - routes between the VPC's networks (source-NATed so replies return
 //     through it), giving the VPC its implied any-to-any routes;
@@ -33,7 +33,7 @@ import (
 //     (GCP-like timeout) or rejecting it with natReject;
 //   - while the offline sink is on (--offline, or switched through the
 //     admin API) redirects NAT-allowed TCP egress to a sink in the
-//     gateway that records the attempt and answers with natSinkResponse;
+//     proxy that records the attempt and answers with natSinkResponse;
 //   - streams conntrack events for NAT translation logs, and NFLOGs the
 //     first packet of every refused egress connection for drop logs
 //     (FR-NAT-004).
@@ -41,26 +41,26 @@ import (
 // The data plane is re-programmed after every router, NAT, subnetwork or
 // connection change.
 
-// natImage runs the egress gateway (it has iptables, ip and conntrack).
+// natImage runs the NAT egress proxy (it has iptables, ip and conntrack).
 const natImage = "rancher/k3s:v1.36.5-k3s1"
 
 // Images lists the container images the compute service launches, by role
 // (pinned by tag; digests are pinned at release).
 var Images = map[string]string{
-	"nat-gateway": natImage,
-	"alias-probe": aliasProbeImage,
+	"nat-egress-proxy": natImage,
+	"alias-probe":      aliasProbeImage,
 }
 
-// natSinkPort is the sink's port inside the gateway.
+// natSinkPort is the sink's port inside the proxy.
 const natSinkPort = 15001
 
-// natRole is the gateway container's role label.
+// natRole is the proxy container's role label.
 const natRole = "nat"
 
-// natAgentName is the in-container agent run by the gateway.
-const natAgentName = "nat-gateway"
+// natAgentName is the in-container agent run by the proxy.
+const natAgentName = "nat-egress-proxy"
 
-type gateway struct {
+type egressProxy struct {
 	s       *Service
 	network string // VPC network path
 
@@ -81,20 +81,20 @@ type gateway struct {
 	done   chan struct{}
 }
 
-// gatewayFor returns the running gateway of a VPC network, if any.
-func (s *Service) gatewayFor(np string) *gateway {
+// proxyFor returns the running NAT egress proxy of a VPC network, if any.
+func (s *Service) proxyFor(np string) *egressProxy {
 	s.egMu.Lock()
 	defer s.egMu.Unlock()
 	return s.egress[np]
 }
 
-// EgressGateway implements emu.VPC.
-func (s *Service) EgressGateway(ctx context.Context, subnetwork string) (string, error) {
+// EgressProxy implements emu.VPC.
+func (s *Service) EgressProxy(ctx context.Context, subnetwork string) (string, error) {
 	net, err := s.SubnetNetwork(ctx, subnetwork)
 	if err != nil {
 		return "", err
 	}
-	g, err := s.ensureGateway(ctx, net.NetworkName)
+	g, err := s.ensureProxy(ctx, net.NetworkName)
 	if err != nil {
 		return "", err
 	}
@@ -102,19 +102,19 @@ func (s *Service) EgressGateway(ctx context.Context, subnetwork string) (string,
 		return "", err
 	}
 	if err := g.aliasError(net.Name); err != nil {
-		return "", apierr.FailedPrecondition("NAT gateway: %v", err)
+		return "", apierr.FailedPrecondition("NAT egress proxy: %v", err)
 	}
 	c, _ := parseCIDR(net.ContainerSubnet, false)
 	return ipString(c.reservedTail()), nil
 }
 
-// ensureGateway returns the network's gateway, starting it if needed.
-func (s *Service) ensureGateway(ctx context.Context, np string) (*gateway, error) {
+// ensureProxy returns the network's NAT egress proxy, starting it if needed.
+func (s *Service) ensureProxy(ctx context.Context, np string) (*egressProxy, error) {
 	s.egMu.Lock()
 	g := s.egress[np]
 	if g == nil {
 		bg, cancel := context.WithCancel(context.Background())
-		g = &gateway{s: s, network: np, kick: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
+		g = &egressProxy{s: s, network: np, kick: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
 		s.egress[np] = g
 		go g.loop(bg)
 	}
@@ -125,8 +125,8 @@ func (s *Service) ensureGateway(ctx context.Context, np string) (*gateway, error
 	return g, nil
 }
 
-// removeGateway stops and removes a VPC network's gateway container.
-func (s *Service) removeGateway(ctx context.Context, np string) {
+// removeProxy stops and removes a VPC network's NAT egress proxy container.
+func (s *Service) removeProxy(ctx context.Context, np string) {
 	s.egMu.Lock()
 	g := s.egress[np]
 	delete(s.egress, np)
@@ -147,9 +147,9 @@ func (s *Service) removeGateway(ctx context.Context, np string) {
 	}
 }
 
-// networkChanged schedules re-programming of a VPC network's gateway.
+// networkChanged schedules re-programming of a VPC network's NAT egress proxy.
 func (s *Service) networkChanged(np string) {
-	if g := s.gatewayFor(np); g != nil {
+	if g := s.proxyFor(np); g != nil {
 		select {
 		case g.kick <- struct{}{}:
 		default:
@@ -157,23 +157,23 @@ func (s *Service) networkChanged(np string) {
 	}
 }
 
-// attachIfGateway synchronously re-syncs a running gateway (so newly
+// attachIfProxy synchronously re-syncs a running proxy (so newly
 // realised networks are attached before callers use them).
-func (s *Service) attachIfGateway(ctx context.Context, np string) {
-	if g := s.gatewayFor(np); g != nil {
+func (s *Service) attachIfProxy(ctx context.Context, np string) {
+	if g := s.proxyFor(np); g != nil {
 		if err := g.sync(ctx); err != nil {
-			s.env.Log.Warn("compute: syncing NAT gateway", "network", np, "err", err)
+			s.env.Log.Warn("compute: syncing NAT egress proxy", "network", np, "err", err)
 		}
 	}
 }
 
-func (g *gateway) stop() {
+func (g *egressProxy) stop() {
 	g.cancel()
 	<-g.done
 }
 
-// loop re-programs the gateway when kicked.
-func (g *gateway) loop(ctx context.Context) {
+// loop re-programs the proxy when kicked.
+func (g *egressProxy) loop(ctx context.Context) {
 	defer close(g.done)
 	for {
 		select {
@@ -183,15 +183,15 @@ func (g *gateway) loop(ctx context.Context) {
 		}
 		sctx, cancel := context.WithTimeout(ctx, time.Minute)
 		if err := g.sync(sctx); err != nil && ctx.Err() == nil {
-			g.s.env.Log.Warn("compute: re-programming NAT gateway", "network", g.network, "err", err)
+			g.s.env.Log.Warn("compute: re-programming NAT egress proxy", "network", g.network, "err", err)
 		}
 		cancel()
 	}
 }
 
-// ensureRunning creates and starts the gateway container if it is absent
+// ensureRunning creates and starts the proxy container if it is absent
 // or has died.
-func (g *gateway) ensureRunning(ctx context.Context) error {
+func (g *egressProxy) ensureRunning(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	rt, err := g.s.runtime(ctx)
@@ -207,21 +207,21 @@ func (g *gateway) ensureRunning(ctx context.Context) error {
 	return g.startLocked(ctx, rt)
 }
 
-func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
+func (g *egressProxy) startLocked(ctx context.Context, rt *runtime.Manager) error {
 	plane, err := g.s.env.Containers.Netplane(ctx)
 	if err != nil {
-		return apierr.FailedPrecondition("NAT gateway: %v", err)
+		return apierr.FailedPrecondition("NAT egress proxy: %v", err)
 	}
 	ext, err := plane.External(ctx)
 	if err != nil {
-		return apierr.Internal("NAT gateway: external network: %v", err)
+		return apierr.Internal("NAT egress proxy: external network: %v", err)
 	}
 	svc, err := plane.Services(ctx)
 	if err != nil {
-		return apierr.Internal("NAT gateway: services network: %v", err)
+		return apierr.Internal("NAT egress proxy: services network: %v", err)
 	}
 	if err := rt.EnsureImage(ctx, natImage, g.s.env.Config.Offline); err != nil {
-		return apierr.FailedPrecondition("NAT gateway image %s: %v", natImage, err)
+		return apierr.FailedPrecondition("NAT egress proxy image %s: %v", natImage, err)
 	}
 	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
@@ -247,7 +247,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 			"GCPEMU_NAT_SINK_RESPONSE=" + g.s.env.Config.NATSinkResponse,
 		},
 		Labels:   rt.Labels("compute", g.network, natRole),
-		Hostname: "nat-gateway",
+		Hostname: "nat-egress-proxy",
 		CapAdd:   []string{"NET_ADMIN", "NET_RAW"},
 		Sysctls: map[string]string{
 			"net.ipv4.ip_forward":             "1",
@@ -257,7 +257,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 		Networks: []runtime.Attachment{{Network: ext.Name}, {Network: svc.Name}},
 	})
 	if err != nil {
-		return apierr.Internal("NAT gateway: %v", err)
+		return apierr.Internal("NAT egress proxy: %v", err)
 	}
 	if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(agent.ContainerPath, "/"), Mode: 0o755, Path: bin}}); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)
@@ -265,13 +265,13 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 	}
 	if err := rt.StartContainer(ctx, id); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)
-		return apierr.Internal("NAT gateway: start: %v", err)
+		return apierr.Internal("NAT egress proxy: start: %v", err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := rt.WaitRunning(wctx, id); err != nil {
 		_ = rt.RemoveContainer(ctx, id, true)
-		return apierr.Internal("NAT gateway: %v", err)
+		return apierr.Internal("NAT egress proxy: %v", err)
 	}
 	c, err := rt.InspectContainer(ctx, id)
 	if err != nil {
@@ -282,8 +282,8 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 	return nil
 }
 
-// detach disconnects the gateway from a container network being removed.
-func (g *gateway) detach(ctx context.Context, netName string) {
+// detach disconnects the proxy from a container network being removed.
+func (g *egressProxy) detach(ctx context.Context, netName string) {
 	g.mu.Lock()
 	id := g.id
 	g.rules = ""
@@ -298,9 +298,9 @@ func (g *gateway) detach(ctx context.Context, netName string) {
 	}
 }
 
-// sync attaches the gateway to every realised network of the VPC and
+// sync attaches the proxy to every realised network of the VPC and
 // programs the NAT rules.
-func (g *gateway) sync(ctx context.Context) error {
+func (g *egressProxy) sync(ctx context.Context) error {
 	if err := g.ensureRunning(ctx); err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func (g *gateway) sync(ctx context.Context) error {
 		}
 		cc, _ := parseCIDR(st.Subnet, false)
 		if err := rt.Connect(ctx, st.Name, g.id, ipString(cc.reservedTail())); err != nil && !strings.Contains(err.Error(), "already exists") {
-			return apierr.Internal("NAT gateway: attach to %s: %v", st.Name, err)
+			return apierr.Internal("NAT egress proxy: attach to %s: %v", st.Name, err)
 		}
 	}
 	g.alias(ctx, rt, nets)
@@ -334,21 +334,21 @@ func (g *gateway) sync(ctx context.Context) error {
 	}
 	res, err := rt.Exec(ctx, g.id, []string{"sh", "-c", rules}, nil)
 	if err != nil {
-		return apierr.Internal("NAT gateway: program rules: %v", err)
+		return apierr.Internal("NAT egress proxy: program rules: %v", err)
 	}
 	if res.ExitCode != 0 {
-		return apierr.Internal("NAT gateway: program rules failed (%d): %s%s", res.ExitCode, res.Stdout, res.Stderr)
+		return apierr.Internal("NAT egress proxy: program rules failed (%d): %s%s", res.ExitCode, res.Stdout, res.Stderr)
 	}
 	g.rules = rules
 	return nil
 }
 
-// alias gives the gateway the egress gateway's Declared address on each
+// alias gives the proxy its Declared address on each
 // Translated network (ADR 0004). Each network is aliased on its own, so
 // one that fails, say on a kernel without VLAN support (#173), leaves NAT
-// working on the others; EgressGateway reports the failure for it.
+// working on the others; EgressProxy reports the failure for it.
 // Called with g.mu held.
-func (g *gateway) alias(ctx context.Context, rt *runtime.Manager, nets []*vpcNet) {
+func (g *egressProxy) alias(ctx context.Context, rt *runtime.Manager, nets []*vpcNet) {
 	if g.aliased == nil {
 		g.aliased, g.aliasErr = map[string]string{}, map[string]error{}
 	}
@@ -369,7 +369,7 @@ func (g *gateway) alias(ctx context.Context, rt *runtime.Manager, nets []*vpcNet
 		}
 		if err != nil {
 			if prev := g.aliasErr[st.Name]; prev == nil || prev.Error() != err.Error() {
-				g.s.env.Log.Warn("compute: NAT gateway: aliasing onto a Translated network", "network", st.Name, "err", err)
+				g.s.env.Log.Warn("compute: NAT egress proxy: aliasing onto a Translated network", "network", st.Name, "err", err)
 			}
 			g.aliasErr[st.Name] = err
 			continue
@@ -379,15 +379,15 @@ func (g *gateway) alias(ctx context.Context, rt *runtime.Manager, nets []*vpcNet
 	}
 }
 
-// aliasError is why the gateway could not be aliased onto the Translated
+// aliasError is why the proxy could not be aliased onto the Translated
 // network netName, or nil.
-func (g *gateway) aliasError(netName string) error {
+func (g *egressProxy) aliasError(netName string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.aliasErr[netName]
 }
 
-// RoutePublic implements emu.PublicRouter: every gateway routes the load
+// RoutePublic implements emu.PublicRouter: every proxy routes the load
 // balancer's forwarding rule addresses via the Edge relay, so private
 // workloads reach them through Cloud NAT as on GCP, with the NAT's address
 // as the client (#187).
@@ -396,7 +396,7 @@ func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) err
 	s.pubVia, s.pubIPs = via, append([]string(nil), ips...)
 	s.pubMu.Unlock()
 	s.egMu.Lock()
-	gws := make([]*gateway, 0, len(s.egress))
+	gws := make([]*egressProxy, 0, len(s.egress))
 	for _, g := range s.egress {
 		gws = append(gws, g)
 	}
@@ -404,7 +404,7 @@ func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) err
 	var errs []error
 	for _, g := range gws {
 		if err := g.sync(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("NAT gateway of %s: %w", g.network, err))
+			errs = append(errs, fmt.Errorf("NAT egress proxy of %s: %w", g.network, err))
 		}
 	}
 	return errors.Join(errs...)
@@ -472,9 +472,9 @@ func (s *Service) natCoverage(np string, nets []*vpcNet) []coverage {
 	return out
 }
 
-// natRules renders the shell script that programs the gateway. Interfaces
+// natRules renders the shell script that programs the proxy. Interfaces
 // are resolved inside the container from the addresses they carry.
-func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
+func (s *Service) natRules(g *egressProxy, nets []*vpcNet) (string, error) {
 	cov := s.natCoverage(g.network, nets)
 	ports, err := s.natAllocations(g.network)
 	if err != nil {
@@ -513,7 +513,7 @@ func (s *Service) natRules(g *gateway, nets []*vpcNet) (string, error) {
 	// rest (other protocols) are masqueraded.
 	b.WriteString(snatVMs)
 	b.WriteString("-A GCPEMU-POST -o $EXT -j MASQUERADE\n")
-	// Intra-VPC traffic is source-NATed to the gateway so replies return
+	// Intra-VPC traffic is source-NATed to the proxy so replies return
 	// through it regardless of the destination's default route.
 	var internal []string
 	for _, st := range nets {

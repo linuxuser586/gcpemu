@@ -76,7 +76,7 @@ func realise(t *testing.T, rng string) (*emutest.Instance, emu.SubnetNet, string
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := vpc.EgressGateway(ctx, sp); err != nil {
+	if _, err := vpc.EgressProxy(ctx, sp); err != nil {
 		t.Fatal(err)
 	}
 	ip, err := vpc.AllocateIP(ctx, n, "vm-1")

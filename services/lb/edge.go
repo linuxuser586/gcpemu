@@ -42,7 +42,7 @@ import (
 // the edge joins the external network, holds every external forwarding
 // rule address and relays its ports like the lb-network aliases. Services
 // whose containers egress over the external network (GKE nodes with
-// external IPs, the Cloud NAT gateways) route those addresses via the
+// external IPs, the NAT egress proxies) route those addresses via the
 // edge (emu.PublicRouter), so the client the backends see is the node or
 // the NAT, as on GCP.
 
