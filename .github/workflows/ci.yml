@@ -173,8 +173,11 @@ jobs:
           cat "$RUNNER_TEMP/container-events.log"
           sudo dmesg | grep -iE 'oom|killed process' || true
           free -m
+      # #477: also upload when a test was flaky. Under retain-on-failure
+      # Playwright keeps a trace only for an attempt that failed, so a trace
+      # in a passing job means a test passed on retry.
       - uses: actions/upload-artifact@v7
-        if: failure()
+        if: failure() || (success() && hashFiles('console/test-results/**/trace.zip') != '')
         with:
           name: playwright-report
           path: console/playwright-report
