@@ -878,6 +878,43 @@ paths:
             text/plain:
               schema: { type: string }
         "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/build/daemon:
+    get:
+      summary: The Build daemon's state and image cache size (build service; Web console, gcpemu doctor).
+      operationId: buildDaemon
+      description: >-
+        The Build daemon (ADR 0016) starts with the first Build; until then,
+        and while it is down, running is false and cacheBytes 0. A runtime
+        that refused its privileged container is reported with
+        privilegedRefused, and every Build fails until that changes.
+      responses:
+        "200":
+          description: The Build daemon.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BuildDaemon" }
+  /_emu/v1/build/daemon/prune:
+    post:
+      summary: Prune the Build daemon's image cache (build service; Web console).
+      operationId: pruneBuildDaemon
+      description: >-
+        Removes the daemon's stopped containers, unused images and volumes,
+        and build cache, starting the daemon first if it is not running.
+        Builds share the cache, so the next Build of each image builds and
+        pulls its layers again.
+      responses:
+        "200":
+          description: What pruning freed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reclaimedBytes, cacheBytes]
+                properties:
+                  reclaimedBytes: { type: integer, format: int64 }
+                  cacheBytes: { type: integer, format: int64, description: The cache's size now. }
+        "503": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
   /_emu/v1/sql/hosts:
     get:
       summary: How host clients reach each running public Cloud SQL instance (sql service; gcpemu doctor).
@@ -1501,6 +1538,14 @@ components:
         natIp: { type: string, description: The NAT IP a translation used. }
         natPort: { type: integer, description: The NAT port a translation used. }
         request: { type: string, description: The first line the offline sink received. }
+    BuildDaemon:
+      type: object
+      required: [running, cacheBytes, privilegedRefused]
+      properties:
+        running: { type: boolean }
+        cacheBytes: { type: integer, format: int64, description: Size of the daemon's image and layer cache while it runs. }
+        error: { type: string, description: Why the daemon last failed to start. }
+        privilegedRefused: { type: boolean, description: The container runtime refused the daemon's privileged container. }
     NatSink:
       type: object
       required: [enabled]

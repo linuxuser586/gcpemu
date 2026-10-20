@@ -105,6 +105,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, inContainer)
 			if running == nil {
 				checkUnpublished(out, cfg)
+				checkBuildDaemon(report, cfg)
 			}
 			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
 
@@ -333,6 +334,39 @@ func checkUnpublished(out io.Writer, cfg *config.Config) {
 	}
 	if b, err := c.get("/_emu/v1/sql/hosts"); err == nil {
 		reportSQLHosts(out, b)
+	}
+}
+
+// checkBuildDaemon reports a running Instance's Build daemon, which an
+// Instance without the build service does not report.
+func checkBuildDaemon(report func(bool, string, string), cfg *config.Config) {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return
+	}
+	if b, err := c.get("/_emu/v1/build/daemon"); err == nil {
+		reportBuildDaemon(report, b)
+	}
+}
+
+// reportBuildDaemon flags a runtime that refused the Build daemon its
+// privileged container (ADR 0016), and reports a running daemon's cache.
+func reportBuildDaemon(report func(bool, string, string), body []byte) {
+	var v struct {
+		Running           bool   `json:"running"`
+		CacheBytes        int64  `json:"cacheBytes"`
+		Error             string `json:"error"`
+		PrivilegedRefused bool   `json:"privilegedRefused"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return
+	}
+	switch {
+	case v.PrivilegedRefused:
+		report(false, "the container runtime refused the Build daemon's privileged container, so Builds fail: "+v.Error,
+			"use a runtime that allows privileged containers (Docker without userns-remap, or rootful Podman), then run the Build again")
+	case v.Running:
+		report(true, fmt.Sprintf("Build daemon running, image cache %.1f MiB", float64(v.CacheBytes)/(1<<20)), "")
 	}
 }
 

@@ -84,6 +84,9 @@ type ObjectStore interface {
 	// everything appended so far, so a reader polling the live object
 	// sees it grow, as with a log written while it is read.
 	AppendObject(ctx context.Context, bucket, name, contentType string, data []byte) error
+	// WriteObject stores r as the object, replacing any live generation,
+	// and returns the new generation and the data's MD5.
+	WriteObject(ctx context.Context, bucket, name, contentType string, r io.Reader) (gen int64, md5 []byte, err error)
 	// EnsureServiceBucket creates a bucket in project unless it exists,
 	// without the naming rule users are held to: a bucket Google itself
 	// names, such as Cloud Build's default logs bucket, may contain

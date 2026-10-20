@@ -199,7 +199,14 @@ func (s *Service) execute(r *liveBuild, b *cloudbuildpb.Build) {
 		}
 		s.end(r.ref, o)
 	}
+	// No Build starts while mu is held, so the daemon is cleared only
+	// of the containers this, the last running Build, left.
 	s.mu.Lock()
+	if len(s.live) == 1 {
+		if rt, err := s.env.Containers.Runtime(context.WithoutCancel(r.ctx)); err == nil {
+			s.clearDaemon(rt)
+		}
+	}
 	delete(s.live, r.ref.key())
 	s.mu.Unlock()
 	r.stop(nil)

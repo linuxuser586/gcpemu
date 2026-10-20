@@ -263,6 +263,9 @@ func validate(b *cloudbuildpb.Build) error {
 			return err
 		}
 	}
+	if err := validateArtifacts(b.GetArtifacts()); err != nil {
+		return err
+	}
 	if len(b.GetSecrets()) > 0 || b.GetAvailableSecrets() != nil {
 		return apierr.New(codes.Unimplemented, "Build secrets are not emulated yet.")
 	}
@@ -306,13 +309,37 @@ func validate(b *cloudbuildpb.Build) error {
 	return validateVolumes(b.GetOptions().GetVolumes())
 }
 
+// validateArtifacts refuses artifacts.objects without a gs:// location,
+// and the artifact kinds this emulator does not have.
+func validateArtifacts(a *cloudbuildpb.Artifacts) error {
+	for field, n := range map[string]int{
+		"mavenArtifacts": len(a.GetMavenArtifacts()),
+		"pythonPackages": len(a.GetPythonPackages()),
+		"npmPackages":    len(a.GetNpmPackages()),
+		"goModules":      len(a.GetGoModules()),
+	} {
+		if n > 0 {
+			return apierr.New(codes.Unimplemented, "Build artifacts.%s is not emulated; use images or artifacts.objects.", field)
+		}
+	}
+	if o := a.GetObjects(); o != nil {
+		if bucket, _ := splitLocation(o.GetLocation()); bucket == "" {
+			return apierr.InvalidArgument("invalid build: artifacts.objects.location %q must be a gs:// location.", o.GetLocation())
+		}
+		if len(o.GetPaths()) == 0 {
+			return apierr.InvalidArgument("invalid build: artifacts.objects needs paths.")
+		}
+	}
+	return nil
+}
+
 func validateVolumes(vs []*cloudbuildpb.Volume) error {
 	for _, v := range vs {
 		p := v.GetPath()
 		if v.GetName() == "" || !path.IsAbs(p) {
 			return apierr.InvalidArgument("invalid build: a volume needs a name and an absolute path.")
 		}
-		if p = path.Clean(p); p == workspace || p == home {
+		if p = path.Clean(p); p == workspace || p == home || p == stepRun {
 			return apierr.InvalidArgument("invalid build: volume path %q is reserved.", p)
 		}
 	}

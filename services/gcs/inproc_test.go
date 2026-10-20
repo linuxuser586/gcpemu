@@ -2,6 +2,7 @@ package gcs_test
 
 import (
 	"context"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strconv"
@@ -84,6 +85,37 @@ func TestObjectStoreInProcess(t *testing.T) {
 	}
 	if err := store.AppendObject(ctx, "no-such-bucket", "x", "", []byte("x")); status.Code(err) != codes.NotFound {
 		t.Errorf("append to a missing bucket: err = %v, want NOT_FOUND", err)
+	}
+}
+
+// A Service writes a whole object, as Cloud Build uploads an artifact:
+// writing it again replaces it with a new generation, and the MD5 it
+// reports is the data's.
+func TestWriteObjectInProcess(t *testing.T) {
+	inst := start(t)
+	store := objectStore(t, inst.Env)
+	ctx := context.Background()
+	const bucket = "artifacts"
+	if err := store.EnsureServiceBucket(ctx, testProject, bucket); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := store.WriteObject(ctx, bucket, "bin/app", "", strings.NewReader("old"))
+	if err != nil {
+		t.Fatalf("WriteObject: %v", err)
+	}
+	gen, sum, err := store.WriteObject(ctx, bucket, "bin/app", "", strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("WriteObject: %v", err)
+	}
+	// MD5("hello"), from md5sum.
+	if got := hex.EncodeToString(sum); got != "5d41402abc4b2a76b9719d911017c592" {
+		t.Errorf("md5 = %s", got)
+	}
+	if got, g := readAll(t, store, bucket, "bin/app", 0); got != "hello" || g != gen || gen <= first {
+		t.Errorf("object = %q generation %d, want \"hello\" generation %d after %d", got, g, gen, first)
+	}
+	if _, _, err := store.WriteObject(ctx, "no-such-bucket", "x", "", strings.NewReader("x")); status.Code(err) != codes.NotFound {
+		t.Errorf("write to a missing bucket: err = %v, want NOT_FOUND", err)
 	}
 }
 
