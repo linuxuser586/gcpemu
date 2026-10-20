@@ -48,24 +48,57 @@ type CA struct {
 	now   func() time.Time
 }
 
-// Load opens the CA in dir, creating it if absent. instance names it.
+// Load opens the Instance CA in dir. instance names it. The CA is created
+// only when neither ca.pem nor ca-key.pem exists (a missing dir counts as a
+// first start); a CA with only one of its files, or with files that don't
+// match, is an error, and no error case changes anything in dir.
 func Load(dir, instance string) (*CA, error) {
 	c := &CA{dir: dir, cache: map[string]*tls.Certificate{}, now: time.Now}
-	certPEM, err1 := os.ReadFile(filepath.Join(dir, CertFile))
-	keyPEM, err2 := os.ReadFile(filepath.Join(dir, KeyFile))
-	if err1 == nil && err2 == nil {
-		if err := c.parse(certPEM, keyPEM); err != nil {
-			return nil, fmt.Errorf("load CA from %s: %w", dir, err)
-		}
-		return c, nil
-	}
-	if !errors.Is(err1, os.ErrNotExist) && err1 != nil {
-		return nil, err1
-	}
-	if err := c.generate(instance); err != nil {
+	certPEM, certOK, err := readCAFile(dir, CertFile)
+	if err != nil {
 		return nil, err
 	}
+	keyPEM, keyOK, err := readCAFile(dir, KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !certOK && !keyOK:
+		if err := c.generate(instance); err != nil {
+			return nil, err
+		}
+		return c, nil
+	case !certOK:
+		return nil, halfPresent(dir, CertFile, KeyFile)
+	case !keyOK:
+		return nil, halfPresent(dir, KeyFile, CertFile)
+	}
+	if err := c.parse(certPEM, keyPEM); err != nil {
+		return nil, fmt.Errorf("load CA from %s: %w", dir, err)
+	}
+	pub, ok := c.key.Public().(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !pub.Equal(c.cert.PublicKey) {
+		return nil, fmt.Errorf("%s in %s does not match %s: restore the matching file, or remove both to create a new Instance CA (then run `gcpemu ca install` again)",
+			CertFile, dir, KeyFile)
+	}
 	return c, nil
+}
+
+// readCAFile reads name in dir; ok is false when the file doesn't exist.
+func readCAFile(dir, name string) (b []byte, ok bool, err error) {
+	b, err = os.ReadFile(filepath.Join(dir, name))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("read CA: %w", err)
+	}
+	return b, true, nil
+}
+
+func halfPresent(dir, missing, left string) error {
+	return fmt.Errorf("the Instance CA in %s has %s but no %s: restore %s, or remove %s to create a new Instance CA (then run `gcpemu ca install` again)",
+		dir, left, missing, missing, left)
 }
 
 // Rotate replaces the root CA with a new one (`gcpemu ca rotate`). Leaf
