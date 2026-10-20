@@ -194,6 +194,10 @@ function httpsProxyFlags(b: Obj): Record<string, FlagValue> {
     ),
     'ssl-policy': lastSeg(text(b.sslPolicy)),
     'ssl-policy-region': regionOf(b.sslPolicy),
+    'server-tls-policy': text(b.serverTlsPolicy).replace(
+      /^\/\/networksecurity\.googleapis\.com\//,
+      '',
+    ),
     'quic-override': text(b.quicOverride),
   }
 }

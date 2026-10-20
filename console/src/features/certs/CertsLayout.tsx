@@ -9,7 +9,17 @@ import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
 import { NotEnabled } from '../services/ServicePage'
-import { mapLabel, mapRefOf, type CertRef, type EntryRef, type MapRef } from './api'
+import {
+  lastSegment,
+  locationOf,
+  mapLabel,
+  mapRefOf,
+  type CertRef,
+  type EntryRef,
+  type MapRef,
+  type TrustRef,
+} from './api'
+import { collOf, TLS_COLLS, TLS_KINDS, tlsLabel, tlsRefOf, type TlsColl, type TlsRef } from './tls'
 
 /**
  * CertsLayout gates the Certificate Manager view (SRS 4.8.3) on the
@@ -41,6 +51,7 @@ export function ChooseProject({ what }: { what: ReactNode }) {
 const SECTIONS = [
   ['/certs', 'Certificates'],
   ['/certs/maps', 'Certificate maps'],
+  ['/certs/tls', 'TLS policies'],
 ] as const
 
 /** CertsNav switches between the view's resource types. */
@@ -118,6 +129,98 @@ export function MapLink({ name }: { name: string }) {
       title={`certificate map ${r.map}`}
     >
       {mapLabel(name, view.project ?? '')}
+    </Link>
+  )
+}
+
+/** useTrustRef is the trust config the route names, in the chosen Project. */
+export function useTrustRef(): TrustRef {
+  const [view] = useViewState()
+  const { location = '', trust = '' } = useParams()
+  return { project: view.project ?? '', location, trust }
+}
+
+/** trustPath is the console path of a trust config. */
+export const trustPath = (r: Pick<TrustRef, 'location' | 'trust'>) =>
+  `/certs/locations/${enc(r.location)}/trustConfigs/${enc(r.trust)}`
+
+/**
+ * TrustConfigLink links a trust config's name to its page, in the Project
+ * that holds it.
+ */
+export function TrustConfigLink({ name }: { name: string }) {
+  const [view] = useViewState()
+  const m = /projects\/([^/]+)\/locations\/[^/]+\/trustConfigs\/[^/]+$/.exec(name)
+  if (!m) return <span className="font-mono break-all">{name}</span>
+  const project = m[1]!
+  const to = trustPath({ location: locationOf(name), trust: lastSegment(name) })
+  return (
+    <Link
+      className="font-mono text-primary underline-offset-4 hover:underline"
+      to={project === view.project ? to : `${to}?project=${enc(project)}`}
+      title={`trust config ${lastSegment(name)}`}
+    >
+      {project === view.project ? lastSegment(name) : `${project}/${lastSegment(name)}`}
+    </Link>
+  )
+}
+
+/** useTlsRef is the resource of kind coll that the route names. */
+export function useTlsRef(coll: TlsColl): TlsRef {
+  const [view] = useViewState()
+  const { location = '', id = '' } = useParams()
+  return { project: view.project ?? '', location, coll, id }
+}
+
+/** tlsListPath is the console path of one kind's list. */
+export const tlsListPath = (coll: TlsColl) => `/certs/tls/${coll}`
+
+/** tlsPath is the console path of a TLS policies resource, or of a page under it. */
+export const tlsPath = (r: Pick<TlsRef, 'location' | 'coll' | 'id'>, sub = '') =>
+  `/certs/locations/${enc(r.location)}/${r.coll}/${enc(r.id)}${sub ? `/${sub}` : ''}`
+
+/** TlsNav switches between the TLS policy kinds. */
+export function TlsNav() {
+  const { coll } = useParams()
+  const active = collOf(coll)
+  return (
+    <nav aria-label="TLS policy types" className="flex flex-wrap gap-1">
+      {TLS_COLLS.map((c) => (
+        <Link
+          key={c}
+          to={tlsListPath(c)}
+          aria-current={active === c ? 'page' : undefined}
+          className={cn(
+            'rounded-md px-3 py-1 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+            active === c
+              ? 'bg-muted font-medium text-foreground'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {TLS_KINDS[c].title}
+        </Link>
+      ))}
+    </nav>
+  )
+}
+
+/**
+ * TlsLink links the name of a server TLS policy, backend authentication
+ * config or client TLS policy, in any of its forms, to its page in
+ * the Project that holds it.
+ */
+export function TlsLink({ name }: { name: string }) {
+  const [view] = useViewState()
+  const r = tlsRefOf(name)
+  if (!r) return <span className="font-mono break-all">{name}</span>
+  const to = tlsPath(r)
+  return (
+    <Link
+      className="font-mono text-primary underline-offset-4 hover:underline"
+      to={r.project === view.project ? to : `${to}?project=${enc(r.project)}`}
+      title={`${TLS_KINDS[r.coll].singular} ${r.id}`}
+    >
+      {tlsLabel(name, view.project ?? '')}
     </Link>
   )
 }

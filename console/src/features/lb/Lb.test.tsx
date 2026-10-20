@@ -424,6 +424,61 @@ describe('certificate maps', () => {
   })
 })
 
+describe('server TLS policies', () => {
+  const NS = `projects/${P}/locations/global/serverTlsPolicies`
+  beforeEach(() => {
+    fake.info.services = ['iam', 'compute', 'lb', 'certs']
+    server.use(
+      http.get(`*/networksecurity/v1/projects/${P}/locations/-/serverTlsPolicies`, () =>
+        HttpResponse.json({
+          serverTlsPolicies: [
+            { name: `${NS}/mtls` },
+            { name: `projects/${P}/locations/us-east1/serverTlsPolicies/regional` },
+          ],
+        }),
+      ),
+    )
+  })
+
+  it('picks a target HTTPS proxy’s server TLS policy from those of its location', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/targetHttpsProxies?project=${P}`)
+    await user.type(await screen.findByLabelText('Name'), 'web-https')
+    await user.selectOptions(
+      screen.getByLabelText('URL map'),
+      `projects/${P}/global/urlMaps/web-map`,
+    )
+    const picker = screen.getByLabelText('Server TLS policy')
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(2))
+    await user.selectOptions(picker, 'mtls')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetHttpsProxies/web-https'),
+    )
+    expect(requests[0]!.body).toEqual({
+      name: 'web-https',
+      urlMap: `projects/${P}/global/urlMaps/web-map`,
+      serverTlsPolicy: `${NS}/mtls`,
+    })
+  })
+
+  it('links a target HTTPS proxy to its server TLS policy', async () => {
+    state.targetHttpsProxies = [
+      res('targetHttpsProxies', 'web-https', {
+        urlMap: link('global/urlMaps/web-map'),
+        serverTlsPolicy: `//networksecurity.googleapis.com/${NS}/mtls`,
+      }),
+    ]
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/global/targetHttpsProxies/web-https?project=${P}`)
+    const details = await screen.findByLabelText('target HTTPS proxy details')
+    await user.click(within(details).getByRole('link', { name: 'mtls' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/certs/locations/global/serverTlsPolicies/mtls'),
+    )
+  })
+})
+
 it('creates a health check, showing the API’s validation messages', async () => {
   const user = userEvent.setup()
   const { router } = renderApp(`/lb/create/healthChecks?project=${P}`)
@@ -707,6 +762,19 @@ it('copies a backend service as gcloud commands, a request and an OpenTofu block
 describe('Copy as', () => {
   const ref = (coll: Coll, region = ''): Ref => ({ project: P, region, coll, name: 'x' })
   const regional = (p: string) => link(`regions/us-east1/${p}`)
+
+  it('copies a target HTTPS proxy with its server TLS policy', () => {
+    const policy = `projects/${P}/locations/global/serverTlsPolicies/mtls`
+    const r = recipeFor(
+      ref('targetHttpsProxies'),
+      res('targetHttpsProxies', 'web-https', {
+        urlMap: link('global/urlMaps/web-map'),
+        serverTlsPolicy: `//networksecurity.googleapis.com/${policy}`,
+      }),
+    )
+    expect(r.gcloud).toEqual([expect.stringContaining(`--server-tls-policy=${policy}`)])
+    expect(r.tofu).toContain(`server_tls_policy = "//networksecurity.googleapis.com/${policy}"`)
+  })
 
   it('copies a global forwarding rule with a reserved address and labels', () => {
     const r = recipeFor(

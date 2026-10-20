@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import type { APIRequestContext } from '@playwright/test'
@@ -41,6 +42,21 @@ async function createDnsAuthorization(api: APIRequestContext, project: string, d
     `/certificatemanager/v1/${parent}/dnsAuthorizations?dnsAuthorizationId=e2e`,
     { data: { domain } },
   )
+  expect(res.ok(), await res.text()).toBe(true)
+  let op = (await res.json()) as { name: string; done?: boolean; error?: unknown }
+  while (!op.done) {
+    op = (await (await api.get(`/certificatemanager/v1/${op.name}`)).json()) as typeof op
+  }
+  expect(op.error).toBeUndefined()
+}
+
+/** createTrustConfig creates one that trusts the test certificate, and waits for its operation. */
+async function createTrustConfig(api: APIRequestContext, project: string, id: string) {
+  const parent = `projects/${project}/locations/global`
+  const pemCertificate = readFileSync(testdata('self-cert.pem'), 'utf8')
+  const res = await api.post(`/certificatemanager/v1/${parent}/trustConfigs?trustConfigId=${id}`, {
+    data: { trustStores: [{ trustAnchors: [{ pemCertificate }] }] },
+  })
   expect(res.ok(), await res.text()).toBe(true)
   let op = (await res.json()) as { name: string; done?: boolean; error?: unknown }
   while (!op.done) {
@@ -183,6 +199,93 @@ test('Certificate Manager: a certificate map serves an HTTPS proxy made in the L
   await expect(target.getByRole('link', { name: 'web-443' })).toBeVisible()
   await target.getByRole('link', { name: 'web-https' }).click()
   await expect(page).toHaveURL(/\/console\/lb\/global\/targetHttpsProxies\/web-https\?/)
+
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('Certificate Manager: a server TLS policy verifies an HTTPS proxy’s clients with a trust config', async ({
+  page,
+  browserName,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-tls${testInfo.retry}`, browserName)
+  const scope = `projects/${id}`
+  await createTrustConfig(page.request, id, 'corp')
+
+  // A server TLS policy that rejects clients the trust config does not verify.
+  await page.goto(`/console/certs?project=${id}`)
+  await page.getByRole('link', { name: 'TLS policies' }).click()
+  await expect(page.getByText('No server TLS policies in this Project yet.')).toBeVisible()
+  await page.getByRole('link', { name: 'Create server TLS policy' }).click()
+  await page.getByLabel('Name').fill('partners')
+  await page.getByLabel('Client validation').selectOption('REJECT_INVALID')
+  await page.getByLabel('Trust config').selectOption({ label: 'corp' })
+  await page.getByRole('button', { name: 'Create' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/certs/locations/global/serverTlsPolicies/partners\\?project=${id}$`),
+  )
+  const details = page.getByLabel('Server TLS policy details')
+  await expect(details).toContainText('Reject invalid client certificates')
+  await expect(
+    page.getByText('No target HTTPS proxy uses this server TLS policy yet.'),
+  ).toBeVisible()
+
+  // An HTTPS proxy that uses it is listed on the policy's page.
+  await compute(page.request, `${scope}/global/sslCertificates`, {
+    name: 'self',
+    certificate: readFileSync(testdata('self-cert.pem'), 'utf8'),
+    privateKey: readFileSync(testdata('self-key.pem'), 'utf8'),
+  })
+  await compute(page.request, `${scope}/global/urlMaps`, {
+    name: 'web-map',
+    defaultUrlRedirect: { hostRedirect: 'example.com' },
+  })
+  await compute(page.request, `${scope}/global/targetHttpsProxies`, {
+    name: 'partner-https',
+    urlMap: 'global/urlMaps/web-map',
+    sslCertificates: ['global/sslCertificates/self'],
+    serverTlsPolicy: `${scope}/locations/global/serverTlsPolicies/partners`,
+  })
+  await page.reload()
+  await expect(page.getByTestId('tls-proxy')).toContainText('partner-https')
+
+  // Edit: clients without a valid certificate are let through after all.
+  await page.getByRole('link', { name: 'Edit server TLS policy' }).click()
+  await page.getByLabel('Description').fill('Partners, while they roll out certificates')
+  await page.getByLabel('Client validation').selectOption('ALLOW_INVALID_OR_MISSING_CLIENT_CERT')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page).toHaveURL(/\/serverTlsPolicies\/partners\?/)
+  await expect(details).toContainText('Allow invalid or missing client certificates')
+  await expect(details).toContainText('Partners, while they roll out certificates')
+
+  // The policy links to its trust config, which lists it as a user.
+  await details.getByRole('link', { name: 'corp' }).click()
+  await expect(page).toHaveURL(/\/trustConfigs\/corp\?/)
+  await expect(page.getByTestId('trust-user')).toContainText('partners')
+  await page.getByTestId('trust-user').getByRole('link', { name: 'partners' }).click()
+
+  // The API refuses to delete it while the proxy uses it; then it is deleted.
+  const del = async () => {
+    await page.getByRole('button', { name: 'Delete server TLS policy' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete server TLS policy' }).click()
+  }
+  await del()
+  await expect(page.getByText(/in use by/).first()).toBeVisible()
+  await page.keyboard.press('Escape')
+  const res = await page.request.delete(
+    `/compute/v1/${scope}/global/targetHttpsProxies/partner-https`,
+  )
+  expect(res.ok(), await res.text()).toBe(true)
+  await expect
+    .poll(async () =>
+      (
+        await page.request.get(`/compute/v1/${scope}/global/targetHttpsProxies/partner-https`)
+      ).status(),
+    )
+    .toBe(404)
+  await del()
+  await expect(page).toHaveURL(new RegExp(`/console/certs/tls/serverTlsPolicies\\?project=${id}$`))
+  await expect(page.getByText('No server TLS policies in this Project yet.')).toBeVisible()
 
   await expectConsoleRequests(requests, { allowed })
 })

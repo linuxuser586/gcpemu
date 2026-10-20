@@ -68,6 +68,20 @@ export interface IssuanceConfig {
   description?: string
 }
 
+/** TrustConfig is the CAs and certificates that verify the other side of mTLS. */
+export interface TrustConfig {
+  name: string
+  description?: string
+  labels?: Record<string, string>
+  createTime?: string
+  updateTime?: string
+  trustStores?: {
+    trustAnchors?: { pemCertificate?: string }[]
+    intermediateCas?: { pemCertificate?: string }[]
+  }[]
+  allowlistedCertificates?: { pemCertificate?: string }[]
+}
+
 /** GclbTarget is a target proxy that serves a certificate map. */
 export interface GclbTarget {
   targetHttpsProxy?: string
@@ -132,7 +146,7 @@ const enc = encodeURIComponent
 const API = '/certificatemanager/v1'
 
 /** path encodes each segment of a resource name for a URL path. */
-const path = (name: string) => name.split('/').map(enc).join('/')
+export const path = (name: string) => name.split('/').map(enc).join('/')
 
 export const locationName = (project: string, location: string) =>
   `projects/${project}/locations/${location}`
@@ -221,7 +235,7 @@ export const certDomains = (c: Certificate) =>
 
 // ---- reads ----
 
-async function listAll<T>(url: string, field: string): Promise<T[]> {
+export async function listAll<T>(url: string, field: string): Promise<T[]> {
   const out: T[] = []
   let pageToken = ''
   do {
@@ -284,6 +298,32 @@ export const issuanceConfigsQuery = (project: string, location: string) =>
       ),
   })
 
+export const trustConfigsQuery = (project: string, location: string) =>
+  queryOptions({
+    queryKey: ['certs', 'trustConfigs', project, location],
+    queryFn: () =>
+      listAll<TrustConfig>(
+        `${API}/${path(locationName(project, location))}/trustConfigs`,
+        'trustConfigs',
+      ),
+  })
+
+/** TrustRef names a trust config. */
+export interface TrustRef {
+  project: string
+  location: string
+  trust: string
+}
+
+export const trustName = (r: TrustRef) =>
+  `${locationName(r.project, r.location)}/trustConfigs/${r.trust}`
+
+export const trustConfigQuery = (r: TrustRef) =>
+  queryOptions({
+    queryKey: ['certs', 'trustConfig', r],
+    queryFn: () => gcpFetch<TrustConfig>(`${API}/${path(trustName(r))}`),
+  })
+
 /** mapsQuery lists the certificate maps, which are all global. */
 export const mapsQuery = (project: string) =>
   queryOptions({
@@ -343,12 +383,15 @@ const GRPC_CODES = [
 /** OP_POLL_MS is how often waitOperation checks an Operation. */
 export const OP_POLL_MS = 250
 
-/** waitOperation resolves with op's response once it is done, or rejects with its error. */
-export async function waitOperation<T>(op: Operation): Promise<T> {
+/**
+ * waitOperation resolves with op's response once it is done, or rejects
+ * with its error. api is the API that started it.
+ */
+export async function waitOperation<T>(op: Operation, api = API): Promise<T> {
   let cur = op
   while (!cur.done) {
     await new Promise((r) => setTimeout(r, OP_POLL_MS))
-    cur = await gcpFetch<Operation>(`${API}/${path(cur.name)}`)
+    cur = await gcpFetch<Operation>(`${api}/${path(cur.name)}`)
   }
   if (cur.error) {
     const status = GRPC_CODES[cur.error.code ?? 2] ?? 'UNKNOWN'

@@ -271,6 +271,26 @@ _Avoid_: map entry, entry (unqualified)
 The Certificate map entry that serves every hostname no other entry of its map matches, and any client that names no hostname. An exact hostname wins over a wildcard, and a wildcard over the Primary entry.
 _Avoid_: default entry, fallback entry
 
+**Trust config**:
+A Certificate Manager resource holding the CAs (trust anchors and intermediate CAs) and allowlisted certificates that verify the other side of mutual TLS. Server TLS policies and Backend authentication configs name one.
+_Avoid_: trust store (that is one part of a Trust config), CA bundle
+
+**Server TLS policy**:
+A Network Security resource that a target HTTPS proxy names to verify its clients' certificates against a Trust config (mutual TLS), either rejecting clients that fail or letting them through.
+_Avoid_: mTLS policy, TLS policy (unqualified)
+
+**Backend authentication config**:
+A Network Security resource that a backend service names to verify its backends' certificates against a Trust config or the public roots, optionally presenting a client certificate of its own.
+_Avoid_: backend TLS policy, BAC (in user-facing text)
+
+**Client TLS policy**:
+A Network Security resource for the client side of service-to-service TLS (Cloud Service Mesh), with the SNI, client certificate and CAs a client uses. The load balancer does not use it.
+_Avoid_: TLS policy (unqualified)
+
+**TLS policies**:
+The section of the Certificate Manager view that lists Server TLS policies, Backend authentication configs and Client TLS policies together, though only two of the three are named "policy" by the API.
+_Avoid_: using it for a single resource
+
 **Cloud SQL instance**:
 A Cloud SQL database server resource. Always write it in full so it is not confused with an Instance.
 _Avoid_: instance (unqualified)
