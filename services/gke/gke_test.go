@@ -738,7 +738,7 @@ func testNEG(t *testing.T, e *env) {
 	})
 	addr := net.JoinHostPort(ingress, "8081")
 	if net.ParseIP(ingress).IsLoopback() {
-		addr = e.inst.Internal().Env.Endpoints.Get("gke:c1/default/web-lb/8081")
+		addr = e.inst.Endpoint("gke:c1/default/web-lb/8081")
 		if h, _, _ := net.SplitHostPort(addr); h != ingress {
 			t.Fatalf("ingress %s, endpoint %q; want the endpoint on the ingress loopback address", ingress, addr)
 		}

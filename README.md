@@ -652,7 +652,7 @@ inst := emutest.Start(t, []string{"gcs", "pubsub", "secrets", "dns"})
 sc := inst.Storage(t)              // *storage.Client, closed at cleanup
 ps := inst.PubSub(t, "my-project") // *pubsub.Client (cloud.google.com/go/pubsub/v2)
 
-// Any gRPC client library: the gateway endpoint, no authentication, insecure transport.
+// Any gRPC client library: the API gateway endpoint, no authentication, insecure transport.
 sm, err := secretmanager.NewClient(ctx, inst.GRPCOptions()...)
 
 // Any REST client library, by API name: "storage", "compute", "dns", "sqladmin", …
@@ -690,7 +690,7 @@ Options, for `Start` and `New`:
 | `WithStrictProjects()` | Refuses undeclared projects (`--strict-projects`) |
 | `WithOffline()` | Never reaches the internet (`--offline`) |
 | `WithIAMMode(mode)` | `off`, `audit` or `enforce` |
-| `WithDeterministic()` | Deterministic IDs and clock (see above) |
+| `WithDeterministic()` | A Deterministic Instance (see above) |
 | `WithConsole()` | Serves the Web console |
 | `WithSQLHostClients()` | Cloud SQL host clients on loopback (below) |
 

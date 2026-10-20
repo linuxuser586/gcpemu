@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,13 +27,30 @@ const project = "external-proj"
 var inst *emutest.Instance
 
 func TestMain(m *testing.M) {
+	os.Exit(run(m))
+}
+
+// run shares one Instance across the package's tests: a Seed file declares
+// the project, and strict projects refuse any other.
+func run(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "emutest-external-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer os.RemoveAll(dir)
+	seed := filepath.Join(dir, "seed.yaml")
+	if err := os.WriteFile(seed, []byte("projects: ["+project+"]\n"), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	var err error
-	inst, err = emutest.New(ctx, []string{"gcs", "pubsub", "secrets", "dns"})
+	inst, err = emutest.New(ctx, []string{"gcs", "pubsub", "secrets", "dns"},
+		emutest.WithSeed(seed), emutest.WithStrictProjects())
 	cancel()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 	code := m.Run()
 	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
@@ -41,7 +59,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}
-	os.Exit(code)
+	return code
 }
 
 func TestStorage(t *testing.T) {

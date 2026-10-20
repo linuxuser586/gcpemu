@@ -36,19 +36,11 @@ type Instance struct {
 // stops it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	t.Helper()
-	cfg := testConfig(svcs, opts)
-	var release func()
-	if !cfg.NoSQLHostClients {
-		var err error
-		if release, err = holdHostLoopback(testDeadline(t)); err != nil {
-			t.Fatalf("emutest: %v", err)
-		}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	i, err := launch(ctx, &cfg, release)
+	i, err := start(ctx, svcs, opts, testDeadline(t))
 	if err != nil {
-		t.Fatalf("emutest: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -64,12 +56,18 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 // the Instance keeps its files in a temporary directory that Close
 // removes. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func New(ctx context.Context, svcs []string, opts ...Option) (*Instance, error) {
+	deadline, _ := ctx.Deadline()
+	return start(ctx, svcs, opts, deadline)
+}
+
+// start launches an Instance running svcs with opts, waiting for the host
+// loopback lock, when it needs one, until lockDeadline (zero: forever).
+func start(ctx context.Context, svcs []string, opts []Option, lockDeadline time.Time) (*Instance, error) {
 	cfg := testConfig(svcs, opts)
 	var release func()
 	if !cfg.NoSQLHostClients {
-		deadline, _ := ctx.Deadline()
 		var err error
-		if release, err = holdHostLoopback(deadline); err != nil {
+		if release, err = holdHostLoopback(lockDeadline); err != nil {
 			return nil, fmt.Errorf("emutest: %w", err)
 		}
 	}

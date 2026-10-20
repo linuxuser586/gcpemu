@@ -11,8 +11,8 @@ type Option struct {
 	apply func(*config.Config)
 }
 
-// WithIAMMode sets the IAM enforcement mode: "off", "audit" (the default)
-// or "enforce".
+// WithIAMMode sets the IAM enforcement level: "off", "audit" (the
+// default) or "enforce".
 func WithIAMMode(mode string) Option { return WithConfig(func(c *config.Config) { c.IAMMode = mode }) }
 
 // WithDeterministic enables deterministic IDs and the fake clock.

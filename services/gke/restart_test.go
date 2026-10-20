@@ -14,8 +14,8 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
-// startPersistent starts a --data-dir (non-ephemeral) instance in dir,
-// which lives until Close so the test can stop and restart it.
+// startPersistent starts a Persistent Instance in dir, which lives until
+// Close so the test can stop and restart it.
 func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

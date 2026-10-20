@@ -309,10 +309,7 @@ func TestMirrorOfflinePersistentCache(t *testing.T) {
 	up := newFakeUpstream(t)
 	img := up.put("library/pause:3.10", 256, 1)
 	dir := t.TempDir()
-	persistent := func(offline bool) emutest.Option {
-		return emutest.WithConfig(func(c *config.Config) { c.Ephemeral, c.DataDir, c.Offline = false, dir, offline })
-	}
-	e1 := start(t, persistent(false))
+	e1 := start(t, emutest.WithDataDir(dir))
 	ref := "127.0.0.1:" + strings.Split(up.host(), ":")[1]
 	pullAll(t, "http://"+e1.registry(), "library/pause", "3.10", ref, img)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -322,7 +319,7 @@ func TestMirrorOfflinePersistentCache(t *testing.T) {
 	}
 	up.pub.Close()
 
-	e2 := start(t, persistent(true))
+	e2 := start(t, emutest.WithDataDir(dir), emutest.WithOffline())
 	base := "http://" + e2.registry()
 	pullAll(t, base, "library/pause", "3.10", ref, img)
 	resp, body := containerdGet(t, http.MethodGet, base+"/v2/library/pause/manifests/3.9?ns="+ref)

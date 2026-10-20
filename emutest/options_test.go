@@ -2,19 +2,24 @@ package emutest_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/golang-jwt/jwt/v5"
 	dns "google.golang.org/api/dns/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/project"
 )
 
 // TestWithSeed: the Seed file is applied before the Instance is ready; its
@@ -112,11 +117,35 @@ func TestWithOperationLatency(t *testing.T) {
 	}
 }
 
-// TestWithOffline: the Services see an offline configuration.
+// TestWithOffline: STS refuses to fetch a workload identity provider's
+// issuer keys rather than reaching the internet.
 func TestWithOffline(t *testing.T) {
-	inst := emutest.Start(t, []string{"gcs"}, emutest.WithOffline())
-	if !inst.Internal().Env.Config.Offline {
-		t.Error("Env.Config.Offline = false")
+	inst := emutest.Start(t, []string{"iam"}, emutest.WithOffline())
+	gw := inst.GatewayURL()
+	const proj, issuer = "offline-proj", "https://issuer.example.test"
+	pools := gw + "/iam/v1/projects/" + proj + "/locations/global/workloadIdentityPools"
+	ok(t, "POST", pools+"?workloadIdentityPoolId=pool", map[string]any{}, nil)
+	ok(t, "POST", pools+"/pool/providers?workloadIdentityPoolProviderId=oidc",
+		map[string]any{"oidc": map[string]any{"issuerUri": issuer}, "attributeMapping": map[string]string{"google.subject": "assertion.sub"}}, nil)
+	provider := "//iam.googleapis.com/projects/" + project.NumberString(proj) + "/locations/global/workloadIdentityPools/pool/providers/oidc"
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": issuer, "aud": "https:" + provider,
+		"sub": "u", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
+	tok.Header["kid"] = "k"
+	subject, err := tok.SignedString(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, b := send(t, "POST", gw+"/sts/v1/token", map[string]any{
+		"grant_type": "urn:ietf:params:oauth:grant-type:token-exchange", "audience": provider,
+		"subject_token": subject, "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+		"requested_token_type": "urn:ietf:params:oauth:token-type:access_token", "scope": "https://www.googleapis.com/auth/cloud-platform",
+	}, nil)
+	if code/100 == 2 || !strings.Contains(string(b), "offline mode") {
+		t.Errorf("STS with an issuer to fetch keys from: %d %s", code, b)
 	}
 }
 
@@ -129,7 +158,7 @@ func TestNewClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := inst.Internal().Dir
-	sc, err := storage.NewClient(ctx, append(mustHTTP(t, inst, "storage"), storage.WithJSONReads())...)
+	sc, err := storage.NewClient(ctx, append(httpOptions(t, inst, "storage"), storage.WithJSONReads())...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +180,8 @@ func TestNewClose(t *testing.T) {
 	}
 }
 
-func mustHTTP(t *testing.T, inst *emutest.Instance, api string) []option.ClientOption {
+// httpOptions is inst.HTTPOptions(api), failing the test on error.
+func httpOptions(t *testing.T, inst *emutest.Instance, api string) []option.ClientOption {
 	t.Helper()
 	opts, err := inst.HTTPOptions(api)
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 )
 
 // restAPIs maps each REST API name to the Service ID that serves it and
-// the gateway path its Go client library (google.golang.org/api/<name>)
+// the API gateway path its Go client library (google.golang.org/api/<name>)
 // needs as its endpoint: the API's mount, plus what the library's default
 // base path adds after the host.
 var restAPIs = map[string]struct{ service, prefix string }{
@@ -43,8 +43,8 @@ var restAPIs = map[string]struct{ service, prefix string }{
 }
 
 // GRPCOptions returns the client options that connect any gRPC client
-// library (cloud.google.com/go/...) to the Instance: its gateway endpoint,
-// no authentication and an insecure transport.
+// library (cloud.google.com/go/...) to the Instance: its API gateway
+// endpoint, no authentication and an insecure transport.
 func (i *Instance) GRPCOptions() []option.ClientOption {
 	return []option.ClientOption{
 		option.WithEndpoint(i.Endpoint("gateway")),
@@ -56,15 +56,15 @@ func (i *Instance) GRPCOptions() []option.ClientOption {
 // HTTPOptions returns the client options that connect the REST client
 // library of the API named api (google.golang.org/api/<api>: "storage",
 // "compute", "dns", "sqladmin", …) to the Instance: the API's endpoint on
-// the gateway, and no authentication. It fails when the Instance does not
+// the API gateway, and no authentication. It fails when the Instance does not
 // serve api.
 func (i *Instance) HTTPOptions(api string) ([]option.ClientOption, error) {
 	a, ok := restAPIs[api]
 	if !ok {
 		return nil, fmt.Errorf("emutest: no REST API %q", api)
 	}
-	if !i.serves(a.service) {
-		return nil, fmt.Errorf("emutest: the Instance does not serve %s: start it with the %q service", api, a.service)
+	if err := i.requireService(api, a.service); err != nil {
+		return nil, err
 	}
 	return []option.ClientOption{
 		option.WithEndpoint(i.GatewayURL() + a.prefix),
@@ -72,14 +72,18 @@ func (i *Instance) HTTPOptions(api string) ([]option.ClientOption, error) {
 	}, nil
 }
 
-// serves reports whether the Instance runs the Service serviceID.
-func (i *Instance) serves(serviceID string) bool {
-	return slices.ContainsFunc(i.in.Services(), func(s emu.Service) bool { return s.Name() == serviceID })
+// requireService fails unless the Instance runs the Service serviceID,
+// which serves what.
+func (i *Instance) requireService(what, serviceID string) error {
+	if slices.ContainsFunc(i.in.Services(), func(s emu.Service) bool { return s.Name() == serviceID }) {
+		return nil
+	}
+	return fmt.Errorf("emutest: the Instance does not serve %s: start it with the %q service", what, serviceID)
 }
 
 // Storage returns a Cloud Storage client connected to the Instance, closed
-// when the test ends. It reads through the JSON API, which the gateway
-// serves. The test fails if the Instance does not run gcs.
+// when the test ends. It reads through the JSON API, which the API
+// gateway serves. The test fails if the Instance does not run gcs.
 func (i *Instance) Storage(t testing.TB) *storage.Client {
 	t.Helper()
 	opts, err := i.HTTPOptions("storage")
@@ -99,8 +103,8 @@ func (i *Instance) Storage(t testing.TB) *storage.Client {
 // pubsub.
 func (i *Instance) PubSub(t testing.TB, project string) *pubsub.Client {
 	t.Helper()
-	if !i.serves("pubsub") {
-		t.Fatal(`emutest: the Instance does not serve Pub/Sub: start it with the "pubsub" service`)
+	if err := i.requireService("pubsub", "pubsub"); err != nil {
+		t.Fatal(err)
 	}
 	c, err := pubsub.NewClient(context.Background(), project, i.GRPCOptions()...)
 	if err != nil {
