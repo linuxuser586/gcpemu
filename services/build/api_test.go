@@ -16,6 +16,7 @@ type restBuild struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 	Tags   []string
+	LogURL string `json:"logUrl"`
 }
 
 // restOp is an Operation as the REST API returns it.
@@ -33,7 +34,7 @@ type restOp struct {
 }
 
 // The regional resource path serves create, the Operation, get, list with
-// a filter and retry over REST, as gcloud uses them.
+// a filter, retry and cancel over REST, as gcloud uses them.
 func TestRegionalBuildsOverREST(t *testing.T) {
 	e := start(t)
 	parent := "/cloudbuild/v1/projects/" + testProject + "/locations/us-central1"
@@ -62,6 +63,10 @@ func TestRegionalBuildsOverREST(t *testing.T) {
 	if code := e.rest("GET", parent+"/builds/"+id, nil, &b); code != http.StatusOK || b.Status != "SUCCESS" {
 		t.Fatalf("get: %d %+v", code, b)
 	}
+	// FR-CB-008: logUrl opens the Build in the Web console.
+	if want := "http://" + e.inst.Endpoint("gateway") + "/console/build/" + b.Name; b.LogURL != want {
+		t.Errorf("logUrl = %q, want %q", b.LogURL, want)
+	}
 	var retried restOp
 	if code := e.rest("POST", parent+"/builds/"+id+":retry", map[string]any{}, &retried); code != http.StatusOK {
 		t.Fatalf("retry: %d", code)
@@ -85,6 +90,16 @@ func TestRegionalBuildsOverREST(t *testing.T) {
 	if len(global.Builds) != 0 {
 		t.Errorf("the global location lists %+v", global.Builds)
 	}
+
+	body = map[string]any{"steps": []map[string]any{{"name": busybox, "args": []string{"sleep", "600"}}}}
+	if code := e.rest("POST", parent+"/builds", body, &op); code != http.StatusOK {
+		t.Fatalf("create: %d %+v", code, op)
+	}
+	var cancelled restBuild
+	if code := e.rest("POST", parent+"/builds/"+op.Metadata.Build.ID+":cancel", map[string]any{}, &cancelled); code != http.StatusOK {
+		t.Fatalf("cancel: %d %+v", code, cancelled)
+	}
+	e.await2(parent, op.Metadata.Build.ID, "CANCELLED")
 }
 
 // await2 polls a regional Build over REST until it has status want.

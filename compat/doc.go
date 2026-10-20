@@ -26,6 +26,16 @@
 // guard, which names the host it dialed. The node-mtls subtest (#246)
 // does the same with sdk/universemtls.js.
 //
+// The gcloud/builds subtests (#393) run gcloud builds submit with
+// --config and --tag, builds list and cancel, and create and run a Build
+// trigger. They also build the Go probe in sdk/buildgo, which creates a
+// Build with the Cloud Build client. gcloud can't stream the log without
+// Host mode (SRS 11.3), so they pass --async or set options.logging NONE.
+// TestHostMode (Linux only) starts an Instance with --host-mode and runs
+// the same submits with the log streaming. The Escape guard tunnels the
+// hostnames Host mode serves to the Google front end, so the test changes
+// neither /etc/hosts nor the system resolver.
+//
 // TestOpenTofu is the OpenTofu acceptance (SRS 11.1, IF-001): each module
 // in tofu/ is applied, planned with no changes expected and destroyed with
 // the google and google-beta providers at their current and previous

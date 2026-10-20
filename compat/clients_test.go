@@ -4,6 +4,7 @@ package compat
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
+	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -29,12 +31,22 @@ type emulator struct {
 	bin, dir string
 	vars     map[string]string  // from `gcpemu env`
 	env      []string           // full client environment
+	envArgs  []string           // `gcpemu env` flags
 	runtime  bool               // a container runtime is available
 	guard    *escapeguard.Guard // gcloud runs behind it
 }
 
+// options picks what a test's instance runs.
+type options struct {
+	services string // the Services to run; "" for the default set, plus the Runtime Services when there is a container runtime
+	hostMode bool   // start with --host-mode (callers skip without a container runtime); gcloud reaches it through the Escape guard
+}
+
 // start builds gcpemu statically and starts a detached instance.
-func start(t *testing.T) *emulator {
+func start(t *testing.T) *emulator { return startWith(t, options{}) }
+
+// startWith is start with o.
+func startWith(t *testing.T, o options) *emulator {
 	t.Helper()
 	tmp := t.TempDir()
 	e := &emulator{bin: filepath.Join(tmp, exe("gcpemu")), dir: filepath.Join(tmp, "data"), guard: escapeguard.New(t)}
@@ -43,15 +55,22 @@ func start(t *testing.T) *emulator {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	services := "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn"
+	services := cmp.Or(o.services, "iam,gcs,pubsub,secrets,dns,ar,compute,lb,certs,cdn")
 	// gcpemu's own detection, not `docker info`: an engine serving Windows
 	// containers answers `docker info` but cannot run the Runtime Services.
 	if _, err := emuruntime.Detect(); err == nil {
 		e.runtime = true
-		services += ",sql,gke,build"
+		if o.services == "" {
+			services += ",sql,gke,build"
+		}
 	}
-	cmd := exec.Command(e.bin, "start", "--detach", "--data-dir", e.dir, "--ephemeral", "--port", "0",
-		"--services", services, "--wait-timeout", "120s")
+	args := []string{"start", "--detach", "--data-dir", e.dir, "--ephemeral", "--port", "0",
+		"--services", services, "--wait-timeout", "120s"}
+	if o.hostMode {
+		args = append(args, "--host-mode")
+		e.envArgs = []string{"--no-universe"}
+	}
+	cmd := exec.Command(e.bin, args...)
 	cmd.Env = append(os.Environ(), "CI=")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("gcpemu start: %v\n%s", err, out)
@@ -60,6 +79,11 @@ func start(t *testing.T) *emulator {
 		_ = exec.Command(e.bin, "stop", "--data-dir", e.dir).Run()
 	})
 	e.vars = e.emuEnv(t)
+	if o.hostMode {
+		st := hostModeReady(t, e.vars["GCPEMU_GATEWAY"])
+		e.guard.Tunnel(st.IP, st.Hosts)
+		e.vars["CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE"] = e.vars["GCPEMU_CA_FILE"]
+	}
 	token := filepath.Join(tmp, "token")
 	_ = os.WriteFile(token, []byte("owner"), 0o600) // the emulator's default-principal token
 	e.vars["KUBECONFIG"] = filepath.Join(tmp, "kubeconfig")
@@ -95,7 +119,7 @@ func (e *emulator) emuEnv(t *testing.T) map[string]string {
 	t.Helper()
 	// A home without gcloud's application-default credentials, so the
 	// variables are the same on every machine (#247).
-	cmd := exec.Command(e.bin, "env", "--data-dir", e.dir)
+	cmd := exec.Command(e.bin, append([]string{"env", "--data-dir", e.dir}, e.envArgs...)...)
 	cmd.Env = withEnv(os.Environ(), map[string]string{"HOME": t.TempDir()}, "CLOUDSDK_CONFIG", "GOOGLE_APPLICATION_CREDENTIALS")
 	out, err := cmd.Output()
 	if err != nil {
@@ -412,53 +436,7 @@ func TestClients(t *testing.T) {
 		if !e.runtime {
 			t.Skip("Cloud Build needs a container runtime")
 		}
-		// Without Host mode gcloud cannot tail the log (SRS 11.3), and
-		// --suppress-logs still tails it; with options.logging NONE gcloud
-		// only waits for the Build, whose log still goes to Cloud Storage.
-		src := longTempDir(t)
-		_ = os.WriteFile(filepath.Join(src, "hello.txt"), []byte("from the source\n"), 0o644)
-		config := filepath.Join(src, "cloudbuild.yaml")
-		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  id: greet\n  args: [cat, hello.txt]\noptions:\n  logging: NONE\n"), 0o644)
-		out := e.run(t, g, "builds", "submit", "--config", config, "--format=value(id,logsBucket)", src)
-		fields := strings.Fields(out)
-		if len(fields) < 2 {
-			t.Fatalf("builds submit printed %q", out)
-		}
-		id, bucket := fields[len(fields)-2], fields[len(fields)-1]
-		contains(t, "builds describe", e.run(t, g, "builds", "describe", id, "--format=value(status)"), "SUCCESS")
-		log := e.run(t, g, "storage", "cat", bucket+"/log-"+id+".txt")
-		contains(t, "the Build log", log, `Step #0 - "greet": from the source`)
-		contains(t, "the Build log", log, "DONE")
-
-		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  args: [sh, -c, 'exit 3']\noptions:\n  logging: NONE\n"), 0o644)
-		if out, err := e.try(t, g, "builds", "submit", "--config", config, src); err == nil {
-			t.Fatalf("builds submit of a failing Build exited 0:\n%s", out)
-		}
-		id = strings.TrimSpace(e.run(t, g, "builds", "submit", "--config", config, "--async", "--format=value(id)", src))
-		if id == "" {
-			t.Fatal("builds submit --async printed no Build ID")
-		}
-
-		// --tag builds the Dockerfile with gcr.io/cloud-builders/docker on
-		// the Build daemon and pushes the image to Artifact Registry
-		// (FR-CB-004, FR-CB-006); --async, as gcloud cannot tail the log.
-		e.run(t, g, "artifacts", "repositories", "create", "compat-builds", "--repository-format=docker", "--location=us-central1")
-		_ = os.WriteFile(filepath.Join(src, "Dockerfile"), []byte("FROM busybox:1.37\nCOPY hello.txt /\n"), 0o644)
-		img := "us-central1-docker.pkg.dev/" + project + "/compat-builds/tagged"
-		// gcloud's progress precedes the ID in the output.
-		fields = strings.Fields(e.run(t, g, "builds", "submit", "--tag", img+":v1", "--async", "--format=value(id)", src))
-		id = fields[len(fields)-1]
-		status := ""
-		for deadline := time.Now().Add(10 * time.Minute); time.Now().Before(deadline); time.Sleep(3 * time.Second) {
-			if status = strings.TrimSpace(e.run(t, g, "builds", "describe", id, "--format=value(status)")); status != "QUEUED" && status != "WORKING" {
-				break
-			}
-		}
-		if status != "SUCCESS" {
-			t.Fatalf("builds submit --tag ended %s", status)
-		}
-		digest := strings.TrimSpace(e.run(t, g, "builds", "describe", id, "--format=value(results.images[0].digest)"))
-		contains(t, "artifacts docker images list", e.run(t, g, "artifacts", "docker", "images", "list", img, "--format=value(version)"), digest)
+		testBuilds(t, e, g)
 	})
 
 	t.Run("gcloud/sql+psql+auth-proxy", func(t *testing.T) {
@@ -584,4 +562,30 @@ func TestClients(t *testing.T) {
 	if err != nil || resp.StatusCode != 200 {
 		t.Errorf("ready after the clients: %v %v", resp, err)
 	}
+}
+
+// hostModeReady waits for the Google front end and returns Host mode's
+// status.
+func hostModeReady(t *testing.T, gateway string) hostmode.Status {
+	t.Helper()
+	cl := &http.Client{Timeout: 10 * time.Second}
+	var st hostmode.Status
+	var err error
+	for deadline := time.Now().Add(3 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
+		var resp *http.Response
+		if resp, err = cl.Get("http://" + gateway + "/_emu/v1/hostmode"); err != nil {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("GET /_emu/v1/hostmode: %s", resp.Status)
+		} else {
+			err = json.NewDecoder(resp.Body).Decode(&st)
+		}
+		resp.Body.Close()
+		if err == nil && st.State == hostmode.StateReady {
+			return st
+		}
+	}
+	t.Fatalf("Host mode is %q (%s): %v", st.State, st.Error, err)
+	return st
 }
