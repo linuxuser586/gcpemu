@@ -259,6 +259,18 @@ _Avoid_: deny rule (one rule inside a Deny policy)
 **Strict projects**:
 An Instance setting under which referencing a Project that does not exist is an error instead of creating it.
 
+**Certificate map**:
+A Certificate Manager resource that a global target proxy serves TLS from, through its Certificate map entries, choosing a certificate by the hostname the client asks for (SNI).
+_Avoid_: cert map, map (unqualified)
+
+**Certificate map entry**:
+One rule of a Certificate map: a hostname, or a wildcard of it one label deep, and the one to four global certificates that serve it. A Certificate map has at most one entry per hostname.
+_Avoid_: map entry, entry (unqualified)
+
+**Primary entry**:
+The Certificate map entry that serves every hostname no other entry of its map matches, and any client that names no hostname. An exact hostname wins over a wildcard, and a wildcard over the Primary entry.
+_Avoid_: default entry, fallback entry
+
 **Cloud SQL instance**:
 A Cloud SQL database server resource. Always write it in full so it is not confused with an Instance.
 _Avoid_: instance (unqualified)
@@ -362,5 +374,6 @@ _Avoid_: egress check, leak detector
 - "Gateway" and "frontend" on their own are ambiguous. Load balancer frontends and the network's gateway IP keep their GCP meanings and are always qualified.
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
 - "Build" on its own is ambiguous: it also means compiling gcpemu, a Docker image build or the Web console's Vite build. Use *Build* (capitalised) only for a Cloud Build execution, and say *image build* or *compile* for the others.
+- "Map" and "entry" on their own are ambiguous: URL maps have host and path rules, and certificate maps have entries. Use *URL map*, *Certificate map* and *Certificate map entry*.
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
