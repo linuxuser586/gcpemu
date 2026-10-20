@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
+	"io/fs"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -118,7 +120,7 @@ func TestReadCertFileErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name, content, want string
 	}{
-		{"missing", "", "no such file"},
+		{"missing", "", ""},
 		{"text", "hello\n", "no PEM block"},
 		{"key", string(key), "PRIVATE KEY"},
 		{"two", string(c.PEM()) + string(c.PEM()), "more than one PEM block"},
@@ -132,6 +134,12 @@ func TestReadCertFileErrors(t *testing.T) {
 			}
 		}
 		_, err := readCertFile(p, nil)
+		if tc.name == "missing" {
+			if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--cert") {
+				t.Errorf("%s: err %v, want a --cert not-exist error", tc.name, err)
+			}
+			continue
+		}
 		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "--cert") {
 			t.Errorf("%s: err %v, want it to contain %q", tc.name, err, tc.want)
 		}
@@ -205,7 +213,7 @@ func TestCACertCommand(t *testing.T) {
 			t.Errorf("%s without --instance: %v", verb, err)
 		}
 		_, err = run("--data-dir", dataDir, "--instance", "container", "ca", verb, "--cert", filepath.Join(dataDir, "missing.pem"), "--dry-run")
-		if err == nil || !strings.Contains(err.Error(), "no such file") {
+		if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--cert") {
 			t.Errorf("%s with a missing cert: %v", verb, err)
 		}
 		out, err := run("--data-dir", dataDir, "--instance", "container", "ca", verb, "--cert", f.Path(), "--dry-run")
