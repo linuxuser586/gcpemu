@@ -8,7 +8,7 @@ import { waitOperation, type Operation, type Resource } from '../lb/api'
 
 // The VPC network view's reads and writes: networks and subnetworks on
 // compute v1, with their custom methods (switchToCustomMode,
-// expandIpCidrRange, setPrivateIpGoogleAccess). The Host attachment
+// expandIpCidrRange, setPrivateIpGoogleAccess), firewall rules and routes. The Host attachment
 // (ADR 0014) is not modelled on GCP: its Offered ports are on the admin
 // API only. Other views (Cloud NAT, Cloud DNS) read networks and
 // subnetworks from here.
@@ -39,6 +39,53 @@ export interface Subnetwork extends Resource {
   stackType?: string
   state?: string
 }
+
+/** FirewallRule is a firewall rule's allowed or denied protocol and ports. */
+export interface FirewallRule {
+  IPProtocol: string
+  ports?: string[]
+}
+
+/** Firewall is a firewall rule. Its Fidelity is Recorded: stored and returned, not enforced. */
+export interface Firewall extends Resource {
+  network?: string
+  direction?: 'INGRESS' | 'EGRESS'
+  priority?: number
+  allowed?: FirewallRule[]
+  denied?: FirewallRule[]
+  sourceRanges?: string[]
+  destinationRanges?: string[]
+  sourceTags?: string[]
+  targetTags?: string[]
+  sourceServiceAccounts?: string[]
+  targetServiceAccounts?: string[]
+  disabled?: boolean
+  logConfig?: { enable?: boolean; [field: string]: unknown }
+}
+
+/** Route is a route. Its Fidelity is Recorded: stored and returned, not enforced. */
+export interface Route extends Resource {
+  network?: string
+  destRange?: string
+  priority?: number
+  tags?: string[]
+  nextHopGateway?: string
+  nextHopIp?: string
+  nextHopInstance?: string
+  nextHopIlb?: string
+  nextHopVpnTunnel?: string
+  routeType?: string
+}
+
+/** DEFAULT_PRIORITY is a firewall rule's or route's priority when it is sent none. */
+export const DEFAULT_PRIORITY = 1000
+
+/** priorityOf is a firewall rule's or route's priority. */
+export const priorityOf = (r: { priority?: number }) => r.priority ?? DEFAULT_PRIORITY
+
+/** byPriority orders firewall rules or routes as GCP weighs them: by priority, then name. */
+export const byPriority = (a: Firewall | Route, b: Firewall | Route) =>
+  priorityOf(a) - priorityOf(b) || a.name.localeCompare(b.name)
 
 /** NetworkRef names a network: a Project and its name. */
 export interface NetworkRef {
@@ -119,6 +166,46 @@ export const expandIpCidrRange = (r: SubnetRef, ipCidrRange: string) =>
 export const setPrivateIpGoogleAccess = (r: SubnetRef, privateIpGoogleAccess: boolean) =>
   write(`${subnetPath(r)}/setPrivateIpGoogleAccess`, 'POST', { privateIpGoogleAccess })
 
+// ---- firewall rules ----
+
+export const firewallPath = (project: string, name: string) =>
+  `projects/${project}/global/firewalls/${enc(name)}`
+
+export const listFirewalls = async (project: string) =>
+  (await gcpFetch<{ items?: Firewall[] }>(`${API}projects/${enc(project)}/global/firewalls`))
+    .items ?? []
+
+export const getFirewall = (project: string, name: string) =>
+  gcpFetch<Firewall>(API + firewallPath(project, name))
+
+export const insertFirewall = (project: string, body: unknown) =>
+  write(`projects/${project}/global/firewalls`, 'POST', body)
+
+/** patchFirewall sends a JSON merge patch: allowed replaces denied, and denied allowed. */
+export const patchFirewall = (project: string, name: string, body: unknown) =>
+  write(firewallPath(project, name), 'PATCH', body)
+
+export const deleteFirewall = (project: string, name: string) =>
+  write(firewallPath(project, name), 'DELETE')
+
+// ---- routes ----
+
+export const routePath = (project: string, name: string) =>
+  `projects/${project}/global/routes/${enc(name)}`
+
+export const listRoutes = async (project: string) =>
+  (await gcpFetch<{ items?: Route[] }>(`${API}projects/${enc(project)}/global/routes`)).items ?? []
+
+export const getRoute = (project: string, name: string) =>
+  gcpFetch<Route>(API + routePath(project, name))
+
+export const insertRoute = (project: string, body: unknown) =>
+  write(`projects/${project}/global/routes`, 'POST', body)
+
+/** deleteRoute deletes a route; routes are immutable, so there is no patch. */
+export const deleteRoute = (project: string, name: string) =>
+  write(routePath(project, name), 'DELETE')
+
 // ---- queries ----
 
 // Keys are under "compute": the events bridge marks them stale when a
@@ -148,6 +235,32 @@ export const subnetQuery = (r: SubnetRef) =>
   queryOptions({
     queryKey: ['compute', 'vpc', 'subnetwork', r],
     queryFn: () => getSubnetwork(r),
+  })
+
+export const firewallsQuery = (project: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'firewalls', project],
+    queryFn: () => listFirewalls(project),
+    enabled: !!project,
+  })
+
+export const firewallQuery = (project: string, name: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'firewall', project, name],
+    queryFn: () => getFirewall(project, name),
+  })
+
+export const routesQuery = (project: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'routes', project],
+    queryFn: () => listRoutes(project),
+    enabled: !!project,
+  })
+
+export const routeQuery = (project: string, name: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'route', project, name],
+    queryFn: () => getRoute(project, name),
   })
 
 /** OFFERS_POLL_MS: offers change from the CLI, outside the console. */

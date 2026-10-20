@@ -18,6 +18,13 @@ export const networkPage = (network: string, sub = '') =>
 export const subnetPage = (r: Pick<SubnetRef, 'region' | 'subnetwork'>, sub = '') =>
   `/compute/regions/${r.region}/subnetworks/${enc(r.subnetwork)}${sub ? `/${sub}` : ''}`
 
+/** firewallPage is the console path of a firewall rule, or of a page under it. */
+export const firewallPage = (name: string, sub = '') =>
+  `/compute/global/firewalls/${enc(name)}${sub ? `/${sub}` : ''}`
+
+/** routePage is the console path of a route. */
+export const routePage = (name: string) => `/compute/global/routes/${enc(name)}`
+
 const linkClass = 'font-mono text-primary underline-offset-4 hover:underline'
 
 /** NetworkLink links a network's selfLink or name to its page. */
@@ -26,6 +33,24 @@ export function NetworkLink({ link }: { link?: string }) {
   if (!name) return <>—</>
   return (
     <Link className={linkClass} to={networkPage(name)}>
+      {name}
+    </Link>
+  )
+}
+
+/** FirewallLink links a firewall rule to its page. */
+export function FirewallLink({ name }: { name: string }) {
+  return (
+    <Link className={linkClass} to={firewallPage(name)}>
+      {name}
+    </Link>
+  )
+}
+
+/** RouteLink links a route to its page. */
+export function RouteLink({ name }: { name: string }) {
+  return (
+    <Link className={linkClass} to={routePage(name)}>
       {name}
     </Link>
   )

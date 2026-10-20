@@ -29,7 +29,8 @@ export function VpcLayout() {
         <h1 className="text-2xl font-semibold">VPC network</h1>
         <Card role="status">
           <p className="text-sm text-muted-foreground">
-            Choose a Project with the Project switcher to see its VPC networks and subnetworks.
+            Choose a Project with the Project switcher to see its VPC networks, subnetworks,
+            firewall rules and routes.
           </p>
         </Card>
       </div>
@@ -55,6 +56,8 @@ export function useSubnetRef(): SubnetRef {
 const TABS = [
   ['/compute', 'Networks'],
   ['/compute/subnetworks', 'Subnetworks'],
+  ['/compute/firewalls', 'Firewall rules'],
+  ['/compute/routes', 'Routes'],
   ['/compute/offers', 'Offered ports'],
 ] as const
 
@@ -93,7 +96,8 @@ export function VpcHeader({ action }: { action?: ReactNode }) {
           <h1 className="text-2xl font-semibold">VPC network</h1>
           {view.project && (
             <p className="text-sm text-muted-foreground">
-              Networks and subnetworks of Project <span className="font-mono">{view.project}</span>
+              Networks, subnetworks, firewall rules and routes of Project{' '}
+              <span className="font-mono">{view.project}</span>
             </p>
           )}
         </div>
