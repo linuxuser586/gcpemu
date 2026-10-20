@@ -26,6 +26,14 @@ export const subnetMode = (n: Network) => (n.autoCreateSubnetworks ? 'Auto' : 'C
 /** routingMode is a network's dynamic routing mode, REGIONAL by default. */
 export const routingMode = (n: Network) => n.routingConfig?.routingMode ?? 'REGIONAL'
 
+/**
+ * isEmulatorDefault is the "default" network the emulator creates the
+ * first time a resource uses a Project's default network, where GCP
+ * creates it with the Project.
+ */
+export const isEmulatorDefault = (n: Network) =>
+  n.name === 'default' && n.description === 'Default network for the project'
+
 /** Networks is the chosen Project's VPC networks, each with its subnetworks. */
 export function Networks() {
   const [view] = useViewState()
@@ -78,6 +86,11 @@ export function Networks() {
                       >
                         {n.name}
                       </Link>
+                      {isEmulatorDefault(n) && (
+                        <span className="block text-xs text-muted-foreground">
+                          Created by the emulator
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>{subnetMode(n)}</TableCell>
                     <TableCell>

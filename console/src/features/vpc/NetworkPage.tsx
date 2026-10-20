@@ -13,7 +13,7 @@ import { toast } from '@/lib/toast'
 import { relPath } from '../lb/api'
 import { deleteNetwork, networkQuery, subnetsQuery, switchToCustomMode, type Network } from './api'
 import { networkRecipe } from './copy'
-import { routingMode } from './Networks'
+import { isEmulatorDefault, routingMode } from './Networks'
 import { bySubnet, SubnetTable } from './Subnetworks'
 import { networkPage } from './links'
 import { useNetworkRef } from './VpcLayout'
@@ -100,6 +100,13 @@ export function NetworkPage() {
         )}
       </div>
       <QueryStatus query={query} />
+      {n && isEmulatorDefault(n) && (
+        <p role="note" className="text-sm text-muted-foreground">
+          Created by the emulator the first time a resource used the Project&apos;s default network,
+          such as a GKE cluster or Cloud SQL instance that named no network. GCP creates it with
+          each new Project.
+        </p>
+      )}
       {n && (
         <>
           <Card aria-labelledby="network-title">

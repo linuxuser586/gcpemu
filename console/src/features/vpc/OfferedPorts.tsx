@@ -11,16 +11,21 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
+import { useViewState } from '@/lib/viewState'
+
 import { hostOffersQuery } from './api'
 import { VpcHeader } from './VpcLayout'
 
 /**
  * OfferedPorts is the Offered ports of the Host attachment (ADR 0014), at which
  * VPC workloads reach listeners on the host's 127.0.0.1. They are the
- * Instance's, for every Project.
+ * Instance's, so every Project's show until one is chosen.
  */
 export function OfferedPorts() {
-  const offers = useQuery(hostOffersQuery())
+  const [view] = useViewState()
+  const query = useQuery(hostOffersQuery())
+  const mine = view.project ? `projects/${view.project}/` : ''
+  const shown = query.data?.filter((h) => h.subnetwork.startsWith(mine))
   return (
     <div className="flex flex-col gap-6">
       <VpcHeader />
@@ -30,17 +35,17 @@ export function OfferedPorts() {
           Workloads on a subnetwork reach each offered port at its Host address, which forwards to
           the same port on the host&apos;s 127.0.0.1.
         </p>
-        <QueryStatus query={offers} />
-        {offers.data && offers.data.length === 0 && (
+        <QueryStatus query={query} />
+        {shown && shown.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            No ports are offered. Offer one with{' '}
+            No ports are offered{mine && ' on this Project’s subnetworks'}. Offer one with{' '}
             <code className="font-mono">
               gcpemu offer &lt;port&gt; --subnetwork projects/P/regions/R/subnetworks/S
             </code>
             .
           </p>
         )}
-        {offers.data && offers.data.length > 0 && (
+        {shown && shown.length > 0 && (
           <Table aria-label="Offered ports">
             <TableHeader>
               <TableRow>
@@ -50,10 +55,10 @@ export function OfferedPorts() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {offers.data.map((h) => (
+              {shown.map((h) => (
                 <TableRow key={h.subnetwork} data-testid="host-offers">
                   <TableCell className="font-mono break-all">
-                    {h.subnetwork.replace(/^projects\/[^/]+\//, '')}
+                    {mine ? h.subnetwork.slice(mine.length) : h.subnetwork}
                   </TableCell>
                   <TableCell className="font-mono">{h.hostAddress}</TableCell>
                   <TableCell className="font-mono">

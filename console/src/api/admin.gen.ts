@@ -757,7 +757,7 @@ export interface paths {
         };
         /**
          * The Host address of a subnetwork (compute service; `gcpemu host-address`, ADR 0014).
-         * @description The address at which the workloads on the subnetwork's VPC container network reach the host: the network's gateway where the host routes to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance. Asking realises the container network, and starts the VM relay, when they are not yet.
+         * @description The address at which the workloads on the subnetwork's VPC container network reach the host: the VPC container network's own gateway IP where the host routes to it, and an address the VM relay holds on a VM runtime. It is not the subnetwork's gatewayAddress, though the two can be the same IP when there is no Fallback range. It stays the same for the life of a Persistent Instance. Asking realises the container network, and starts the VM relay, when they are not yet.
          */
         get: operations["hostAddress"];
         put?: never;

@@ -104,20 +104,29 @@ export function rangesError(text: string): string | undefined {
 }
 
 /**
+ * conflictRange is the range an API overlap error names, which names no
+ * field: X in "Invalid IPCidrRange: X conflicts with existing …".
+ */
+export const conflictRange = (message: string) =>
+  /^Invalid IPCidrRange: (\S+) conflicts with /.exec(message)?.[1]
+
+/**
  * withFieldError shows an API error on the form field it names (fields
- * maps the API field's first segment to the form's), then rethrows it
- * for the editor to show above the buttons.
+ * maps the API field's first segment to the form's; fieldOf names the
+ * form field of an error that names none), then rethrows it for the
+ * editor to show above the buttons.
  */
 export async function withFieldError<V extends FieldValues>(
   form: UseFormReturn<V>,
   fields: Record<string, string>,
   send: () => Promise<unknown>,
+  fieldOf?: (message: string) => string | undefined,
 ) {
   try {
     return await send()
   } catch (e) {
     const head = resourceField(errorMessage(e))?.split(/[.[]/)[0]
-    const f = head && fields[head]
+    const f = (head && fields[head]) || fieldOf?.(errorMessage(e))
     if (f && f in form.getValues()) {
       form.setError(f as Path<V>, { type: 'server', message: errorMessage(e) })
     }

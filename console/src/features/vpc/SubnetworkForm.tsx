@@ -27,6 +27,7 @@ import {
   type SubnetRef,
 } from './api'
 import {
+  conflictRange,
   formatRanges,
   NAME,
   networkRef,
@@ -140,7 +141,16 @@ export function CreateSubnetwork() {
   const create = useMutation({
     meta: { toast: false },
     mutationFn: ({ body, region }: { body: Body; region: string }) =>
-      withFieldError(form, FIELD, () => insertSubnetwork(project, region.trim(), body)),
+      withFieldError(
+        form,
+        FIELD,
+        () => insertSubnetwork(project, region.trim(), body),
+        (m) => {
+          const range = conflictRange(m)
+          if (!range) return undefined
+          return range === body.ipCidrRange ? 'ipCidrRange' : 'secondary'
+        },
+      ),
     onSuccess: (_, { body, region }) => {
       void qc.invalidateQueries({ queryKey: ['compute'] })
       toast.success(`Created subnetwork ${str(body.name)}.`)

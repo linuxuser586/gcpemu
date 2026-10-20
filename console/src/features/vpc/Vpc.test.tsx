@@ -174,6 +174,7 @@ beforeEach(() => {
     vpc({
       name: 'default',
       id: '102',
+      description: 'Default network for the project',
       selfLink: link('global/networks/default'),
       autoCreateSubnetworks: true,
       subnetworks: [link('regions/europe-west1/subnetworks/default')],
@@ -238,10 +239,14 @@ beforeEach(() => {
     ),
     http.post(S, async ({ request, params }) => {
       const body = (await record(request)) as Subnetwork
-      if (body.ipCidrRange === '10.0.0.0/25') {
+      const clash = [
+        body.ipCidrRange,
+        ...(body.secondaryIpRanges ?? []).map((r) => r.ipCidrRange),
+      ].find((c) => c === '10.0.0.0/25' || c === '10.4.0.0/16')
+      if (clash) {
         return err(
           400,
-          "Invalid IPCidrRange: 10.0.0.0/25 conflicts with existing subnetwork 'nodes' in region 'us-central1'.",
+          `Invalid IPCidrRange: ${clash} conflicts with existing subnetwork 'nodes' in region 'us-central1'.`,
         )
       }
       subnets.push(
@@ -293,6 +298,11 @@ beforeEach(() => {
             hostAddress: '10.0.0.254',
             offers: [{ port: 8080, protocol: 'tcp' }],
           },
+          {
+            subnetwork: 'projects/beta-project/regions/us-central1/subnetworks/web',
+            hostAddress: '10.9.0.254',
+            offers: [{ port: 5432, protocol: 'tcp' }],
+          },
         ],
       }),
     ),
@@ -321,6 +331,8 @@ describe('networks', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0]).toHaveTextContent('default')
     expect(rows[0]).toHaveTextContent('Auto')
+    expect(rows[0]).toHaveTextContent(/Created by the emulator/)
+    expect(rows[1]).not.toHaveTextContent(/Created by the emulator/)
     expect(rows[1]).toHaveTextContent('Custom')
     expect(rows[1]).toHaveTextContent('1460')
     expect(within(rows[1]!).getByRole('link', { name: 'vpc' })).toHaveAttribute(
@@ -388,6 +400,7 @@ describe('networks', () => {
     subnets = subnets.filter((s) => s.name !== 'default')
     const { router } = renderApp(`/compute/global/networks/default?project=${P}`)
     expect(await screen.findByLabelText('Network details')).toHaveTextContent('Auto')
+    expect(screen.getByText(/Created by the emulator the first time a resource used/)).toBeVisible()
     expect(screen.getByText(/No subnetworks in this network/)).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Switch to custom mode' }))
@@ -478,11 +491,28 @@ describe('subnetworks', () => {
     await user.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByText(/The prefix length must be between 8 and 29/)).toBeVisible()
 
-    // A conflict only the API knows is shown above the buttons.
+    // A conflict only the API knows is shown on the range it names.
     await user.clear(screen.getByLabelText('Primary range'))
     await user.type(screen.getByLabelText('Primary range'), '10.0.0.0/25')
     await user.click(screen.getByRole('button', { name: 'Create' }))
-    expect(await screen.findByText(/conflicts with existing subnetwork 'nodes'/)).toBeVisible()
+    expect(
+      (await screen.findAllByText(/10.0.0.0\/25 conflicts with existing subnetwork 'nodes'/))[0],
+    ).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByLabelText('Primary range')).toHaveAttribute('aria-invalid', 'true'),
+    )
+    expect(screen.getByLabelText('Secondary ranges')).toHaveAttribute('aria-invalid', 'false')
+    await user.clear(screen.getByLabelText('Primary range'))
+    await user.type(screen.getByLabelText('Primary range'), '10.0.1.0/24')
+    await user.clear(screen.getByLabelText('Secondary ranges'))
+    await user.type(screen.getByLabelText('Secondary ranges'), 'pods 10.4.0.0/16')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Secondary ranges')).toHaveAttribute('aria-invalid', 'true'),
+    )
+    expect(screen.getByLabelText('Primary range')).toHaveAttribute('aria-invalid', 'false')
+    await user.clear(screen.getByLabelText('Secondary ranges'))
+    await user.type(screen.getByLabelText('Secondary ranges'), 'pods 10.8.0.0/14')
 
     await user.clear(screen.getByLabelText('Primary range'))
     await user.type(screen.getByLabelText('Primary range'), '10.0.1.0/24')
@@ -617,9 +647,13 @@ describe('subnetworks', () => {
   })
 })
 
-it('shows the Offered ports without a Project', async () => {
-  renderApp('/compute/offers')
-  const row = await screen.findByTestId('host-offers')
+it('shows every Project’s Offered ports, or the chosen Project’s', async () => {
+  const { unmount } = renderApp('/compute/offers')
+  await waitFor(() => expect(screen.getAllByTestId('host-offers')).toHaveLength(2))
+  unmount()
+  renderApp(`/compute/offers?project=${P}`)
+  await waitFor(() => expect(screen.getAllByTestId('host-offers')).toHaveLength(1))
+  const row = screen.getByTestId('host-offers')
   expect(row).toHaveTextContent('10.0.0.254')
   expect(row).toHaveTextContent('8080/tcp')
 })
