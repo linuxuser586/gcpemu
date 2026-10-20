@@ -26,8 +26,8 @@ const (
 	defaultQueueTTL = time.Hour
 )
 
-// api implements cloudbuildpb.CloudBuildServer: Builds only; Build
-// triggers and worker pools answer UNIMPLEMENTED.
+// api implements cloudbuildpb.CloudBuildServer: Builds here, Build
+// triggers (triggers.go) and worker pools (pools.go).
 type api struct {
 	cloudbuildpb.UnimplementedCloudBuildServer
 	s *Service

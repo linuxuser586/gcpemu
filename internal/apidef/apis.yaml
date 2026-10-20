@@ -41,6 +41,26 @@ googleapis:
     google.devtools.cloudbuild.v1.CancelBuildRequest.id: [REQUIRED]
     google.devtools.cloudbuild.v1.RetryBuildRequest.project_id: [REQUIRED]
     google.devtools.cloudbuild.v1.RetryBuildRequest.id: [REQUIRED]
+    # The same holds for Build triggers: their regional paths
+    # (projects/*/locations/*/triggers), which OpenTofu uses, name the
+    # project and trigger in parent or name, and a regional patch in
+    # trigger.resource_name.
+    google.devtools.cloudbuild.v1.CreateBuildTriggerRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.GetBuildTriggerRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.GetBuildTriggerRequest.trigger_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.ListBuildTriggersRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.DeleteBuildTriggerRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.DeleteBuildTriggerRequest.trigger_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.UpdateBuildTriggerRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.UpdateBuildTriggerRequest.trigger_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.RunBuildTriggerRequest.project_id: [REQUIRED]
+    google.devtools.cloudbuild.v1.RunBuildTriggerRequest.trigger_id: [REQUIRED]
+    # A run's source names only the revision of the trigger's own
+    # repository (gcloud builds triggers run --branch), with no repo_name.
+    google.devtools.cloudbuild.v1.RepoSource.repo_name: [REQUIRED]
+    # OpenTofu's worker_config.no_external_ip sends networkConfig with an
+    # egressOption alone, for a pool on no peered network.
+    google.devtools.cloudbuild.v1.PrivatePoolV1Config.NetworkConfig.peered_network: [REQUIRED]
 
 # Discovery documents, read from the google.golang.org/api module version
 # pinned in go.mod (each revision is recorded in zz_discovery.go).
