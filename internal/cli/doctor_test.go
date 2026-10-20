@@ -419,6 +419,7 @@ func TestCheckLANBindAddress(t *testing.T) {
 	}{
 		{"bridge network", true, true, true, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
 		{"unconfirmed", true, true, false, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
+		{"--containerized=true, no marker files", false, true, false, "--lb-bind 203.0.113.7 is an address of this container", "pick one from " + listAddrsCmd(runtime.GOOS)},
 		{"host network", true, false, false, "--lb-bind 203.0.113.7 is an address of this host", "pick one of this host's addresses: "},
 		{"host", false, false, false, "--lb-bind 203.0.113.7 is an address of this host", "pick one from " + listAddrsCmd(runtime.GOOS)},
 	} {
@@ -540,32 +541,41 @@ func TestReportBuildDaemon(t *testing.T) {
 	}
 }
 
-// doctor warns that the Instance guesses it is a Containerized Instance
-// only with the marker files, no answer from the runtime and
+// doctor decides once whether the Instance is a Containerized Instance,
+// and on a bridge network, for its network checks (#564), and warns that
+// it guesses only with the marker files, no answer from the runtime and
 // --containerized=auto, naming why (#502).
 func TestCheckContainerized(t *testing.T) {
 	for _, tc := range []struct {
 		setting                    string
 		markers, hasRuntime, found bool
+		self                       string
 		warn                       string
+		want                       containerFacts
 	}{
-		{"auto", true, false, false, "no container runtime socket"},
-		{"", true, false, false, "no container runtime socket"},
-		{"auto", true, true, false, emuruntime.SelfEnv},
-		{"auto", true, true, true, ""},
-		{"auto", false, false, false, ""},
-		{"false", true, false, false, ""},
-		{"true", true, true, false, ""},
+		{"auto", true, false, false, "", "no container runtime socket", containerFacts{markers: true, containerized: true}},
+		{"", true, false, false, "", "no container runtime socket", containerFacts{markers: true, containerized: true}},
+		{"auto", true, true, false, "", emuruntime.SelfEnv, containerFacts{markers: true, containerized: true}},
+		{"auto", true, true, true, "", "", containerFacts{markers: true}},
+		{"auto", true, true, true, "abc", "", containerFacts{markers: true, containerized: true, bridge: true}},
+		{"false", true, true, true, "abc", "", containerFacts{markers: true, containerized: true, bridge: true}},
+		{"auto", false, false, false, "", "", containerFacts{}},
+		{"false", true, false, false, "", "", containerFacts{markers: true}},
+		{"true", true, true, false, "", "", containerFacts{markers: true, containerized: true}},
+		{"true", false, false, false, "", "", containerFacts{containerized: true}},
 	} {
 		var out strings.Builder
-		checkContainerized(&out, emuruntime.ContainerizedFacts{Setting: tc.setting, Markers: tc.markers, Runtime: tc.hasRuntime, Found: tc.found})
-		got := out.String()
-		if tc.warn == "" && got != "" {
-			t.Errorf("%+v: output %q, want none", tc, got)
+		got := checkContainerized(&out, emuruntime.ContainerizedFacts{Setting: tc.setting, Markers: tc.markers, Runtime: tc.hasRuntime, Found: tc.found, Self: tc.self})
+		if got != tc.want {
+			t.Errorf("%+v: facts %+v, want %+v", tc, got, tc.want)
 		}
-		if tc.warn != "" && (!strings.HasPrefix(got, "[WARN] ") || !strings.Contains(got, tc.warn) ||
-			!strings.Contains(got, "--containerized=false") || strings.Count(got, "\n") != 1) {
-			t.Errorf("%+v: output %q, want one [WARN] line naming %q and --containerized=false", tc, got, tc.warn)
+		logged := out.String()
+		if tc.warn == "" && logged != "" {
+			t.Errorf("%+v: output %q, want none", tc, logged)
+		}
+		if tc.warn != "" && (!strings.HasPrefix(logged, "[WARN] ") || !strings.Contains(logged, tc.warn) ||
+			!strings.Contains(logged, "--containerized=false") || strings.Count(logged, "\n") != 1) {
+			t.Errorf("%+v: output %q, want one [WARN] line naming %q and --containerized=false", tc, logged, tc.warn)
 		}
 	}
 }

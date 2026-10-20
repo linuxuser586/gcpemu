@@ -866,9 +866,9 @@ every start, so a changed setting takes effect when the emulator restarts.
 A container on the host's network runs as on the host. It isn't a Containerized Instance, so
 forwarding rules aren't served on published ports, the Google front end's dynamic port comes
 from `--port-range`, the gfe-lan relay serves `--gfe-bind`'s port 443, and `gcpemu doctor` checks
-the `--*-bind` addresses and the unprivileged port start as the host's. With the Docker socket, the emulator asks the runtime to find its own
-container and whether that container is on the host's network. When the runtime finds it, the
-runtime's answer always wins. Without the socket, or when the runtime can't find the container,
+the `--*-bind` addresses and the unprivileged port start as the host's. With the Docker socket,
+the emulator asks the runtime to find its own container and whether that container is on the
+host's network. When the runtime finds it, the runtime's answer always wins. Without the socket, or when the runtime can't find the container,
 `GCPEMU_CONTAINERIZED` (`--containerized`, `containerized`) decides:
 
 - `auto` (the default) treats any container as a Containerized Instance, and logs a warning

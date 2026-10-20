@@ -66,9 +66,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if hasRuntime {
 				facts.Found, facts.Self = cl.SelfFound(), cl.Self()
 			}
-			containerized := checkContainerized(out, facts).On
-			c := containerFacts{markers: inContainer, containerized: containerized,
-				bridge: lanbind.Locate(containerized, facts.Found) == lanbind.Bridge}
+			ctr := checkContainerized(out, facts)
 			// hostRuntime: a runtime whose host network is this host's,
 			// for a relay container there.
 			hostRuntime := false
@@ -110,7 +108,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, c)
+			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, ctr)
 			if running == nil {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
@@ -163,8 +161,9 @@ func portNames(cfg *config.Config) []string {
 
 // checkHostOnly runs the checks of goos's host: the loopback aliases on
 // macOS and the excluded port ranges on Windows. In a container
-// (inContainer, the marker files), even on the host's network, the host's OS is unknown and out of reach, so it
-// notes what to check on each host instead.
+// (inContainer, the marker files), even on the host's network (#564), the
+// host's OS is unknown and out of reach, so it notes what to check on each
+// host instead.
 func checkHostOnly(out io.Writer, cfg *config.Config, goos string, inContainer, running bool) {
 	switch {
 	case inContainer:
@@ -550,9 +549,9 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 // browser (NSS) database on Linux, which browsers read instead of the OS
 // store. Missing trust is a note, not a failure, since only HTTPS to
 // load balancers and host mode need it. In a container (inContainer, the
-// marker files), even on the host's network, trust is the host's, which
-// the container cannot see, so
-// it notes the commands that trust the CA there (#496).
+// marker files), even on the host's network (#564), trust is the host's,
+// which the container cannot see, so it notes the commands that trust the
+// CA there (#496).
 func checkCATrust(out io.Writer, instance string, pemBytes []byte, inContainer bool) {
 	if inContainer {
 		fmt.Fprintln(out, "[--  ] Instance CA trust is the host's in a container: on the host, not in the container, run "+
@@ -655,7 +654,7 @@ type containerFacts struct {
 // container networks, and the fix says how to reach the LAN (#497). In
 // any container the fix lists the addresses itself, since the image has no
 // `ip`.
-func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime bool, c containerFacts) {
+func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime bool, ctr containerFacts) {
 	if running {
 		c, err := clientFor(cfg)
 		if err != nil {
@@ -700,21 +699,21 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	}
 	whose, fix := "this host", "pick one from "+listAddrsCmd(runtime.GOOS)
 	switch {
-	case c.containerized && c.markers:
+	case ctr.containerized && ctr.markers:
 		// The image has no `ip`, so the fix lists the addresses itself.
 		whose, fix = "this container", "pick one of the container's addresses: "+strings.Join(lan, ", ")
 		if len(lan) == 0 {
 			fix = "attach the container to a network with an address beyond loopback (docker run --network)"
 		}
-	case c.containerized:
+	case ctr.containerized:
 		whose = "this container"
-	case c.markers:
+	case ctr.markers:
 		fix = "pick one of this host's addresses: " + strings.Join(lan, ", ")
 		if len(lan) == 0 {
 			fix = "give this host an address beyond loopback"
 		}
 	}
-	if c.bridge {
+	if ctr.bridge {
 		fix += "; these addresses reach only container networks: " + lanbind.Fix
 	}
 	for _, b := range cfg.LANBinds() {
@@ -729,28 +728,28 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	}
 	start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if _, set := cfg.PortSet(frontend.LANEndpoint); len(cfg.GFEBind) > 0 && !set {
-		checkGFEPort(report, start, os.Geteuid() == 0, hostRuntime, c)
+		checkGFEPort(report, start, os.Geteuid() == 0, hostRuntime, ctr)
 	}
 	if len(cfg.LBBind) > 0 {
-		checkLBPort(report, start, hasRuntime, c)
+		checkLBPort(report, start, hasRuntime, ctr)
 	}
 }
 
 // checkLBPort reports whether --lb-bind's ports below start, the
 // unprivileged port start, are relayed by the lb-lan container, which
-// needs hasRuntime. In a container (c.markers), even on the host's
+// needs hasRuntime. In a container (ctr.markers), even on the host's
 // network, the runtime is the host's, reached through its socket mounted
 // in the container.
-func checkLBPort(report func(bool, string, string), start int, hasRuntime bool, c containerFacts) {
+func checkLBPort(report func(bool, string, string), start int, hasRuntime bool, ctr containerFacts) {
 	if start <= 80 {
 		return
 	}
 	runtimeFix := "install a container runtime"
-	if c.markers {
+	if ctr.markers {
 		runtimeFix = "mount the container runtime's socket (`docker run -v /var/run/docker.sock:/var/run/docker.sock`)"
 	}
 	report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
-		runtimeFix+", or let the emulator bind them: "+sysctlFix(80, c.containerized))
+		runtimeFix+", or let the emulator bind them: "+sysctlFix(80, ctr.containerized))
 }
 
 // sysctlFix is the command that lets the emulator bind ports from port
@@ -769,13 +768,13 @@ func sysctlFix(port int, containerized bool) string {
 // it, otherwise by the gfe-lan relay (the LAN front-end relay) when there is
 // a hostRuntime for it, otherwise not until the sysctl is lowered (the
 // container's, in a Containerized Instance).
-func checkGFEPort(report func(bool, string, string), start int, root, hostRuntime bool, c containerFacts) {
+func checkGFEPort(report func(bool, string, string), start int, root, hostRuntime bool, ctr containerFacts) {
 	if start > 443 && !root && hostRuntime {
 		report(true, "--gfe-bind port 443 relayed by the gfe-lan container", "")
 		return
 	}
 	report(start <= 443 || root, fmt.Sprintf("--gfe-bind port 443 can be bound (net.ipv4.ip_unprivileged_port_start is %d)", start),
-		sysctlFix(443, c.containerized))
+		sysctlFix(443, ctr.containerized))
 }
 
 // listAddrsCmd is the command that lists this host's addresses on goos.
@@ -817,16 +816,17 @@ func checkRuntimeDetection(out io.Writer, report func(ok bool, what, fix string)
 	}
 }
 
-// checkContainerized decides from f whether the Instance is a
-// Containerized Instance, for the network checks, and warns when that is
-// a guess from the marker files: in a container whose runtime is missing
-// or can't find it, under --containerized=auto (#502).
-func checkContainerized(out io.Writer, f emuruntime.ContainerizedFacts) emuruntime.ContainerizedDecision {
+// checkContainerized decides from f, once, whether the Instance is a
+// Containerized Instance, for the network checks (#564), and warns when
+// that is a guess from the marker files: in a container whose runtime is
+// missing or can't find it, under --containerized=auto (#502).
+func checkContainerized(out io.Writer, f emuruntime.ContainerizedFacts) containerFacts {
 	d := emuruntime.DecideContainerized(f)
 	if d.Guess != "" {
 		fmt.Fprintln(out, "[WARN] "+d.Guess)
 	}
-	return d
+	return containerFacts{markers: f.Markers, containerized: d.On,
+		bridge: lanbind.Locate(d.On, f.Runtime && f.Found) == lanbind.Bridge}
 }
 
 // checkRuntimeArch notes a container runtime whose architecture is not the

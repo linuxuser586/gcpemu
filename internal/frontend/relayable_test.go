@@ -32,6 +32,8 @@ func TestRelayable(t *testing.T) {
 		{"on the host", "auto", false, "", false, noRT, true},
 		{"runtime: host network", "auto", true, "", true, nil, true},
 		{"runtime: bridge container", "auto", true, "abc", true, nil, false},
+		{"runtime: can't find its container, set false", "false", true, "", false, nil, true},
+		{"runtime: can't find its container", "auto", true, "", false, nil, false},
 		{"no runtime: set false", "false", true, "", false, noRT, true},
 		{"no runtime: auto", "auto", true, "", false, noRT, false},
 		{"no runtime: set true", "true", true, "", false, noRT, false},

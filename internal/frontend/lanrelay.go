@@ -26,7 +26,8 @@ import (
 // client's address.
 //
 // There is no relay off Linux, with --port gfe-lan set, in a
-// Containerized Instance, without a container runtime or on a VM runtime, whose host
+// Containerized Instance (a container on the host's network is not one,
+// #564), without a container runtime or on a VM runtime, whose host
 // network is the VM's: the address is skipped with the sysctl advice. The
 // container lives until the Instance stops; if the runtime stops or
 // restarts it, /_emu/v1/ready names it as Disrupted.
