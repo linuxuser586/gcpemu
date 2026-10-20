@@ -259,13 +259,7 @@ func checkPlatform(report func(bool, string, string), goos, goarch string) {
 func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) (vm, known bool) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	gw := ""
-	for _, name := range []string{"bridge", "podman"} {
-		if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
-			gw = n.Gateway
-			break
-		}
-	}
+	gw := vmrelay.DefaultGateway(ctx, cl)
 	if gw == "" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
 		fmt.Fprintln(out, "[--  ] VM relay: undetermined (no default bridge network to probe)")
 		return false, false

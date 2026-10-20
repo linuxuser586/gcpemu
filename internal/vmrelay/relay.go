@@ -41,14 +41,14 @@ type Decision struct {
 	// VM: the gateway cannot be bound, so the runtime runs in a VM, whose
 	// host network is not the host's.
 	VM bool
-	// Forced: GCPEMU_VM_RELAY chose On, not the gateway probe.
+	// Forced: GCPEMU_VM_RELAY decided On, not the gateway probe.
 	Forced bool
 	Reason string
 }
 
-// Unroutable reports whether the relay is on because the gateway cannot
-// be bound, rather than forced: the host then cannot route to container
-// networks, which live in the runtime's VM.
+// Unroutable reports whether the relay is on because the services
+// network's gateway cannot be bound, rather than forced: the host then
+// cannot route to container networks, which live in the runtime's VM.
 func (d Decision) Unroutable() bool {
 	return d.On && !d.Forced
 }
@@ -83,6 +83,18 @@ func Decide(inContainer bool, gateway string) Decision {
 		return Decision{On: true, VM: true, Reason: "gateway " + gateway + " not bindable"}
 	}
 	return Decision{Reason: "gateway " + gateway + " bindable"}
+}
+
+// DefaultGateway is the gateway of the runtime's default bridge network,
+// which stands in for the services network's gateway before the Instance
+// creates it, or "" when there is none.
+func DefaultGateway(ctx context.Context, cl *runtime.Client) string {
+	for _, name := range []string{"bridge", "podman"} {
+		if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
+			return n.Gateway
+		}
+	}
+	return ""
 }
 
 // Options configure Start.

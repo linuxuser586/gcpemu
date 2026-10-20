@@ -96,7 +96,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if err := refuseHostMode(cfg, goruntime.GOOS, func() (hostModeRuntime, bool) { return hostModeVM(cfg.VMRuntime) }); err != nil {
+	if err := refuseHostMode(cfg, goruntime.GOOS, func() (hostModeRuntime, bool) { return hostModeProbe(cfg.VMRuntime) }); err != nil {
 		return nil, err
 	}
 	dir := cfg.InstanceDir()
@@ -223,18 +223,18 @@ type hostModeRuntime struct {
 
 // refuseHostMode fails when cfg asks for host mode on an OS other than
 // Linux (#175), or on Linux in a Containerized Instance on a VM runtime
-// (#492) or on the host with the VM relay on because the gateway cannot
-// be bound (#560), before anything starts. vm returns the runtime's
+// (#492) or on the host with the VM relay on because the services
+// network's gateway cannot be bound (#560), before anything starts. probe returns the runtime's
 // decisions, or false when the runtime cannot be reached; host mode then
 // fails later, saying it needs a container runtime, as it would anyway.
-func refuseHostMode(cfg *config.Config, goos string, vm func() (hostModeRuntime, bool)) error {
+func refuseHostMode(cfg *config.Config, goos string, probe func() (hostModeRuntime, bool)) error {
 	if !cfg.HostMode {
 		return nil
 	}
 	if err := hostmode.UnsupportedOn(goos); err != nil {
 		return fmt.Errorf("--host-mode: %w", err)
 	}
-	d, ok := vm()
+	d, ok := probe()
 	if !ok {
 		return nil
 	}
@@ -247,14 +247,14 @@ func refuseHostMode(cfg *config.Config, goos string, vm func() (hostModeRuntime,
 	return nil
 }
 
-// hostModeVM decides, as the runtime manager and the netplane will,
+// hostModeProbe decides, as the runtime manager and the netplane will,
 // whether this Instance is a Containerized Instance on a VM runtime and
 // whether it uses the VM relay, or reports false when the runtime cannot
 // be reached within a few seconds. The services network does not exist
-// yet, so the runtime's default bridge network's gateway stands in for
-// its gateway, as in gcpemu doctor; without one the relay is decided off.
-// A variable for tests.
-var hostModeVM = func(setting string) (hostModeRuntime, bool) {
+// yet, so the default bridge network's gateway stands in for the services
+// network's gateway, as in gcpemu doctor; without one the relay is
+// decided off. A variable for tests.
+var hostModeProbe = func(setting string) (hostModeRuntime, bool) {
 	cl, err := runtime.Detect()
 	if err != nil {
 		return hostModeRuntime{}, false
@@ -267,11 +267,8 @@ var hostModeVM = func(setting string) (hostModeRuntime, bool) {
 	}
 	r := hostModeRuntime{VM: runtime.DecideVM(setting, cl.Self() != "", info)}
 	if cl.Self() == "" {
-		for _, name := range []string{"bridge", "podman"} {
-			if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
-				r.Relay = vmrelay.Decide(false, n.Gateway)
-				break
-			}
+		if gw := vmrelay.DefaultGateway(ctx, cl); gw != "" {
+			r.Relay = vmrelay.Decide(false, gw)
 		}
 	}
 	return r, true

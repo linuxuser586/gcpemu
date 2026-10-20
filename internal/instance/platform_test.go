@@ -82,7 +82,7 @@ func TestRefuseHostModeOnVMRuntime(t *testing.T) {
 }
 
 // An emulator on the host whose VM relay is on because the services
-// gateway cannot be bound is on a VM runtime too, as Docker Desktop on
+// network's gateway cannot be bound is on a VM runtime too, as Docker Desktop on
 // Linux shows: the host cannot route to the host-mode container (#560).
 // A relay forced on by GCPEMU_VM_RELAY (Linux CI, where the host routes)
 // or off is no reason to refuse.
@@ -139,9 +139,9 @@ func TestNewRefusesHostModeOnVMRuntime(t *testing.T) {
 	if hostmode.UnsupportedOn(goruntime.GOOS) != nil {
 		t.Skip("off Linux the GOOS refusal comes first")
 	}
-	probe := hostModeVM
-	t.Cleanup(func() { hostModeVM = probe })
-	hostModeVM = func(string) (hostModeRuntime, bool) {
+	probe := hostModeProbe
+	t.Cleanup(func() { hostModeProbe = probe })
+	hostModeProbe = func(string) (hostModeRuntime, bool) {
 		return hostModeRuntime{VM: runtime.VMDecision{On: true, Reason: "forced by GCPEMU_VM_RUNTIME"}}, true
 	}
 	cfg := config.Defaults()
