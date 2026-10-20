@@ -23,6 +23,46 @@ To run the check locally after `task release`, on a host with Docker:
 docker build --build-arg TARGETARCH=amd64 -t gcpemu:check -f Dockerfile dist && task image-check IMAGE=gcpemu:check
 ```
 
+## Signing
+
+The release job signs `SHA256SUMS` with keyless cosign (`SHA256SUMS.sigstore.json`), writes an
+SPDX SBOM for each binary (`gcpemu-<os>-<arch>.spdx.json`), and records SLSA provenance and the
+SBOM as GitHub attestations for each binary, all before it publishes anything. If any of those
+steps fails, there is no GitHub release and the major tag doesn't move. Re-run the workflow once
+the cause is fixed, or, if the fix needs a code change, release it under a new patch tag.
+
+The image job signs the pushed manifest list by digest, in Docker Hub and in GHCR, right after the
+push. If signing fails, the tags are already pushed but unsigned, and `cosign verify` fails for
+them until the job is re-run. Re-run the image job on its own: it pushes the tags again and signs
+the digest they then name. Re-running it is safe even after a partial signing.
+
+The signer is `https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/vX.Y.Z`
+with issuer `https://token.actions.githubusercontent.com`. To verify a release, with
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and the
+[GitHub CLI](https://cli.github.com/), in a directory holding the downloaded `SHA256SUMS`,
+`SHA256SUMS.sigstore.json` and binaries:
+
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify gcpemu-linux-amd64 --repo linuxuser586/gcpemu
+gh attestation verify gcpemu-linux-amd64 --repo linuxuser586/gcpemu --predicate-type https://spdx.dev/Document/v2.3
+```
+
+The last command checks the SBOM attestation rather than the provenance. For the image (replace
+`X.Y.Z` with the version):
+
+```sh
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com docker.io/linuxuser586/gcpemu:X.Y.Z
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/linuxuser586/gcpemu:X.Y.Z
+```
+
 ## macOS (Apple Silicon)
 
 Run every step below on **Docker Desktop** and on **Colima**. OrbStack and Podman machine are
