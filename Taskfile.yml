@@ -280,6 +280,64 @@ tasks:
     cmds:
       - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -count=1 -timeout 30m -v
 
+  # #498: the Image readiness check. Runs IMAGE, already built, the way the
+  # Dockerfile's header documents: with the Docker socket and its group, so
+  # the Runtime Services start too. It fails unless Docker reports the
+  # container healthy within 120 s. The interpreter has no sleep or date, so
+  # busybox, which reads the socket's group, is the clock as well. The
+  # container isn't --rm, so the logs of one that exited can still be
+  # printed. The trap stops it gracefully, so the Instance removes the
+  # Managed containers and networks it made, and then removes it.
+  image-check:
+    desc: Run the Image readiness check on a built image (IMAGE=<ref>; never builds or pulls it)
+    silent: true
+    requires:
+      vars: [IMAGE]
+    vars:
+      TIMEOUT: 120
+      BUSYBOX: busybox:1.37
+    env:
+      IMAGE: "{{.IMAGE}}"
+    cmds:
+      - cmd: |
+          gid=$(docker run --rm -v /var/run/docker.sock:/s {{.BUSYBOX}} stat -c %g /s) || exit 1
+          cid=
+          cleanup() {
+            status=$?
+            if [ -n "$cid" ]; then
+              docker stop -t 60 "$cid" >/dev/null
+              docker rm "$cid" >/dev/null
+            fi
+            exit $status
+          }
+          # A trap, not defer:, since only this shell knows cid.
+          trap cleanup EXIT
+          cid=$(docker run -d --pull never -v /var/run/docker.sock:/var/run/docker.sock --group-add "$gid" "$IMAGE") || exit 1
+          echo "image-check: waiting up to {{.TIMEOUT}} s for $IMAGE to report healthy"
+          deadline=$(( $(docker run --rm {{.BUSYBOX}} date +%s) + {{.TIMEOUT}} ))
+          while :; do
+            state=$(docker inspect --format '{{"{{"}}.State.Status{{"}}"}} {{"{{"}}if .State.Health{{"}}"}}{{"{{"}}.State.Health.Status{{"}}"}}{{"{{"}}end{{"}}"}}' "$cid") || exit 1
+            case $state in
+              "running healthy")
+                echo "image-check: $IMAGE is healthy"
+                exit 0 ;;
+              "running ") reason="the image declares no HEALTHCHECK"; break ;;
+              running*) ;;
+              *) reason="the container is ${state% *}"; break ;;
+            esac
+            now=$(docker run --rm {{.BUSYBOX}} sh -c 'sleep 2; date +%s') || exit 1
+            if [ "$now" -ge "$deadline" ]; then
+              reason="not healthy after {{.TIMEOUT}} s (${state#* })"
+              break
+            fi
+          done
+          echo "--- docker logs"
+          docker logs "$cid" 2>&1
+          echo "--- health"
+          docker inspect --format '{{"{{"}}json .State.Health{{"}}"}}' "$cid"
+          echo "image-check: $IMAGE failed: $reason" >&2
+          exit 1
+
   # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
   # psql, the Cloud SQL Auth Proxy and dig against a detached instance.
   compat:
