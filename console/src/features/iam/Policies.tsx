@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 
 import { kindOf, nameError, type KindId } from './api'
 import { ChooseProject, useProject } from './IamLayout'
@@ -16,7 +16,7 @@ import { ResourcePicker } from './ResourcePicker'
  */
 export function Policies() {
   const project = useProject()
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const kind = kindOf(search.get('kind'))
   const name = search.get('name') ?? ''
   const [text, setText] = useState(name)

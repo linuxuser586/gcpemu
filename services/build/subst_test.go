@@ -7,6 +7,8 @@ import (
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/linuxuser586/gcpemu/internal/project"
 )
 
 // Built-in and user substitutions expand in a step's args and in images,
@@ -16,12 +18,15 @@ func TestSubstitutionsExpand(t *testing.T) {
 	e := start(t)
 	op, b := e.create(&cloudbuildpb.Build{
 		Substitutions: map[string]string{"_TAG": "v1"},
-		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"echo", "$PROJECT_ID/$BUILD_ID:${_TAG}-$$HOME"}}},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"echo", "$PROJECT_ID/$BUILD_ID:${_TAG}-$$HOME", "$PROJECT_NUMBER@$LOCATION"}}},
 		Images:        []string{"us-docker.pkg.dev/$PROJECT_ID/repo/app:$_TAG"},
 	})
 	want := testProject + "/" + b.GetId() + ":v1-$HOME"
 	if got := b.GetSteps()[0].GetArgs()[1]; got != want {
 		t.Errorf("args[1] = %q, want %q", got, want)
+	}
+	if got, want := b.GetSteps()[0].GetArgs()[2], project.NumberString(testProject)+"@global"; got != want {
+		t.Errorf("args[2] = %q, want %q", got, want)
 	}
 	if got, want := b.GetImages()[0], "us-docker.pkg.dev/"+testProject+"/repo/app:v1"; got != want {
 		t.Errorf("images[0] = %q, want %q", got, want)
@@ -149,4 +154,63 @@ func TestValidatedAsSubstituted(t *testing.T) {
 	if got := b.GetArtifacts().GetObjects().GetLocation(); got != "gs://out/dir" {
 		t.Errorf("location = %q", got)
 	}
+}
+
+// With automapSubstitutions, a step reads the Build's substitutions from
+// its environment, as resolved at creation and under the step's own env:
+// a step's own setting overrides the Build's options, and a step without
+// automapping gets none. Under MUST_MATCH, automapping uses every user
+// substitution.
+func TestAutomapSubstitutions(t *testing.T) {
+	e := start(t)
+	no, yes := false, true
+	show := `echo "[${PROJECT_ID-unset}][${_FOO-unset}][${TAG_NAME-unset}][${_TAG-unset}]"`
+	op, _ := e.create(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo", "SHORT_SHA": "abc1234", "_TAG": "${SHORT_SHA}-dev"},
+		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true, DynamicSubstitutions: true},
+		Steps: []*cloudbuildpb.BuildStep{
+			{Name: busybox, Id: "on", Script: show},
+			{Name: busybox, Id: "off", AutomapSubstitutions: &no, Script: show},
+			{Name: busybox, Id: "args", Entrypoint: "sh", Args: []string{"-c", `echo "[$$_FOO]"`}},
+			{Name: busybox, Id: "env", Env: []string{"PROJECT_ID=other"}, Script: show},
+		},
+	})
+	b, err := op.Wait(e.ctx)
+	if err != nil {
+		t.Fatalf("Wait: %v (%s)", err, b.GetStatusDetail())
+	}
+	log := e.log(b)
+	for _, want := range []string{
+		`Step #0 - "on": [` + testProject + `][foo][][abc1234-dev]`,
+		`Step #1 - "off": [unset][unset][unset][unset]`,
+		`Step #2 - "args": [foo]`,
+		`Step #3 - "env": [other][foo][][abc1234-dev]`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q:\n%s", want, log)
+		}
+	}
+
+	op, _ = e.create(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo"},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Id: "step", AutomapSubstitutions: &yes, Script: show}},
+	})
+	b, err = op.Wait(e.ctx)
+	if err != nil {
+		t.Fatalf("Wait: %v (%s)", err, b.GetStatusDetail())
+	}
+	if log, want := e.log(b), `Step #0 - "step": [`+testProject+`][foo][][unset]`; !strings.Contains(log, want) {
+		t.Errorf("log lacks %q:\n%s", want, log)
+	}
+
+	wantInvalid(t, e.createErr(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo"},
+		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, AutomapSubstitutions: &no, Script: show}},
+	}), `invalid build: key "_FOO" in the substitution data is not matched in the template`)
+	wantInvalid(t, e.createErr(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo"},
+		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"echo", "$_MISSING"}}},
+	}), `invalid build: key in the template "_MISSING" is not matched in the substitution data; substitutions = map[_FOO:foo]`)
 }

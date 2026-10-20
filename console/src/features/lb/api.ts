@@ -32,6 +32,8 @@ export type Coll =
   | 'forwardingRules'
   | 'targetHttpProxies'
   | 'targetHttpsProxies'
+  | 'targetSslProxies'
+  | 'targetTcpProxies'
   | 'urlMaps'
   | 'backendServices'
   | 'backendBuckets'
@@ -49,8 +51,22 @@ export interface KindInfo {
   api: string
   /** regional: the kind also has regional resources (an aggregated list). */
   regional: boolean
-  /** editable: the API has patch (SSL certificates are immutable). */
-  editable: boolean
+  /**
+   * edit is how the API changes a resource: 'patch' sends a JSON merge
+   * patch, 'set' a set* method per changed field (target SSL proxies have
+   * no patch), and false means it cannot change (SSL certificates).
+   */
+  edit: 'patch' | 'set' | false
+  /**
+   * regionalEdit false: regional resources cannot change, though global
+   * ones can (regionTargetTcpProxies has no set* methods).
+   */
+  regionalEdit?: false
+  /**
+   * recorded: the resources are Recorded, stored and returned with no
+   * effect; forwarding rules that target them carry no Data plane traffic.
+   */
+  recorded?: boolean
 }
 
 /** KINDS are the Service's M resource types (FR-LB-001), in tab order. */
@@ -61,7 +77,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'forwarding rule',
     api: 'globalForwardingRules',
     regional: true,
-    editable: true,
+    edit: 'patch',
   },
   {
     coll: 'targetHttpProxies',
@@ -69,7 +85,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'target HTTP proxy',
     api: 'targetHttpProxies',
     regional: true,
-    editable: true,
+    edit: 'patch',
   },
   {
     coll: 'targetHttpsProxies',
@@ -77,7 +93,26 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'target HTTPS proxy',
     api: 'targetHttpsProxies',
     regional: true,
-    editable: true,
+    edit: 'patch',
+  },
+  {
+    coll: 'targetSslProxies',
+    title: 'SSL proxies',
+    singular: 'target SSL proxy',
+    api: 'targetSslProxies',
+    regional: false,
+    edit: 'set',
+    recorded: true,
+  },
+  {
+    coll: 'targetTcpProxies',
+    title: 'TCP proxies',
+    singular: 'target TCP proxy',
+    api: 'targetTcpProxies',
+    regional: true,
+    edit: 'set',
+    regionalEdit: false,
+    recorded: true,
   },
   {
     coll: 'urlMaps',
@@ -85,7 +120,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'URL map',
     api: 'urlMaps',
     regional: true,
-    editable: true,
+    edit: 'patch',
   },
   {
     coll: 'backendServices',
@@ -93,7 +128,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'backend service',
     api: 'backendServices',
     regional: true,
-    editable: true,
+    edit: 'patch',
   },
   {
     coll: 'backendBuckets',
@@ -101,7 +136,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'backend bucket',
     api: 'backendBuckets',
     regional: false,
-    editable: true,
+    edit: 'patch',
   },
   {
     coll: 'healthChecks',
@@ -109,7 +144,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'health check',
     api: 'healthChecks',
     regional: true,
-    editable: true,
+    edit: 'patch',
   },
   {
     coll: 'sslCertificates',
@@ -117,7 +152,7 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'SSL certificate',
     api: 'sslCertificates',
     regional: true,
-    editable: false,
+    edit: false,
   },
   {
     coll: 'sslPolicies',
@@ -125,13 +160,17 @@ export const KINDS: readonly KindInfo[] = [
     singular: 'SSL policy',
     api: 'sslPolicies',
     regional: true,
-    editable: true,
+    edit: 'patch',
   },
 ]
 
 const byColl = new Map(KINDS.map((k) => [k.coll, k]))
 
 export const kindInfo = (coll: string) => byColl.get(coll as Coll)
+
+/** editOf is how the API changes a resource of kind k in region ("" for global). */
+export const editOf = (k: KindInfo, region: string): KindInfo['edit'] =>
+  region && k.regionalEdit === false ? false : k.edit
 
 /** Ref names one resource: a Project, "" (global) or a region, and a name. */
 export interface Ref {
@@ -245,6 +284,10 @@ export const insertResource = (project: string, region: string, coll: Coll, body
 
 /** patchResource sends a JSON merge patch (patch() of every kind). */
 export const patchResource = (r: Ref, body: unknown) => write(resourcePath(r), 'PATCH', body)
+
+/** setResource calls one of a resource's set* methods, e.g. setBackendService. */
+export const setResource = (r: Ref, method: string, body: unknown) =>
+  write(`${resourcePath(r)}/${method}`, 'POST', body)
 
 export const deleteResource = (r: Ref) => write(resourcePath(r), 'DELETE')
 

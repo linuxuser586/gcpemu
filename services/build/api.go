@@ -206,7 +206,8 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provi
 	for _, st := range b.Steps {
 		st.Status, st.ExitCode, st.Timing, st.PullTiming = cloudbuildpb.Build_QUEUED, 0, nil, nil
 	}
-	if err := substitute(b, builtins(b, location, provided)); err != nil {
+	substs, err := substitute(b, builtins(b, location, provided))
+	if err != nil {
 		return nil, err
 	}
 	if err := validate(b); err != nil {
@@ -227,7 +228,7 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provi
 	// nor a cancel can change its status until then.
 	s.mu.Lock()
 	err = s.env.Store.Update(func(tx store.Tx) error {
-		return put(tx, &stored{build: b, request: in, op: op.Name})
+		return put(tx, &stored{build: b, request: in, op: op.Name, substitutions: substs})
 	})
 	if err != nil {
 		s.mu.Unlock()

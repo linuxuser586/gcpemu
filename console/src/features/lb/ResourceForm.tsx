@@ -26,6 +26,7 @@ import { useViewState } from '@/lib/viewState'
 import { CERT_MAP_PREFIX, locationOf, mapLabel, mapsQuery } from '../certs/api'
 import { tlsLabel, tlsListQuery } from '../certs/tls'
 import {
+  editOf,
   insertResource,
   kindInfo,
   kindQuery,
@@ -34,18 +35,24 @@ import {
   patchResource,
   relPath,
   resourceQuery,
+  setResource,
   text,
   type KindInfo,
   type Ref,
   type Resource,
 } from './api'
 import { lbPath, listPath, useLbRef } from './LbLayout'
+import { RecordedNote } from './RecordedNote'
 import {
   createBody,
   initialValues,
   patchBody,
   patchValues,
   readValues,
+  runSetCalls,
+  setBody,
+  setCalls,
+  setValues,
   SPECS,
   short,
   validate,
@@ -59,7 +66,8 @@ import {
 // Create and edit forms of every load-balancing kind (FR-UI-011), built
 // from the kind's field specs (spec.ts). Writes are compute Operations,
 // which the forms wait for. Create sends insert; edit sends patch, a JSON
-// merge patch of what changed.
+// merge patch of what changed, or for a kind without patch (target SSL
+// and TCP proxies) the set* method of each changed field, one at a time.
 
 /** apiMethod names the API method a request goes to, e.g. regionUrlMaps.patch. */
 export function apiMethod(k: KindInfo, region: string, verb: string) {
@@ -85,9 +93,14 @@ interface Option {
 
 /**
  * useRefOptions lists the resources a reference field offers: those of its
- * collections in the form's scope (any zone for NEGs).
+ * collections in the form's scope (any zone for NEGs) that it accepts.
  */
-function useRefOptions(project: string, region: string, targets: readonly Target[]): Option[] {
+function useRefOptions(
+  project: string,
+  region: string,
+  targets: readonly Target[],
+  accept: (r: Resource) => boolean = () => true,
+): Option[] {
   const results = useQueries({
     queries: targets.map((t) =>
       t === 'networkEndpointGroups' ? negsQuery(project) : kindQuery(project, t),
@@ -97,6 +110,7 @@ function useRefOptions(project: string, region: string, targets: readonly Target
   return targets.flatMap((t, i) =>
     (results[i]?.data ?? [])
       .filter((r) => t === 'networkEndpointGroups' || (r.selfLink ?? '').includes(scope))
+      .filter(accept)
       .map((r) => ({
         value: relPath(r.selfLink),
         label:
@@ -136,7 +150,7 @@ function SpecField({
   const id = `${prefix}-${f.key}`
   const error = form.formState.errors[f.key]?.message
   const reg = form.register(f.key)
-  const options = useRefOptions(project, region, f.targets ?? [])
+  const options = useRefOptions(project, region, f.targets ?? [], f.accept)
   const maps = useQuery({ ...mapsQuery(project), enabled: f.type === 'certmap' && !!project })
   const policies = useQuery({
     ...tlsListQuery(project, 'serverTlsPolicies'),
@@ -506,6 +520,7 @@ function CreateForm({ k }: { k: KindInfo }) {
           In Project <span className="font-mono">{project}</span>.
         </p>
       </div>
+      {k.recorded && <RecordedNote />}
       <Card>
         <ResourceEditor
           form={form}
@@ -535,21 +550,25 @@ function CreateForm({ k }: { k: KindInfo }) {
 export function EditResource() {
   const ref = useLbRef()
   const k = kindInfo(ref.coll)
+  const edit = k && editOf(k, ref.region)
   const query = useQuery(resourceQuery(ref))
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-2xl font-semibold">
         Edit {k?.singular ?? ref.coll} <span className="font-mono">{ref.name}</span>
       </h1>
+      {k?.recorded && <RecordedNote />}
       <QueryStatus query={query} />
-      {k && !k.editable && (
+      {k && !edit && (
         <Card role="status">
           <p className="text-sm text-muted-foreground">
-            {k.title} cannot be changed: create a new one and point the proxies at it.
+            {ref.region && k.edit
+              ? `A regional ${k.singular} cannot be changed: the API has no method that changes it. Create a new one and point the forwarding rules at it.`
+              : `${k.title} cannot be changed: create a new one and point the proxies at it.`}
           </p>
         </Card>
       )}
-      {k?.editable && query.data && <EditForm k={k} r={ref} cur={query.data} />}
+      {k && edit && query.data && <EditForm k={k} r={ref} cur={query.data} />}
     </div>
   )
 }
@@ -563,12 +582,26 @@ function EditForm({ k, r, cur }: { k: KindInfo; r: Ref; cur: Resource }) {
     defaultValues: readValues(spec, cur, { region: r.region }),
   })
   const back = () => navigate(lbPath(r))
+  const bySet = k.edit === 'set'
   const save = useMutation({
     meta: { toast: false },
     mutationFn: async (body: Body) => {
-      if (Object.keys(body).filter((key) => key !== 'fingerprint').length === 0) return false
-      await patchResource(r, body)
-      return true
+      if (!bySet) {
+        if (Object.keys(body).filter((key) => key !== 'fingerprint').length === 0) return false
+        await patchResource(r, body)
+        return true
+      }
+      const calls = setCalls(spec, cur, body)
+      try {
+        await runSetCalls(calls, (c) => setResource(r, c.method, c.body))
+      } catch (e) {
+        // No rollback: reload, so that the form shows what was applied.
+        const fresh = await qc.fetchQuery({ ...resourceQuery(r), staleTime: 0 }).catch(() => cur)
+        form.reset(readValues(spec, fresh, { region: r.region }))
+        void qc.invalidateQueries({ queryKey: ['lb', 'list'] })
+        throw e
+      }
+      return calls.length > 0
     },
     onSuccess: (changed) => {
       void qc.invalidateQueries({ queryKey: ['lb'] })
@@ -581,17 +614,29 @@ function EditForm({ k, r, cur }: { k: KindInfo; r: Ref; cur: Resource }) {
       <ResourceEditor
         form={form}
         initialBody={{}}
-        toBody={patchBody(spec, cur)}
-        fromBody={patchValues(spec, cur)}
+        toBody={bySet ? setBody(spec, cur) : patchBody(spec, cur)}
+        fromBody={bySet ? setValues(spec, cur) : patchValues(spec, cur)}
         fields={keysOf(spec)}
         onSubmit={(body) => save.mutateAsync(body)}
         submitLabel="Save"
         onCancel={back}
         jsonHint={
-          <>
-            Sent to <span className="font-mono">{apiMethod(k, r.region, 'patch')}</span>: objects
-            merge, lists replace and null removes a field.
-          </>
+          bySet ? (
+            <>
+              Each changed field is sent to its own method, one at a time:{' '}
+              <span className="font-mono">
+                {Object.values(spec.setters ?? {})
+                  .map((m) => apiMethod(k, r.region, m))
+                  .join(', ')}
+              </span>
+              . An empty field is cleared.
+            </>
+          ) : (
+            <>
+              Sent to <span className="font-mono">{apiMethod(k, r.region, 'patch')}</span>: objects
+              merge, lists replace and null removes a field.
+            </>
+          )
         }
       >
         <p className="text-sm text-muted-foreground">

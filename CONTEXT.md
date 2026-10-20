@@ -111,7 +111,7 @@ The Managed container that listens on `--gfe-bind` addresses at port 443 when th
 _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 
 **VM runtime**:
-A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, and Docker Desktop or Podman machine on Windows.
+A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, Docker Desktop or Podman machine on Windows, and Docker Desktop on Linux.
 
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
@@ -176,7 +176,7 @@ An Instance whose state disappears when it exits.
 An Instance that keeps its state in a data directory across restarts.
 
 **Containerized Instance**:
-An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host.
+An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host. It still sees only its own container's files, such as its trust store, not the host's.
 _Avoid_: container mode, in-container, DooD, host-network mode (for a container on the host's network, which is not one)
 
 **Abandoned Instance ID**:
@@ -385,6 +385,10 @@ _Avoid_: compat tests (when OpenTofu acceptance is meant too)
 **OpenTofu acceptance**:
 Tests that apply, re-plan and destroy OpenTofu configurations covering every resource type behind the Products.
 
+**Kubernetes conformance**:
+Upstream Kubernetes' own conformance tests, run with Sonobuoy against an emulated GKE cluster at each supported minor version. It checks the clusters, not their agreement with GCP.
+_Avoid_: "conformance" on its own
+
 **Reference stack**:
 An end-to-end deployment of a representative application across all Products, used as the final acceptance test.
 _Avoid_: "acceptance" on its own, e2e
@@ -398,7 +402,7 @@ Starting a release's amd64 OCI image, with the host's container runtime, and req
 _Avoid_: smoke test
 
 **Escape guard**:
-A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it.
+A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine.
 _Avoid_: egress check, leak detector
 
 ## Flagged ambiguities
@@ -411,5 +415,7 @@ _Avoid_: egress check, leak detector
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
 - "Build" on its own is ambiguous: it also means compiling gcpemu, a Docker image build or the Web console's Vite build. Use *Build* (capitalised) only for a Cloud Build execution, and say *image build* or *compile* for the others.
 - "Map" and "entry" on their own are ambiguous: URL maps have host and path rules, and certificate maps have entries. Use *URL map*, *Certificate map* and *Certificate map entry*.
+- A *global* certificate is one in location `global`. That is its location, not its scope: a certificate with scope `ALL_REGIONS` is also in `global`, but serves cross-region load balancers.
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
+- "Conformance" on its own is ambiguous: the SRS's conformance suite diffs the emulator's responses against real GCP, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.

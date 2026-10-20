@@ -34,6 +34,7 @@ import {
 } from './api'
 import { CertStatusBadge, certDomains } from './Certificates'
 import { KindTabs, lbPath, RefLink } from './LbLayout'
+import { RecordedNote } from './RecordedNote'
 
 type Column = [
   header: string,
@@ -46,6 +47,20 @@ const ref = (field: string) => (r: Resource) => <RefLink link={r[field] as strin
 const yes = (v: unknown) => (v ? 'On' : 'Off')
 const len = (v: unknown) => (Array.isArray(v) ? v.length : 0)
 
+/** certs are a TLS proxy's SSL certificates, or its certificate map. */
+const certs = (r: Resource) =>
+  len(r.sslCertificates) ? (
+    <span className="flex flex-wrap gap-x-2">
+      {(r.sslCertificates as string[]).map((c) => (
+        <RefLink key={c} link={c} />
+      ))}
+    </span>
+  ) : r.certificateMap ? (
+    mono(lastSeg(r.certificateMap as string))
+  ) : (
+    '—'
+  )
+
 /** COLUMNS are each kind's list columns after its name and scope. */
 const COLUMNS: Record<Coll, Column[]> = {
   forwardingRules: [
@@ -57,22 +72,18 @@ const COLUMNS: Record<Coll, Column[]> = {
   targetHttpProxies: [['URL map', ref('urlMap')]],
   targetHttpsProxies: [
     ['URL map', ref('urlMap')],
-    [
-      'Certificates',
-      (r) =>
-        len(r.sslCertificates) ? (
-          <span className="flex flex-wrap gap-x-2">
-            {(r.sslCertificates as string[]).map((c) => (
-              <RefLink key={c} link={c} />
-            ))}
-          </span>
-        ) : r.certificateMap ? (
-          mono(lastSeg(r.certificateMap as string))
-        ) : (
-          '—'
-        ),
-    ],
+    ['Certificates', certs],
     ['SSL policy', ref('sslPolicy')],
+  ],
+  targetSslProxies: [
+    ['Backend service', ref('service')],
+    ['Certificates', certs],
+    ['Proxy header', (r) => mono(r.proxyHeader)],
+    ['SSL policy', ref('sslPolicy')],
+  ],
+  targetTcpProxies: [
+    ['Backend service', ref('service')],
+    ['Proxy header', (r) => mono(r.proxyHeader)],
   ],
   urlMaps: [
     ['Default backend', ref('defaultService')],
@@ -154,6 +165,7 @@ export function Resources() {
         </Button>
       </div>
       <KindTabs coll={coll} />
+      {k.recorded && <RecordedNote />}
       <Card>
         <form
           role="search"

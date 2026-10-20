@@ -25,6 +25,21 @@ export default tseslint.config(
       jsxA11y.flatConfigs.recommended,
       pluginQuery.configs['flat/recommended'],
     ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'react-router',
+              importNames: ['useSearchParams'],
+              message:
+                "Use useLatestSearchParams from '@/lib/latestSearchParams': its setter builds on the latest params, not the last rendered ones.",
+            },
+          ],
+        },
+      ],
+    },
   },
   {
     files: ['e2e/**', 'scripts/**', '*.config.{js,ts}'],

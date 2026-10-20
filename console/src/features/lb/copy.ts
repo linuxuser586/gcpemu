@@ -182,18 +182,25 @@ const proxyFlags = (b: Obj): Record<string, FlagValue> => ({
   'url-map-region': regionOf(b.urlMap),
 })
 
-function httpsProxyFlags(b: Obj): Record<string, FlagValue> {
+/** CERT_MAP_URL is the API prefix of a certificate map, which gcloud leaves out. */
+const CERT_MAP_URL = /^\/\/certificatemanager\.googleapis\.com\//
+
+/** tlsFlags are the certificate and SSL policy flags of a target HTTPS or SSL proxy. */
+function tlsFlags(b: Obj): Record<string, FlagValue> {
   const certs = strs(b.sslCertificates)
   return {
-    ...proxyFlags(b),
     'ssl-certificates': certs.map(lastSeg),
     'ssl-certificates-region': regionOf(certs[0]),
-    'certificate-map': text(b.certificateMap).replace(
-      /^\/\/certificatemanager\.googleapis\.com\//,
-      '',
-    ),
+    'certificate-map': text(b.certificateMap).replace(CERT_MAP_URL, ''),
     'ssl-policy': lastSeg(text(b.sslPolicy)),
     'ssl-policy-region': regionOf(b.sslPolicy),
+  }
+}
+
+function httpsProxyFlags(b: Obj): Record<string, FlagValue> {
+  return {
+    ...proxyFlags(b),
+    ...tlsFlags(b),
     'server-tls-policy': text(b.serverTlsPolicy).replace(
       /^\/\/networksecurity\.googleapis\.com\//,
       '',
@@ -201,6 +208,37 @@ function httpsProxyFlags(b: Obj): Record<string, FlagValue> {
     'quic-override': text(b.quicOverride),
   }
 }
+
+/** l4ProxyFlags are the proxy header and description flags of a target TCP or SSL proxy. */
+const l4ProxyFlags = (b: Obj): Record<string, FlagValue> => ({
+  // NONE is the default.
+  'proxy-header': b.proxyHeader === 'NONE' ? undefined : text(b.proxyHeader),
+  description: text(b.description),
+})
+
+/** sslProxyCmd creates a target SSL proxy, which is global only. */
+const sslProxyCmd = (p: string, b: Obj) =>
+  gcloud(['compute', 'target-ssl-proxies', 'create', text(b.name)], {
+    project: p,
+    'backend-service': lastSeg(text(b.service)),
+    ...tlsFlags(b),
+    ...l4ProxyFlags(b),
+  })
+
+/**
+ * tcpProxyCmd creates a target TCP proxy, global or regional. The backend
+ * service's scope is explicit: gcloud would otherwise take it from the
+ * compute/region property.
+ */
+const tcpProxyCmd = (p: string, region: string, b: Obj) =>
+  gcloud(['compute', 'target-tcp-proxies', 'create', text(b.name)], {
+    project: p,
+    ...scope(region),
+    'backend-service': lastSeg(text(b.service)),
+    'backend-service-region': regionOf(b.service),
+    'global-backend-service': !!b.service && !regionOf(b.service),
+    ...l4ProxyFlags(b),
+  })
 
 /** URL_MAP_FLAGS are what url-maps create sets; a map with more is imported instead. */
 const URL_MAP_FLAGS = new Set(['name', 'description', 'defaultService'])
@@ -399,6 +437,10 @@ function gcloudCmds(coll: Coll, ref: Ref, r: Obj, b: Obj): string[] {
           ...httpsProxyFlags(b),
         }),
       ]
+    case 'targetSslProxies':
+      return [sslProxyCmd(p, b)]
+    case 'targetTcpProxies':
+      return [tcpProxyCmd(p, region, b)]
     case 'urlMaps':
       return [urlMapCmd(p, region, b)]
     case 'backendServices':
@@ -427,6 +469,8 @@ const TOFU: Record<Coll, readonly [string, string?]> = {
     'google_compute_target_https_proxy',
     'google_compute_region_target_https_proxy',
   ],
+  targetSslProxies: ['google_compute_target_ssl_proxy'],
+  targetTcpProxies: ['google_compute_target_tcp_proxy', 'google_compute_region_target_tcp_proxy'],
   urlMaps: ['google_compute_url_map', 'google_compute_region_url_map'],
   backendServices: ['google_compute_backend_service', 'google_compute_region_backend_service'],
   backendBuckets: ['google_compute_backend_bucket'],
@@ -486,6 +530,14 @@ function tofuBlock(coll: Coll, ref: Ref, r: Obj, b: Obj): string | undefined {
         ...head,
         ...hclBody(rest),
         port_range: port(r as Resource) || undefined,
+      })
+    case 'targetSslProxies':
+    case 'targetTcpProxies':
+      // The provider calls the backend service backend_service.
+      return resource(type, text(b.name), {
+        ...head,
+        ...hclBody(omit(rest, ['service'])),
+        backend_service: text(b.service) || undefined,
       })
     case 'healthChecks':
       // The provider tells the protocol by its block.

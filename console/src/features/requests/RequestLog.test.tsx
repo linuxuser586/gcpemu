@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, expect, it } from 'vitest'
@@ -109,6 +109,21 @@ it('tails the Request log, newest first, and filters it from the URL', async () 
   })
   await user.type(screen.getByLabelText('Method'), 'x')
   expect(screen.getByText('No requests match the filters.')).toBeVisible()
+})
+
+it('keeps a cleared filter out of the URL when the next filter follows at once', async () => {
+  const { router } = renderApp('/requests?status=4xx')
+  await waitFor(() => expect(rows()).toHaveLength(1))
+  // Both changes are made before the first navigation renders.
+  act(() => {
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Method'), { target: { value: 'patch' } })
+  })
+  await waitFor(() =>
+    expect(Object.fromEntries(new URLSearchParams(router.state.location.search))).toEqual({
+      method: 'patch',
+    }),
+  )
 })
 
 it('pauses the tail', async () => {

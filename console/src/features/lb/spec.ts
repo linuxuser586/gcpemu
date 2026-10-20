@@ -54,10 +54,16 @@ export interface FieldSpec {
   /** emptyOption labels a select's "" option, which leaves the field unset. */
   emptyOption?: string
   targets?: readonly Target[]
+  /** accept keeps the resources a reference field offers, e.g. TCP backend services. */
+  accept?: (r: Resource) => boolean
   /** asList: a single reference the API keeps in a list (healthChecks). */
   asList?: boolean
-  /** required, or the API's message when it is not the usual one. */
-  required?: boolean | string
+  /**
+   * required, or the API's message when it is not the usual one; a
+   * function of the values when it depends on other fields, returning the
+   * message, or undefined when the field may be empty.
+   */
+  required?: boolean | string | ((v: Values) => string | undefined)
   /** createOnly fields cannot change after create. */
   createOnly?: boolean
   /** scope is the region field: "" for a global resource. */
@@ -84,6 +90,11 @@ export interface KindSpec {
   fields: readonly FieldSpec[]
   /** finish tidies a written body, e.g. drops the unused health check block. */
   finish?: (body: Obj, v: Values) => void
+  /**
+   * setters are the set* method of each API field, in the order they are
+   * sent, for a kind edited by set* methods instead of patch.
+   */
+  setters?: Readonly<Record<string, string>>
 }
 
 // ---- paths ----
@@ -342,6 +353,61 @@ export function patchBody(spec: KindSpec, cur: Resource) {
 export const patchValues = (spec: KindSpec, cur: Resource) => (body: Obj, prev: Values) =>
   readValues(spec, applyMerge(cur, body), prev)
 
+// ---- set* methods ----
+
+/** setFields are the fields of cur that a kind's set* methods change. */
+const setFields = (spec: KindSpec, cur: Obj): Obj =>
+  Object.fromEntries(Object.keys(spec.setters ?? {}).map((f) => [f, cur[f]]))
+
+/**
+ * setBody is the body of an edit form of a kind edited by set* methods:
+ * the fields they change, as the form's values make them.
+ */
+export const setBody = (spec: KindSpec, cur: Obj) => (v: Values, base: Obj) =>
+  writeValues(spec, { ...setFields(spec, cur), ...base }, v, true)
+
+export const setValues = (spec: KindSpec, cur: Obj) => (body: Obj, prev: Values) =>
+  readValues(spec, { ...setFields(spec, cur), ...body }, prev)
+
+/** SetCall is one set* method call: setBackendService and its body. */
+export interface SetCall {
+  method: string
+  body: Obj
+}
+
+/** norm is a field's value for comparing: references without their Project. */
+const norm = (v: unknown): unknown =>
+  empty(v) ? null : Array.isArray(v) ? v.map(norm) : typeof v === 'string' ? short(v) : v
+
+/**
+ * setCalls are the set* calls that turn cur into body: one per changed
+ * field. Calls that clear a field go last, so that a proxy always keeps
+ * SSL certificates or a certificate map: switching to a map sets it
+ * before clearing the certificates, and switching back sets the
+ * certificates before clearing the map.
+ */
+export function setCalls(spec: KindSpec, cur: Obj, body: Obj): SetCall[] {
+  const calls = Object.entries(spec.setters ?? {})
+    .filter(([f]) => JSON.stringify(norm(cur[f])) !== JSON.stringify(norm(body[f])))
+    .map(([f, method]) => {
+      if (!empty(body[f])) return { method, body: { [f]: body[f] }, clears: false }
+      // A list is cleared with an empty one, a reference by leaving it out.
+      const isList = spec.fields.find((x) => x.path === f)?.type === 'refs'
+      return { method, body: isList ? { [f]: [] } : {}, clears: true }
+    })
+  return [...calls.filter((c) => !c.clears), ...calls.filter((c) => c.clears)].map(
+    ({ method, body }) => ({ method, body }),
+  )
+}
+
+/** runSetCalls sends calls in turn, each once the last is done, stopping at the first that fails. */
+export async function runSetCalls(
+  calls: readonly SetCall[],
+  send: (c: SetCall) => Promise<unknown>,
+) {
+  for (const c of calls) await send(c)
+}
+
 // ---- validation ----
 
 const NAME = /^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$/
@@ -356,8 +422,9 @@ export const requiredMessage = (path: string) => `Required field 'resource.${pat
 export const invalid = (path: string, value: unknown, why: string) =>
   `Invalid value for field 'resource.${path}': '${text(value)}'. ${why}`
 
-const empty = (v: FormValue | undefined) =>
-  v === undefined || v === '' || (Array.isArray(v) && v.length === 0)
+/** empty is a field with no value: unset, "" or an empty list. */
+const empty = (v: unknown) =>
+  v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)
 
 /** validate returns the error of each invalid field, by key. */
 export function validate(spec: KindSpec, v: Values, edit = false): Record<string, string> {
@@ -365,10 +432,11 @@ export function validate(spec: KindSpec, v: Values, edit = false): Record<string
   for (const f of spec.fields) {
     if ((edit && f.createOnly) || (f.show && !f.show(v))) continue
     const value = v[f.key]
-    if (f.required && empty(value)) {
+    const required = typeof f.required === 'function' ? f.required(v) : f.required
+    if (required && empty(value)) {
       errors[f.key] =
-        typeof f.required === 'string'
-          ? f.required
+        typeof required === 'string'
+          ? required
           : f.key === 'name'
             ? nameMessage('')
             : requiredMessage(pathOf(f, v) ?? f.key)
@@ -440,6 +508,69 @@ const headers = (key: string, path: string, label: string): FieldSpec => ({
   },
 })
 
+const sslCertificates: FieldSpec = {
+  key: 'sslCertificates',
+  path: 'sslCertificates',
+  label: 'SSL certificates',
+  type: 'refs',
+  targets: ['sslCertificates'],
+  hint: 'The certificates the proxy chooses among by SNI (up to 15).',
+  check: (v) =>
+    (v as string[]).length > 15
+      ? invalid(
+          'sslCertificates',
+          (v as string[]).length,
+          'At most 15 SSL certificates can be specified.',
+        )
+      : undefined,
+}
+
+const certificateMap: FieldSpec = {
+  key: 'certificateMap',
+  path: 'certificateMap',
+  label: 'Certificate map',
+  type: 'certmap',
+  emptyOption: 'None (use SSL certificates)',
+  hint: 'Instead of SSL certificates: a Certificate Manager map of the Project. Global target proxies only.',
+}
+
+const sslPolicy: FieldSpec = {
+  key: 'sslPolicy',
+  path: 'sslPolicy',
+  label: 'SSL policy',
+  type: 'ref',
+  targets: ['sslPolicies'],
+  emptyOption: 'None (GCP’s default policy)',
+}
+
+/** L4_PROTOCOLS are the protocols of the backend services of target TCP and SSL proxies. */
+const L4_PROTOCOLS = ['TCP', 'SSL']
+
+/**
+ * l4Service is the backend service of a target TCP or SSL proxy: one of
+ * protocol TCP or SSL, in the proxy's scope as every reference field is.
+ */
+const l4Service: FieldSpec = {
+  key: 'service',
+  path: 'service',
+  label: 'Backend service',
+  type: 'ref',
+  targets: ['backendServices'],
+  accept: (r) => L4_PROTOCOLS.includes(text(r.protocol)),
+  required: true,
+  hint: 'A backend service of protocol TCP or SSL.',
+}
+
+const proxyHeader: FieldSpec = {
+  key: 'proxyHeader',
+  path: 'proxyHeader',
+  label: 'Proxy header',
+  type: 'select',
+  options: ['NONE', 'PROXY_V1'],
+  initial: 'NONE',
+  hint: 'PROXY_V1 prepends a PROXY protocol header with the client’s address.',
+}
+
 const SCHEMES = ['EXTERNAL_MANAGED', 'EXTERNAL', 'INTERNAL_MANAGED', 'INTERNAL_SELF_MANAGED']
 const internal = (v: Values) => text(v.loadBalancingScheme).startsWith('INTERNAL')
 
@@ -507,7 +638,14 @@ export const SPECS: Record<Coll, KindSpec> = {
         path: 'target',
         label: 'Target proxy',
         type: 'ref',
-        targets: ['targetHttpProxies', 'targetHttpsProxies'],
+        // The picker offers proxies in the rule's scope; target SSL proxies are
+        // global only, so a regional rule's form has none of them to offer.
+        targets: [
+          'targetHttpProxies',
+          'targetHttpsProxies',
+          'targetSslProxies',
+          'targetTcpProxies',
+        ],
         required: true,
       },
       {
@@ -569,31 +707,8 @@ export const SPECS: Record<Coll, KindSpec> = {
         targets: ['urlMaps'],
         required: true,
       },
-      {
-        key: 'sslCertificates',
-        path: 'sslCertificates',
-        label: 'SSL certificates',
-        type: 'refs',
-        targets: ['sslCertificates'],
-        hint: 'The certificates the proxy chooses among by SNI (up to 15).',
-        check: (v) =>
-          (v as string[]).length > 15
-            ? invalid(
-                'sslCertificates',
-                (v as string[]).length,
-                'At most 15 SSL certificates can be specified.',
-              )
-            : undefined,
-      },
-      {
-        key: 'certificateMap',
-        path: 'certificateMap',
-        label: 'Certificate map',
-        type: 'certmap',
-        emptyOption: 'None (use SSL certificates)',
-        hint: 'Instead of SSL certificates: a Certificate Manager map of the Project. Global target proxies only.',
-        show: (v) => !text(v.region).trim(),
-      },
+      sslCertificates,
+      { ...certificateMap, show: (v) => !text(v.region).trim() },
       {
         key: 'serverTlsPolicy',
         path: 'serverTlsPolicy',
@@ -602,15 +717,44 @@ export const SPECS: Record<Coll, KindSpec> = {
         emptyOption: 'None (no mutual TLS)',
         hint: 'Mutual TLS: a Network Security server TLS policy of the proxy’s location that verifies clients.',
       },
-      {
-        key: 'sslPolicy',
-        path: 'sslPolicy',
-        label: 'SSL policy',
-        type: 'ref',
-        targets: ['sslPolicies'],
-        emptyOption: 'None (GCP’s default policy)',
-      },
+      sslPolicy,
     ],
+  },
+  targetSslProxies: {
+    coll: 'targetSslProxies',
+    // Global only: the API has no regional target SSL proxies.
+    fields: [
+      name,
+      { ...description, createOnly: true },
+      l4Service,
+      {
+        ...sslCertificates,
+        required: (v) =>
+          v.certificateMap
+            ? undefined
+            : invalid(
+                'sslCertificates',
+                '',
+                'At least one SSL certificate or a certificate map must be specified.',
+              ),
+      },
+      certificateMap,
+      proxyHeader,
+      sslPolicy,
+    ],
+    setters: {
+      service: 'setBackendService',
+      proxyHeader: 'setProxyHeader',
+      sslCertificates: 'setSslCertificates',
+      certificateMap: 'setCertificateMap',
+      sslPolicy: 'setSslPolicy',
+    },
+  },
+  targetTcpProxies: {
+    coll: 'targetTcpProxies',
+    fields: [name, region('proxy'), { ...description, createOnly: true }, l4Service, proxyHeader],
+    // Global proxies only: regionTargetTcpProxies has no set* methods.
+    setters: { service: 'setBackendService', proxyHeader: 'setProxyHeader' },
   },
   urlMaps: {
     coll: 'urlMaps',
@@ -680,8 +824,9 @@ export const SPECS: Record<Coll, KindSpec> = {
         path: 'protocol',
         label: 'Protocol',
         type: 'select',
-        options: ['HTTP', 'HTTPS', 'HTTP2'],
+        options: ['HTTP', 'HTTPS', 'HTTP2', ...L4_PROTOCOLS],
         initial: 'HTTP',
+        hint: 'TCP and SSL serve target TCP and SSL proxies.',
       },
       {
         key: 'backends',

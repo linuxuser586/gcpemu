@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
-import { useSearchParams } from 'react-router'
 
 import { useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
@@ -8,6 +7,7 @@ import { Field, fieldAria } from '@/components/resource/Field'
 import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
 import { Card } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/native-select'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
 
@@ -34,7 +34,7 @@ const method = (r: OriginRef) =>
 export function AddOrigin() {
   const [view] = useViewState()
   const project = view.project ?? ''
-  const [params, setParams] = useSearchParams()
+  const [params, setParams] = useLatestSearchParams()
   const backends = useQuery(backendsQuery(project))
   const candidates = (backends.data ?? [])
     .filter((b) => !isOrigin(b.r))
