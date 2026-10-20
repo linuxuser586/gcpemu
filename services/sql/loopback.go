@@ -51,8 +51,8 @@ var loopPorts = []int{proxy.ConnectPort, proxy.PublicPort}
 func errNoLoopback(holder string, containerized bool) error {
 	if containerized {
 		return apierr.FailedPrecondition("Cloud SQL instance %s already serves host clients on %s:%d, the only loopback address this Containerized Instance uses. "+
-			"Add loopback aliases on the host (`%s`, from the native binary on macOS) and, unless the runtime is Docker Desktop, set %s=true to give each instance its own address.",
-			holder, loopbackHost, proxy.ConnectPort, loopback.InstallHint, runtime.LoopbackAliasesEnv)
+			"To give each instance its own address, set %s=true unless the runtime is Docker Desktop; only a macOS host needs loopback aliases added first (`%s`, from the native binary), as Linux and Windows hosts already have them.",
+			holder, loopbackHost, proxy.ConnectPort, runtime.LoopbackAliasesEnv, loopback.InstallHint)
 	}
 	return apierr.FailedPrecondition("Cloud SQL instance %s already serves host clients on %s:%d, the only loopback address this host has. Run `%s` to give each instance its own address.",
 		holder, loopbackHost, proxy.ConnectPort, loopback.InstallHint)

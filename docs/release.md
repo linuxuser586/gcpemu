@@ -1,7 +1,8 @@
 # Release checklist
 
 CI runs the VM relay path on Linux (the `vm-relay` job, `GCPEMU_VM_RELAY=1`), but hosted macOS
-runners have no container runtime. Before tagging `vX.Y.Z`, run these checks by hand on macOS.
+runners have no container runtime, and hosted Windows runners run only Windows containers.
+Before tagging `vX.Y.Z`, run these checks by hand on macOS and on Windows.
 
 ## Release notes
 
@@ -76,3 +77,86 @@ that names the runtime and says it has no VLAN (8021q) support, not a raw `ip` e
 the check didn't run. Record "supported" or "not supported", with the runtime's version.
 
 Commit the table change before tagging.
+
+## Windows (Containerized Instance)
+
+Run every step below in PowerShell on **Docker Desktop** in Linux-containers mode. Podman machine
+is best-effort: check it when one is at hand, with `GCPEMU_VM_RUNTIME=true`, but a release does
+not wait for it.
+
+Build the image from the commit to be tagged: `task release VERSION=vX.Y.Z` (it builds the Web
+console first, so it needs Node and pnpm), then `docker build -t gcpemu:rc -f Dockerfile dist`.
+
+### 1. Start the image with the socket and a port range
+
+```powershell
+docker run -d --name gcpemu -p 127.0.0.1:4510:4510 -p 127.0.0.1:20000-20019:20000-20019 `
+  -v /var/run/docker.sock:/var/run/docker.sock `
+  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" `
+  gcpemu:rc start --ephemeral --port-range 20000-20019
+docker exec gcpemu /gcpemu doctor
+```
+
+`doctor` must report the VM-runtime decision as on (Docker Desktop recognized) and the
+loopback-alias decision as on. Point the clients on the host at the container:
+
+```powershell
+docker exec gcpemu /gcpemu env --shell powershell | Out-String | Invoke-Expression
+Remove-Item Env:KUBECONFIG -ErrorAction SilentlyContinue   # a path inside the container
+curl.exe "http://$env:GCPEMU_GATEWAY/"
+```
+
+`curl.exe` must get an answer from the API gateway: the addresses `env` prints must be ones a
+Windows host can connect to. Repeat these three lines wherever a step below reloads the
+environment.
+
+### 2. A Cloud SQL instance from the host
+
+```powershell
+gcloud sql instances create one --database-version=POSTGRES_16 --tier=db-f1-micro
+gcloud sql users set-password postgres --instance=one --password=pw
+Remove-Item Env:GOOGLE_CLOUD_UNIVERSE_DOMAIN   # the proxy's static --token is in Google's universe
+cloud-sql-proxy --sqladmin-api-endpoint "http://$env:GCPEMU_GATEWAY/" --token owner --port 15432 `
+  "$(gcloud sql instances describe one --format='value(connectionName)')"
+```
+
+In a second terminal, `psql "host=127.0.0.1 port=15432 user=postgres password=pw sslmode=disable"
+-c 'select 1'` must succeed. The instance's `PRIMARY` address must be a `127.0.0.x` of its own,
+since `GCPEMU_LOOPBACK_ALIASES=auto` uses the loopback aliases on Docker Desktop; while 5432 is
+free on the host, `psql` straight to that address on 5432 must work too.
+
+### 3. A GKE `LoadBalancer` Service from the host
+
+```powershell
+gcloud container clusters create lb --zone=us-central1-a --num-nodes=1
+$p = gcloud config get-value project
+curl.exe -o lb.kubeconfig "http://$env:GCPEMU_GATEWAY/container/_emu/kubeconfig?cluster=projects/$p/locations/us-central1-a/clusters/lb"
+$env:KUBECONFIG = "$PWD\lb.kubeconfig"
+kubectl create deployment web --image=nginx:1.29-alpine
+kubectl expose deployment web --type=LoadBalancer --port=80
+kubectl get service web           # EXTERNAL-IP is 127.0.0.1
+docker exec gcpemu /gcpemu env --shell powershell | Out-String | Invoke-Expression
+$env:KUBECONFIG = "$PWD\lb.kubeconfig"
+curl.exe "http://$env:GCPEMU_GKE_LB_DEFAULT_WEB_80/"
+```
+
+`curl.exe` must get nginx's page on a port of the published range.
+
+### 4. A forwarding rule from the host
+
+```powershell
+gcloud storage buckets create gs://lb-site
+Set-Content -Path index.html -Value 'lb ok'
+gcloud storage cp index.html gs://lb-site/index.html
+gcloud compute backend-buckets create site --gcs-bucket-name=lb-site
+gcloud compute url-maps create site --default-backend-bucket=site
+gcloud compute target-http-proxies create site --url-map=site
+gcloud compute forwarding-rules create site --global --target-http-proxy=site --ports=8080
+docker exec gcpemu /gcpemu env --shell powershell | Out-String | Invoke-Expression
+curl.exe "http://$env:GCPEMU_LB_SITE/index.html"
+```
+
+`GCPEMU_LB_SITE` must name `127.0.0.1` and a port of the published range, and `curl.exe` must
+print `lb ok`.
+
+Then `docker rm -f gcpemu`.
