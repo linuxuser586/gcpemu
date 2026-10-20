@@ -130,29 +130,29 @@ func checkCRIConfigPath(h trustHost) criCheck {
 	if configPath == "" && len(reg.Mirrors) == 0 && h.goos == "linux" && (major > 2 || major == 2 && minor >= 2) {
 		configPath = certsD + ":" + etc + "/docker/certs.d"
 	}
-	var dirs []string
-	if configPath != "" {
-		dirs = strings.Split(configPath, ":")
-	}
-	for _, d := range dirs {
-		if d == certsD {
-			c.kind = criOK
-			return c
-		}
+	// config_path is a ':' list; matching certsD between delimiters rather
+	// than splitting keeps a test's Windows etc (C:\...) whole.
+	if configPath != "" && strings.Contains(":"+configPath+":", ":"+certsD+":") {
+		c.kind = criOK
+		return c
 	}
 	c.kind = criNotIncluded
 	if len(reg.Mirrors) > 0 {
 		set := "set config_path to " + certsD
-		if len(dirs) > 0 {
+		if configPath != "" {
 			set = "add " + certsD + " to config_path"
 		}
 		c.fix = []string{fmt.Sprintf("move the registry.mirrors of %s into hosts.toml files in %s, then %s and run `sudo systemctl restart containerd`", plugin, certsD, set)}
 		return c
 	}
 	c.fix = []string{"add this to " + etc + "/containerd/config.toml (" + where + "), then run `sudo systemctl restart containerd`:", "  " + header}
+	list := certsD
+	if configPath != "" {
+		list = configPath + ":" + certsD
+	}
 	c.fix = append(c.fix,
 		`  [plugins."`+plugin+`".registry]`,
-		`    config_path = "`+strings.Join(append(dirs, certsD), ":")+`"`)
+		`    config_path = "`+list+`"`)
 	return c
 }
 
