@@ -44,6 +44,9 @@ type buildLog struct {
 	flushing sync.Mutex
 	// warned is set once a failed append has been logged.
 	warned bool
+	// masked are the Build's secret payloads, which logs.mu guards and
+	// write replaces with secretMask.
+	masked []string
 }
 
 // line appends a line to a Build's log.
@@ -53,6 +56,9 @@ func (l *logs) write(ref buildRef, p []byte) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entry(ref)
+	for _, m := range e.masked {
+		p = bytes.ReplaceAll(p, []byte(m), []byte(secretMask))
+	}
 	switch {
 	case e.buf.Len() >= maxLog:
 		return
@@ -60,6 +66,19 @@ func (l *logs) write(ref buildRef, p []byte) {
 		p = []byte("(log truncated)\n")
 	}
 	e.buf.Write(p)
+}
+
+// mask has every later line of a Build's log carry secretMask in place of
+// each of values.
+func (l *logs) mask(ref buildRef, values []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entry(ref)
+	for _, v := range values {
+		if v != "" {
+			e.masked = append(e.masked, v)
+		}
+	}
 }
 
 // entry returns a Build's log, adding it. Callers hold mu.
