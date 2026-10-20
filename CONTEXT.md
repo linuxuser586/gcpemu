@@ -415,6 +415,7 @@ _Avoid_: egress check, leak detector
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
 - "Build" on its own is ambiguous: it also means compiling gcpemu, a Docker image build or the Web console's Vite build. Use *Build* (capitalised) only for a Cloud Build execution, and say *image build* or *compile* for the others.
 - "Map" and "entry" on their own are ambiguous: URL maps have host and path rules, and certificate maps have entries. Use *URL map*, *Certificate map* and *Certificate map entry*.
+- A *global* certificate is one in location `global`. That is its location, not its scope: a certificate with scope `ALL_REGIONS` is also in `global`, but serves cross-region load balancers.
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
 - "Conformance" on its own is ambiguous: the SRS's conformance suite diffs the emulator's responses against real GCP, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.

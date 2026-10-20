@@ -76,6 +76,9 @@ func (s *Service) prepareEntry(n resName, res, old obj) error {
 		if err != nil {
 			return err
 		}
+		if cn.Location != "global" {
+			return apierr.InvalidArgument("Certificate %s must be in location \"global\" to be used in a certificate map entry.", cn.name(kCert))
+		}
 		if _, _, err := s.loadKind(kCert, c); err != nil {
 			return apierr.InvalidArgument("Certificate %s not found.", cn.name(kCert))
 		}

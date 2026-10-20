@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,37 @@ certs:
 	var m map[string]any
 	if e.rest("GET", cmBase+"/certificates/managed", nil, &m); m["managed"].(map[string]any)["state"] != "PROVISIONING" {
 		t.Fatalf("managed: %v", m)
+	}
+}
+
+// A seeded Certificate map entry naming a regional certificate fails the same
+// way create does.
+func TestSeedRegionalMapEntry(t *testing.T) {
+	e := start(t)
+	ca := newTestCA(t, "seed CA")
+	dir := t.TempDir()
+	web, webKey := ca.leaf(t, x509.ExtKeyUsageServerAuth, "app.example.test")
+	for f, c := range map[string]string{"web.pem": web, "web-key.pem": webKey} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte(c), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed := `
+certs:
+  certificates:
+    - {project: test-proj, location: us-central1, id: web, selfManaged: {pemCertificateFile: web.pem, pemPrivateKeyFile: web-key.pem}}
+  certificateMaps:
+    - {project: test-proj, id: web}
+  certificateMapEntries:
+    - {project: test-proj, certificateMap: web, id: app, hostname: app.example.test, certificates: [projects/test-proj/locations/us-central1/certificates/web]}
+`
+	path := filepath.Join(dir, "seed.yaml")
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := `Certificate projects/test-proj/locations/us-central1/certificates/web must be in location "global" to be used in a certificate map entry.`
+	if err := e.inst.ApplySeed(e.ctx, path); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("seed: %v", err)
 	}
 }
 
