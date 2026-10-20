@@ -9,7 +9,9 @@
 // kept in memory for /_emu/v1/build/<build name>/log (logs.go). Steps
 // act as the Build's service account (serviceaccount.go) and reach the
 // Instance by real hostname through the Build agent (agent.go,
-// agentctl.go). Cloud Build v2 answers UNIMPLEMENTED.
+// agentctl.go). Every status change is published to the Project's
+// cloud-builds topic when it exists (notify.go). Cloud Build v2 answers
+// UNIMPLEMENTED.
 package build
 
 import (

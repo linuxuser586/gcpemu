@@ -37,8 +37,14 @@ type env struct {
 
 func start(t *testing.T, opts ...emutest.Option) *env {
 	t.Helper()
+	return startWith(t, nil, opts...)
+}
+
+// startWith is start with the Services svcs running too.
+func startWith(t *testing.T, svcs []string, opts ...emutest.Option) *env {
+	t.Helper()
 	emutest.RequireRuntime(t)
-	inst := emutest.Start(t, []string{"build", "gcs"}, opts...)
+	inst := emutest.Start(t, append([]string{"build", "gcs"}, svcs...), opts...)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	t.Cleanup(cancel)
 	cb, err := cloudbuild.NewClient(ctx,
