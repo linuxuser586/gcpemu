@@ -197,6 +197,21 @@ it('shows a map’s entries and the target proxies and forwarding rules that ser
   )
 })
 
+it('links a target SSL proxy that serves a map to its page in the Load Balancer view', async () => {
+  maps[0]!.gclbTargets = [
+    {
+      targetSslProxy: `projects/${P}/global/targetSslProxies/tls`,
+      ipConfigs: [{ ipAddress: '34.120.0.2', ports: [443] }],
+    },
+  ]
+  renderApp(`/certs/locations/global/certificateMaps/main?project=${P}`)
+  const targets = await screen.findByRole('table', { name: 'Target proxies' })
+  expect(within(targets).getByRole('link', { name: 'tls' })).toHaveAttribute(
+    'href',
+    `/lb/global/targetSslProxies/tls?project=${P}`,
+  )
+})
+
 it('says when no load balancer serves a map', async () => {
   renderApp(`/certs/locations/global/certificateMaps/spare?project=${P}`)
   expect(

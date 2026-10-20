@@ -7,9 +7,13 @@ import {
   patchBody,
   patchValues,
   readValues,
+  runSetCalls,
+  setBody,
+  setCalls,
   SPECS,
   validate,
   type Matcher,
+  type Values,
 } from './spec'
 import { parseHeaders, splitUrl } from './UrlMap'
 
@@ -203,6 +207,117 @@ describe('URL map routing', () => {
       routing: [{ name: 'app', hosts: 'a.test', defaultService: '', pathRules: '/api/*' }],
     }
     expect(validate(spec, v).routing).toMatch(/Invalid path rule "\/api\/\*" in path matcher app/)
+  })
+})
+
+describe('target SSL proxies', () => {
+  const spec = SPECS.targetSslProxies
+  const CM = '//certificatemanager.googleapis.com/projects/p/locations/global/certificateMaps/main'
+  const cur = {
+    name: 'ssl',
+    selfLink: link('global/targetSslProxies/ssl'),
+    service: link('global/backendServices/tcp'),
+    sslCertificates: [link('global/sslCertificates/a')],
+    proxyHeader: 'NONE',
+  }
+  /** edit is the body an edit form sends after changing values. */
+  const edit = (r: Record<string, unknown>, change: Values) =>
+    setBody(spec, r)({ ...readValues(spec, r), ...change }, {})
+
+  it('sends nothing for an unchanged form', () => {
+    expect(setCalls(spec, cur, edit(cur, {}))).toEqual([])
+    const mapped = {
+      ...cur,
+      sslCertificates: undefined,
+      certificateMap: CM,
+      sslPolicy: link('global/sslPolicies/modern'),
+    }
+    expect(setCalls(spec, mapped, edit(mapped, {}))).toEqual([])
+  })
+
+  it('sends one set call for each changed field', () => {
+    expect(
+      setCalls(
+        spec,
+        cur,
+        edit(cur, {
+          service: 'projects/p/global/backendServices/ssl',
+          proxyHeader: 'PROXY_V1',
+          sslPolicy: 'projects/p/global/sslPolicies/modern',
+        }),
+      ),
+    ).toEqual([
+      {
+        method: 'setBackendService',
+        body: { service: 'projects/p/global/backendServices/ssl' },
+      },
+      { method: 'setProxyHeader', body: { proxyHeader: 'PROXY_V1' } },
+      { method: 'setSslPolicy', body: { sslPolicy: 'projects/p/global/sslPolicies/modern' } },
+    ])
+  })
+
+  it('sets a certificate map before clearing the certificates', () => {
+    expect(setCalls(spec, cur, edit(cur, { sslCertificates: [], certificateMap: CM }))).toEqual([
+      { method: 'setCertificateMap', body: { certificateMap: CM } },
+      { method: 'setSslCertificates', body: { sslCertificates: [] } },
+    ])
+  })
+
+  it('sets certificates before clearing the certificate map', () => {
+    const mapped = { ...cur, sslCertificates: undefined, certificateMap: CM }
+    expect(
+      setCalls(
+        spec,
+        mapped,
+        edit(mapped, {
+          sslCertificates: ['projects/p/global/sslCertificates/b'],
+          certificateMap: '',
+        }),
+      ),
+    ).toEqual([
+      {
+        method: 'setSslCertificates',
+        body: { sslCertificates: ['projects/p/global/sslCertificates/b'] },
+      },
+      { method: 'setCertificateMap', body: {} },
+    ])
+  })
+
+  it('stops at the first call that fails', async () => {
+    const sent: string[] = []
+    const calls = setCalls(
+      spec,
+      cur,
+      edit(cur, { proxyHeader: 'PROXY_V1', sslCertificates: [], certificateMap: CM }),
+    )
+    await expect(
+      runSetCalls(calls, (c) => {
+        sent.push(c.method)
+        return c.method === 'setCertificateMap'
+          ? Promise.reject(new Error('no such map'))
+          : Promise.resolve()
+      }),
+    ).rejects.toThrow('no such map')
+    expect(sent).toEqual(['setProxyHeader', 'setCertificateMap'])
+  })
+
+  it('needs SSL certificates or a certificate map', () => {
+    const v = {
+      ...initialValues(spec),
+      name: 'ssl',
+      service: 'projects/p/global/backendServices/tcp',
+    }
+    expect(validate(spec, v)).toEqual({
+      sslCertificates:
+        "Invalid value for field 'resource.sslCertificates': ''. At least one SSL certificate or a certificate map must be specified.",
+    })
+    expect(validate(spec, { ...v, certificateMap: CM })).toEqual({})
+    expect(createBody(spec)({ ...v, certificateMap: CM }, {})).toEqual({
+      name: 'ssl',
+      service: 'projects/p/global/backendServices/tcp',
+      certificateMap: CM,
+      proxyHeader: 'NONE',
+    })
   })
 })
 

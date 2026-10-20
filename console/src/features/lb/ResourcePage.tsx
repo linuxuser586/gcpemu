@@ -28,6 +28,7 @@ import { CertificateStatus } from './Certificates'
 import { recipeFor } from './copy'
 import { BackendHealth } from './Health'
 import { lbPath, listPath, RefLink, useLbRef } from './LbLayout'
+import { RecordedNote } from './RecordedNote'
 import { readValues, SPECS, type FieldSpec, type Values } from './spec'
 import { RouteTree, TestUrl } from './UrlMap'
 
@@ -76,7 +77,7 @@ export function ResourcePage() {
         {r && (
           <div className="flex flex-wrap gap-2">
             <CopyAs what={k.singular} recipe={() => recipeFor(ref, r)} />
-            {k.editable && (
+            {k.edit && (
               <Button variant="outline" asChild>
                 <Link to={lbPath(ref, 'edit')}>
                   <Pencil aria-hidden />
@@ -99,6 +100,7 @@ export function ResourcePage() {
           </div>
         )}
       </div>
+      {k.recorded && <RecordedNote />}
       <QueryStatus query={query} />
       {r && (
         <>
@@ -176,12 +178,14 @@ function Frontend({ fr, r }: { fr: Resource; r: Ref }) {
   const l = listeners.data?.get(relPath(fr.selfLink))
   const proxyRef = parseRef(fr.target as string | undefined)
   const proxy = useQuery({ ...resourceQuery(proxyRef!), enabled: !!proxyRef })
+  const recorded = !!proxyRef && kindInfo(proxyRef.coll)?.recorded
   const scheme = l?.https ? 'https' : 'http'
   return (
     <Card aria-labelledby="listener-title">
       <CardTitle id="listener-title">Local listener</CardTitle>
       <QueryStatus query={listeners} />
-      {listeners.data && !l && (
+      {recorded && <RecordedNote />}
+      {listeners.data && !l && !recorded && (
         <p className="text-sm text-muted-foreground">
           Not listening: the forwarding rule’s target proxy or URL map cannot serve yet.
         </p>
