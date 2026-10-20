@@ -1,7 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Play } from 'lucide-react'
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { errorMessage } from '@/api/errors'
 import { infoQuery } from '@/api/queries'
@@ -19,6 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 
 import {
   kindOf,
@@ -68,7 +68,7 @@ async function simulate(principal: string, r: ResourceRef, permissions: string[]
  */
 export function Simulator() {
   const project = useProject()
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const kind = kindOf(search.get('kind'))
   const [principal, setPrincipal] = useState(search.get('principal') ?? '')
   const [name, setName] = useState(search.get('name') ?? '')

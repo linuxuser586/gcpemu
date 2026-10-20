@@ -1,7 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Download, File, Folder, Trash2, Upload } from 'lucide-react'
 import { useCallback, useRef, useState, type DragEvent } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { errorMessage } from '@/api/errors'
 import { Link } from '@/components/Link'
@@ -10,6 +9,7 @@ import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
@@ -141,7 +141,7 @@ const GRID = 'grid grid-cols-[minmax(0,1fr)_6rem_10rem_11rem_5.5rem] items-cente
  */
 export function ObjectBrowser() {
   const bucket = useBucket()
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const prefix = search.get('prefix') ?? ''
   const [view, setView] = useViewState()
   const [text, setText] = useState(view.q ?? '')

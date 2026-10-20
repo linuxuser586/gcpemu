@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { RefreshCw, Search } from 'lucide-react'
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
@@ -19,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { useViewState } from '@/lib/viewState'
 
 import { dnsQuery, networkLabel, TYPES, zoneNetworks, zonesQuery, type DnsRecord } from './api'
@@ -81,7 +81,7 @@ function ZoneLink({ zone }: { zone: string }) {
 export function Query() {
   const [view] = useViewState()
   const project = view.project ?? ''
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const asked = {
     name: search.get('name') ?? '',
     type: search.get('type') || 'A',

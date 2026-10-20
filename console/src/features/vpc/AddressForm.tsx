@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useId } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
-import { useSearchParams } from 'react-router'
 import { z } from 'zod'
 
 import { useCarriedNavigate } from '@/components/Link'
@@ -14,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { formatLabels, labelsError, parseLabels } from '@/lib/labels'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
 
@@ -86,7 +86,7 @@ const subnetRef = (v: string, project: string, region: string) =>
 
 export function CreateAddress() {
   const [view] = useViewState()
-  const [params] = useSearchParams()
+  const [params] = useLatestSearchParams()
   const project = view.project ?? ''
   const id = useId()
   const navigate = useCarriedNavigate()

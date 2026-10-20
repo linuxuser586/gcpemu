@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Pause, Play, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import type { RequestEntry } from '@/api/admin'
 import { ApiError } from '@/api/errors'
@@ -14,6 +13,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { VirtualRows } from '@/components/VirtualRows'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { serviceName, SERVICES } from '@/lib/services'
 import { cn } from '@/lib/utils'
 
@@ -168,7 +168,7 @@ const TEXT_FILTERS = [
 
 /** RequestLog is the live, filterable tail of the Instance's Request log. */
 export function RequestLog() {
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   // The inputs lead the URL, which follows each keystroke.
   const [filters, setFilters] = useState<Filters>(() => ({
     service: search.get('service') ?? '',

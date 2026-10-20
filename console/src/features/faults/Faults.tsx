@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
@@ -20,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { serviceName, SERVICES } from '@/lib/services'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
@@ -146,7 +146,7 @@ export function Faults() {
   // The input owns the text while typing: a URL update is a navigation,
   // which lands after the next keystroke.
   const [text, setText] = useState(view.q ?? '')
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const qc = useQueryClient()
   const query = useQuery(faultsQuery())
   const clear = useMutation({

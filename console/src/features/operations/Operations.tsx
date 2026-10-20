@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, CircleCheck, CircleX, LoaderCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import type { Operation } from '@/api/admin'
 import { operationsQuery } from '@/api/queries'
@@ -19,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { serviceName, SERVICES } from '@/lib/services'
 import { useViewState } from '@/lib/viewState'
 
@@ -187,7 +187,7 @@ export function Operations() {
   // The input owns the text while typing: a URL update is a navigation,
   // which lands after the next keystroke.
   const [text, setText] = useState(view.q ?? '')
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const query = useQuery(operationsQuery(view.project))
   const service = search.get('service') ?? ''
   const status = (search.get('status') ?? '') as OperationState | ''
