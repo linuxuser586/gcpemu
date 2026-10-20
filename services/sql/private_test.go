@@ -204,14 +204,14 @@ func testPrivateIP(t *testing.T, psa string) {
 	}
 
 	// FR-INT-008: a workload on a VPC subnetwork (as a GKE node/pod is,
-	// default route via compute's gateway) reaches the private IP. The
-	// gateway relays it, and the instance sees an address of the VPC.
+	// default route via compute's NAT egress proxy) reaches the private IP.
+	// The proxy relays it, and the instance sees an address of the VPC.
 	sp := "projects/" + testProject + "/regions/us-central1/subnetworks/s"
 	subnet, err := vpc.SubnetNetwork(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gw, err := vpc.EgressGateway(ctx, sp)
+	gw, err := vpc.EgressProxy(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func testPrivateIP(t *testing.T, psa string) {
 
 // vpcWorkload starts a container holding an address of net, as a Managed
 // container would (aliased on a Translated network), with its default
-// route via the egress gateway via when set. It returns the address and
+// route via the NAT egress proxy at via when set. It returns the address and
 // the container.
 func vpcWorkload(t *testing.T, inst *emutest.Instance, vpc emu.VPC, net emu.SubnetNet, owner, via string) (string, string) {
 	t.Helper()

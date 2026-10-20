@@ -16,7 +16,7 @@ import (
 )
 
 // Cloud Routers and their Cloud NAT configurations (FR-NAT-001). Every
-// change re-programs the VPC's egress gateway (FR-NAT-002).
+// change re-programs the VPC's NAT egress proxy (FR-NAT-002).
 
 const (
 	nsRouters = "compute/routers"

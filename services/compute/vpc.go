@@ -35,11 +35,11 @@ import (
 // reused idempotently after a restart.
 //
 // The bridges are not --internal: Docker's internal-network rules drop
-// routed traffic, which would make the egress gateway impossible. Instead
+// routed traffic, which would make the NAT egress proxy impossible. Instead
 // they have IP masquerading disabled (so the host never NATs workload
 // traffic to the internet) and gateway mode nat-unprotected (so routing
-// through the egress gateway between VPC networks works). Workloads must
-// use EgressGateway as their default route.
+// through the NAT egress proxy between VPC networks works). Workloads must
+// use EgressProxy as their default route.
 
 const (
 	nsVPCNets = "compute/vpcnets"
@@ -218,7 +218,7 @@ func (s *Service) SubnetNetwork(ctx context.Context, subnetwork string) (emu.Sub
 	for _, sr := range sn.SecondaryIpRanges {
 		out.SecondaryRanges[sr.RangeName] = sr.IpCidrRange
 	}
-	s.attachIfGateway(ctx, np)
+	s.attachIfProxy(ctx, np)
 	return out, nil
 }
 
@@ -257,7 +257,7 @@ func (s *Service) PrivateServicesNetwork(ctx context.Context, network string) (e
 	if err != nil {
 		return emu.SubnetNet{}, err
 	}
-	s.attachIfGateway(ctx, np)
+	s.attachIfProxy(ctx, np)
 	return st.subnetNet(), nil
 }
 
@@ -492,8 +492,8 @@ func stateOf(tx store.Tx, net emu.SubnetNet) (*vpcNet, string) {
 // AllocateIP implements emu.VPC: it reserves the lowest free address of
 // the network's address range (the Declared range unless the network fell
 // back without translation) for owner, skipping the network and gateway
-// addresses, GCP's reserved second-to-last address (where the egress
-// gateway lives) and the broadcast address, plus internal addresses
+// addresses, GCP's reserved second-to-last address (where the NAT egress
+// proxy lives) and the broadcast address, plus internal addresses
 // reserved through the compute API, and addresses held on the container
 // network by containers compute did not allocate for (#146), such as
 // ones the emulator does not manage, which join with an address the
@@ -657,7 +657,7 @@ func firstOwner(tx store.Tx, name string) string {
 
 // releaseNetworkRuntime removes the container networks of deleted
 // subnetworks / PSA ranges (keys) and, when np is a deleted VPC network,
-// its egress gateway. It never initialises the runtime itself.
+// its NAT egress proxy. It never initialises the runtime itself.
 func (s *Service) releaseNetworkRuntime(ctx context.Context, np string, keys []string) {
 	var states []*vpcNet
 	var hosts []*hostAttachment
@@ -687,7 +687,7 @@ func (s *Service) releaseNetworkRuntime(ctx context.Context, np string, keys []s
 	})
 	s.withdrawAll(ctx, hosts)
 	if np != "" {
-		s.removeGateway(ctx, np)
+		s.removeProxy(ctx, np)
 	}
 	if len(states) == 0 {
 		return
@@ -697,7 +697,7 @@ func (s *Service) releaseNetworkRuntime(ctx context.Context, np string, keys []s
 		return
 	}
 	for _, st := range states {
-		if g := s.gatewayFor(st.Network); g != nil {
+		if g := s.proxyFor(st.Network); g != nil {
 			g.detach(ctx, st.Name)
 		}
 		if err := rt.RemoveNetwork(ctx, st.Name); err != nil {

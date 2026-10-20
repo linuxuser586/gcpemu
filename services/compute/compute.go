@@ -8,7 +8,7 @@
 // ranges to a VPC.
 //
 // It also implements emu.VPC: subnetworks are realised as container
-// networks so workload addresses are real, and a per-VPC egress gateway
+// networks so workload addresses are real, and a per-VPC NAT egress proxy
 // container forwards traffic to the internet only while a Cloud NAT covers
 // the source subnetwork (FR-NAT-002..005).
 package compute
@@ -65,11 +65,11 @@ type Service struct {
 	// restoring is the restore of its Offered ports at start.
 	hostMu    sync.Mutex
 	restoring sync.WaitGroup
-	// egress holds the NAT egress gateways by VPC network path.
+	// egress holds the NAT egress proxies by VPC network path.
 	egMu   sync.Mutex
-	egress map[string]*gateway
+	egress map[string]*egressProxy
 	// pubVia and pubIPs are the load balancer's public routes
-	// (RoutePublic), programmed into every gateway.
+	// (RoutePublic), programmed into every NAT egress proxy.
 	pubMu  sync.Mutex
 	pubVia string
 	pubIPs []string
@@ -99,7 +99,7 @@ func New(env *emu.Env) emu.Service {
 		lastOp:  map[string]chan struct{}{},
 		stopped: make(chan struct{}),
 		halt:    make(chan struct{}),
-		egress:  map[string]*gateway{},
+		egress:  map[string]*egressProxy{},
 	}
 	s.lro = lro.NewManager(env, "compute")
 	s.sink = &sinkServer{token: randomToken()}
@@ -128,7 +128,7 @@ func (s *Service) Register(r emu.Router) error {
 }
 
 // Start fails operations interrupted by a previous run. Container networks
-// and the egress gateway are (re)created lazily when workloads ask for
+// and the NAT egress proxy are (re)created lazily when workloads ask for
 // them, except those of subnetworks with Offered ports, which are served
 // again in the background.
 func (s *Service) Start(ctx context.Context) error {
@@ -166,7 +166,7 @@ func (s *Service) Stop(ctx context.Context) error {
 	s.lro.Close()
 	s.egMu.Lock()
 	gws := s.egress
-	s.egress = map[string]*gateway{}
+	s.egress = map[string]*egressProxy{}
 	s.egMu.Unlock()
 	for _, g := range gws {
 		g.stop()
@@ -187,7 +187,7 @@ func (s *Service) ResourceCounts() map[string]int {
 }
 
 // Reset drops pending operations and waits, bounded by ctx, for those
-// already running (#301). It then removes the NAT egress gateways (their
+// already running (#301). It then removes the NAT egress proxies (their
 // state is wiped with the store); workload containers and networks belong
 // to their owners and the core.
 func (s *Service) Reset(ctx context.Context) error {
@@ -202,7 +202,7 @@ func (s *Service) Reset(ctx context.Context) error {
 	}
 	s.egMu.Unlock()
 	for _, np := range nets {
-		s.removeGateway(ctx, np)
+		s.removeProxy(ctx, np)
 	}
 	return err
 }

@@ -124,7 +124,7 @@ func manualNatIP(t *testing.T, s *Service) func(*computev1.RouterNat) {
 	}
 }
 
-// TestNatRulesPortBlocks is FR-NAT-003 in the gateway: each workload is
+// TestNatRulesPortBlocks is FR-NAT-003 in the proxy: each workload is
 // translated onto its own port block, endpoint-independent mapping caps
 // its concurrent connections at the block, dynamic port allocation lets
 // it grow to maxPortsPerVm, and a workload left without ports is dropped.
@@ -178,7 +178,7 @@ func TestNatRulesPortBlocks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := natTestService(t, nil)
 			setNat(t, s, tc.nat(s))
-			g := &gateway{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
+			g := &egressProxy{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
 			rules, err := s.natRules(g, s.netsOf(tNet))
 			if err != nil {
 				t.Fatal(err)

@@ -1027,7 +1027,7 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 	if s.env.CA != nil {
 		cfg.CA = string(s.env.CA.PEM())
 	}
-	egw, err := d.vpc.EgressGateway(ctx, rec.Int.Subnetwork)
+	egw, err := d.vpc.EgressProxy(ctx, rec.Int.Subnetwork)
 	if err != nil {
 		egw = ""
 	}

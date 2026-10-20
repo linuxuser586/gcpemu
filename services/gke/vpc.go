@@ -153,7 +153,7 @@ func (l *localVPC) ReleaseIP(ctx context.Context, sn emu.SubnetNet, owner string
 	return nil
 }
 
-func (l *localVPC) EgressGateway(ctx context.Context, subnetwork string) (string, error) {
+func (l *localVPC) EgressProxy(ctx context.Context, subnetwork string) (string, error) {
 	return "", apierr.FailedPrecondition("Cloud NAT needs the compute service")
 }
 
