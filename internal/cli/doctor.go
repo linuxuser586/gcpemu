@@ -623,7 +623,8 @@ func checkRuntimeTrust(out io.Writer, h trustHost, instance string, pemBytes []b
 // the CA, and containerd's (h.etc's containerd exists) when each host's
 // hosts.toml names the shared CA file and that file matches; a
 // hosts.toml gcpemu did not write, which `ca install` skips, gets the
-// manual fix by name.
+// manual fix by name. With containerd it also says whether Kubernetes
+// (CRI) pulls read those hosts.toml files (checkCRIConfigPath).
 func checkLinuxRuntimeTrust(out io.Writer, h trustHost, instance string, pemBytes []byte) {
 	etc := h.etc
 	if etc == "" {
@@ -675,6 +676,7 @@ func checkLinuxRuntimeTrust(out io.Writer, h trustHost, instance string, pemByte
 			}
 			fmt.Fprintf(out, "[--  ] Instance CA not trusted by containerd for %d of %d registry hosts (%s)\n", missing, len(hosts), strings.Join(fixes, "; "))
 		}
+		writeCRICheck(out, checkCRIConfigPath(h), etc, true)
 	}
 }
 

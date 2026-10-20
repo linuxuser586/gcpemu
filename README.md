@@ -619,7 +619,12 @@ gcpemu hosts | sudo tee -a /etc/hosts
 Then trust the CA with `gcpemu ca install`. On Linux and macOS it goes in the system trust store;
 on Linux it also goes in Docker's and containerd's per-registry trust for every
 `LOCATION-docker.pkg.dev`, and, with `certutil` (`libnss3-tools`), in the browser NSS databases:
-Chrome's `~/.pki/nssdb` and every native, snap and flatpak Firefox profile. Colima and Podman
+Chrome's `~/.pki/nssdb` and every native, snap and flatpak Firefox profile. containerd's trust is a
+`/etc/containerd/certs.d/HOST/hosts.toml` file. A kubelet on the host pulls through containerd's
+CRI, which reads it only when CRI's `config_path` includes that folder, which by default is so only
+from containerd 2.2. Otherwise `ca install` and `gcpemu doctor` print the `config.toml` change to
+make, followed by `sudo systemctl restart containerd`. Emulated GKE clusters are not affected:
+their nodes pull with their own registry settings. Colima and Podman
 machine keep their own registry trust inside their VM, so for them `ca install` prints the
 command to run there; Docker Desktop and OrbStack use the macOS keychain. Docker Desktop reads
 it only when it starts, so `ca install` and `ca uninstall` tell you to restart it. On Windows it
