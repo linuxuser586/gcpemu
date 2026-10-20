@@ -73,6 +73,7 @@ beforeEach(() => {
       res('targetHttpProxies', 'web-proxy', { urlMap: link('global/urlMaps/web-map') }),
     ],
     targetHttpsProxies: [],
+    targetSslProxies: [],
     urlMaps: [
       res('urlMaps', 'web-map', {
         defaultService: link('global/backendBuckets/static'),
@@ -162,8 +163,8 @@ beforeEach(() => {
       }
       return HttpResponse.json({ items: { global: { [coll]: state[coll] ?? [] } } })
     }),
-    http.get(`${API}/global/backendBuckets`, () =>
-      HttpResponse.json({ items: state.backendBuckets }),
+    http.get(`${API}/global/:coll`, ({ params }) =>
+      HttpResponse.json({ items: state[params.coll as string] ?? [] }),
     ),
     http.get(`${API}/:scope/:coll/:name`, ({ params }) => {
       const r = find(params.coll as string, params.name as string)
@@ -421,6 +422,188 @@ describe('certificate maps', () => {
       ),
     )
     expect(within(picker).getByRole('option', { name: 'other/shared' })).toBeInTheDocument()
+  })
+})
+
+describe('target SSL proxies', () => {
+  const RECORDED =
+    'Recorded: stored and returned. A forwarding rule that targets this proxy carries no Data plane traffic; the emulator’s load balancer proxies HTTP and HTTPS only.'
+  const proxy = (over: Partial<Resource> = {}) =>
+    res('targetSslProxies', 'ssl', {
+      service: link('global/backendServices/tcp'),
+      sslCertificates: [link('global/sslCertificates/managed')],
+      proxyHeader: 'NONE',
+      ...over,
+    })
+  /** failing is the set* method the fake refuses. */
+  let failing: string
+
+  beforeEach(() => {
+    failing = ''
+    fake.info.services = ['iam', 'compute', 'lb', 'certs']
+    state.backendServices!.push(
+      res('backendServices', 'tcp', { protocol: 'TCP' }),
+      res('backendServices', 'tls', { protocol: 'SSL' }),
+    )
+    server.use(
+      http.get(`*/certificatemanager/v1/projects/${P}/locations/global/certificateMaps`, () =>
+        HttpResponse.json({
+          certificateMaps: [{ name: `projects/${P}/locations/global/certificateMaps/main` }],
+        }),
+      ),
+      http.post(`${API}/global/targetSslProxies/:name/:method`, async ({ request, params }) => {
+        const body = await record(request)
+        if (params.method === failing) {
+          return HttpResponse.json(
+            { error: { code: 400, message: `${failing} refused` } },
+            { status: 400 },
+          )
+        }
+        // The fake applies the call, so that a reload shows it.
+        state.targetSslProxies = state.targetSslProxies!.map((p) =>
+          p.name === params.name ? { ...p, ...body } : p,
+        )
+        return HttpResponse.json(op)
+      }),
+    )
+  })
+
+  it('lists the Project’s global target SSL proxies, with the Recorded note', async () => {
+    state.targetSslProxies = [proxy()]
+    renderApp(`/lb/targetSslProxies?project=${P}`)
+    const table = await screen.findByRole('table', { name: 'SSL proxies' })
+    const [row] = within(table).getAllByTestId('resource')
+    expect(row).toHaveTextContent(/ssl.*global.*tcp.*managed.*NONE/)
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    expect(screen.queryByLabelText('Scope')).not.toBeInTheDocument()
+  })
+
+  it('creates one with a certificate map, offering TCP and SSL backend services only', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/targetSslProxies?project=${P}`)
+    await user.type(await screen.findByLabelText('Name'), 'ssl')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    expect(screen.queryByLabelText('Region')).not.toBeInTheDocument()
+    const service = screen.getByLabelText('Backend service')
+    await waitFor(() => expect(within(service).getAllByRole('option')).toHaveLength(3))
+    expect(within(service).queryByRole('option', { name: 'api' })).not.toBeInTheDocument()
+    await user.selectOptions(service, 'tcp')
+
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(
+      await screen.findByText(/At least one SSL certificate or a certificate map/),
+    ).toBeVisible()
+    expect(requests).toHaveLength(0)
+
+    const picker = screen.getByLabelText('Certificate map')
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(2))
+    await user.selectOptions(picker, 'main')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetSslProxies/ssl'),
+    )
+    expect(requests).toEqual([
+      {
+        method: 'POST',
+        path: `/compute/v1/projects/${P}/global/targetSslProxies`,
+        body: {
+          name: 'ssl',
+          service: `projects/${P}/global/backendServices/tcp`,
+          certificateMap: `${CM}/main`,
+          proxyHeader: 'NONE',
+        },
+      },
+    ])
+  })
+
+  it('links its backend service, certificates, SSL policy and certificate map', async () => {
+    state.targetSslProxies = [
+      proxy({ sslPolicy: link('global/sslPolicies/modern'), certificateMap: `${CM}/main` }),
+    ]
+    renderApp(`/lb/global/targetSslProxies/ssl?project=${P}`)
+    const details = await screen.findByLabelText('target SSL proxy details')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    for (const [name, href] of [
+      ['tcp', `/lb/global/backendServices/tcp?project=${P}`],
+      ['managed', `/lb/global/sslCertificates/managed?project=${P}`],
+      ['modern', `/lb/global/sslPolicies/modern?project=${P}`],
+      ['main', `/certs/locations/global/certificateMaps/main?project=${P}`],
+    ]) {
+      expect(within(details).getByRole('link', { name })).toHaveAttribute('href', href)
+    }
+  })
+
+  it('edits through set* methods, setting the map before clearing the certificates', async () => {
+    state.targetSslProxies = [proxy({ description: 'kept' })]
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/global/targetSslProxies/ssl/edit?project=${P}`)
+    const picker = await screen.findByLabelText('Certificate map')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Description')).not.toBeInTheDocument()
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(2))
+    await user.selectOptions(picker, 'main')
+    await user.deselectOptions(screen.getByLabelText('SSL certificates'), 'managed')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetSslProxies/ssl'),
+    )
+    const base = `/compute/v1/projects/${P}/global/targetSslProxies/ssl`
+    expect(requests).toEqual([
+      { method: 'POST', path: `${base}/setCertificateMap`, body: { certificateMap: `${CM}/main` } },
+      { method: 'POST', path: `${base}/setSslCertificates`, body: { sslCertificates: [] } },
+    ])
+  })
+
+  it('stops at a failed set* call, shows its error and reloads the proxy', async () => {
+    state.targetSslProxies = [proxy()]
+    failing = 'setCertificateMap'
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/global/targetSslProxies/ssl/edit?project=${P}`)
+    const picker = await screen.findByLabelText('Certificate map')
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(2))
+    await user.selectOptions(screen.getByLabelText('Proxy header'), 'PROXY_V1')
+    await user.selectOptions(picker, 'main')
+    await user.deselectOptions(screen.getByLabelText('SSL certificates'), 'managed')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('setCertificateMap refused')).toBeVisible()
+    expect(requests.map((r) => r.path.split('/').pop())).toEqual([
+      'setProxyHeader',
+      'setCertificateMap',
+    ])
+    // The form shows what was applied: the proxy header, not the map.
+    await waitFor(() => expect(screen.getByLabelText('Certificate map')).toHaveValue(''))
+    expect(screen.getByLabelText('Proxy header')).toHaveValue('PROXY_V1')
+    expect(router.state.location.pathname).toBe('/lb/global/targetSslProxies/ssl/edit')
+  })
+
+  it('is a target of global forwarding rules only, whose page shows the Recorded note', async () => {
+    state.targetSslProxies = [proxy()]
+    state.forwardingRules!.push(
+      res('forwardingRules', 'tls', {
+        IPAddress: '34.120.0.2',
+        portRange: '443-443',
+        target: link('global/targetSslProxies/ssl'),
+      }),
+    )
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/forwardingRules?project=${P}`)
+    const target = await screen.findByLabelText('Target proxy')
+    expect(
+      await within(target).findByRole('option', { name: 'ssl (target SSL proxy)' }),
+    ).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Region'), 'us-east1')
+    expect(
+      within(screen.getByLabelText('Target proxy')).queryByRole('option', {
+        name: 'ssl (target SSL proxy)',
+      }),
+    ).not.toBeInTheDocument()
+
+    await act(() => router.navigate(`/lb/global/forwardingRules/tls?project=${P}`))
+    expect(await screen.findByRole('note')).toHaveTextContent(RECORDED)
+    await act(() => router.navigate(`/lb/global/forwardingRules/web?project=${P}`))
+    await screen.findByRole('region', { name: 'Local listener' })
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
   })
 })
 
@@ -774,6 +957,69 @@ describe('Copy as', () => {
     )
     expect(r.gcloud).toEqual([expect.stringContaining(`--server-tls-policy=${policy}`)])
     expect(r.tofu).toContain(`server_tls_policy = "//networksecurity.googleapis.com/${policy}"`)
+  })
+
+  it('copies a target SSL proxy with its backend service, certificates and proxy header', () => {
+    const r = recipeFor(
+      ref('targetSslProxies'),
+      res('targetSslProxies', 'ssl', {
+        kind: 'compute#targetSslProxy',
+        description: 'TLS to TCP',
+        service: link('global/backendServices/tcp'),
+        sslCertificates: [link('global/sslCertificates/a'), link('global/sslCertificates/b')],
+        proxyHeader: 'PROXY_V1',
+        sslPolicy: link('global/sslPolicies/modern'),
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute target-ssl-proxies create ssl \\',
+        `    --project=${P} \\`,
+        '    --backend-service=tcp \\',
+        '    --ssl-certificates=a,b \\',
+        '    --ssl-policy=modern \\',
+        '    --proxy-header=PROXY_V1 \\',
+        "    --description='TLS to TCP'",
+      ].join('\n'),
+    ])
+    expect(r.rest).toEqual({
+      method: 'POST',
+      path: `/compute/v1/projects/${P}/global/targetSslProxies`,
+      body: {
+        name: 'ssl',
+        description: 'TLS to TCP',
+        service: `projects/${P}/global/backendServices/tcp`,
+        sslCertificates: [
+          `projects/${P}/global/sslCertificates/a`,
+          `projects/${P}/global/sslCertificates/b`,
+        ],
+        proxyHeader: 'PROXY_V1',
+        sslPolicy: `projects/${P}/global/sslPolicies/modern`,
+      },
+    })
+    expect(r.tofu).toContain('resource "google_compute_target_ssl_proxy" "ssl"')
+    expect(r.tofu).toContain(`backend_service = "projects/${P}/global/backendServices/tcp"`)
+    expect(r.tofu).toContain('proxy_header    = "PROXY_V1"')
+  })
+
+  it('copies a target SSL proxy that uses a certificate map', () => {
+    const map = `projects/${P}/locations/global/certificateMaps/main`
+    const r = recipeFor(
+      ref('targetSslProxies'),
+      res('targetSslProxies', 'ssl', {
+        service: link('global/backendServices/tcp'),
+        certificateMap: `//certificatemanager.googleapis.com/${map}`,
+        proxyHeader: 'NONE',
+      }),
+    )
+    expect(r.gcloud).toEqual([
+      [
+        'gcloud compute target-ssl-proxies create ssl \\',
+        `    --project=${P} \\`,
+        '    --backend-service=tcp \\',
+        `    --certificate-map=${map}`,
+      ].join('\n'),
+    ])
   })
 
   it('copies a global forwarding rule with a reserved address and labels', () => {
