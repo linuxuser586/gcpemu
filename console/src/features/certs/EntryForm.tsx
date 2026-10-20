@@ -56,7 +56,7 @@ const strs = (v: unknown) => (Array.isArray(v) ? v.map(str).filter(Boolean) : []
 const MAX_CERTS = 4
 
 /** normalHostname is a hostname as the API stores it. */
-export const normalHostname = (h: string) => h.trim().toLowerCase().replace(/\.$/, '')
+export const normalHostname = (h: string) => h.toLowerCase().replace(/\.$/, '')
 
 const certificatesSchema = z.array(z.string()).superRefine((v, ctx) => {
   if (v.length === 0) ctx.addIssue({ code: 'custom', message: 'Field certificates is required.' })
