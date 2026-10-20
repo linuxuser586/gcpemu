@@ -173,7 +173,7 @@ func TestDeterministicIgnoresWallTime(t *testing.T) {
 func TestDeterministicStepsPerAPIRequest(t *testing.T) {
 	type op struct{ InsertTime string }
 	run := func(between func(gw string)) (first, second op) {
-		inst := emutest.Start(t, []string{"compute"}, emutest.WithDeterministic())
+		inst := emutest.Start(t, []string{"compute"}, emutest.WithDeterministic(), emutest.WithConsole())
 		gw := inst.GatewayURL()
 		insert := func(name string) (o op) {
 			b := call(t, "POST", gw+"/compute/v1/projects/det-proj/global/networks", `{"name":"`+name+`","autoCreateSubnetworks":false}`)
