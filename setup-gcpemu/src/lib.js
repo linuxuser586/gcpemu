@@ -168,3 +168,58 @@ export function cacheableImages(containerImages, localImages, before = []) {
   }
   return [...set].sort()
 }
+
+// signerIdentity is the Sigstore certificate identity a Signed release's
+// SHA256SUMS bundle must carry (NFR-SEC-005): this repository's release
+// workflow at that same tag, issued by GitHub Actions. sigstore-js tests
+// the identity as an unanchored regexp, so pattern is the URI escaped and
+// anchored.
+export function signerIdentity(tag) {
+  const uri = `https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/${tag}`
+  return {
+    uri,
+    pattern: `^${uri.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}$`,
+    issuer: 'https://token.actions.githubusercontent.com',
+  }
+}
+
+// compareTags orders two vX.Y.Z[-pre][+build] tags by semver precedence:
+// negative, zero or positive. A prerelease sorts before its release.
+export function compareTags(a, b) {
+  const pa = semver(a)
+  const pb = semver(b)
+  for (let i = 0; i < 3; i++) if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
+  if (!pa.pre.length || !pb.pre.length) return pb.pre.length - pa.pre.length
+  for (let i = 0; i < Math.min(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i]
+    const y = pb.pre[i]
+    if (x === y) continue
+    const nx = /^\d+$/.test(x)
+    const ny = /^\d+$/.test(y)
+    if (nx && ny) return Number(x) - Number(y)
+    if (nx !== ny) return nx ? -1 : 1
+    return x < y ? -1 : 1
+  }
+  return pa.pre.length - pb.pre.length
+}
+
+function semver(tag) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(tag)
+  if (!m) throw new Error(`"${tag}" is not a semver tag (vX.Y.Z)`)
+  return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ? m[4].split('.') : [] }
+}
+
+// firstSignedRelease is the first Signed release: every release from it on
+// publishes SHA256SUMS.sigstore.json.
+export const firstSignedRelease = 'v0.10.0'
+
+// missingBundle decides what a release without a SHA256SUMS bundle gets:
+// "warn" before the first Signed release, "fail" from it on, and "fail"
+// for a tag that is not semver, which cannot be placed before it.
+export function missingBundle(tag) {
+  try {
+    return compareTags(tag, firstSignedRelease) < 0 ? 'warn' : 'fail'
+  } catch {
+    return 'fail'
+  }
+}

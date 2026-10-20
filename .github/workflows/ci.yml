@@ -328,6 +328,7 @@ jobs:
         with:
           version: v0.0.0-selftest
           download-url: http://127.0.0.1:8765
+          verify-signature: false # the local mirror has no Sigstore bundle
           cache: false # #340: a new binary every commit can only miss
           services: gcs,pubsub,sql
           seed: setup-gcpemu/test/seed.yaml
@@ -352,6 +353,17 @@ jobs:
           services: pubsub
           artifact-name: gcpemu-selftest-second-${{ runner.arch }}
       - run: test "$GCPEMU_INSTANCE" = second && gcpemu status | grep -q 'instance second'
+      # NFR-SEC-005: the action from this checkout against the real latest
+      # release, with signature verification on. Until the first Signed
+      # release ships this takes the "unsigned release" warning branch.
+      - uses: ./setup-gcpemu
+        id: release
+        with:
+          version: latest
+          instance: release
+          services: pubsub
+          artifact-name: gcpemu-selftest-release-${{ runner.arch }}
+      - run: test -n "${{ steps.release.outputs.version }}" && test "$GCPEMU_INSTANCE" = release
 
   action-artifacts:
     needs: action
@@ -446,6 +458,7 @@ jobs:
         with:
           version: v0.0.0-selftest
           download-url: http://127.0.0.1:8765
+          verify-signature: false # the local mirror has no Sigstore bundle
           cache: false # #340: a new binary every commit can only miss
           services: gcs,pubsub
           seed: setup-gcpemu/test/seed-in-process.yaml
