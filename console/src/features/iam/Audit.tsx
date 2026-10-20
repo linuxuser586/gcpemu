@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircleCheck, KeyRound, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { infoQuery } from '@/api/queries'
 import { Link } from '@/components/Link'
@@ -20,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { serviceName } from '@/lib/services'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
@@ -51,7 +51,7 @@ export function Audit() {
   const [view, setView] = useViewState()
   const project = view.project ?? ''
   const [text, setText] = useState(view.q ?? '')
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const status = (search.get('status') ?? '') as DenialStatus | ''
   const qc = useQueryClient()
   const { data: info } = useQuery(infoQuery())

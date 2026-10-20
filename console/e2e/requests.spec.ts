@@ -65,6 +65,9 @@ test('tails the Request log live, filters it and expands a request to its bodies
   await expect(rows).toHaveCount(1)
 
   // The filters survive a reload, and the log is read back from the Instance.
+  // The URL holds what the inputs show, including the cleared Status (#529).
+  await expect(page).toHaveURL(/[?&]method=patch(&|$)/)
+  expect(page.url()).not.toContain('status=')
   await page.reload()
   await expect(page.getByRole('searchbox', { name: 'Method' })).toHaveValue('patch')
   await expect(rows).toHaveCount(1)

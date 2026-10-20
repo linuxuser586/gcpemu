@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useId } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
-import { useSearchParams } from 'react-router'
 import { z } from 'zod'
 
 import { useCarriedNavigate } from '@/components/Link'
@@ -12,6 +11,7 @@ import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 import { useViewState } from '@/lib/viewState'
 
@@ -104,7 +104,7 @@ const hopRef = (kind: Hop, v: string, project: string) =>
 
 export function CreateRoute() {
   const [view] = useViewState()
-  const [params] = useSearchParams()
+  const [params] = useLatestSearchParams()
   const project = view.project ?? ''
   const id = useId()
   const navigate = useCarriedNavigate()

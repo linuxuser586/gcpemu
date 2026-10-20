@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Pause, Play } from 'lucide-react'
 import { Fragment, useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import type { RequestEntry } from '@/api/admin'
 import { requestsQuery } from '@/api/queries'
@@ -19,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { useViewState } from '@/lib/viewState'
 
 import type { LbTrace } from './api'
@@ -119,7 +119,7 @@ function Details({ e }: { e: Traced }) {
 export function Traffic() {
   const [view] = useViewState()
   const project = view.project ?? ''
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   // The inputs lead the URL, which follows each keystroke.
   const [host, setHost] = useState(search.get('host') ?? '')
   const [path, setPath] = useState(search.get('path') ?? '')

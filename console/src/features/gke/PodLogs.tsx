@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { useParams } from 'react-router'
 
 import { Link } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { Card } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/native-select'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 
 import { kubeQuery, podLogQuery, type KubePod } from './api'
 import { podStatus, StatusBadge } from './format'
@@ -21,7 +22,7 @@ export const TAIL_CHOICES = [100, 500, 2000] as const
 export function PodLogs() {
   const ref = useClusterRef()
   const { namespace = '', pod = '' } = useParams()
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const podQuery = useQuery(kubeQuery<KubePod>(ref, `/api/v1/namespaces/${namespace}/pods/${pod}`))
   const containers = podQuery.data?.spec?.containers.map((c) => c.name) ?? []
   const container = search.get('container') ?? containers[0] ?? ''
