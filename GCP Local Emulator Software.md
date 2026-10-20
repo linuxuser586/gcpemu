@@ -490,7 +490,7 @@ The compatibility bar is the client, not the spec: a requirement is met when the
 | IF-004 | `kubectl`, Helm, `istioctl` | Kubeconfig from `get-credentials` | Standard cluster operations | M |
 | IF-005 | Docker, Podman, `crane`, `ko` | Registry host from `gcpemu env`; credential helper | Push and pull multi-arch images | M |
 | IF-006 | `psql`, pgx, Cloud SQL Auth Proxy v2 | Host port, or proxy pointed at the emulator | Connect, IAM auth | M |
-| IF-007 | `gsutil`/`gcloud storage`, S3 clients via XML API | Endpoint override | Copy, sync, signed URLs | S |
+| IF-007 | `gcloud storage`, S3 clients via XML API | Endpoint override | Copy, sync, signed URLs | S |
 | IF-008 | Client libraries in Node, Python, Java | Endpoint override / emulator env vars | Storage and Pub/Sub at minimum | S |
 | IF-009 | `dig`, browsers, `curl` | Emulated DNS port; local CA trusted | Name resolution and HTTPS through the LB | M |
 
