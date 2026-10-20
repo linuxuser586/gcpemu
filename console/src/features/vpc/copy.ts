@@ -1,13 +1,25 @@
 import { block, gcloud, keyValues, omit, resource, type Recipe } from '@/lib/copyAs'
 
 import { lastSeg, relPath } from '../lb/api'
-import type { Address, Firewall, Network, Route, Subnetwork } from './api'
+import {
+  PSA_SERVICE,
+  type Address,
+  type Connection,
+  type Firewall,
+  type Network,
+  type NetworkPeering,
+  type Route,
+  type Subnetwork,
+} from './api'
 import { formatRules } from './form'
 
 // Copy as (FR-UI-015) for the VPC view's resources: gcloud compute
 // networks (subnets) create, firewall-rules create, routes create and
-// addresses create, the compute/v1 requests, and the google_compute_network,
-// _subnetwork, _firewall, _route, _address and _global_address resources.
+// addresses create, networks peerings create and services vpc-peerings
+// connect; the compute/v1 and servicenetworking/v1 requests; and the
+// google_compute_network, _subnetwork, _firewall, _route, _address,
+// _global_address and _network_peering resources and
+// google_service_networking_connection.
 
 const API = '/compute/v1/'
 
@@ -254,6 +266,74 @@ export function routeRecipe(r: Route, project: string): Recipe {
       next_hop_ilb: hop(r.nextHopIlb),
       next_hop_vpn_tunnel: hop(r.nextHopVpnTunnel),
       tags: r.tags,
+    }),
+  }
+}
+
+/** projectOf is the Project a resource path names. */
+const projectOf = (link?: string) => /^projects\/([^/]+)\//.exec(relPath(link))?.[1]
+
+/** peeringRecipe copies a peering of network (a name in project). */
+export function peeringRecipe(p: NetworkPeering, network: string, project: string): Recipe {
+  const peerProject = projectOf(p.network)
+  return {
+    gcloud: gcloud(['compute', 'networks', 'peerings', 'create', p.name], {
+      project,
+      network,
+      'peer-network': lastSeg(p.network),
+      'peer-project': peerProject !== project ? peerProject : undefined,
+      'import-custom-routes': p.importCustomRoutes,
+      'export-custom-routes': p.exportCustomRoutes,
+      'import-subnet-routes-with-public-ip': p.importSubnetRoutesWithPublicIp,
+      // Exporting them is gcloud's default.
+      'no-export-subnet-routes-with-public-ip': p.exportSubnetRoutesWithPublicIp === false,
+      'stack-type': p.stackType,
+    }),
+    rest: {
+      method: 'POST',
+      path: `${API}projects/${project}/global/networks/${network}/addPeering`,
+      body: {
+        networkPeering: {
+          ...omit(p, ['state', 'stateDetails', 'autoCreateRoutes', 'peerMtu', 'connectionStatus']),
+          network: relPath(p.network),
+        },
+      },
+    },
+    tofu: resource('google_compute_network_peering', p.name, {
+      name: p.name,
+      network: `projects/${project}/global/networks/${network}`,
+      peer_network: relPath(p.network),
+      export_custom_routes: p.exportCustomRoutes,
+      import_custom_routes: p.importCustomRoutes,
+      export_subnet_routes_with_public_ip: p.exportSubnetRoutesWithPublicIp,
+      import_subnet_routes_with_public_ip: p.importSubnetRoutesWithPublicIp,
+      stack_type: p.stackType,
+    }),
+  }
+}
+
+/**
+ * connectionRecipe copies network's private services access connection.
+ * The API names the network by Project number; the copy names it by ID.
+ */
+export function connectionRecipe(c: Connection, network: string, project: string): Recipe {
+  const path = `projects/${project}/global/networks/${network}`
+  return {
+    gcloud: gcloud(['services', 'vpc-peerings', 'connect'], {
+      project,
+      service: PSA_SERVICE,
+      network,
+      ranges: c.reservedPeeringRanges,
+    }),
+    rest: {
+      method: 'POST',
+      path: `/servicenetworking/v1/services/${PSA_SERVICE}/connections`,
+      body: { network: path, reservedPeeringRanges: c.reservedPeeringRanges },
+    },
+    tofu: resource('google_service_networking_connection', network, {
+      network: path,
+      service: PSA_SERVICE,
+      reserved_peering_ranges: c.reservedPeeringRanges,
     }),
   }
 }

@@ -16,7 +16,7 @@ import {
 
 import { lastSeg } from '../lb/api'
 import { containerNetworksQuery, type ContainerNetwork, type SubnetRef, subnetPath } from './api'
-import { SubnetLink } from './links'
+import { AddressLink, SubnetLink } from './links'
 
 // VPC container networks (CONTEXT.md): the container network behind each
 // subnetwork and private services access allocation. No GCP API has
@@ -179,7 +179,7 @@ export function ContainerNetworkSummary({
                     <SubnetLink region={cn.region ?? ''} name={lastSeg(cn.subnetwork)} />
                   ) : (
                     <span className="flex flex-col">
-                      <span className="font-mono">{lastSeg(cn.allocation)}</span>
+                      <AddressLink region="" name={lastSeg(cn.allocation)} />
                       <span className="text-xs text-muted-foreground">Private services access</span>
                     </span>
                   )}

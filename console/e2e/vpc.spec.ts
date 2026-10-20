@@ -4,8 +4,9 @@ import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The VPC network view (SRS 4.8.3, FR-UI-011) against the Instance's
 // compute Service: a custom mode network and a subnetwork, a network's
-// firewall rules and routes, and addresses, are created, edited and
-// deleted in the console, through the public compute API.
+// firewall rules, routes and peerings, addresses, and a private services
+// access connection are created, edited and deleted in the console,
+// through the public compute and servicenetworking APIs.
 // A subnetwork's VPC container network needs a container runtime, so that
 // test skips without one.
 
@@ -280,6 +281,85 @@ test('VPC network: reserve and release a regional external and a global address'
     await page.getByRole('dialog').getByRole('button', { name: 'Release address' }).click()
     await expect(page).toHaveURL(new RegExp(`/console/compute/addresses\\?project=${id}$`))
   }
+  await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
+
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('VPC network: peer two networks; allocate a private services access range and connect it', async ({
+  page,
+  request,
+  browserName,
+  requests,
+}, testInfo) => {
+  // Seven compute and servicenetworking Operations of 2 s each (--lro-latency), and the pages between them.
+  test.setTimeout(3 * 60_000)
+  const id = projectId(`e2e-vpcpeer${testInfo.retry}`, browserName)
+  for (const name of ['main', 'hub']) {
+    await compute(request, 'POST', `projects/${id}/global/networks`, {
+      name,
+      autoCreateSubnetworks: false,
+    })
+  }
+  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  await expect(page.getByText('No peerings in this network.')).toBeVisible()
+
+  // Peer main with hub; it is active once hub peers back.
+  await page.getByRole('link', { name: 'Add peering' }).click()
+  await expect(page).toHaveURL(/\/networks\/main\/add-peering\?/)
+  await page.getByLabel('Name').fill('main-to-hub')
+  await page.getByRole('combobox', { name: 'Peer network' }).fill('hub')
+  await page.getByLabel('Import custom routes').check()
+  await page.getByRole('button', { name: 'Add' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/compute/global/networks/main\\?project=${id}$`))
+  const peering = page.getByRole('table', { name: 'Peerings' }).getByTestId('peering')
+  await expect(peering).toContainText('INACTIVE')
+  await expect(peering).toContainText('Import')
+  await compute(request, 'POST', `projects/${id}/global/networks/hub/addPeering`, {
+    networkPeering: { name: 'hub-to-main', network: `projects/${id}/global/networks/main` },
+  })
+  await page.reload()
+  await expect(peering).toContainText('ACTIVE')
+  await expect(peering).not.toContainText('INACTIVE')
+
+  // Remove it.
+  await peering.getByRole('button', { name: 'Remove peering main-to-hub' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Remove peering' }).click()
+  await expect(page.getByText('No peerings in this network.')).toBeVisible()
+
+  // Allocate a private services access range from the network.
+  await page.getByRole('link', { name: 'Allocate range' }).click()
+  await expect(page).toHaveURL(/\/console\/compute\/create-address\?/)
+  await page.getByLabel('Name').fill('psa-range')
+  await page.getByLabel('Prefix length').fill('16')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/compute/global/addresses/psa-range\\?project=${id}$`),
+  )
+  await expect(page.getByLabel('Address details')).toContainText('VPC_PEERING')
+
+  // Connect the network over it.
+  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  const range = page.getByRole('table', { name: 'Allocated ranges' }).getByTestId('allocation')
+  await expect(range).toContainText('/16')
+  await expect(range).toContainText('Not connected')
+  await page.getByRole('link', { name: 'Connect', exact: true }).click()
+  await expect(page).toHaveURL(/\/networks\/main\/connection\?/)
+  await page.getByLabel(/psa-range/).check()
+  await page.getByRole('button', { name: 'Connect' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/compute/global/networks/main\\?project=${id}$`))
+  await expect(page.getByLabel('Connection details')).toContainText('psa-range')
+  await expect(range).toContainText('Connected')
+  await expect(peering).toContainText('servicenetworking-googleapis-com')
+
+  // Delete the connection, then release the range.
+  await page.getByRole('button', { name: 'Delete connection' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete connection' }).click()
+  await expect(page.getByText(/No private services access connection/)).toBeVisible()
+  await range.getByRole('link', { name: 'psa-range' }).click()
+  await page.getByRole('button', { name: 'Release address' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Release address' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/compute/addresses\\?project=${id}$`))
   await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
 
   await expectConsoleRequests(requests, { allowed })

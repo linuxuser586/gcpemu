@@ -185,7 +185,9 @@ import { CreateFirewall, EditFirewall } from '@/features/vpc/FirewallForm'
 import { FirewallPage } from '@/features/vpc/FirewallPage'
 import { Firewalls } from '@/features/vpc/Firewalls'
 import { CreateNetwork, EditNetwork } from '@/features/vpc/NetworkForm'
+import { ConnectionPage } from '@/features/vpc/ConnectionForm'
 import { NetworkPage } from '@/features/vpc/NetworkPage'
+import { AddPeering, EditPeering } from '@/features/vpc/PeeringForm'
 import { Networks } from '@/features/vpc/Networks'
 import { OfferedPorts } from '@/features/vpc/OfferedPorts'
 import { CreateRoute } from '@/features/vpc/RouteForm'
@@ -1083,6 +1085,9 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
       },
     },
     { path: 'global/networks/:network/edit', element: <EditNetwork /> },
+    { path: 'global/networks/:network/add-peering', element: <AddPeering /> },
+    { path: 'global/networks/:network/connection', element: <ConnectionPage /> },
+    { path: 'global/networks/:network/peerings/:peering/edit', element: <EditPeering /> },
     {
       path: 'regions/:region/subnetworks/:subnetwork',
       element: <SubnetworkPage />,
