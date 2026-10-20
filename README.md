@@ -275,8 +275,8 @@ serves: `storage.googleapis.com`, `oauth2.googleapis.com`, `iam.googleapis.com`,
 and have it trust `<data-dir>/ca.pem`. Port 443 is privileged on Linux: when an unprivileged
 emulator can't bind it, a labelled `gcpemu-<id>-gfe-lan` container on the host network listens
 there instead and relays each connection, still encrypted, to the Google front end. That needs a
-container runtime that isn't a VM runtime, an emulator not running in a container and no
-`--port gfe-lan`; otherwise run `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`.
+container runtime that isn't a VM runtime, an emulator that isn't a Containerized Instance (a
+container on the host's network qualifies) and no `--port gfe-lan`; otherwise run `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`.
 `gcpemu doctor` checks which applies. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
 
 - Every request needs credentials, whatever the IAM enforcement level: a bearer token the
@@ -864,8 +864,9 @@ address, and whether the runtime has refused a loopback alias. Instance containe
 every start, so a changed setting takes effect when the emulator restarts.
 
 A container on the host's network runs as on the host. It isn't a Containerized Instance, so
-forwarding rules aren't served on published ports, and the Google front end's dynamic port comes
-from `--port-range`. With the Docker socket, the emulator asks the runtime to find its own
+forwarding rules aren't served on published ports, the Google front end's dynamic port comes
+from `--port-range`, the gfe-lan relay serves `--gfe-bind`'s port 443, and `gcpemu doctor` checks
+the `--*-bind` addresses and the unprivileged port start as the host's. With the Docker socket, the emulator asks the runtime to find its own
 container and whether that container is on the host's network. When the runtime finds it, the
 runtime's answer always wins. Without the socket, or when the runtime can't find the container,
 `GCPEMU_CONTAINERIZED` (`--containerized`, `containerized`) decides:

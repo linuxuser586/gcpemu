@@ -11,8 +11,10 @@ type LANRelay = lanRelay
 
 // LANHooks replace what StartLAN asks the host and the container runtime.
 type LANHooks struct {
-	GOOS        string
-	InContainer bool
+	GOOS string
+	// Containerized decides whether the Instance is a Containerized
+	// Instance; nil asks emu.Env.Containerized.
+	Containerized func(ctx context.Context) bool
 	// Listen binds a --gfe-bind address.
 	Listen func(network, addr string) (net.Listener, error)
 	// Runtime reports whether the runtime is a VM runtime, or why it
@@ -27,7 +29,9 @@ type LANHooks struct {
 // SetLANHooks installs h on f before StartLAN.
 func SetLANHooks(f *Frontend, h LANHooks) {
 	f.goos = h.GOOS
-	f.inContainer = func() bool { return h.InContainer }
+	if h.Containerized != nil {
+		f.containerized = h.Containerized
+	}
 	f.listen = h.Listen
 	f.relayRuntime = h.Runtime
 	f.newRelay = h.Relay

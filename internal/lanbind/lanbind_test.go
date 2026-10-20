@@ -70,21 +70,21 @@ func TestWarning(t *testing.T) {
 	}
 }
 
+// Locate goes by the Containerized Instance decision: only a runtime
+// that found the emulator's own container confirms a bridge network (#564).
 func TestLocate(t *testing.T) {
 	for _, c := range []struct {
-		name        string
-		inContainer bool
-		runtime     bool
-		self        string
-		want        Where
+		name          string
+		containerized bool
+		confirmed     bool
+		want          Where
 	}{
-		{"host", false, false, "", Host},
-		{"host with runtime", false, true, "", Host},
-		{"host network", true, true, "", Host},
-		{"bridge", true, true, "abc", Bridge},
-		{"no socket", true, false, "", Unconfirmed},
+		{"host, or a host-network container", false, false, Host},
+		{"runtime finds it on the host's network", false, true, Host},
+		{"runtime finds its own container", true, true, Bridge},
+		{"decision on without the runtime's answer", true, false, Unconfirmed},
 	} {
-		if got := Locate(c.inContainer, c.runtime, c.self); got != c.want {
+		if got := Locate(c.containerized, c.confirmed); got != c.want {
 			t.Errorf("%s: Locate = %v, want %v", c.name, got, c.want)
 		}
 	}

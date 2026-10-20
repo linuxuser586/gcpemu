@@ -28,21 +28,29 @@ type ContainerizedProbe struct {
 // without an answer --containerized and the marker files decide. The
 // guess and any conflict are logged once (NoteContainerized).
 func (e *Env) Containerized(ctx context.Context) bool {
-	f := runtime.ContainerizedFacts{Setting: e.Config.Containerized, Markers: e.markers()}
-	if !runtime.MayBeContainerized(f.Setting, f.Markers) {
-		return false
-	}
-	self, found, err := e.self(ctx)
+	d, _, err := e.decideContainerized(ctx)
 	if err != nil && !errors.Is(err, ErrNoRuntime) {
 		// The runtime may yet answer: not the no-socket guess.
-		d := runtime.DecideContainerized(f)
 		e.Log.Info("container runtime not reachable yet; deciding whether this is a Containerized Instance without it", "err", err, "containerized", d.On)
 		return d.On
 	}
-	f.Runtime, f.Found, f.Self = err == nil, found, self
-	d := runtime.DecideContainerized(f)
 	e.NoteContainerized(d)
 	return d.On
+}
+
+// decideContainerized is Containerized without logging: the decision,
+// whether the runtime found the emulator's own container (so the decision
+// is its answer), and the error asking it, if it was asked.
+func (e *Env) decideContainerized(ctx context.Context) (runtime.ContainerizedDecision, bool, error) {
+	f := runtime.ContainerizedFacts{Setting: e.Config.Containerized, Markers: e.markers()}
+	if !runtime.MayBeContainerized(f.Setting, f.Markers) {
+		return runtime.ContainerizedDecision{}, false, nil
+	}
+	self, found, err := e.self(ctx)
+	if err == nil {
+		f.Runtime, f.Found, f.Self = true, found, self
+	}
+	return runtime.DecideContainerized(f), f.Found, err
 }
 
 // NoteContainerized logs, once each, that d is a guess from the marker

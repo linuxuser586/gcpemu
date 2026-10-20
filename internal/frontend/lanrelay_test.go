@@ -103,11 +103,12 @@ func startRelayCase(t *testing.T, edit func(*config.Config, *frontend.LANHooks))
 	rc := &relayCase{ca: authority, relay: &fakeRelay{}, logs: &logBuffer{}}
 	rc.env = &emu.Env{Config: &cfg, CA: authority, Auth: tokenAuth{}, Endpoints: emu.NewEndpoints(), Log: slog.New(slog.NewTextHandler(rc.logs, nil))}
 	hooks := frontend.LANHooks{
-		GOOS:    "linux",
-		Listen:  refuse443,
-		Runtime: func(context.Context) (bool, error) { return false, nil },
-		Relay:   func() frontend.LANRelay { return rc.relay },
-		Retry:   []time.Duration{time.Millisecond, time.Millisecond},
+		GOOS:          "linux",
+		Containerized: func(context.Context) bool { return false },
+		Listen:        refuse443,
+		Runtime:       func(context.Context) (bool, error) { return false, nil },
+		Relay:         func() frontend.LANRelay { return rc.relay },
+		Retry:         []time.Duration{time.Millisecond, time.Millisecond},
 	}
 	if edit != nil {
 		edit(&cfg, &hooks)
@@ -239,7 +240,7 @@ func TestLANRelayRetriesRuntime(t *testing.T) {
 	waitFor(t, "the gfe-lan endpoint", func() bool { return rc.env.Endpoints.Get(frontend.LANEndpoint) == "127.0.0.1:443" })
 }
 
-// TestLANNoRelay: without a usable non-VM runtime, inside a container,
+// TestLANNoRelay: without a usable non-VM runtime, in a Containerized Instance,
 // off Linux, or with --port gfe-lan set, a refused bind is skipped with
 // the sysctl advice as before, and no relay is made; nor is one when 443
 // can be bound.
@@ -264,7 +265,9 @@ func TestLANNoRelay(t *testing.T) {
 		{name: "runtime never reachable", edit: func(_ *config.Config, h *frontend.LANHooks) {
 			h.Runtime = func(context.Context) (bool, error) { return false, errors.New("runtime socket not ready") }
 		}},
-		{name: "in a container", edit: func(_ *config.Config, h *frontend.LANHooks) { h.InContainer = true }},
+		{name: "in a Containerized Instance", edit: func(_ *config.Config, h *frontend.LANHooks) {
+			h.Containerized = func(context.Context) bool { return true }
+		}},
 		{name: "macOS", edit: func(_ *config.Config, h *frontend.LANHooks) { h.GOOS = "darwin" }},
 		{name: "--port gfe-lan", edit: func(c *config.Config, h *frontend.LANHooks) {
 			c.Ports["gfe-lan"] = 8443
@@ -326,7 +329,7 @@ func TestLANNotLocal(t *testing.T) {
 		env := &emu.Env{Config: &cfg, CA: authority, Auth: tokenAuth{}, Endpoints: emu.NewEndpoints(), Log: slog.New(slog.NewTextHandler(logs, nil)),
 			LANBindWhere: func(context.Context) lanbind.Where { return tc.where }}
 		fe := frontend.New(env, lanNames)
-		frontend.SetLANHooks(fe, frontend.LANHooks{GOOS: "linux", InContainer: tc.where != lanbind.Host, Listen: notLocal})
+		frontend.SetLANHooks(fe, frontend.LANHooks{GOOS: "linux", Containerized: func(context.Context) bool { return tc.where != lanbind.Host }, Listen: notLocal})
 		fe.StartLAN(lanStubs())
 		fe.Close()
 		log := logs.String()
