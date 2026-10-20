@@ -3,17 +3,23 @@ name: release
 # setup-gcpemu downloads and verifies (FR-CI-001), and moves the major tag
 # (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves. The image
 # job then publishes the same linux binaries as the OCI image (NFR-PORT-004).
-# Run the manual macOS checks in docs/release.md before pushing the tag.
+# Both jobs sign what they publish with keyless cosign, and the binaries get
+# an SBOM each and SLSA provenance (NFR-SEC-005); docs/release.md shows how
+# to verify them. Run the manual macOS checks in docs/release.md before
+# pushing the tag.
 on:
   push:
     tags: ["v*.*.*"]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,6 +42,51 @@ jobs:
         run: |
           task release VERSION="$GITHUB_REF_NAME"
           cd dist && sha256sum gcpemu-* > SHA256SUMS && cat SHA256SUMS
+      # NFR-SEC-005. Everything below runs before Publish, so a failure
+      # publishes nothing. The SBOMs stay out of dist, so the dist/gcpemu-*
+      # globs still match only the binaries.
+      - id: syft
+        uses: anchore/sbom-action/download-syft@v0
+      - name: SBOMs
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          mkdir sbom
+          for bin in dist/gcpemu-*; do
+            name="$(basename "$bin" .exe)"
+            "$SYFT" scan "file:$bin" -o "spdx-json=sbom/$name.spdx.json"
+          done
+      - uses: sigstore/cosign-installer@v4
+      # Only SHA256SUMS is signed: it covers each binary through its hash.
+      - name: Sign SHA256SUMS
+        run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/gcpemu-*
+      - uses: actions/attest-sbom@v4
+        with:
+          subject-path: dist/gcpemu-linux-amd64
+          sbom-path: sbom/gcpemu-linux-amd64.spdx.json
+      - uses: actions/attest-sbom@v4
+        with:
+          subject-path: dist/gcpemu-linux-arm64
+          sbom-path: sbom/gcpemu-linux-arm64.spdx.json
+      - uses: actions/attest-sbom@v4
+        with:
+          subject-path: dist/gcpemu-darwin-amd64
+          sbom-path: sbom/gcpemu-darwin-amd64.spdx.json
+      - uses: actions/attest-sbom@v4
+        with:
+          subject-path: dist/gcpemu-darwin-arm64
+          sbom-path: sbom/gcpemu-darwin-arm64.spdx.json
+      - uses: actions/attest-sbom@v4
+        with:
+          subject-path: dist/gcpemu-windows-amd64.exe
+          sbom-path: sbom/gcpemu-windows-amd64.spdx.json
+      - uses: actions/attest-sbom@v4
+        with:
+          subject-path: dist/gcpemu-windows-arm64.exe
+          sbom-path: sbom/gcpemu-windows-arm64.spdx.json
       # docs/releases/vX.Y.Z.md, when present, goes above the generated
       # list of pull requests.
       - name: Publish
@@ -46,7 +97,8 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
           notes="docs/releases/$GITHUB_REF_NAME.md"
           [ -f "$notes" ] && flags+=(--notes-file "$notes")
-          gh release create "$GITHUB_REF_NAME" dist/gcpemu-* dist/SHA256SUMS --verify-tag --generate-notes "${flags[@]}"
+          gh release create "$GITHUB_REF_NAME" dist/gcpemu-* dist/SHA256SUMS \
+            dist/SHA256SUMS.sigstore.json sbom/*.spdx.json --verify-tag --generate-notes "${flags[@]}"
       - uses: actions/upload-artifact@v7
         with:
           name: linux-binaries
@@ -67,6 +119,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -112,7 +165,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-      - uses: docker/build-push-action@v7
+      - id: push
+        uses: docker/build-push-action@v7
         with:
           context: dist
           file: Dockerfile
@@ -123,3 +177,14 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           sbom: true
           provenance: mode=max
+      # NFR-SEC-005: sign the manifest list by digest, never by tag, in each
+      # registry. A failure leaves the pushed tags unsigned until the job
+      # is re-run, which pushes the tags again and signs the digest they
+      # then name (docs/release.md).
+      - uses: sigstore/cosign-installer@v4
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "docker.io/linuxuser586/gcpemu@$DIGEST"
+          cosign sign --yes "ghcr.io/linuxuser586/gcpemu@$DIGEST"

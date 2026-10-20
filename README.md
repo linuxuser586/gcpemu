@@ -892,6 +892,36 @@ env:
   PUBSUB_EMULATOR_HOST: localhost:8085
 ```
 
+### Verifying a release
+
+Each release is signed with keyless cosign by its release workflow. `SHA256SUMS.sigstore.json`
+signs `SHA256SUMS`, which covers every binary. Each binary also has an SPDX SBOM
+(`gcpemu-<os>-<arch>.spdx.json`) and SLSA provenance, recorded as GitHub attestations. With
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and the
+[GitHub CLI](https://cli.github.com/), in the directory you downloaded `SHA256SUMS`,
+`SHA256SUMS.sigstore.json` and the binary to:
+
+```sh
+cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify gcpemu-linux-amd64 --repo linuxuser586/gcpemu
+```
+
+The image is signed by digest in both registries (replace `X.Y.Z` with the version):
+
+```sh
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com docker.io/linuxuser586/gcpemu:X.Y.Z
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/linuxuser586/gcpemu:X.Y.Z
+```
+
+See "Signing" in [docs/release.md](docs/release.md) for what happens when a signing step fails.
+
 ### Reference stack (SRS 11.2)
 
 `e2e/` holds the Reference stack, the final acceptance test of the whole emulator: one OpenTofu root module
