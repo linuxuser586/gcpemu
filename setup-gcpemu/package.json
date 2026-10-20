@@ -13,7 +13,8 @@
     "@actions/cache": "^6.3.0",
     "@actions/core": "^3.0.1",
     "@actions/exec": "^3.0.0",
-    "@actions/tool-cache": "^4.0.0"
+    "@actions/tool-cache": "^4.0.0",
+    "sigstore": "^5.0.0"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

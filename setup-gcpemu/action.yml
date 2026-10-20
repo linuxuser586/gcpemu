@@ -31,8 +31,11 @@ inputs:
     description: Path to a gcpemu binary to use instead of downloading a release.
     default: ""
   download-url:
-    description: Base URL of the releases (a mirror must serve <tag>/SHA256SUMS and <tag>/gcpemu-<os>-<arch>).
+    description: Base URL of the releases (a mirror must serve <tag>/SHA256SUMS, <tag>/SHA256SUMS.sigstore.json and <tag>/gcpemu-<os>-<arch>, or set verify-signature to false).
     default: https://github.com/linuxuser586/gcpemu/releases/download
+  verify-signature:
+    description: Verify the release's SHA256SUMS against its Sigstore bundle, signed by this repository's release workflow for that tag. Set to false on runners that cannot reach Sigstore; the binary is still checked against SHA256SUMS.
+    default: "true"
   cache:
     description: Cache the binary and, after a successful job, the container images it pulled (keyed by release).
     default: "true"

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { cacheableImages, imagesKey, jobFailed, jobMismatch, listJobsReason, normalizeTag, parseEnv, parseSums, platform, retryDelay, shouldUpload, splitArgs, startArgs, unknownNotice } from './lib.js'
+import { cacheableImages, compareTags, firstSignedRelease, imagesKey, jobFailed, jobMismatch, listJobsReason, missingBundle, normalizeTag, parseEnv, parseSums, platform, retryDelay, shouldUpload, signerIdentity, splitArgs, startArgs, unknownNotice } from './lib.js'
 
 test('platform', () => {
   assert.deepEqual(platform('linux', 'arm64'), { os: 'linux', arch: 'arm64', asset: 'gcpemu-linux-arm64' })
@@ -132,4 +132,46 @@ test('cacheableImages', () => {
   )
   // Images on the runner before the action are left to their own instance.
   assert.deepEqual(cacheableImages([], ['postgres:17.10-alpine', 'rancher/k3s:v2'], ['postgres:17.10-alpine']), ['rancher/k3s:v2'])
+})
+
+test('signerIdentity', () => {
+  const { pattern, ...id } = signerIdentity('v0.10.0')
+  assert.deepEqual(id, {
+    uri: 'https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v0.10.0',
+    issuer: 'https://token.actions.githubusercontent.com',
+  })
+  // sigstore-js tests the SAN as an unanchored regexp: the pattern matches
+  // only this tag's identity, not another tag's that contains it.
+  const re = new RegExp(pattern)
+  assert.ok(re.test('https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v0.10.0'))
+  assert.ok(!re.test('https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v0.10.0-rc.1'))
+  assert.ok(!re.test('https://github.com/linuxuser586/gcpemu/.github/workflows/releaseXyml@refs/tags/v0.10.0'))
+  assert.ok(!re.test('https://github.com/fork/x/https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v0.10.0'))
+})
+
+test('compareTags', () => {
+  assert.equal(compareTags('v0.10.0', 'v0.10.0'), 0)
+  assert.ok(compareTags('v0.9.0', 'v0.10.0') < 0)
+  assert.ok(compareTags('v0.10.1', 'v0.10.0') > 0)
+  assert.ok(compareTags('v1.0.0', 'v0.10.0') > 0)
+  assert.ok(compareTags('v0.10.0-rc.1', 'v0.10.0') < 0)
+  assert.ok(compareTags('v0.10.0-rc.2', 'v0.10.0-rc.10') < 0)
+  assert.ok(compareTags('v0.10.0-rc.1', 'v0.10.0-rc') > 0)
+  assert.ok(compareTags('v0.10.0-alpha', 'v0.10.0-rc.1') < 0)
+  assert.ok(compareTags('v0.10.0-1', 'v0.10.0-rc') < 0)
+  assert.ok(compareTags('v0.0.0-selftest', 'v0.10.0') < 0)
+  assert.ok(compareTags('v0.10.0+build.5', 'v0.10.0') === 0)
+  assert.throws(() => compareTags('nightly', 'v0.10.0'), /not a semver tag/)
+})
+
+test('missingBundle', () => {
+  assert.equal(firstSignedRelease, 'v0.10.0')
+  assert.equal(missingBundle('v0.9.0'), 'warn')
+  assert.equal(missingBundle('v0.10.0-rc.1'), 'warn')
+  assert.equal(missingBundle('v0.0.0-selftest'), 'warn')
+  assert.equal(missingBundle('v0.10.0'), 'fail')
+  assert.equal(missingBundle('v0.10.1'), 'fail')
+  assert.equal(missingBundle('v1.0.0'), 'fail')
+  // A tag that isn't semver can't be placed before the cutoff.
+  assert.equal(missingBundle('nightly'), 'fail')
 })

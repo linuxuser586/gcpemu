@@ -1,6 +1,6 @@
-// setup-gcpemu main step (FR-CI-001): install the verified binary, restore
-// cached container images, start the instance detached and export its
-// environment.
+// setup-gcpemu main step (FR-CI-001, NFR-SEC-005): install the verified
+// binary of a Signed release, restore cached container images, start the
+// instance detached and export its environment.
 
 import * as cache from '@actions/cache'
 import * as core from '@actions/core'
@@ -9,8 +9,9 @@ import * as tc from '@actions/tool-cache'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import * as sigstore from 'sigstore'
 
-import { imagesKey, normalizeTag, parseEnv, parseSums, platform, startArgs } from './lib.js'
+import { firstSignedRelease, imagesKey, missingBundle, normalizeTag, parseEnv, parseSums, platform, signerIdentity, startArgs } from './lib.js'
 
 const repo = 'linuxuser586/gcpemu'
 
@@ -77,11 +78,15 @@ async function run() {
 }
 
 // install downloads the release binary for the runner, verified against
-// the release's SHA256SUMS, through the Actions cache.
+// the release's SHA256SUMS, through the Actions cache. SHA256SUMS itself
+// is checked against its Sigstore bundle first, cache hits included.
 async function install({ os, arch, asset, temp, useCache }) {
   const tag = await resolveTag(core.getInput('version') || 'latest')
   const base = `${core.getInput('download-url').replace(/\/+$/, '')}/${tag}`
-  const sums = parseSums(await fetchText(`${base}/SHA256SUMS`))
+  const sumsFile = await fetchBytes(`${base}/SHA256SUMS`)
+  if (core.getBooleanInput('verify-signature')) await verifySums({ base, tag, sumsFile })
+  else core.warning(`signature verification is off (verify-signature: false): ${tag}'s SHA256SUMS is trusted as downloaded`)
+  const sums = parseSums(sumsFile.toString('utf8'))
   const digest = sums[asset]
   if (!digest) throw new Error(`${base}/SHA256SUMS has no ${asset}`)
 
@@ -102,6 +107,43 @@ async function install({ os, arch, asset, temp, useCache }) {
   fs.chmodSync(bin, 0o755)
   if (useCache) await cache.saveCache([dir], key).catch((e) => core.warning(`cache save: ${e.message}`))
   return { bin, digest }
+}
+
+// verifySums checks that the exact bytes of SHA256SUMS were signed by this
+// repository's release workflow for tag (a Signed release), with
+// Sigstore's trusted root fetched through TUF. A release before the first
+// Signed release may have no bundle; every other failure fails the step.
+async function verifySums({ base, tag, sumsFile }) {
+  const url = `${base}/SHA256SUMS.sigstore.json`
+  const skipHint = 'set verify-signature: false to skip signature verification, e.g. on a runner that cannot reach Sigstore'
+  const id = signerIdentity(tag)
+  let bundle
+  try {
+    bundle = await fetchText(url, { notFound: null })
+  } catch (e) {
+    throw new Error(`fetching the signature of ${tag}'s SHA256SUMS: ${e.message} (${skipHint})`)
+  }
+  if (bundle === null) {
+    if (missingBundle(tag) === 'warn') {
+      core.warning(`${tag} is an unsigned release (signing starts at ${firstSignedRelease}): no ${url}; checking SHA256SUMS digests only`)
+      return
+    }
+    throw new Error(`${tag} is unsigned: ${url} not found, and releases from ${firstSignedRelease} on are signed (${skipHint})`)
+  }
+  let signer
+  try {
+    // The identity is passed as an anchored pattern, since sigstore-js
+    // matches it as a regexp; the signer is then compared exactly.
+    signer = await sigstore.verify(JSON.parse(bundle), sumsFile, { certificateIdentityURI: id.pattern, certificateIssuer: id.issuer })
+  } catch (e) {
+    throw new Error(`signature of ${tag}'s SHA256SUMS does not verify: ${e.message} (${skipHint})`)
+  }
+  const san = signer.identity?.subjectAlternativeName
+  const issuer = signer.identity?.extensions?.issuer
+  if (san !== id.uri || issuer !== id.issuer) {
+    throw new Error(`${tag}'s SHA256SUMS is signed by ${san} (issuer ${issuer}), not ${id.uri} (issuer ${id.issuer}) (${skipHint})`)
+  }
+  core.info(`${tag}'s SHA256SUMS is signed by ${id.uri}`)
 }
 
 async function resolveTag(version) {
@@ -137,13 +179,21 @@ async function restoreImages({ os, arch, digest, services, temp }) {
   }
 }
 
-async function fetchText(url) {
+async function fetchText(url, opts) {
+  const b = await fetchBytes(url, opts)
+  return b === null ? null : b.toString('utf8')
+}
+
+// fetchBytes fetches url with retries. A 404 throws, or returns notFound
+// when that option is given.
+async function fetchBytes(url, opts = {}) {
   let last
   for (let i = 0; i < 5; i++) {
     if (i > 0) await new Promise((r) => setTimeout(r, i * 2000))
     try {
       const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(30000) })
-      if (res.ok) return await res.text()
+      if (res.ok) return Buffer.from(await res.arrayBuffer())
+      if (res.status === 404 && 'notFound' in opts) return opts.notFound
       last = new Error(`${url}: HTTP ${res.status}`)
       if (res.status === 404) break
     } catch (e) {

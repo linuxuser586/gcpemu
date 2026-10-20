@@ -1,7 +1,7 @@
 # setup-gcpemu
 
 GitHub Action that installs [gcpemu](../README.md), starts it in the background and exports
-the environment variables that point clients at it (SRS FR-CI-001, FR-CI-002).
+the environment variables that point clients at it (SRS FR-CI-001, FR-CI-002, NFR-SEC-005).
 
 ```yaml
 jobs:
@@ -23,7 +23,9 @@ jobs:
 The action:
 
 1. Downloads `gcpemu-<os>-<arch>` of the requested release and checks it against the release's
-   `SHA256SUMS`. The binary is cached by its digest, and its directory is added to `PATH`.
+   `SHA256SUMS`. Before it uses any digest from `SHA256SUMS`, it verifies the release's signature
+   (see [Signature verification](#signature-verification)). The binary is cached by its digest,
+   and its directory is added to `PATH`.
 2. Restores the container images (Cloud SQL's PostgreSQL, GKE's k3s, …) that an earlier
    successful job with the same release, platform and services saved, then `docker load`s them.
 3. Runs `gcpemu start --detach` with `services`, `seed` and `config`. It waits until every
@@ -61,7 +63,8 @@ The post step always runs. It does three things:
 | `args` | | Extra `gcpemu start` arguments, e.g. `--iam-mode enforce` |
 | `wait-timeout` | `120s` | Readiness timeout |
 | `binary` | | Use this gcpemu binary instead of downloading a release |
-| `download-url` | GitHub releases | Base URL of a mirror serving `<tag>/SHA256SUMS` and `<tag>/gcpemu-<os>-<arch>` |
+| `download-url` | GitHub releases | Base URL of a mirror serving `<tag>/SHA256SUMS`, `<tag>/SHA256SUMS.sigstore.json` and `<tag>/gcpemu-<os>-<arch>` |
+| `verify-signature` | `true` | Verify the release's Sigstore signature on `SHA256SUMS`; `false` skips it (the binary is still checked against `SHA256SUMS`) |
 | `cache` | `true` | Cache the binary and container images |
 | `diagnostics` | `failure` | When to upload the diagnostics artifact: `failure`, `always` or `never` |
 | `artifact-name` | `gcpemu-<job>-<instance>-<os>-<arch>-<random>` | Name of the diagnostics artifact |
@@ -69,6 +72,28 @@ The post step always runs. It does three things:
 | `token` | `github.token` | Used to resolve `latest` and to read the job's result |
 
 Outputs: `version`, `gateway` (host:port), `data-dir`, `bin`.
+
+## Signature verification
+
+Releases are Signed releases (NFR-SEC-005). The release workflow signs `SHA256SUMS` with keyless cosign and
+publishes the Sigstore bundle as `SHA256SUMS.sigstore.json`. On every run, cache hits included,
+the action fetches that bundle and verifies it against the exact bytes of `SHA256SUMS`, with
+Sigstore's trusted root fetched through TUF. The signer must be exactly
+`https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/<tag>`, for
+the tag being installed, issued by `https://token.actions.githubusercontent.com`. A bundle
+signed for another tag, another workflow or another repository is rejected.
+
+- **v0.10.0 and later** are always Signed releases. A missing bundle, a bad signature, a signer mismatch,
+  or a failure to reach Sigstore or the release fails the step.
+- **Releases before v0.10.0** are unsigned. When their bundle is missing the action logs a
+  warning and checks only the `SHA256SUMS` digests, as before. When one is present, it is
+  verified like any other.
+- **`verify-signature: false`** skips fetching and verifying the bundle, with a warning. Use it
+  on runners that can't reach Sigstore (`tuf-repo-cdn.sigstore.dev`), or with a mirror that
+  doesn't serve the bundle. The binary is still checked against `SHA256SUMS`.
+- **Mirrors.** A non-default `download-url` keeps verification on. The mirror must serve
+  `<tag>/SHA256SUMS.sigstore.json` alongside `<tag>/SHA256SUMS`, or set `verify-signature: false`.
+- **`binary`** is used as given: nothing is downloaded or verified.
 
 Use `@v0` until v1.0.0: a `vX.Y.Z` release moves its major tag `vX`, so `@v0` follows the latest
 0.x release. Pin a release such as `@v0.1.0` for reproducible builds. `version: latest` installs
@@ -84,7 +109,9 @@ The runner executes `dist/` as it is, so it is committed. After changing `src/`,
 `task action` from the repository root (it runs `npm ci`, the unit tests and the esbuild bundle)
 and commit `dist/`. CI fails when `dist/` doesn't match the sources. The `action` job in
 `.github/workflows/ci.yml` is the self-test. It serves the commit's binary as release
-`v0.0.0-selftest`, uses the action with the fixtures in `test/` (`check.sh` asserts the
-environment, seed and config), and checks the diagnostics artifact. The `platforms` job does the
-same on `macos-latest` with the in-process Services and `seed-in-process.yaml`. Releases come from
-`.github/workflows/release.yml` on a `vX.Y.Z` tag, which also moves the `vX` tag.
+`v0.0.0-selftest` (with `verify-signature: false`, since it has no bundle), uses the action with
+the fixtures in `test/` (`check.sh` asserts the environment, seed and config), and checks the
+diagnostics artifact. It also runs the action against the real latest release with verification
+on. The `platforms` job does the same on `macos-latest` with the in-process Services and
+`seed-in-process.yaml`. Releases come from `.github/workflows/release.yml` on a `vX.Y.Z` tag,
+which also moves the `vX` tag.
