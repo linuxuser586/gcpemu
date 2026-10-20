@@ -552,6 +552,7 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 			}
 		}
 		in.hm.Stop()
+		in.fe.StopLAN()
 		errs = append(errs, in.containers.shutdown())
 		errs = append(errs, in.fe.Close())
 		in.Events.Close() // end event streams so the gateway can drain

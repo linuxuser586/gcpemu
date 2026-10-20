@@ -53,7 +53,8 @@ const (
 	TokenHeader = "X-Gcpemu-Lb-Token"
 )
 
-// Image is the image the edge containers run the agent in.
+// Image is the image lb-edge and the LAN relay containers run the
+// Sidecar agent in.
 const Image = "rancher/k3s:v1.36.5-k3s1"
 
 func init() {
@@ -76,7 +77,7 @@ type Listener struct {
 	Port int    `json:"port"`
 }
 
-// Route is a route the agent installs.
+// Route is a route the Sidecar agent installs.
 type Route struct {
 	CIDR string `json:"cidr"`
 	Via  string `json:"via"`

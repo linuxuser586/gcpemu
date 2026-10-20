@@ -190,9 +190,12 @@ func (f *Frontend) lanSkipped(addr string, err error) {
 		"address", ip, "port", port, "err", err)
 }
 
-// closeLAN stops the --gfe-bind listeners and returns the relay, for the
-// caller to close. Callers hold f.mu.
-func (f *Frontend) closeLAN() lanRelay {
+// StopLAN stops the --gfe-bind listeners and removes the LAN front-end
+// relay, one still starting included. The Instance calls it before it
+// removes its containers, so that no relay starts after.
+func (f *Frontend) StopLAN() {
+	f.stopRelay()
+	f.mu.Lock()
 	for _, s := range f.lan {
 		_ = s.Close()
 	}
@@ -201,7 +204,10 @@ func (f *Frontend) closeLAN() lanRelay {
 	}
 	relay := f.relay
 	f.lan, f.lanAddrs, f.relay = nil, nil, nil
-	return relay
+	f.mu.Unlock()
+	if relay != nil {
+		closeRelay(relay)
+	}
 }
 
 type lanHandler struct {

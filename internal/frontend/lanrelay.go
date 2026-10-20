@@ -91,21 +91,27 @@ func (f *Frontend) startRelay(ctx context.Context, srv func() *http.Server, addr
 	relay := f.newRelay()
 	err = relay.Set(ctx, ln.Addr().String(), addrs)
 	f.mu.Lock()
-	if err == nil && ctx.Err() == nil {
+	stopped := ctx.Err() != nil || f.closed
+	if err == nil && !stopped {
 		f.relay = relay
 	}
 	f.mu.Unlock()
-	if err != nil || ctx.Err() != nil {
+	if err != nil || stopped {
 		ln.Close()
-		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		relay.Close(cctx)
-		cancel()
-		if ctx.Err() == nil {
+		closeRelay(relay)
+		if !stopped {
 			skip(fmt.Errorf("gfe-lan relay: %w", err))
 		}
 		return
 	}
 	f.serveLAN(srv(), edgeagent.ProxiedListener(ln), "relay", addrs...)
+}
+
+// closeRelay removes relay, waiting up to 30s.
+func closeRelay(relay lanRelay) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	relay.Close(ctx)
 }
 
 // stopRelay stops a relay still starting and waits for it.

@@ -178,10 +178,10 @@ func (f *Frontend) Addr() string {
 	return f.ln.Addr().String()
 }
 
-// Close stops the listener and open connections, and removes the LAN
-// front-end relay.
+// Close stops the listener and open connections, and the --gfe-bind
+// listeners (StopLAN).
 func (f *Frontend) Close() error {
-	f.stopRelay()
+	f.StopLAN()
 	f.mu.Lock()
 	f.closed = true
 	if f.ln != nil {
@@ -190,13 +190,7 @@ func (f *Frontend) Close() error {
 	for c := range f.conns {
 		c.Close()
 	}
-	relay := f.closeLAN()
 	f.mu.Unlock()
-	if relay != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		relay.Close(ctx)
-		cancel()
-	}
 	f.wg.Wait()
 	return nil
 }

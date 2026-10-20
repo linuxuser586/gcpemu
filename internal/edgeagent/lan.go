@@ -40,11 +40,12 @@ type LANRelay struct {
 	Offline bool
 	Log     *slog.Logger
 
-	mu     sync.Mutex
-	id     string
-	ctrl   string // control address on the host's loopback
-	token  string
-	pushed string
+	mu      sync.Mutex
+	created bool // a container may exist under its name without id
+	id      string
+	ctrl    string // control address on the host's loopback
+	token   string
+	pushed  string
 }
 
 // Set makes the relay listen on exactly addrs (host:port) and relay to
@@ -120,7 +121,11 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 	_, _ = rand.Read(tb[:])
 	r.token = hex.EncodeToString(tb[:])
 	name := rt.Name(r.Name)
+	// A start cut short (ctx done) cleans up regardless.
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	_ = rt.RemoveContainer(ctx, name, true)
+	r.created = true
 	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
 		Name:       name,
 		Image:      Image,
@@ -136,14 +141,15 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 		Networks: []runtime.Attachment{{Network: "host"}},
 	})
 	if err != nil {
+		_ = rt.RemoveContainer(cleanup, name, true)
 		return fmt.Errorf("%s: %w", r.Name, err)
 	}
 	if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(agent.ContainerPath, "/"), Mode: 0o755, Path: bin}}); err != nil {
-		_ = rt.RemoveContainer(ctx, id, true)
+		_ = rt.RemoveContainer(cleanup, id, true)
 		return fmt.Errorf("%s: copy Sidecar agent: %w", r.Name, err)
 	}
 	if err := rt.StartContainer(ctx, id); err != nil {
-		_ = rt.RemoveContainer(ctx, id, true)
+		_ = rt.RemoveContainer(cleanup, id, true)
 		return fmt.Errorf("%s: start: %w", r.Name, err)
 	}
 	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -157,7 +163,7 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 		}
 		select {
 		case <-wctx.Done():
-			_ = rt.RemoveContainer(ctx, id, true)
+			_ = rt.RemoveContainer(cleanup, id, true)
 			return fmt.Errorf("%s: control port not ready: %w", r.Name, err)
 		case <-time.After(100 * time.Millisecond):
 		}
@@ -168,14 +174,20 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 }
 
 func (r *LANRelay) removeLocked(ctx context.Context) {
-	if r.id == "" {
+	if !r.created {
 		return
 	}
 	if rt, err := r.Runtime(ctx); err == nil {
-		_ = rt.RemoveContainer(ctx, r.id, true)
+		target := r.id
+		if target == "" {
+			target = rt.Name(r.Name)
+		}
+		_ = rt.RemoveContainer(ctx, target, true)
 	}
-	r.id, r.pushed = "", ""
-	r.Log.Info(r.Name + " relay container removed")
+	if r.id != "" {
+		r.Log.Info(r.Name + " relay container removed")
+	}
+	r.created, r.id, r.pushed = false, "", ""
 }
 
 // Close removes the container.
