@@ -107,7 +107,7 @@ tasks:
       - go test -race -timeout 45m ./...
 
   vet:
-    desc: Check gofmt, run go vet (with the e2e and compat build tags too) and keep go-winio Windows-only
+    desc: Check gofmt, run go vet (with the e2e and compat build tags too), keep go-winio Windows-only and check ADR numbers
     cmds:
       - cmd: |
           unformatted=$(gofmt -l .)
@@ -129,6 +129,39 @@ tasks:
             }
           done
         silent: true
+      - task: adr
+
+  # #482: ADRs drafted on parallel branches can take the same number. The
+  # sorted glob puts files sharing a prefix next to each other; list holds
+  # all but the last of the current run, joined with commas. On Windows the
+  # glob's paths use backslashes.
+  adr:
+    desc: Check that no two ADRs share a number
+    silent: true
+    cmds:
+      - cmd: |
+          flush() {
+            [ "$n" -gt 1 ] || return 0
+            echo "docs/adr: $prev is used by $list and $last" >&2
+            status=1
+          }
+          prev= list= last= n=0 status=0
+          for f in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+            [ -e "$f" ] || continue
+            name=${f##*/}
+            name=${name##*\\}
+            num=${name%%-*}
+            if [ "$num" = "$prev" ]; then
+              list=${list:+$list, }$last
+              n=$((n + 1))
+            else
+              flush
+              prev=$num list= n=1
+            fi
+            last=$name
+          done
+          flush
+          exit $status
 
   # SRS 11.2 reference stack (container runtime + tofu; steps 2 and 4-8
   # download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them),

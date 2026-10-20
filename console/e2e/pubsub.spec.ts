@@ -3,8 +3,8 @@ import type { APIRequestContext, Page } from '@playwright/test'
 import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The Pub/Sub view (SRS 4.8.3, FR-UI-011) against the Instance's pubsub
-// Service. Each attempt has its own Project, so a retry does not meet the
-// topics of the one before.
+// Service. Each test and attempt has its own Project, so a retry does not
+// meet the topics of the one before.
 
 // The console's paths: its bundle, the admin API and public GCP API paths.
 const allowed = /^\/(console\/|_emu\/v1\/|[a-z]+\/v\d[a-z0-9]*\/)/
@@ -32,12 +32,13 @@ function localTime(t: Date): string {
   return d.toISOString().slice(0, 19)
 }
 
-test('Pub/Sub: topics, subscriptions, publish, pull, ack, peek, seek and purge', async ({
-  page,
-  browserName,
-  requests,
-}, testInfo) => {
-  const id = projectId(`e2e-ps${testInfo.retry}`, browserName)
+/** put creates the Pub/Sub resource at path through the public REST API. */
+async function put(request: APIRequestContext, path: string, data: unknown) {
+  expect((await request.put(`/pubsub/v1/${path}`, { data })).ok()).toBe(true)
+}
+
+test('Pub/Sub: topics and subscriptions', async ({ page, browserName, requests }, testInfo) => {
+  const id = projectId(`e2e-pst${testInfo.retry}`, browserName)
   await page.goto(`/console/pubsub?project=${id}`)
   await expect(page.getByText('No topics in this Project yet.')).toBeVisible()
 
@@ -78,45 +79,7 @@ test('Pub/Sub: topics, subscriptions, publish, pull, ack, peek, seek and purge',
     new RegExp(`/console/pubsub/subscriptions/orders-worker\\?project=${id}$`),
   )
   await expect(tile(page, 'Unacked messages')).toHaveText('0')
-  const before = new Date()
-
-  // Publish two messages with attributes and an ordering key.
   await page.getByRole('link', { name: 'Overview' }).click()
-  await page.getByRole('link', { name: 'orders', exact: true }).click()
-  await publish(page, 'first', 'kind=new', 'cust-1')
-  await publish(page, 'second', 'kind=paid', 'cust-1')
-  const row = page.getByTestId('subscription').filter({ hasText: 'orders-worker' })
-  await expect(row).toContainText('2 (')
-
-  // Peek returns them without acking them; pull leases them in order.
-  await row.getByRole('link', { name: 'orders-worker' }).click()
-  await expect(tile(page, 'Unacked messages')).toHaveText('2')
-  const messages = page.getByTestId('message')
-  await page.getByRole('button', { name: 'Peek' }).click()
-  await expect(messages).toHaveCount(2)
-  await expect(messages.filter({ hasText: 'Peeked' })).toHaveCount(2)
-  await expect(tile(page, 'Unacked messages')).toHaveText('2')
-  await page.getByLabel('Messages at most').fill('10')
-  await page.getByRole('button', { name: 'Pull' }).click()
-  await expect(messages.getByRole('button', { name: /^Ack message/ })).toHaveCount(2)
-  const first = messages.filter({ hasText: 'first' })
-  await expect(first).toContainText('kind=new')
-  await expect(first).toContainText('cust-1')
-  await first.getByRole('button', { name: /^Ack message/ }).click()
-  await expect(messages).toHaveCount(1)
-  await expect(tile(page, 'Unacked messages')).toHaveText('1')
-
-  // Purge acks the rest; seeking back replays the retained messages.
-  await page.getByRole('button', { name: 'Purge messages' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Purge messages' }).click()
-  await expect(tile(page, 'Unacked messages')).toHaveText('0')
-  await page.getByRole('button', { name: 'Seek' }).click()
-  await page
-    .getByRole('dialog')
-    .getByLabel('Time')
-    .fill(localTime(new Date(before.getTime() - 60_000)))
-  await page.getByRole('dialog').getByRole('button', { name: 'Seek' }).click()
-  await expect(tile(page, 'Unacked messages')).toHaveText('2')
 
   // Edit: labels and a longer acknowledgement deadline.
   await page.getByRole('link', { name: 'Edit subscription' }).click()
@@ -143,9 +106,77 @@ test('Pub/Sub: topics, subscriptions, publish, pull, ack, peek, seek and purge',
   await expectConsoleRequests(requests, { allowed })
 })
 
-async function put(request: APIRequestContext, path: string, data: unknown) {
-  expect((await request.put(`/pubsub/v1/${path}`, { data })).ok()).toBe(true)
-}
+test('Pub/Sub: publish, peek, pull and ack', async ({
+  page,
+  request,
+  browserName,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-psp${testInfo.retry}`, browserName)
+  const topic = `projects/${id}/topics/orders`
+  await put(request, topic, {})
+  await put(request, `projects/${id}/subscriptions/orders-worker`, { topic })
+
+  // Publish two messages with attributes and an ordering key.
+  await page.goto(`/console/pubsub/topics/orders?project=${id}`)
+  await publish(page, 'first', 'kind=new', 'cust-1')
+  await publish(page, 'second', 'kind=paid', 'cust-1')
+  const row = page.getByTestId('subscription').filter({ hasText: 'orders-worker' })
+  await expect(row).toContainText('2 (')
+
+  // Peek returns them without acking them; pull leases them in order.
+  await row.getByRole('link', { name: 'orders-worker' }).click()
+  await expect(tile(page, 'Unacked messages')).toHaveText('2')
+  const messages = page.getByTestId('message')
+  await page.getByRole('button', { name: 'Peek' }).click()
+  await expect(messages).toHaveCount(2)
+  await expect(messages.filter({ hasText: 'Peeked' })).toHaveCount(2)
+  await expect(tile(page, 'Unacked messages')).toHaveText('2')
+  await page.getByLabel('Messages at most').fill('10')
+  await page.getByRole('button', { name: 'Pull' }).click()
+  await expect(messages.getByRole('button', { name: /^Ack message/ })).toHaveCount(2)
+  const first = messages.filter({ hasText: 'first' })
+  await expect(first).toContainText('kind=new')
+  await expect(first).toContainText('cust-1')
+  await first.getByRole('button', { name: /^Ack message/ }).click()
+  await expect(messages).toHaveCount(1)
+  await expect(tile(page, 'Unacked messages')).toHaveText('1')
+
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('Pub/Sub: purge and seek', async ({ page, request, browserName, requests }, testInfo) => {
+  const id = projectId(`e2e-pss${testInfo.retry}`, browserName)
+  const topic = `projects/${id}/topics/orders`
+  await put(request, topic, {})
+  await put(request, `projects/${id}/subscriptions/orders-worker`, {
+    topic,
+    retainAckedMessages: true,
+  })
+  const before = new Date()
+  const res = await request.post(`/pubsub/v1/${topic}:publish`, {
+    data: {
+      messages: ['first', 'second'].map((m) => ({ data: Buffer.from(m).toString('base64') })),
+    },
+  })
+  expect(res.ok()).toBe(true)
+
+  // Purge acks them; seeking back replays the retained messages.
+  await page.goto(`/console/pubsub/subscriptions/orders-worker?project=${id}`)
+  await expect(tile(page, 'Unacked messages')).toHaveText('2')
+  await page.getByRole('button', { name: 'Purge messages' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Purge messages' }).click()
+  await expect(tile(page, 'Unacked messages')).toHaveText('0')
+  await page.getByRole('button', { name: 'Seek' }).click()
+  await page
+    .getByRole('dialog')
+    .getByLabel('Time')
+    .fill(localTime(new Date(before.getTime() - 60_000)))
+  await page.getByRole('dialog').getByRole('button', { name: 'Seek' }).click()
+  await expect(tile(page, 'Unacked messages')).toHaveText('2')
+
+  await expectConsoleRequests(requests, { allowed })
+})
 
 test('Pub/Sub: a message peeked at too often is dead-lettered', async ({
   page,

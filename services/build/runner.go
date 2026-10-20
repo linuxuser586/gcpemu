@@ -13,7 +13,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
-	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -65,9 +64,8 @@ func (r *liveBuild) stopStep(i int, cause error) {
 }
 
 // now is the Emulator clock's time for the scheduler and the Builds it
-// runs, which are background work: under --deterministic only requests
-// move the fake clock.
-func (s *Service) now() time.Time { return clock.Peek(s.env.Clock) }
+// runs.
+func (s *Service) now() time.Time { return s.env.Clock.Now() }
 
 // kick asks the scheduler for a pass.
 func (s *Service) kick() {

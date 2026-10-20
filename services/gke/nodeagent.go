@@ -7,12 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +19,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/trust"
+	"github.com/linuxuser586/gcpemu/internal/workload"
 )
 
 // The gke-node agent is the entrypoint of every node container. It
@@ -137,12 +135,15 @@ func runNodeAgent(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	go func() { _ = http.Serve(mdL, metadataProxy(cfg)) }()
+	go func() { _ = http.Serve(mdL, workload.MetadataProxy(cfg.Emu)) }()
 	regL, err := net.Listen("tcp", fmt.Sprintf("%s:%d", metadataIP, registryPort))
 	if err != nil {
 		return err
 	}
-	go func() { _ = http.Serve(regL, registryProxy(cfg)) }()
+	ts := &workload.TokenSource{URL: cfg.Emu + "/token"}
+	go func() {
+		_ = http.Serve(regL, workload.RegistryProxy(cfg.Registry, func(*http.Request) string { return ts.Token() }))
+	}()
 	if cfg.Frontend != "" {
 		feL, err := net.Listen("tcp", metadataIP+":443")
 		if err != nil {
@@ -329,81 +330,6 @@ func trustNodeCA(caPEM string) error {
 	return nil
 }
 
-// metadataProxy forwards metadata requests to the emulator, tagged with
-// the caller's address. It does not add X-Forwarded-For (the metadata
-// server rejects requests that carry it, like GCE's).
-func metadataProxy(cfg nodeConfig) http.Handler {
-	base, _ := url.Parse(cfg.Emu)
-	return &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			src, _, _ := net.SplitHostPort(pr.In.RemoteAddr)
-			pr.Out.URL.Scheme = base.Scheme
-			pr.Out.URL.Host = base.Host
-			pr.Out.URL.Path = base.Path + "/md/" + src + pr.In.URL.Path
-			pr.Out.URL.RawPath = ""
-			pr.Out.Host = base.Host
-			pr.Out.Header.Del("Authorization")
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			http.Error(w, "metadata server unavailable: "+err.Error(), http.StatusServiceUnavailable)
-		},
-	}
-}
-
-// registryProxy forwards registry requests to Artifact Registry with the
-// node service account's access token.
-func registryProxy(cfg nodeConfig) http.Handler {
-	if cfg.Registry == "" {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "Artifact Registry is not running", http.StatusServiceUnavailable)
-		})
-	}
-	ts := &nodeTokenSource{url: cfg.Emu + "/token"}
-	return &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.Out.URL.Scheme = "http"
-			pr.Out.URL.Host = cfg.Registry
-			pr.Out.Host = cfg.Registry
-			if pr.Out.Header.Get("Authorization") == "" {
-				if tok := ts.token(); tok != "" {
-					pr.Out.Header.Set("Authorization", "Bearer "+tok)
-				}
-			}
-		},
-	}
-}
-
-// nodeTokenSource caches the node service account's access token.
-type nodeTokenSource struct {
-	url string
-	mu  sync.Mutex
-	tok string
-	exp time.Time
-}
-
-func (t *nodeTokenSource) token() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.tok != "" && time.Now().Before(t.exp) {
-		return t.tok
-	}
-	resp, err := http.Get(t.url)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	var v struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&v) != nil {
-		return ""
-	}
-	t.tok = v.AccessToken
-	t.exp = time.Now().Add(time.Duration(max(v.ExpiresIn-60, 30)) * time.Second)
-	return t.tok
-}
-
 // serveNodeDNS relays DNS to the emulator over UDP and TCP. It answers
 // metadata.google.internal and the frontend's hostnames itself. It also
 // serves the googleapis resolver when the cluster's DNS address is known.
@@ -438,19 +364,7 @@ func serveNodeDNS(cfg nodeConfig) (func(), error) {
 
 // nodeDNSAnswer returns the names the node relay answers with addr.
 func nodeDNSAnswer(cfg nodeConfig, addr net.IP) func(string) net.IP {
-	hosts := map[string]bool{}
-	for _, h := range cfg.FrontendHosts {
-		hosts[frontend.Normalize(h)] = true
-	}
-	return func(name string) net.IP {
-		switch {
-		case name == "metadata.google.internal" || name == "metadata":
-			return addr
-		case cfg.Frontend != "" && (hosts[name] || frontend.IsRegistryHost(name)):
-			return addr
-		}
-		return nil
-	}
+	return workload.DNSAnswer(cfg.FrontendHosts, cfg.Frontend != "", addr)
 }
 
 // addrIn returns this host's IPv4 address inside cidr.

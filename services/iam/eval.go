@@ -25,7 +25,8 @@ var unknownPerms sync.Map
 // project (and so may do anything), as is the host metadata server's
 // default service account unless one was configured explicitly; internal
 // calls without a principal are trusted; and each project's default
-// compute service account is editor of its project, as in GCP.
+// compute service account is editor of its project, and its legacy Cloud
+// Build service account a Cloud Build Service Account, as in GCP.
 func (s *Service) Allowed(ctx context.Context, p emu.Principal, perm, resource string) bool {
 	if p == "" || strings.EqualFold(string(p), s.env.Config.DefaultPrincipal) {
 		return true
@@ -46,6 +47,10 @@ func (s *Service) Allowed(ctx context.Context, p emu.Principal, perm, resource s
 	return allowed
 }
 
+// legacyCloudBuildRole is the role GCP grants a project's legacy Cloud
+// Build service account on it.
+const legacyCloudBuildRole = "roles/cloudbuild.builds.builder"
+
 func (s *Service) allowedTx(tx store.Tx, p emu.Principal, perm, resource string) bool {
 	chain := s.policyChain(tx, resource)
 	for _, res := range chain {
@@ -63,13 +68,18 @@ func (s *Service) allowedTx(tx store.Tx, p emu.Principal, perm, resource string)
 			return true
 		}
 	}
-	// The default compute SA is editor on its project.
+	// The default compute SA is editor on its project, and the legacy
+	// Cloud Build SA is a Cloud Build Service Account on its.
 	if email, ok := strings.CutPrefix(string(p), "serviceAccount:"); ok {
+		var num string
 		if m := defaultComputeRE.FindStringSubmatch(email); m != nil && basicIncludes("editor", perm) {
-			for _, res := range chain {
-				if pid, ok := strings.CutPrefix(res, "//cloudresourcemanager.googleapis.com/projects/"); ok && project.NumberString(pid) == m[1] {
-					return true
-				}
+			num = m[1]
+		} else if m := legacyCloudBuildRE.FindStringSubmatch(email); m != nil && s.roleHas(tx, legacyCloudBuildRole, perm) {
+			num = m[1]
+		}
+		for _, res := range chain {
+			if pid, ok := strings.CutPrefix(res, "//cloudresourcemanager.googleapis.com/projects/"); ok && num != "" && project.NumberString(pid) == num {
+				return true
 			}
 		}
 	}

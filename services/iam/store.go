@@ -43,6 +43,9 @@ type deletedAccount struct {
 var (
 	accountIDRE      = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])$`)
 	defaultComputeRE = regexp.MustCompile(`^(\d+)-compute@developer\.gserviceaccount\.com$`)
+	// legacyCloudBuildRE matches a project's legacy Cloud Build service
+	// account, a service agent.
+	legacyCloudBuildRE = regexp.MustCompile(`^(\d+)@cloudbuild\.gserviceaccount\.com$`)
 )
 
 // saResource is the full resource name IAM checks use for an account.
@@ -83,7 +86,8 @@ func notFoundSA() error {
 }
 
 // getAccount resolves a service account by email or unique ID inside tx.
-// The project's default compute service account always exists.
+// The project's default compute service account and legacy Cloud Build
+// service account always exist.
 func (s *Service) getAccount(tx store.Tx, idOrEmail string) (*iamv1.ServiceAccount, bool) {
 	var sa iamv1.ServiceAccount
 	if strings.Contains(idOrEmail, "@") {
@@ -93,6 +97,11 @@ func (s *Service) getAccount(tx store.Tx, idOrEmail string) (*iamv1.ServiceAccou
 		if m := defaultComputeRE.FindStringSubmatch(idOrEmail); m != nil {
 			if pid, ok := s.projectByNumber(tx, m[1]); ok {
 				return s.defaultComputeAccount(pid), true
+			}
+		}
+		if m := legacyCloudBuildRE.FindStringSubmatch(idOrEmail); m != nil {
+			if pid, ok := s.projectByNumber(tx, m[1]); ok {
+				return legacyCloudBuildAccount(pid), true
 			}
 		}
 		return nil, false
@@ -119,6 +128,20 @@ func (s *Service) defaultComputeAccount(projectID string) *iamv1.ServiceAccount 
 		UniqueId:       uniqueIDFor(email),
 		Email:          email,
 		DisplayName:    "Compute Engine default service account",
+		Etag:           saEtag,
+		Oauth2ClientId: uniqueIDFor(email),
+	}
+}
+
+// legacyCloudBuildAccount describes PROJECT_NUMBER@cloudbuild.gserviceaccount.com.
+func legacyCloudBuildAccount(projectID string) *iamv1.ServiceAccount {
+	email := project.NumberString(projectID) + "@cloudbuild.gserviceaccount.com"
+	return &iamv1.ServiceAccount{
+		Name:           "projects/" + projectID + "/serviceAccounts/" + email,
+		ProjectId:      projectID,
+		UniqueId:       uniqueIDFor(email),
+		Email:          email,
+		DisplayName:    "Cloud Build Service Account",
 		Etag:           saEtag,
 		Oauth2ClientId: uniqueIDFor(email),
 	}

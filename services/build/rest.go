@@ -23,6 +23,10 @@ func (s *Service) restHandler() http.Handler {
 	t := transcode.New()
 	cloudbuildpb.RegisterCloudBuildServer(t, s.api)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/_emu/agent/"); ok {
+			s.serveAgent(w, r, rest)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/v2/") {
 			apierr.Write(w, apierr.New(codes.Unimplemented, "Cloud Build API v2 is not emulated."))
 			return
