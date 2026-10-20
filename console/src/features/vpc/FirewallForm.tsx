@@ -54,6 +54,7 @@ const editShape = {
   sourceRanges: z.string(),
   destinationRanges: z.string(),
   sourceTags: z.string(),
+  sourceServiceAccounts: z.string(),
   targetTags: z.string(),
   targetServiceAccounts: z.string(),
   description: z.string(),
@@ -102,6 +103,7 @@ const FIELD: Record<string, string> = {
   sourceRanges: 'sourceRanges',
   destinationRanges: 'destinationRanges',
   sourceTags: 'sourceTags',
+  sourceServiceAccounts: 'sourceServiceAccounts',
   targetTags: 'targetTags',
   targetServiceAccounts: 'targetServiceAccounts',
   description: 'description',
@@ -111,6 +113,7 @@ const LISTS = [
   'sourceRanges',
   'destinationRanges',
   'sourceTags',
+  'sourceServiceAccounts',
   'targetTags',
   'targetServiceAccounts',
 ] as const
@@ -128,6 +131,7 @@ function shared(body: Body): EditValues {
     sourceRanges: formatList(listOf(body.sourceRanges)),
     destinationRanges: formatList(listOf(body.destinationRanges)),
     sourceTags: formatList(listOf(body.sourceTags)),
+    sourceServiceAccounts: formatList(listOf(body.sourceServiceAccounts)),
     targetTags: formatList(listOf(body.targetTags)),
     targetServiceAccounts: formatList(listOf(body.targetServiceAccounts)),
     description: str(body.description),
@@ -137,10 +141,9 @@ function shared(body: Body): EditValues {
 }
 
 /** shown are the list fields a rule of direction d has. */
+const SOURCES: readonly string[] = ['sourceRanges', 'sourceTags', 'sourceServiceAccounts']
 const shown = (d: Direction) =>
-  LISTS.filter((k) =>
-    d === 'EGRESS' ? k !== 'sourceRanges' && k !== 'sourceTags' : k !== 'destinationRanges',
-  )
+  LISTS.filter((k) => (d === 'EGRESS' ? !SOURCES.includes(k) : k !== 'destinationRanges'))
 
 // ---- create ----
 
@@ -289,6 +292,10 @@ const LIST_FIELDS: Record<(typeof LISTS)[number], [label: string, hint: string]>
     'IPv4 CIDR ranges, separated by commas. Empty is 0.0.0.0/0.',
   ],
   sourceTags: ['Source tags', 'Network tags of the VM instances the traffic comes from.'],
+  sourceServiceAccounts: [
+    'Source service accounts',
+    'Service account emails of the VM instances the traffic comes from, instead of tags.',
+  ],
   targetTags: [
     'Target tags',
     'Network tags of the VM instances the rule applies to. Empty is all.',
@@ -446,6 +453,7 @@ function EditFirewallForm({ firewall, project }: { firewall: Firewall; project: 
       sourceRanges: keep('sourceRanges'),
       destinationRanges: keep('destinationRanges'),
       sourceTags: keep('sourceTags'),
+      sourceServiceAccounts: keep('sourceServiceAccounts'),
       targetTags: keep('targetTags'),
       targetServiceAccounts: keep('targetServiceAccounts'),
       description: keep('description'),

@@ -81,10 +81,17 @@ export function subnetRecipe(s: Subnetwork, project: string): Recipe {
   }
 }
 
+/** LOGGING_METADATA is gcloud's --logging-metadata for a logConfig's metadata. */
+const LOGGING_METADATA: Record<string, string | undefined> = {
+  INCLUDE_ALL_METADATA: 'include-all',
+  EXCLUDE_ALL_METADATA: 'exclude-all',
+}
+
 export function firewallRecipe(f: Firewall, project: string): Recipe {
   const deny = !!f.denied?.length
   const rules = (deny ? f.denied : f.allowed) ?? []
   const logged = !!f.logConfig?.enable
+  const metadata = typeof f.logConfig?.metadata === 'string' ? f.logConfig.metadata : ''
   return {
     gcloud: gcloud(['compute', 'firewall-rules', 'create', f.name], {
       project,
@@ -102,6 +109,7 @@ export function firewallRecipe(f: Firewall, project: string): Recipe {
       description: f.description,
       disabled: f.disabled,
       'enable-logging': logged,
+      'logging-metadata': logged ? LOGGING_METADATA[metadata] : undefined,
     }),
     rest: {
       method: 'POST',
@@ -125,7 +133,7 @@ export function firewallRecipe(f: Firewall, project: string): Recipe {
       [deny ? 'deny' : 'allow']: rules.map((r) =>
         block({ protocol: r.IPProtocol, ports: r.ports }),
       ),
-      log_config: logged ? block({ metadata: 'INCLUDE_ALL_METADATA' }) : undefined,
+      log_config: logged ? block({ metadata: metadata || 'INCLUDE_ALL_METADATA' }) : undefined,
     }),
   }
 }

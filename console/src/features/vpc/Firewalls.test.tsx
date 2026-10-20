@@ -112,7 +112,7 @@ describe('Copy as', () => {
         destinationRanges: ['0.0.0.0/0'],
         targetTags: undefined,
         disabled: true,
-        logConfig: { enable: true },
+        logConfig: { enable: true, metadata: 'EXCLUDE_ALL_METADATA' },
       }),
       P,
     )
@@ -121,11 +121,12 @@ describe('Copy as', () => {
     expect(r.gcloud).toContain('--rules=all \\')
     expect(r.gcloud).toContain('--destination-ranges=0.0.0.0/0 \\')
     expect(r.gcloud).toContain('--disabled \\')
-    expect(r.gcloud).toMatch(/--enable-logging$/)
+    expect(r.gcloud).toContain('--enable-logging \\')
+    expect(r.gcloud).toMatch(/--logging-metadata=exclude-all$/)
     expect(r.tofu).toContain('  priority           = 0\n')
     expect(r.tofu).toContain('  disabled           = true\n')
     expect(r.tofu).toContain('  deny {\n    protocol = "all"\n  }')
-    expect(r.tofu).toContain('  log_config {\n    metadata = "INCLUDE_ALL_METADATA"\n  }')
+    expect(r.tofu).toContain('  log_config {\n    metadata = "EXCLUDE_ALL_METADATA"\n  }')
   })
 
   it('copies a route to a next hop address', () => {
@@ -380,6 +381,10 @@ describe('firewall rules', () => {
     await user.clear(screen.getByLabelText('Priority'))
     await user.type(screen.getByLabelText('Source ranges'), '10.0.0.1/8')
     await user.type(screen.getByLabelText('Target tags'), 'web, api')
+    await user.type(
+      screen.getByLabelText('Source service accounts'),
+      'front@p.iam.gserviceaccount.com',
+    )
     await user.click(screen.getByRole('button', { name: 'Create' }))
     expect(
       await screen.findByText(
@@ -402,6 +407,7 @@ describe('firewall rules', () => {
         direction: 'INGRESS',
         allowed: [{ IPProtocol: 'tcp', ports: ['80', '443'] }, { IPProtocol: 'icmp' }],
         sourceRanges: ['10.0.0.0/8'],
+        sourceServiceAccounts: ['front@p.iam.gserviceaccount.com'],
         targetTags: ['web', 'api'],
       },
     })
@@ -415,6 +421,7 @@ describe('firewall rules', () => {
     await user.selectOptions(screen.getByLabelText('Direction'), 'EGRESS')
     await user.selectOptions(screen.getByLabelText('Action'), 'DENY')
     expect(screen.queryByLabelText('Source ranges')).toBeNull()
+    expect(screen.queryByLabelText('Source service accounts')).toBeNull()
     await user.type(screen.getByLabelText('Protocols and ports'), 'all')
     await user.type(screen.getByLabelText('Priority'), '0')
     await user.type(screen.getByLabelText('Destination ranges'), '0.0.0.0/0')
