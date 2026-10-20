@@ -546,6 +546,31 @@ const sslPolicy: FieldSpec = {
 /** L4_PROTOCOLS are the protocols of the backend services of target TCP and SSL proxies. */
 const L4_PROTOCOLS = ['TCP', 'SSL']
 
+/**
+ * l4Service is the backend service of a target TCP or SSL proxy: one of
+ * protocol TCP or SSL, in the proxy's scope as every reference field is.
+ */
+const l4Service: FieldSpec = {
+  key: 'service',
+  path: 'service',
+  label: 'Backend service',
+  type: 'ref',
+  targets: ['backendServices'],
+  accept: (r) => L4_PROTOCOLS.includes(text(r.protocol)),
+  required: true,
+  hint: 'A backend service of protocol TCP or SSL.',
+}
+
+const proxyHeader: FieldSpec = {
+  key: 'proxyHeader',
+  path: 'proxyHeader',
+  label: 'Proxy header',
+  type: 'select',
+  options: ['NONE', 'PROXY_V1'],
+  initial: 'NONE',
+  hint: 'PROXY_V1 prepends a PROXY protocol header with the client’s address.',
+}
+
 const SCHEMES = ['EXTERNAL_MANAGED', 'EXTERNAL', 'INTERNAL_MANAGED', 'INTERNAL_SELF_MANAGED']
 const internal = (v: Values) => text(v.loadBalancingScheme).startsWith('INTERNAL')
 
@@ -613,8 +638,14 @@ export const SPECS: Record<Coll, KindSpec> = {
         path: 'target',
         label: 'Target proxy',
         type: 'ref',
-        // Target SSL proxies are global: a regional rule's form has none to offer.
-        targets: ['targetHttpProxies', 'targetHttpsProxies', 'targetSslProxies'],
+        // The picker offers proxies in the rule's scope; target SSL proxies are
+        // global only, so a regional rule's form has none of them to offer.
+        targets: [
+          'targetHttpProxies',
+          'targetHttpsProxies',
+          'targetSslProxies',
+          'targetTcpProxies',
+        ],
         required: true,
       },
       {
@@ -695,16 +726,7 @@ export const SPECS: Record<Coll, KindSpec> = {
     fields: [
       name,
       { ...description, createOnly: true },
-      {
-        key: 'service',
-        path: 'service',
-        label: 'Backend service',
-        type: 'ref',
-        targets: ['backendServices'],
-        accept: (r) => L4_PROTOCOLS.includes(text(r.protocol)),
-        required: true,
-        hint: 'A backend service of protocol TCP or SSL.',
-      },
+      l4Service,
       {
         ...sslCertificates,
         required: (v) =>
@@ -717,15 +739,7 @@ export const SPECS: Record<Coll, KindSpec> = {
               ),
       },
       certificateMap,
-      {
-        key: 'proxyHeader',
-        path: 'proxyHeader',
-        label: 'Proxy header',
-        type: 'select',
-        options: ['NONE', 'PROXY_V1'],
-        initial: 'NONE',
-        hint: 'PROXY_V1 prepends a PROXY protocol header with the client’s address.',
-      },
+      proxyHeader,
       sslPolicy,
     ],
     setters: {
@@ -735,6 +749,12 @@ export const SPECS: Record<Coll, KindSpec> = {
       certificateMap: 'setCertificateMap',
       sslPolicy: 'setSslPolicy',
     },
+  },
+  targetTcpProxies: {
+    coll: 'targetTcpProxies',
+    fields: [name, region('proxy'), { ...description, createOnly: true }, l4Service, proxyHeader],
+    // Global proxies only: regionTargetTcpProxies has no set* methods.
+    setters: { service: 'setBackendService', proxyHeader: 'setProxyHeader' },
   },
   urlMaps: {
     coll: 'urlMaps',
@@ -806,7 +826,7 @@ export const SPECS: Record<Coll, KindSpec> = {
         type: 'select',
         options: ['HTTP', 'HTTPS', 'HTTP2', ...L4_PROTOCOLS],
         initial: 'HTTP',
-        hint: 'TCP and SSL serve target SSL proxies.',
+        hint: 'TCP and SSL serve target TCP and SSL proxies.',
       },
       {
         key: 'backends',

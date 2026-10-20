@@ -15,6 +15,7 @@ import { MapLink, TlsLink } from '../certs/CertsLayout'
 import { CopyText } from '../sql/InstancePage'
 import {
   deleteResource,
+  editOf,
   kindInfo,
   listenersQuery,
   parseRef,
@@ -77,7 +78,7 @@ export function ResourcePage() {
         {r && (
           <div className="flex flex-wrap gap-2">
             <CopyAs what={k.singular} recipe={() => recipeFor(ref, r)} />
-            {k.edit && (
+            {editOf(k, ref.region) && (
               <Button variant="outline" asChild>
                 <Link to={lbPath(ref, 'edit')}>
                   <Pencil aria-hidden />

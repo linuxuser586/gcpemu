@@ -321,6 +321,52 @@ describe('target SSL proxies', () => {
   })
 })
 
+describe('target TCP proxies', () => {
+  const spec = SPECS.targetTcpProxies
+  const cur = {
+    name: 'tcp',
+    selfLink: link('global/targetTcpProxies/tcp'),
+    description: 'kept',
+    service: link('global/backendServices/tcp'),
+    proxyHeader: 'NONE',
+  }
+  const edit = (change: Values) => setBody(spec, cur)({ ...readValues(spec, cur), ...change }, {})
+
+  it('sends no call for an unchanged field', () => {
+    expect(setCalls(spec, cur, edit({}))).toEqual([])
+  })
+
+  it('sends setBackendService and setProxyHeader for the fields that changed', () => {
+    expect(setCalls(spec, cur, edit({ service: 'projects/p/global/backendServices/tls' }))).toEqual(
+      [{ method: 'setBackendService', body: { service: 'projects/p/global/backendServices/tls' } }],
+    )
+    expect(
+      setCalls(
+        spec,
+        cur,
+        edit({ service: 'projects/p/global/backendServices/tls', proxyHeader: 'PROXY_V1' }),
+      ),
+    ).toEqual([
+      { method: 'setBackendService', body: { service: 'projects/p/global/backendServices/tls' } },
+      { method: 'setProxyHeader', body: { proxyHeader: 'PROXY_V1' } },
+    ])
+  })
+
+  it('creates with service, proxy header and description, and needs a backend service', () => {
+    const v = { ...initialValues(spec, 'us-east1'), name: 'east', description: 'raw' }
+    expect(validate(spec, v)).toEqual({
+      service: "Required field 'resource.service' not specified",
+    })
+    const service = 'projects/p/regions/us-east1/backendServices/tcp'
+    expect(createBody(spec)({ ...v, service }, {})).toEqual({
+      name: 'east',
+      description: 'raw',
+      service,
+      proxyHeader: 'NONE',
+    })
+  })
+})
+
 describe('test a URL', () => {
   it('splits URLs and headers', () => {
     expect(splitUrl('https://a.test:8443/x?y=1')).toEqual({
