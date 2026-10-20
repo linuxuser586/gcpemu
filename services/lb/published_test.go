@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/lb"
@@ -31,14 +33,14 @@ func startPublished(t *testing.T, portRange string, ports map[int]string) (*env,
 
 // startContainerized starts an Instance as startPublished does, with set
 // making its data plane a Containerized Instance's, serving published
-// ports on bind.
-func startContainerized(t *testing.T, portRange string, set func(svc emu.Service, bind string)) (*env, func(port int) string) {
+// ports on bind, and opts its configuration.
+func startContainerized(t *testing.T, portRange string, set func(svc emu.Service, bind string), opts ...emutest.Option) (*env, func(port int) string) {
 	t.Helper()
 	if c, err := net.DialTimeout("tcp", "127.0.0.1:8080", time.Second); err == nil {
 		c.Close()
 		t.Skip("127.0.0.1:8080 is in use")
 	}
-	e := start(t)
+	e := start(t, opts...)
 	e.inst.Env.Config.PortRange = portRange
 	svc, _ := e.inst.Env.Lookup("lb")
 	host, bind := "127.0.0.1", "127.0.0.1"
@@ -263,12 +265,11 @@ func TestPublishedRuntimeNone(t *testing.T) {
 func TestPublishedNoRuntimeNotContainerized(t *testing.T) {
 	rt := &fakeRuntime{errs: []error{emu.NoRuntime(errors.New("no runtime found"))}}
 	e, _ := startContainerized(t, "", func(svc emu.Service, bind string) {
-		lb.SetContainerized(svc, "false")
 		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
 			t.Error("published ports read without a runtime")
 			return "", false, nil, nil
 		}, bind)
-	})
+	}, containerized("false"))
 	svc, _ := e.inst.Env.Lookup("lb")
 	e.forwardingRule("a", 8080)
 	want := net.JoinHostPort(lb.ListenerAddr(svc, "a"), "8080")
@@ -289,11 +290,10 @@ func TestPublishedRuntimeWinsOverSetting(t *testing.T) {
 	rng := freePort(t)
 	rt := &fakeRuntime{}
 	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
-		lb.SetContainerized(svc, "false")
 		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
 			return "self", true, map[int]string{rng: "127.0.0.1:40001"}, nil
 		}, bind)
-	})
+	}, containerized("false"))
 	e.forwardingRule("a", 8080)
 	e.waitEndpoint(ep("a"), "127.0.0.1:40001")
 	e.serves(dial(rng))
@@ -313,6 +313,11 @@ func TestPublishedSelfNotFound(t *testing.T) {
 	e.forwardingRule("a", 8080)
 	e.waitEndpoint(ep("a"), "127.0.0.1:8080")
 	e.serves(dial(8080))
+}
+
+// containerized sets --containerized.
+func containerized(setting string) emutest.Option {
+	return func(c *config.Config) { c.Containerized = setting }
 }
 
 // freePort returns a TCP port free on 127.0.0.1.

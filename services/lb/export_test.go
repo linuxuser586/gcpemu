@@ -142,12 +142,6 @@ func SetSelfRuntime(svc emu.Service, rt func(ctx context.Context) (*runtime.Mana
 	publishedHost = host
 }
 
-// SetContainerized sets --containerized (call it before creating
-// forwarding rules).
-func SetContainerized(svc emu.Service, setting string) {
-	svc.(*Service).env.Config.Containerized = setting
-}
-
 // Publishing reports whether the data plane serves forwarding rules on
 // Published ports.
 func Publishing(svc emu.Service) bool {
