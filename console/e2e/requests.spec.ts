@@ -1,12 +1,10 @@
 import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 import { startInstance, type Instance } from './instance'
 
-// FR-UI-013: the Request log is the Instance's and keeps only its last
-// 2000 entries. On the shared Instance every other spec's traffic, and the
-// DNS, NAT, load balancer and Cloud SQL entries written on their own, can
-// evict this test's requests before the reload reads the log back, so it
-// runs against an Instance of its own per browser. Pub/Sub runs only so the
-// Service filter offers it; neither Service writes to the log unprompted.
+// FR-UI-013: the Request log keeps only its last 2000 entries, and on the
+// shared Instance other specs' traffic can evict this test's before the
+// reload reads them back, so it runs against an Instance of its own per
+// browser. Pub/Sub runs only so the Service filter offers it.
 
 const allowed = /^\/(console\/|_emu\/v1\/|[a-z]+\/v\d[a-z0-9]*\/)/
 
