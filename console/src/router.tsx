@@ -167,6 +167,8 @@ import { SaveSnapshot } from '@/features/state/SaveSnapshot'
 import { State } from '@/features/state/State'
 import {
   firewallQuery,
+  addressQuery,
+  allAddressesQuery,
   firewallsQuery,
   hostOffersQuery,
   networkQuery,
@@ -176,6 +178,9 @@ import {
   subnetQuery,
   subnetsQuery,
 } from '@/features/vpc/api'
+import { CreateAddress } from '@/features/vpc/AddressForm'
+import { AddressPage } from '@/features/vpc/AddressPage'
+import { Addresses } from '@/features/vpc/Addresses'
 import { CreateFirewall, EditFirewall } from '@/features/vpc/FirewallForm'
 import { FirewallPage } from '@/features/vpc/FirewallPage'
 import { Firewalls } from '@/features/vpc/Firewalls'
@@ -1030,9 +1035,10 @@ function natRoutes(queryClient: QueryClient): RouteObject[] {
 
 // The VPC network view (SRS 4.8.3), the compute Service. Paths follow the
 // API's resource names, global/networks/N, regions/R/subnetworks/S,
-// global/firewalls/F and global/routes/R, with the Project in ?project=;
-// create pages are not under them, so that no name is shadowed, and the
-// subnetwork, firewall rule and route ones take the network in ?network=.
+// global/firewalls/F, global/routes/R and global/addresses/A or
+// regions/R/addresses/A, with the Project in ?project=; create pages are
+// not under them, so that no name is shadowed, and the subnetwork,
+// firewall rule and route ones take the network in ?network=.
 // Offered ports are the Instance's, at /compute/offers.
 function vpcRoutes(queryClient: QueryClient): RouteObject[] {
   const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
@@ -1044,6 +1050,14 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
           queryClient.ensureQueryData(subnetsQuery(project)),
         )
       : null
+  }
+  const address: RouteObject['loader'] = ({ request, params }) => {
+    const r = {
+      project: projectOf(request),
+      region: params.region ?? '',
+      address: params.address ?? '',
+    }
+    return r.project ? warm(queryClient.ensureQueryData(addressQuery(r))) : null
   }
   return [
     { index: true, element: <Networks />, loader: lists },
@@ -1121,6 +1135,17 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
           : null
       },
     },
+    {
+      path: 'addresses',
+      element: <Addresses />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(allAddressesQuery(project))) : null
+      },
+    },
+    { path: 'create-address', element: <CreateAddress /> },
+    { path: 'global/addresses/:address', element: <AddressPage />, loader: address },
+    { path: 'regions/:region/addresses/:address', element: <AddressPage />, loader: address },
   ]
 }
 
