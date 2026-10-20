@@ -57,6 +57,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			}
 
 			checkPlatform(report, runtime.GOOS, runtime.GOARCH)
+			inContainer := emuruntime.InContainer()
 			cl, det, rtErr := emuruntime.Locate()
 			checkRuntimeDetection(out, report, det, rtErr)
 			hasRuntime := rtErr == nil
@@ -101,16 +102,11 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime)
+			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, inContainer)
 			if running == nil {
 				checkUnpublished(out, cfg)
 			}
-			if runtime.GOOS == "darwin" {
-				checkLoopback(out, loopback.Aliases())
-			}
-			if runtime.GOOS == "windows" {
-				checkExcludedPorts(out, cfg, running == nil)
-			}
+			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
 
 			dir := cfg.InstanceDir()
 			if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -124,7 +120,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			caPath := filepath.Join(dir, ca.CertFile)
 			if pemBytes, err := os.ReadFile(caPath); err == nil {
 				fmt.Fprintf(out, "[ok  ] emulator CA present at %s\n", caPath)
-				checkCATrust(out, cfg.Instance, pemBytes)
+				checkCATrust(out, cfg.Instance, caPath, pemBytes, inContainer)
 			} else {
 				fmt.Fprintln(out, "[--  ] emulator CA not created yet (created on first start)")
 			}
@@ -154,6 +150,22 @@ func portNames(cfg *config.Config) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// checkHostOnly runs the checks of goos's host: the loopback aliases on
+// macOS and the excluded port ranges on Windows. In a Containerized
+// Instance (inContainer) the host's OS is unknown and out of reach, so it
+// notes what to check on each host instead.
+func checkHostOnly(out io.Writer, cfg *config.Config, goos string, inContainer, running bool) {
+	switch {
+	case inContainer:
+		fmt.Fprintf(out, "[--  ] host checks not run in a Containerized Instance; on the host: on a macOS host, `%s` with the native binary adds the loopback aliases; "+
+			"on a Windows host, check the published ports and --port-range against `netsh int ipv4 show excludedportrange protocol=tcp`\n", loopback.InstallHint)
+	case goos == "darwin":
+		checkLoopback(out, loopback.Aliases())
+	case goos == "windows":
+		checkExcludedPorts(out, cfg, running)
+	}
 }
 
 // checkExcludedPorts warns, on Windows, about ports in one of its
@@ -501,8 +513,14 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 // checkCATrust reports where the CA is trusted: the OS store, then each
 // browser (NSS) database on Linux, which browsers read instead of the OS
 // store. Missing trust is a note, not a failure, since only HTTPS to
-// load balancers and host mode need it.
-func checkCATrust(out io.Writer, instance string, pemBytes []byte) {
+// load balancers and host mode need it. In a Containerized Instance
+// (inContainer) trust is the host's, which the container cannot see, so
+// it notes that the CA at caPath is to be trusted there.
+func checkCATrust(out io.Writer, instance, caPath string, pemBytes []byte, inContainer bool) {
+	if inContainer {
+		fmt.Fprintf(out, "[--  ] Instance CA trust is the host's in a Containerized Instance: trust %s on the host, not in the container\n", caPath)
+		return
+	}
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		fmt.Fprintln(out, "[--  ] emulator CA unreadable; skipping trust checks")
@@ -582,8 +600,9 @@ func osTrustsCA(der []byte) bool {
 // --lb-bind ports need the lb-lan relay, and --gfe-bind's 443 an
 // unprivileged port start at or below it, or the gfe-lan relay, which
 // needs hostRuntime: a container runtime that is not a VM runtime, for an
-// emulator not in a container).
-func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime bool) {
+// emulator not in a container). In a Containerized Instance (inContainer)
+// the addresses and the sysctl are the container's.
+func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime, inContainer bool) {
 	if running {
 		c, err := clientFor(cfg)
 		if err != nil {
@@ -615,11 +634,23 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 		return
 	}
 	local := map[string]bool{}
+	var lan []string
 	if addrs, err := net.InterfaceAddrs(); err == nil {
 		for _, a := range addrs {
 			if ipn, ok := a.(*net.IPNet); ok {
 				local[ipn.IP.String()] = true
+				if !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
+					lan = append(lan, ipn.IP.String())
+				}
 			}
+		}
+	}
+	whose, fix := "this host", "pick one from "+listAddrsCmd(runtime.GOOS)
+	if inContainer {
+		// The image has no `ip`, so the fix lists the addresses itself.
+		whose, fix = "this container", "pick one of the container's addresses: "+strings.Join(lan, ", ")
+		if len(lan) == 0 {
+			fix = "attach the container to a network with an address beyond loopback (docker run --network)"
 		}
 	}
 	for _, b := range []struct {
@@ -628,8 +659,7 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	}{{"lb-bind", cfg.LBBind}, {"gke-bind", cfg.GKEBind}, {"ar-bind", cfg.ARBind}, {"gfe-bind", cfg.GFEBind}} {
 		for _, a := range b.addrs {
 			ip := net.ParseIP(a)
-			report(ip != nil && local[ip.String()], fmt.Sprintf("--%s %s is an address of this host", b.flag, a),
-				"pick one from "+listAddrsCmd(runtime.GOOS))
+			report(ip != nil && local[ip.String()], fmt.Sprintf("--%s %s is an address of %s", b.flag, a, whose), fix)
 		}
 	}
 	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")
@@ -638,27 +668,51 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	}
 	start, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	if _, set := cfg.PortSet(frontend.LANEndpoint); len(cfg.GFEBind) > 0 && !set {
-		checkGFEPort(report, start, os.Geteuid() == 0, hostRuntime)
+		checkGFEPort(report, start, os.Geteuid() == 0, hostRuntime, inContainer)
 	}
 	if len(cfg.LBBind) > 0 {
-		if start > 80 {
-			report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
-				"install a container runtime, or let the emulator bind them: sudo sysctl net.ipv4.ip_unprivileged_port_start=80")
-		}
+		checkLBPort(report, start, hasRuntime, inContainer)
 	}
+}
+
+// checkLBPort reports whether --lb-bind's ports below start, the
+// unprivileged port start, are relayed by the lb-lan container, which
+// needs hasRuntime. In a Containerized Instance (inContainer) the runtime
+// is the host's, reached through its socket mounted in the container.
+func checkLBPort(report func(bool, string, string), start int, hasRuntime, inContainer bool) {
+	if start <= 80 {
+		return
+	}
+	runtimeFix := "install a container runtime"
+	if inContainer {
+		runtimeFix = "mount the container runtime's socket (`docker run -v /var/run/docker.sock:/var/run/docker.sock`)"
+	}
+	report(hasRuntime, fmt.Sprintf("--lb-bind ports below %d relayed by the lb-lan container", start),
+		runtimeFix+", or let the emulator bind them: "+sysctlFix(80, inContainer))
+}
+
+// sysctlFix is the command that lets the emulator bind ports from port
+// on: on the host, or in a Containerized Instance (inContainer), where
+// the sysctl is the container's network namespace's, when it starts.
+func sysctlFix(port int, inContainer bool) string {
+	if inContainer {
+		return fmt.Sprintf("start the container with `docker run --sysctl net.ipv4.ip_unprivileged_port_start=%d`", port)
+	}
+	return fmt.Sprintf("sudo sysctl net.ipv4.ip_unprivileged_port_start=%d", port)
 }
 
 // checkGFEPort reports how --gfe-bind's port 443 is served on Linux,
 // whose unprivileged port start is start: by the emulator, when it may bind
 // it, otherwise by the gfe-lan relay (the LAN front-end relay) when there is
-// a hostRuntime for it, otherwise not until the sysctl is lowered.
-func checkGFEPort(report func(bool, string, string), start int, root, hostRuntime bool) {
+// a hostRuntime for it, otherwise not until the sysctl is lowered (the
+// container's, in a Containerized Instance).
+func checkGFEPort(report func(bool, string, string), start int, root, hostRuntime, inContainer bool) {
 	if start > 443 && !root && hostRuntime {
 		report(true, "--gfe-bind port 443 relayed by the gfe-lan container", "")
 		return
 	}
 	report(start <= 443 || root, fmt.Sprintf("--gfe-bind port 443 can be bound (net.ipv4.ip_unprivileged_port_start is %d)", start),
-		"sudo sysctl net.ipv4.ip_unprivileged_port_start=443")
+		sysctlFix(443, inContainer))
 }
 
 // listAddrsCmd is the command that lists this host's addresses on goos.

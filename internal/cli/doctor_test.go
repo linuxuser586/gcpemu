@@ -1,11 +1,17 @@
 package cli
 
 import (
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -362,5 +368,122 @@ func TestReportExcludedPorts(t *testing.T) {
 	reportExcludedPorts(&out, "tcp", nil, ports)
 	if out.Len() != 0 {
 		t.Errorf("no ranges: output %q, want none", out.String())
+	}
+}
+
+// In a Containerized Instance, CA trust is the host's: doctor notes where
+// the CA is, and checks neither the container's bundles nor its NSS
+// databases (#493).
+func TestCheckCATrust(t *testing.T) {
+	saved := systemBundles
+	defer func() { systemBundles = saved }()
+	bundle := filepath.Join(t.TempDir(), "bundle.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")})
+	if err := os.WriteFile(bundle, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	systemBundles = []string{bundle}
+	for _, tc := range []struct {
+		inContainer bool
+		want        string
+	}{
+		{true, "[--  ] Instance CA trust is the host's in a Containerized Instance: trust /data/default/ca.pem on the host, not in the container\n"},
+		{false, "[ok  ] emulator CA trusted by the OS trust store\n"},
+	} {
+		var out strings.Builder
+		checkCATrust(&out, "default", "/data/default/ca.pem", pemBytes, tc.inContainer)
+		got := out.String()
+		if tc.inContainer && got != tc.want {
+			t.Errorf("inContainer: output %q, want %q", got, tc.want)
+		}
+		if !tc.inContainer && runtime.GOOS == "linux" && !strings.HasPrefix(got, tc.want) {
+			t.Errorf("on the host: output %q, want it to start %q", got, tc.want)
+		}
+	}
+}
+
+// An --lb-bind address that is not local is checked against the
+// container's addresses in a Containerized Instance, whose fix lists them,
+// since the image has no `ip` (#493), and against the host's otherwise.
+func TestCheckLANBindAddress(t *testing.T) {
+	for _, tc := range []struct {
+		inContainer     bool
+		what, fixPrefix string
+	}{
+		{true, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
+		{false, "--lb-bind 203.0.113.7 is an address of this host", "pick one from " + listAddrsCmd(runtime.GOOS)},
+	} {
+		var whats, fixes []string
+		failed := false
+		report := func(ok bool, what, fix string) {
+			if strings.HasPrefix(what, "--lb-bind 203.0.113.7") {
+				failed = !ok
+				whats, fixes = append(whats, what), append(fixes, fix)
+			}
+		}
+		checkLANBind(io.Discard, report, &config.Config{LBBind: []string{"203.0.113.7"}}, false, false, false, tc.inContainer)
+		if !failed || len(whats) != 1 || whats[0] != tc.what || !strings.HasPrefix(fixes[0], tc.fixPrefix) {
+			t.Errorf("inContainer=%v: failed=%v %q %q, want %q %q...", tc.inContainer, failed, whats, fixes, tc.what, tc.fixPrefix)
+		}
+		if tc.inContainer && (strings.Contains(fixes[0], "ip -br addr") || strings.Contains(fixes[0], "127.0.0.1")) {
+			t.Errorf("container fix %q names a host command or a loopback address", fixes[0])
+		}
+	}
+}
+
+// The fixes for privileged --gfe-bind and --lb-bind ports lower the
+// container's own sysctl with `docker run --sysctl` in a Containerized
+// Instance, and the host's with `sudo sysctl` otherwise (#493).
+func TestPrivilegedPortFixes(t *testing.T) {
+	for _, tc := range []struct {
+		inContainer bool
+		gfe, lb     string
+	}{
+		{true, "docker run --sysctl net.ipv4.ip_unprivileged_port_start=443", "docker run --sysctl net.ipv4.ip_unprivileged_port_start=80"},
+		{false, "sudo sysctl net.ipv4.ip_unprivileged_port_start=443", "sudo sysctl net.ipv4.ip_unprivileged_port_start=80"},
+	} {
+		var fixes []string
+		report := func(ok bool, what, fix string) {
+			if !ok {
+				fixes = append(fixes, fix)
+			}
+		}
+		checkGFEPort(report, 1024, false, false, tc.inContainer)
+		checkLBPort(report, 1024, false, tc.inContainer)
+		if len(fixes) != 2 || !strings.Contains(fixes[0], tc.gfe) || !strings.Contains(fixes[1], tc.lb) {
+			t.Errorf("inContainer=%v: fixes %q, want ones naming %q and %q", tc.inContainer, fixes, tc.gfe, tc.lb)
+		}
+		if tc.inContainer && strings.Contains(strings.Join(fixes, "\n"), "sudo sysctl") {
+			t.Errorf("container fixes %q name sudo sysctl", fixes)
+		}
+	}
+}
+
+// In a Containerized Instance, doctor notes the host checks it cannot run,
+// for every host, since it cannot tell the host's OS; on a Linux host
+// there are none (#493).
+func TestCheckHostOnly(t *testing.T) {
+	for _, tc := range []struct {
+		inContainer bool
+		want        []string
+	}{
+		{true, []string{"[--  ] ", "on a macOS host", "`" + loopback.InstallHint + "`", "native binary",
+			"on a Windows host", "--port-range", "`netsh int ipv4 show excludedportrange protocol=tcp`"}},
+		{false, nil},
+	} {
+		var out strings.Builder
+		checkHostOnly(&out, &config.Config{}, "linux", tc.inContainer, false)
+		got := out.String()
+		if len(tc.want) == 0 && got != "" {
+			t.Errorf("inContainer=false on linux: output %q, want none", got)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("inContainer=%v: output lacks %q:\n%s", tc.inContainer, w, got)
+			}
+		}
+		if tc.inContainer && strings.Count(got, "\n") != 1 {
+			t.Errorf("container note is not one line:\n%s", got)
+		}
 	}
 }
