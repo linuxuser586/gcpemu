@@ -385,6 +385,10 @@ _Avoid_: compat tests (when OpenTofu acceptance is meant too)
 **OpenTofu acceptance**:
 Tests that apply, re-plan and destroy OpenTofu configurations covering every resource type behind the Products.
 
+**Kubernetes conformance**:
+Upstream Kubernetes' own conformance tests, run with Sonobuoy against an emulated GKE cluster at each supported minor version. It checks the clusters, not their agreement with GCP.
+_Avoid_: "conformance" on its own
+
 **Reference stack**:
 An end-to-end deployment of a representative application across all Products, used as the final acceptance test.
 _Avoid_: "acceptance" on its own, e2e
@@ -413,3 +417,4 @@ _Avoid_: egress check, leak detector
 - "Map" and "entry" on their own are ambiguous: URL maps have host and path rules, and certificate maps have entries. Use *URL map*, *Certificate map* and *Certificate map entry*.
 - "Trigger" on its own is ambiguous. Use *Build trigger*; a Fault rule *matches*, it is not triggered.
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
+- "Conformance" on its own is ambiguous: the SRS's conformance suite diffs the emulator's responses against real GCP, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.
