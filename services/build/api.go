@@ -136,7 +136,8 @@ func (a *api) CancelBuild(ctx context.Context, req *cloudbuildpb.CancelBuildRequ
 	return a.s.cancel(ctx, r)
 }
 
-// RetryBuild submits the Build's original config again as a new Build.
+// RetryBuild submits the Build's original config again as a new Build,
+// with the built-ins its source or Build trigger provided.
 func (a *api) RetryBuild(ctx context.Context, req *cloudbuildpb.RetryBuildRequest) (*longrunningpb.Operation, error) {
 	r, err := parseBuild(req.GetProjectId(), req.GetId(), req.GetName())
 	if err != nil {
@@ -152,7 +153,11 @@ func (a *api) RetryBuild(ctx context.Context, req *cloudbuildpb.RetryBuildReques
 	if err := a.s.checkActAs(ctx, r.Project, st.request); err != nil {
 		return nil, err
 	}
-	return a.s.submit(r.Project, r.Location, st.request, nil)
+	// Assumed, not checked against GCP: a retry builds the same revision
+	// for the same Build trigger, so COMMIT_SHA, TRIGGER_NAME and the
+	// rest keep the original's values; the Build's own built-ins, such as
+	// BUILD_ID, are worked out afresh.
+	return a.s.submit(r.Project, r.Location, st.request, st.provided)
 }
 
 // load returns a stored Build.
@@ -228,7 +233,7 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provi
 	// nor a cancel can change its status until then.
 	s.mu.Lock()
 	err = s.env.Store.Update(func(tx store.Tx) error {
-		return put(tx, &stored{build: b, request: in, op: op.Name, substitutions: substs})
+		return put(tx, &stored{build: b, request: in, op: op.Name, substitutions: substs, provided: provided})
 	})
 	if err != nil {
 		s.mu.Unlock()

@@ -284,6 +284,52 @@ func TestRunBuildTrigger(t *testing.T) {
 	}
 }
 
+// A retry of a triggered Build, and a retry of that, keeps the built-ins
+// its trigger and revision provided, in its steps and automapped into
+// their environment, but has its own BUILD_ID.
+func TestRetryTriggeredBuild(t *testing.T) {
+	e := start(t)
+	const repo, commit = "https://github.com/octocat/Hello-World", "553c2077f0edc3d5dc5d17262f6aa498e69d6f8e"
+	b := &cloudbuildpb.Build{
+		Source:  &cloudbuildpb.Source{Source: &cloudbuildpb.Source_GitSource{GitSource: &cloudbuildpb.GitSource{Url: repo}}},
+		Options: &cloudbuildpb.BuildOptions{AutomapSubstitutions: true},
+		Steps: []*cloudbuildpb.BuildStep{
+			{Name: busybox, Args: []string{"echo", "args $TRIGGER_NAME $COMMIT_SHA $SHORT_SHA $BUILD_ID"}},
+			{Name: busybox, Script: `echo "env [${TRIGGER_NAME-unset}][${COMMIT_SHA-unset}]"`},
+		},
+	}
+	e.createTrigger(&cloudbuildpb.BuildTrigger{Name: "manual", BuildTemplate: &cloudbuildpb.BuildTrigger_Build{Build: b}})
+	op, err := e.cb.RunBuildTrigger(e.ctx, &cloudbuildpb.RunBuildTriggerRequest{ProjectId: testProject, TriggerId: "manual",
+		Source: &cloudbuildpb.RepoSource{Revision: &cloudbuildpb.RepoSource_CommitSha{CommitSha: commit}}})
+	if err != nil {
+		t.Fatalf("RunBuildTrigger: %v", err)
+	}
+	got, err := op.Wait(e.ctx)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	ids := map[string]bool{}
+	for range 3 {
+		if ids[got.GetId()] {
+			t.Fatalf("Build %s ran twice", got.GetId())
+		}
+		ids[got.GetId()] = true
+		log := e.log(got)
+		for _, want := range []string{"args manual " + commit + " 553c207 " + got.GetId(), "env [manual][" + commit + "]"} {
+			if !strings.Contains(log, want) {
+				t.Errorf("Build %s log lacks %q:\n%s", got.GetId(), want, log)
+			}
+		}
+		retry, err := e.cb.RetryBuild(e.ctx, &cloudbuildpb.RetryBuildRequest{ProjectId: testProject, Id: got.GetId()})
+		if err != nil {
+			t.Fatalf("RetryBuild: %v", err)
+		}
+		if got, err = retry.Wait(e.ctx); err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+	}
+}
+
 // Worker pools are Recorded through Operations; a Build naming one runs.
 func TestWorkerPool(t *testing.T) {
 	e := start(t)
