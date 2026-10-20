@@ -107,7 +107,7 @@ tasks:
       - go test -race -timeout 45m ./...
 
   vet:
-    desc: Check gofmt and run go vet, with the e2e and compat build tags too
+    desc: Check gofmt, run go vet (with the e2e and compat build tags too) and keep go-winio Windows-only
     cmds:
       - cmd: |
           unformatted=$(gofmt -l .)
@@ -116,6 +116,19 @@ tasks:
       - go vet ./...
       - go vet -tags e2e ./e2e/...
       - go vet -tags compat ./compat/...
+      # ADR 0015 (#419): only Windows builds link go-winio. The template
+      # prints the go-winio packages (the module's subpackages too) that a
+      # linux or darwin build of the binary depends on.
+      - cmd: |
+          for goos in linux darwin; do
+            out=$(GOOS=$goos go list -deps -f '{{"{{"}}with .Module{{"}}"}}{{"{{"}}if eq .Path "github.com/Microsoft/go-winio"{{"}}"}}{{"{{"}}$.ImportPath{{"}}"}}{{"{{"}}end{{"}}"}}{{"{{"}}end{{"}}"}}' ./cmd/gcpemu) || exit 1
+            [ -z "$out" ] || {
+              echo "$out"
+              echo "vet: the GOOS=$goos build of ./cmd/gcpemu links github.com/Microsoft/go-winio; ADR 0015 restricts it to Windows builds" >&2
+              exit 1
+            }
+          done
+        silent: true
 
   # SRS 11.2 reference stack (container runtime + tofu; steps 2 and 4-8
   # download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them),
