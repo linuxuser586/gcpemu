@@ -43,22 +43,33 @@ import { Triggers } from '@/features/build/Triggers'
 import {
   certificateQuery,
   certificatesQuery,
+  dnsAuthorizationQuery,
   entriesQuery,
+  issuanceConfigQuery,
   mapQuery,
   mapsQuery,
+  trustConfigQuery,
 } from '@/features/certs/api'
 import { CreateCertificate, EditCertificate } from '@/features/certs/CertificateForm'
 import { CertificatePage } from '@/features/certs/CertificatePage'
 import { Certificates } from '@/features/certs/Certificates'
 import { CertsLayout } from '@/features/certs/CertsLayout'
+import { CreateDnsAuthorization, EditDnsAuthorization } from '@/features/certs/DnsAuthorizationForm'
+import { DnsAuthorizationPage } from '@/features/certs/DnsAuthorizationPage'
+import { DnsAuthorizations, dnsAuthorizationsAll } from '@/features/certs/DnsAuthorizations'
 import { CreateEntry, EditEntry } from '@/features/certs/EntryForm'
+import { CreateIssuanceConfig } from '@/features/certs/IssuanceConfigForm'
+import { IssuanceConfigPage } from '@/features/certs/IssuanceConfigPage'
+import { IssuanceConfigs, issuanceConfigsAll } from '@/features/certs/IssuanceConfigs'
 import { CreateMap, EditMap } from '@/features/certs/MapForm'
 import { MapPage } from '@/features/certs/MapPage'
 import { Maps } from '@/features/certs/Maps'
 import { TlsPolicies } from '@/features/certs/TlsPolicies'
 import { CreateTlsPolicy, EditTlsPolicy } from '@/features/certs/TlsPolicyForm'
 import { TlsPolicyPage } from '@/features/certs/TlsPolicyPage'
+import { CreateTrustConfig, EditTrustConfig } from '@/features/certs/TrustConfigForm'
 import { TrustConfigPage } from '@/features/certs/TrustConfigPage'
+import { TrustConfigs, trustConfigsAll } from '@/features/certs/TrustConfigs'
 import { collOf, TLS_COLLS, tlsListQuery, tlsQuery } from '@/features/certs/tls'
 import { Dashboard } from '@/features/dashboard/Dashboard'
 import { changesQuery, rrsetsQuery, zoneQuery, zonesQuery } from '@/features/dns/api'
@@ -996,6 +1007,14 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
     },
     { path: 'maps/create', element: <CreateMap /> },
     {
+      path: 'dnsAuthorizations',
+      element: <DnsAuthorizations />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(dnsAuthorizationsAll(project))) : null
+      },
+    },
+    {
       path: 'tls/:coll?',
       element: <TlsPolicies />,
       loader: ({ request, params }) => {
@@ -1042,7 +1061,63 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
         return r.project ? warm(queryClient.ensureQueryData(tlsQuery(r))) : null
       },
     })),
-    { path: 'locations/:location/trustConfigs/:trust', element: <TrustConfigPage /> },
+    {
+      path: 'trustConfigs',
+      element: <TrustConfigs />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(trustConfigsAll(project))) : null
+      },
+    },
+    { path: 'trustConfigs/create', element: <CreateTrustConfig /> },
+    {
+      path: 'issuanceConfigs',
+      element: <IssuanceConfigs />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(issuanceConfigsAll(project))) : null
+      },
+    },
+    { path: 'issuanceConfigs/create', element: <CreateIssuanceConfig /> },
+    { path: 'dnsAuthorizations/create', element: <CreateDnsAuthorization /> },
+    { path: 'locations/:location/dnsAuthorizations/:auth/edit', element: <EditDnsAuthorization /> },
+    {
+      path: 'locations/:location/dnsAuthorizations/:auth',
+      element: <DnsAuthorizationPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          auth: params.auth ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(dnsAuthorizationQuery(r))) : null
+      },
+    },
+    {
+      path: 'locations/:location/certificateIssuanceConfigs/:config',
+      element: <IssuanceConfigPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          config: params.config ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(issuanceConfigQuery(r))) : null
+      },
+    },
+    { path: 'locations/:location/trustConfigs/:trust/edit', element: <EditTrustConfig /> },
+    {
+      path: 'locations/:location/trustConfigs/:trust',
+      element: <TrustConfigPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          trust: params.trust ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(trustConfigQuery(r))) : null
+      },
+    },
     { path: 'locations/:location/certificates/:cert/edit', element: <EditCertificate /> },
     {
       path: 'locations/:location/certificates/:cert',
