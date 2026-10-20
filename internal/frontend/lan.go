@@ -186,6 +186,10 @@ func (f *Frontend) serveLAN(srv *http.Server, l net.Listener, mode string, addrs
 // does not serve.
 func (f *Frontend) lanSkipped(addr string, err error) {
 	ip, port, _ := net.SplitHostPort(addr)
+	if why := f.env.ExplainBind(context.Background(), err); why != err {
+		f.env.Log.Warn("Google front end: cannot serve on --gfe-bind address", "address", ip, "port", port, "err", why)
+		return
+	}
 	f.env.Log.Warn("Google front end: cannot serve on --gfe-bind address; clients there expect port 443, which an unprivileged process binds only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`",
 		"address", ip, "port", port, "err", err)
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -101,7 +102,7 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 		r.id, r.pushed = "", ""
 	}
 	if rt.Self() != "" {
-		return errors.New("the emulator runs in a container: publish the port on its container instead")
+		return errors.New("the emulator runs in a container on a bridge network, whose addresses reach only container networks; " + lanbind.Fix)
 	}
 	if err := rt.EnsureImage(ctx, Image, r.Offline); err != nil {
 		return fmt.Errorf("%s image %s: %w", r.Name, Image, err)

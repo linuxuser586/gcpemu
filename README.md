@@ -675,6 +675,14 @@ shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints i
 host-only checks (loopback aliases, Windows' excluded port ranges) are notes for the host, and
 every fix names a `docker run` flag or a host command.
 
+`--lb-bind`, `--gke-bind`, `--ar-bind` and `--gfe-bind` serve the LAN only from the host's
+network. On Linux, run the image with `--network host` and they work as documented. On a bridge
+network they bind only the container's own addresses, which only container networks reach, and
+the emulator warns at start. Publishing a port on a LAN address is no substitute: the published
+listeners are `--bind`'s, which don't require credentials, and the certificates don't name the
+host's address. On a VM runtime (Docker Desktop, Podman machine), use the native binary instead
+(`docs/adr/0011-lan-binding-requires-credentials.md`).
+
 A load balancer forwarding rule listens on a loopback address inside the container, which `-p`
 never forwards to, so each rule is also served on a port the container publishes (ADR 0012), and
 `gcpemu env` prints the host side of that port as the rule's `GCPEMU_LB_*` variables (see "Service

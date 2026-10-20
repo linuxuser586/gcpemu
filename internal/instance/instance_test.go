@@ -19,6 +19,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -759,5 +760,48 @@ func TestOperations(t *testing.T) {
 	if op := raw.Operations[0]; op["done"] != true || op["endTime"] != nil ||
 		op["error"].(map[string]any)["code"] != "RESOURCE_ALREADY_EXISTS" {
 		t.Errorf("wire form = %v", op)
+	}
+}
+
+// TestContainerBindWarning is #497: a Containerized Instance on a bridge
+// network warns once at start that the --*-bind addresses reach only
+// container networks; on the host (or the host network) it doesn't.
+func TestContainerBindWarning(t *testing.T) {
+	for _, tc := range []struct {
+		where lanbind.Where
+		warn  bool
+	}{{lanbind.Bridge, true}, {lanbind.Host, false}, {lanbind.Unconfirmed, false}} {
+		cfg := config.Defaults()
+		cfg.Ephemeral = true
+		cfg.DataDir = t.TempDir()
+		cfg.Services = []string{"dns"}
+		cfg.Ports["gateway"] = 0
+		cfg.LogFormat = "text"
+		cfg.GKEBind = []string{"172.17.0.2"}
+		cfg.ARBind = []string{"172.17.0.2"}
+		var out syncBuffer
+		in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in.Env.LANBindWhere = func(context.Context) lanbind.Where { return tc.where }
+		if err := in.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		_ = in.Shutdown(context.Background())
+		n := strings.Count(out.String(), "reach only container networks")
+		if want := map[bool]int{true: 1, false: 0}[tc.warn]; n != want {
+			t.Errorf("%v: %d warnings, want %d; log:\n%s", tc.where, n, want, out.String())
+		}
+		if tc.warn {
+			for _, w := range []string{"level=WARN", "--gke-bind", "--ar-bind", "--network host", "native binary"} {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("%v: log lacks %q:\n%s", tc.where, w, out.String())
+				}
+			}
+			if strings.Contains(out.String(), "--lb-bind") {
+				t.Errorf("warning names --lb-bind, which isn't set:\n%s", out.String())
+			}
+		}
 	}
 }

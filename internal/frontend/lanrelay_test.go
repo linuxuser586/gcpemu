@@ -21,6 +21,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/edgeagent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 )
 
 // fakeRelay records what the Google front end asks the LAN front-end
@@ -297,5 +298,46 @@ func TestLANNoRelay(t *testing.T) {
 				t.Error("a relay was made")
 			}
 		})
+	}
+}
+
+// TestLANNotLocal is #497: a --gfe-bind address that isn't the Instance's
+// is skipped; in a container the warning names the cause and the fix
+// instead of the privileged port, and on the host it is unchanged.
+func TestLANNotLocal(t *testing.T) {
+	notLocal := func(network, addr string) (net.Listener, error) {
+		return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRNOTAVAIL)}
+	}
+	for _, tc := range []struct {
+		where       lanbind.Where
+		want, avoid string
+	}{
+		{lanbind.Bridge, "not an address of this container", "ip_unprivileged_port_start"},
+		{lanbind.Unconfirmed, "may not be an address of this container", "ip_unprivileged_port_start"},
+		{lanbind.Host, "ip_unprivileged_port_start", "container"},
+	} {
+		authority, err := ca.Load(t.TempDir(), "lan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := config.Defaults()
+		cfg.GFEBind = []string{"192.0.2.1"}
+		logs := &logBuffer{}
+		env := &emu.Env{Config: &cfg, CA: authority, Auth: tokenAuth{}, Endpoints: emu.NewEndpoints(), Log: slog.New(slog.NewTextHandler(logs, nil)),
+			LANBindWhere: func(context.Context) lanbind.Where { return tc.where }}
+		fe := frontend.New(env, lanNames)
+		frontend.SetLANHooks(fe, frontend.LANHooks{GOOS: "linux", InContainer: tc.where != lanbind.Host, Listen: notLocal})
+		fe.StartLAN(lanStubs())
+		fe.Close()
+		log := logs.String()
+		if !strings.Contains(log, "level=WARN") || !strings.Contains(log, tc.want) || strings.Contains(log, tc.avoid) {
+			t.Errorf("%v: want %q and not %q in:\n%s", tc.where, tc.want, tc.avoid, log)
+		}
+		if tc.where != lanbind.Host && !strings.Contains(log, "--network host") {
+			t.Errorf("%v: log lacks the fix:\n%s", tc.where, log)
+		}
+		if env.Endpoints.Get(frontend.LANEndpoint) != "" {
+			t.Errorf("%v: %s served", tc.where, frontend.LANEndpoint)
+		}
 	}
 }

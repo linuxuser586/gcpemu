@@ -1,6 +1,7 @@
 package gke
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func (s *Service) lanSANs() []string {
 // trying port first, and returns the port to try next time. An address it
 // cannot serve is logged and skipped. It replaces the cluster's previous
 // listeners.
-func (s *Service) serveLAN(d *deps, key, context string, port int, target string) int {
+func (s *Service) serveLAN(ctx context.Context, d *deps, key, cluster string, port int, target string) int {
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -61,7 +62,7 @@ func (s *Service) serveLAN(d *deps, key, context string, port int, target string
 	for _, ip := range binds {
 		ex, err := d.np.Expose(net.JoinHostPort(ip, strconv.Itoa(port)), target, true)
 		if err != nil {
-			s.env.Log.Warn("gke: cannot serve the Kubernetes API on --gke-bind address", "cluster", context, "address", ip, "err", err)
+			s.env.Log.Warn("gke: cannot serve the Kubernetes API on --gke-bind address", "cluster", cluster, "address", ip, "err", s.env.ExplainBind(ctx, err))
 			continue
 		}
 		if len(rt.lan) == 0 {
@@ -71,9 +72,9 @@ func (s *Service) serveLAN(d *deps, key, context string, port int, target string
 		rt.lanAddrs = append(rt.lanAddrs, ex.Addr())
 	}
 	if len(rt.lanAddrs) > 0 {
-		rt.lanName = "gke-lan:" + context
+		rt.lanName = "gke-lan:" + cluster
 		s.env.Endpoints.Set(rt.lanName, strings.Join(rt.lanAddrs, ","))
-		s.env.Log.Info("gke: Kubernetes API exposed", "cluster", context, "address", strings.Join(rt.lanAddrs, ","))
+		s.env.Log.Info("gke: Kubernetes API exposed", "cluster", cluster, "address", strings.Join(rt.lanAddrs, ","))
 	}
 	return port
 }
