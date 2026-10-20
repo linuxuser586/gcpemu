@@ -289,12 +289,17 @@ func (p *subscriberServer) DeleteSubscription(ctx context.Context, req *pubsubpb
 	if err := s.env.Auth.Check(ctx, "pubsub.subscriptions.delete", fullName(req.GetSubscription())); err != nil {
 		return nil, err
 	}
+	return &emptypb.Empty{}, s.deleteSubscription(req.GetSubscription())
+}
+
+// deleteSubscription deletes a subscription and its backlog.
+func (s *Service) deleteSubscription(name string) error {
 	var w writes
 	s.mu.Lock()
-	sb, err := s.subscription(req.GetSubscription())
+	sb, err := s.subscription(name)
 	if err != nil {
 		s.mu.Unlock()
-		return nil, err
+		return err
 	}
 	delete(s.subs, sb.name)
 	if t := s.topics[sb.cfg.GetTopic()]; t != nil && t.subs[sb.name] == sb {
@@ -306,7 +311,7 @@ func (p *subscriberServer) DeleteSubscription(ctx context.Context, req *pubsubpb
 	sb.signal()
 	w.del(nsSubs, sb.name)
 	s.mu.Unlock()
-	return &emptypb.Empty{}, s.commit(&w)
+	return s.commit(&w)
 }
 
 func (p *subscriberServer) ModifyPushConfig(ctx context.Context, req *pubsubpb.ModifyPushConfigRequest) (*emptypb.Empty, error) {

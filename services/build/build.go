@@ -131,9 +131,13 @@ func (s *Service) Register(r emu.Router) error {
 	return nil
 }
 
-// Start ends the Builds a previous process left unfinished and runs the
-// scheduler.
+// Start serves the pushes to pubsubConfig Build triggers
+// (trigger_events.go), ends the Builds a previous process left
+// unfinished and runs the scheduler.
 func (s *Service) Start(ctx context.Context) error {
+	if sub := s.subscriber(); sub != nil {
+		sub.ServePushHost(apiHost, http.HandlerFunc(s.serveTriggerPush))
+	}
 	s.interrupt("The Build was interrupted by an emulator restart.")
 	s.loops.Start(func(ctx context.Context) { s.loop(ctx) })
 	s.kick()
@@ -228,7 +232,7 @@ func (s *Service) ClockAdvanced(ctx context.Context) error {
 
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
-	return store.Counts(s.env.Store, map[string]string{"builds": nsBuilds})
+	return store.Counts(s.env.Store, map[string]string{"builds": nsBuilds, "triggers": nsTriggers, "workerPools": nsPools})
 }
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004): the gcloud endpoint

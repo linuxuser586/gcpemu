@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
+import { admin, unwrap } from '@/api/admin'
 import { ApiError } from '@/api/errors'
 import { gcpFetch } from '@/api/fetch'
 
@@ -592,3 +593,9 @@ export const createIssuanceConfig = (r: IssuanceRef, body: unknown) =>
   )
 
 export const deleteIssuanceConfig = (r: IssuanceRef) => remove(issuanceName(r))
+
+/**
+ * rotateCa replaces the Instance CA and resolves once every Google-managed
+ * certificate is re-issued, with the path of the new ca.pem.
+ */
+export const rotateCa = () => unwrap(admin.POST('/_emu/v1/ca/rotate'))
