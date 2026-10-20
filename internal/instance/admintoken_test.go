@@ -108,6 +108,7 @@ func TestAdminToken(t *testing.T) {
 		want         int
 	}{
 		{"GET", "/_emu/v1/info", nil, 401},
+		{"GET", "/_emu/v1/conditions?for=fake/thing=p/l/n", nil, 401},
 		{"POST", "/_emu/v1/fake/rotate", nil, 401},
 		{"GET", "/console/", nil, 401},
 		{"GET", "/console", nil, 401},

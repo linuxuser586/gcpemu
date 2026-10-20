@@ -85,7 +85,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 
 	root.AddCommand(o.startCmd(), o.stopCmd(), o.statusCmd(), o.resetCmd(), o.logsCmd(),
 		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.snapshotCmd(), o.exportCmd(), o.tofuProviderCmd(), o.doctorCmd(), o.pruneCmd(),
-		o.cdnCmd(), o.consoleCmd())
+		o.cdnCmd(), o.consoleCmd(), o.waitCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.offerCmd(), o.withdrawCmd(), o.hostAddressCmd())
 	root.AddCommand(o.caCmd())

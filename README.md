@@ -56,7 +56,8 @@ bin/gcpemu console              # the Web console in the default browser
 bin/gcpemu stop
 ```
 
-Other commands: `reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
+Other commands: `wait --for KIND=TARGET` (see [Waiting for resources](#waiting-for-resources)),
+`reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
 `fault add|list|enable|disable|clear`, `snapshot save|restore|list|delete`, `export` (the
 resources as a seed file), `doctor`, `prune`, `version`, `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
@@ -65,6 +66,30 @@ resources as a seed file), `doctor`, `prune`, `version`, `admin openapi` (the Op
 them, while Managed containers that something other than the Instance stopped or restarted (a restart
 of the container runtime, `docker stop` or `docker restart`) are down or have lost their setup: stop and
 start the Instance to bring them back.
+
+### Waiting for resources
+
+`gcpemu wait` blocks until every Wait condition given with `--for` holds, so a script does not have to
+poll `gcloud` in a loop:
+
+```sh
+bin/gcpemu wait --for gke/cluster=my-project/us-central1-a/c1 \
+                --for lb/health=my-project/global/api --timeout 5m
+```
+
+A Wait condition is `KIND=PROJECT/LOCATION/NAME`:
+
+| Kind | LOCATION | Met when | Fails when |
+|---|---|---|---|
+| `gke/cluster` | the cluster's zone or region | its status is `RUNNING` | its status is `ERROR` or `STOPPING` |
+| `lb/health` | `global` or the backend service's region | every backend group has at least one `HEALTHY` endpoint, as `backendServices.getHealth` reports it | — |
+
+A resource that does not exist yet keeps `wait` waiting, since another process may still be creating it,
+and a backend service with no backends has not met `lb/health`. `wait` exits 0 once all of them are
+met. It exits 1 straight away when one fails or no Instance is running, and once `--timeout` (default
+`120s`) passes. When it fails, it names each Wait condition not met, and why, on stderr. A malformed
+`--for`, or an unknown kind, is a usage error. `wait` asks the Admin API (`GET
+/_emu/v1/conditions?for=...`), which is not subject to IAM.
 
 ### State snapshots
 

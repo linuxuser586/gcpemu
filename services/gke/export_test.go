@@ -7,6 +7,7 @@ import (
 	"cloud.google.com/go/container/apiv1/containerpb"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // SetBeforeNodeStart makes f run between each node container's creation
@@ -86,4 +87,12 @@ var BringUpWaits = map[string]time.Duration{
 	"API server ready, two starts": 2 * apiReadyWait,
 	"nodes ready":                  nodeReadyWait,
 	"add-on CRDs":                  crdEstablishTimeout,
+}
+
+// PutCluster stores a cluster in project and location with status st and
+// statusMessage msg, with no data plane (exported to the external tests).
+func PutCluster(svc emu.Service, project, location, name string, st containerpb.Cluster_Status, msg string) error {
+	rec := &clusterRecord{Int: clusterInternal{Project: project, Location: location, Name: name}}
+	rec.setCluster(&containerpb.Cluster{Name: name, Location: location, Status: st, StatusMessage: msg})
+	return svc.(*Service).env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) })
 }

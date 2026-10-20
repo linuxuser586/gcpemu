@@ -350,6 +350,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/conditions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The state of Wait conditions (`gcpemu wait`, FR-CI-007).
+         * @description Evaluates each Wait condition, written KIND=TARGET with TARGET
+         *     PROJECT/LOCATION/NAME, against the Instance's current state, once.
+         *     The kinds are:
+         *
+         *     - `gke/cluster`: met when the GKE cluster's status is RUNNING,
+         *       failed when it is ERROR or STOPPING. LOCATION is its zone or
+         *       region.
+         *     - `lb/health`: met when every backend group of the backend service
+         *       has at least one HEALTHY endpoint, as backendServices.getHealth
+         *       reports it. LOCATION is `global` or a region.
+         *
+         *     A resource that does not exist is pending: it may still be being
+         *     created. Not subject to IAM.
+         */
+        get: operations["conditions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/operations": {
         parameters: {
             query?: never;
@@ -969,6 +1001,17 @@ export interface components {
                     reason?: string;
                 };
             };
+        };
+        WaitCondition: {
+            /** @description The Wait condition as asked, KIND=TARGET. */
+            for: string;
+            /**
+             * @description pending may still become met; failed can no longer.
+             * @enum {string}
+             */
+            state: "met" | "pending" | "failed";
+            /** @description Why it is not met, e.g. "not found" or "status PROVISIONING". */
+            reason?: string;
         };
         Operation: {
             /** @description Service ID that owns the Operation. */
@@ -1898,6 +1941,34 @@ export interface operations {
                     "application/json": components["schemas"]["ResourceCounts"];
                 };
             };
+        };
+    };
+    conditions: {
+        parameters: {
+            query: {
+                /** @description A Wait condition, KIND=TARGET; repeat for several. */
+                for: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Each Wait condition's state, in the order asked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Whether every Wait condition is met. */
+                        met: boolean;
+                        conditions: components["schemas"]["WaitCondition"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
         };
     };
     operations: {
