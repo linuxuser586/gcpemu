@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto'
 
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Page, Request } from '@playwright/test'
 
 import { expect, projectId, test } from './fixtures'
 
 // The Artifact Registry view (SRS 4.8.3, FR-UI-011) against the
 // Instance's ar Service: images are pushed to its registry with the OCI
-// Distribution API, as docker would. Each attempt has its own Project,
-// so a retry does not meet the repositories of the one before.
+// Distribution API, as docker would. Each test, and each attempt of it,
+// has its own Project, so a retry does not meet the repositories of the
+// one before. The tests after the first create their repository through
+// the REST API, not the form (#475).
 
 // The console's paths: its bundle, the admin API and public GCP API paths.
 const allowed = /^\/(console\/|_emu\/v1\/|[a-z]+\/v\d[a-z0-9]*\/)/
@@ -105,14 +107,50 @@ class Registry {
 const digestRow = (page: Page, digest: string) =>
   page.getByTestId('digest').filter({ has: page.getByRole('link', { name: short(digest) }) })
 
-test('Artifact Registry: repositories, images, tags, digests and per-arch manifests', async ({
+/**
+ * createRepository creates the Docker repository "images" in us-central1
+ * through the REST API and returns its registry path.
+ */
+async function createRepository(request: APIRequestContext, project: string) {
+  const res = await request.post(
+    `/artifactregistry/v1/projects/${project}/locations/us-central1/repositories?repositoryId=images`,
+    { data: { format: 'DOCKER' } },
+  )
+  expect(res.ok()).toBe(true)
+  expect(((await res.json()) as { done?: boolean }).done).toBe(true)
+  return `us-central1-docker.pkg.dev/${project}/images`
+}
+
+/** repoURL is the console path of the repository "images", or of an image in it. */
+const repoURL = (project: string, image?: string) =>
+  `/console/ar/locations/us-central1/repositories/images${image ? `/images/${encodeURIComponent(image)}` : ''}?project=${project}`
+
+/** pushApp pushes app:v1, an index of an amd64 and an arm64 manifest. */
+async function pushApp(reg: Registry, name: string) {
+  const amd64 = await reg.image(`${name}/app`, 'amd64')
+  const arm64 = await reg.image(`${name}/app`, 'arm64')
+  const index = await reg.index(`${name}/app`, 'v1', [
+    { ...amd64, arch: 'amd64' },
+    { ...arm64, arch: 'arm64' },
+  ])
+  return { amd64, arm64, index }
+}
+
+/** expectOwnPaths is FR-UI-003: only the console's own paths and public APIs on the API gateway. */
+function expectOwnPaths(page: Page, requests: Request[]) {
+  const gateway = new URL(page.url()).origin
+  for (const r of requests) {
+    const u = new URL(r.url())
+    if (u.origin === gateway) expect(u.pathname).toMatch(allowed)
+  }
+}
+
+test('Artifact Registry: create, edit and delete a repository', async ({
   page,
   browserName,
-  context,
-  request,
   requests,
 }, testInfo) => {
-  const id = projectId(`e2e-ar${testInfo.retry}`, browserName)
+  const id = projectId(`e2e-arr${testInfo.retry}`, browserName)
   await page.goto(`/console/ar?project=${id}`)
   await expect(page.getByText('No repositories in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create repository' }).click()
@@ -140,16 +178,38 @@ test('Artifact Registry: repositories, images, tags, digests and per-arch manife
   )
   await expect(page.getByText('No images yet')).toBeVisible()
 
+  // Edit the repository, then delete it.
+  await page.getByRole('link', { name: 'Edit repository' }).click()
+  await page.getByLabel('Description').fill('E2E images')
+  await page.getByLabel(/Immutable tags/).check()
+  await page.getByRole('button', { name: 'Save' }).click()
+  const details = page.getByLabel('Repository details')
+  await expect(details).toContainText('E2E images')
+  await expect(details).toContainText('team=e2e')
+  await page.getByRole('button', { name: 'Delete repository' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete repository' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/ar\\?project=${id}$`))
+  await expect(page.getByText('No repositories in this Project yet.')).toBeVisible()
+
+  expectOwnPaths(page, requests)
+})
+
+test('Artifact Registry: pushed images, their digests and per-arch manifests', async ({
+  page,
+  browserName,
+  context,
+  request,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-ari${testInfo.retry}`, browserName)
+  const name = await createRepository(request, id)
+  await page.goto(repoURL(id))
+  await expect(page.getByText('No images yet')).toBeVisible()
+
   // Push a multi-arch image and a nested single-arch one; the view updates live.
   const reg = await Registry.open(request)
-  const name = `us-central1-docker.pkg.dev/${id}/images`
-  const amd64 = await reg.image(`${name}/app`, 'amd64')
-  const arm64 = await reg.image(`${name}/app`, 'arm64')
-  const index = await reg.index(`${name}/app`, 'v1', [
-    { ...amd64, arch: 'amd64' },
-    { ...arm64, arch: 'arm64' },
-  ])
-  const svc = await reg.image(`${name}/team/svc`, 'amd64', 'stable')
+  const { index } = await pushApp(reg, name)
+  await reg.image(`${name}/team/svc`, 'amd64', 'stable')
   const images = page.getByRole('table', { name: 'Images' })
   await expect(images.getByTestId('image')).toHaveCount(2)
   await expect(images.getByTestId('image').filter({ hasText: 'team/svc' })).toContainText('stable')
@@ -170,6 +230,21 @@ test('Artifact Registry: repositories, images, tags, digests and per-arch manife
     expect(command).toMatch(new RegExp(`^docker pull \\S+/${name}/app:v1$`))
     expect(await reg.pullStatus(command.slice('docker pull '.length))).toBe(200)
   }
+
+  expectOwnPaths(page, requests)
+})
+
+test('Artifact Registry: add, move and delete tags of a per-arch manifest', async ({
+  page,
+  browserName,
+  request,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-art${testInfo.retry}`, browserName)
+  const name = await createRepository(request, id)
+  const reg = await Registry.open(request)
+  const { arm64, index } = await pushApp(reg, name)
+  await page.goto(repoURL(id, 'app'))
 
   // Tag the arm64 manifest from its digest page; its pull command works.
   await page.getByRole('link', { name: short(index.digest) }).click()
@@ -193,9 +268,22 @@ test('Artifact Registry: repositories, images, tags, digests and per-arch manife
   await expect(page.getByLabel('Digest details').getByTestId('tag')).toHaveText(['v1'])
   expect(await reg.pullStatus(`registry/${name}/app:arm`)).toBe(404)
 
-  // Delete a digest: the tagged team/svc manifest, with its tag.
-  await page.getByRole('link', { name: 'images', exact: true }).click()
-  await page.getByRole('link', { name: 'team/svc' }).click()
+  expectOwnPaths(page, requests)
+})
+
+test('Artifact Registry: delete a tagged digest', async ({
+  page,
+  browserName,
+  request,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-ard${testInfo.retry}`, browserName)
+  const name = await createRepository(request, id)
+  const reg = await Registry.open(request)
+  const svc = await reg.image(`${name}/team/svc`, 'amd64', 'stable')
+  await page.goto(repoURL(id, 'team/svc'))
+
+  // Its tag goes with it.
   await digestRow(page, svc.digest)
     .getByRole('button', { name: `Delete digest ${short(svc.digest)}` })
     .click()
@@ -203,24 +291,5 @@ test('Artifact Registry: repositories, images, tags, digests and per-arch manife
   await page.getByRole('dialog').getByRole('button', { name: 'Delete digest' }).click()
   await expect(page.getByText('The image has no digests')).toBeVisible()
 
-  // Edit the repository, then delete it.
-  await page.getByRole('link', { name: 'images', exact: true }).click()
-  await page.getByRole('link', { name: 'Edit repository' }).click()
-  await page.getByLabel('Description').fill('E2E images')
-  await page.getByLabel(/Immutable tags/).check()
-  await page.getByRole('button', { name: 'Save' }).click()
-  const details = page.getByLabel('Repository details')
-  await expect(details).toContainText('E2E images')
-  await expect(details).toContainText('team=e2e')
-  await page.getByRole('button', { name: 'Delete repository' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Delete repository' }).click()
-  await expect(page).toHaveURL(new RegExp(`/console/ar\\?project=${id}$`))
-  await expect(page.getByText('No repositories in this Project yet.')).toBeVisible()
-
-  // FR-UI-003: only the console's own paths and public APIs on the gateway.
-  const gateway = new URL(page.url()).origin
-  for (const r of requests) {
-    const u = new URL(r.url())
-    if (u.origin === gateway) expect(u.pathname).toMatch(allowed)
-  }
+  expectOwnPaths(page, requests)
 })
