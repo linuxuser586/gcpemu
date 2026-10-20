@@ -577,7 +577,7 @@ it('rotates the Instance CA, then reads the re-issued certificates again and say
   await user.click(within(dialog).getByRole('button', { name: 'Rotate CA' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   const done = await screen.findByText(
-    'Rotated the Instance CA and re-issued the Google-managed certificates. Trust the new CA at /data/ca/ca.pem.',
+    'Rotated the Instance CA and re-issued the Google-managed certificates. Run gcpemu ca install to trust the new CA at /data/ca/ca.pem.',
   )
   expect(done.closest('[role]')).toHaveAttribute('role', 'status')
   await waitFor(() =>

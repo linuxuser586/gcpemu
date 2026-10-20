@@ -8,9 +8,10 @@ import { toast } from '@/lib/toast'
 import { rotateCa } from './api'
 
 /**
- * RotateCa replaces the Instance CA (`gcpemu ca rotate`) after asking:
- * every Google-managed certificate is re-issued from the new root, and
- * clients verify TLS to the emulator again only once they trust it.
+ * RotateCa replaces the Instance CA after asking: every Google-managed
+ * certificate is re-issued from the new root, and clients verify TLS to
+ * the emulator again only once they trust it. Unlike `gcpemu ca rotate`,
+ * it changes no host trust store.
  */
 export function RotateCa() {
   const qc = useQueryClient()
@@ -19,7 +20,7 @@ export function RotateCa() {
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['certs'] })
       toast.success(
-        `Rotated the Instance CA and re-issued the Google-managed certificates. Trust the new CA at ${r.path}.`,
+        `Rotated the Instance CA and re-issued the Google-managed certificates. Run gcpemu ca install to trust the new CA at ${r.path}.`,
       )
     },
   })

@@ -80,7 +80,7 @@ test('Certificate Manager: Rotate CA re-issues a Google-managed certificate', as
   await expect(dialog).toBeHidden()
   await expect(
     page.getByRole('status').filter({ hasText: 'Rotated the Instance CA' }),
-  ).toContainText(/Trust the new CA at .*ca\.pem\./)
+  ).toContainText(/Run gcpemu ca install to trust the new CA at .*ca\.pem\./)
 
   // The certificate is still ACTIVE, with a certificate from the new CA.
   await page.getByRole('link', { name: 'managed' }).click()
