@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm, useWatch, type UseFormReturn } from 'react-hook-form'
-import { useParams } from 'react-router'
+import { useParams, useSearchParams } from 'react-router'
 import { z } from 'zod'
 
 import { errorMessage } from '@/api/errors'
@@ -237,20 +237,24 @@ function RecordSetEditor({
   zone,
   r,
   was,
+  prefill,
 }: {
   zone: ManagedZone
   r: ZoneRef
   was?: ResourceRecordSet
+  /** prefill is the record set a new one starts as. */
+  prefill?: ResourceRecordSet
 }) {
   const navigate = useCarriedNavigate()
   const qc = useQueryClient()
-  const initial: Body = was
-    ? (structuredClone(was) as unknown as Body)
+  const start = was ?? prefill
+  const initial: Body = start
+    ? (structuredClone(start) as unknown as Body)
     : { name: zone.dnsName, type: 'A', ttl: 300, rrdatas: [] }
   delete initial.kind
   const form = useForm<Values>({
     resolver: zodResolver(schema(zone)),
-    defaultValues: was
+    defaultValues: start
       ? recordValues(zone)(initial)
       : { name: '', type: 'A', ttl: '300', rrdatas: '', routed: false },
   })
@@ -306,13 +310,24 @@ function RecordSetEditor({
   )
 }
 
+/** CreateRecordSet adds a record set, pre-filled by recordSetPath's ?name=, ?type= and ?data=. */
 export function CreateRecordSet() {
   const zone = useZone()
   const r = useZoneRef()
+  const [search] = useSearchParams()
+  const name = search.get('name')
+  const prefill: ResourceRecordSet | undefined = name
+    ? {
+        name: fullName(name, zone),
+        type: search.get('type') || 'A',
+        ttl: 300,
+        rrdatas: lines(search.get('data') ?? ''),
+      }
+    : undefined
   return (
     <Card>
       <h2 className="text-lg font-semibold">Add record set</h2>
-      <RecordSetEditor zone={zone} r={r} />
+      <RecordSetEditor zone={zone} r={r} prefill={prefill} />
     </Card>
   )
 }

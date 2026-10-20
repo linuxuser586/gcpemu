@@ -29,6 +29,11 @@ import { CdnLayout } from '@/features/cdn/CdnLayout'
 import { AddOrigin, EditOrigin } from '@/features/cdn/OriginForm'
 import { OriginPage } from '@/features/cdn/OriginPage'
 import { Origins } from '@/features/cdn/Origins'
+import { certificateQuery, certificatesQuery } from '@/features/certs/api'
+import { CreateCertificate, EditCertificate } from '@/features/certs/CertificateForm'
+import { CertificatePage } from '@/features/certs/CertificatePage'
+import { Certificates } from '@/features/certs/Certificates'
+import { CertsLayout } from '@/features/certs/CertsLayout'
 import { Dashboard } from '@/features/dashboard/Dashboard'
 import { changesQuery, rrsetsQuery, zoneQuery, zonesQuery } from '@/features/dns/api'
 import { Changes } from '@/features/dns/Changes'
@@ -266,6 +271,11 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           path: 'dns',
           element: <DnsLayout />,
           children: dnsRoutes(queryClient),
+        },
+        {
+          path: 'certs',
+          element: <CertsLayout />,
+          children: certsRoutes(queryClient),
         },
         {
           path: 'nat',
@@ -839,6 +849,38 @@ function dnsRoutes(queryClient: QueryClient): RouteObject[] {
         },
         { path: 'overview', element: <ZoneOverview /> },
       ],
+    },
+  ]
+}
+
+// The Certificate Manager view (SRS 4.8.3). Paths follow the API's
+// resource names, with the Project in ?project=; the list shows every
+// location. Create pages are not under locations/, so that no name is
+// shadowed.
+function certsRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  return [
+    {
+      index: true,
+      element: <Certificates />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(certificatesQuery(project))) : null
+      },
+    },
+    { path: 'create', element: <CreateCertificate /> },
+    { path: 'locations/:location/certificates/:cert/edit', element: <EditCertificate /> },
+    {
+      path: 'locations/:location/certificates/:cert',
+      element: <CertificatePage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          cert: params.cert ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(certificateQuery(r))) : null
+      },
     },
   ]
 }

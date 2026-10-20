@@ -20,6 +20,7 @@ const services = [
   'dns',
   'lb',
   'cdn',
+  'certs',
   'sql',
   ...(process.platform === 'linux' ? ['gke', 'nat'] : []),
 ]
