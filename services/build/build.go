@@ -71,6 +71,10 @@ type Service struct {
 	probeMu sync.Mutex
 	checked time.Time
 	probed  error
+
+	// checkpoint, when set by the tests, runs at points of a Build's run
+	// (export_test.go).
+	checkpoint func(ctx context.Context, id, at string)
 }
 
 var (

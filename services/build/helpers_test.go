@@ -103,6 +103,16 @@ func (e *env) await(id string, want ...cloudbuildpb.Build_Status) *cloudbuildpb.
 	}
 }
 
+// cancel cancels a Build with CancelBuild and returns the Build it
+// answers.
+func (e *env) cancel(id string) *cloudbuildpb.Build {
+	b, err := e.cb.CancelBuild(e.ctx, &cloudbuildpb.CancelBuildRequest{ProjectId: testProject, Id: id})
+	if err != nil {
+		e.t.Errorf("CancelBuild: %v", err)
+	}
+	return b
+}
+
 // awaitStep polls until step i of the Build is WORKING.
 func (e *env) awaitStep(id string, i int) {
 	e.t.Helper()
