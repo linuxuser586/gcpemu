@@ -219,9 +219,11 @@ it('opens a Build from its logUrl with its steps’ status, timing and logs', as
   await waitFor(() => expect(log).toHaveTextContent('DONE'))
   await user.click(within(steps[0]!).getByRole('button', { name: 'Show the log of step 0' }))
   expect(router.state.location.search).toContain('step=0')
-  expect(screen.getByLabelText('Log of step 0')).toHaveTextContent(/^compiled$/)
+  await waitFor(() =>
+    expect(screen.getByLabelText('Log of step 0')).toHaveTextContent(/^compiled$/),
+  )
   await user.click(screen.getByRole('button', { name: 'Show the whole log' }))
-  expect(screen.getByLabelText('Build log')).toHaveTextContent('pushed')
+  await waitFor(() => expect(screen.getByLabelText('Build log')).toHaveTextContent('pushed'))
 })
 
 it('updates a running Build’s step log live and moves it to its final status', async () => {
