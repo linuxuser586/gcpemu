@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"os"
 	"syscall"
 
 	"golang.org/x/sys/windows"
@@ -51,3 +52,11 @@ func freeGiB(dir string) (uint64, error) {
 	}
 	return avail >> 30, nil
 }
+
+// exitStatus is the exit code of a command that `gcpemu run` ran.
+func exitStatus(ps *os.ProcessState) int { return ps.ExitCode() }
+
+// groupGetsCtrlC reports whether a Ctrl+C reaches the commands that
+// `gcpemu run` runs without it: the console sends it to every process
+// attached to it.
+func groupGetsCtrlC() bool { return true }

@@ -52,11 +52,15 @@ func clientFor(cfg *config.Config) (*adminClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	gw := eps["gateway"]
-	if gw == "" {
+	if eps["gateway"] == "" {
 		return nil, fmt.Errorf("no API gateway address recorded")
 	}
-	return &adminClient{base: "http://" + gw, endpoints: eps, http: &http.Client{Timeout: 10 * time.Second}, token: readAdminToken(cfg)}, nil
+	return newAdminClient(eps, readAdminToken(cfg)), nil
+}
+
+// newAdminClient returns a client for the Admin API on the gateway in eps.
+func newAdminClient(eps map[string]string, token string) *adminClient {
+	return &adminClient{base: "http://" + dialable(eps["gateway"]), endpoints: eps, http: &http.Client{Timeout: 10 * time.Second}, token: token}
 }
 
 // newRequest builds an admin API request carrying the Admin token.
@@ -81,16 +85,22 @@ func (c *adminClient) consoleURL() string {
 // unspecified address (--bind 0.0.0.0) becomes 127.0.0.1, which browsers
 // open; from another machine, use this host's name instead.
 func consoleURL(addr, token string) string {
-	if h, p, err := net.SplitHostPort(addr); err == nil {
-		if ip := net.ParseIP(h); ip != nil && ip.IsUnspecified() {
-			addr = net.JoinHostPort("127.0.0.1", p)
-		}
-	}
-	u := "http://" + addr + "/console/"
+	u := "http://" + dialable(addr) + "/console/"
 	if token != "" {
 		u += "?" + gateway.AdminTokenQuery + "=" + url.QueryEscape(token)
 	}
 	return u
+}
+
+// dialable is addr, a listener's address, with an unspecified IP
+// (--bind 0.0.0.0) made 127.0.0.1, which can be dialled on every OS.
+func dialable(addr string) string {
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		if ip := net.ParseIP(h); ip != nil && ip.IsUnspecified() {
+			return net.JoinHostPort("127.0.0.1", p)
+		}
+	}
+	return addr
 }
 
 func (c *adminClient) do(method, path string) (int, []byte, error) {

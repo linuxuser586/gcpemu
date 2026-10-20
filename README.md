@@ -67,6 +67,29 @@ them, while Managed containers that something other than the Instance stopped or
 of the container runtime, `docker stop` or `docker restart`) are down or have lost their setup: stop and
 start the Instance to bring them back.
 
+### Running one command
+
+`gcpemu run` does the whole `start --detach`, `eval "$(gcpemu env)"`, command, `stop` sequence in one
+step, and tears down even when the command fails or is interrupted:
+
+```sh
+bin/gcpemu run --services gcs,pubsub --seed seed.yaml -- go test ./...
+```
+
+`run` hosts the Instance in its own process, as `gcpemu start` without `--detach` does, so if `run` is
+killed the Instance goes with it. It takes every `start` flag, with two other defaults: the Instance is
+Ephemeral (`--ephemeral=false` keeps a Persistent Instance's state), and it logs at `warn`
+(`--log-level=info` for the usual level), to stderr. It refuses to start while an Instance with the same
+name is running.
+
+The command starts once the Instance is ready, Seeding included. Its environment is the caller's plus the
+variables `gcpemu env` prints, which win; `--trust` and `--no-universe` mean what they mean for `env`.
+Ctrl+C and SIGTERM go to the command, and the Instance, with its Managed containers, is torn down once
+the command has exited. `run` exits with the command's code, or 128+*n* on Unix when signal *n* killed it
+(a teardown that fails is only a warning). It exits 1 without running the command when there is no
+command after `--`, the command can't be found, the Instance fails to start, or it isn't ready within
+`--wait-timeout`. To wait for resources too, the command can call `gcpemu wait`.
+
 ### Waiting for resources
 
 `gcpemu wait` blocks until every Wait condition given with `--for` holds, so a script does not have to
