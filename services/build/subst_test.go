@@ -105,10 +105,12 @@ func TestDynamicSubstitutions(t *testing.T) {
 	args := []string{
 		"${_SHA:0:7}", "${_SHA: -4}", "${_REF##*/}", "${_REF#refs/}", "${_REF%/*}", "${_REF/heads/tags}",
 		"${_REF//e/E}", "${_REF,,}", "${_REF^^}", "${#_SHA}", "$_IMAGE", "${_MISSING:-dflt}",
+		"${_MISSING-unset}", "${_MISSING+set}", "${_SHA+set}", "${_REF/#/x}", "${_REF^}",
 	}
 	want := []string{
 		"0123456", "cdef", "Main", "heads/Main", "refs/heads", "refs/tags/Main",
 		"rEfs/hEads/Main", "refs/heads/main", "REFS/HEADS/MAIN", "16", "us-docker.pkg.dev/" + testProject + "/r/app:0123456", "dflt",
+		"unset", "", "set", "xrefs/heads/Main", "Refs/heads/Main",
 	}
 	_, b := e.create(&cloudbuildpb.Build{
 		Substitutions: subs,
@@ -127,5 +129,24 @@ func TestDynamicSubstitutions(t *testing.T) {
 	})
 	if got := b.GetSteps()[0].GetArgs()[1]; got != "${_SHA:0:7}" {
 		t.Errorf("without dynamicSubstitutions: %q, want it as it is", got)
+	}
+}
+
+// A Build is validated as substituted: a step name that comes of an
+// unset substitution is refused, and an artifacts location that comes of
+// one is accepted.
+func TestValidatedAsSubstituted(t *testing.T) {
+	e := start(t)
+	wantInvalid(t, e.createErr(&cloudbuildpb.Build{
+		Options: &cloudbuildpb.BuildOptions{SubstitutionOption: cloudbuildpb.BuildOptions_ALLOW_LOOSE},
+		Steps:   []*cloudbuildpb.BuildStep{{Name: "$_IMG"}},
+	}), "invalid build: build step 0 must specify name.")
+	_, b := e.create(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_LOC": "gs://out/dir"},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"true"}}},
+		Artifacts:     &cloudbuildpb.Artifacts{Objects: &cloudbuildpb.Artifacts_ArtifactObjects{Location: "$_LOC", Paths: []string{"x"}}},
+	})
+	if got := b.GetArtifacts().GetObjects().GetLocation(); got != "gs://out/dir" {
+		t.Errorf("location = %q", got)
 	}
 }

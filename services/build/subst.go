@@ -34,8 +34,8 @@ var (
 	keyPrefix = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*`)
 )
 
-// builtinKeys are the built-in substitutions; a true one may be given a
-// value in substitutions, as gcloud --substitutions does for the
+// builtinKeys are the built-in substitutions, each mapped to whether
+// substitutions may override it, as gcloud --substitutions does for the
 // source's.
 var builtinKeys = map[string]bool{
 	"PROJECT_ID":                false,
@@ -209,22 +209,23 @@ func resolve(vars, subs map[string]string, dynamic bool) (map[string]string, err
 	done := map[string]bool{}
 	visiting := map[string]bool{}
 	var err error
-	var value func(key string) string
-	value = func(key string) string {
+	var value func(key string) (string, bool)
+	value = func(key string) (string, bool) {
 		raw, user := subs[key]
 		if !user || done[key] {
-			return out[key]
+			v, set := out[key]
+			return v, set
 		}
 		if visiting[key] {
 			if err == nil {
 				err = apierr.InvalidArgument("invalid build: substitution %q refers to itself.", key)
 			}
-			return ""
+			return "", true
 		}
 		visiting[key] = true
 		out[key] = expandWith(raw, true, value)
 		visiting[key], done[key] = false, true
-		return out[key]
+		return out[key], true
 	}
 	for _, k := range slices.Sorted(maps.Keys(subs)) {
 		value(k)
@@ -322,12 +323,18 @@ func walk(s string, dynamic bool, fn func(key string)) {
 	}
 }
 
-// expand replaces the expressions in s with their values.
+// expand replaces the expressions in s with their values; a key values
+// lacks is unset, and expands to empty.
 func expand(s string, dynamic bool, values map[string]string) string {
-	return expandWith(s, dynamic, func(key string) string { return values[key] })
+	return expandWith(s, dynamic, func(key string) (string, bool) {
+		v, set := values[key]
+		return v, set
+	})
 }
 
-func expandWith(s string, dynamic bool, value func(string) string) string {
+// expandWith is expand with value giving each key's value, and whether
+// it is set.
+func expandWith(s string, dynamic bool, value func(string) (string, bool)) string {
 	var out strings.Builder
 	last := 0
 	for _, p := range params(s, dynamic) {
@@ -337,9 +344,11 @@ func expandWith(s string, dynamic bool, value func(string) string) string {
 		case p.escape:
 			out.WriteByte('$')
 		case p.length:
-			out.WriteString(strconv.Itoa(len(value(p.key))))
+			v, _ := value(p.key)
+			out.WriteString(strconv.Itoa(len(v)))
 		default:
-			v, ok := applyOp(value(p.key), p.op, func(w string) string { return expandWith(w, dynamic, value) })
+			v, set := value(p.key)
+			v, ok := applyOp(v, set, p.op, func(w string) string { return expandWith(w, dynamic, value) })
 			if !ok {
 				v = s[p.start:p.end]
 			}
@@ -350,11 +359,12 @@ func expandWith(s string, dynamic bool, value func(string) string) string {
 	return out.String()
 }
 
-// applyOp applies a bash parameter expansion to v: substrings (:N, :N:L),
-// defaults (:-, -, :+, +), prefix and suffix removal (#, ##, %, %%),
-// replacement (/, //, /#, /%) and case (^, ^^, ",", ",,"). word expands
-// the words in op. An op it does not know reports false.
-func applyOp(v, op string, word func(string) string) (string, bool) {
+// applyOp applies a bash parameter expansion to v, which set reports
+// set: substrings (:N, :N:L), defaults (:-, -, :+, +), prefix and suffix
+// removal (#, ##, %, %%), replacement (/, //, /#, /%) and case (^, ^^,
+// ",", ",,"). word expands the words in op. An op it does not know
+// reports false.
+func applyOp(v string, set bool, op string, word func(string) string) (string, bool) {
 	switch {
 	case op == "":
 		return v, true
@@ -369,10 +379,15 @@ func applyOp(v, op string, word func(string) string) (string, bool) {
 		}
 		return "", true
 	case strings.HasPrefix(op, "-"), strings.HasPrefix(op, "="):
-		// Every substitution is set, if only to empty.
+		if !set {
+			return word(op[1:]), true
+		}
 		return v, true
 	case strings.HasPrefix(op, "+"):
-		return word(op[1:]), true
+		if set {
+			return word(op[1:]), true
+		}
+		return "", true
 	case strings.HasPrefix(op, ":"):
 		return substring(v, op[1:])
 	case strings.HasPrefix(op, "##"):
@@ -390,11 +405,17 @@ func applyOp(v, op string, word func(string) string) (string, bool) {
 	case op == ",,":
 		return strings.ToLower(v), true
 	case op == "^":
-		return strings.ToUpper(v[:min(1, len(v))]) + v[min(1, len(v)):], true
+		return mapFirst(v, strings.ToUpper), true
 	case op == ",":
-		return strings.ToLower(v[:min(1, len(v))]) + v[min(1, len(v)):], true
+		return mapFirst(v, strings.ToLower), true
 	}
 	return "", false
+}
+
+// mapFirst applies f to v's first byte.
+func mapFirst(v string, f func(string) string) string {
+	n := min(1, len(v))
+	return f(v[:n]) + v[n:]
 }
 
 // substring applies ${KEY:offset} or ${KEY:offset:length}, where a
@@ -468,6 +489,12 @@ func replace(v, spec string, word func(string) string) string {
 	pattern, with, _ := cutUnescaped(spec, '/')
 	pattern, with = word(pattern), word(with)
 	if pattern == "" {
+		switch mode {
+		case '#':
+			return with + v
+		case '%':
+			return v + with
+		}
 		return v
 	}
 	re := glob(pattern)

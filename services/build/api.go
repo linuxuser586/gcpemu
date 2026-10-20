@@ -180,8 +180,12 @@ func (s *Service) loadStored(r buildRef) (*stored, error) {
 // the scheduler start it. source gives the built-in substitutions that
 // come of a source or Build trigger, such as COMMIT_SHA or TRIGGER_NAME.
 func (s *Service) submit(project, location string, in *cloudbuildpb.Build, source map[string]string) (*longrunningpb.Operation, error) {
-	if err := validate(in); err != nil {
-		return nil, err
+	// The serviceAccount, which substitutions do not apply to, gives
+	// built-ins; the rest is validated as substituted.
+	if sa := in.GetServiceAccount(); sa != "" {
+		if _, err := serviceAccountEmail(sa); err != nil {
+			return nil, err
+		}
 	}
 	b := proto.Clone(in).(*cloudbuildpb.Build)
 	r := buildRef{project, location, s.env.IDs.UUID()}
@@ -202,6 +206,9 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, sourc
 		st.Status, st.ExitCode, st.Timing, st.PullTiming = cloudbuildpb.Build_QUEUED, 0, nil, nil
 	}
 	if err := substitute(b, builtins(b, location, source)); err != nil {
+		return nil, err
+	}
+	if err := validate(b); err != nil {
 		return nil, err
 	}
 	if err := s.logsBucket(b); err != nil {
@@ -262,11 +269,6 @@ func validate(b *cloudbuildpb.Build) error {
 	}
 	if err := validateSource(b.GetSource()); err != nil {
 		return err
-	}
-	if sa := b.GetServiceAccount(); sa != "" {
-		if _, err := serviceAccountEmail(sa); err != nil {
-			return err
-		}
 	}
 	if err := validateArtifacts(b.GetArtifacts()); err != nil {
 		return err

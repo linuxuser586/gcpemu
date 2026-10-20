@@ -29,7 +29,7 @@ const secretMask = "[REDACTED]"
 // checkSecrets).
 func validateSecrets(b *cloudbuildpb.Build) error {
 	if len(b.GetSecrets()) > 0 {
-		return apierr.New(codes.Unimplemented, "Build secrets (Cloud KMS) is not emulated; use availableSecrets.secretManager.")
+		return apierr.New(codes.Unimplemented, "Build field secrets (Cloud KMS) is not emulated; use availableSecrets.secretManager.")
 	}
 	if len(b.GetAvailableSecrets().GetInline()) > 0 {
 		return apierr.New(codes.Unimplemented, "Build availableSecrets.inline (Cloud KMS) is not emulated; use availableSecrets.secretManager.")
@@ -86,7 +86,8 @@ func validateSecrets(b *cloudbuildpb.Build) error {
 // resolveSecrets reads the Build's availableSecrets.secretManager versions
 // as its service account, returning each payload by env, and masks them
 // in the Build's log. A version that cannot be read, being disabled or
-// destroyed or denied to the account, is a *stepFailure.
+// destroyed or denied to the account, is a *stepFailure; any other error
+// is the Build being stopped.
 func (s *Service) resolveSecrets(ctx context.Context, r *liveBuild, b *cloudbuildpb.Build) (map[string]string, error) {
 	secs := b.GetAvailableSecrets().GetSecretManager()
 	if len(secs) == 0 {
@@ -103,7 +104,7 @@ func (s *Service) resolveSecrets(ctx context.Context, r *liveBuild, b *cloudbuil
 	}
 	email, err := serviceAccountEmail(b.GetServiceAccount())
 	if err != nil {
-		return nil, err
+		return nil, fail("failed to access secrets: " + apierr.From(err).Message)
 	}
 	ctx = emu.WithPrincipal(ctx, emu.Principal("serviceAccount:"+email))
 	env := map[string]string{}
@@ -117,8 +118,30 @@ func (s *Service) resolveSecrets(ctx context.Context, r *liveBuild, b *cloudbuil
 		}
 		env[sec.GetEnv()] = string(data)
 	}
-	s.logs.mask(r.ref, slices.Collect(maps.Values(env)))
+	for _, v := range env {
+		s.logs.mask(r.ref, maskedParts(v))
+	}
 	return env, nil
+}
+
+// minMaskedLine is the shortest line of a multi-line payload that is
+// masked on its own: the log is masked a line at a time, and shorter
+// lines, such as a JSON key's braces, would mask ordinary output.
+const minMaskedLine = 8
+
+// maskedParts returns what of a payload to mask in the log: the payload,
+// and each line of a multi-line one that is at least minMaskedLine long.
+func maskedParts(payload string) []string {
+	parts := []string{payload}
+	if !strings.Contains(payload, "\n") {
+		return parts
+	}
+	for line := range strings.Lines(payload) {
+		if line = strings.TrimSpace(line); len(line) >= minMaskedLine {
+			parts = append(parts, line)
+		}
+	}
+	return parts
 }
 
 // secretEnv returns step i's secret variables, KEY=payload: options'

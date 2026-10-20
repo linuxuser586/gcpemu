@@ -15,8 +15,8 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
-// secret creates the Secret id in the test project with one version
-// holding payload.
+// secret creates the Secret Manager secret id in the test project with
+// one version holding payload.
 func (e *env) secret(id, payload string) {
 	e.t.Helper()
 	base := "/secretmanager/v1/projects/" + testProject + "/secrets"
@@ -24,8 +24,9 @@ func (e *env) secret(id, payload string) {
 	e.send(http.MethodPost, base+"/"+id+":addVersion", `{"payload":{"data":"`+base64.StdEncoding.EncodeToString([]byte(payload))+`"}}`)
 }
 
-// secretBuild is a Build whose step reads the Secret id's version as
-// TOKEN, through a versionName with a substitution.
+// secretBuild is a Build whose step reads the latest version of the
+// Secret Manager secret id as TOKEN, through a versionName with a
+// substitution.
 func secretBuild(id string) *cloudbuildpb.Build {
 	return &cloudbuildpb.Build{
 		AvailableSecrets: &cloudbuildpb.Secrets{SecretManager: []*cloudbuildpb.SecretManagerSecret{
@@ -42,12 +43,18 @@ func secretBuild(id string) *cloudbuildpb.Build {
 func TestSecretEnv(t *testing.T) {
 	e := startWith(t, []string{"secrets"})
 	e.secret("token", "s3cr3t-value")
-	b := e.run(secretBuild("token"))
+	e.secret("key", "-----BEGIN KEY-----\nline-one-of-the-key\nline-two-of-the-key\n-----END KEY-----\n")
+	pem := secretBuild("token")
+	pem.AvailableSecrets.SecretManager = append(pem.AvailableSecrets.SecretManager,
+		&cloudbuildpb.SecretManagerSecret{VersionName: "projects/" + testProject + "/secrets/key/versions/1", Env: "KEY"})
+	pem.Steps[0].SecretEnv = append(pem.Steps[0].SecretEnv, "KEY")
+	pem.Steps[0].Args[1] += `; echo "$$KEY"`
+	b := e.run(pem)
 	log := e.log(b)
 	if !strings.Contains(log, "eulav-t3rc3s") {
 		t.Errorf("the step did not see the payload:\n%s", log)
 	}
-	if strings.Contains(log, "s3cr3t-value") || !strings.Contains(log, "plain [REDACTED]") {
+	if strings.Contains(log, "s3cr3t-value") || strings.Contains(log, "line-one-of-the-key") || !strings.Contains(log, "plain [REDACTED]") {
 		t.Errorf("the payload is not masked in the log:\n%s", log)
 	}
 	if stored := e.storedLog(b); strings.Contains(stored, "s3cr3t-value") {

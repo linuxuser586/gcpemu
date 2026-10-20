@@ -364,12 +364,11 @@ func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Sta
 }
 
 // stepSpec is the container of step i: its image, entrypoint and args or
-// script, env (the Build's options first, then its secretEnv), dir under
-// the source's, the
-// Build's volumes, the Build daemon's socket and the Build network,
-// labelled as the Build's so cleanup finds it. The Build agent is its
-// resolver, and the variables
-// that point clients at the agent come before the Build's own.
+// script, env (the Build's options first, then the step's secretEnv
+// payloads from secrets), dir under the source's, the Build's volumes,
+// the Build daemon's socket and the Build network, labelled as the
+// Build's so cleanup finds it. The Build agent is its resolver, and the
+// variables that point clients at the agent come before the Build's own.
 func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network buildNet, secrets map[string]string) runtime.ContainerSpec {
 	st := b.GetSteps()[i]
 	agentEnv, hosts := s.stepEnv(network.agent)
