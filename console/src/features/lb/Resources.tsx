@@ -81,6 +81,10 @@ const COLUMNS: Record<Coll, Column[]> = {
     ['Proxy header', (r) => mono(r.proxyHeader)],
     ['SSL policy', ref('sslPolicy')],
   ],
+  targetTcpProxies: [
+    ['Backend service', ref('service')],
+    ['Proxy header', (r) => mono(r.proxyHeader)],
+  ],
   urlMaps: [
     ['Default backend', ref('defaultService')],
     ['Host rules', (r) => len(r.hostRules)],
