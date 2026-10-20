@@ -4,10 +4,10 @@ import { errorMessage } from '@/api/errors'
 
 import { lastSeg, relPath } from '../lb/api'
 import { invalid, requiredMessage } from '../lb/spec'
-import { resourceField, type SecondaryRange } from './api'
+import { resourceField, type FirewallRule, type SecondaryRange } from './api'
 
-// What the network and subnetwork forms share: reading API values and
-// showing the API's errors on the fields they name.
+// What the VPC view's forms share: reading API values and showing the
+// API's errors on the fields they name.
 
 export type Obj = Record<string, unknown>
 
@@ -37,6 +37,12 @@ export function mtuError(v: string): string | undefined {
 }
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/
+
+/** isIPv4 is whether s is a dotted IPv4 address. */
+export function isIPv4(s: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s.trim())
+  return !!m && m.slice(1).every((o) => Number(o) <= 255)
+}
 
 /**
  * parseCidr reads an IPv4 CIDR network address range, as the API does:
@@ -132,4 +138,72 @@ export async function withFieldError<V extends FieldValues>(
     }
     throw e
   }
+}
+
+/** formatRules writes firewall rules as gcloud's --rules does: tcp:22,tcp:80-90,icmp. */
+export const formatRules = (rules?: FirewallRule[]) =>
+  (rules ?? [])
+    .flatMap((r) => (r.ports?.length ? r.ports.map((p) => `${r.IPProtocol}:${p}`) : [r.IPProtocol]))
+    .join(',')
+
+const PROTOCOLS = new Set(['tcp', 'udp', 'icmp', 'esp', 'ah', 'sctp', 'ipip', 'all'])
+const WITH_PORTS = new Set(['tcp', 'udp', 'sctp', '6', '17', '132'])
+
+/** rulesError is the message for the first invalid firewall rule, as gcloud's --rules writes them. */
+export function rulesError(text: string, field: 'allowed' | 'denied'): string | undefined {
+  const items = text.split(',').map((x) => x.trim())
+  if (!text.trim()) return "Exactly one of 'allowed' or 'denied' must be specified."
+  for (const item of items) {
+    const [proto = '', port, ...rest] = item.toLowerCase().split(':')
+    const num = /^\d+$/.test(proto) && Number(proto) <= 255
+    if (!PROTOCOLS.has(proto) && !num) {
+      return invalid(
+        field,
+        item,
+        'A rule is a protocol (tcp, udp, icmp, esp, ah, sctp, ipip, all or a number), with ports for tcp, udp and sctp: tcp:22, udp:5000-5100.',
+      )
+    }
+    if (port === undefined) continue
+    if (rest.length || !WITH_PORTS.has(proto)) {
+      return invalid(field, item, 'Only tcp, udp and sctp rules take ports.')
+    }
+    const m = /^(\d+)(?:-(\d+))?$/.exec(port)
+    const lo = Number(m?.[1])
+    const hi = m?.[2] === undefined ? lo : Number(m[2])
+    if (!m || hi > 65535 || lo > hi) return invalid(field, item, 'Ports are 0 to 65535.')
+  }
+  return undefined
+}
+
+/** parseRules reads firewall rules as gcloud's --rules writes them, a protocol's ports together. */
+export function parseRules(text: string): FirewallRule[] {
+  const out: FirewallRule[] = []
+  for (const item of text
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean)) {
+    const [IPProtocol = '', port] = item.split(':')
+    let rule = out.find((r) => r.IPProtocol === IPProtocol)
+    if (!rule) {
+      rule = { IPProtocol, ports: [] }
+      out.push(rule)
+    }
+    // A protocol without ports is all its ports.
+    if (port === undefined) rule.ports = undefined
+    else rule.ports?.push(port)
+  }
+  return out.map((r) => (r.ports?.length ? r : { IPProtocol: r.IPProtocol }))
+}
+
+/** parseList reads a list of ranges, tags or service accounts, separated by commas or spaces. */
+export const parseList = (text: string) => text.split(/[\s,]+/).filter(Boolean)
+
+export const formatList = (l?: string[]) => (l ?? []).join(', ')
+
+/** priorityError is the API's message for a priority out of range, if v is one. */
+export function priorityError(v: string): string | undefined {
+  const t = v.trim()
+  if (!t) return undefined
+  if (!/^\d+$/.test(t)) return invalid('priority', t, 'Must be a whole number.')
+  return Number(t) > 65535 ? invalid('priority', t, 'Must be between 0 and 65535.') : undefined
 }

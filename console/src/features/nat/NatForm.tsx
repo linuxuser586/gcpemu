@@ -18,9 +18,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 
 import { lastSeg, relPath } from '../lb/api'
-import { resourceField, subnetsQuery } from '../vpc/api'
+import { externalAddressesQuery, resourceField, subnetsQuery } from '../vpc/api'
 import {
-  addressesQuery,
   patchRouter,
   regionSubnets,
   routerPath,
@@ -543,7 +542,7 @@ function SubnetsField({
 function NatIpsField({ form, r }: { form: UseFormReturn<NatValues>; r: RouterRef }) {
   const error = form.formState.errors.natIps?.message
   const text = useWatch({ control: form.control, name: 'natIps' }) ?? ''
-  const addresses = useQuery(addressesQuery(r.project, r.region))
+  const addresses = useQuery(externalAddressesQuery(r.project, r.region))
   const used = new Set(lines(text))
   const self = routerPath(r)
   const free = (addresses.data ?? []).filter(

@@ -31,6 +31,7 @@ import {
   type Certificate,
 } from './api'
 import { certPath, CertsNav, ChooseProject } from './CertsLayout'
+import { RotateCa } from './RotateCa'
 
 const TONES: Record<string, 'success' | 'warning' | 'destructive' | 'default'> = {
   ACTIVE: 'success',
@@ -53,7 +54,8 @@ export function Certificates() {
   const project = view.project ?? ''
   const [text, setText] = useState(view.q ?? '')
   const query = useQuery({ ...certificatesQuery(project), enabled: !!project })
-  if (!project) return <ChooseProject what="see its certificates" />
+  // Rotate CA is the Instance's, so it needs no Project.
+  if (!project) return <ChooseProject what="see its certificates" actions={<RotateCa />} />
   const all = query.data ?? []
   const shown = all.filter(
     (c) => lastSegment(c.name).includes(text) || certDomains(c).some((d) => d.includes(text)),
@@ -68,12 +70,15 @@ export function Certificates() {
             Certificates of Project <span className="font-mono">{project}</span>
           </p>
         </div>
-        <Button asChild>
-          <Link to="/certs/create">
-            <Plus aria-hidden />
-            Create certificate
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <RotateCa />
+          <Button asChild>
+            <Link to="/certs/create">
+              <Plus aria-hidden />
+              Create certificate
+            </Link>
+          </Button>
+        </div>
       </div>
       <CertsNav />
       <Card>

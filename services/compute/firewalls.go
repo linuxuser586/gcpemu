@@ -140,6 +140,7 @@ func (s *Service) loadFirewall(r *http.Request, perm string) (string, *computev1
 	if !ok {
 		return "", nil, errNotFound(path)
 	}
+	withPriority(&fw.ForceSendFields)
 	return path, fw, nil
 }
 
@@ -152,6 +153,7 @@ func (s *Service) listFirewalls(w http.ResponseWriter, r *http.Request) {
 	s.listGlobal(w, r, nsFirewalls, "firewalls", "compute.firewalls.list", "compute#firewallList", func(b []byte) (string, any) {
 		var v computev1.Firewall
 		_ = json.Unmarshal(b, &v)
+		withPriority(&v.ForceSendFields)
 		return v.Name, &v
 	})
 }
@@ -217,6 +219,15 @@ func (s *Service) updateFirewall(w http.ResponseWriter, r *http.Request) {
 			apierr.Write(w, err)
 			return
 		}
+	}
+	// A stored rule always has its priority, so a patch keeps it (0
+	// included) unless it nulls it; an update sends it or takes 1000.
+	// hasKey cannot tell a null priority from a missing one.
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	prio, sent := fields["priority"]
+	if string(prio) != "null" && (sent || r.Method != http.MethodPut) {
+		next.ForceSendFields = append(next.ForceSendFields, "Priority")
 	}
 	p, _, _ := pathParts(path)
 	if relPath(next.Network) != relPath(cur.Network) {
@@ -374,6 +385,7 @@ func (s *Service) loadRoute(r *http.Request, perm string) (string, *computev1.Ro
 	if !ok {
 		return "", nil, errNotFound(path)
 	}
+	withPriority(&rt.ForceSendFields)
 	return path, rt, nil
 }
 
@@ -386,6 +398,7 @@ func (s *Service) listRoutes(w http.ResponseWriter, r *http.Request) {
 	s.listGlobal(w, r, nsRoutes, "routes", "compute.routes.list", "compute#routeList", func(b []byte) (string, any) {
 		var v computev1.Route
 		_ = json.Unmarshal(b, &v)
+		withPriority(&v.ForceSendFields)
 		return v.Name, &v
 	})
 }
@@ -406,6 +419,14 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// withPriority returns a stored firewall rule's or route's priority even
+// when it is 0, as GCP does: one is always stored.
+func withPriority(force *[]string) {
+	if !contains(*force, "Priority") {
+		*force = append(*force, "Priority")
+	}
 }
 
 // hasKey reports whether a JSON object has a top-level key.

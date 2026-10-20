@@ -11,17 +11,29 @@ import { Card, CardTitle } from '@/components/ui/card'
 import { toast } from '@/lib/toast'
 
 import { relPath } from '../lb/api'
-import { deleteNetwork, networkQuery, subnetsQuery, switchToCustomMode, type Network } from './api'
+import {
+  byPriority,
+  deleteNetwork,
+  firewallsQuery,
+  networkQuery,
+  routesQuery,
+  subnetsQuery,
+  switchToCustomMode,
+  type Network,
+} from './api'
 import { ContainerNetworkSummary } from './ContainerNetworks'
 import { networkRecipe } from './copy'
+import { FirewallTable } from './Firewalls'
 import { isEmulatorDefault, routingMode } from './Networks'
+import { RecordedNotice } from './RecordedNotice'
+import { RouteTable } from './Routes'
 import { bySubnet, SubnetTable } from './Subnetworks'
 import { networkPage } from './links'
 import { useNetworkRef } from './VpcLayout'
 
 /**
- * NetworkPage is one VPC network: its settings, its subnetworks, and the
- * network as the API returns it.
+ * NetworkPage is one VPC network: its settings, its subnetworks,
+ * firewall rules and routes, and the network as the API returns it.
  */
 export function NetworkPage() {
   const ref = useNetworkRef()
@@ -30,9 +42,13 @@ export function NetworkPage() {
   const n = query.data
   const navigate = useCarriedNavigate()
   const qc = useQueryClient()
-  const mine = (subnets.data ?? [])
-    .filter((s) => n && relPath(s.network) === relPath(n.selfLink))
-    .sort(bySubnet)
+  const firewalls = useQuery(firewallsQuery(ref.project))
+  const routes = useQuery(routesQuery(ref.project))
+  const onNetwork = (r: { network?: string }) => !!n && relPath(r.network) === relPath(n.selfLink)
+  const mine = (subnets.data ?? []).filter(onNetwork).sort(bySubnet)
+  const myFirewalls = (firewalls.data ?? []).filter(onNetwork).sort(byPriority)
+  const myRoutes = (routes.data ?? []).filter(onNetwork).sort(byPriority)
+  const add = (what: string) => `/compute/create-${what}?network=${encodeURIComponent(ref.network)}`
   const remove = useMutation({
     mutationFn: () => deleteNetwork(ref),
     onSuccess: () => {
@@ -132,7 +148,7 @@ export function NetworkPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle id="subnets-title">Subnetworks</CardTitle>
               <Button variant="outline" size="sm" asChild>
-                <Link to={`/compute/create-subnetwork?network=${encodeURIComponent(ref.network)}`}>
+                <Link to={add('subnetwork')}>
                   <Plus aria-hidden />
                   Add subnetwork
                 </Link>
@@ -145,6 +161,39 @@ export function NetworkPage() {
               </p>
             )}
             {mine.length > 0 && <SubnetTable subnets={mine} />}
+          </Card>
+          <RecordedNotice />
+          <Card aria-labelledby="firewalls-title">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle id="firewalls-title">Firewall rules</CardTitle>
+              <Button variant="outline" size="sm" asChild>
+                <Link to={add('firewall')}>
+                  <Plus aria-hidden />
+                  Add firewall rule
+                </Link>
+              </Button>
+            </div>
+            <QueryStatus query={firewalls} />
+            {firewalls.data && myFirewalls.length === 0 && (
+              <p className="text-sm text-muted-foreground">No firewall rules in this network.</p>
+            )}
+            {myFirewalls.length > 0 && <FirewallTable firewalls={myFirewalls} />}
+          </Card>
+          <Card aria-labelledby="routes-title">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle id="routes-title">Routes</CardTitle>
+              <Button variant="outline" size="sm" asChild>
+                <Link to={add('route')}>
+                  <Plus aria-hidden />
+                  Add route
+                </Link>
+              </Button>
+            </div>
+            <QueryStatus query={routes} />
+            {routes.data && myRoutes.length === 0 && (
+              <p className="text-sm text-muted-foreground">No routes in this network.</p>
+            )}
+            {myRoutes.length > 0 && <RouteTable routes={myRoutes} />}
           </Card>
           <ContainerNetworkSummary project={ref.project} network={ref.network} />
           <Card>

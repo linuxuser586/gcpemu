@@ -226,7 +226,8 @@ type seedOut struct {
 }
 
 // ExportSeed implements emu.SeedExporter: the latest revision of each
-// schema (with an inline definition), topics and subscriptions. Messages,
+// schema (with an inline definition), topics and subscriptions, but for
+// those another Service owns and makes again from its own section. Messages,
 // snapshots, older schema revisions and pinned revision IDs are not
 // exported.
 func (s *Service) ExportSeed(ctx context.Context) (any, error) {
@@ -241,7 +242,9 @@ func (s *Service) ExportSeed(ctx context.Context) (any, error) {
 	}
 	subs := make([]proto.Message, 0, len(s.subs))
 	for _, sb := range s.subs {
-		subs = append(subs, proto.Clone(sb.cfg))
+		if !s.servicePush(sb.cfg) {
+			subs = append(subs, proto.Clone(sb.cfg))
+		}
 	}
 	s.mu.Unlock()
 

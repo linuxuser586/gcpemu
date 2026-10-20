@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
 import { NotEnabled } from '../services/ServicePage'
-import type { NetworkRef, SubnetRef } from './api'
+import type { AddressRef, NetworkRef, SubnetRef } from './api'
 
 /**
  * VpcLayout gates the VPC network view (SRS 4.8.3): the compute Service
@@ -29,7 +29,8 @@ export function VpcLayout() {
         <h1 className="text-2xl font-semibold">VPC network</h1>
         <Card role="status">
           <p className="text-sm text-muted-foreground">
-            Choose a Project with the Project switcher to see its VPC networks and subnetworks.
+            Choose a Project with the Project switcher to see its VPC networks, subnetworks,
+            firewall rules, routes and IP addresses.
           </p>
         </Card>
       </div>
@@ -52,9 +53,19 @@ export function useSubnetRef(): SubnetRef {
   return { project: view.project ?? '', region, subnetwork }
 }
 
+/** useAddressRef is the address the route names, in the chosen Project: global without a region. */
+export function useAddressRef(): AddressRef {
+  const { region = '', address = '' } = useParams()
+  const [view] = useViewState()
+  return { project: view.project ?? '', region, address }
+}
+
 const TABS = [
   ['/compute', 'Networks'],
   ['/compute/subnetworks', 'Subnetworks'],
+  ['/compute/firewalls', 'Firewall rules'],
+  ['/compute/routes', 'Routes'],
+  ['/compute/addresses', 'IP addresses'],
   ['/compute/offers', 'Offered ports'],
 ] as const
 
@@ -93,7 +104,8 @@ export function VpcHeader({ action }: { action?: ReactNode }) {
           <h1 className="text-2xl font-semibold">VPC network</h1>
           {view.project && (
             <p className="text-sm text-muted-foreground">
-              Networks and subnetworks of Project <span className="font-mono">{view.project}</span>
+              Networks, subnetworks, firewall rules, routes and IP addresses of Project{' '}
+              <span className="font-mono">{view.project}</span>
             </p>
           )}
         </div>

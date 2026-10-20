@@ -33,11 +33,17 @@ export function CertsLayout() {
   return <Outlet />
 }
 
-/** ChooseProject asks for a Project before anything else. */
-export function ChooseProject({ what }: { what: ReactNode }) {
+/**
+ * ChooseProject asks for a Project before anything else. actions are
+ * the ones that need none, such as those on the whole Instance.
+ */
+export function ChooseProject({ what, actions }: { what: ReactNode; actions?: ReactNode }) {
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold">Certificate Manager</h1>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Certificate Manager</h1>
+        {actions}
+      </div>
       <Card role="status">
         <p className="text-sm text-muted-foreground">
           Choose a Project with the Project switcher to {what}.

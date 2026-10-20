@@ -7,8 +7,9 @@ import { startInstance } from './instance.ts'
 // run (FR-UI-012); compute needs no container runtime either. GKE runs
 // on Linux only; its clusters need a container runtime, so the GKE view
 // tests that create them skip without one (gke.spec.ts), as do the Cloud
-// SQL view tests that create instances (sql.spec.ts). Cloud NAT is
-// ready only with a container runtime, so it runs on Linux too. Each
+// SQL view tests that create instances (sql.spec.ts). Cloud NAT and
+// Cloud Build are ready only with a container runtime, so they run on
+// Linux too. Each
 // browser runs a cluster of up to 2 nodes and a private one of 1 node
 // behind Cloud NAT (nat.spec.ts), beyond the default limit of 5.
 const services = [
@@ -22,7 +23,7 @@ const services = [
   'cdn',
   'certs',
   'sql',
-  ...(process.platform === 'linux' ? ['gke', 'nat'] : []),
+  ...(process.platform === 'linux' ? ['gke', 'nat', 'build'] : []),
 ]
 
 let instance

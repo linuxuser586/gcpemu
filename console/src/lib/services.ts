@@ -11,6 +11,7 @@ export const SERVICES: readonly ServiceInfo[] = [
   { id: 'dns', name: 'Cloud DNS' },
   { id: 'certs', name: 'Certificate Manager' },
   { id: 'ar', name: 'Artifact Registry' },
+  { id: 'build', name: 'Cloud Build' },
   { id: 'pubsub', name: 'Pub/Sub' },
   { id: 'secrets', name: 'Secret Manager' },
   { id: 'gcs', name: 'Cloud Storage' },

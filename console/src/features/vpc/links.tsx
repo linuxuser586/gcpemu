@@ -2,11 +2,15 @@ import { Fragment } from 'react'
 
 import { Link } from '@/components/Link'
 
-import { lastSeg } from '../lb/api'
-import type { SubnetRef, Subnetwork } from './api'
+import { lastSeg, parseRef, relPath } from '../lb/api'
+import { lbPath } from '../lb/LbLayout'
+import { routerRefOf } from '../nat/api'
+import { routerPage } from '../nat/NatLayout'
+import type { AddressRef, SubnetRef, Subnetwork } from './api'
 
-// The VPC network view's paths, and links to networks and subnetworks
-// that other views (Cloud NAT) show too.
+// The VPC network view's paths, links to networks and subnetworks that
+// other views (Cloud NAT) show too, and links from an address to the
+// resources that use it in their own views (Load Balancer, Cloud NAT).
 
 const enc = encodeURIComponent
 
@@ -18,6 +22,17 @@ export const networkPage = (network: string, sub = '') =>
 export const subnetPage = (r: Pick<SubnetRef, 'region' | 'subnetwork'>, sub = '') =>
   `/compute/regions/${r.region}/subnetworks/${enc(r.subnetwork)}${sub ? `/${sub}` : ''}`
 
+/** firewallPage is the console path of a firewall rule, or of a page under it. */
+export const firewallPage = (name: string, sub = '') =>
+  `/compute/global/firewalls/${enc(name)}${sub ? `/${sub}` : ''}`
+
+/** routePage is the console path of a route. */
+export const routePage = (name: string) => `/compute/global/routes/${enc(name)}`
+
+/** addressPage is the console path of a regional or global address. */
+export const addressPage = (r: Pick<AddressRef, 'region' | 'address'>) =>
+  `/compute/${r.region ? `regions/${r.region}` : 'global'}/addresses/${enc(r.address)}`
+
 const linkClass = 'font-mono text-primary underline-offset-4 hover:underline'
 
 /** NetworkLink links a network's selfLink or name to its page. */
@@ -26,6 +41,24 @@ export function NetworkLink({ link }: { link?: string }) {
   if (!name) return <>—</>
   return (
     <Link className={linkClass} to={networkPage(name)}>
+      {name}
+    </Link>
+  )
+}
+
+/** FirewallLink links a firewall rule to its page. */
+export function FirewallLink({ name }: { name: string }) {
+  return (
+    <Link className={linkClass} to={firewallPage(name)}>
+      {name}
+    </Link>
+  )
+}
+
+/** RouteLink links a route to its page. */
+export function RouteLink({ name }: { name: string }) {
+  return (
+    <Link className={linkClass} to={routePage(name)}>
       {name}
     </Link>
   )
@@ -51,6 +84,48 @@ export function SubnetList({ subnets }: { subnets: Pick<Subnetwork, 'name' | 're
           <SubnetLink region={lastSeg(s.region)} name={s.name} />
         </Fragment>
       ))}
+    </span>
+  )
+}
+
+/** AddressLink links an address to its page. */
+export function AddressLink({ region, name }: { region: string; name: string }) {
+  return (
+    <Link className={linkClass} to={addressPage({ region, address: name })}>
+      {name}
+    </Link>
+  )
+}
+
+/**
+ * userPage is the console path of a resource that uses an address, where
+ * the console has a view of it: a forwarding rule in Load Balancer, a
+ * router (whose NATs use it) in Cloud NAT.
+ */
+function userPage(link: string): string | undefined {
+  const lb = parseRef(link)
+  if (lb?.coll === 'forwardingRules') return lbPath(lb)
+  const router = routerRefOf(link)
+  return router ? routerPage(router) : undefined
+}
+
+/** AddressUsers lists the resources that use an address, linked where the console has a view. */
+export function AddressUsers({ users }: { users?: string[] }) {
+  if (!users?.length) return <span className="font-mono">—</span>
+  return (
+    <span className="flex flex-col">
+      {users.map((u) => {
+        const to = userPage(u)
+        return to ? (
+          <Link key={u} className={linkClass} to={to}>
+            {lastSeg(u)}
+          </Link>
+        ) : (
+          <span key={u} className="font-mono break-all">
+            {relPath(u)}
+          </span>
+        )
+      })}
     </span>
   )
 }

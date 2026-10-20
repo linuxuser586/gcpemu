@@ -1,8 +1,11 @@
 package compute_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -254,6 +257,13 @@ func TestFirewallsAndRoutes(t *testing.T) {
 	fw, _ = c.Firewalls.Get(proj, "fw").Do()
 	if fw.Priority != 900 || fw.SourceRanges[0] != "10.0.0.0/8" || len(fw.Allowed) != 1 {
 		t.Fatalf("patched firewall: %+v", fw)
+	}
+	// Priority 0 is a priority, not the default, and a patch keeps it.
+	waitDo(t, c)(c.Firewalls.Patch(proj, "fw", &computev1.Firewall{Priority: 0, ForceSendFields: []string{"Priority"}}).Do())
+	waitDo(t, c)(c.Firewalls.Patch(proj, "fw", &computev1.Firewall{Description: "first"}).Do())
+	fw, _ = c.Firewalls.Get(proj, "fw").Do()
+	if fw.Priority != 0 || fw.Description != "first" {
+		t.Fatalf("patched priority 0: %+v", fw)
 	}
 	if _, err := c.Firewalls.Insert(proj, &computev1.Firewall{Name: "bad", Network: "global/networks/net"}).Do(); code(err) != http.StatusBadRequest {
 		t.Fatalf("no allowed/denied: %v", err)
@@ -759,5 +769,28 @@ func TestOperationsResetDropped(t *testing.T) {
 	}
 	if ops := inst.Operations("compute", ""); len(ops) != 0 {
 		t.Errorf("operations after reset: %+v", ops)
+	}
+}
+
+// TestPriorityZeroIsReturned: GCP returns priority 0 rather than leaving
+// it out, and the Web console reads a missing priority as 1000.
+func TestPriorityZeroIsReturned(t *testing.T) {
+	inst, c, _ := newClients(t)
+	customNet(t, c, "net")
+	waitDo(t, c)(c.Firewalls.Insert(proj, &computev1.Firewall{Name: "fw", Network: "global/networks/net", Priority: 0,
+		ForceSendFields: []string{"Priority"}, Allowed: []*computev1.FirewallAllowed{{IPProtocol: "all"}}}).Do())
+	waitDo(t, c)(c.Routes.Insert(proj, &computev1.Route{Name: "r", Network: "global/networks/net", DestRange: "10.9.0.0/16",
+		NextHopIp: "10.0.0.5", Priority: 0, ForceSendFields: []string{"Priority"}}).Do())
+	for _, p := range []string{"firewalls/fw", "firewalls", "routes/r", "routes"} {
+		res, err := http.Get(inst.GatewayURL() + "/compute/v1/projects/" + proj + "/global/" + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		var flat bytes.Buffer
+		if err := json.Compact(&flat, b); err != nil || !strings.Contains(flat.String(), `"priority":0`) {
+			t.Errorf("GET %s leaves out priority 0: %s %v", p, flat.String(), err)
+		}
 	}
 }

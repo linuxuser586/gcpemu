@@ -227,11 +227,17 @@ func (s *Service) idToken(ctx context.Context, email, aud string) (string, error
 // pushClient returns the push HTTP client: through the load balancer's
 // DNS-aware transport when the lb service runs (FR-INT-011: push
 // endpoints served by an emulated load balancer), else the plain client.
+// Pushes to a host another Service serves (ServePushHost) never leave the
+// process.
 func (s *Service) pushClient() *http.Client {
+	next := s.push.Transport
 	if svc, ok := s.env.Lookup("lb"); ok {
 		if p, ok := svc.(interface{ PushTransport() http.RoundTripper }); ok {
-			return &http.Client{Transport: p.PushTransport(), Timeout: s.push.Timeout}
+			next = p.PushTransport()
 		}
 	}
-	return s.push
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	return &http.Client{Transport: hostTransport{s, next}, Timeout: s.push.Timeout}
 }

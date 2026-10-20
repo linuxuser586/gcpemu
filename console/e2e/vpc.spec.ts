@@ -3,8 +3,9 @@ import type { APIRequestContext } from '@playwright/test'
 import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The VPC network view (SRS 4.8.3, FR-UI-011) against the Instance's
-// compute Service: a custom mode network and a subnetwork are created,
-// edited and deleted in the console, through the public compute API.
+// compute Service: a custom mode network and a subnetwork, a network's
+// firewall rules and routes, and addresses, are created, edited and
+// deleted in the console, through the public compute API.
 // A subnetwork's VPC container network needs a container runtime, so that
 // test skips without one.
 
@@ -140,5 +141,146 @@ test('VPC network: a subnetwork’s container network', async ({
 
   // Nothing is deleted: on a VM runtime the Host address keeps the
   // subnetwork in use, and the Instance is Ephemeral.
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('VPC network: create, edit and delete a firewall rule, create and delete a route', async ({
+  page,
+  request,
+  browserName,
+  requests,
+}, testInfo) => {
+  // Five compute Operations of 2 s each (--lro-latency), and the pages between them.
+  test.setTimeout(2 * 60_000)
+  const id = projectId(`e2e-vpcfw${testInfo.retry}`, browserName)
+  await compute(request, 'POST', `projects/${id}/global/networks`, {
+    name: 'main',
+    autoCreateSubnetworks: false,
+  })
+  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  await expect(page.getByText('Recorded: stored and returned, not enforced')).toBeVisible()
+  const defaultRoute = page.getByRole('table', { name: 'Routes' }).getByTestId('route')
+  await expect(defaultRoute).toContainText('System-generated')
+  await expect(defaultRoute).toContainText('Gateway default-internet-gateway')
+  await expect(page.getByText('No firewall rules in this network.')).toBeVisible()
+
+  // Create a firewall rule on the network.
+  await page.getByRole('link', { name: 'Add firewall rule' }).click()
+  await expect(page).toHaveURL(/\/console\/compute\/create-firewall\?/)
+  await expect(page.getByRole('combobox', { name: 'Network', exact: true })).toHaveValue('main')
+  await page.getByLabel('Name').fill('allow-web')
+  await page.getByLabel('Protocols and ports').fill('tcp:80,tcp:443')
+  await page.getByLabel('Source ranges').fill('10.0.0.0/8')
+  await page.getByLabel('Target tags').fill('web')
+  await page.getByRole('button', { name: 'Create' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/compute/global/firewalls/allow-web\\?project=${id}$`),
+  )
+  const details = page.getByLabel('Firewall rule details')
+  await expect(details).toContainText('tcp:80,tcp:443')
+  await expect(details).toContainText('10.0.0.0/8')
+  await expect(details).toContainText('Tags: web')
+
+  // Edit it: deny instead, at the highest priority.
+  await page.getByRole('link', { name: 'Edit firewall rule' }).click()
+  await expect(page).toHaveURL(/\/firewalls\/allow-web\/edit\?/)
+  await page.getByLabel('Action').selectOption('DENY')
+  await page.getByLabel('Protocols and ports').fill('tcp:23')
+  await page.getByLabel('Priority').fill('0')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(details).toContainText('Deny')
+  await expect(details).toContainText('tcp:23')
+  await expect(details).toContainText('Priority0')
+
+  // Delete it.
+  await page.getByRole('button', { name: 'Delete firewall rule' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete firewall rule' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/compute/firewalls\\?project=${id}$`))
+  await expect(page.getByText('No firewall rules in this Project yet.')).toBeVisible()
+
+  // Create a route from the Routes tab.
+  await page.getByRole('link', { name: 'Routes' }).click()
+  await page.getByRole('link', { name: 'Create route' }).click()
+  await expect(page).toHaveURL(/\/console\/compute\/create-route\?/)
+  await page.getByLabel('Name').fill('via-ip')
+  await page.getByRole('combobox', { name: 'Network', exact: true }).fill('main')
+  await page.getByLabel('Destination range').fill('10.60.0.0/16')
+  await page.getByLabel('Next hop', { exact: true }).selectOption('nextHopIp')
+  await page.getByLabel('Next hop IP address').fill('10.0.0.5')
+  await page.getByRole('button', { name: 'Create' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/compute/global/routes/via-ip\\?project=${id}$`))
+  await expect(page.getByLabel('Route details')).toContainText('IP 10.0.0.5')
+
+  // Delete it; the network's default route stays, read-only.
+  await page.getByRole('button', { name: 'Delete route' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete route' }).click()
+  await expect(page).toHaveURL(new RegExp(`/console/compute/routes\\?project=${id}$`))
+  const rows = page.getByRole('table', { name: 'Routes' }).getByTestId('route')
+  await expect(rows).toHaveCount(1)
+  await rows.getByRole('link').first().click()
+  await expect(page.getByLabel('Route details')).toContainText('0.0.0.0/0')
+  await expect(page.getByText(/^System-generated: made by GCP/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Delete route' })).toHaveCount(0)
+
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('VPC network: reserve and release a regional external and a global address', async ({
+  page,
+  browserName,
+  requests,
+}, testInfo) => {
+  // Four compute Operations of 2 s each (--lro-latency), and the pages between them.
+  test.setTimeout(2 * 60_000)
+  const id = projectId(`e2e-vpcip${testInfo.retry}`, browserName)
+  await page.goto(`/console/compute/addresses?project=${id}`)
+  await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
+
+  // Reserve a regional external address; the form checks what the API checks.
+  await page.getByRole('link', { name: 'Reserve address' }).click()
+  await expect(page).toHaveURL(/\/console\/compute\/create-address\?/)
+  await page.getByLabel('Name').fill('Web_ip')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page.getByText("Invalid value for field 'resource.name': 'Web_ip'")).toBeVisible()
+  await page.getByLabel('Name').fill('web-ip')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/compute/regions/us-central1/addresses/web-ip\\?project=${id}$`),
+  )
+  const details = page.getByLabel('Address details')
+  await expect(details).toContainText('RESERVED')
+  // Regional external addresses come from 34.16.0.0/12.
+  await expect(details).toContainText(/34\.(1[6-9]|2\d|3[01])\./)
+
+  // Reserve a global one.
+  await page.goto(`/console/compute/create-address?project=${id}`)
+  await page.getByLabel('Name').fill('lb-ip')
+  await page.getByLabel('Scope').selectOption('global')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/compute/global/addresses/lb-ip\\?project=${id}$`),
+  )
+  await expect(details).toContainText('Global')
+  // Global ones from 34.120.0.0/14.
+  await expect(details).toContainText(/34\.12[0-3]\./)
+
+  // Both are listed.
+  await page.goto(`/console/compute/addresses?project=${id}`)
+  const rows = page.getByRole('table', { name: 'IP addresses' }).getByTestId('address')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText('lb-ip')
+  await expect(rows.nth(0)).toContainText('Global')
+  await expect(rows.nth(1)).toContainText('web-ip')
+  await expect(rows.nth(1)).toContainText('us-central1')
+
+  // Release both.
+  for (const name of ['lb-ip', 'web-ip']) {
+    await rows.getByRole('link', { name }).click()
+    await page.getByRole('button', { name: 'Release address' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Release address' }).click()
+    await expect(page).toHaveURL(new RegExp(`/console/compute/addresses\\?project=${id}$`))
+  }
+  await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
+
   await expectConsoleRequests(requests, { allowed })
 })

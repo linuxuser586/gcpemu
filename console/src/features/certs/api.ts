@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
+import { admin, unwrap } from '@/api/admin'
 import { ApiError } from '@/api/errors'
 import { gcpFetch } from '@/api/fetch'
 
@@ -471,3 +472,9 @@ export const patchEntry = (r: EntryRef, body: unknown, mask: string[]) =>
   patch<CertificateMapEntry>(entryName(r), body, mask)
 
 export const deleteEntry = (r: EntryRef) => remove(entryName(r))
+
+/**
+ * rotateCa replaces the Instance CA and resolves once every Google-managed
+ * certificate is re-issued, with the path of the new ca.pem.
+ */
+export const rotateCa = () => unwrap(admin.POST('/_emu/v1/ca/rotate'))
