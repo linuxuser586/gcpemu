@@ -1,7 +1,8 @@
 // Starts an Ephemeral Instance from bin/gcpemu (built with the real console
 // by `task build`): the shared one Playwright's webServer runs
 // (emulator.ts), and private ones for tests that change all of an
-// Instance's state (state.spec.ts).
+// Instance's state (state.spec.ts) or read back all of its Request log
+// (requests.spec.ts).
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
