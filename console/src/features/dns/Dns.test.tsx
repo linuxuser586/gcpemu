@@ -10,6 +10,7 @@ import { server } from '@/test/setup'
 
 import type { Change, DnsQueryResult, ManagedZone, ResourceRecordSet } from './api'
 import { rrsetRecipe, zoneRecipe } from './copy'
+import { recordSetPath, zoneFor } from './DnsLayout'
 import { fullName, shortName } from './RecordSetForm'
 import { networkUrls } from './ZoneForm'
 
@@ -321,6 +322,35 @@ it('lists record sets and keeps the apex SOA and NS', async () => {
   expect(within(table).getByText(/Weighted round robin/)).toBeInTheDocument()
   expect(screen.getByLabelText('Select example.com. (SOA)')).toBeDisabled()
   expect(screen.queryByRole('button', { name: 'Delete example.com. (NS)' })).not.toBeInTheDocument()
+})
+
+it('pre-fills a record set another view links to, in the zone that holds it', async () => {
+  const user = userEvent.setup()
+  const zones = [
+    { name: 'example', dnsName: 'example.com.', visibility: 'public' as const },
+    { name: 'inside', dnsName: 'acme.example.com.', visibility: 'private' as const },
+  ]
+  const zone = zoneFor('_acme-challenge.example.com.', zones)!
+  expect(zone.name).toBe('example')
+  expect(zoneFor('host.example.org', zones)).toBeUndefined()
+  const { router } = renderApp(
+    `${recordSetPath(zone, { name: '_acme-challenge.example.com.', type: 'CNAME', data: 'x.authorize.certificatemanager.goog.' })}&project=${P}`,
+  )
+  expect(await screen.findByLabelText('DNS name')).toHaveValue('_acme-challenge')
+  expect(screen.getByLabelText('Type')).toHaveValue('CNAME')
+  expect(screen.getByLabelText('Data')).toHaveValue('x.authorize.certificatemanager.goog.')
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await waitFor(() => expect(router.state.location.pathname).toBe('/dns/zones/example'))
+  expect(sent('POST', /changes$/).at(-1)!.body).toEqual({
+    additions: [
+      {
+        name: '_acme-challenge.example.com.',
+        type: 'CNAME',
+        ttl: 300,
+        rrdatas: ['x.authorize.certificatemanager.goog.'],
+      },
+    ],
+  })
 })
 
 it('adds a record set as a change, with the API’s messages', async () => {

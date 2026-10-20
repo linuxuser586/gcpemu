@@ -72,7 +72,7 @@ A way of running an Instance so that it answers on real Google hostnames, using 
 _Avoid_: "mode" for anything else
 
 **Instance CA**:
-The root certificate authority an Instance creates the first time it starts and keeps for its whole life. It signs Google-managed certificates and Host mode serving certificates, and clients trust it once. It is made of a certificate and a private key, which always belong together: an Instance never uses one without the other and never quietly replaces either.
+The root certificate authority an Instance creates the first time it starts. It signs Google-managed certificates and Host mode serving certificates, and clients trust it once. It is made of a certificate and a private key, which always belong together: an Instance never uses one without the other. An Instance keeps its CA until the user rotates it, and never replaces either part on its own.
 _Avoid_: local CA, root CA, emulator CA
 
 **Google front end**:

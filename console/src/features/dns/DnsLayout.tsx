@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
 import { NotEnabled } from '../services/ServicePage'
-import type { ZoneRef } from './api'
+import type { ManagedZone, ZoneRef } from './api'
 
 /** DnsLayout gates the Cloud DNS view (SRS 4.8.3) on the Service being enabled. */
 export function DnsLayout() {
@@ -79,6 +79,34 @@ export const zonePath = (zone: string, sub = '') => `/dns/zones/${enc(zone)}${su
 /** rrsetPath is the console path of a record set's page under its zone. */
 export const rrsetPath = (zone: string, name: string, type: string, sub = '') =>
   zonePath(zone, `rrsets/${enc(name)}/${enc(type)}${sub ? `/${sub}` : ''}`)
+
+/** NewRecord is a record set another view links to the add form for. */
+export interface NewRecord {
+  name: string
+  type: string
+  data: string
+}
+
+/**
+ * recordSetPath is the add form of zone pre-filled with record, read back
+ * by CreateRecordSet from ?name=, ?type= and ?data=.
+ */
+export const recordSetPath = (zone: Pick<ManagedZone, 'name'>, record: NewRecord) =>
+  `${zonePath(zone.name, 'rrsets/create')}?${new URLSearchParams({ ...record })}`
+
+const fqdn = (name: string) => (name.endsWith('.') ? name : `${name}.`).toLowerCase()
+
+/**
+ * zoneFor is the public zone that would hold a record named name: the
+ * one with the longest DNS name that name is in.
+ */
+export function zoneFor<Z extends ManagedZone>(name: string, zones: Z[]): Z | undefined {
+  const n = fqdn(name)
+  return zones
+    .filter((z) => z.visibility !== 'private')
+    .filter((z) => n === fqdn(z.dnsName) || n.endsWith(`.${fqdn(z.dnsName)}`))
+    .sort((a, b) => b.dnsName.length - a.dnsName.length)[0]
+}
 
 /** queryPath is the query box asking name (type A unless given). */
 export const queryPath = (name: string, type = '', network = '') => {
