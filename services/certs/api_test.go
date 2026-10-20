@@ -204,7 +204,7 @@ func TestCertificateMapEntryRegionalCertificate(t *testing.T) {
 		return "Certificate " + name + ` must be in location "global" to be used in a certificate map entry.`
 	}
 
-	for _, tc := range []struct{ desc, cert, name string }{
+	for _, tc := range []struct{ desc, cert, wantName string }{
 		{"existing regional", regional, regional},
 		{"full resource name", "//certificatemanager.googleapis.com/" + regional, regional},
 		{"missing regional", regionLoc + "/certificates/nope", regionLoc + "/certificates/nope"},
@@ -216,7 +216,7 @@ func TestCertificateMapEntryRegionalCertificate(t *testing.T) {
 				Certificates: []string{globalLoc + "/certificates/glob", tc.cert},
 			},
 		})
-		if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != wantMsg(tc.name) {
+		if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != wantMsg(tc.wantName) {
 			t.Errorf("create with %s: %v", tc.desc, err)
 		}
 	}
