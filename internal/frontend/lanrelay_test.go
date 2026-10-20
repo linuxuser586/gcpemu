@@ -306,7 +306,7 @@ func TestLANNoRelay(t *testing.T) {
 // instead of the privileged port, and on the host it is unchanged.
 func TestLANNotLocal(t *testing.T) {
 	notLocal := func(network, addr string) (net.Listener, error) {
-		return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRNOTAVAIL)}
+		return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", errNotLocal)}
 	}
 	for _, tc := range []struct {
 		where       lanbind.Where
