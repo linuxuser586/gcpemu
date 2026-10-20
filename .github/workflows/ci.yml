@@ -25,6 +25,12 @@ jobs:
               - "**"
               - "!**/*.md"
               - "!docs/**"
+      # #482: changes is the one job that runs on docs-only changes, where
+      # ADRs land, so the ADR numbering check runs here.
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - run: task adr
 
   test:
     needs: changes
