@@ -3,9 +3,9 @@ import type { APIRequestContext } from '@playwright/test'
 import { expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // The VPC network view (SRS 4.8.3, FR-UI-011) against the Instance's
-// compute Service: a custom mode network and a subnetwork, and a
-// network's firewall rules and routes, are created, edited and deleted in
-// the console, through the public compute API.
+// compute Service: a custom mode network and a subnetwork, a network's
+// firewall rules and routes, and addresses, are created, edited and
+// deleted in the console, through the public compute API.
 // A subnetwork's VPC container network needs a container runtime, so that
 // test skips without one.
 
@@ -221,6 +221,66 @@ test('VPC network: create, edit and delete a firewall rule, create and delete a 
   await expect(page.getByLabel('Route details')).toContainText('0.0.0.0/0')
   await expect(page.getByText(/^System-generated: made by GCP/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Delete route' })).toHaveCount(0)
+
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('VPC network: reserve and release a regional external and a global address', async ({
+  page,
+  browserName,
+  requests,
+}, testInfo) => {
+  // Four compute Operations of 2 s each (--lro-latency), and the pages between them.
+  test.setTimeout(2 * 60_000)
+  const id = projectId(`e2e-vpcip${testInfo.retry}`, browserName)
+  await page.goto(`/console/compute/addresses?project=${id}`)
+  await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
+
+  // Reserve a regional external address; the form checks what the API checks.
+  await page.getByRole('link', { name: 'Reserve address' }).click()
+  await expect(page).toHaveURL(/\/console\/compute\/create-address\?/)
+  await page.getByLabel('Name').fill('Web_ip')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page.getByText("Invalid value for field 'resource.name': 'Web_ip'")).toBeVisible()
+  await page.getByLabel('Name').fill('web-ip')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/compute/regions/us-central1/addresses/web-ip\\?project=${id}$`),
+  )
+  const details = page.getByLabel('Address details')
+  await expect(details).toContainText('RESERVED')
+  // Regional external addresses come from 34.16.0.0/12.
+  await expect(details).toContainText(/34\.(1[6-9]|2\d|3[01])\./)
+
+  // Reserve a global one.
+  await page.goto(`/console/compute/create-address?project=${id}`)
+  await page.getByLabel('Name').fill('lb-ip')
+  await page.getByLabel('Scope').selectOption('global')
+  await page.getByRole('button', { name: 'Reserve' }).click()
+  await expect(page).toHaveURL(
+    new RegExp(`/console/compute/global/addresses/lb-ip\\?project=${id}$`),
+  )
+  await expect(details).toContainText('Global')
+  // Global ones from 34.120.0.0/14.
+  await expect(details).toContainText(/34\.12[0-3]\./)
+
+  // Both are listed.
+  await page.goto(`/console/compute/addresses?project=${id}`)
+  const rows = page.getByRole('table', { name: 'IP addresses' }).getByTestId('address')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText('lb-ip')
+  await expect(rows.nth(0)).toContainText('Global')
+  await expect(rows.nth(1)).toContainText('web-ip')
+  await expect(rows.nth(1)).toContainText('us-central1')
+
+  // Release both.
+  for (const name of ['lb-ip', 'web-ip']) {
+    await rows.getByRole('link', { name }).click()
+    await page.getByRole('button', { name: 'Release address' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Release address' }).click()
+    await expect(page).toHaveURL(new RegExp(`/console/compute/addresses\\?project=${id}$`))
+  }
+  await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
 
   await expectConsoleRequests(requests, { allowed })
 })
