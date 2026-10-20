@@ -59,6 +59,7 @@ func (c *Client) detectSelf(ctx context.Context) {
 		if err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/json", nil, nil, &v); err != nil {
 			continue
 		}
+		c.selfFound = true
 		if v.HostConfig.NetworkMode == "host" {
 			return
 		}
@@ -70,6 +71,11 @@ func (c *Client) detectSelf(ctx context.Context) {
 // Self returns the emulator's own container ID, or "" when it runs on the
 // host (or on the host network).
 func (c *Client) Self() string { return c.self }
+
+// SelfFound reports whether the runtime found the emulator's own
+// container, on the host's network or not. On the host, or in a container
+// it can't find, Self is "" too (#502).
+func (c *Client) SelfFound() bool { return c.selfFound }
 
 // AttachSelf connects the emulator's container to network; it is a no-op
 // on the host and when already connected.

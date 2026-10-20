@@ -335,6 +335,7 @@ func (in *Instance) Start(ctx context.Context) error {
 	}
 	in.startGFELAN()
 	in.warnContainerBind(ctx)
+	in.warnContainerized(ctx)
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
 	}
@@ -356,6 +357,20 @@ func (in *Instance) warnContainerBind(ctx context.Context) {
 	if len(flags) > 0 && in.Env.LANBind(ctx) == lanbind.Bridge {
 		in.Env.Log.Warn(lanbind.Warning(flags))
 	}
+}
+
+// warnContainerized logs, under --containerized=auto in a container with
+// no runtime socket, that the Instance assumes it is a Containerized
+// Instance (#502). It asks in the background, so Start doesn't wait.
+func (in *Instance) warnContainerized(ctx context.Context) {
+	if s := strings.ToLower(in.Config.Containerized); s != "auto" && s != "" {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), emu.ContainerizedWait)
+		defer cancel()
+		in.Env.Containerized(ctx)
+	}()
 }
 
 // mountConsole serves the Web console on the gateway unless it is turned

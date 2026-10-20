@@ -92,7 +92,8 @@ func Serves(hosts []string, name string) bool {
 type Frontend struct {
 	env   *emu.Env
 	hosts func() []string
-	// inContainer is runtime.InContainer, replaced in tests.
+	// inContainer is runtime.InContainer (the marker files), replaced in
+	// tests; keepsRange asks emu.Env.Containerized instead.
 	inContainer func() bool
 	// goos, listen, relayRuntime, newRelay and relayRetry are how
 	// StartLAN binds the --gfe-bind addresses and relays those it may
@@ -153,7 +154,8 @@ func (f *Frontend) Serves(name string) bool { return Serves(f.Hosts(), name) }
 // Start opens the listener on the configured bind address and records the
 // "frontend" endpoint. A dynamic port comes from --port-range, except in
 // a Containerized Instance, whose published range ports forwarding rules
-// and LoadBalancer Services need (ADR 0012).
+// and LoadBalancer Services need (ADR 0012). The port is settled before
+// the endpoint is recorded, so it never moves.
 func (f *Frontend) Start() error {
 	port := f.env.Config.Port(Endpoint)
 	var l net.Listener
@@ -176,10 +178,17 @@ func (f *Frontend) Start() error {
 }
 
 // keepsRange reports whether the Instance is a Containerized Instance with
-// a --port-range, which it keeps for Published ports.
+// a --port-range, which it keeps for Published ports. It asks the runtime
+// once, for up to emu.ContainerizedWait; without an answer --containerized
+// and the marker files decide (emu.Env.Containerized).
 func (f *Frontend) keepsRange() bool {
 	_, _, ranged, _ := f.env.Config.ParsePortRange()
-	return ranged && f.inContainer()
+	if !ranged {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(f.ctx, emu.ContainerizedWait)
+	defer cancel()
+	return f.env.Containerized(ctx)
 }
 
 // Addr returns the listener address ("" before Start).

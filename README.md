@@ -745,6 +745,10 @@ its own port when the container publishes it (`-p 127.0.0.1:28080:8080` gives
 no `GCPEMU_LB_*` variable; the
 emulator logs what to publish, `gcpemu doctor` lists it, and it is served once a port frees.
 
+A container on the host's network (`--network host`) isn't a Containerized Instance, and runs as
+on the host. When the runtime can't tell (no Docker socket, or it can't find the emulator's
+container), set `--containerized=false` to say so (see below).
+
 Cloud SQL, GKE and Cloud NAT start containers of their own, so they need the host's Docker
 socket (Docker-outside-of-Docker). Without the socket the image starts every other Service and
 logs which it skipped. With it, the emulator stays unprivileged and non-root; it needs only the
@@ -820,9 +824,10 @@ of that binding (`127.0.0.1`), and the port appears only in `gcpemu env`
 (`GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>`) and the Web console. Only TCP ports are
 served. When no published port is free, the Service has no ingress and the emulator logs a
 warning saying what to publish. Forwarding rules without their own published port take ports
-from the same range, and whoever binds a port first gets it. In any container with a
-`--port-range`, the Google front end's dynamic port stays out of the range, so the range is left
-for Services and forwarding rules.
+from the same range, and whoever binds a port first gets it. In any Containerized Instance
+with a `--port-range`, the Google front end's dynamic port stays out of the range, so the range is
+left for Services and forwarding rules. A container on the host's network takes it from the range,
+as on the host.
 
 The emulator guesses from the runtime's info that it is on a VM runtime: Docker Desktop (on any
 host) and OrbStack are recognized. Set `GCPEMU_VM_RUNTIME=true` (or `--vm-runtime true`) on
@@ -856,6 +861,22 @@ way: the instance is then served on 3307 only.
 `gcpemu doctor` prints the decision next to the VM-runtime one, each public instance's host
 address, and whether the runtime has refused a loopback alias. Instance containers are recreated on
 every start, so a changed setting takes effect when the emulator restarts.
+
+A container on the host's network runs as on the host. It isn't a Containerized Instance, so
+forwarding rules aren't served on published ports, and the Google front end's dynamic port comes
+from `--port-range`. With the Docker socket, the emulator asks the runtime to find its own
+container and whether that container is on the host's network. When the runtime finds it, the
+runtime's answer always wins. Without the socket, or when the runtime can't find the container,
+`GCPEMU_CONTAINERIZED` (`--containerized`, `containerized`) decides:
+
+- `auto` (the default) treats any container as a Containerized Instance, and logs a warning
+  saying so. `gcpemu doctor` warns about it too. Forwarding rules are then served as without the
+  socket.
+- `true` treats the emulator as a Containerized Instance.
+- `false` declares a container on the host's network, which runs as on the host.
+
+When `true` or `false` disagrees with the runtime, the runtime wins and the emulator logs a
+warning naming both.
 
 As a GitHub Actions service container (the job waits for the health check):
 

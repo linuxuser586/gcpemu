@@ -101,6 +101,11 @@ type Config struct {
 	// can't see on the host (ADR 0012): "auto" says yes on Docker Desktop
 	// only, "true" and "false" override it.
 	LoopbackAliases string `yaml:"loopbackAliases" env:"LOOPBACK_ALIASES"`
+	// Containerized says whether the Instance is a Containerized Instance
+	// when the container runtime can't tell (#502): "auto" goes by the
+	// container marker files, "true" and "false" override them. The
+	// runtime's answer, when there is one, wins.
+	Containerized string `yaml:"containerized" env:"CONTAINERIZED"`
 	// NoSQLHostClients stops Cloud SQL serving host clients on a loopback
 	// address on a VM runtime (ADR 0005), so that tests which never dial
 	// an instance's reported address don't contend for 127.0.0.1 (#316).
@@ -159,6 +164,7 @@ func Defaults() Config {
 		LROLatency:       map[string]string{},
 		VMRuntime:        "auto",
 		LoopbackAliases:  "auto",
+		Containerized:    "auto",
 		Build:            BuildConfig{Concurrency: 4},
 	}
 	if os.Getenv("CI") == "true" {
@@ -482,6 +488,11 @@ func (c *Config) Validate() error {
 	case "", "auto", "true", "false":
 	default:
 		return fmt.Errorf("invalid --loopback-aliases (GCPEMU_LOOPBACK_ALIASES, loopbackAliases) %q (want auto, true or false)", c.LoopbackAliases)
+	}
+	switch strings.ToLower(c.Containerized) {
+	case "", "auto", "true", "false":
+	default:
+		return fmt.Errorf("invalid --containerized (GCPEMU_CONTAINERIZED, containerized) %q (want auto, true or false)", c.Containerized)
 	}
 	for name, p := range c.Ports {
 		if p < 0 || p > 65535 {
