@@ -23,7 +23,8 @@ import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
-import { CERT_MAP_PREFIX, mapLabel, mapsQuery } from '../certs/api'
+import { CERT_MAP_PREFIX, locationOf, mapLabel, mapsQuery } from '../certs/api'
+import { tlsLabel, tlsListQuery } from '../certs/tls'
 import {
   insertResource,
   kindInfo,
@@ -137,6 +138,10 @@ function SpecField({
   const reg = form.register(f.key)
   const options = useRefOptions(project, region, f.targets ?? [])
   const maps = useQuery({ ...mapsQuery(project), enabled: f.type === 'certmap' && !!project })
+  const policies = useQuery({
+    ...tlsListQuery(project, 'serverTlsPolicies'),
+    enabled: f.type === 'tlspolicy' && !!project,
+  })
   const mono = f.mono ? 'font-mono' : undefined
   switch (f.type) {
     case 'checkbox':
@@ -202,6 +207,30 @@ function SpecField({
       }))
       if (cur && !opts.some((o) => o.value === cur)) {
         opts.push({ value: cur, label: mapLabel(cur, project) })
+      }
+      control = (
+        <NativeSelect className="font-mono" {...fieldAria(id, error, f.hint)} {...reg}>
+          <option value="">{f.emptyOption ?? 'None'}</option>
+          {opts.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </NativeSelect>
+      )
+      break
+    }
+    case 'tlspolicy': {
+      // Policies of the proxy's location; one it names otherwise is kept.
+      const cur = values[f.key] as string
+      const opts = (policies.data ?? [])
+        .filter((p) => locationOf(p.name) === (region || 'global'))
+        .map((p) => ({
+          value: cur && relPath(cur) === p.name ? cur : p.name,
+          label: tlsLabel(p.name, project),
+        }))
+      if (cur && !opts.some((o) => o.value === cur)) {
+        opts.push({ value: cur, label: tlsLabel(cur, project) })
       }
       control = (
         <NativeSelect className="font-mono" {...fieldAria(id, error, f.hint)} {...reg}>

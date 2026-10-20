@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
 import { toast } from '@/lib/toast'
 
-import { MapLink } from '../certs/CertsLayout'
+import { MapLink, TlsLink } from '../certs/CertsLayout'
 import { CopyText } from '../sql/InstancePage'
 import {
   deleteResource,
@@ -129,6 +129,8 @@ function display(f: FieldSpec, v: Values[string]): ReactNode {
       return v ? <RefLink link={v as string} /> : undefined
     case 'certmap':
       return v ? <MapLink name={v as string} /> : undefined
+    case 'tlspolicy':
+      return v ? <TlsLink name={v as string} /> : undefined
     case 'refs': {
       const l = v as string[]
       return l.length ? (

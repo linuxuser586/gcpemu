@@ -1,4 +1,4 @@
-import { block, expr, gcloud, keyValues, resource, type Recipe } from '@/lib/copyAs'
+import { block, expr, gcloud, keyValues, resource, type Block, type Recipe } from '@/lib/copyAs'
 
 import {
   lastSegment,
@@ -7,6 +7,7 @@ import {
   type CertificateMap,
   type CertificateMapEntry,
 } from './api'
+import { NS_API, TLS_KINDS, tlsRefOf, type CertificateProvider, type TlsResource } from './tls'
 
 // Copy as (FR-UI-015) for certificates, certificate maps and map
 // entries: gcloud certificate-manager, the certificatemanager/v1 create
@@ -154,5 +155,115 @@ export function entryRecipe(e: CertificateMapEntry, project = projectOf(e.name))
       matcher: primary ? 'PRIMARY' : undefined,
       certificates,
     }),
+  }
+}
+
+/** providerBlock is a certificate provider as an OpenTofu block. */
+function providerBlock(p?: CertificateProvider): Block | undefined {
+  if (!p) return undefined
+  return block({
+    grpc_endpoint: p.grpcEndpoint && block({ target_uri: p.grpcEndpoint.targetUri }),
+    certificate_provider_instance:
+      p.certificateProviderInstance &&
+      block({ plugin_instance: p.certificateProviderInstance.pluginInstance }),
+  })
+}
+
+/** TLS_INPUT are the fields the TLS policies kinds' create requests take. */
+const TLS_INPUT = [
+  'description',
+  'labels',
+  'allowOpen',
+  'serverCertificate',
+  'mtlsPolicy',
+  'sni',
+  'clientCertificate',
+  'serverValidationCa',
+  'trustConfig',
+  'wellKnownRoots',
+] as const
+
+/**
+ * tlsRecipe is server TLS policy, client TLS policy or backend
+ * authentication config r, in project when given. gcloud imports a server
+ * or client TLS policy from YAML (here JSON, which YAML reads) on stdin, and creates a
+ * backend authentication config with flags.
+ */
+export function tlsRecipe(r: TlsResource, project = projectOf(r.name)): Recipe {
+  const ref = tlsRefOf(r.name)
+  if (!ref) return {}
+  const { coll, id, location } = ref
+  const kind = TLS_KINDS[coll]
+  const body: Record<string, unknown> = {}
+  for (const k of TLS_INPUT) {
+    const v = r[k]
+    if (v === undefined || v === '' || v === false) continue
+    if (typeof v === 'object' && Object.keys(v).length === 0) continue
+    body[k] = v
+  }
+  const common = { project, name: id, location, description: r.description, labels: r.labels }
+  const scope = { project, location }
+  let cmd: string
+  let tofu: string
+  switch (coll) {
+    case 'backendAuthenticationConfigs': {
+      const cert = typeof r.clientCertificate === 'string' ? r.clientCertificate : undefined
+      cmd = gcloud(['network-security', kind.gcloud, 'create', id], {
+        ...scope,
+        description: r.description,
+        labels: keyValues(r.labels),
+        'trust-config': r.trustConfig,
+        // gcloud spells the enum in lowercase with hyphens, e.g. public-roots.
+        'well-known-roots': r.wellKnownRoots?.toLowerCase().replaceAll('_', '-'),
+        'client-certificate': cert,
+      })
+      tofu = resource(kind.tofu, id, {
+        ...common,
+        client_certificate: cert,
+        trust_config: r.trustConfig,
+        well_known_roots: r.wellKnownRoots,
+      })
+      break
+    }
+    case 'serverTlsPolicies': {
+      const m = r.mtlsPolicy
+      cmd = gcloud(['network-security', kind.gcloud, 'import', id], scope)
+      tofu = resource(kind.tofu, id, {
+        ...common,
+        allow_open: r.allowOpen || undefined,
+        server_certificate: providerBlock(r.serverCertificate),
+        mtls_policy:
+          m &&
+          block({
+            client_validation_mode: m.clientValidationMode,
+            client_validation_trust_config: m.clientValidationTrustConfig,
+            client_validation_ca: (m.clientValidationCa ?? []).map((c) => providerBlock(c)!),
+          }),
+      })
+      break
+    }
+    case 'clientTlsPolicies': {
+      const cert = typeof r.clientCertificate === 'object' ? r.clientCertificate : undefined
+      cmd = gcloud(['network-security', kind.gcloud, 'import', id], scope)
+      tofu = resource(kind.tofu, id, {
+        ...common,
+        sni: r.sni,
+        client_certificate: providerBlock(cert),
+        server_validation_ca: (r.serverValidationCa ?? []).map((c) => providerBlock(c)!),
+      })
+      break
+    }
+  }
+  return {
+    gcloud:
+      coll === 'backendAuthenticationConfigs'
+        ? cmd
+        : `${cmd} <<'EOF'\n${JSON.stringify(body, null, 2)}\nEOF`,
+    rest: {
+      method: 'POST',
+      path: `${NS_API}/projects/${project}/locations/${location}/${coll}?${new URLSearchParams({ [kind.idParam]: id })}`,
+      body,
+    },
+    tofu,
   }
 }

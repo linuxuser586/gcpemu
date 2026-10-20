@@ -34,6 +34,7 @@ export type FieldType =
   | 'refs'
   | 'routing'
   | 'certmap'
+  | 'tlspolicy'
 
 /** Target is a collection a reference field offers resources of. */
 export type Target = Coll | 'networkEndpointGroups'
@@ -592,6 +593,14 @@ export const SPECS: Record<Coll, KindSpec> = {
         emptyOption: 'None (use SSL certificates)',
         hint: 'Instead of SSL certificates: a Certificate Manager map of the Project. Global target proxies only.',
         show: (v) => !text(v.region).trim(),
+      },
+      {
+        key: 'serverTlsPolicy',
+        path: 'serverTlsPolicy',
+        label: 'Server TLS policy',
+        type: 'tlspolicy',
+        emptyOption: 'None (no mutual TLS)',
+        hint: 'Mutual TLS: a Network Security server TLS policy of the proxy’s location that verifies clients.',
       },
       {
         key: 'sslPolicy',

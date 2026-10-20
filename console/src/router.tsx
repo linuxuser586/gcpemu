@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
-import { createBrowserRouter, type RouteObject } from 'react-router'
+import { createBrowserRouter, type LoaderFunctionArgs, type RouteObject } from 'react-router'
 
 import {
   containersQuery,
@@ -44,6 +44,11 @@ import { CreateEntry, EditEntry } from '@/features/certs/EntryForm'
 import { CreateMap, EditMap } from '@/features/certs/MapForm'
 import { MapPage } from '@/features/certs/MapPage'
 import { Maps } from '@/features/certs/Maps'
+import { TlsPolicies } from '@/features/certs/TlsPolicies'
+import { CreateTlsPolicy, EditTlsPolicy } from '@/features/certs/TlsPolicyForm'
+import { TlsPolicyPage } from '@/features/certs/TlsPolicyPage'
+import { TrustConfigPage } from '@/features/certs/TrustConfigPage'
+import { collOf, TLS_COLLS, tlsListQuery, tlsQuery } from '@/features/certs/tls'
 import { Dashboard } from '@/features/dashboard/Dashboard'
 import { changesQuery, rrsetsQuery, zoneQuery, zonesQuery } from '@/features/dns/api'
 import { Changes } from '@/features/dns/Changes'
@@ -899,6 +904,17 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
       },
     },
     { path: 'maps/create', element: <CreateMap /> },
+    {
+      path: 'tls/:coll?',
+      element: <TlsPolicies />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(queryClient.ensureQueryData(tlsListQuery(project, collOf(params.coll))))
+          : null
+      },
+    },
+    { path: 'tls/:coll/create', element: <CreateTlsPolicy /> },
     { path: 'locations/global/certificateMaps/:map/edit', element: <EditMap /> },
     { path: 'locations/global/certificateMaps/:map/create-entry', element: <CreateEntry /> },
     {
@@ -918,6 +934,24 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
           : null
       },
     },
+    ...TLS_COLLS.map((coll) => ({
+      path: `locations/:location/${coll}/:id/edit`,
+      element: <EditTlsPolicy coll={coll} />,
+    })),
+    ...TLS_COLLS.map((coll) => ({
+      path: `locations/:location/${coll}/:id`,
+      element: <TlsPolicyPage coll={coll} />,
+      loader: ({ request, params }: LoaderFunctionArgs) => {
+        const r = {
+          project: projectOf(request),
+          location: params.location ?? '',
+          coll,
+          id: params.id ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(tlsQuery(r))) : null
+      },
+    })),
+    { path: 'locations/:location/trustConfigs/:trust', element: <TrustConfigPage /> },
     { path: 'locations/:location/certificates/:cert/edit', element: <EditCertificate /> },
     {
       path: 'locations/:location/certificates/:cert',
