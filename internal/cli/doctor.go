@@ -26,6 +26,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/instance"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
@@ -64,6 +65,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			// hostRuntime: a runtime whose host network is this host's,
 			// for a relay container there.
 			hostRuntime := false
+			bridge := hasRuntime && lanbind.Locate(inContainer, true, cl.Self()) == lanbind.Bridge
 			if hasRuntime {
 				vm, known := checkVMRelay(cmd.Context(), out, cl)
 				hostRuntime = known && !vm && cl.Self() == ""
@@ -102,7 +104,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, inContainer)
+			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, inContainer, bridge)
 			if running == nil {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
@@ -637,8 +639,10 @@ func osTrustsCA(der []byte) bool {
 // unprivileged port start at or below it, or the gfe-lan relay, which
 // needs hostRuntime: a container runtime that is not a VM runtime, for an
 // emulator not in a container). In a Containerized Instance (inContainer)
-// the addresses and the sysctl are the container's.
-func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime, inContainer bool) {
+// the addresses and the sysctl are the container's; on a bridge network
+// (bridge: the runtime confirms the Instance's container) they reach only
+// container networks, and the fix says how to reach the LAN (#497).
+func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.Config, running, hasRuntime, hostRuntime, inContainer, bridge bool) {
 	if running {
 		c, err := clientFor(cfg)
 		if err != nil {
@@ -688,14 +692,14 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 		if len(lan) == 0 {
 			fix = "attach the container to a network with an address beyond loopback (docker run --network)"
 		}
+		if bridge {
+			fix += "; these addresses reach only container networks: " + lanbind.Fix
+		}
 	}
-	for _, b := range []struct {
-		flag  string
-		addrs []string
-	}{{"lb-bind", cfg.LBBind}, {"gke-bind", cfg.GKEBind}, {"ar-bind", cfg.ARBind}, {"gfe-bind", cfg.GFEBind}} {
-		for _, a := range b.addrs {
+	for _, b := range cfg.LANBinds() {
+		for _, a := range b.Addrs {
 			ip := net.ParseIP(a)
-			report(ip != nil && local[ip.String()], fmt.Sprintf("--%s %s is an address of %s", b.flag, a, whose), fix)
+			report(ip != nil && local[ip.String()], fmt.Sprintf("--%s %s is an address of %s", b.Flag, a, whose), fix)
 		}
 	}
 	b, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")

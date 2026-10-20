@@ -148,7 +148,7 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 	}
 	switch loopback.RefusedOn(d.goos, err) {
 	case loopback.NotRefused:
-		return nil, err
+		return nil, d.s.env.ExplainBind(d.ctx, err)
 	case loopback.Excluded:
 		return nil, loopback.ExcludedError(err, "tcp")
 	case loopback.PrivilegedWildcard:

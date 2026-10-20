@@ -75,7 +75,7 @@ func (s *Service) LANHandler() http.Handler {
 
 // startLAN serves h on every --ar-bind address. A failed address is
 // logged and skipped.
-func (s *Service) startLAN(port int, h http.Handler) []*http.Server {
+func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*http.Server {
 	binds := s.env.Config.ARBind
 	if len(binds) == 0 {
 		return nil
@@ -91,6 +91,10 @@ func (s *Service) startLAN(port int, h http.Handler) []*http.Server {
 	for _, ip := range binds {
 		l, err := net.Listen("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 		if err != nil {
+			if why := s.env.ExplainBind(ctx, err); why != err {
+				s.env.Log.Warn("ar: cannot serve the registry on --ar-bind address", "address", ip, "err", why)
+				continue
+			}
 			s.env.Log.Warn("ar: registry port taken on --ar-bind address; using a free one", "address", ip, "port", port, "err", err)
 			if l, err = net.Listen("tcp", net.JoinHostPort(ip, "0")); err != nil {
 				s.env.Log.Warn("ar: cannot serve the registry on --ar-bind address", "address", ip, "err", err)
