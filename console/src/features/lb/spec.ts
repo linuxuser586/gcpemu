@@ -33,6 +33,7 @@ export type FieldType =
   | 'ref'
   | 'refs'
   | 'routing'
+  | 'certmap'
 
 /** Target is a collection a reference field offers resources of. */
 export type Target = Coll | 'networkEndpointGroups'
@@ -587,9 +588,10 @@ export const SPECS: Record<Coll, KindSpec> = {
         key: 'certificateMap',
         path: 'certificateMap',
         label: 'Certificate map',
-        type: 'text',
-        mono: true,
-        hint: 'Instead of SSL certificates: //certificatemanager.googleapis.com/projects/PROJECT/locations/global/certificateMaps/MAP',
+        type: 'certmap',
+        emptyOption: 'None (use SSL certificates)',
+        hint: 'Instead of SSL certificates: a Certificate Manager map of the Project. Global target proxies only.',
+        show: (v) => !text(v.region).trim(),
       },
       {
         key: 'sslPolicy',

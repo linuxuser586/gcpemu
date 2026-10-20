@@ -60,12 +60,13 @@ export const domainList = (text: string) =>
 const LABEL = /^[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?$/
 
 /** validHostname is the Service's domain rule: two or more labels of letters, digits and hyphens. */
-function validHostname(h: string): boolean {
+export function validHostname(h: string): boolean {
   if (!h || h.length > 253 || !h.includes('.')) return false
   return h.split('.').every((l) => LABEL.test(l))
 }
 
-const fieldsSchema = {
+/** fieldsSchema checks the fields every resource of the view has. */
+export const fieldsSchema = {
   description: z.string(),
   labels: z.string().superRefine((v, ctx) => {
     const err = labelsError(v)
@@ -136,7 +137,7 @@ const createSchema = (authDomains: Record<string, string>) =>
     })
 export type CreateValues = z.infer<ReturnType<typeof createSchema>>
 
-const editSchema = z.object(fieldsSchema)
+export const editSchema = z.object(fieldsSchema)
 export type EditValues = z.infer<typeof editSchema>
 
 /** kindOf is how a certificates.create body issues the certificate. */
@@ -197,14 +198,17 @@ export function certificateBody(v: CreateValues, base: Body): Body {
   return out
 }
 
+/** Described is a resource with the fields every edit form edits. */
+type Described = Pick<Certificate, 'description' | 'labels'>
+
 /** editValues are the edit form's values for c. */
-export const editValues = (c: Certificate): EditValues => ({
+export const editValues = (c: Described): EditValues => ({
   description: c.description ?? '',
   labels: formatLabels(c.labels),
 })
 
 /** patchBody writes what the edit form changed onto a certificates.patch body. */
-export function patchBody(c: Certificate, v: EditValues, base: Body): Body {
+export function patchBody(c: Described, v: EditValues, base: Body): Body {
   const was = editValues(c)
   const out: Body = { ...base }
   if (v.description !== was.description) out.description = v.description
@@ -216,7 +220,7 @@ export function patchBody(c: Certificate, v: EditValues, base: Body): Body {
 
 /** patchValues reads an edit body back into the form, defaulting to c. */
 export const patchValues =
-  (c: Certificate) =>
+  (c: Described) =>
   (body: Body): EditValues => {
     const was = editValues(c)
     return {
@@ -231,14 +235,14 @@ export const updateMask = (body: Body) =>
   Object.keys(body).map((k) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`))
 
 /** CommonFields are the fields create and edit share. */
-function CommonFields({
+export function CommonFields<V extends EditValues>({
   form,
   prefix,
 }: {
-  form: UseFormReturn<EditValues> | UseFormReturn<CreateValues>
+  form: UseFormReturn<V>
   prefix: string
 }) {
-  const f = form as UseFormReturn<EditValues>
+  const f = form as unknown as UseFormReturn<EditValues>
   const errors = f.formState.errors
   return (
     <>

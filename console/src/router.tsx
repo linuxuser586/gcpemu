@@ -29,11 +29,21 @@ import { CdnLayout } from '@/features/cdn/CdnLayout'
 import { AddOrigin, EditOrigin } from '@/features/cdn/OriginForm'
 import { OriginPage } from '@/features/cdn/OriginPage'
 import { Origins } from '@/features/cdn/Origins'
-import { certificateQuery, certificatesQuery } from '@/features/certs/api'
+import {
+  certificateQuery,
+  certificatesQuery,
+  entriesQuery,
+  mapQuery,
+  mapsQuery,
+} from '@/features/certs/api'
 import { CreateCertificate, EditCertificate } from '@/features/certs/CertificateForm'
 import { CertificatePage } from '@/features/certs/CertificatePage'
 import { Certificates } from '@/features/certs/Certificates'
 import { CertsLayout } from '@/features/certs/CertsLayout'
+import { CreateEntry, EditEntry } from '@/features/certs/EntryForm'
+import { CreateMap, EditMap } from '@/features/certs/MapForm'
+import { MapPage } from '@/features/certs/MapPage'
+import { Maps } from '@/features/certs/Maps'
 import { Dashboard } from '@/features/dashboard/Dashboard'
 import { changesQuery, rrsetsQuery, zoneQuery, zonesQuery } from '@/features/dns/api'
 import { Changes } from '@/features/dns/Changes'
@@ -866,7 +876,8 @@ function dnsRoutes(queryClient: QueryClient): RouteObject[] {
 // The Certificate Manager view (SRS 4.8.3). Paths follow the API's
 // resource names, with the Project in ?project=; the list shows every
 // location. Create pages are not under locations/, so that no name is
-// shadowed.
+// shadowed, except a map's create-entry, beside its
+// certificateMapEntries/.
 function certsRoutes(queryClient: QueryClient): RouteObject[] {
   const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
   return [
@@ -879,6 +890,34 @@ function certsRoutes(queryClient: QueryClient): RouteObject[] {
       },
     },
     { path: 'create', element: <CreateCertificate /> },
+    {
+      path: 'maps',
+      element: <Maps />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(mapsQuery(project))) : null
+      },
+    },
+    { path: 'maps/create', element: <CreateMap /> },
+    { path: 'locations/global/certificateMaps/:map/edit', element: <EditMap /> },
+    { path: 'locations/global/certificateMaps/:map/create-entry', element: <CreateEntry /> },
+    {
+      path: 'locations/global/certificateMaps/:map/certificateMapEntries/:entry/edit',
+      element: <EditEntry />,
+    },
+    {
+      path: 'locations/global/certificateMaps/:map',
+      element: <MapPage />,
+      loader: ({ request, params }) => {
+        const r = { project: projectOf(request), map: params.map ?? '' }
+        return r.project
+          ? warm(
+              queryClient.ensureQueryData(mapQuery(r)),
+              queryClient.ensureQueryData(entriesQuery(r)),
+            )
+          : null
+      },
+    },
     { path: 'locations/:location/certificates/:cert/edit', element: <EditCertificate /> },
     {
       path: 'locations/:location/certificates/:cert',
