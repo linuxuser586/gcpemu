@@ -271,6 +271,14 @@ _Avoid_: map entry, entry (unqualified)
 The Certificate map entry that serves every hostname no other entry of its map matches, and any client that names no hostname. An exact hostname wins over a wildcard, and a wildcard over the Primary entry.
 _Avoid_: default entry, fallback entry
 
+**DNS authorization**:
+A Certificate Manager resource that proves control of one domain (and its subdomains) by a CNAME record it asks to be added to the domain's DNS zone. A Google-managed certificate names the DNS authorizations of its domains, and is issued once each record resolves. Its domain and type cannot be changed.
+_Avoid_: domain verification, DNS challenge (that is the record, not the resource)
+
+**Certificate issuance config**:
+A Certificate Manager resource that has a CA Service CA pool issue the Google-managed certificates that name it, with their lifetime, rotation window and key algorithm. Nothing about it can be changed once created.
+_Avoid_: issuance config (in user-facing text, except where space is short), CA config
+
 **Trust config**:
 A Certificate Manager resource holding the CAs (trust anchors and intermediate CAs) and allowlisted certificates that verify the other side of mutual TLS. Server TLS policies and Backend authentication configs name one.
 _Avoid_: trust store (that is one part of a Trust config), CA bundle

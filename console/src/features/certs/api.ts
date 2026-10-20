@@ -55,17 +55,29 @@ export interface Certificate {
   usedBy?: { name?: string }[]
 }
 
+/** DnsAuthorization proves control of a domain with a CNAME record. */
 export interface DnsAuthorization {
   name: string
   domain?: string
   type?: string
   description?: string
+  labels?: Record<string, string>
+  createTime?: string
+  updateTime?: string
   dnsResourceRecord?: { name?: string; type?: string; data?: string }
 }
 
+/** IssuanceConfig has a CA Service CA pool issue the certificates that name it. */
 export interface IssuanceConfig {
   name: string
   description?: string
+  labels?: Record<string, string>
+  createTime?: string
+  updateTime?: string
+  certificateAuthorityConfig?: { certificateAuthorityServiceConfig?: { caPool?: string } }
+  lifetime?: string
+  rotationWindowPercentage?: number
+  keyAlgorithm?: string
 }
 
 /** TrustConfig is the CAs and certificates that verify the other side of mTLS. */
@@ -75,6 +87,7 @@ export interface TrustConfig {
   labels?: Record<string, string>
   createTime?: string
   updateTime?: string
+  etag?: string
   trustStores?: {
     trustAnchors?: { pemCertificate?: string }[]
     intermediateCas?: { pemCertificate?: string }[]
@@ -324,6 +337,44 @@ export const trustConfigQuery = (r: TrustRef) =>
     queryFn: () => gcpFetch<TrustConfig>(`${API}/${path(trustName(r))}`),
   })
 
+/** DnsAuthRef names a DNS authorization. */
+export interface DnsAuthRef {
+  project: string
+  location: string
+  auth: string
+}
+
+export const dnsAuthName = (r: DnsAuthRef) =>
+  `${locationName(r.project, r.location)}/dnsAuthorizations/${r.auth}`
+
+export const dnsAuthorizationQuery = (r: DnsAuthRef) =>
+  queryOptions({
+    queryKey: ['certs', 'dnsAuthorization', r],
+    queryFn: () => gcpFetch<DnsAuthorization>(`${API}/${path(dnsAuthName(r))}`),
+  })
+
+/** DNS_AUTH_TYPES name the kinds of record a DNS authorization asks for. */
+export const DNS_AUTH_TYPES: Record<string, string> = {
+  FIXED_RECORD: 'Fixed record',
+  PER_PROJECT_RECORD: 'Per-project record',
+}
+
+/** IssuanceRef names a certificate issuance config. */
+export interface IssuanceRef {
+  project: string
+  location: string
+  config: string
+}
+
+export const issuanceName = (r: IssuanceRef) =>
+  `${locationName(r.project, r.location)}/certificateIssuanceConfigs/${r.config}`
+
+export const issuanceConfigQuery = (r: IssuanceRef) =>
+  queryOptions({
+    queryKey: ['certs', 'issuanceConfig', r],
+    queryFn: () => gcpFetch<IssuanceConfig>(`${API}/${path(issuanceName(r))}`),
+  })
+
 /** mapsQuery lists the certificate maps, which are all global. */
 export const mapsQuery = (project: string) =>
   queryOptions({
@@ -471,3 +522,43 @@ export const patchEntry = (r: EntryRef, body: unknown, mask: string[]) =>
   patch<CertificateMapEntry>(entryName(r), body, mask)
 
 export const deleteEntry = (r: EntryRef) => remove(entryName(r))
+
+export const createDnsAuthorization = (r: DnsAuthRef, body: unknown) =>
+  create<DnsAuthorization>(
+    locationName(r.project, r.location),
+    'dnsAuthorizations',
+    'dnsAuthorizationId',
+    r.auth,
+    body,
+  )
+
+export const patchDnsAuthorization = (r: DnsAuthRef, body: unknown, mask: string[]) =>
+  patch<DnsAuthorization>(dnsAuthName(r), body, mask)
+
+export const deleteDnsAuthorization = (r: DnsAuthRef) => remove(dnsAuthName(r))
+
+export const createTrustConfig = (r: TrustRef, body: unknown) =>
+  create<TrustConfig>(
+    locationName(r.project, r.location),
+    'trustConfigs',
+    'trustConfigId',
+    r.trust,
+    body,
+  )
+
+/** patchTrustConfig patches a trust config; an etag in body must be its current one. */
+export const patchTrustConfig = (r: TrustRef, body: unknown, mask: string[]) =>
+  patch<TrustConfig>(trustName(r), body, mask)
+
+export const deleteTrustConfig = (r: TrustRef) => remove(trustName(r))
+
+export const createIssuanceConfig = (r: IssuanceRef, body: unknown) =>
+  create<IssuanceConfig>(
+    locationName(r.project, r.location),
+    'certificateIssuanceConfigs',
+    'certificateIssuanceConfigId',
+    r.config,
+    body,
+  )
+
+export const deleteIssuanceConfig = (r: IssuanceRef) => remove(issuanceName(r))

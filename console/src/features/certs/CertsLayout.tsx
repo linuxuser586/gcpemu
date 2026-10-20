@@ -15,7 +15,9 @@ import {
   mapLabel,
   mapRefOf,
   type CertRef,
+  type DnsAuthRef,
   type EntryRef,
+  type IssuanceRef,
   type MapRef,
   type TrustRef,
 } from './api'
@@ -51,6 +53,9 @@ export function ChooseProject({ what }: { what: ReactNode }) {
 const SECTIONS = [
   ['/certs', 'Certificates'],
   ['/certs/maps', 'Certificate maps'],
+  ['/certs/dnsAuthorizations', 'DNS authorizations'],
+  ['/certs/trustConfigs', 'Trust configs'],
+  ['/certs/issuanceConfigs', 'Issuance configs'],
   ['/certs/tls', 'TLS policies'],
 ] as const
 
@@ -140,9 +145,31 @@ export function useTrustRef(): TrustRef {
   return { project: view.project ?? '', location, trust }
 }
 
-/** trustPath is the console path of a trust config. */
-export const trustPath = (r: Pick<TrustRef, 'location' | 'trust'>) =>
-  `/certs/locations/${enc(r.location)}/trustConfigs/${enc(r.trust)}`
+/** trustPath is the console path of a trust config, or of a page under it. */
+export const trustPath = (r: Pick<TrustRef, 'location' | 'trust'>, sub = '') =>
+  `/certs/locations/${enc(r.location)}/trustConfigs/${enc(r.trust)}${sub ? `/${sub}` : ''}`
+
+/** useDnsAuthRef is the DNS authorization the route names, in the chosen Project. */
+export function useDnsAuthRef(): DnsAuthRef {
+  const [view] = useViewState()
+  const { location = '', auth = '' } = useParams()
+  return { project: view.project ?? '', location, auth }
+}
+
+/** dnsAuthPath is the console path of a DNS authorization, or of a page under it. */
+export const dnsAuthPath = (r: Pick<DnsAuthRef, 'location' | 'auth'>, sub = '') =>
+  `/certs/locations/${enc(r.location)}/dnsAuthorizations/${enc(r.auth)}${sub ? `/${sub}` : ''}`
+
+/** useIssuanceRef is the certificate issuance config the route names. */
+export function useIssuanceRef(): IssuanceRef {
+  const [view] = useViewState()
+  const { location = '', config = '' } = useParams()
+  return { project: view.project ?? '', location, config }
+}
+
+/** issuancePath is the console path of a certificate issuance config. */
+export const issuancePath = (r: Pick<IssuanceRef, 'location' | 'config'>) =>
+  `/certs/locations/${enc(r.location)}/certificateIssuanceConfigs/${enc(r.config)}`
 
 /**
  * TrustConfigLink links a trust config's name to its page, in the Project

@@ -6,6 +6,9 @@ import {
   type Certificate,
   type CertificateMap,
   type CertificateMapEntry,
+  type DnsAuthorization,
+  type IssuanceConfig,
+  type TrustConfig,
 } from './api'
 import { NS_API, TLS_KINDS, tlsRefOf, type CertificateProvider, type TlsResource } from './tls'
 
@@ -154,6 +157,140 @@ export function entryRecipe(e: CertificateMapEntry, project = projectOf(e.name))
       hostname: primary ? undefined : e.hostname,
       matcher: primary ? 'PRIMARY' : undefined,
       certificates,
+    }),
+  }
+}
+
+/** labelled is the description and labels of a create request body, when set. */
+const labelled = (r: { description?: string; labels?: Record<string, string> }) => ({
+  ...(r.description ? { description: r.description } : {}),
+  ...(r.labels && Object.keys(r.labels).length ? { labels: r.labels } : {}),
+})
+
+/**
+ * dnsAuthorizationRecipe is DNS authorization a, in project when given.
+ * Its type is left to the default unless it is a per-project record; the
+ * record it asks for is computed, so it is left out.
+ */
+export function dnsAuthorizationRecipe(a: DnsAuthorization, project = projectOf(a.name)): Recipe {
+  const id = lastSegment(a.name)
+  const location = locationOf(a.name) || 'global'
+  const loc = location === 'global' ? undefined : location
+  const type = a.type === 'PER_PROJECT_RECORD' ? a.type : undefined
+  return {
+    gcloud: gcloud(['certificate-manager', 'dns-authorizations', 'create', id], {
+      project,
+      location: loc,
+      domain: a.domain,
+      type,
+      description: a.description,
+      labels: keyValues(a.labels),
+    }),
+    rest: {
+      method: 'POST',
+      path: `/certificatemanager/v1/projects/${project}/locations/${location}/dnsAuthorizations?${new URLSearchParams({ dnsAuthorizationId: id })}`,
+      body: { domain: a.domain, ...(type ? { type } : {}), ...labelled(a) },
+    },
+    tofu: resource('google_certificate_manager_dns_authorization', id, {
+      project,
+      name: id,
+      location: loc,
+      domain: a.domain,
+      type,
+      description: a.description,
+      labels: a.labels,
+    }),
+  }
+}
+
+/** pemBlocks are PEM certificates as repeated OpenTofu blocks. */
+const pemBlocks = (pems?: { pemCertificate?: string }[]) =>
+  (pems ?? []).map((p) => block({ pem_certificate: p.pemCertificate }))
+
+/**
+ * trustConfigRecipe is trust config t, in project when given. gcloud
+ * imports it from YAML (here JSON, which YAML reads) on stdin; the etag is
+ * left out, as a new trust config has none.
+ */
+export function trustConfigRecipe(t: TrustConfig, project = projectOf(t.name)): Recipe {
+  const id = lastSegment(t.name)
+  const location = locationOf(t.name) || 'global'
+  const body = {
+    ...labelled(t),
+    ...(t.trustStores?.length ? { trustStores: t.trustStores } : {}),
+    ...(t.allowlistedCertificates?.length
+      ? { allowlistedCertificates: t.allowlistedCertificates }
+      : {}),
+  }
+  const cmd = gcloud(['certificate-manager', 'trust-configs', 'import', id], { project, location })
+  return {
+    gcloud: `${cmd} <<'EOF'\n${JSON.stringify(body, null, 2)}\nEOF`,
+    rest: {
+      method: 'POST',
+      path: `/certificatemanager/v1/projects/${project}/locations/${location}/trustConfigs?${new URLSearchParams({ trustConfigId: id })}`,
+      body,
+    },
+    tofu: resource('google_certificate_manager_trust_config', id, {
+      project,
+      name: id,
+      location,
+      description: t.description,
+      labels: t.labels,
+      trust_stores: (t.trustStores ?? []).map((s) =>
+        block({
+          trust_anchors: pemBlocks(s.trustAnchors),
+          intermediate_cas: pemBlocks(s.intermediateCas),
+        }),
+      ),
+      allowlisted_certificates: pemBlocks(t.allowlistedCertificates),
+    }),
+  }
+}
+
+/**
+ * issuanceConfigRecipe is certificate issuance config c, in project when
+ * given.
+ */
+export function issuanceConfigRecipe(c: IssuanceConfig, project = projectOf(c.name)): Recipe {
+  const id = lastSegment(c.name)
+  const location = locationOf(c.name) || 'global'
+  const loc = location === 'global' ? undefined : location
+  const caPool = c.certificateAuthorityConfig?.certificateAuthorityServiceConfig?.caPool
+  return {
+    gcloud: gcloud(['certificate-manager', 'issuance-configs', 'create', id], {
+      project,
+      location: loc,
+      'ca-pool': caPool,
+      lifetime: c.lifetime,
+      'rotation-window-percentage': c.rotationWindowPercentage,
+      // gcloud spells the enum in lowercase with hyphens, e.g. ecdsa-p256.
+      'key-algorithm': c.keyAlgorithm?.toLowerCase().replaceAll('_', '-'),
+      description: c.description,
+      labels: keyValues(c.labels),
+    }),
+    rest: {
+      method: 'POST',
+      path: `/certificatemanager/v1/projects/${project}/locations/${location}/certificateIssuanceConfigs?${new URLSearchParams({ certificateIssuanceConfigId: id })}`,
+      body: {
+        ...labelled(c),
+        certificateAuthorityConfig: { certificateAuthorityServiceConfig: { caPool } },
+        lifetime: c.lifetime,
+        rotationWindowPercentage: c.rotationWindowPercentage,
+        ...(c.keyAlgorithm ? { keyAlgorithm: c.keyAlgorithm } : {}),
+      },
+    },
+    tofu: resource('google_certificate_manager_certificate_issuance_config', id, {
+      project,
+      name: id,
+      location: loc,
+      description: c.description,
+      labels: c.labels,
+      lifetime: c.lifetime,
+      rotation_window_percentage: c.rotationWindowPercentage,
+      key_algorithm: c.keyAlgorithm,
+      certificate_authority_config: block({
+        certificate_authority_service_config: block({ ca_pool: caPool }),
+      }),
     }),
   }
 }
