@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
-import { errorMessage } from '@/api/errors'
 import { useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
 import { ResourceEditor, type Body } from '@/components/resource/ResourceEditor'
@@ -20,6 +19,7 @@ import {
   type NetworkRef,
 } from './api'
 import { ipOf } from './Addresses'
+import { withFieldError } from './form'
 import { networkPage } from './links'
 import { allocationsOf } from './PrivateServicesAccess'
 import { useNetworkRef } from './VpcLayout'
@@ -87,12 +87,13 @@ function ConnectionForm({
     meta: { toast: false },
     mutationFn: async ({ body, force }: { body: Body; force: boolean }) => {
       const want = (body.reservedPeeringRanges as string[] | undefined) ?? []
-      try {
-        await (conn ? patchConnection(r, want, force) : createConnection(r, want))
-      } catch (e) {
-        form.setError('ranges', { type: 'server', message: errorMessage(e) })
-        throw e
-      }
+      // servicenetworking's errors name no field: they are the ranges'.
+      await withFieldError(
+        form,
+        {},
+        () => (conn ? patchConnection(r, want, force) : createConnection(r, want)),
+        () => 'ranges',
+      )
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['compute'] })

@@ -2,6 +2,8 @@ import { block, gcloud, keyValues, omit, resource, type Recipe } from '@/lib/cop
 
 import { lastSeg, relPath } from '../lb/api'
 import {
+  CONNECTIONS,
+  networkPath,
   PSA_SERVICE,
   type Address,
   type Connection,
@@ -291,7 +293,7 @@ export function peeringRecipe(p: NetworkPeering, network: string, project: strin
     }),
     rest: {
       method: 'POST',
-      path: `${API}projects/${project}/global/networks/${network}/addPeering`,
+      path: `${API}${networkPath({ project, network })}/addPeering`,
       body: {
         networkPeering: {
           ...omit(p, ['state', 'stateDetails', 'autoCreateRoutes', 'peerMtu', 'connectionStatus']),
@@ -301,7 +303,7 @@ export function peeringRecipe(p: NetworkPeering, network: string, project: strin
     },
     tofu: resource('google_compute_network_peering', p.name, {
       name: p.name,
-      network: `projects/${project}/global/networks/${network}`,
+      network: networkPath({ project, network }),
       peer_network: relPath(p.network),
       export_custom_routes: p.exportCustomRoutes,
       import_custom_routes: p.importCustomRoutes,
@@ -317,7 +319,7 @@ export function peeringRecipe(p: NetworkPeering, network: string, project: strin
  * The API names the network by Project number; the copy names it by ID.
  */
 export function connectionRecipe(c: Connection, network: string, project: string): Recipe {
-  const path = `projects/${project}/global/networks/${network}`
+  const path = networkPath({ project, network })
   return {
     gcloud: gcloud(['services', 'vpc-peerings', 'connect'], {
       project,
@@ -327,7 +329,7 @@ export function connectionRecipe(c: Connection, network: string, project: string
     }),
     rest: {
       method: 'POST',
-      path: `/servicenetworking/v1/services/${PSA_SERVICE}/connections`,
+      path: CONNECTIONS,
       body: { network: path, reservedPeeringRanges: c.reservedPeeringRanges },
     },
     tofu: resource('google_service_networking_connection', network, {

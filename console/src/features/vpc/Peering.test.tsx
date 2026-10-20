@@ -414,8 +414,12 @@ describe('private services access', () => {
       `/compute/global/addresses/psa-a?project=${P}`,
     )
     expect(a).toHaveTextContent('10.120.0.0/16')
-    expect(a).toHaveTextContent('gcpemu-psa-main')
-    expect(a).toHaveTextContent('1 container')
+    expect(within(a).getByRole('link', { name: 'gcpemu-psa-main' })).toHaveAttribute(
+      'href',
+      '#container-network-gcpemu-psa-main',
+    )
+    expect(document.getElementById('container-network-gcpemu-psa-main')).toHaveTextContent('psa-a')
+    expect(a).toHaveTextContent('1 Managed container')
     expect(a).toHaveTextContent('Connected')
     expect(b).toHaveTextContent('10.121.0.0/16')
     expect(b).toHaveTextContent('None yet')

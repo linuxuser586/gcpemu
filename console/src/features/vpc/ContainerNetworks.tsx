@@ -16,7 +16,7 @@ import {
 
 import { lastSeg } from '../lb/api'
 import { containerNetworksQuery, type ContainerNetwork, type SubnetRef, subnetPath } from './api'
-import { AddressLink, SubnetLink } from './links'
+import { AddressLink, containerNetworkAnchor, SubnetLink } from './links'
 
 // VPC container networks (CONTEXT.md): the container network behind each
 // subnetwork and private services access allocation. No GCP API has
@@ -25,7 +25,7 @@ import { AddressLink, SubnetLink } from './links'
 type Container = ContainerNetwork['containers'][number]
 
 /** FallbackBadge says whether a network on a Fallback range is Translated. */
-function FallbackBadge({ cn }: { cn: ContainerNetwork }) {
+export function FallbackBadge({ cn }: { cn: ContainerNetwork }) {
   return cn.translated ? (
     <Badge variant="warning">Translated</Badge>
   ) : (
@@ -173,7 +173,11 @@ export function ContainerNetworkSummary({
           </TableHeader>
           <TableBody>
             {query.data.map((cn) => (
-              <TableRow key={cn.bridge} data-testid="container-network">
+              <TableRow
+                key={cn.bridge}
+                id={containerNetworkAnchor(cn.bridge)}
+                data-testid="container-network"
+              >
                 <TableCell>
                   {cn.subnetwork ? (
                     <SubnetLink region={cn.region ?? ''} name={lastSeg(cn.subnetwork)} />

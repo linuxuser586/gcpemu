@@ -30,8 +30,8 @@ export interface Network extends Resource {
 
 /**
  * NetworkPeering is one of a network's VPC Network Peerings. It is ACTIVE
- * once the peer network peers back; its Fidelity is Recorded: no routes
- * are exchanged.
+ * once the peer network peers back. Its route exchange settings are
+ * Recorded: no routes are exchanged.
  */
 export interface NetworkPeering {
   name: string
@@ -287,11 +287,13 @@ export const removePeering = (r: NetworkRef, name: string) =>
 
 // ---- private services access ----
 
-const SN = '/servicenetworking/v1'
-const CONNECTIONS = `${SN}/services/${PSA_SERVICE}/connections`
+const SERVICENETWORKING = '/servicenetworking/v1'
+
+/** CONNECTIONS is the path of the service producer's private services access connections. */
+export const CONNECTIONS = `${SERVICENETWORKING}/services/${PSA_SERVICE}/connections`
 
 /** waitConnection waits for a servicenetworking Operation, a google.longrunning one. */
-const waitConnection = async (res: Promise<LongOperation>) => waitLong(await res, SN)
+const waitConnection = async (res: Promise<LongOperation>) => waitLong(await res, SERVICENETWORKING)
 
 export const listConnections = async (r: NetworkRef) =>
   (

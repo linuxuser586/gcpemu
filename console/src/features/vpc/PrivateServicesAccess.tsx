@@ -31,8 +31,9 @@ import {
   type NetworkRef,
 } from './api'
 import { ipOf } from './Addresses'
+import { FallbackBadge } from './ContainerNetworks'
 import { connectionRecipe } from './copy'
-import { AddressLink, networkPage } from './links'
+import { AddressLink, allocatePage, connectionPage, containerNetworkAnchor } from './links'
 
 // Private services access (servicenetworking v1): a network's VPC_PEERING
 // global addresses, the ranges it allocates to service producers such as
@@ -46,10 +47,11 @@ export const allocationsOf = (addresses: Address[], r: NetworkRef) =>
     .filter((a) => a.purpose === 'VPC_PEERING' && relPath(a.network) === networkPath(r))
     .sort((a, b) => a.name.localeCompare(b.name))
 
-/** allocateLink is the reserve form, set for a range of network. */
-export const allocateLink = (network: string) =>
-  `/compute/create-address?network=${encodeURIComponent(network)}&purpose=VPC_PEERING`
-
+/**
+ * PrivateServicesAccess is a network's allocated ranges, each with the
+ * VPC container network behind it, and its connection to the service
+ * producer.
+ */
 export function PrivateServicesAccess({ r }: { r: NetworkRef }) {
   const id = useId()
   const qc = useQueryClient()
@@ -70,7 +72,7 @@ export function PrivateServicesAccess({ r }: { r: NetworkRef }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <CardTitle id={`${id}-title`}>Private services access</CardTitle>
         <Button variant="outline" size="sm" asChild>
-          <Link to={allocateLink(r.network)}>
+          <Link to={allocatePage(r.network)}>
             <Plus aria-hidden />
             Allocate range
           </Link>
@@ -108,16 +110,25 @@ export function PrivateServicesAccess({ r }: { r: NetworkRef }) {
                   </TableCell>
                   <TableCell>
                     {cn ? (
-                      <span className="flex flex-col">
-                        <span className="font-mono break-all">{cn.bridge}</span>
+                      <span className="flex flex-col items-start gap-1">
+                        <a
+                          href={`#${containerNetworkAnchor(cn.bridge)}`}
+                          className="font-mono break-all text-primary underline-offset-4 hover:underline"
+                        >
+                          {cn.bridge}
+                        </a>
+                        {cn.fallbackRange ? (
+                          <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            Fallback range <span className="font-mono">{cn.fallbackRange}</span>
+                            <FallbackBadge cn={cn} />
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Declared range</span>
+                        )}
                         <span className="text-xs text-muted-foreground">
-                          {cn.fallbackRange
-                            ? `Fallback range ${cn.fallbackRange}${cn.translated ? ', translated' : ''}`
-                            : 'Declared range'}
-                          {', '}
                           {cn.containers.length === 1
-                            ? '1 container'
-                            : `${cn.containers.length} containers`}
+                            ? '1 Managed container'
+                            : `${cn.containers.length} Managed containers`}
                         </span>
                       </span>
                     ) : (
@@ -138,7 +149,7 @@ export function PrivateServicesAccess({ r }: { r: NetworkRef }) {
           </p>
           {ranges.length > 0 && (
             <Button variant="outline" size="sm" asChild>
-              <Link to={networkPage(r.network, 'connection')}>Connect</Link>
+              <Link to={connectionPage(r.network)}>Connect</Link>
             </Button>
           )}
         </div>
@@ -163,7 +174,7 @@ export function PrivateServicesAccess({ r }: { r: NetworkRef }) {
               recipe={() => connectionRecipe(conn, r.network, r.project)}
             />
             <Button variant="outline" size="sm" asChild>
-              <Link to={networkPage(r.network, 'connection')}>
+              <Link to={connectionPage(r.network)}>
                 <Pencil aria-hidden />
                 Edit ranges
               </Link>

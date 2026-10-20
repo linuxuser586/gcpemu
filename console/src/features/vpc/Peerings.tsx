@@ -26,11 +26,12 @@ import {
   type NetworkRef,
 } from './api'
 import { peeringRecipe } from './copy'
-import { NetworkLink, networkPage } from './links'
+import { addPeeringPage, NetworkLink, peeringEditPage } from './links'
 
 // A network's VPC Network Peerings (networks.addPeering, updatePeering,
-// removePeering). Their Fidelity is Recorded: a peering turns ACTIVE when
-// the peer network peers back, but no routes are exchanged.
+// removePeering). A peering turns ACTIVE when the peer network peers
+// back; its route exchange settings are Recorded: no routes are
+// exchanged.
 
 /** customRoutes says which custom routes a peering imports and exports. */
 export function customRoutes(p: NetworkPeering) {
@@ -65,15 +66,15 @@ export function Peerings({ r, network }: { r: NetworkRef; network: Network }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <CardTitle id={`${id}-title`}>Peerings</CardTitle>
         <Button variant="outline" size="sm" asChild>
-          <Link to={networkPage(r.network, 'add-peering')}>
+          <Link to={addPeeringPage(r.network)}>
             <Plus aria-hidden />
             Add peering
           </Link>
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Recorded: a peering is active once the peer network peers back, but the emulator exchanges
-        no routes between the networks.
+        A peering is active once the peer network peers back. Its route exchange is Recorded: the
+        emulator exchanges no routes between the networks.
       </p>
       {peerings.length === 0 ? (
         <p className="text-sm text-muted-foreground">No peerings in this network.</p>
@@ -121,10 +122,7 @@ export function Peerings({ r, network }: { r: NetworkRef; network: Network }) {
                         />
                         <Button variant="ghost" size="icon" asChild>
                           <Link
-                            to={networkPage(
-                              r.network,
-                              `peerings/${encodeURIComponent(p.name)}/edit`,
-                            )}
+                            to={peeringEditPage(r.network, p.name)}
                             aria-label={`Edit peering ${p.name}`}
                           >
                             <Pencil aria-hidden />
