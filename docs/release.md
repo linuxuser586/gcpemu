@@ -9,6 +9,20 @@ Before tagging `vX.Y.Z`, run these checks by hand on macOS and on Windows.
 The release lists the merged pull requests on its own. For a release that users need to act on,
 commit `docs/releases/vX.Y.Z.md` before tagging: the workflow puts it above that list.
 
+## Image readiness check
+
+Before it pushes any image tag, the release workflow builds the amd64 image from the release's
+binaries and runs it with the runner's Docker socket. The image must report healthy within 120
+seconds. If it doesn't, the GitHub release and its binaries stay published, but neither Docker Hub
+nor GHCR gets any of that release's tags, `latest` included. The job prints the container's logs
+and its last health-check output. Fix the cause and release it under a new patch tag.
+
+To run the check locally after `task release`, on a host with Docker:
+
+```sh
+docker build --build-arg TARGETARCH=amd64 -t gcpemu:check -f Dockerfile dist && task image-check IMAGE=gcpemu:check
+```
+
 ## macOS (Apple Silicon)
 
 Run every step below on **Docker Desktop** and on **Colima**. OrbStack and Podman machine are
