@@ -13,8 +13,9 @@
 // and "http/1.1", then passes the decrypted byte stream unchanged to:
 //
 //   - the Artifact Registry listener for LOCATION-docker.pkg.dev, or
-//   - the gateway for every other name, in process (SetGateway), so the
-//     gateway knows the client used HTTPS and services render https links.
+//   - the API gateway for every other name, in process (SetGateway), so
+//     the API gateway knows the client used HTTPS and services render
+//     https links (#440).
 //
 // Both backends speak HTTP/1.1 and prior-knowledge h2c, so whichever
 // protocol the client negotiated works end to end, including gRPC,
@@ -92,8 +93,11 @@ type Frontend struct {
 	hosts func() []string
 	// inContainer is runtime.InContainer, replaced in tests.
 	inContainer func() bool
-	// gateway serves a connection in the gateway (SetGateway).
-	gateway func(net.Conn) error
+	// serveGateway serves a connection in the API gateway (SetGateway).
+	serveGateway func(context.Context, net.Conn) error
+	// ctx is cancelled by Close, abandoning hand-offs not yet accepted.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu     sync.Mutex
 	ln     net.Listener
@@ -106,13 +110,15 @@ type Frontend struct {
 // New returns a frontend serving the names hosts returns (the gateway's
 // mounted hosts) plus LOCATION-docker.pkg.dev.
 func New(env *emu.Env, hosts func() []string) *Frontend {
-	return &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer, ctx: ctx, cancel: cancel}
 }
 
-// SetGateway makes the frontend hand gateway connections to serve (the
-// gateway's ServeFrontend) instead of dialing the "gateway" endpoint, which
-// cannot tell them from direct plain-HTTP clients. Call it before Start.
-func (f *Frontend) SetGateway(serve func(net.Conn) error) { f.gateway = serve }
+// SetGateway makes the frontend hand API gateway connections to serve
+// (Gateway.ServeFrontend) instead of dialing the "gateway" endpoint, where
+// they look like direct plain-HTTP clients. Without it (tests building a
+// Frontend alone) the frontend dials the endpoint. Call it before Start.
+func (f *Frontend) SetGateway(serve func(context.Context, net.Conn) error) { f.serveGateway = serve }
 
 // Hosts returns the exact hostnames served (registry hosts match by
 // pattern; see IsRegistryHost).
@@ -174,6 +180,7 @@ func (f *Frontend) Addr() string {
 func (f *Frontend) Close() error {
 	f.mu.Lock()
 	f.closed = true
+	f.cancel()
 	if f.ln != nil {
 		f.ln.Close()
 	}
@@ -271,9 +278,9 @@ func ipNames() []string {
 	return out
 }
 
-// registry returns the Artifact Registry listener's address when it
+// registryAddr returns the Artifact Registry listener's address when it
 // serves name, else "".
-func (f *Frontend) registry(name string) string {
+func (f *Frontend) registryAddr(name string) string {
 	if IsRegistryHost(name) {
 		return f.env.Endpoints.Get("ar")
 	}
@@ -290,18 +297,18 @@ func (f *Frontend) handle(raw net.Conn) {
 		f.env.Log.Debug("Google front end: handshake failed", "remote", raw.RemoteAddr().String(), "err", err)
 		return
 	}
-	target := f.registry(tc.ConnectionState().ServerName)
-	if target == "" && f.gateway != nil {
-		if err := f.gateway(tc); err != nil {
-			f.env.Log.Debug("Google front end: gateway not serving", "err", err)
+	target := f.registryAddr(tc.ConnectionState().ServerName)
+	switch {
+	case target != "":
+	case f.serveGateway != nil:
+		if err := f.serveGateway(f.ctx, tc); err != nil {
+			f.env.Log.Debug("Google front end: API gateway not serving", "err", err)
 		}
 		return
-	}
-	if target == "" {
-		target = f.env.Endpoints.Get("gateway")
-	}
-	if target == "" {
-		return
+	default:
+		if target = f.env.Endpoints.Get("gateway"); target == "" {
+			return
+		}
 	}
 	up, err := net.DialTimeout("tcp", target, 5*time.Second)
 	if err != nil {

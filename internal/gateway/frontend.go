@@ -9,20 +9,24 @@ import (
 
 // ServeFrontend serves c, a connection whose TLS the Google front end
 // (internal/frontend) terminated, as plain HTTP/1.1 or prior-knowledge h2c
-// like the gateway port. Requests on it arrive with X-Forwarded-Proto:
+// like the API gateway's port. Requests on it arrive with X-Forwarded-Proto:
 // https, so links services render (GCS session URIs, selfLink, mediaLink)
 // use the scheme the client used (#440). The hand-off is in process: no
 // listener exists that a client could reach to claim the marker, and a
-// client-sent X-Forwarded-Proto on the gateway port is left as it was.
+// client-sent X-Forwarded-Proto on the API gateway's port is left as it
+// was.
 //
-// ServeFrontend returns once the gateway has closed c, or at once with
-// net.ErrClosed after Shutdown.
-func (g *Gateway) ServeFrontend(c net.Conn) error {
+// ServeFrontend returns once the API gateway has closed c, with
+// net.ErrClosed after Shutdown, or with ctx's error if ctx ends before the
+// API gateway accepts c.
+func (g *Gateway) ServeFrontend(ctx context.Context, c net.Conn) error {
 	fc := &frontConn{Conn: c, done: make(chan struct{})}
 	select {
 	case g.front.conns <- fc:
 	case <-g.front.closed:
 		return net.ErrClosed
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	<-fc.done
 	return nil
@@ -48,7 +52,7 @@ func markFrontend(r *http.Request) {
 }
 
 // frontConn is a connection handed over by ServeFrontend; done is closed
-// when the gateway closes it.
+// when the API gateway closes it.
 type frontConn struct {
 	net.Conn
 	once sync.Once

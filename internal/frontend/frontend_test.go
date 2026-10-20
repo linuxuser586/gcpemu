@@ -85,8 +85,8 @@ func TestFrontendRealClients(t *testing.T) {
 	})
 
 	t.Run("HTTPSLinks", func(t *testing.T) {
-		// Requests through the frontend are HTTPS, so the links services
-		// render must be too (#440).
+		// Requests through the Google front end are HTTPS, so the links
+		// services render must be too (#440).
 		loc := startResumable(t, hc, "https://storage.googleapis.com", "fe-bucket")
 		if want := "https://storage.googleapis.com/upload/storage/v1/b/fe-bucket/o?"; !strings.HasPrefix(loc, want) {
 			t.Errorf("resumable Location = %q, want prefix %q", loc, want)
@@ -100,7 +100,7 @@ func TestFrontendRealClients(t *testing.T) {
 	})
 
 	t.Run("PlainGatewayLinks", func(t *testing.T) {
-		// Emulator-host clients dial the gateway directly over plain HTTP
+		// Emulator-host clients dial the API gateway over plain HTTP
 		// and keep http links; a client-sent X-Forwarded-Proto is honoured
 		// exactly as before, not overridden or widened.
 		gw := inst.GatewayURL()

@@ -545,7 +545,11 @@ func (g *Gateway) Serve(l net.Listener) error {
 	g.srv.ConnContext = connContext
 	srv := g.srv
 	g.mu.Unlock()
-	go func() { _ = srv.Serve(g.front) }()
+	go func() {
+		if err := srv.Serve(g.front); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			g.env.Log.Error("API gateway stopped serving the Google front end", "err", err)
+		}
+	}()
 	err := srv.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
