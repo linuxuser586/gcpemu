@@ -25,7 +25,11 @@ Start from a clean checkout of the commit to be tagged, and run `task build`.
 task e2e
 ```
 
-It must pass within its 10-minute budget. See "Reference stack (SRS 11.2)" in the README.
+It runs the Reference stack and the Containerized Instance tests. On macOS the two forwarding-rule
+tests (`TestContainerizedForwardingRules`, `TestContainerizedRuleServiceContention`) run, and
+`TestContainerizedSQLHostClients` skips itself: it runs only on Linux. Everything must pass, and the
+Reference stack within its 10-minute budget, which applies to it alone. See "Reference stack (SRS 11.2)"
+in the README.
 
 ### 2. Two Cloud SQL instances at once, over loopback aliases
 
