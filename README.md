@@ -601,7 +601,9 @@ it only when it starts, so `ca install` and `ca uninstall` tell you to restart i
 adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
 which needs no administrator rights. Windows shows a security dialog to confirm the change, and
 another for `gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
-databases, and `gcpemu doctor` reports where it is trusted. `ca install --cert FILE` and
+databases, and `gcpemu doctor` reports where it is trusted: the OS store, the browser NSS databases,
+and Docker's and containerd's registry trust; for a VM runtime it notes that it cannot check and
+repeats `ca install`'s advice. `ca install --cert FILE` and
 `ca uninstall --cert FILE` (`-` for stdin) do the same for another CA certificate, such as a
 Containerized Instance's (see "Trusting the CA on the host"). The Web console's Certificate Manager
 view rotates a running Instance's CA too (Rotate CA), but changes no Host trust: run `gcpemu ca install`

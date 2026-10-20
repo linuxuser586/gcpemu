@@ -373,8 +373,9 @@ func TestReportExcludedPorts(t *testing.T) {
 }
 
 // In a Containerized Instance, CA trust is the host's: doctor notes how to
-// trust the CA there, and checks neither the container's bundles nor its NSS
-// databases (#493).
+// trust the CA there, and checks neither the container's bundles, its NSS
+// databases nor its container runtimes (#493, #28). On the host, a CA the
+// OS store lacks gets a note pointing at `gcpemu ca install`.
 func TestCheckCATrust(t *testing.T) {
 	saved := systemBundles
 	defer func() { systemBundles = saved }()
@@ -383,24 +384,175 @@ func TestCheckCATrust(t *testing.T) {
 	if err := os.WriteFile(bundle, pemBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	other := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("other der")})
 	systemBundles = []string{bundle}
+	const colima = "unix:///Users/u/.colima/default/docker.sock"
 	for _, tc := range []struct {
+		name        string
+		pem         []byte
 		inContainer bool
+		linuxOnly   bool // off Linux the OS store is the real one
 		want        string
 	}{
-		{true, "[--  ] Instance CA trust is the host's in a container: on the host, not in the container, run " +
+		{"in a container", pemBytes, true, false, "[--  ] Instance CA trust is the host's in a container: on the host, not in the container, run " +
 			"`docker exec CONTAINER /gcpemu ca print > gcpemu-ca.pem` and `gcpemu --instance container ca install --cert gcpemu-ca.pem` " +
 			"(README: \"Trusting the CA on the host\")\n"},
-		{false, "[ok  ] emulator CA trusted by the OS trust store\n"},
+		{"trusted", pemBytes, false, true, "[ok  ] Instance CA trusted by the OS trust store\n"},
+		{"not trusted", other, false, false, "[--  ] Instance CA not trusted by the OS trust store (run `gcpemu ca install`)\n"},
 	} {
 		var out strings.Builder
-		checkCATrust(&out, "default", pemBytes, tc.inContainer)
+		checkCATrust(&out, "default", tc.pem, tc.inContainer, colima)
 		got := out.String()
-		if tc.inContainer && got != tc.want {
-			t.Errorf("inContainer: output %q, want %q", got, tc.want)
+		switch {
+		case tc.inContainer:
+			if got != tc.want {
+				t.Errorf("%s: output %q, want %q", tc.name, got, tc.want)
+			}
+		case tc.linuxOnly && runtime.GOOS != "linux":
+		case !strings.HasPrefix(got, tc.want):
+			t.Errorf("%s: output %q, want it to start %q", tc.name, got, tc.want)
 		}
-		if !tc.inContainer && runtime.GOOS == "linux" && !strings.HasPrefix(got, tc.want) {
-			t.Errorf("on the host: output %q, want it to start %q", got, tc.want)
+		if !tc.inContainer && !strings.Contains(got, "[--  ] cannot check whether Colima (profile default) trusts the Instance CA") {
+			t.Errorf("%s: output %q, want the runtime trust note", tc.name, got)
+		}
+		if strings.Contains(got, "emulator CA") {
+			t.Errorf("%s: output %q says \"emulator CA\"", tc.name, got)
+		}
+	}
+}
+
+// testEtc returns a temporary /etc with the given subdirectories, for
+// checkRuntimeTrust.
+func testEtc(t *testing.T, dirs ...string) trustHost {
+	t.Helper()
+	etc := t.TempDir()
+	for _, d := range dirs {
+		if err := os.MkdirAll(filepath.Join(etc, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return trustHost{goos: "linux", etc: etc, isDir: func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }}
+}
+
+// writeTestFile writes b to name, creating its directory.
+func writeTestFile(t *testing.T, name string, b []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Docker trusts the Instance CA for image pulls only when every registry
+// host's certs.d holds gcpemu-INSTANCE.crt matching it (#28).
+func TestCheckRuntimeTrustDocker(t *testing.T) {
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")})
+	hosts := registryHosts()
+	if len(hosts) < 2 {
+		t.Fatalf("registry hosts %v, want several", hosts)
+	}
+	h := testEtc(t, "docker")
+	crt := func(host string) string { return filepath.Join(h.etc, "docker", "certs.d", host, "gcpemu-dev.crt") }
+	for _, host := range hosts {
+		writeTestFile(t, crt(host), pemBytes)
+	}
+	var out strings.Builder
+	checkRuntimeTrust(&out, h, "dev", pemBytes, "")
+	if want := "[ok  ] Instance CA trusted by Docker for "; !strings.HasPrefix(out.String(), want) || strings.Count(out.String(), "\n") != 1 {
+		t.Errorf("all in place: output %q, want one line starting %q", out.String(), want)
+	}
+
+	if err := os.Remove(crt(hosts[0])); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, crt(hosts[1]), []byte("another CA\n"))
+	out.Reset()
+	checkRuntimeTrust(&out, h, "dev", pemBytes, "")
+	want := fmt.Sprintf("[--  ] Instance CA not trusted by Docker for 2 of %d registry hosts (run `gcpemu ca install`)\n", len(hosts))
+	if out.String() != want {
+		t.Errorf("two missing: output %q, want %q", out.String(), want)
+	}
+}
+
+// containerd trusts the Instance CA for a registry host when its hosts.toml
+// names the shared CA file `ca install` writes and that file matches. A
+// hosts.toml gcpemu did not write, which `ca install` leaves alone, gets
+// the manual fix by name (#28).
+func TestCheckRuntimeTrustContainerd(t *testing.T) {
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")})
+	hosts := registryHosts()
+	h := testEtc(t, "containerd")
+	shared := h.etc + "/gcpemu/gcpemu-dev.crt"
+	toml := func(host string) string { return filepath.Join(h.etc, "containerd", "certs.d", host, "hosts.toml") }
+	for _, host := range hosts {
+		writeTestFile(t, toml(host), []byte("# written by gcpemu (dev)\nserver = \"https://"+host+"\"\n\n[host.\"https://"+host+"\"]\n  ca = \""+shared+"\"\n"))
+	}
+	run := func() string {
+		var out strings.Builder
+		checkRuntimeTrust(&out, h, "dev", pemBytes, "")
+		return out.String()
+	}
+	notTrusted := func(n int) string {
+		return fmt.Sprintf("[--  ] Instance CA not trusted by containerd for %d of %d registry hosts", n, len(hosts))
+	}
+
+	if got, want := run(), notTrusted(len(hosts))+" (run `gcpemu ca install`)\n"; got != want {
+		t.Errorf("no shared CA: output %q, want %q", got, want)
+	}
+	writeTestFile(t, shared, []byte("another CA\n"))
+	if got, want := run(), notTrusted(len(hosts))+" (run `gcpemu ca install`)\n"; got != want {
+		t.Errorf("mismatched shared CA: output %q, want %q", got, want)
+	}
+	writeTestFile(t, shared, pemBytes)
+	if got, want := run(), fmt.Sprintf("[ok  ] Instance CA trusted by containerd for %d registry hosts\n", len(hosts)); got != want {
+		t.Errorf("all in place: output %q, want %q", got, want)
+	}
+
+	writeTestFile(t, toml(hosts[0]), []byte("server = \"https://"+hosts[0]+"\"\n"))
+	want := notTrusted(1) + " (add `ca = \"" + shared + "\"` to " + toml(hosts[0]) + ", which `gcpemu ca install` does not change)\n"
+	if got := run(); got != want {
+		t.Errorf("user-written hosts.toml: output %q, want %q", got, want)
+	}
+	if err := os.Remove(toml(hosts[1])); err != nil {
+		t.Fatal(err)
+	}
+	want = notTrusted(2) + " (run `gcpemu ca install`; add `ca = \"" + shared + "\"` to " + toml(hosts[0]) + ", which `gcpemu ca install` does not change)\n"
+	if got := run(); got != want {
+		t.Errorf("user-written and missing hosts.toml: output %q, want %q", got, want)
+	}
+}
+
+// A VM runtime's trust store is out of doctor's reach: it notes so and
+// prints the advice `ca install` prints for that runtime (#28).
+func TestCheckRuntimeTrustVM(t *testing.T) {
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")})
+	for _, tc := range []struct{ endpoint, what string }{
+		{"unix:///Users/u/.colima/default/docker.sock", "Colima (profile default)"},
+		{"/var/folders/xy/T/podman/podman-machine-default-api.sock", "Podman machine podman-machine-default"},
+		{"unix:///Users/u/.docker/run/docker.sock", "Docker Desktop"},
+	} {
+		var out strings.Builder
+		checkRuntimeTrust(&out, trustHost{goos: "darwin"}, "dev", pemBytes, tc.endpoint)
+		var advice strings.Builder
+		writeVMTrust(&advice, vmTrustCommand(tc.endpoint, "dev", &certFile{pem: pemBytes}, true), true, false)
+		want := "[--  ] cannot check whether " + tc.what + " trusts the Instance CA for image pulls: its VM is out of reach\n" + advice.String()
+		if advice.Len() == 0 || out.String() != want {
+			t.Errorf("%s: output %q, want %q", tc.endpoint, out.String(), want)
+		}
+	}
+}
+
+// Without Docker or containerd, or off Linux, there is no runtime trust
+// to report.
+func TestCheckRuntimeTrustNoRuntime(t *testing.T) {
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")})
+	for name, h := range map[string]trustHost{"empty etc": testEtc(t), "darwin": {goos: "darwin"}} {
+		var out strings.Builder
+		checkRuntimeTrust(&out, h, "dev", pemBytes, "unix:///var/run/docker.sock")
+		if out.Len() != 0 {
+			t.Errorf("%s: output %q, want none", name, out.String())
 		}
 	}
 }

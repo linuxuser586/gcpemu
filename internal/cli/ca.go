@@ -524,17 +524,25 @@ func vmTrustCommand(endpoint, instance string, c trustCert, install bool) vmTrus
 	return v
 }
 
-// certsDirScript is the shell script that adds (install) or removes the CA
-// for every registry host in each certs.d directory of dirs (Docker's and
-// Podman's read every *.crt in DIR/HOST) and, with containerd, in
-// containerd's hosts.toml files. The CA itself goes in etc/gcpemu.
-func certsDirScript(etc, instance string, c trustCert, dirs []string, containerd, install bool) string {
+// registryHosts are the hosts gcpemu's container runtime trust covers: the
+// registry hosts of the host mode hosts list (LOCATION-docker.pkg.dev).
+// `ca install` and doctor both use it, so they cannot disagree.
+func registryHosts() []string {
 	var hosts []string
 	for _, n := range hostmode.HostsBlockNames(nil) {
 		if frontend.IsRegistryHost(n) {
 			hosts = append(hosts, n)
 		}
 	}
+	return hosts
+}
+
+// certsDirScript is the shell script that adds (install) or removes the CA
+// for every registry host in each certs.d directory of dirs (Docker's and
+// Podman's read every *.crt in DIR/HOST) and, with containerd, in
+// containerd's hosts.toml files. The CA itself goes in etc/gcpemu.
+func certsDirScript(etc, instance string, c trustCert, dirs []string, containerd, install bool) string {
+	hosts := registryHosts()
 	file := "gcpemu-" + instance + ".crt"
 	shared := etc + "/gcpemu/" + file
 	marker := "# written by gcpemu (" + instance + ")"
