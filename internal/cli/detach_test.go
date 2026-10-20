@@ -50,6 +50,10 @@ func fakeGcpemu(mode string) {
 			}
 			resp.Body.Close()
 		}
+	case "touch": // a command `gcpemu run` runs
+		_ = os.WriteFile(os.Getenv("GCPEMU_TEST_MARKER"), nil, 0o600)
+	case "env": // a command `gcpemu run` runs, recording its environment
+		_ = os.WriteFile(os.Getenv("GCPEMU_TEST_MARKER"), []byte(strings.Join(os.Environ(), "\n")), 0o600)
 	}
 	os.Exit(0)
 }

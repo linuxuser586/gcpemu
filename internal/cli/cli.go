@@ -85,7 +85,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 
 	root.AddCommand(o.startCmd(), o.stopCmd(), o.statusCmd(), o.resetCmd(), o.logsCmd(),
 		o.envCmd(), o.versionCmd(), o.timeCmd(), o.faultCmd(), o.snapshotCmd(), o.exportCmd(), o.tofuProviderCmd(), o.doctorCmd(), o.pruneCmd(),
-		o.cdnCmd(), o.consoleCmd(), o.waitCmd())
+		o.cdnCmd(), o.consoleCmd(), o.waitCmd(), o.runCmd())
 	root.AddCommand(o.hostsCmd())
 	root.AddCommand(o.offerCmd(), o.withdrawCmd(), o.hostAddressCmd())
 	root.AddCommand(o.caCmd())
@@ -96,7 +96,11 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 
 // load builds the effective config: defaults < file < env < flags.
 func (o *rootOpts) load(fs *pflag.FlagSet) (*config.Config, error) {
-	c := config.Defaults()
+	return o.loadOver(fs, config.Defaults())
+}
+
+// loadOver is load with c as the defaults.
+func (o *rootOpts) loadOver(fs *pflag.FlagSet, c config.Config) (*config.Config, error) {
 	if err := c.LoadFile(o.configFile); err != nil {
 		return nil, err
 	}
@@ -140,8 +144,14 @@ func (o *rootOpts) startCmd() *cobra.Command {
 			return o.runForeground(cfg)
 		},
 	}
-	f := cmd.Flags()
-	f.BoolVar(&detach, "detach", false, "run in the background and return once ready")
+	cmd.Flags().BoolVar(&detach, "detach", false, "run in the background and return once ready")
+	o.instanceFlags(cmd.Flags())
+	return cmd
+}
+
+// instanceFlags registers the flags that configure the Instance `start`
+// and `run` host.
+func (o *rootOpts) instanceFlags(f *pflag.FlagSet) {
 	f.BoolVar(&o.flags.Ephemeral, "ephemeral", false, "keep state in memory and data in a temp dir removed on exit")
 	f.StringSliceVar(&o.flags.Services, "services", nil, "Service IDs to run (default all): "+strings.Join(config.AllServices, ","))
 	f.StringVar(&o.flags.Bind, "bind", "127.0.0.1", "address to bind listeners to")
@@ -160,7 +170,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.BoolVar(&o.flags.Deterministic, "deterministic", false, "run a Deterministic Instance: reproducible IDs and a fake clock")
 	f.BoolVar(&o.flags.StrictProjects, "strict-projects", false, "require projects to be declared")
 	f.StringVar(&o.flags.Seed, "seed", "", "seed file to apply before reporting ready")
-	f.DurationVar(&o.flags.WaitTimeout, "wait-timeout", 120*time.Second, "readiness timeout for --detach and CI")
+	f.DurationVar(&o.flags.WaitTimeout, "wait-timeout", 120*time.Second, "readiness timeout for --detach, run and CI")
 	f.BoolVar(&o.flags.DNSNoForward, "dns-no-forward", false, "do not forward unknown DNS names to the host resolver")
 	f.BoolVar(&o.flags.Offline, "offline", false, "never reach the internet")
 	f.BoolVar(&o.console, "console", true, "serve the Web console under /console on the API gateway (default false when CI=true)")
@@ -169,7 +179,6 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.StringVar(&o.flags.Containerized, "containerized", "auto", "whether this is a Containerized Instance when the container runtime can't tell: auto (the container marker files decide), true or false (a container on the host's network); the runtime's answer wins")
 	f.IntVar(&o.flags.Build.Concurrency, "build-concurrency", 4, "how many Cloud Builds run at once; the rest wait QUEUED")
 	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (Linux hosts only, not on a VM runtime such as Docker Desktop; see gcpemu env and gcpemu hosts)")
-	return cmd
 }
 
 func (o *rootOpts) runForeground(cfg *config.Config) error {
@@ -177,42 +186,12 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	if os.Getenv("GCPEMU_DETACHED") == "1" {
 		logOut = os.Stdout // redirected to the log file by the parent
 	}
-	in, err := instance.New(cfg, o.factories, logOut)
-	if err != nil {
-		return err
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	// Not ready until seeded: `start --detach` and CI poll /_emu/v1/ready.
-	seeded := func() {}
-	if cfg.Seed != "" {
-		seeded = in.HoldReady("seed", "applying "+cfg.Seed)
-	}
-	if err := in.Start(ctx); err != nil {
-		_ = in.Shutdown(context.Background())
-		return err
-	}
-	if os.Getenv("GCPEMU_DETACHED") != "1" { // the parent prints it instead
-		printAdminToken(os.Stderr, cfg, in.Env.Endpoints.Get("gateway"), in.AdminToken(), in.ConsoleServed())
-	}
-	if cfg.Seed != "" {
-		if err := in.ApplySeed(ctx, cfg.Seed); err != nil {
-			_ = in.Shutdown(context.Background())
-			return fmt.Errorf("seed: %w", err)
-		}
-	}
-	seeded()
-	wctx, cancel := context.WithTimeout(ctx, cfg.WaitTimeout)
-	err = in.WaitReady(wctx)
-	cancel()
+	// FR-CI-003: fail fast in CI.
+	in, err := o.host(ctx, cfg, logOut, os.Getenv("GCPEMU_DETACHED") != "1", os.Getenv("CI") == "true")
 	if err != nil {
-		in.Env.Log.Error("not ready", "err", err)
-		if os.Getenv("CI") == "true" { // FR-CI-003: fail fast
-			_ = in.Shutdown(context.Background())
-			return err
-		}
-	} else {
-		in.Env.Log.Info("ready")
+		return err
 	}
 	select {
 	case <-ctx.Done():
@@ -223,15 +202,68 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	return in.Shutdown(sctx)
 }
 
+// host starts an Instance in this process and waits, up to the wait
+// timeout, until it is ready, Seeding included. printToken prints how to
+// reach the Admin API. Unless mustBeReady, an Instance that does not
+// become ready keeps running. On error the Instance is shut down.
+func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Writer, printToken, mustBeReady bool) (*instance.Instance, error) {
+	in, err := instance.New(cfg, o.factories, logOut)
+	if err != nil {
+		return nil, err
+	}
+	// Not ready until seeded: `start --detach` and CI poll /_emu/v1/ready.
+	seeded := func() {}
+	if cfg.Seed != "" {
+		seeded = in.HoldReady("seed", "applying "+cfg.Seed)
+	}
+	if err := in.Start(ctx); err != nil {
+		_ = in.Shutdown(context.Background())
+		return nil, err
+	}
+	if printToken {
+		printAdminToken(os.Stderr, cfg, in.Env.Endpoints.Get("gateway"), in.AdminToken(), in.ConsoleServed())
+	}
+	// An Instance that must be ready must be within the wait timeout,
+	// Seeding included, as `start --detach` waits for it.
+	deadline := time.Now().Add(cfg.WaitTimeout)
+	if cfg.Seed != "" {
+		sctx, cancel := ctx, context.CancelFunc(func() {})
+		if mustBeReady {
+			sctx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		err := in.ApplySeed(sctx, cfg.Seed)
+		cancel()
+		if err != nil {
+			_ = in.Shutdown(context.Background())
+			return nil, fmt.Errorf("seed: %w", err)
+		}
+	}
+	seeded()
+	if !mustBeReady {
+		deadline = time.Now().Add(cfg.WaitTimeout)
+	}
+	wctx, cancel := context.WithDeadline(ctx, deadline)
+	err = in.WaitReady(wctx)
+	cancel()
+	if err != nil {
+		in.Env.Log.Error("not ready", "err", err)
+		if mustBeReady {
+			_ = in.Shutdown(context.Background())
+			return nil, err
+		}
+	} else {
+		in.Env.Log.Info("ready")
+	}
+	return in, nil
+}
+
 func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 	dir := cfg.InstanceDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if c, err := clientFor(cfg); err == nil {
-		if _, err := c.get("/_emu/v1/health"); err == nil {
-			return fmt.Errorf("instance %q is already running (%s)", cfg.Instance, dir)
-		}
+	if err := refuseRunning(cfg); err != nil {
+		return err
 	}
 	_ = os.Remove(filepath.Join(dir, instance.EndpointsFile))
 	logf, err := os.OpenFile(filepath.Join(dir, instance.LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -306,6 +338,16 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		reasons = logTail(logPath, logStart, 20)
 	}
 	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
+}
+
+// refuseRunning fails when cfg's Instance is already running.
+func refuseRunning(cfg *config.Config) error {
+	if c, err := clientFor(cfg); err == nil {
+		if _, err := c.get("/_emu/v1/health"); err == nil {
+			return fmt.Errorf("instance %q is already running (%s)", cfg.Instance, cfg.InstanceDir())
+		}
+	}
+	return nil
 }
 
 // printAdminToken tells the user how to reach the Admin API and the Web
