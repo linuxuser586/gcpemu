@@ -9,28 +9,34 @@ import { useLatestSearchParams } from './latestSearchParams'
 
 type Setter = ReturnType<typeof useLatestSearchParams>[1]
 
+// Location keys are unique across tests, as a router's are across navigations.
+let n = 0
+
 function setup(search: string) {
+  const navigations: { search: string }[] = []
   const navigator = {
     createHref: () => '',
     go: vi.fn(),
-    push: vi.fn(),
-    replace: vi.fn(),
+    push: vi.fn((to: { search: string }) => void navigations.push(to)),
+    replace: vi.fn((to: { search: string }) => void navigations.push(to)),
   } satisfies Navigator
   let set!: Setter
+  let other!: Setter
   let seen = ''
+  // A view may use the hook twice, as one using useViewState does.
   function Probe() {
     const [params, setParams] = useLatestSearchParams()
     set = setParams
+    other = useLatestSearchParams()[1]
     seen = params.toString()
     return null
   }
-  let n = 0
-  const at = (search: string): Location => ({
+  const at = (search: string, key = `k${n++}`): Location => ({
     pathname: '/view',
     search: search && `?${search}`,
     hash: '',
     state: null,
-    key: `k${n++}`,
+    key,
   })
   let loc = at(search)
   const tree = () => (
@@ -42,24 +48,19 @@ function setup(search: string) {
   return {
     navigator,
     set: (...args: Parameters<Setter>) => act(() => set(...args)),
+    /** setOther updates through the view's other use of the hook. */
+    setOther: (...args: Parameters<Setter>) => act(() => other(...args)),
     seen: () => seen,
-    /** land renders a navigation to search, as the router would. */
-    land: (search: string) => {
-      loc = at(search)
+    /** land renders a navigation to search, as the router would, and returns its key. */
+    land: (search: string, key?: string) => {
+      loc = at(search, key)
       utils.rerender(tree())
+      return loc.key
     },
     /** rerender renders the same location again, as a change of local state does. */
     rerender: () => utils.rerender(tree()),
     /** sent is the search of the latest navigation the hook made. */
-    sent: () => {
-      const calls = [...navigator.push.mock.calls, ...navigator.replace.mock.calls]
-      const order = [
-        ...navigator.push.mock.invocationCallOrder,
-        ...navigator.replace.mock.invocationCallOrder,
-      ]
-      const last = calls[order.indexOf(Math.max(...order))]![0] as { search: string }
-      return new URLSearchParams(last.search).toString()
-    },
+    sent: () => new URLSearchParams(navigations.at(-1)?.search).toString(),
   }
 }
 
@@ -97,6 +98,26 @@ it('adopts a navigation made elsewhere', () => {
   h.land('project=p')
   h.set(patch('b', '2'))
   expect(h.sent()).toBe('project=p&b=2')
+})
+
+it('builds on an update sent by another use of the hook in the view', () => {
+  const h = setup('status=4xx')
+  h.set(patch('status', ''))
+  h.setOther(patch('q', 'x'))
+  expect(h.sent()).toBe('q=x')
+  h.land('')
+  h.set(patch('method', 'patch'))
+  expect(h.sent()).toBe('q=x&method=patch')
+})
+
+it('drops a landed update when the back button returns to an earlier location', () => {
+  const h = setup('')
+  const first = h.land('a=1')
+  h.set(patch('b', '2'))
+  h.land('a=1&b=2')
+  h.land('a=1', first)
+  h.set(patch('c', '3'))
+  expect(h.sent()).toBe('a=1&c=3')
 })
 
 it('keeps a pending update across a re-render of the same location', () => {
