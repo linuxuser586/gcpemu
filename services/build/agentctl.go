@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -137,19 +136,6 @@ func (s *Service) buildAgent(ctx context.Context, rt *runtime.Manager, network s
 	}
 	s.agentID = id
 	return c.IPs[network], nil
-}
-
-// registryProxy returns the Build agent's registry proxy, host:port on
-// the Build network over plain HTTP, starting the agent if needed. The
-// Build daemon will use it as its insecure registry (ADR 0016); until
-// #387 tells the proxy which Build a daemon request is for, only Build
-// steps' requests get a token added.
-func (s *Service) registryProxy(ctx context.Context, rt *runtime.Manager) (string, error) {
-	n, err := s.network(ctx, rt)
-	if err != nil {
-		return "", err
-	}
-	return net.JoinHostPort(n.agent, strconv.Itoa(registryPort)), nil
 }
 
 // dialer is how the emulator reaches container addresses.

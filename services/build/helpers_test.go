@@ -145,15 +145,20 @@ func (e *env) buildObjects() (containers, volumes []string) {
 		e.t.Fatal(err)
 	}
 	for _, c := range cs {
-		if c.Labels[runtime.LabelResource] != "" { // not the Build agent, which is the Instance's
+		if c.Labels[runtime.LabelResource] != "" { // not the Build agent or daemon, which are the Instance's
 			containers = append(containers, c.Name)
 		}
 	}
-	vs, err := rt.ListVolumes(e.ctx, sel)
+	vs, err := rt.Volumes(e.ctx, sel)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return containers, vs
+	for _, v := range vs {
+		if v.Labels[runtime.LabelResource] != "" { // not the Build daemon's
+			volumes = append(volumes, v.Name)
+		}
+	}
+	return containers, volumes
 }
 
 // noBuildObjects fails unless no container or volume of a Build is left.

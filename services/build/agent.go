@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
@@ -30,7 +31,8 @@ import (
 //     those hostnames (FR-INT-007).
 //   - :5000 the registry proxy to emulated Artifact Registry, adding the
 //     calling step's Build service account's token, over plain HTTP. The
-//     Build daemon will use it as its insecure registry (ADR 0016, #387).
+//     Build daemon uses it as its insecure registry (ADR 0016, daemon.go),
+//     with the credentials steps give it.
 
 const (
 	agentName      = "build-agent"
@@ -70,7 +72,7 @@ func runAgent(ctx context.Context, _ []string) error {
 	if err != nil {
 		return err
 	}
-	go func() { _ = http.Serve(regL, workload.RegistryProxy(cfg.Registry, stepToken(cfg.Emu))) }()
+	go func() { _ = http.Serve(regL, basicChallenge(workload.RegistryProxy(cfg.Registry, stepToken(cfg.Emu)))) }()
 	if cfg.Frontend != "" {
 		feL, err := net.Listen("tcp", ":443")
 		if err != nil {
@@ -101,6 +103,28 @@ func runAgent(ctx context.Context, _ []string) error {
 	<-ctx.Done()
 	return nil
 }
+
+// basicChallenge turns Artifact Registry's Bearer challenges into Basic
+// ones: their token endpoint is on the services network, which neither
+// steps nor the Build daemon reach. The daemon then sends the credentials
+// a step's docker CLI gave it with every request, which Artifact Registry
+// accepts as they are.
+func basicChallenge(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(&challengeWriter{ResponseWriter: w}, r)
+	})
+}
+
+type challengeWriter struct{ http.ResponseWriter }
+
+func (w *challengeWriter) WriteHeader(code int) {
+	if code == http.StatusUnauthorized && strings.HasPrefix(w.Header().Get("WWW-Authenticate"), "Bearer ") {
+		w.Header().Set("WWW-Authenticate", `Basic realm="gcpemu"`)
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *challengeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // stepToken returns the access token of the calling step's Build service
 // account, read from the metadata server as that step on every request:

@@ -487,3 +487,29 @@ func TestCheckHostOnly(t *testing.T) {
 		}
 	}
 }
+
+// A running Instance whose runtime refused the Build daemon's privileged
+// container is flagged with a fix, and one whose daemon runs reports its
+// cache; one without a Build daemon yet reports nothing (ADR 0016).
+func TestReportBuildDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		body     string
+		ok       []bool
+		what     string
+		fixNames string
+	}{
+		{`{"running":false,"cacheBytes":0,"error":"the Build daemon needs a privileged container, which the container runtime refused: mount: permission denied","privilegedRefused":true}`,
+			[]bool{false}, "the container runtime refused the Build daemon's privileged container, so Builds fail", "privileged"},
+		{`{"running":true,"cacheBytes":3145728,"privilegedRefused":false}`, []bool{true}, "Build daemon running, image cache 3.0 MiB", ""},
+		{`{"running":false,"cacheBytes":0,"privilegedRefused":false}`, nil, "", ""},
+	} {
+		var oks []bool
+		var whats, fixes []string
+		reportBuildDaemon(func(ok bool, what, fix string) {
+			oks, whats, fixes = append(oks, ok), append(whats, what), append(fixes, fix)
+		}, []byte(tc.body))
+		if len(oks) != len(tc.ok) || (len(oks) == 1 && (oks[0] != tc.ok[0] || !strings.Contains(whats[0], tc.what) || !strings.Contains(fixes[0], tc.fixNames))) {
+			t.Errorf("%s: reported %v %q fix %q", tc.body, oks, whats, fixes)
+		}
+	}
+}

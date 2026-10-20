@@ -438,6 +438,27 @@ func TestClients(t *testing.T) {
 		if id == "" {
 			t.Fatal("builds submit --async printed no Build ID")
 		}
+
+		// --tag builds the Dockerfile with gcr.io/cloud-builders/docker on
+		// the Build daemon and pushes the image to Artifact Registry
+		// (FR-CB-004, FR-CB-006); --async, as gcloud cannot tail the log.
+		e.run(t, g, "artifacts", "repositories", "create", "compat-builds", "--repository-format=docker", "--location=us-central1")
+		_ = os.WriteFile(filepath.Join(src, "Dockerfile"), []byte("FROM busybox:1.37\nCOPY hello.txt /\n"), 0o644)
+		img := "us-central1-docker.pkg.dev/" + project + "/compat-builds/tagged"
+		// gcloud's progress precedes the ID in the output.
+		fields = strings.Fields(e.run(t, g, "builds", "submit", "--tag", img+":v1", "--async", "--format=value(id)", src))
+		id = fields[len(fields)-1]
+		status := ""
+		for deadline := time.Now().Add(10 * time.Minute); time.Now().Before(deadline); time.Sleep(3 * time.Second) {
+			if status = strings.TrimSpace(e.run(t, g, "builds", "describe", id, "--format=value(status)")); status != "QUEUED" && status != "WORKING" {
+				break
+			}
+		}
+		if status != "SUCCESS" {
+			t.Fatalf("builds submit --tag ended %s", status)
+		}
+		digest := strings.TrimSpace(e.run(t, g, "builds", "describe", id, "--format=value(results.images[0].digest)"))
+		contains(t, "artifacts docker images list", e.run(t, g, "artifacts", "docker", "images", "list", img, "--format=value(version)"), digest)
 	})
 
 	t.Run("gcloud/sql+psql+auth-proxy", func(t *testing.T) {

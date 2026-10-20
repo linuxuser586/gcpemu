@@ -367,7 +367,7 @@ Service's node port. Only TCP ports are served. When the emulator itself runs in
 Cloud Build knobs: `build.concurrency` in `gcpemu.yaml` (`GCPEMU_BUILD_CONCURRENCY`,
 `--build-concurrency`, default 4) caps how many Builds are `WORKING` at once; the rest wait
 `QUEUED` until their `queueTtl` passes. A Reset cancels every Build and removes its containers
-and volumes; a Build that was `QUEUED` or `WORKING` when a State snapshot was saved restores as
+and volumes, and keeps the Build daemon's cache; a Build that was `QUEUED` or `WORKING` when a State snapshot was saved restores as
 `INTERNAL_ERROR`.
 
 Build steps get the environment of a GKE pod from the Build agent, one Sidecar agent per Instance
@@ -375,7 +375,27 @@ on the Build network: `gcloud` and client-library steps need no Endpoint overrid
 the steps' DNS server and answers `metadata.google.internal`, the Google front end's hostnames
 and every `LOCATION-docker.pkg.dev` with its own address, where it relays `:443` to the front end,
 serves the metadata server as the step's Build's service account on `:80` and proxies Artifact
-Registry over plain HTTP on `:5000` with that account's token. Every step gets the Instance CA
+Registry over plain HTTP on `:5000` with that account's token.
+
+Every step gets `/var/run/docker.sock` of the Build daemon (ADR 0016), one privileged
+Docker-in-Docker container per Instance (`docker:29.9.0-dind`) started with the first Build, so
+`gcr.io/cloud-builders/docker` and `docker` steps build, run and push images unmodified, and
+`docker run --network=cloudbuild` reaches containers started earlier by name. Unlike on GCP, the
+steps themselves are not on `cloudbuild`, so a step reaches such a container only from another
+container on it, not by name from the step. The host runtime
+only ever runs the daemon and the step containers. Its image cache is a volume that survives
+Builds, Reset and restarts of a Persistent Instance, and is removed with the Instance's data;
+unlike on GCP, Builds share it. `GET /_emu/v1/build/daemon` reports its size, and
+`POST /_emu/v1/build/daemon/prune` empties it. The containers steps start in the daemon are
+removed once no Build runs. The daemon reaches every `LOCATION-docker.pkg.dev` through the
+Build agent's registry proxy, with the credentials the docker CLI sends it: every Build's
+`/builder/home/.docker/config.json` holds its service account's for every Artifact Registry
+location, as on Cloud Build. Once the steps succeed, `images` (and `artifacts.images`) are pushed
+and listed with their digests in `results.images`, and the files `artifacts.objects.paths` match
+in `/workspace` are uploaded under `artifacts.objects.location`, with the manifest
+`artifacts-BUILD_ID.json`, `results.artifactManifest` and `results.numArtifacts`; Maven, Python,
+npm and Go artifacts answer `UNIMPLEMENTED`. A runtime that refuses privileged containers, such
+as Docker with userns-remap, fails every Build saying so, and `gcpemu doctor` flags it. Every step gets the Instance CA
 bundle at `/etc/gcpemu/certs/ca-certificates.crt` and over `/etc/ssl/certs/ca-certificates.crt`,
 `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS` set to it, and `GCE_METADATA_HOST`
 and `GCE_METADATA_IP` set to the agent's address; unlike on GCP, the metadata server is not at
