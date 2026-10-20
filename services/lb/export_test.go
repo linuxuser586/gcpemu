@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/edgeagent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/published"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
@@ -47,8 +48,8 @@ func JoinSubnetwork(ctx context.Context, svc emu.Service, subnetwork string) (st
 
 // The edge container's ports, which the VM relay's stream counts name.
 const (
-	EdgeControlPort = edgeControlPort
-	EdgeRelayPort   = edgeRelayPort
+	EdgeControlPort = edgeagent.ControlPort
+	EdgeRelayPort   = edgeagent.RelayPort
 )
 
 // SetSingleLoopback switches the data plane in or out of single-loopback

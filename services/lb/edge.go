@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
+	"github.com/linuxuser586/gcpemu/internal/edgeagent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/gke"
@@ -31,7 +32,7 @@ import (
 // "lb" network (forwarding rule addresses), the services network (to reach
 // the emulator's edge ingress) and every VPC subnetwork with pod routes.
 // The in-process proxy stays the only L7 implementation: the edge only
-// relays TCP (edgeagent.go). The edge needs a container runtime: without
+// relays TCP (internal/edgeagent). The edge needs a container runtime: without
 // one for good (emu.ErrNoRuntime) its callers fall back for the
 // Instance's life; after a transient failure they fall back for now, and
 // the runtime is asked again after rtRetryAfter (#313).
@@ -48,10 +49,8 @@ import (
 // Images lists the container images the lb service launches (pinned by
 // tag; digests are pinned at release).
 var Images = map[string]string{
-	"lb-edge": edgeImage,
+	"lb-edge": edgeagent.Image,
 }
-
-const edgeImage = "rancher/k3s:v1.36.5-k3s1"
 
 type edge struct {
 	d *dataplane
@@ -71,7 +70,7 @@ type edge struct {
 	alias   map[string]string // frontend key → alias IP
 	byAlias map[string]string // alias ip:port → frontend key
 	ports   map[string]int    // frontend key → port
-	routes  []edgeRoute
+	routes  []edgeagent.Route
 	pods    []*net.IPNet
 	nets    map[string]bool
 	// vpcs holds the subnetwork networks on which the edge holds an
@@ -80,7 +79,7 @@ type edge struct {
 	// public are the external forwarding rule addresses and ports the
 	// edge serves on the external network, where it holds extIP; routed
 	// is the last route set the PublicRouters accepted ("" for none).
-	public  []edgeListener
+	public  []edgeagent.Listener
 	extIP   string
 	routed  string
 	pushed  string
@@ -253,7 +252,7 @@ func (e *edge) dial(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, errors.New("lb-edge relay is not running")
 	}
 	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	c, err := e.env().Containers.DialContext(dctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(edgeRelayPort)))
+	c, err := e.env().Containers.DialContext(dctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(edgeagent.RelayPort)))
 	cancel()
 	if err != nil {
 		return nil, err
@@ -330,8 +329,8 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("lb network subnet %q: %w", n.Subnet, err)
 	}
-	if err := rt.EnsureImage(ctx, edgeImage, e.env().Config.Offline); err != nil {
-		return fmt.Errorf("lb-edge image %s: %w", edgeImage, err)
+	if err := rt.EnsureImage(ctx, edgeagent.Image, e.env().Config.Offline); err != nil {
+		return fmt.Errorf("lb-edge image %s: %w", edgeagent.Image, err)
 	}
 	bin, err := rt.AgentBinary(ctx)
 	if err != nil {
@@ -346,11 +345,11 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	_ = rt.RemoveContainer(ctx, name, true)
 	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
 		Name:       name,
-		Image:      edgeImage,
+		Image:      edgeagent.Image,
 		Entrypoint: []string{agent.ContainerPath},
 		Cmd:        []string{},
 		Env: []string{
-			agent.EnvVar + "=" + edgeAgentName,
+			agent.EnvVar + "=" + edgeagent.EdgeAgentName,
 			"GCPEMU_LB_TOKEN=" + e.token,
 			"GCPEMU_LB_SUBNET=" + n.Subnet,
 		},
@@ -385,7 +384,7 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	e.nets = map[string]bool{e.netName: true, svc.Name: true}
 	// Wait for the control port.
 	for {
-		req, _ := http.NewRequestWithContext(wctx, http.MethodGet, "http://"+net.JoinHostPort(e.ip, strconv.Itoa(edgeControlPort))+"/healthz", nil)
+		req, _ := http.NewRequestWithContext(wctx, http.MethodGet, "http://"+net.JoinHostPort(e.ip, strconv.Itoa(edgeagent.ControlPort))+"/healthz", nil)
 		resp, err := e.control().Do(req)
 		if err == nil {
 			resp.Body.Close()
@@ -431,9 +430,9 @@ func (e *edge) pushLocked(ctx context.Context) error {
 	if e.id == "" {
 		return nil
 	}
-	cfg := edgeConfig{Ingress: e.inAddr, Routes: e.routes, Public: e.public}
+	cfg := edgeagent.Config{Ingress: e.inAddr, Routes: e.routes, Public: e.public}
 	for key, ip := range e.alias {
-		cfg.Listeners = append(cfg.Listeners, edgeListener{IP: ip, Port: e.ports[key]})
+		cfg.Listeners = append(cfg.Listeners, edgeagent.Listener{IP: ip, Port: e.ports[key]})
 	}
 	sort.Slice(cfg.Listeners, func(i, j int) bool {
 		a, b := cfg.Listeners[i], cfg.Listeners[j]
@@ -443,8 +442,8 @@ func (e *edge) pushLocked(ctx context.Context) error {
 	if string(body) == e.pushed {
 		return nil
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+net.JoinHostPort(e.ip, strconv.Itoa(edgeControlPort))+"/config", bytes.NewReader(body))
-	req.Header.Set(edgeTokenHeader, e.token)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+net.JoinHostPort(e.ip, strconv.Itoa(edgeagent.ControlPort))+"/config", bytes.NewReader(body))
+	req.Header.Set(edgeagent.TokenHeader, e.token)
 	resp, err := e.control().Do(req)
 	if err != nil {
 		return err
@@ -467,7 +466,7 @@ func (e *edge) serveIngress(ln net.Listener) {
 			return
 		}
 		go func() {
-			pc, err := acceptProxied(c)
+			pc, err := edgeagent.AcceptProxied(c)
 			if err != nil {
 				c.Close()
 				return
@@ -533,7 +532,7 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	if ctx.Err() != nil {
 		return // stopped, or the routes were read before a Reset
 	}
-	var pub []edgeListener
+	var pub []edgeagent.Listener
 	if len(prs) > 0 {
 		// Only GKE nodes are VPC workloads that call load balancers.
 		pub = e.d.publicFrontends()
@@ -554,7 +553,7 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	if err != nil || vpc == nil {
 		return
 	}
-	var routes []edgeRoute
+	var routes []edgeagent.Route
 	var pods []*net.IPNet
 	for _, pr := range prs {
 		sn, err := vpc.SubnetNetwork(cctx, pr.Subnetwork)
@@ -566,7 +565,7 @@ func (e *edge) syncRoutes(ctx context.Context) {
 			continue
 		}
 		if _, n, err := net.ParseCIDR(pr.CIDR); err == nil && pr.Via != "" {
-			routes = append(routes, edgeRoute{CIDR: pr.CIDR, Via: pr.Via})
+			routes = append(routes, edgeagent.Route{CIDR: pr.CIDR, Via: pr.Via})
 			pods = append(pods, n)
 		}
 	}
@@ -587,14 +586,14 @@ func (e *edge) syncRoutes(ctx context.Context) {
 }
 
 // publicFrontends returns the listening external IPv4 forwarding rules.
-func (d *dataplane) publicFrontends() []edgeListener {
+func (d *dataplane) publicFrontends() []edgeagent.Listener {
 	cfg := d.cfg.Load()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	var out []edgeListener
+	var out []edgeagent.Listener
 	for key, fe := range cfg.fronts {
 		if cfg.public[fe.ip] && d.listeners[key] != nil && net.ParseIP(fe.ip).To4() != nil {
-			out = append(out, edgeListener{IP: fe.ip, Port: fe.port})
+			out = append(out, edgeagent.Listener{IP: fe.ip, Port: fe.port})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -634,7 +633,7 @@ func (e *edge) joinExternalLocked(ctx context.Context, rt *runtime.Manager) erro
 
 // routePublicLocked asks the PublicRouters to route the addresses of pub
 // via the edge, or to remove the routes when pub is empty.
-func (e *edge) routePublicLocked(ctx context.Context, pub []edgeListener) {
+func (e *edge) routePublicLocked(ctx context.Context, pub []edgeagent.Listener) {
 	via, ips := "", []string(nil)
 	if len(pub) > 0 {
 		via = e.extIP

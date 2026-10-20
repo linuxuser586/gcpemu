@@ -43,6 +43,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,25 +94,40 @@ type Frontend struct {
 	hosts func() []string
 	// inContainer is runtime.InContainer, replaced in tests.
 	inContainer func() bool
+	// goos, listen, relayRuntime, newRelay and relayRetry are how
+	// StartLAN binds the --gfe-bind addresses and relays those it may
+	// not (lanrelay.go), replaced in tests.
+	goos         string
+	listen       func(network, addr string) (net.Listener, error)
+	relayRuntime func(ctx context.Context) (vm bool, err error)
+	newRelay     func() lanRelay
+	relayRetry   []time.Duration
 	// serveGateway serves a connection in the API gateway (SetGateway).
 	serveGateway func(context.Context, net.Conn) error
 	// ctx is cancelled by Close, abandoning hand-offs not yet accepted.
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu     sync.Mutex
-	ln     net.Listener
-	conns  map[net.Conn]struct{}
-	lan    []*http.Server // --gfe-bind listeners (lan.go)
-	closed bool
-	wg     sync.WaitGroup
+	mu        sync.Mutex
+	ln        net.Listener
+	conns     map[net.Conn]struct{}
+	lan       []*http.Server // --gfe-bind listeners and the relay's ingress (lan.go)
+	lanAddrs  []string       // the --gfe-bind addresses served, directly or relayed
+	relay     lanRelay       // the LAN front-end relay, once it serves
+	relayStop context.CancelFunc
+	relayDone chan struct{}
+	closed    bool
+	wg        sync.WaitGroup
 }
 
 // New returns a frontend serving the names hosts returns (the gateway's
 // mounted hosts) plus LOCATION-docker.pkg.dev.
 func New(env *emu.Env, hosts func() []string) *Frontend {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer, ctx: ctx, cancel: cancel}
+	f := &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer,
+		goos: goruntime.GOOS, listen: net.Listen, relayRetry: relayRetry, ctx: ctx, cancel: cancel}
+	f.relayRuntime, f.newRelay = f.containerRuntime, f.containerRelay
+	return f
 }
 
 // SetGateway makes the frontend hand API gateway connections to serve
@@ -176,8 +192,10 @@ func (f *Frontend) Addr() string {
 	return f.ln.Addr().String()
 }
 
-// Close stops the listener and open connections.
+// Close stops the listener and open connections, and the --gfe-bind
+// listeners (StopLAN).
 func (f *Frontend) Close() error {
+	f.StopLAN()
 	f.mu.Lock()
 	f.closed = true
 	f.cancel()
@@ -187,7 +205,6 @@ func (f *Frontend) Close() error {
 	for c := range f.conns {
 		c.Close()
 	}
-	f.closeLAN()
 	f.mu.Unlock()
 	f.wg.Wait()
 	return nil

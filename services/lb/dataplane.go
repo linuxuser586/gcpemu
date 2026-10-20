@@ -14,9 +14,11 @@ import (
 
 	computev1 "google.golang.org/api/compute/v1"
 
+	"github.com/linuxuser586/gcpemu/internal/edgeagent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/project"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/cdn"
 	"github.com/linuxuser586/gcpemu/services/lb/urlmap"
 )
@@ -52,7 +54,7 @@ type dataplane struct {
 	// already logged.
 	lan    map[string]*lanBinding
 	lanErr map[string]string
-	relay  *lanRelay
+	relay  *edgeagent.LANRelay
 
 	// Published ports (published.go), learnt on first use.
 	pub      publishing
@@ -113,7 +115,8 @@ type frontend struct {
 
 func newDataplane(s *Service) *dataplane {
 	d := &dataplane{s: s, listeners: map[string]*listener{}, loopX: map[string]int{}, backends: map[string]*backendSvc{}, goos: goruntime.GOOS}
-	d.relay = &lanRelay{d: d}
+	d.relay = &edgeagent.LANRelay{Runtime: func(ctx context.Context) (*runtime.Manager, error) { return s.env.Containers.Runtime(ctx) },
+		Name: "lb-lan", Service: "lb", Resource: "lan", Role: "lan", Offline: s.env.Config.Offline, Log: s.env.Log}
 	d.cfg.Store(&config{fronts: map[string]*frontend{}, byIP: map[string]bool{}, public: map[string]bool{}, svcs: map[string]*backendSvc{}})
 	return d
 }

@@ -1,4 +1,4 @@
-package lb
+package edgeagent
 
 import (
 	"bufio"
@@ -6,16 +6,17 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"time"
 )
 
-// PROXY protocol v2 (TCP over IPv4/IPv6) between the lb-edge container and
-// the in-process proxy, so the proxy sees the real client address.
+// PROXY protocol v2 (TCP over IPv4/IPv6) between the agent and the
+// emulator's ingress, so the emulator sees the real client address.
 
 var proxyV2Sig = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
 
-// writeProxyV2 writes a PROXY v2 header for a TCP connection src → dst.
-func writeProxyV2(w io.Writer, src, dst *net.TCPAddr) error {
+// WriteProxyV2 writes a PROXY v2 header for a TCP connection src → dst.
+func WriteProxyV2(w io.Writer, src, dst *net.TCPAddr) error {
 	s4, d4 := src.IP.To4(), dst.IP.To4()
 	var b []byte
 	b = append(b, proxyV2Sig...)
@@ -35,8 +36,8 @@ func writeProxyV2(w io.Writer, src, dst *net.TCPAddr) error {
 	return err
 }
 
-// readProxyV2 parses a PROXY v2 header from r.
-func readProxyV2(r *bufio.Reader) (src, dst *net.TCPAddr, err error) {
+// ReadProxyV2 parses a PROXY v2 header from r.
+func ReadProxyV2(r *bufio.Reader) (src, dst *net.TCPAddr, err error) {
 	hdr := make([]byte, 16)
 	if _, err := io.ReadFull(r, hdr); err != nil {
 		return nil, nil, err
@@ -79,14 +80,71 @@ func (c *proxiedConn) Read(b []byte) (int, error) { return c.r.Read(b) }
 func (c *proxiedConn) RemoteAddr() net.Addr       { return c.peer }
 func (c *proxiedConn) LocalAddr() net.Addr        { return c.local }
 
-// acceptProxied reads the PROXY header of a new connection.
-func acceptProxied(c net.Conn) (*proxiedConn, error) {
+// AcceptProxied reads the PROXY header of a new connection.
+func AcceptProxied(c net.Conn) (*proxiedConn, error) {
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	r := bufio.NewReader(c)
-	src, dst, err := readProxyV2(r)
+	src, dst, err := ReadProxyV2(r)
 	_ = c.SetReadDeadline(time.Time{})
 	if err != nil {
 		return nil, err
 	}
 	return &proxiedConn{Conn: c, r: r, local: dst, peer: src}, nil
+}
+
+// ProxiedListener accepts from ln only connections that start with a
+// PROXY v2 header, which each reads in its own goroutine, and closes every
+// other; the connections it returns have the header's addresses.
+func ProxiedListener(ln net.Listener) net.Listener {
+	p := &proxiedListener{Listener: ln, conns: make(chan net.Conn), done: make(chan struct{})}
+	go p.run()
+	return p
+}
+
+type proxiedListener struct {
+	net.Listener
+	conns chan net.Conn
+	done  chan struct{}
+	once  sync.Once
+	err   error // the Accept error, if it closed done
+}
+
+func (p *proxiedListener) run() {
+	for {
+		c, err := p.Listener.Accept()
+		if err != nil {
+			p.once.Do(func() { p.err = err; close(p.done) })
+			return
+		}
+		go func() {
+			pc, err := AcceptProxied(c)
+			if err != nil {
+				c.Close()
+				return
+			}
+			select {
+			case p.conns <- pc:
+			case <-p.done:
+				c.Close()
+			}
+		}()
+	}
+}
+
+func (p *proxiedListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-p.conns:
+		return c, nil
+	case <-p.done:
+		if p.err != nil {
+			return nil, p.err
+		}
+		return nil, net.ErrClosed
+	}
+}
+
+func (p *proxiedListener) Close() error {
+	err := p.Listener.Close()
+	p.once.Do(func() { close(p.done) })
+	return err
 }
