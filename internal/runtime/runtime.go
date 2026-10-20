@@ -65,8 +65,10 @@ type Client struct {
 	// dial connects to Endpoint; host is the Host header sent over it.
 	dial func(context.Context) (net.Conn, error)
 	host string
-	// self is the emulator's own container (self.go).
-	self string
+	// self is the emulator's own container (self.go); selfFound also when
+	// it is on the host's network.
+	self      string
+	selfFound bool
 	// member joins every network like self (SetMember).
 	memberMu sync.Mutex
 	member   string

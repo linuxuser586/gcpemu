@@ -193,6 +193,23 @@ func TestValidate(t *testing.T) {
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "GCPEMU_LOOPBACK_ALIASES") {
 		t.Errorf("LoopbackAliases yes: err = %v", err)
 	}
+
+	// GCPEMU_CONTAINERIZED is auto, true or false too (#502).
+	c = Defaults()
+	if c.Containerized != "auto" {
+		t.Errorf("default Containerized = %q, want auto", c.Containerized)
+	}
+	for _, ok := range []string{"auto", "true", "false", "FALSE", ""} {
+		c.Containerized = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("Containerized %q: %v", ok, err)
+		}
+	}
+	c.Containerized = "bogus"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "--containerized") ||
+		!strings.Contains(err.Error(), "GCPEMU_CONTAINERIZED") || !strings.Contains(err.Error(), "containerized)") {
+		t.Errorf("Containerized bogus: err = %v", err)
+	}
 }
 
 func TestLRO(t *testing.T) {

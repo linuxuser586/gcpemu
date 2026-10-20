@@ -55,9 +55,9 @@ type env struct {
 	c    *computev1.Service
 }
 
-func start(t *testing.T) *env {
+func start(t *testing.T, opts ...emutest.Option) *env {
 	t.Helper()
-	inst := emutest.Start(t, []string{"lb", "cdn"})
+	inst := emutest.Start(t, []string{"lb", "cdn"}, opts...)
 	svc, _ := inst.Env.Lookup("lb")
 	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
 	c, err := computev1.NewService(context.Background(), option.WithEndpoint(inst.GatewayURL()+"/compute/v1/"), option.WithoutAuthentication())

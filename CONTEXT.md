@@ -177,7 +177,7 @@ An Instance that keeps its state in a data directory across restarts.
 
 **Containerized Instance**:
 An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host. It still sees only its own container's files, such as its trust store, not the host's.
-_Avoid_: container mode, in-container, DooD
+_Avoid_: container mode, in-container, DooD, host-network mode (for a container on the host's network, which is not one)
 
 **Abandoned Instance ID**:
 An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, so no future Instance will reclaim them.

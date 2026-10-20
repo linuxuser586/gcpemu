@@ -32,10 +32,14 @@ import (
 // a port first wins. A rule with none free has no endpoint, logs what to
 // publish, and is retried each second and whenever the rules change.
 //
-// Without the runtime socket the Instance cannot read its published
-// ports. A rule then listens on its own port and reports 127.0.0.1 there,
-// which is right when the port is published at the same host port; the
-// first rule on each port wins. Only a permanent failure decides this
+// Without the runtime socket, or when the runtime can't find its own
+// container, the Instance cannot read its published ports, nor tell a
+// container on the host's network, which runs as on the host, from a
+// Containerized Instance: --containerized decides, and under auto the
+// marker files do (#502). In a Containerized Instance a rule
+// then listens on its own port and reports 127.0.0.1 there, which is
+// right when the port is published at the same host port; the first rule
+// on each port wins. Only a permanent failure decides this
 // no-socket mode (no runtime at all, emu.ErrNoRuntime), and once decided
 // it stays, so live endpoints never move. A transient failure (the socket
 // not ready yet, a timeout) leaves the ports unknown: no rule is served on
@@ -95,16 +99,17 @@ func (d *dataplane) publishing() publishing {
 }
 
 // selfProbe stands in for the runtime in tests: inContainer for
-// runtime.InContainer, runtime for emu.Containers.Runtime, and selfPorts
-// for the Manager's Self and SelfPorts.
+// runtime.InContainer (the marker files), runtime for
+// emu.Containers.Runtime, and selfPorts for the Manager's Self,
+// SelfFound and SelfPorts.
 type selfProbe struct {
 	inContainer func() bool
 	runtime     func(ctx context.Context) (*runtime.Manager, error)
-	selfPorts   func(ctx context.Context, rt *runtime.Manager) (self string, ports map[int]string, err error)
+	selfPorts   func(ctx context.Context, rt *runtime.Manager) (self string, found bool, ports map[int]string, err error)
 }
 
-// inContainer reports whether the Instance runs in a container. Callers
-// hold d.mu.
+// inContainer reports whether the container marker files say the Instance
+// runs in a container. Callers hold d.mu.
 func (d *dataplane) inContainer() bool {
 	if d.self != nil {
 		return d.self.inContainer()
@@ -128,16 +133,21 @@ func (d *dataplane) containerRuntime(ctx context.Context) (*runtime.Manager, err
 // fails transiently.
 var errRuntimeUnknown = errors.New("container runtime not reachable yet")
 
-// selfPublishing asks the runtime about the Instance's own container.
+// selfPublishing asks the runtime about the Instance's own container, and
+// decides whether it is a Containerized Instance as
+// runtime.DecideContainerized says (#502). A Containerized Instance whose
+// runtime can't find its container can't read its published ports either,
+// and serves rules as without the runtime socket.
 func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
-	if !d.inContainer() {
+	f := runtime.ContainerizedFacts{Setting: d.s.env.Config.Containerized, Markers: d.inContainer()}
+	if !runtime.MayBeContainerized(f.Setting, f.Markers) {
 		return publishing{}, nil
 	}
 	// publishing backs off on its own: ask now, whatever the edge's
 	// backoff.
 	switch d.edge.runtimeState(ctx, true) {
 	case rtNone:
-		return publishing{on: true, noSocket: true}, nil
+		return d.decidePublishing(f, nil), nil
 	case rtUnknown:
 		// Decided by a permanent failure only: try again later (#313).
 		return publishing{}, errRuntimeUnknown
@@ -148,28 +158,41 @@ func (d *dataplane) selfPublishing(ctx context.Context) (publishing, error) {
 	if err != nil {
 		return publishing{}, err
 	}
-	self, ports, err := d.selfPorts(ctx, rt)
+	self, found, ports, err := d.selfPorts(ctx, rt)
 	if err != nil {
 		return publishing{}, err
 	}
-	if self == "" {
-		// On the host network: as on the host.
-		return publishing{}, nil
-	}
-	return publishing{on: true, ports: published.NewPorts(ports, d.s.env.Config)}, nil
+	f.Runtime, f.Found, f.Self = true, found, self
+	return d.decidePublishing(f, ports), nil
 }
 
-// selfPorts returns the Instance's own container ("" on the host network)
-// and the ports it publishes. Callers hold d.mu.
-func (d *dataplane) selfPorts(ctx context.Context, rt *runtime.Manager) (string, map[int]string, error) {
+// decidePublishing is how rules reach the host given f, ports being the
+// container's published ports when the runtime found it.
+func (d *dataplane) decidePublishing(f runtime.ContainerizedFacts, ports map[int]string) publishing {
+	c := runtime.DecideContainerized(f)
+	d.s.env.NoteContainerized(c)
+	switch {
+	case !c.On:
+		// On the host's network: as on the host.
+		return publishing{}
+	case f.Self == "":
+		return publishing{on: true, noSocket: true}
+	}
+	return publishing{on: true, ports: published.NewPorts(ports, d.s.env.Config)}
+}
+
+// selfPorts returns the Instance's own container ("" on the host's
+// network), whether the runtime found it, and the ports it publishes.
+// Callers hold d.mu.
+func (d *dataplane) selfPorts(ctx context.Context, rt *runtime.Manager) (string, bool, map[int]string, error) {
 	if d.self != nil {
 		return d.self.selfPorts(ctx, rt)
 	}
 	if rt.Self() == "" {
-		return "", nil, nil
+		return "", rt.SelfFound(), nil, nil
 	}
 	ports, err := rt.SelfPorts(ctx)
-	return rt.Self(), ports, err
+	return rt.Self(), true, ports, err
 }
 
 // listenLoop opens a forwarding rule's loopback listener, sharing its port
