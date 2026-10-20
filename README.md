@@ -651,13 +651,14 @@ docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 `
 
 The `--group-add` line reads the socket's group the way the runtime mounts it, so the same line
 works from bash, zsh and PowerShell on every host: on a VM runtime the socket inside the VM
-belongs to `root`, and the line gives `0`. In Git Bash, MSYS path conversion rewrites the
-socket path, so write `//var/run/docker.sock` (and `//s`), or run `export MSYS_NO_PATHCONV=1` first.
+belongs to `root`, and the line gives `0`. In Git Bash, MSYS path conversion rewrites every
+container path in these examples, so run `export MSYS_NO_PATHCONV=1` first, or double each
+leading slash (`//var/run/docker.sock`, `//s`, `//gcpemu`).
 
 Podman serves the same API on a socket of its own (best-effort): put its path in place of the
-host side of both `-v` mounts above, keeping `/var/run/docker.sock` and `/s` in the container. Rootless Podman on Linux serves
-`$XDG_RUNTIME_DIR/podman/podman.sock`; a rootful Podman machine on macOS and Windows
-(`podman machine set --rootful`) serves `/run/podman/podman.sock`.
+host side of both `-v` mounts above, keeping `/var/run/docker.sock` and `/s` in the container.
+Rootless Podman on Linux serves `$XDG_RUNTIME_DIR/podman/podman.sock`; a rootful Podman machine
+on macOS and Windows (`podman machine set --rootful`) serves `/run/podman/podman.sock`.
 
 The emulator finds its own container and joins the networks it creates (taking each
 subnetwork's reserved second-to-last address), so it works on a normal bridge or compose
@@ -679,10 +680,10 @@ Docker daemon, not from the emulator's container. From the host:
   containers, networks and volumes, while a persistent one keeps them for its next start.
 
 On a VM runtime (Docker Desktop, OrbStack, Colima, Podman machine; every runtime on a macOS or
-Windows host) the host can't route to
-container addresses inside the VM, so the emulator serves each GKE `LoadBalancer` Service on a
-port its own container publishes (ADR 0012), as it does forwarding rules on any runtime. Start
-it with `--port-range` and publish that range on the same container and host ports:
+Windows host) the host can't route to container addresses inside the VM, so the emulator serves
+each GKE `LoadBalancer` Service on a port its own container publishes (ADR 0012), as it does
+forwarding rules on any runtime. Start it with `--port-range` and publish that range on the same
+container and host ports:
 
 ```sh
 docker run -d --name gcpemu -p 127.0.0.1:4510:4510 -p 127.0.0.1:20000-20019:20000-20019 \
@@ -710,13 +711,12 @@ for Services and forwarding rules.
 
 The emulator guesses from the runtime's info that it is on a VM runtime: Docker Desktop (on any
 host) and OrbStack are recognized. Set `GCPEMU_VM_RUNTIME=true` (or `--vm-runtime true`) on
-Colima and Podman machine, Podman machine on Windows included, or `false` to keep node addresses;
-the default is `auto`. Podman machine on Windows can't be recognized: its
-WSL2 kernel looks the same as Docker Engine installed inside a WSL distribution, which isn't a VM
-runtime from that distribution. `docker exec gcpemu /gcpemu doctor` prints the decision, warns
-when no `--port-range` port is published, lists forwarding rules with no published port, and
-flags clusters last started under the other decision; restarting the emulator recreates their
-servers with the current one.
+Colima and Podman machine, or `false` to keep node addresses; the default is `auto`. Podman
+machine on Windows can't be recognized either: its WSL2 kernel looks the same as Docker Engine
+installed inside a WSL distribution, which isn't a VM runtime from that distribution.
+`docker exec gcpemu /gcpemu doctor` prints the decision, warns when no `--port-range` port is
+published, lists forwarding rules with no published port, and flags clusters last started under
+the other decision; restarting the emulator recreates their servers with the current one.
 
 On a VM runtime each Cloud SQL instance with a public IP publishes port 3307, and 5432 when it
 is free, on a `127.0.0.x` of its own, and reports that address as its `PRIMARY` IP, so the Auth
@@ -736,8 +736,8 @@ starting a second fails with `FAILED_PRECONDITION` naming the first. Linux and W
 already have the loopback aliases: all of 127.0.0.0/8 is loopback there, so on a Windows host
 `true` is safe on any runtime. A macOS host has none until `sudo gcpemu loopback install` is run
 from the native binary. Once the host has them, set `GCPEMU_LOOPBACK_ALIASES=true` on VM
-runtimes other than Docker Desktop. A local PostgreSQL on
-`127.0.0.1:5432` doesn't get in the way: the instance is then served on 3307 only.
+runtimes other than Docker Desktop. A local PostgreSQL on `127.0.0.1:5432` doesn't get in the
+way: the instance is then served on 3307 only.
 `gcpemu doctor` prints the decision next to the VM-runtime one, each public instance's host
 address, and whether the runtime has refused a loopback alias. Instance containers are recreated on
 every start, so a changed setting takes effect when the emulator restarts.

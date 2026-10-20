@@ -115,13 +115,15 @@ environment.
 ```powershell
 gcloud sql instances create one --database-version=POSTGRES_16 --tier=db-f1-micro
 gcloud sql users set-password postgres --instance=one --password=pw
-cloud-sql-proxy --port 15432 "$(gcloud sql instances describe one --format='value(connectionName)')"
+Remove-Item Env:GOOGLE_CLOUD_UNIVERSE_DOMAIN   # the proxy's static --token is in Google's universe
+cloud-sql-proxy --sqladmin-api-endpoint "http://$env:GCPEMU_GATEWAY/" --token owner --port 15432 `
+  "$(gcloud sql instances describe one --format='value(connectionName)')"
 ```
 
-In a second terminal, `psql "host=127.0.0.1 port=15432 user=postgres password=pw" -c 'select 1'`
-must succeed. The instance's `PRIMARY` address must be a `127.0.0.x` of its own, as Docker
-Desktop gets loopback aliases by default; while 5432 is free on the host, `psql` straight to that
-address on 5432 must work too.
+In a second terminal, `psql "host=127.0.0.1 port=15432 user=postgres password=pw sslmode=disable"
+-c 'select 1'` must succeed. The instance's `PRIMARY` address must be a `127.0.0.x` of its own,
+since `GCPEMU_LOOPBACK_ALIASES=auto` uses the loopback aliases on Docker Desktop; while 5432 is
+free on the host, `psql` straight to that address on 5432 must work too.
 
 ### 3. A GKE `LoadBalancer` Service from the host
 
