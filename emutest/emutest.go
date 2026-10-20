@@ -30,6 +30,7 @@ type Instance struct {
 	release   func() // drops the host loopback lock, nil when none is held
 	closeOnce sync.Once
 	closeErr  error
+	removeErr error // removing ownedDir, part of closeErr
 }
 
 // Start launches an Instance running svcs (plus their dependencies) and
@@ -45,7 +46,12 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	t.Cleanup(func() {
 		sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer scancel()
+		// Shutdown errors are ignored, but a data dir left behind is
+		// reported, as t.TempDir does.
 		_ = i.Close(sctx)
+		if i.removeErr != nil {
+			t.Errorf("emutest: %v", i.removeErr)
+		}
 	})
 	return i
 }
@@ -154,7 +160,8 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (i *Instanc
 func (i *Instance) Close(ctx context.Context) error {
 	i.closeOnce.Do(func() {
 		err := i.in.Shutdown(ctx)
-		i.closeErr = errors.Join(err, i.cleanup())
+		i.removeErr = i.cleanup()
+		i.closeErr = errors.Join(err, i.removeErr)
 	})
 	return i.closeErr
 }

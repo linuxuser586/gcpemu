@@ -43,8 +43,8 @@ var restAPIs = map[string]struct{ service, prefix string }{
 }
 
 // GRPCOptions returns the client options that connect any gRPC client
-// library (cloud.google.com/go/...) to the Instance: its API gateway
-// endpoint, no authentication and an insecure transport.
+// library (cloud.google.com/go/...) to the Instance: an Endpoint override
+// for its API gateway, no authentication and an insecure transport.
 func (i *Instance) GRPCOptions() []option.ClientOption {
 	return []option.ClientOption{
 		option.WithEndpoint(i.Endpoint("gateway")),
@@ -55,8 +55,8 @@ func (i *Instance) GRPCOptions() []option.ClientOption {
 
 // HTTPOptions returns the client options that connect the REST client
 // library of the API named api (google.golang.org/api/<api>: "storage",
-// "compute", "dns", "sqladmin", …) to the Instance: the API's endpoint on
-// the API gateway, and no authentication. It fails when the Instance does not
+// "compute", "dns", "sqladmin", …) to the Instance: an Endpoint override
+// for the API's path on the API gateway, and no authentication. It fails when the Instance does not
 // serve api.
 func (i *Instance) HTTPOptions(api string) ([]option.ClientOption, error) {
 	a, ok := restAPIs[api]

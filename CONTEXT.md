@@ -7,7 +7,7 @@ A local emulator of a subset of Google Cloud, so that real clients (gcloud, Open
 ### The emulator
 
 **Instance**:
-One running emulator process together with its state. Two processes are always two Instances, even if they share an Instance name.
+One running emulator together with its state: a `gcpemu` process, or one started in-process by `emutest`. Two running emulators are always two Instances, even if they share an Instance name or a process.
 _Avoid_: emulator (when a specific running one is meant), server
 
 **Instance name**:
@@ -41,7 +41,7 @@ The resource-management APIs that create, read, update and delete GCP resources.
 The traffic those resources carry: object bytes, load-balanced requests, Postgres connections, DNS queries.
 
 **Service endpoint**:
-The address at which an Instance serves one Service.
+A named address at which an Instance serves clients, such as a Service's own port, the API gateway, or a forwarding rule's host listener. The names are those in `endpoints.json`.
 _Avoid_: endpoint (unqualified)
 
 **Endpoint override**:
@@ -174,7 +174,7 @@ A named state of an emulated resource, written `KIND=TARGET`, that a script can 
 _Avoid_: condition (on its own), readiness check
 
 **Ephemeral Instance**:
-An Instance whose state disappears when it exits.
+An Instance whose state disappears when it stops.
 
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts.

@@ -652,10 +652,10 @@ inst := emutest.Start(t, []string{"gcs", "pubsub", "secrets", "dns"})
 sc := inst.Storage(t)              // *storage.Client, closed at cleanup
 ps := inst.PubSub(t, "my-project") // *pubsub.Client (cloud.google.com/go/pubsub/v2)
 
-// Any gRPC client library: the API gateway endpoint, no authentication, insecure transport.
+// Endpoint overrides for any gRPC client library: the API gateway, no authentication, insecure transport.
 sm, err := secretmanager.NewClient(ctx, inst.GRPCOptions()...)
 
-// Any REST client library, by API name: "storage", "compute", "dns", "sqladmin", …
+// Endpoint overrides for any REST client library, by API name: "storage", "compute", "dns", "sqladmin", …
 opts, err := inst.HTTPOptions("dns") // fails for an API the Instance doesn't serve
 svc, err := dns.NewService(ctx, opts...)
 
