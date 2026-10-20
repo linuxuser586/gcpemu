@@ -1,10 +1,16 @@
 import { block, expr, gcloud, keyValues, resource, type Recipe } from '@/lib/copyAs'
 
-import { lastSegment, locationOf, type Certificate } from './api'
+import {
+  lastSegment,
+  locationOf,
+  type Certificate,
+  type CertificateMap,
+  type CertificateMapEntry,
+} from './api'
 
-// Copy as (FR-UI-015) for certificates: gcloud certificate-manager, the
-// certificatemanager/v1 create request and the
-// google_certificate_manager_certificate resource. The API never returns
+// Copy as (FR-UI-015) for certificates, certificate maps and map
+// entries: gcloud certificate-manager, the certificatemanager/v1 create
+// request and the google_certificate_manager_* resource. The API never returns
 // a self-managed certificate's private key, so each form leaves it to the
 // reader, as the Load Balancer view does for classic certificates.
 
@@ -77,5 +83,76 @@ export function certificateRecipe(c: Certificate, project = c.name.split('/')[1]
       },
     },
     tofu: m ? tofu : `${SAVE_KEY}\n${tofu}`,
+  }
+}
+
+/** projectOf is the Project ID in a resource name. */
+const projectOf = (name: string) => name.split('/')[1] ?? ''
+
+/** mapRecipe is certificate map m, in project when given. */
+export function mapRecipe(m: CertificateMap, project = projectOf(m.name)): Recipe {
+  const id = lastSegment(m.name)
+  return {
+    gcloud: gcloud(['certificate-manager', 'maps', 'create', id], {
+      project,
+      description: m.description,
+      labels: keyValues(m.labels),
+    }),
+    rest: {
+      method: 'POST',
+      path: `/certificatemanager/v1/projects/${project}/locations/global/certificateMaps?${new URLSearchParams({ certificateMapId: id })}`,
+      body: {
+        ...(m.description ? { description: m.description } : {}),
+        ...(m.labels && Object.keys(m.labels).length ? { labels: m.labels } : {}),
+      },
+    },
+    tofu: resource('google_certificate_manager_certificate_map', id, {
+      project,
+      name: id,
+      description: m.description,
+      labels: m.labels,
+    }),
+  }
+}
+
+/**
+ * entryRecipe is certificate map entry e, in project when given. gcloud
+ * names its certificates by ID, as they are global.
+ */
+export function entryRecipe(e: CertificateMapEntry, project = projectOf(e.name)): Recipe {
+  const id = lastSegment(e.name)
+  const map = e.name.split('/')[5] ?? ''
+  const primary = e.matcher === 'PRIMARY'
+  const certificates = e.certificates ?? []
+  return {
+    gcloud: gcloud(['certificate-manager', 'maps', 'entries', 'create', id], {
+      project,
+      map,
+      description: e.description,
+      labels: keyValues(e.labels),
+      hostname: primary ? undefined : e.hostname,
+      'set-primary': primary,
+      certificates: certificates.map(lastSegment),
+    }),
+    rest: {
+      method: 'POST',
+      path: `/certificatemanager/v1/projects/${project}/locations/global/certificateMaps/${map}/certificateMapEntries?${new URLSearchParams({ certificateMapEntryId: id })}`,
+      body: {
+        ...(e.description ? { description: e.description } : {}),
+        ...(e.labels && Object.keys(e.labels).length ? { labels: e.labels } : {}),
+        ...(primary ? { matcher: 'PRIMARY' } : { hostname: e.hostname }),
+        certificates,
+      },
+    },
+    tofu: resource('google_certificate_manager_certificate_map_entry', id, {
+      project,
+      name: id,
+      map,
+      description: e.description,
+      labels: e.labels,
+      hostname: primary ? undefined : e.hostname,
+      matcher: primary ? 'PRIMARY' : undefined,
+      certificates,
+    }),
   }
 }

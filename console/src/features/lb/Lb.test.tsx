@@ -349,6 +349,81 @@ it('edits a URL map with a merge patch of what changed', async () => {
   ])
 })
 
+const CM = `//certificatemanager.googleapis.com/projects/${P}/locations/global/certificateMaps`
+
+describe('certificate maps', () => {
+  beforeEach(() => {
+    fake.info.services = ['iam', 'compute', 'lb', 'certs']
+    server.use(
+      http.get(`*/certificatemanager/v1/projects/${P}/locations/global/certificateMaps`, () =>
+        HttpResponse.json({
+          certificateMaps: [
+            { name: `projects/${P}/locations/global/certificateMaps/main` },
+            { name: `projects/${P}/locations/global/certificateMaps/spare` },
+          ],
+        }),
+      ),
+    )
+  })
+
+  it('picks a global target HTTPS proxy’s certificate map from the Project’s maps', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/targetHttpsProxies?project=${P}`)
+    await user.type(await screen.findByLabelText('Name'), 'web-https')
+    await user.selectOptions(
+      screen.getByLabelText('URL map'),
+      `projects/${P}/global/urlMaps/web-map`,
+    )
+    const picker = screen.getByLabelText('Certificate map')
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(3))
+    await user.selectOptions(picker, 'main')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetHttpsProxies/web-https'),
+    )
+    expect(requests[0]!.body).toEqual({
+      name: 'web-https',
+      urlMap: `projects/${P}/global/urlMaps/web-map`,
+      certificateMap: `${CM}/main`,
+    })
+
+    // Certificate maps serve global target proxies only.
+    await act(() => router.navigate(`/lb/create/targetHttpsProxies?project=${P}`))
+    await user.type(await screen.findByLabelText('Region'), 'us-east1')
+    expect(screen.queryByLabelText('Certificate map')).not.toBeInTheDocument()
+  })
+
+  it('links a target HTTPS proxy to its certificate map, and keeps one from another Project', async () => {
+    state.targetHttpsProxies = [
+      res('targetHttpsProxies', 'web-https', {
+        urlMap: link('global/urlMaps/web-map'),
+        certificateMap: `${CM}/main`,
+      }),
+      res('targetHttpsProxies', 'shared', {
+        urlMap: link('global/urlMaps/web-map'),
+        certificateMap:
+          '//certificatemanager.googleapis.com/projects/other/locations/global/certificateMaps/shared',
+      }),
+    ]
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/global/targetHttpsProxies/web-https?project=${P}`)
+    const details = await screen.findByLabelText('target HTTPS proxy details')
+    await user.click(within(details).getByRole('link', { name: 'main' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/certs/locations/global/certificateMaps/main'),
+    )
+
+    await act(() => router.navigate(`/lb/global/targetHttpsProxies/shared/edit?project=${P}`))
+    const picker = await screen.findByLabelText('Certificate map')
+    await waitFor(() =>
+      expect(picker).toHaveValue(
+        '//certificatemanager.googleapis.com/projects/other/locations/global/certificateMaps/shared',
+      ),
+    )
+    expect(within(picker).getByRole('option', { name: 'other/shared' })).toBeInTheDocument()
+  })
+})
+
 it('creates a health check, showing the API’s validation messages', async () => {
   const user = userEvent.setup()
   const { router } = renderApp(`/lb/create/healthChecks?project=${P}`)

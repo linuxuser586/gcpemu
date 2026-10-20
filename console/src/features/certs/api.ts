@@ -68,6 +68,34 @@ export interface IssuanceConfig {
   description?: string
 }
 
+/** GclbTarget is a target proxy that serves a certificate map. */
+export interface GclbTarget {
+  targetHttpsProxy?: string
+  targetSslProxy?: string
+  ipConfigs?: { ipAddress?: string; ports?: number[] }[]
+}
+
+export interface CertificateMap {
+  name: string
+  description?: string
+  labels?: Record<string, string>
+  createTime?: string
+  updateTime?: string
+  gclbTargets?: GclbTarget[]
+}
+
+export interface CertificateMapEntry {
+  name: string
+  description?: string
+  labels?: Record<string, string>
+  hostname?: string
+  matcher?: string
+  certificates?: string[]
+  state?: string
+  createTime?: string
+  updateTime?: string
+}
+
 export interface Location {
   name: string
   locationId: string
@@ -89,6 +117,17 @@ export interface CertRef {
   cert: string
 }
 
+/** MapRef names a certificate map, which is always global. */
+export interface MapRef {
+  project: string
+  map: string
+}
+
+/** EntryRef names a certificate map entry. */
+export interface EntryRef extends MapRef {
+  entry: string
+}
+
 const enc = encodeURIComponent
 const API = '/certificatemanager/v1'
 
@@ -101,6 +140,27 @@ export const locationName = (project: string, location: string) =>
 export const certName = (r: CertRef) =>
   `${locationName(r.project, r.location)}/certificates/${r.cert}`
 
+export const mapName = (r: MapRef) =>
+  `${locationName(r.project, 'global')}/certificateMaps/${r.map}`
+
+export const entryName = (r: EntryRef) => `${mapName(r)}/certificateMapEntries/${r.entry}`
+
+/** mapRefOf is the MapRef of a certificate map's name, in any of its forms. */
+export function mapRefOf(name: string): MapRef | undefined {
+  const m = /projects\/([^/]+)\/locations\/global\/certificateMaps\/([^/]+)$/.exec(name)
+  return m ? { project: m[1]!, map: m[2]! } : undefined
+}
+
+/** CERT_MAP_PREFIX begins a certificate map's name where a target proxy references it. */
+export const CERT_MAP_PREFIX = '//certificatemanager.googleapis.com/'
+
+/** mapLabel names a certificate map by ID, with its Project when it is not project. */
+export function mapLabel(name: string, project: string): string {
+  const r = mapRefOf(name)
+  if (!r) return name
+  return r.project === project ? r.map : `${r.project}/${r.map}`
+}
+
 /** lastSegment is the ID at the end of a resource name. */
 export const lastSegment = (name: string) => name.slice(name.lastIndexOf('/') + 1)
 
@@ -109,10 +169,10 @@ export const locationOf = (name: string) => /\/locations\/([^/]+)/.exec(name)?.[
 
 /** CERT_ID is the API's resource ID rule. */
 export const CERT_ID = /^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
-export const certIdMessage = (id: string) =>
+export const certIdMessage = (id: string, field = 'certificateId') =>
   id
-    ? `Invalid certificateId ${JSON.stringify(id)}: must be 1-63 characters long, start with a lowercase letter and contain only lowercase letters, digits and hyphens.`
-    : 'Field certificateId is required.'
+    ? `Invalid ${field} ${JSON.stringify(id)}: must be 1-63 characters long, start with a lowercase letter and contain only lowercase letters, digits and hyphens.`
+    : `Field ${field} is required.`
 
 // ---- what a certificate is ----
 
@@ -224,6 +284,39 @@ export const issuanceConfigsQuery = (project: string, location: string) =>
       ),
   })
 
+/** mapsQuery lists the certificate maps, which are all global. */
+export const mapsQuery = (project: string) =>
+  queryOptions({
+    queryKey: ['certs', 'maps', project],
+    queryFn: () =>
+      listAll<CertificateMap>(
+        `${API}/${path(locationName(project, 'global'))}/certificateMaps`,
+        'certificateMaps',
+      ),
+  })
+
+export const mapQuery = (r: MapRef) =>
+  queryOptions({
+    queryKey: ['certs', 'map', r],
+    queryFn: () => gcpFetch<CertificateMap>(`${API}/${path(mapName(r))}`),
+  })
+
+export const entriesQuery = (r: MapRef) =>
+  queryOptions({
+    queryKey: ['certs', 'entries', r],
+    queryFn: () =>
+      listAll<CertificateMapEntry>(
+        `${API}/${path(mapName(r))}/certificateMapEntries`,
+        'certificateMapEntries',
+      ),
+  })
+
+export const entryQuery = (r: EntryRef) =>
+  queryOptions({
+    queryKey: ['certs', 'entry', r],
+    queryFn: () => gcpFetch<CertificateMapEntry>(`${API}/${path(entryName(r))}`),
+  })
+
 // ---- operations ----
 
 // GRPC_CODES are the canonical status names by code, for Operation errors.
@@ -268,21 +361,70 @@ export async function waitOperation<T>(op: Operation): Promise<T> {
 
 const json = (body: unknown) => ({ body: JSON.stringify(body) })
 
-export const createCertificate = async (r: CertRef, body: unknown) =>
-  waitOperation<Certificate>(
+/** create creates a resource in parent's collection coll with the ID param idParam. */
+const create = async <T>(
+  parent: string,
+  coll: string,
+  idParam: string,
+  id: string,
+  body: unknown,
+) =>
+  waitOperation<T>(
     await gcpFetch<Operation>(
-      `${API}/${path(locationName(r.project, r.location))}/certificates?${new URLSearchParams({ certificateId: r.cert })}`,
+      `${API}/${path(parent)}/${coll}?${new URLSearchParams({ [idParam]: id })}`,
       { method: 'POST', ...json(body) },
     ),
   )
 
-export const patchCertificate = async (r: CertRef, body: unknown, mask: string[]) =>
-  waitOperation<Certificate>(
+const patch = async <T>(name: string, body: unknown, mask: string[]) =>
+  waitOperation<T>(
     await gcpFetch<Operation>(
-      `${API}/${path(certName(r))}?${new URLSearchParams({ updateMask: mask.join(',') })}`,
+      `${API}/${path(name)}?${new URLSearchParams({ updateMask: mask.join(',') })}`,
       { method: 'PATCH', ...json(body) },
     ),
   )
 
-export const deleteCertificate = async (r: CertRef) =>
-  waitOperation(await gcpFetch<Operation>(`${API}/${path(certName(r))}`, { method: 'DELETE' }))
+const remove = async (name: string) =>
+  waitOperation(await gcpFetch<Operation>(`${API}/${path(name)}`, { method: 'DELETE' }))
+
+export const createCertificate = (r: CertRef, body: unknown) =>
+  create<Certificate>(
+    locationName(r.project, r.location),
+    'certificates',
+    'certificateId',
+    r.cert,
+    body,
+  )
+
+export const patchCertificate = (r: CertRef, body: unknown, mask: string[]) =>
+  patch<Certificate>(certName(r), body, mask)
+
+export const deleteCertificate = (r: CertRef) => remove(certName(r))
+
+export const createMap = (r: MapRef, body: unknown) =>
+  create<CertificateMap>(
+    locationName(r.project, 'global'),
+    'certificateMaps',
+    'certificateMapId',
+    r.map,
+    body,
+  )
+
+export const patchMap = (r: MapRef, body: unknown, mask: string[]) =>
+  patch<CertificateMap>(mapName(r), body, mask)
+
+export const deleteMap = (r: MapRef) => remove(mapName(r))
+
+export const createEntry = (r: EntryRef, body: unknown) =>
+  create<CertificateMapEntry>(
+    mapName(r),
+    'certificateMapEntries',
+    'certificateMapEntryId',
+    r.entry,
+    body,
+  )
+
+export const patchEntry = (r: EntryRef, body: unknown, mask: string[]) =>
+  patch<CertificateMapEntry>(entryName(r), body, mask)
+
+export const deleteEntry = (r: EntryRef) => remove(entryName(r))
