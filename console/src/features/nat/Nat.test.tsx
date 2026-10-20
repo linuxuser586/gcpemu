@@ -9,7 +9,8 @@ import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
-import { coverage, natRanges, type NatSink, type Router, type Subnetwork } from './api'
+import type { Subnetwork } from '../vpc/api'
+import { coverage, natRanges, type NatSink, type Router } from './api'
 import { natRecipe, routerRecipe } from './copy'
 import { natBody, natValues } from './NatForm'
 
@@ -393,7 +394,10 @@ it('shows a router’s NAT gateways and deletes it', async () => {
   await waitFor(() => expect(row).toHaveTextContent('203.0.113.5'))
   expect(row).toHaveTextContent('Automatic')
   expect(row).toHaveTextContent('LIST_OF_SUBNETWORKS')
-  expect(row).toHaveTextContent('nodes')
+  expect(within(row).getByRole('link', { name: 'nodes' })).toHaveAttribute(
+    'href',
+    `/compute/regions/us-central1/subnetworks/nodes?project=${P}`,
+  )
   expect(row).toHaveTextContent('Errors only')
   expect(within(row).getAllByRole('cell')[4]).toHaveTextContent('2')
   expect(screen.getByLabelText('Router JSON')).toHaveTextContent('"fingerprint": "fp-edge"')
@@ -506,6 +510,10 @@ it('shows a NAT’s settings, coverage, port usage and translations', async () =
   expect(within(covered).getAllByTestId('covered')).toHaveLength(1)
   expect(covered).toHaveTextContent('10.0.0.0/24 primary')
   expect(covered).toHaveTextContent('10.4.0.0/14 pods')
+  expect(within(covered).getByRole('link', { name: 'nodes' })).toHaveAttribute(
+    'href',
+    `/compute/regions/us-central1/subnetworks/nodes?project=${P}`,
+  )
 
   const ports = await screen.findByRole('table', { name: 'Port usage' })
   expect(within(ports).getAllByTestId('mapping')).toHaveLength(2)

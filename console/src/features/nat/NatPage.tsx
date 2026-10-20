@@ -20,6 +20,8 @@ import {
 import { toast } from '@/lib/toast'
 
 import { lastSeg } from '../lb/api'
+import { subnetsQuery } from '../vpc/api'
+import { SubnetList } from '../vpc/VpcLayout'
 import {
   coverage,
   mappingsQuery,
@@ -27,7 +29,6 @@ import {
   routerPath,
   routerQuery,
   statusQuery,
-  subnetsQuery,
   withoutNat,
   type Router,
   type RouterNat,
@@ -209,7 +210,9 @@ function Covered({ r, router, nat }: { r: RouterRef; router: Router; nat: Router
           <TableBody>
             {covered.map((c) => (
               <TableRow key={c.subnetwork.name} data-testid="covered">
-                <TableCell className="font-mono">{c.subnetwork.name}</TableCell>
+                <TableCell>
+                  <SubnetList subnets={[c.subnetwork]} />
+                </TableCell>
                 <TableCell>
                   <span className="flex flex-wrap gap-x-4">
                     {c.ranges.map((x) => (

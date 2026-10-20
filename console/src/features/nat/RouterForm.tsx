@@ -16,16 +16,8 @@ import { useViewState } from '@/lib/viewState'
 
 import { lastSeg, relPath } from '../lb/api'
 import { invalid, nameMessage, requiredMessage } from '../lb/spec'
-import {
-  insertRouter,
-  networksQuery,
-  patchRouter,
-  resourceField,
-  routerQuery,
-  subnetsQuery,
-  type Router,
-  type RouterRef,
-} from './api'
+import { networksQuery, resourceField, subnetsQuery } from '../vpc/api'
+import { insertRouter, patchRouter, routerQuery, type Router, type RouterRef } from './api'
 import { routerPage, useRouterRef } from './NatLayout'
 
 // Create and edit forms for Cloud Routers (FR-NAT-001, FR-UI-011):

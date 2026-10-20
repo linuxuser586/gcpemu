@@ -99,7 +99,6 @@ import {
   routersQuery,
   sinkQuery,
   statusQuery,
-  subnetsQuery,
 } from '@/features/nat/api'
 import { AddNat, EditNat } from '@/features/nat/NatForm'
 import { NatLayout } from '@/features/nat/NatLayout'
@@ -146,7 +145,21 @@ import { CreateUser, EditUser, Users } from '@/features/sql/Users'
 import { snapshotsQuery } from '@/features/state/api'
 import { SaveSnapshot } from '@/features/state/SaveSnapshot'
 import { State } from '@/features/state/State'
-import { VpcPage } from '@/features/vpc/VpcPage'
+import {
+  hostOffersQuery,
+  networkQuery,
+  networksQuery,
+  subnetQuery,
+  subnetsQuery,
+} from '@/features/vpc/api'
+import { CreateNetwork, EditNetwork } from '@/features/vpc/NetworkForm'
+import { NetworkPage } from '@/features/vpc/NetworkPage'
+import { Networks } from '@/features/vpc/Networks'
+import { Offers } from '@/features/vpc/Offers'
+import { CreateSubnetwork, EditSubnetwork } from '@/features/vpc/SubnetworkForm'
+import { SubnetworkPage } from '@/features/vpc/SubnetworkPage'
+import { Subnetworks } from '@/features/vpc/Subnetworks'
+import { VpcLayout } from '@/features/vpc/VpcLayout'
 
 export const BASENAME = '/console'
 
@@ -274,11 +287,8 @@ export function routes(queryClient: QueryClient): RouteObject[] {
         },
         {
           path: 'compute',
-          element: <VpcPage />,
-          loader: async () => {
-            await Promise.allSettled([queryClient.ensureQueryData(resourceCountsQuery())])
-            return null
-          },
+          element: <VpcLayout />,
+          children: vpcRoutes(queryClient),
         },
         {
           path: ':service/*',
@@ -890,6 +900,62 @@ function natRoutes(queryClient: QueryClient): RouteObject[] {
     { path: 'regions/:region/routers/:router/nats/add', element: <AddNat /> },
     { path: 'regions/:region/routers/:router/nats/:nat', element: <NatPage />, loader: router },
     { path: 'regions/:region/routers/:router/nats/:nat/edit', element: <EditNat /> },
+  ]
+}
+
+// The VPC network view (SRS 4.8.3), the compute Service. Paths follow the
+// API's resource names, global/networks/N and regions/R/subnetworks/S,
+// with the Project in ?project=; create pages are not under them, so
+// that no name is shadowed, and the subnetwork one takes the network in
+// ?network=. Offered ports are the Instance's, at /compute/offers.
+function vpcRoutes(queryClient: QueryClient): RouteObject[] {
+  const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
+  const lists: RouteObject['loader'] = ({ request }) => {
+    const project = projectOf(request)
+    return project
+      ? warm(
+          queryClient.ensureQueryData(networksQuery(project)),
+          queryClient.ensureQueryData(subnetsQuery(project)),
+        )
+      : null
+  }
+  return [
+    { index: true, element: <Networks />, loader: lists },
+    { path: 'subnetworks', element: <Subnetworks />, loader: lists },
+    {
+      path: 'offers',
+      element: <Offers />,
+      loader: () => warm(queryClient.ensureQueryData(hostOffersQuery())),
+    },
+    { path: 'create-network', element: <CreateNetwork /> },
+    { path: 'create-subnetwork', element: <CreateSubnetwork /> },
+    {
+      path: 'global/networks/:network',
+      element: <NetworkPage />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(
+              queryClient.ensureQueryData(networkQuery({ project, network: params.network ?? '' })),
+              queryClient.ensureQueryData(subnetsQuery(project)),
+            )
+          : null
+      },
+    },
+    { path: 'global/networks/:network/edit', element: <EditNetwork /> },
+    {
+      path: 'regions/:region/subnetworks/:subnetwork',
+      element: <SubnetworkPage />,
+      loader: ({ request, params }) => {
+        const r = {
+          project: projectOf(request),
+          region: params.region ?? '',
+          subnetwork: params.subnetwork ?? '',
+        }
+        return r.project ? warm(queryClient.ensureQueryData(subnetQuery(r))) : null
+      },
+    },
+    { path: 'regions/:region/subnetworks/:subnetwork/edit', element: <EditSubnetwork /> },
   ]
 }
 

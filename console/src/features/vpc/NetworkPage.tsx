@@ -1,0 +1,155 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Pencil, Plus, Shuffle, Trash2 } from 'lucide-react'
+
+import { Link, useCarriedNavigate } from '@/components/Link'
+import { QueryStatus } from '@/components/QueryStatus'
+import { ConfirmDialog } from '@/components/resource/ConfirmDialog'
+import { CopyAs } from '@/components/resource/CopyAs'
+import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
+import { Button } from '@/components/ui/button'
+import { Card, CardTitle } from '@/components/ui/card'
+import { toast } from '@/lib/toast'
+
+import { relPath } from '../lb/api'
+import { deleteNetwork, networkQuery, subnetsQuery, switchToCustomMode, type Network } from './api'
+import { networkRecipe } from './copy'
+import { routingMode } from './Networks'
+import { bySubnet, SubnetTable } from './Subnetworks'
+import { networkPage, useNetworkRef } from './VpcLayout'
+
+/**
+ * NetworkPage is one VPC network: its settings, its subnetworks, and the
+ * network as the API returns it.
+ */
+export function NetworkPage() {
+  const ref = useNetworkRef()
+  const query = useQuery(networkQuery(ref))
+  const subnets = useQuery(subnetsQuery(ref.project))
+  const n = query.data
+  const navigate = useCarriedNavigate()
+  const qc = useQueryClient()
+  const mine = (subnets.data ?? [])
+    .filter((s) => n && relPath(s.network) === relPath(n.selfLink))
+    .sort(bySubnet)
+  const remove = useMutation({
+    mutationFn: () => deleteNetwork(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['compute'] })
+      toast.success(`Deleted network ${ref.network}.`)
+      navigate('/compute')
+    },
+  })
+  const custom = useMutation({
+    mutationFn: () => switchToCustomMode(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['compute'] })
+      toast.success(`Network ${ref.network} is now a custom mode network.`)
+    },
+  })
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm text-muted-foreground">
+            <Link to="/compute" className="underline-offset-4 hover:underline">
+              VPC network
+            </Link>{' '}
+            / network
+          </p>
+          <h1 className="text-2xl font-semibold">
+            <span className="font-mono">{ref.network}</span>
+          </h1>
+        </div>
+        {n && (
+          <div className="flex flex-wrap gap-2">
+            <CopyAs what="network" recipe={() => networkRecipe(n, ref.project)} />
+            <Button variant="outline" asChild>
+              <Link to={networkPage(ref.network, 'edit')}>
+                <Pencil aria-hidden />
+                Edit network
+              </Link>
+            </Button>
+            {n.autoCreateSubnetworks && (
+              <ConfirmDialog
+                trigger={
+                  <Button variant="outline">
+                    <Shuffle aria-hidden />
+                    Switch to custom mode
+                  </Button>
+                }
+                title={`Switch ${ref.network} to custom mode?`}
+                description="Its subnetworks stay, but no new region gets one, and you add subnetworks yourself. A custom mode network cannot be switched back."
+                confirmLabel="Switch to custom mode"
+                onConfirm={() => custom.mutateAsync()}
+              />
+            )}
+            <ConfirmDialog
+              trigger={
+                <Button variant="outline">
+                  <Trash2 aria-hidden />
+                  Delete network
+                </Button>
+              }
+              title={`Delete network ${ref.network}?`}
+              description={deleteText(n, mine.length)}
+              confirmLabel="Delete network"
+              onConfirm={() => remove.mutateAsync()}
+            />
+          </div>
+        )}
+      </div>
+      <QueryStatus query={query} />
+      {n && (
+        <>
+          <Card aria-labelledby="network-title">
+            <CardTitle id="network-title">Network</CardTitle>
+            <DetailList
+              label="Network details"
+              rows={[
+                [
+                  'Subnet creation mode',
+                  n.autoCreateSubnetworks
+                    ? 'Auto: a subnetwork in every region'
+                    : 'Custom: subnetworks you add',
+                ],
+                ['MTU', <Mono key="m">{n.mtu ?? 1460}</Mono>],
+                ['Dynamic routing mode', <Mono key="r">{routingMode(n)}</Mono>],
+                ['Description', n.description],
+                ['Created', n.creationTimestamp && <Mono key="c">{n.creationTimestamp}</Mono>],
+              ]}
+            />
+          </Card>
+          <Card aria-labelledby="subnets-title">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle id="subnets-title">Subnetworks</CardTitle>
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/compute/create-subnetwork?network=${encodeURIComponent(ref.network)}`}>
+                  <Plus aria-hidden />
+                  Add subnetwork
+                </Link>
+              </Button>
+            </div>
+            <QueryStatus query={subnets} />
+            {subnets.data && mine.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No subnetworks in this network yet: workloads need one in their region.
+              </p>
+            )}
+            {mine.length > 0 && <SubnetTable subnets={mine} />}
+          </Card>
+          <Card>
+            <CardTitle>Resource</CardTitle>
+            <JsonView value={n} label="Network JSON" />
+          </Card>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** deleteText says what deleting network n does to its subnetworks. */
+function deleteText(n: Network, subnets: number) {
+  if (subnets === 0) return 'The network has no subnetworks.'
+  if (n.autoCreateSubnetworks) return 'Its auto mode subnetworks go with it, unless one is in use.'
+  return 'Delete its subnetworks first: the API refuses to delete a custom mode network that has any.'
+}

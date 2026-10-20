@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { infoQuery, resourceCountsQuery } from '@/api/queries'
 import { QueryStatus } from '@/components/QueryStatus'
 import { Card } from '@/components/ui/card'
 import {
@@ -12,31 +11,19 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-import { CountList } from '../dashboard/ResourceCounts'
-import { NotEnabled } from '../services/ServicePage'
 import { hostOffersQuery } from './api'
+import { VpcHeader } from './VpcLayout'
 
 /**
- * VpcPage is the VPC network view: the compute Service's resource counts
- * and the Offered ports of the Host attachment (ADR 0014), at which VPC
- * workloads reach listeners on the host's 127.0.0.1.
+ * Offers is the Offered ports of the Host attachment (ADR 0014), at which
+ * VPC workloads reach listeners on the host's 127.0.0.1. They are the
+ * Instance's, for every Project.
  */
-export function VpcPage() {
-  const { data: info } = useQuery(infoQuery())
-  const counts = useQuery(resourceCountsQuery())
+export function Offers() {
   const offers = useQuery(hostOffersQuery())
-  if (info && !info.services.includes('compute')) {
-    return <NotEnabled id="compute" enabled={info.services} />
-  }
-  const mine = counts.data?.compute
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold">VPC network</h1>
-      {mine && (
-        <Card>
-          <CountList counts={mine} />
-        </Card>
-      )}
+      <VpcHeader />
       <Card>
         <h2 className="text-lg font-semibold">Offered ports</h2>
         <p className="text-sm text-muted-foreground">

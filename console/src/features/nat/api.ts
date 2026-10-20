@@ -5,6 +5,7 @@ import type { components } from '@/api/admin.gen'
 import { gcpFetch } from '@/api/fetch'
 
 import { lastSeg, relPath, waitOperation, type Operation, type Resource } from '../lb/api'
+import { aggregated, type Subnetwork } from '../vpc/api'
 
 // The Cloud NAT view's reads and writes. Cloud NAT's control plane is
 // compute v1 (FR-NAT-001): Cloud Routers and their nats[], with
@@ -54,12 +55,6 @@ export interface Router extends Resource {
   nats?: RouterNat[]
 }
 
-export interface Subnetwork extends Resource {
-  network?: string
-  ipCidrRange?: string
-  secondaryIpRanges?: { rangeName: string; ipCidrRange: string }[]
-}
-
 export interface Address extends Resource {
   address?: string
   addressType?: string
@@ -92,13 +87,6 @@ export function gatewayOf(path: string | undefined): (RouterRef & { nat: string 
   const m = /^(.*)\/nats\/([^/]+)$/.exec(path ?? '')
   const r = m && routerRefOf(m[1])
   return r ? { ...r, nat: m[2]! } : undefined
-}
-
-type Aggregated<K extends string, T> = { items?: Record<string, Partial<Record<K, T[]>>> }
-
-async function aggregated<K extends string, T>(project: string, coll: K): Promise<T[]> {
-  const res = await gcpFetch<Aggregated<K, T>>(`${API}projects/${enc(project)}/aggregated/${coll}`)
-  return Object.values(res.items ?? {}).flatMap((s) => s[coll] ?? [])
 }
 
 export const listRouters = (project: string) => aggregated<'routers', Router>(project, 'routers')
@@ -277,22 +265,6 @@ export const mappingsQuery = (r: RouterRef, nat: string) =>
     queryFn: () => natMappings(r, nat),
   })
 
-export const subnetsQuery = (project: string) =>
-  queryOptions({
-    queryKey: ['compute', 'nat', 'subnetworks', project],
-    queryFn: () => aggregated<'subnetworks', Subnetwork>(project, 'subnetworks'),
-    enabled: !!project,
-  })
-
-export const networksQuery = (project: string) =>
-  queryOptions({
-    queryKey: ['compute', 'nat', 'networks', project],
-    queryFn: async () =>
-      (await gcpFetch<{ items?: Resource[] }>(`${API}projects/${enc(project)}/global/networks`))
-        .items ?? [],
-    enabled: !!project,
-  })
-
 /** addressesQuery lists a region's external addresses, which can be NAT IPs. */
 export const addressesQuery = (project: string, region: string) =>
   queryOptions({
@@ -313,14 +285,3 @@ export const sinkQuery = () =>
     queryKey: ['nat', 'sink'],
     queryFn: () => unwrap(admin.GET('/_emu/v1/nat/sink')),
   })
-
-// ---- errors ----
-
-/**
- * resourceField is the field a compute error message names, without
- * "resource.": "nats[0].minPortsPerVm" for "Invalid value for field
- * 'resource.nats[0].minPortsPerVm': ...".
- */
-export function resourceField(message: string): string | undefined {
-  return /field '?resource\.([^':]+)'?/.exec(message)?.[1]
-}
