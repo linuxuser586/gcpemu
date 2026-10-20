@@ -179,26 +179,33 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) 
 		return fail(err)
 	}
 	r.ip = ct.IPs[o.Services]
-	r.ctrl = ct.Ports[strconv.Itoa(ControlPort)+"/tcp"]
-	if r.ip == "" || r.ctrl == "" {
+	ctrl := controlAddr(ct)
+	if r.ip == "" || ctrl == "" {
 		return fail(fmt.Errorf("no address on %s or no published control port (%v)", o.Services, ct.Ports))
 	}
+	r.ctrl = ctrl
 	r.lookup = func(ctx context.Context) (string, error) {
 		ct, err := rt.InspectContainer(ctx, id)
 		if err != nil {
 			return "", err
 		}
-		if a := ct.Ports[strconv.Itoa(ControlPort)+"/tcp"]; a != "" {
+		if a := controlAddr(ct); a != "" {
 			return a, nil
 		}
 		return "", fmt.Errorf("no published control port (%v)", ct.Ports)
 	}
+	// Once ready, a reconnect may move r.ctrl: log what was dialed.
 	if err := r.waitReady(ctx, 20*time.Second); err != nil {
 		logs, _ := rt.Logs(context.Background(), id, 20)
-		return fail(fmt.Errorf("control port %s did not answer: %w\n%s", r.ctrl, err, logs))
+		return fail(fmt.Errorf("control port %s did not answer: %w\n%s", ctrl, err, logs))
 	}
-	r.log.Info("VM relay started", "container", name, "control", r.ctrl, "ip", r.ip)
+	r.log.Info("VM relay started", "container", name, "control", ctrl, "ip", r.ip)
 	return r, nil
+}
+
+// controlAddr is the host address ct publishes the control port at, or "".
+func controlAddr(ct runtime.Container) string {
+	return ct.Ports[strconv.Itoa(ControlPort)+"/tcp"]
 }
 
 // joined tracks the subnets the relay can reach (runtime.SetMember).

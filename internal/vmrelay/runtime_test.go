@@ -77,7 +77,7 @@ func TestControlPortMoves(t *testing.T) {
 	}
 	before := ctrl()
 
-	// "build" sorts before "ext" and, like the Build Service's network,
+	// "build" sorts before "ext" and, like a Build's network,
 	// is not internal, so it can take the relay's default route.
 	build := network("build", false)
 	if strings.Compare(build, ext) >= 0 {
