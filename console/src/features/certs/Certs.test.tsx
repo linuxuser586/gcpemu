@@ -602,3 +602,20 @@ it('keeps the dialog open and shows why when rotation fails', async () => {
   )
   expect(screen.getByRole('dialog')).toBeInTheDocument()
 })
+
+it('rotates the Instance CA before a Project is chosen', async () => {
+  const user = userEvent.setup()
+  let rotations = 0
+  server.use(
+    http.post('*/_emu/v1/ca/rotate', () => {
+      rotations++
+      return HttpResponse.json({ status: 'rotated', path: '/data/ca/ca.pem' })
+    }),
+  )
+  renderApp('/certs')
+  expect(await screen.findByText(/Choose a Project/)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Rotate CA' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Rotate the Instance CA?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Rotate CA' }))
+  await waitFor(() => expect(rotations).toBe(1))
+})

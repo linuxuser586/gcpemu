@@ -54,7 +54,8 @@ export function Certificates() {
   const project = view.project ?? ''
   const [text, setText] = useState(view.q ?? '')
   const query = useQuery({ ...certificatesQuery(project), enabled: !!project })
-  if (!project) return <ChooseProject what="see its certificates" />
+  // Rotate CA is the Instance's, so it needs no Project.
+  if (!project) return <ChooseProject what="see its certificates" actions={<RotateCa />} />
   const all = query.data ?? []
   const shown = all.filter(
     (c) => lastSegment(c.name).includes(text) || certDomains(c).some((d) => d.includes(text)),

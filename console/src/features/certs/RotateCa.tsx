@@ -11,7 +11,7 @@ import { rotateCa } from './api'
  * RotateCa replaces the Instance CA after asking: every Google-managed
  * certificate is re-issued from the new root, and clients verify TLS to
  * the emulator again only once they trust it. Unlike `gcpemu ca rotate`,
- * it changes no host trust store.
+ * it changes no Host trust.
  */
 export function RotateCa() {
   const qc = useQueryClient()
