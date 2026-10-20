@@ -2,6 +2,7 @@ package build_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,7 +124,7 @@ func (e *env) await2(parent, id, want string) {
 // retry to the Go client.
 func TestGlobalBuilds(t *testing.T) {
 	e := start(t)
-	op, b := e.create(&cloudbuildpb.Build{Tags: []string{"blue"}, Steps: []*cloudbuildpb.BuildStep{step("", "true")}})
+	op, b := e.create(&cloudbuildpb.Build{Tags: []string{"blue"}, Steps: []*cloudbuildpb.BuildStep{step("", `echo "trigger [$TRIGGER_NAME][$COMMIT_SHA]"`)}})
 	if _, err := op.Wait(e.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +137,11 @@ func TestGlobalBuilds(t *testing.T) {
 	again, err := retry.Wait(e.ctx)
 	if err != nil || again.GetId() == b.GetId() || again.GetStatus() != cloudbuildpb.Build_SUCCESS {
 		t.Fatalf("retry = %v %v, %v", again.GetId(), again.GetStatus(), err)
+	}
+	// A Build that no source or Build trigger provided built-ins for
+	// retries without them.
+	if log := e.log(again); !strings.Contains(log, "trigger [][]") {
+		t.Errorf("retry log:\n%s", log)
 	}
 	for filter, want := range map[string]int{"": 3, `status="SUCCESS"`: 2, `status="FAILURE"`: 1, `tags="blue" AND status="SUCCESS"`: 2, `tags="green"`: 0} {
 		it := e.cb.ListBuilds(e.ctx, &cloudbuildpb.ListBuildsRequest{ProjectId: testProject, Filter: filter})
