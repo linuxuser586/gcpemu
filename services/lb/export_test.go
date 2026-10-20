@@ -140,6 +140,21 @@ func SetSelfRuntime(svc emu.Service, rt func(ctx context.Context) (*runtime.Mana
 	publishedHost = host
 }
 
+// SetContainerized sets --containerized (call it before creating
+// forwarding rules).
+func SetContainerized(svc emu.Service, setting string) {
+	svc.(*Service).env.Config.Containerized = setting
+}
+
+// Publishing reports whether the data plane serves forwarding rules on
+// Published ports.
+func Publishing(svc emu.Service) bool {
+	d := svc.(*Service).dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.pubKnown && d.pub.on
+}
+
 // RetryPublishedNow ends the data plane's backoff after it failed to
 // read the Published ports, as if it had elapsed. The edge's own backoff
 // is left running.

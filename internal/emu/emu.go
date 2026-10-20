@@ -161,6 +161,12 @@ type Env struct {
 	// LANBindWhere locates the Instance for the --*-bind addresses
 	// (LANBind); nil uses runtime.InContainer and Containers.
 	LANBindWhere func(ctx context.Context) lanbind.Where
+	// ContainerizedProbe replaces what Containerized asks, in tests; nil
+	// uses runtime.InContainer and Containers.
+	ContainerizedProbe *ContainerizedProbe
+
+	// containerizedWarned holds the NoteContainerized messages logged.
+	containerizedWarned sync.Map
 
 	mu       sync.RWMutex
 	services map[string]Service

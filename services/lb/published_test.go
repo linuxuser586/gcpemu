@@ -257,6 +257,48 @@ func TestPublishedRuntimeNone(t *testing.T) {
 	}
 }
 
+// Without a runtime, --containerized=false declares a container on the
+// host's network: no rule is served on a published port, and its
+// endpoint is its loopback listener, as on the host (#502).
+func TestPublishedNoRuntimeNotContainerized(t *testing.T) {
+	rt := &fakeRuntime{errs: []error{emu.NoRuntime(errors.New("no runtime found"))}}
+	e, _ := startContainerized(t, "", func(svc emu.Service, bind string) {
+		lb.SetContainerized(svc, "false")
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
+			t.Error("published ports read without a runtime")
+			return "", nil, nil
+		}, bind)
+	})
+	svc, _ := e.inst.Env.Lookup("lb")
+	e.forwardingRule("a", 8080)
+	want := net.JoinHostPort(lb.ListenerAddr(svc, "a"), "8080")
+	e.waitEndpoint(ep("a"), want)
+	e.serves(want)
+	if lb.Publishing(svc) {
+		t.Error("forwarding rules served on published ports")
+	}
+	if h := e.unpublished("a"); h != "" {
+		t.Errorf("rule a: hint %q, want none", h)
+	}
+}
+
+// The runtime's answer wins over --containerized: the emulator's own
+// bridge-network container is a Containerized Instance whatever it says
+// (#502).
+func TestPublishedRuntimeWinsOverSetting(t *testing.T) {
+	rng := freePort(t)
+	rt := &fakeRuntime{}
+	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
+		lb.SetContainerized(svc, "false")
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
+			return "self", map[int]string{rng: "127.0.0.1:40001"}, nil
+		}, bind)
+	})
+	e.forwardingRule("a", 8080)
+	e.waitEndpoint(ep("a"), "127.0.0.1:40001")
+	e.serves(dial(rng))
+}
+
 // freePort returns a TCP port free on 127.0.0.1.
 func freePort(t *testing.T) int {
 	t.Helper()

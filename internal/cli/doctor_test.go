@@ -521,3 +521,30 @@ func TestReportBuildDaemon(t *testing.T) {
 		}
 	}
 }
+
+// doctor warns that the Instance guesses it is a Containerized Instance
+// only with the marker files, no runtime and --containerized=auto (#502).
+func TestCheckContainerized(t *testing.T) {
+	for _, tc := range []struct {
+		setting             string
+		markers, hasRuntime bool
+		warn                bool
+	}{
+		{"auto", true, false, true},
+		{"", true, false, true},
+		{"auto", true, true, false},
+		{"auto", false, false, false},
+		{"false", true, false, false},
+		{"true", true, false, false},
+	} {
+		var out strings.Builder
+		checkContainerized(&out, tc.setting, tc.markers, tc.hasRuntime)
+		got := out.String()
+		if !tc.warn && got != "" {
+			t.Errorf("%+v: output %q, want none", tc, got)
+		}
+		if tc.warn && (!strings.HasPrefix(got, "[WARN] ") || !strings.Contains(got, "--containerized=false") || strings.Count(got, "\n") != 1) {
+			t.Errorf("%+v: output %q, want one [WARN] line naming --containerized=false", tc, got)
+		}
+	}
+}
