@@ -166,7 +166,7 @@ func TestAutomapSubstitutions(t *testing.T) {
 	no, yes := false, true
 	show := `echo "[${PROJECT_ID-unset}][${_FOO-unset}][${TAG_NAME-unset}][${_TAG-unset}]"`
 	op, _ := e.create(&cloudbuildpb.Build{
-		Substitutions: map[string]string{"_FOO": "foo", "_TAG": "${PROJECT_ID}-dev"},
+		Substitutions: map[string]string{"_FOO": "foo", "SHORT_SHA": "abc1234", "_TAG": "${SHORT_SHA}-dev"},
 		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true, DynamicSubstitutions: true},
 		Steps: []*cloudbuildpb.BuildStep{
 			{Name: busybox, Id: "on", Script: show},
@@ -181,10 +181,10 @@ func TestAutomapSubstitutions(t *testing.T) {
 	}
 	log := e.log(b)
 	for _, want := range []string{
-		`Step #0 - "on": [` + testProject + `][foo][][` + testProject + `-dev]`,
+		`Step #0 - "on": [` + testProject + `][foo][][abc1234-dev]`,
 		`Step #1 - "off": [unset][unset][unset][unset]`,
 		`Step #2 - "args": [foo]`,
-		`Step #3 - "env": [other][foo][][` + testProject + `-dev]`,
+		`Step #3 - "env": [other][foo][][abc1234-dev]`,
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
@@ -208,4 +208,9 @@ func TestAutomapSubstitutions(t *testing.T) {
 		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true},
 		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, AutomapSubstitutions: &no, Script: show}},
 	}), `invalid build: key "_FOO" in the substitution data is not matched in the template`)
+	wantInvalid(t, e.createErr(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo"},
+		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"echo", "$_MISSING"}}},
+	}), `invalid build: key in the template "_MISSING" is not matched in the substitution data; substitutions = map[_FOO:foo]`)
 }

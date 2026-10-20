@@ -87,9 +87,9 @@ func builtins(b *cloudbuildpb.Build, location string, provided map[string]string
 // do not use, or a $_KEY they use with no value, is INVALID_ARGUMENT;
 // a key that is neither a user substitution nor a built-in always is.
 // With options.dynamicSubstitutions, ${KEY...} takes bash's parameter
-// expansions, and user values may refer to other substitutions. It
-// returns the value of every substitution, which automapped steps get
-// as environment variables.
+// expansions, and user values may refer to other substitutions. When a
+// step is automapped, it returns the value of every substitution, which
+// such steps get as environment variables.
 func substitute(b *cloudbuildpb.Build, vars map[string]string) (map[string]string, error) {
 	if err := checkSubstitutions(b.GetSubstitutions()); err != nil {
 		return nil, err
@@ -137,6 +137,9 @@ func substitute(b *cloudbuildpb.Build, vars map[string]string) (map[string]strin
 	}
 	for _, f := range fields {
 		*f = expand(*f, dynamic, values)
+	}
+	if !automaps {
+		return nil, nil
 	}
 	return values, nil
 }

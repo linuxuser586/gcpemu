@@ -210,10 +210,6 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provi
 	if err != nil {
 		return nil, err
 	}
-	// The resolved values stay with the Build only for automapped steps.
-	if !anyAutomapped(b) {
-		substs = nil
-	}
 	if err := validate(b); err != nil {
 		return nil, err
 	}
