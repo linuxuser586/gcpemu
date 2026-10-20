@@ -45,8 +45,9 @@ type Gateway struct {
 	hosts      map[string]http.Handler // Host → handler (host mode)
 	grpcOwners map[string]string       // gRPC service name → emu service
 	srv        *http.Server
-	adminToken string // see SetAdminToken
-	gate       gate   // see CloseGate
+	adminToken string   // see SetAdminToken
+	gate       gate     // see CloseGate
+	front      *handoff // see ServeFrontend
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -60,6 +61,7 @@ func New(env *emu.Env, log *reqlog.Log) *Gateway {
 		mux:        http.NewServeMux(),
 		hosts:      map[string]http.Handler{},
 		grpcOwners: map[string]string{},
+		front:      newHandoff(),
 	}
 	g.grpc = grpc.NewServer(g.GRPCOptions("")...)
 	reflection.Register(g.grpc)
@@ -334,6 +336,7 @@ func (g *Gateway) HandleConsole(h http.Handler) {
 
 // ServeHTTP dispatches gRPC, host-mode and path-routed requests.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	markFrontend(r)
 	if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 		g.grpc.ServeHTTP(w, r)
 		return
@@ -535,12 +538,18 @@ func NewServer(h http.Handler, log *slog.Logger) *http.Server {
 	return s
 }
 
-// Serve serves on l until Shutdown.
+// Serve serves on l, and connections from ServeFrontend, until Shutdown.
 func (g *Gateway) Serve(l net.Listener) error {
 	g.mu.Lock()
 	g.srv = NewServer(g, g.env.Log)
+	g.srv.ConnContext = connContext
 	srv := g.srv
 	g.mu.Unlock()
+	go func() {
+		if err := srv.Serve(g.front); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			g.env.Log.Error("API gateway stopped serving the Google front end", "err", err)
+		}
+	}()
 	err := srv.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -553,6 +562,7 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.RLock()
 	srv := g.srv
 	g.mu.RUnlock()
+	g.front.Close()
 	g.grpc.Stop()
 	if srv == nil {
 		return nil

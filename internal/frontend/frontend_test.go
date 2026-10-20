@@ -3,6 +3,7 @@ package frontend_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -83,6 +84,41 @@ func TestFrontendRealClients(t *testing.T) {
 		}
 	})
 
+	t.Run("HTTPSLinks", func(t *testing.T) {
+		// Requests through the Google front end are HTTPS, so the links
+		// services render must be too (#440).
+		loc := startResumable(t, hc, "https://storage.googleapis.com", "fe-bucket")
+		if want := "https://storage.googleapis.com/upload/storage/v1/b/fe-bucket/o?"; !strings.HasPrefix(loc, want) {
+			t.Errorf("resumable Location = %q, want prefix %q", loc, want)
+		}
+		self, media := objectLinks(t, hc, "https://storage.googleapis.com", "fe-bucket", "hello.txt", nil)
+		for _, l := range []string{self, media} {
+			if !strings.HasPrefix(l, "https://storage.googleapis.com/") {
+				t.Errorf("object link = %q, want https://storage.googleapis.com/...", l)
+			}
+		}
+	})
+
+	t.Run("PlainGatewayLinks", func(t *testing.T) {
+		// Emulator-host clients dial the API gateway over plain HTTP
+		// and keep http links; a client-sent X-Forwarded-Proto is honoured
+		// exactly as before, not overridden or widened.
+		gw := inst.GatewayURL()
+		host := strings.TrimPrefix(gw, "http://")
+		loc := startResumable(t, http.DefaultClient, gw, "fe-bucket")
+		if want := "http://" + host + "/upload/storage/v1/b/fe-bucket/o?"; !strings.HasPrefix(loc, want) {
+			t.Errorf("direct resumable Location = %q, want prefix %q", loc, want)
+		}
+		self, _ := objectLinks(t, http.DefaultClient, gw, "fe-bucket", "hello.txt", nil)
+		if !strings.HasPrefix(self, "http://"+host+"/") {
+			t.Errorf("direct selfLink = %q", self)
+		}
+		self, _ = objectLinks(t, http.DefaultClient, gw, "fe-bucket", "hello.txt", http.Header{"X-Forwarded-Proto": {"https"}})
+		if !strings.HasPrefix(self, "https://"+host+"/") {
+			t.Errorf("direct selfLink with X-Forwarded-Proto = %q, want the client's header honoured as before", self)
+		}
+	})
+
 	t.Run("PubSubGRPC", func(t *testing.T) {
 		pc, err := pubsub.NewClient(ctx, "fe-project", option.WithoutAuthentication(),
 			option.WithGRPCDialOption(grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
@@ -133,6 +169,41 @@ func TestFrontendRealClients(t *testing.T) {
 		}
 		c.Close()
 	})
+}
+
+// startResumable starts a resumable upload at base and returns the
+// session URI from Location.
+func startResumable(t *testing.T, hc *http.Client, base, bucket string) string {
+	t.Helper()
+	resp, err := hc.Post(base+"/upload/storage/v1/b/"+bucket+"/o?uploadType=resumable&name=big.bin",
+		"application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("start resumable upload = %d", resp.StatusCode)
+	}
+	return resp.Header.Get("Location")
+}
+
+// objectLinks returns the object's selfLink and mediaLink.
+func objectLinks(t *testing.T, hc *http.Client, base, bucket, object string, h http.Header) (self, media string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, base+"/storage/v1/b/"+bucket+"/o/"+object, nil)
+	for k, v := range h {
+		req.Header[k] = v
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var o struct{ SelfLink, MediaLink string }
+	if err := json.NewDecoder(resp.Body).Decode(&o); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("get object = %d, %v", resp.StatusCode, err)
+	}
+	return o.SelfLink, o.MediaLink
 }
 
 func TestServes(t *testing.T) {
