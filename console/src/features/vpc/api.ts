@@ -14,6 +14,7 @@ import { waitOperation, type Operation, type Resource } from '../lb/api'
 // subnetworks from here.
 
 export type HostOffers = components['schemas']['HostOffers']
+export type ContainerNetwork = components['schemas']['ContainerNetwork']
 
 export interface Network extends Resource {
   autoCreateSubnetworks?: boolean
@@ -158,6 +159,32 @@ export const hostOffersQuery = () =>
     queryKey: ['compute', 'hostOffers'],
     queryFn: async () => (await unwrap(admin.GET('/_emu/v1/host/offers'))).subnetworks,
     refetchInterval: OFFERS_POLL_MS,
+  })
+
+/**
+ * CONTAINER_NETS_POLL_MS: Managed containers join and leave VPC container
+ * networks as other Services (Cloud SQL, GKE) create and delete them,
+ * which the compute events do not cover.
+ */
+const CONTAINER_NETS_POLL_MS = 10_000
+
+/**
+ * containerNetworksQuery lists a Project's VPC container networks, or one
+ * network's. They are the emulator's own, on the admin API only.
+ */
+export const containerNetworksQuery = (project: string, network?: string) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'containerNetworks', project, network ?? ''],
+    queryFn: async () =>
+      (
+        await unwrap(
+          admin.GET('/_emu/v1/vpc/containerNetworks', {
+            params: { query: { project, ...(network ? { network } : {}) } },
+          }),
+        )
+      ).containerNetworks,
+    enabled: !!project,
+    refetchInterval: CONTAINER_NETS_POLL_MS,
   })
 
 // ---- errors ----

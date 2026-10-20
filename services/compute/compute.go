@@ -123,6 +123,7 @@ func (s *Service) Register(r emu.Router) error {
 	r.Mount("servicenetworking", []string{"servicenetworking.googleapis.com"}, s.sn)
 	s.lro.Register(r)
 	s.hostRoutes(r)
+	r.Handle("GET /_emu/v1/vpc/containerNetworks", http.HandlerFunc(s.serveContainerNetworks))
 	return nil
 }
 

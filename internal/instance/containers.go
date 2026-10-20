@@ -35,6 +35,13 @@ type containers struct {
 	disruptedAt  time.Time
 }
 
+// Connected implements emu.ConnectedRuntime.
+func (c *containers) Connected() *runtime.Manager {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.rt
+}
+
 func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

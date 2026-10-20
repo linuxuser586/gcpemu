@@ -12,6 +12,7 @@ import { toast } from '@/lib/toast'
 
 import { relPath } from '../lb/api'
 import { deleteNetwork, networkQuery, subnetsQuery, switchToCustomMode, type Network } from './api'
+import { ContainerNetworkSummary } from './ContainerNetworks'
 import { networkRecipe } from './copy'
 import { isEmulatorDefault, routingMode } from './Networks'
 import { bySubnet, SubnetTable } from './Subnetworks'
@@ -145,6 +146,7 @@ export function NetworkPage() {
             )}
             {mine.length > 0 && <SubnetTable subnets={mine} />}
           </Card>
+          <ContainerNetworkSummary project={ref.project} network={ref.network} />
           <Card>
             <CardTitle>Resource</CardTitle>
             <JsonView value={n} label="Network JSON" />

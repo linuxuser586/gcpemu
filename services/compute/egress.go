@@ -54,6 +54,9 @@ var Images = map[string]string{
 // natSinkPort is the sink's port inside the gateway.
 const natSinkPort = 15001
 
+// natRole is the gateway container's role label.
+const natRole = "nat"
+
 // natAgentName is the in-container agent run by the gateway.
 const natAgentName = "nat-gateway"
 
@@ -243,7 +246,7 @@ func (g *gateway) startLocked(ctx context.Context, rt *runtime.Manager) error {
 			fmt.Sprintf("GCPEMU_NAT_SINK_PORT=%d", natSinkPort),
 			"GCPEMU_NAT_SINK_RESPONSE=" + g.s.env.Config.NATSinkResponse,
 		},
-		Labels:   rt.Labels("compute", g.network, "nat"),
+		Labels:   rt.Labels("compute", g.network, natRole),
 		Hostname: "nat-gateway",
 		CapAdd:   []string{"NET_ADMIN", "NET_RAW"},
 		Sysctls: map[string]string{
