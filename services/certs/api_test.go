@@ -11,12 +11,19 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// createSelfManaged creates a self-managed certificate for names.
+// createSelfManaged creates a global self-managed certificate for names.
 func (e *env) createSelfManaged(id string, ca *testCA, names ...string) *certificatemanagerpb.Certificate {
+	e.t.Helper()
+	return e.createSelfManagedIn(globalLoc, id, ca, names...)
+}
+
+// createSelfManagedIn creates a self-managed certificate for names in the
+// location parent.
+func (e *env) createSelfManagedIn(parent, id string, ca *testCA, names ...string) *certificatemanagerpb.Certificate {
 	e.t.Helper()
 	chain, key := ca.leaf(e.t, x509.ExtKeyUsageServerAuth, names...)
 	op, err := e.cm.CreateCertificate(e.ctx, &certificatemanagerpb.CreateCertificateRequest{
-		Parent: globalLoc, CertificateId: id,
+		Parent: parent, CertificateId: id,
 		Certificate: &certificatemanagerpb.Certificate{
 			Description: "test",
 			Type: &certificatemanagerpb.Certificate_SelfManaged{SelfManaged: &certificatemanagerpb.Certificate_SelfManagedCertificate{
@@ -174,5 +181,57 @@ func TestCertificateMapGRPC(t *testing.T) {
 	}
 	if _, err := e.cm.GetCertificateMap(e.ctx, &certificatemanagerpb.GetCertificateMapRequest{Name: globalLoc + "/certificateMaps/m"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("deleted map: %v", err)
+	}
+}
+
+// A Certificate map entry serves only global certificates: create and patch
+// reject a regional one, checking the location before existence.
+func TestCertificateMapEntryRegionalCertificate(t *testing.T) {
+	e := start(t)
+	ca := newTestCA(t, "test root")
+	regionLoc := "projects/" + testProject + "/locations/us-central1"
+	regional := regionLoc + "/certificates/reg"
+	e.createSelfManagedIn(regionLoc, "reg", ca, "www.example.com")
+	e.createSelfManaged("glob", ca, "www.example.com")
+	op, err := e.cm.CreateCertificateMap(e.ctx, &certificatemanagerpb.CreateCertificateMapRequest{Parent: globalLoc, CertificateMapId: "m", CertificateMap: &certificatemanagerpb.CertificateMap{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.Wait(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantMsg := func(name string) string {
+		return "Certificate " + name + ` must be in location "global" to be used in a certificate map entry.`
+	}
+
+	for _, tc := range []struct{ desc, cert, wantName string }{
+		{"existing regional", regional, regional},
+		{"full resource name", "//certificatemanager.googleapis.com/" + regional, regional},
+		{"missing regional", regionLoc + "/certificates/nope", regionLoc + "/certificates/nope"},
+	} {
+		_, err := e.cm.CreateCertificateMapEntry(e.ctx, &certificatemanagerpb.CreateCertificateMapEntryRequest{
+			Parent: globalLoc + "/certificateMaps/m", CertificateMapEntryId: "bad",
+			CertificateMapEntry: &certificatemanagerpb.CertificateMapEntry{
+				Match:        &certificatemanagerpb.CertificateMapEntry_Hostname{Hostname: "www.example.com"},
+				Certificates: []string{globalLoc + "/certificates/glob", tc.cert},
+			},
+		})
+		if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != wantMsg(tc.wantName) {
+			t.Errorf("create with %s: %v", tc.desc, err)
+		}
+	}
+
+	entry := globalLoc + "/certificateMaps/m/certificateMapEntries/e"
+	e.createEntry("m", "e", "", true, globalLoc+"/certificates/glob")
+	_, err = e.cm.UpdateCertificateMapEntry(e.ctx, &certificatemanagerpb.UpdateCertificateMapEntryRequest{
+		CertificateMapEntry: &certificatemanagerpb.CertificateMapEntry{Name: entry, Certificates: []string{regional}},
+		UpdateMask:          &fieldmaskpb.FieldMask{Paths: []string{"certificates"}},
+	})
+	if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != wantMsg(regional) {
+		t.Fatalf("patch to regional: %v", err)
+	}
+	got, err := e.cm.GetCertificateMapEntry(e.ctx, &certificatemanagerpb.GetCertificateMapEntryRequest{Name: entry})
+	if err != nil || len(got.GetCertificates()) != 1 || got.GetCertificates()[0] != globalLoc+"/certificates/glob" {
+		t.Fatalf("entry after rejected patch: %v %v", got, err)
 	}
 }
