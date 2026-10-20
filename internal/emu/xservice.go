@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
@@ -68,6 +69,22 @@ type Publisher interface {
 	PublishInternal(ctx context.Context, topic string, data []byte, attrs map[string]string) (string, error)
 	// TopicExists reports whether the topic exists.
 	TopicExists(ctx context.Context, topic string) bool
+}
+
+// Subscriber is provided by the "pubsub" service: push subscriptions
+// that another Service owns and serves in process, such as those of
+// Cloud Build's pubsubConfig Build triggers. No IAM checks are made.
+type Subscriber interface {
+	// ServePushHost has h serve, in process, the pushes to
+	// https://host/... instead of sending them over the network.
+	ServePushHost(host string, h http.Handler)
+	// EnsurePushSubscription creates the push subscription name on topic
+	// with endpoint, or points an existing one at them. A topic that does
+	// not exist is NOT_FOUND.
+	EnsurePushSubscription(ctx context.Context, name, topic, endpoint string) error
+	// DeleteSubscriptionInternal deletes a subscription; one that does
+	// not exist is not an error.
+	DeleteSubscriptionInternal(ctx context.Context, name string) error
 }
 
 // ObjectStore is provided by the "gcs" service: Cloud Storage objects for

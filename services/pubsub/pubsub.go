@@ -61,6 +61,11 @@ type Service struct {
 	httpSrv  *http.Server
 	push     *http.Client
 	stopping chan struct{}
+
+	// hosts are the push hosts other Services serve in process
+	// (servicesub.go), guarded by hostsMu. Reset keeps them.
+	hostsMu sync.Mutex
+	hosts   map[string]http.Handler
 }
 
 var (
@@ -71,6 +76,7 @@ var (
 	_ emu.SeedExporter = (*Service)(nil)
 	_ emu.EnvVarer     = (*Service)(nil)
 	_ emu.Publisher    = (*Service)(nil)
+	_ emu.Subscriber   = (*Service)(nil)
 
 	_ emu.ClockObserver = (*Service)(nil)
 )
