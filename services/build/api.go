@@ -170,7 +170,7 @@ func (s *Service) loadStored(r buildRef) (*stored, error) {
 }
 
 // submit validates a Build, stores it QUEUED with the Operation that ends
-// with it, and has the scheduler start it.
+// with it, publishes that, and has the scheduler start it.
 func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*longrunningpb.Operation, error) {
 	if err := validate(in); err != nil {
 		return nil, err
@@ -200,14 +200,19 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 	if err != nil {
 		return nil, err
 	}
+	// mu is held from storing the Build until it is queued, so that its
+	// QUEUED notification goes before any other: neither the scheduler
+	// nor a cancel can change its status until then.
+	s.mu.Lock()
 	err = s.env.Store.Update(func(tx store.Tx) error {
 		return put(tx, &stored{build: b, request: in, op: op.Name})
 	})
 	if err != nil {
+		s.mu.Unlock()
 		s.ops.Finish(op.Name, nil, nil, err)
 		return nil, err
 	}
-	s.mu.Lock()
+	s.notify(b)
 	s.queue = append(s.queue, r)
 	s.mu.Unlock()
 	s.kick()

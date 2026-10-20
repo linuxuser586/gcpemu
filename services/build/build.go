@@ -6,8 +6,9 @@
 // (runner.go). timeout and queueTtl run on the Emulator clock. A Build's
 // source comes from Cloud Storage or a Git URL (source.go). Step logs are
 // appended as they run to log-BUILD_ID.txt in the Build's logsBucket, and
-// kept in memory for /_emu/v1/build/<build name>/log (logs.go). Cloud
-// Build v2 answers UNIMPLEMENTED.
+// kept in memory for /_emu/v1/build/<build name>/log (logs.go). Every
+// status change is published to the Project's cloud-builds topic when it
+// exists (notify.go). Cloud Build v2 answers UNIMPLEMENTED.
 package build
 
 import (

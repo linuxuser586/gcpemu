@@ -148,7 +148,8 @@ func (s *Service) schedule(ctx context.Context) {
 	}
 }
 
-// begin makes a QUEUED Build WORKING and runs it. Callers hold mu.
+// begin makes a QUEUED Build WORKING, publishes that, and runs it.
+// Callers hold mu.
 func (s *Service) begin(ref buildRef) {
 	var b *cloudbuildpb.Build
 	err := s.update(ref, func(st *stored) {
@@ -161,6 +162,7 @@ func (s *Service) begin(ref buildRef) {
 		s.end(ref, outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "The Build could not start: " + err.Error()})
 		return
 	}
+	s.notify(b)
 	ctx, stop := context.WithCancelCause(context.Background())
 	r := &liveBuild{ref: ref, ctx: ctx, stop: stop, done: make(chan struct{}), stepStops: map[int]context.CancelCauseFunc{}}
 	s.live[ref.key()] = r
@@ -208,7 +210,8 @@ type outcome struct {
 	failure *cloudbuildpb.Build_FailureInfo
 }
 
-// end gives a Build its final status, logs it and completes its Operation.
+// end gives a Build its final status, logs and publishes it, and
+// completes its Operation.
 //
 // The log's last line is written to the log object first: gcloud reads the
 // log once more when it sees the Build finished, and stops.
@@ -240,6 +243,7 @@ func (s *Service) end(ref buildRef, o outcome) {
 		s.env.Log.Error("build: end", "build", ref.name(), "err", err)
 		return
 	}
+	s.notify(b)
 	s.ops.Finish(op, &cloudbuildpb.BuildOperationMetadata{Build: b}, b, opError(o.status))
 }
 
