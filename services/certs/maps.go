@@ -79,8 +79,13 @@ func (s *Service) prepareEntry(n resName, res, old obj) error {
 		if cn.Location != "global" {
 			return apierr.InvalidArgument("Certificate %s must be in location \"global\" to be used in a certificate map entry.", cn.name(kCert))
 		}
-		if _, _, err := s.loadKind(kCert, c); err != nil {
+		o, _, err := s.loadKind(kCert, c)
+		if err != nil {
 			return apierr.InvalidArgument("Certificate %s not found.", cn.name(kCert))
+		}
+		// The store drops scope DEFAULT, so only an unset scope qualifies.
+		if str(o["scope"]) != "" {
+			return apierr.InvalidArgument("Certificate: %s has invalid scope.", cn.name(kCert))
 		}
 		certs[i] = cn.name(kCert)
 	}

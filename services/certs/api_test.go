@@ -235,3 +235,84 @@ func TestCertificateMapEntryRegionalCertificate(t *testing.T) {
 		t.Fatalf("entry after rejected patch: %v %v", got, err)
 	}
 }
+
+// A Certificate map entry serves only certificates of scope DEFAULT: create
+// and patch reject the other scopes, after the location and existence checks.
+func TestCertificateMapEntryCertificateScope(t *testing.T) {
+	e := start(t)
+	ca := newTestCA(t, "test root")
+	chain, key := ca.leaf(t, x509.ExtKeyUsageServerAuth, "www.example.com")
+	for id, scope := range map[string]string{"all": "ALL_REGIONS", "edge": "EDGE_CACHE", "client": "CLIENT_AUTH", "def": "DEFAULT", "unset": ""} {
+		body := map[string]any{"selfManaged": map[string]any{"pemCertificate": chain, "pemPrivateKey": key}}
+		if scope != "" {
+			body["scope"] = scope
+		}
+		e.restOp("POST", cmBase+"/certificates?certificateId="+id, body)
+	}
+	op, err := e.cm.CreateCertificateMap(e.ctx, &certificatemanagerpb.CreateCertificateMapRequest{Parent: globalLoc, CertificateMapId: "m", CertificateMap: &certificatemanagerpb.CertificateMap{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.Wait(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	cert := func(id string) string { return globalLoc + "/certificates/" + id }
+	wantMsg := func(id string) string { return "Certificate: " + cert(id) + " has invalid scope." }
+
+	for _, id := range []string{"all", "edge", "client"} {
+		_, err := e.cm.CreateCertificateMapEntry(e.ctx, &certificatemanagerpb.CreateCertificateMapEntryRequest{
+			Parent: globalLoc + "/certificateMaps/m", CertificateMapEntryId: "bad",
+			CertificateMapEntry: &certificatemanagerpb.CertificateMapEntry{
+				Match:        &certificatemanagerpb.CertificateMapEntry_Hostname{Hostname: "www.example.com"},
+				Certificates: []string{cert("unset"), cert(id)},
+			},
+		})
+		if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != wantMsg(id) {
+			t.Errorf("create with %s: %v", id, err)
+		}
+	}
+
+	// The location and existence checks still come first.
+	for _, tc := range []struct{ cert, want string }{
+		{"projects/" + testProject + "/locations/us-central1/certificates/all",
+			"Certificate projects/" + testProject + `/locations/us-central1/certificates/all must be in location "global" to be used in a certificate map entry.`},
+		{cert("nope"), "Certificate " + cert("nope") + " not found."},
+	} {
+		_, err := e.cm.CreateCertificateMapEntry(e.ctx, &certificatemanagerpb.CreateCertificateMapEntryRequest{
+			Parent: globalLoc + "/certificateMaps/m", CertificateMapEntryId: "bad",
+			CertificateMapEntry: &certificatemanagerpb.CertificateMapEntry{
+				Match:        &certificatemanagerpb.CertificateMapEntry_Hostname{Hostname: "www.example.com"},
+				Certificates: []string{tc.cert},
+			},
+		})
+		if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != tc.want {
+			t.Errorf("create with %s: %v", tc.cert, err)
+		}
+	}
+
+	entry := globalLoc + "/certificateMaps/m/certificateMapEntries/e"
+	e.createEntry("m", "e", "", true, cert("unset"), cert("def"))
+	for _, id := range []string{"all", "edge", "client"} {
+		_, err = e.cm.UpdateCertificateMapEntry(e.ctx, &certificatemanagerpb.UpdateCertificateMapEntryRequest{
+			CertificateMapEntry: &certificatemanagerpb.CertificateMapEntry{Name: entry, Certificates: []string{cert("def"), cert(id)}},
+			UpdateMask:          &fieldmaskpb.FieldMask{Paths: []string{"certificates"}},
+		})
+		if st := status.Convert(err); st.Code() != codes.InvalidArgument || st.Message() != wantMsg(id) {
+			t.Errorf("patch with %s: %v", id, err)
+		}
+	}
+	got, err := e.cm.GetCertificateMapEntry(e.ctx, &certificatemanagerpb.GetCertificateMapEntryRequest{Name: entry})
+	if err != nil || len(got.GetCertificates()) != 2 || got.GetCertificates()[0] != cert("unset") || got.GetCertificates()[1] != cert("def") {
+		t.Fatalf("entry after rejected patches: %v %v", got, err)
+	}
+	uop, err := e.cm.UpdateCertificateMapEntry(e.ctx, &certificatemanagerpb.UpdateCertificateMapEntryRequest{
+		CertificateMapEntry: &certificatemanagerpb.CertificateMapEntry{Name: entry, Certificates: []string{cert("def")}},
+		UpdateMask:          &fieldmaskpb.FieldMask{Paths: []string{"certificates"}},
+	})
+	if err != nil {
+		t.Fatalf("patch to DEFAULT: %v", err)
+	}
+	if _, err := uop.Wait(e.ctx); err != nil {
+		t.Fatalf("patch to DEFAULT wait: %v", err)
+	}
+}

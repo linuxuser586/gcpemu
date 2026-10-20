@@ -345,6 +345,33 @@ it('edits an entry’s certificates and labels from the map’s page, with an up
   })
 })
 
+it('offers only global certificates of scope DEFAULT, and keeps the entry’s others', async () => {
+  certs.push(
+    { name: `${G}/certificates/def`, scope: 'DEFAULT' },
+    { name: `${G}/certificates/all-regions`, scope: 'ALL_REGIONS' },
+    { name: `${G}/certificates/edge`, scope: 'EDGE_CACHE' },
+    { name: `${G}/certificates/client`, scope: 'CLIENT_AUTH' },
+  )
+  entries[0]!.certificates = [`${G}/certificates/self`, `${G}/certificates/all-regions`]
+  renderApp(
+    `/certs/locations/global/certificateMaps/main/certificateMapEntries/www/edit?project=${P}`,
+  )
+  const certificates = await screen.findByRole('group', { name: 'Certificates' })
+  await waitFor(() =>
+    expect(
+      within(certificates)
+        .getAllByRole('checkbox')
+        .map((c) => (c as HTMLInputElement).value),
+    ).toEqual([
+      `${G}/certificates/self`,
+      `${G}/certificates/other`,
+      `${G}/certificates/def`,
+      `${G}/certificates/all-regions`,
+    ]),
+  )
+  expect(within(certificates).getByRole('checkbox', { name: /all-regions/ })).toBeChecked()
+})
+
 it('copies a map as gcloud, curl and OpenTofu', async () => {
   const user = userEvent.setup()
   renderApp(`/certs/locations/global/certificateMaps/main?project=${P}`)

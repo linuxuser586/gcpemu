@@ -102,6 +102,53 @@ certs:
 	}
 }
 
+// A seeded Certificate map entry naming a certificate whose scope is not
+// DEFAULT fails the same way create does; scope DEFAULT and no scope seed.
+func TestSeedMapEntryCertificateScope(t *testing.T) {
+	ca := newTestCA(t, "seed CA")
+	web, webKey := ca.leaf(t, x509.ExtKeyUsageServerAuth, "app.example.test")
+	invalid := "Certificate: projects/test-proj/locations/global/certificates/web has invalid scope."
+	for _, tc := range []struct{ scope, want string }{
+		{"ALL_REGIONS", invalid},
+		{"EDGE_CACHE", invalid},
+		{"CLIENT_AUTH", invalid},
+		{"DEFAULT", ""},
+		{"", ""},
+	} {
+		e := start(t)
+		dir := t.TempDir()
+		for f, c := range map[string]string{"web.pem": web, "web-key.pem": webKey} {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte(c), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		scope := ""
+		if tc.scope != "" {
+			scope = ", scope: " + tc.scope
+		}
+		seed := `
+certs:
+  certificates:
+    - {project: test-proj, id: web` + scope + `, selfManaged: {pemCertificateFile: web.pem, pemPrivateKeyFile: web-key.pem}}
+  certificateMaps:
+    - {project: test-proj, id: web}
+  certificateMapEntries:
+    - {project: test-proj, certificateMap: web, id: app, hostname: app.example.test, certificates: [projects/test-proj/locations/global/certificates/web]}
+`
+		path := filepath.Join(dir, "seed.yaml")
+		if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := e.inst.ApplySeed(e.ctx, path)
+		if tc.want == "" && err != nil {
+			t.Errorf("seed with scope %q: %v", tc.scope, err)
+		}
+		if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("seed with scope %q: %v", tc.scope, err)
+		}
+	}
+}
+
 // TestSeedExport exports a seeded Instance, applies the export to the
 // reset Instance and expects the same export back (FR-CORE-013).
 func TestSeedExport(t *testing.T) {

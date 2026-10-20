@@ -41,10 +41,10 @@ import { matchLabel } from './MapPage'
 // Create and edit forms for certificate map entries (FR-LB-004,
 // FR-UI-011), reached from the map's page. An entry serves one hostname
 // (or a wildcard of it), or is the map's PRIMARY entry for every other
-// hostname, with one to four global certificates. Create sends
-// certificateMapEntries.create; edit sends certificateMapEntries.patch
-// with the certificates, labels and description that changed: what it
-// serves cannot change.
+// hostname, with one to four global certificates of scope DEFAULT.
+// Create sends certificateMapEntries.create; edit sends
+// certificateMapEntries.patch with the certificates, labels and
+// description that changed: what it serves cannot change.
 
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj =>
@@ -138,8 +138,9 @@ const entryPatchValues =
   })
 
 /**
- * CertificatesField offers the Project's global certificates, the only
- * ones a map can serve, and any the entry has that are not among them.
+ * CertificatesField offers the Project's global certificates of scope
+ * DEFAULT, the only ones a map can serve, and any the entry has that are
+ * not among them.
  */
 function CertificatesField<V extends { certificates: string[] }>({
   form,
@@ -151,11 +152,13 @@ function CertificatesField<V extends { certificates: string[] }>({
   const f = form as unknown as UseFormReturn<{ certificates: string[] }>
   const query = useQuery({ ...certificatesQuery(project), enabled: !!project })
   const chosen = useWatch({ control: f.control, name: 'certificates' })
-  const global = (query.data ?? []).filter((c) => locationOf(c.name) === 'global')
+  const servable = (query.data ?? []).filter(
+    (c) => locationOf(c.name) === 'global' && (c.scope || 'DEFAULT') === 'DEFAULT',
+  )
   const options = [
-    ...global.map((c) => ({ name: c.name, domains: certDomains(c) })),
+    ...servable.map((c) => ({ name: c.name, domains: certDomains(c) })),
     ...chosen
-      .filter((n) => !global.some((c) => c.name === n))
+      .filter((n) => !servable.some((c) => c.name === n))
       .map((n) => ({ name: n, domains: [] as string[] })),
   ]
   const error = f.formState.errors.certificates?.message
@@ -163,12 +166,14 @@ function CertificatesField<V extends { certificates: string[] }>({
     <fieldset className="flex flex-col gap-1">
       <legend className="text-sm font-medium">Certificates</legend>
       <p className="text-xs text-muted-foreground">
-        Up to {MAX_CERTS} global certificates; the load balancer chooses among them by the
-        client&apos;s key type.
+        Up to {MAX_CERTS} global certificates of scope Default; the load balancer chooses among them
+        by the client&apos;s key type.
       </p>
       <QueryStatus query={query} />
       {query.data && options.length === 0 && (
-        <p className="text-sm text-muted-foreground">No global certificates in this Project yet.</p>
+        <p className="text-sm text-muted-foreground">
+          No global certificates of scope Default in this Project yet.
+        </p>
       )}
       {options.map((c) => (
         <label key={c.name} className="flex items-center gap-2 text-sm">
