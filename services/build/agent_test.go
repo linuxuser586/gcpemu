@@ -64,13 +64,16 @@ func TestDefaultServiceAccount(t *testing.T) {
 
 // Unmodified gcloud and Go client-library steps reach the Instance by
 // real hostname with no Endpoint override, as the Build's service
-// account, and no request of theirs leaves the machine: on a host
-// runtime and with the VM relay forced on.
+// account, and no request of theirs leaves the machine: with the VM
+// relay forced off, which runs only on a host runtime, and forced on.
 func TestClientsReachTheInstance(t *testing.T) {
 	for _, relay := range []string{"0", "1"} {
 		t.Run("relay="+relay, func(t *testing.T) {
 			t.Setenv(vmrelay.Env, relay)
 			e := start(t)
+			if relay == "0" && emutest.VMRuntime(t, e.inst) {
+				t.Skip("the VM relay is forced off on a VM runtime, so the host cannot bind the services network's gateway")
+			}
 			sa := e.serviceAccount("builder")
 			bucket := "clients-" + relay
 			e.upload(bucket, "hello.txt", []byte("hello from gcs"))
