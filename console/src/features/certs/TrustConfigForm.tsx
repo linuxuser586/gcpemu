@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
-import type { ChangeEvent } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import { useFieldArray, useForm, useWatch, type UseFormReturn } from 'react-hook-form'
 import { z } from 'zod'
 
@@ -323,7 +323,10 @@ export function EditTrustConfig() {
   return <EditTrustForm t={query.data} r={ref} />
 }
 
-function EditTrustForm({ t, r }: { t: TrustConfig; r: TrustRef }) {
+function EditTrustForm({ t: live, r }: { t: TrustConfig; r: TrustRef }) {
+  // The trust config as the form read it: a refetch must not move the
+  // baseline or the etag, or a change made since would be overwritten.
+  const [t] = useState(live)
   const navigate = useCarriedNavigate()
   const qc = useQueryClient()
   // The body is the trust config's editable fields, so that JSON shows them all.

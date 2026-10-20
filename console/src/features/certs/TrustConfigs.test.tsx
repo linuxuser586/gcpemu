@@ -195,6 +195,19 @@ it('says when the trust config changed since the edit form read it', async () =>
   ).toBeInTheDocument()
 })
 
+it('keeps the etag the edit form read when the trust config is read again in the background', async () => {
+  const user = userEvent.setup()
+  const { queryClient } = renderApp(`/certs/locations/global/trustConfigs/corp/edit?project=${P}`)
+  await user.type(await screen.findByLabelText('Description'), ' (old)')
+  resources[0]!.etag = 'e-9'
+  resources[0]!.description = 'Changed elsewhere'
+  await queryClient.refetchQueries({ queryKey: ['certs', 'trustConfig'] })
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(
+    await screen.findByText(/The etag "e-1" does not match the current etag/),
+  ).toBeInTheDocument()
+})
+
 it('deletes a trust config once nothing uses it', async () => {
   const user = userEvent.setup()
   const { router } = renderApp(`/certs/locations/global/trustConfigs/corp?project=${P}`)

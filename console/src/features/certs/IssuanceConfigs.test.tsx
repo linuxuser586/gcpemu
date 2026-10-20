@@ -76,7 +76,7 @@ it('lists the Project’s certificate issuance configs of every location', async
   const rows = within(table).getAllByTestId('issuance-config')
   expect(rows).toHaveLength(2)
   expect(rows[0]).toHaveTextContent(/web.*global.*web-pool.*30 days.*ECDSA_P256.*Private web/)
-  expect(rows[1]).toHaveTextContent(/internal.*us-central1.*web-pool.*21 days.*RSA_2048/)
+  expect(rows[1]).toHaveTextContent(/internal.*us-central1.*web-pool.*21 days.*Unspecified/)
   await user.click(within(table).getByRole('link', { name: 'internal' }))
   await waitFor(() =>
     expect(router.state.location.pathname).toBe(

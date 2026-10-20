@@ -21,17 +21,19 @@ import { toast } from '@/lib/toast'
 import { StatusBadge } from '../gke/format'
 import { time } from '../gcs/format'
 import {
+  caPoolOf,
   certificatesQuery,
   certState,
   deleteIssuanceConfig,
   issuanceConfigQuery,
   issuanceName,
+  keyAlgorithmLabel,
+  lifetimeLabel,
   locationOf,
   type IssuanceRef,
 } from './api'
 import { ChooseProject, useIssuanceRef } from './CertsLayout'
 import { issuanceConfigRecipe } from './copy'
-import { caPoolOf, DEFAULT_KEY_ALGORITHM, lifetimeLabel } from './IssuanceConfigs'
 import { CertLink } from './MapPage'
 
 const pairs = (m?: Record<string, string>) => {
@@ -118,7 +120,7 @@ export function IssuanceConfigPage() {
                     ? `${c.rotationWindowPercentage}%`
                     : undefined,
                 ],
-                ['Key algorithm', c.keyAlgorithm ?? DEFAULT_KEY_ALGORITHM],
+                ['Key algorithm', keyAlgorithmLabel(c)],
                 ['Labels', pairs(c.labels)],
                 ['Created', time(c.createTime)],
                 ['Updated', time(c.updateTime)],

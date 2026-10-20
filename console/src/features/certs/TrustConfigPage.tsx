@@ -24,6 +24,7 @@ import {
   lastSegment,
   locationOf,
   trustConfigQuery,
+  trustCount,
   trustName,
   type TrustConfig,
   type TrustRef,
@@ -32,7 +33,6 @@ import { ChooseProject, tlsPath, trustPath, useTrustRef } from './CertsLayout'
 import { trustConfigRecipe } from './copy'
 import { PemSummary } from './PemSummary'
 import { referencedTrustConfig, TLS_KINDS, tlsListQuery, tlsRefOf, type TlsColl } from './tls'
-import { trustCount } from './TrustConfigs'
 
 // The kinds that verify with a trust config.
 const USERS: TlsColl[] = ['serverTlsPolicies', 'backendAuthenticationConfigs']

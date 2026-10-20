@@ -22,11 +22,12 @@ import {
 } from './api'
 import { CommonFields, fieldsSchema } from './CertificateForm'
 import { ChooseProject, issuancePath } from './CertsLayout'
-import { DEFAULT_KEY_ALGORITHM } from './IssuanceConfigs'
 
 // The create form for certificate issuance configs (FR-LB-004,
-// FR-UI-011), checked as the Service checks it, with its messages. A
-// config cannot be changed once created, so there is no edit form.
+// FR-UI-011), checked as the Service checks it, with its messages; the
+// lifetime is entered in days, so the form also checks it is a number.
+// The CA pool, lifetime, rotation window and key algorithm cannot be
+// changed once created, so there is no edit form.
 
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj =>
@@ -225,7 +226,7 @@ export function CreateIssuanceConfig() {
           </Field>
           <Field id="issuance-key" label="Key algorithm">
             <NativeSelect {...fieldAria('issuance-key')} {...form.register('keyAlgorithm')}>
-              <option value="">Default ({DEFAULT_KEY_ALGORITHM})</option>
+              <option value="">Unspecified</option>
               <option value="RSA_2048">RSA_2048</option>
               <option value="ECDSA_P256">ECDSA_P256</option>
             </NativeSelect>

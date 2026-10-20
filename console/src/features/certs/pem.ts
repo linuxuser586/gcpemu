@@ -127,7 +127,8 @@ export function parsePem(pem: string): ParsedPem {
     try {
       der = Uint8Array.from(atob(body!.replace(/\s+/g, '')), (c) => c.charCodeAt(0))
     } catch {
-      return { certs: [], error: 'illegal base64 data' }
+      // Go's pem.Decode skips a block that is not base64, as if it were not there.
+      continue
     }
     try {
       certs.push(certificate(der))

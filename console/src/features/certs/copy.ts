@@ -1,6 +1,7 @@
 import { block, expr, gcloud, keyValues, resource, type Block, type Recipe } from '@/lib/copyAs'
 
 import {
+  caPoolOf,
   lastSegment,
   locationOf,
   type Certificate,
@@ -13,7 +14,8 @@ import {
 import { NS_API, TLS_KINDS, tlsRefOf, type CertificateProvider, type TlsResource } from './tls'
 
 // Copy as (FR-UI-015) for certificates, certificate maps and map
-// entries: gcloud certificate-manager, the certificatemanager/v1 create
+// entries, DNS authorizations, trust configs and certificate issuance
+// configs: gcloud certificate-manager, the certificatemanager/v1 create
 // request and the google_certificate_manager_* resource. The API never returns
 // a self-managed certificate's private key, so each form leaves it to the
 // reader, as the Load Balancer view does for classic certificates.
@@ -255,7 +257,7 @@ export function issuanceConfigRecipe(c: IssuanceConfig, project = projectOf(c.na
   const id = lastSegment(c.name)
   const location = locationOf(c.name) || 'global'
   const loc = location === 'global' ? undefined : location
-  const caPool = c.certificateAuthorityConfig?.certificateAuthorityServiceConfig?.caPool
+  const caPool = caPoolOf(c)
   return {
     gcloud: gcloud(['certificate-manager', 'issuance-configs', 'create', id], {
       project,

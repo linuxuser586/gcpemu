@@ -276,7 +276,7 @@ A Certificate Manager resource that proves control of one domain (and its subdom
 _Avoid_: domain verification, DNS challenge (that is the record, not the resource)
 
 **Certificate issuance config**:
-A Certificate Manager resource that has a CA Service CA pool issue the Google-managed certificates that name it, with their lifetime, rotation window and key algorithm. Nothing about it can be changed once created.
+A Certificate Manager resource that has a CA Service CA pool issue the Google-managed certificates that name it, with their lifetime, rotation window and key algorithm, none of which can be changed once it is created.
 _Avoid_: issuance config (in user-facing text, except where space is short), CA config
 
 **Trust config**:

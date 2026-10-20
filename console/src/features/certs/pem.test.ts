@@ -33,3 +33,11 @@ it('rejects what the Service rejects, with its message', () => {
   ).toMatch(new RegExp(`^Invalid PEM certificate in ${field}: `))
   expect(pemError(field, ROOT_PEM)).toBeUndefined()
 })
+
+it('skips a block that is not base64, as the Service does', () => {
+  const bad = '-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----'
+  expect(parsePem(`${bad}\n${ROOT_PEM}`).certs.map((c) => c.subject)).toEqual([
+    'C=US, O=Example Corp, CN=Example Root CA',
+  ])
+  expect(parsePem(bad).error).toBe('no CERTIFICATE block found.')
+})

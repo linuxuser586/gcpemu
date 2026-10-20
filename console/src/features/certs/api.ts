@@ -246,6 +246,36 @@ export function certState(c: Certificate): string {
 export const certDomains = (c: Certificate) =>
   c.sanDnsnames?.length ? c.sanDnsnames : (c.managed?.domains ?? [])
 
+/** caPoolOf is the CA Service CA pool a certificate issuance config issues from. */
+export const caPoolOf = (c: IssuanceConfig) =>
+  c.certificateAuthorityConfig?.certificateAuthorityServiceConfig?.caPool ?? ''
+
+/**
+ * keyAlgorithmLabel is a certificate issuance config's key algorithm. The
+ * Service applies no default to a config that names none.
+ */
+export const keyAlgorithmLabel = (c: IssuanceConfig) => c.keyAlgorithm || 'Unspecified'
+
+const DAY = 86400
+
+/** lifetimeLabel is a duration such as "2592000s" in days, when it is whole days. */
+export function lifetimeLabel(d?: string): string | undefined {
+  if (!d) return undefined
+  const s = Number(d.replace(/s$/, ''))
+  if (!Number.isFinite(s) || s <= 0 || s % DAY !== 0) return d
+  const days = s / DAY
+  return `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+/** trustCount is how many certificates of one role a trust config holds. */
+export function trustCount(
+  t: TrustConfig,
+  role: 'trustAnchors' | 'intermediateCas' | 'allowlistedCertificates',
+): number {
+  if (role === 'allowlistedCertificates') return t.allowlistedCertificates?.length ?? 0
+  return (t.trustStores ?? []).reduce((n, s) => n + (s[role]?.length ?? 0), 0)
+}
+
 // ---- reads ----
 
 export async function listAll<T>(url: string, field: string): Promise<T[]> {
