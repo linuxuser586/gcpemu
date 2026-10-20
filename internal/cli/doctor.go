@@ -341,7 +341,8 @@ func reportSQLHosts(out io.Writer, body []byte) {
 	}
 	if v.AliasesRefused {
 		fmt.Fprintln(out, "[WARN] the runtime refused a loopback alias, so Cloud SQL instances use only 127.0.0.1 and one at a time serves host clients")
-		fmt.Fprintf(out, "       fix: add loopback aliases on the host (`%s`, from the native binary on macOS) and restart the emulator\n", loopback.InstallHint)
+		fmt.Fprintf(out, "       fix: only a macOS host needs loopback aliases added (`%s`, from the native binary), as Linux and Windows hosts already have them;\n", loopback.InstallHint)
+		fmt.Fprintf(out, "       set %s=true unless the runtime is Docker Desktop, and restart the emulator\n", emuruntime.LoopbackAliasesEnv)
 	}
 	for _, in := range v.Instances {
 		if in.Address == "" {

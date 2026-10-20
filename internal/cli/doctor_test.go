@@ -228,6 +228,13 @@ func TestReportSQLHosts(t *testing.T) {
 		!strings.Contains(got, "sudo gcpemu loopback install") {
 		t.Errorf("output lacks the refusal and its fix:\n%s", got)
 	}
+	// Doctor runs in the container, which can't tell the host OS.
+	got = out.String()
+	for _, want := range []string{"only a macOS host", "Linux and Windows hosts already have them", "GCPEMU_LOOPBACK_ALIASES=true unless the runtime is Docker Desktop"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fix lacks %q:\n%s", want, got)
+		}
+	}
 }
 
 const hostServicesBody = `{"services":[
