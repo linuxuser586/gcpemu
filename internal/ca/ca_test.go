@@ -149,13 +149,13 @@ func TestLoad(t *testing.T) {
 					t.Fatalf("Load: %v", err)
 				}
 				if tt.wantSrc && !c.Certificate().Equal(src.Certificate()) {
-					t.Error("Load did not load the existing root")
+					t.Error("Load did not load the existing Instance CA")
 				}
 				if !tt.wantSrc && c.Certificate().Equal(src.Certificate()) {
-					t.Error("Load reused the src root")
+					t.Error("Load reused the src Instance CA instead of creating one")
 				}
 				if got := readFile(t, c.Path()); !bytes.Equal(got, c.PEM()) {
-					t.Error("ca.pem on disk is not the loaded root")
+					t.Error("ca.pem on disk is not the loaded Instance CA")
 				}
 				return
 			}

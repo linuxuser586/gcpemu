@@ -69,17 +69,16 @@ func Load(dir, instance string) (*CA, error) {
 		}
 		return c, nil
 	case !certOK:
-		return nil, halfPresent(dir, CertFile, KeyFile)
+		return nil, errHalfPresent(dir, CertFile, KeyFile)
 	case !keyOK:
-		return nil, halfPresent(dir, KeyFile, CertFile)
+		return nil, errHalfPresent(dir, KeyFile, CertFile)
 	}
 	if err := c.parse(certPEM, keyPEM); err != nil {
 		return nil, fmt.Errorf("load CA from %s: %w", dir, err)
 	}
 	pub, ok := c.key.Public().(interface{ Equal(crypto.PublicKey) bool })
 	if !ok || !pub.Equal(c.cert.PublicKey) {
-		return nil, fmt.Errorf("%s in %s does not match %s: restore the matching file, or remove both to create a new Instance CA (then run `gcpemu ca install` again)",
-			CertFile, dir, KeyFile)
+		return nil, errMismatch(dir)
 	}
 	return c, nil
 }
@@ -96,9 +95,16 @@ func readCAFile(dir, name string) (b []byte, ok bool, err error) {
 	return b, true, nil
 }
 
-func halfPresent(dir, missing, left string) error {
+// errHalfPresent reports an Instance CA in dir that has only its present file.
+func errHalfPresent(dir, missing, present string) error {
 	return fmt.Errorf("the Instance CA in %s has %s but no %s: restore %s, or remove %s to create a new Instance CA (then run `gcpemu ca install` again)",
-		dir, left, missing, missing, left)
+		dir, present, missing, missing, present)
+}
+
+// errMismatch reports an Instance CA in dir whose files don't belong together.
+func errMismatch(dir string) error {
+	return fmt.Errorf("%s in %s does not match %s: restore the matching file, or remove both to create a new Instance CA (then run `gcpemu ca install` again)",
+		CertFile, dir, KeyFile)
 }
 
 // Rotate replaces the root CA with a new one (`gcpemu ca rotate`). Leaf
