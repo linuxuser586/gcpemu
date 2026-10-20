@@ -29,8 +29,15 @@ func startOn(t *testing.T, l net.Listener, a *relayAgent, targets map[string]str
 	t.Helper()
 	go a.serve(l)
 	t.Cleanup(func() { l.Close() })
+	return connect(t, l.Addr().String(), nil, targets)
+}
+
+// connect returns the emulator's side connected to an agent at ctrl,
+// which it finds again with lookup when not nil.
+func connect(t *testing.T, ctrl string, lookup func(context.Context) (string, error), targets map[string]string) *Relay {
+	t.Helper()
 	r := &Relay{
-		log: slog.New(slog.DiscardHandler), ctrl: l.Addr().String(), ip: "127.0.0.1",
+		log: slog.New(slog.DiscardHandler), ctrl: ctrl, lookup: lookup, ip: "127.0.0.1",
 		target:  func(name string) string { return targets[name] },
 		nets:    map[string]netip.Prefix{"lo": netip.MustParsePrefix("127.0.0.0/8")},
 		streams: map[string]int64{},
@@ -651,5 +658,141 @@ func TestInwardEndpointDown(t *testing.T) {
 		if n := r.Streams()[name]; n != 0 {
 			t.Fatalf("streams to %s = %d, want 0", name, n)
 		}
+	}
+}
+
+// published forwards a host port to target, as a runtime publishes a
+// container port; unpublish closes the port and the connections on it.
+func published(t *testing.T, target string) (addr string, unpublish func()) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			u, err := net.Dial("tcp", target)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			mu.Lock()
+			conns = append(conns, c, u)
+			mu.Unlock()
+			go func() { _, _ = io.Copy(u, c); u.Close() }()
+			go func() { _, _ = io.Copy(c, u); c.Close() }()
+		}
+	}()
+	unpublish = sync.OnceFunc(func() {
+		l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	t.Cleanup(unpublish)
+	return l.Addr().String(), unpublish
+}
+
+// TestReconnectMovedControlPort: when the runtime publishes the control
+// port on a new host port (a network the relay joins becomes its gateway
+// endpoint, #555), the emulator finds the new port and reconnects, so
+// dials and inward connections work again.
+func TestReconnectMovedControlPort(t *testing.T) {
+	gw := echoTCP(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, unpublish := published(t, l.Addr().String())
+	var mu sync.Mutex
+	current := first
+	go newRelayAgent().serve(l)
+	t.Cleanup(func() { l.Close() })
+	r := connect(t, first, func(context.Context) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return current, nil
+	}, map[string]string{"gateway": gw})
+	ctx := context.Background()
+	addr, err := r.Listen(ctx, "gateway", "127.0.0.1:0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	moved, _ := published(t, l.Addr().String())
+	mu.Lock()
+	current = moved
+	mu.Unlock()
+	unpublish()
+
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTrip(t, c, "moved"); got != "re:moved" {
+		t.Fatalf("inward after the port moved: %q", got)
+	}
+	d, err := r.DialContext(ctx, "tcp", gw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTrip(t, d, "dial"); got != "re:dial" {
+		t.Fatalf("dial after the port moved: %q", got)
+	}
+	if got := r.Control(); got != moved {
+		t.Fatalf("Control() = %s, want %s", got, moved)
+	}
+}
+
+// TestReconnectLookupFails: while the relay's control port cannot be
+// found, reconnect keeps backing off, and recovers once it can be.
+func TestReconnectLookupFails(t *testing.T) {
+	gw := echoTCP(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newRelayAgent()
+	go a.serve(l)
+	t.Cleanup(func() { l.Close() })
+	ctrl := l.Addr().String()
+	var mu sync.Mutex
+	gone, lookups := false, 0
+	r := connect(t, ctrl, func(context.Context) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		lookups++
+		if gone {
+			return "", errors.New("no such container")
+		}
+		return ctrl, nil
+	}, map[string]string{"gateway": gw})
+	mu.Lock()
+	gone, lookups = true, 0
+	mu.Unlock()
+	dropAgentSession(t, r, a)
+	time.Sleep(500 * time.Millisecond)
+	mu.Lock()
+	n := lookups
+	gone = false
+	mu.Unlock()
+	// Backing off from 50ms: a handful of tries in half a second, not a spin.
+	if n == 0 || n > 10 {
+		t.Fatalf("%d lookups in 500ms, want a few", n)
+	}
+	d, err := r.DialContext(context.Background(), "tcp", gw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTrip(t, d, "back"); got != "re:back" {
+		t.Fatalf("dial after the lookup recovered: %q", got)
 	}
 }
