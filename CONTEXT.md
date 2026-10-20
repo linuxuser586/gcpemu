@@ -268,7 +268,7 @@ A Certificate Manager resource that a global target proxy serves TLS from, throu
 _Avoid_: cert map, map (unqualified)
 
 **Certificate map entry**:
-One rule of a Certificate map: a hostname, or a wildcard of it one label deep, and the one to four global certificates that serve it. A Certificate map has at most one entry per hostname.
+One rule of a Certificate map: a hostname, or a wildcard of it one label deep, and the one to four global certificates of scope `DEFAULT` that serve it. A Certificate map has at most one entry per hostname.
 _Avoid_: map entry, entry (unqualified)
 
 **Primary entry**:
