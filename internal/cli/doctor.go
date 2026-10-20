@@ -126,10 +126,10 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 
 			caPath := filepath.Join(dir, ca.CertFile)
 			if pemBytes, err := os.ReadFile(caPath); err == nil {
-				fmt.Fprintf(out, "[ok  ] emulator CA present at %s\n", caPath)
-				checkCATrust(out, cfg.Instance, pemBytes, inContainer)
+				fmt.Fprintf(out, "[ok  ] Instance CA present at %s\n", caPath)
+				checkCATrust(out, cfg.Instance, pemBytes, inContainer, socketTarget(det.Endpoint))
 			} else {
-				fmt.Fprintln(out, "[--  ] emulator CA not created yet (created on first start)")
+				fmt.Fprintln(out, "[--  ] Instance CA not created yet (created on first start)")
 			}
 
 			checkForeignCreds(out, report)
@@ -547,12 +547,13 @@ func checkDNSUDP(out io.Writer, report func(bool, string, string), host, port st
 
 // checkCATrust reports where the CA is trusted: the OS store, then each
 // browser (NSS) database on Linux, which browsers read instead of the OS
-// store. Missing trust is a note, not a failure, since only HTTPS to
-// load balancers and host mode need it. In a container (inContainer, the
-// marker files), even on the host's network (#564), trust is the host's,
-// which the container cannot see, so it notes the commands that trust the
-// CA there (#496).
-func checkCATrust(out io.Writer, instance string, pemBytes []byte, inContainer bool) {
+// store, then the container runtimes (checkRuntimeTrust, for the runtime
+// at endpoint). Missing trust is a note, not a failure, since only HTTPS
+// to load balancers, host mode and image pulls from the emulated registry
+// need it. In a container (inContainer, the marker files), even on the
+// host's network (#564), trust is the host's, which the container cannot
+// see, so it notes the commands that trust the CA there (#496).
+func checkCATrust(out io.Writer, instance string, pemBytes []byte, inContainer bool, endpoint string) {
 	if inContainer {
 		fmt.Fprintln(out, "[--  ] Instance CA trust is the host's in a container: on the host, not in the container, run "+
 			"`docker exec CONTAINER /gcpemu ca print > gcpemu-ca.pem` and `gcpemu --instance container ca install --cert gcpemu-ca.pem` "+
@@ -561,20 +562,26 @@ func checkCATrust(out io.Writer, instance string, pemBytes []byte, inContainer b
 	}
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
-		fmt.Fprintln(out, "[--  ] emulator CA unreadable; skipping trust checks")
+		fmt.Fprintln(out, "[--  ] Instance CA unreadable; skipping trust checks")
 		return
 	}
 	trusted := func(ok bool, where string) {
 		if ok {
-			fmt.Fprintf(out, "[ok  ] emulator CA trusted by %s\n", where)
+			fmt.Fprintf(out, "[ok  ] Instance CA trusted by %s\n", where)
 		} else {
-			fmt.Fprintf(out, "[--  ] emulator CA not trusted by %s (run `gcpemu ca install`)\n", where)
+			fmt.Fprintf(out, "[--  ] Instance CA not trusted by %s (run `gcpemu ca install`)\n", where)
 		}
 	}
 	trusted(osTrustsCA(block.Bytes), "the OS trust store")
-	if runtime.GOOS != "linux" {
-		return
+	if runtime.GOOS == "linux" {
+		checkNSSTrust(out, instance, trusted)
 	}
+	checkRuntimeTrust(out, hostTrust(), instance, pemBytes, endpoint)
+}
+
+// checkNSSTrust reports, through trusted, whether each browser (NSS)
+// database holds the CA.
+func checkNSSTrust(out io.Writer, instance string, trusted func(ok bool, where string)) {
 	home, _ := nssUser(os.Geteuid() == 0)
 	var dbs []nssDB
 	for _, d := range nssDBs(home) {
@@ -592,6 +599,102 @@ func checkCATrust(out io.Writer, instance string, pemBytes []byte, inContainer b
 	for _, d := range dbs {
 		trusted(nssHas(d.dir, nssNickname(instance)), d.what+" ("+d.dir+")")
 	}
+}
+
+// checkRuntimeTrust reports whether the container runtimes trust the
+// Instance CA for image pulls from the emulated registry hosts, as `ca
+// install` sets up (containerTrustPlan), on a Linux host; then, for the
+// VM runtime at endpoint, whose store doctor cannot see, the advice `ca
+// install` prints for it (#28). Nothing is run inside the VM.
+func checkRuntimeTrust(out io.Writer, h trustHost, instance string, pemBytes []byte, endpoint string) {
+	if h.goos == "linux" {
+		checkLinuxRuntimeTrust(out, h, instance, pemBytes)
+	}
+	v := vmTrustCommand(endpoint, instance, &certFile{pem: pemBytes}, true)
+	if v.what == "" {
+		return
+	}
+	fmt.Fprintf(out, "[--  ] cannot check whether %s trusts the Instance CA for image pulls: its VM is out of reach\n", v.what)
+	writeVMTrust(out, v, true, false)
+}
+
+// checkLinuxRuntimeTrust reports Docker's trust (h.etc's docker exists)
+// when each registry host's certs.d holds gcpemu-INSTANCE.crt matching
+// the CA, and containerd's (h.etc's containerd exists) when each host's
+// hosts.toml names the shared CA file and that file matches; a
+// hosts.toml gcpemu did not write, which `ca install` skips, gets the
+// manual fix by name.
+func checkLinuxRuntimeTrust(out io.Writer, h trustHost, instance string, pemBytes []byte) {
+	etc := h.etc
+	if etc == "" {
+		etc = "/etc"
+	}
+	hosts := registryHosts()
+	file := "gcpemu-" + instance + ".crt"
+	if h.isDir(filepath.Join(etc, "docker")) {
+		missing := 0
+		for _, host := range hosts {
+			if !sameCert(filepath.Join(etc, "docker", "certs.d", host, file), pemBytes) {
+				missing++
+			}
+		}
+		if missing == 0 {
+			fmt.Fprintf(out, "[ok  ] Instance CA trusted by Docker for %d registry hosts\n", len(hosts))
+		} else {
+			fmt.Fprintf(out, "[--  ] Instance CA not trusted by Docker for %d of %d registry hosts (run `gcpemu ca install`)\n", missing, len(hosts))
+		}
+	}
+	if h.isDir(filepath.Join(etc, "containerd")) {
+		shared := etc + "/gcpemu/" + file
+		sharedOK := sameCert(shared, pemBytes)
+		missing, needsInstall := 0, !sharedOK
+		var manual []string
+		for _, host := range hosts {
+			name := filepath.Join(etc, "containerd", "certs.d", host, "hosts.toml")
+			b, err := os.ReadFile(name)
+			namesShared := err == nil && bytes.Contains(b, []byte(`"`+shared+`"`))
+			if sharedOK && namesShared {
+				continue
+			}
+			missing++
+			if err == nil && !namesShared && !gcpemuWrote(b) {
+				manual = append(manual, name)
+			} else {
+				needsInstall = true
+			}
+		}
+		if missing == 0 {
+			fmt.Fprintf(out, "[ok  ] Instance CA trusted by containerd for %d registry hosts\n", len(hosts))
+		} else {
+			var fixes []string
+			if needsInstall {
+				fixes = append(fixes, "run `gcpemu ca install`")
+			}
+			if len(manual) > 0 {
+				fixes = append(fixes, "add `ca = \""+shared+"\"` to "+strings.Join(manual, ", ")+", which `gcpemu ca install` does not change")
+			}
+			fmt.Fprintf(out, "[--  ] Instance CA not trusted by containerd for %d of %d registry hosts (%s)\n", missing, len(hosts), strings.Join(fixes, "; "))
+		}
+	}
+}
+
+// gcpemuWrote reports whether a containerd hosts.toml carries the marker
+// comment `ca install` writes, so that `ca install` replaces it.
+func gcpemuWrote(toml []byte) bool {
+	for _, l := range strings.Split(string(toml), "\n") {
+		if strings.HasPrefix(l, "# written by gcpemu") {
+			return true
+		}
+	}
+	return false
+}
+
+// sameCert reports whether the file name holds the PEM certificate
+// pemBytes. Surrounding whitespace is ignored: `ca install` writes the
+// trimmed PEM plus a newline through a heredoc, whatever pemBytes ends with.
+func sameCert(name string, pemBytes []byte) bool {
+	b, err := os.ReadFile(name)
+	return err == nil && bytes.Equal(bytes.TrimSpace(b), bytes.TrimSpace(pemBytes))
 }
 
 // systemBundles are the CA bundles update-ca-certificates and
