@@ -187,9 +187,6 @@ func TestHostMode(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Host mode is Linux-only")
 	}
-	if os.Getenv("GCPEMU_VM_RELAY") != "" {
-		t.Skip("Host mode stops answering once a Build starts on the VM relay (#555)")
-	}
 	if _, err := emuruntime.Detect(); err != nil {
 		t.Skip("Host mode needs a container runtime")
 	}

@@ -96,9 +96,13 @@ type Relay struct {
 	target func(string) string
 	id     string
 	ip     string // on the services network
-	ctrl   string // the control port on the host
+	// lookup finds the control port's current address on the host: the
+	// runtime moves it when a network the relay joins becomes its gateway
+	// endpoint (#555). nil keeps ctrl.
+	lookup func(ctx context.Context) (string, error)
 
 	mu      sync.Mutex
+	ctrl    string // the control port on the host
 	sess    *yamux.Session
 	nets    map[string]netip.Prefix // joined network → subnet
 	closed  bool
@@ -175,16 +179,33 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) 
 		return fail(err)
 	}
 	r.ip = ct.IPs[o.Services]
-	r.ctrl = ct.Ports[strconv.Itoa(ControlPort)+"/tcp"]
-	if r.ip == "" || r.ctrl == "" {
+	ctrl := controlAddr(ct)
+	if r.ip == "" || ctrl == "" {
 		return fail(fmt.Errorf("no address on %s or no published control port (%v)", o.Services, ct.Ports))
 	}
+	r.ctrl = ctrl
+	r.lookup = func(ctx context.Context) (string, error) {
+		ct, err := rt.InspectContainer(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if a := controlAddr(ct); a != "" {
+			return a, nil
+		}
+		return "", fmt.Errorf("no published control port (%v)", ct.Ports)
+	}
+	// Once ready, a reconnect may move r.ctrl: log what was dialed.
 	if err := r.waitReady(ctx, 20*time.Second); err != nil {
 		logs, _ := rt.Logs(context.Background(), id, 20)
-		return fail(fmt.Errorf("control port %s did not answer: %w\n%s", r.ctrl, err, logs))
+		return fail(fmt.Errorf("control port %s did not answer: %w\n%s", ctrl, err, logs))
 	}
-	r.log.Info("VM relay started", "container", name, "control", r.ctrl, "ip", r.ip)
+	r.log.Info("VM relay started", "container", name, "control", ctrl, "ip", r.ip)
 	return r, nil
+}
+
+// controlAddr is the host address ct publishes the control port at, or "".
+func controlAddr(ct runtime.Container) string {
+	return ct.Ports[strconv.Itoa(ControlPort)+"/tcp"]
 }
 
 // joined tracks the subnets the relay can reach (runtime.SetMember).
@@ -232,6 +253,13 @@ func (r *Relay) ping(ctx context.Context) error {
 
 // IP is the relay's address on the services network.
 func (r *Relay) IP() string { return r.ip }
+
+// Control is the control port's current address on the host.
+func (r *Relay) Control() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ctrl
+}
 
 // ID is the relay container's ID.
 func (r *Relay) ID() string { return r.id }
@@ -415,22 +443,46 @@ func (r *Relay) reconnect() {
 	r.mu.Unlock()
 	for delay := 50 * time.Millisecond; ; delay = min(2*delay, 2*time.Second) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := r.ping(ctx)
+		err := r.refreshControl(ctx)
+		if err == nil {
+			err = r.ping(ctx)
+		}
 		cancel()
 		r.mu.Lock()
+		ctrl := r.ctrl
 		if r.closed || err == nil && !r.sess.IsClosed() {
 			r.reconnecting = false
 			r.mu.Unlock()
 			if err == nil {
-				r.log.Info("VM relay reconnected", "control", r.ctrl)
+				r.log.Info("VM relay reconnected", "control", ctrl)
 			}
 			return
 		}
 		r.mu.Unlock()
-		r.log.Debug("VM relay reconnect failed", "control", r.ctrl, "err", err)
+		r.log.Debug("VM relay reconnect failed", "control", ctrl, "err", err)
 		r.dropSession()
 		time.Sleep(delay)
 	}
+}
+
+// refreshControl asks the runtime where the control port is now
+// published, so the next session dials there.
+func (r *Relay) refreshControl(ctx context.Context) error {
+	if r.lookup == nil {
+		return nil
+	}
+	a, err := r.lookup(ctx)
+	if err != nil {
+		return fmt.Errorf("find the control port: %w", err)
+	}
+	r.mu.Lock()
+	was := r.ctrl
+	r.ctrl = a
+	r.mu.Unlock()
+	if a != was {
+		r.log.Info("VM relay control port moved", "was", was, "now", a)
+	}
+	return nil
 }
 
 // inbound connects a stream the relay opened to the named endpoint. It
