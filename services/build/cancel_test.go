@@ -14,7 +14,9 @@ import (
 )
 
 // stopAt runs stop, once, when a Build reaches the checkpoint at, and
-// holds the Build there until stop has stopped it.
+// holds the Build there until stop has stopped it. The test does not
+// finish, or close its client, until stop has returned (#591): the
+// Build can end before stop's RPC is answered.
 func (e *env) stopAt(at string, stop func()) {
 	e.t.Helper()
 	svc, ok := e.inst.Internal().Env.Lookup("build")
@@ -22,11 +24,22 @@ func (e *env) stopAt(at string, stop func()) {
 		e.t.Fatal("no build Service")
 	}
 	var fired atomic.Bool
+	stopped := make(chan struct{})
+	// Registered after startWith's cb.Close, so it runs first. Claiming
+	// fired keeps stop from starting once the test is over.
+	e.t.Cleanup(func() {
+		if !fired.CompareAndSwap(false, true) {
+			<-stopped
+		}
+	})
 	build.SetCheckpoint(svc, func(ctx context.Context, _, point string) {
 		if point != at || !fired.CompareAndSwap(false, true) {
 			return
 		}
-		go stop()
+		go func() {
+			defer close(stopped)
+			stop()
+		}()
 		select {
 		case <-ctx.Done():
 		case <-time.After(time.Minute):
