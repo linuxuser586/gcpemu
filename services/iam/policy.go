@@ -173,7 +173,8 @@ func (s *Service) validateMemberExists(tx store.Tx, member string) error {
 }
 
 // isServiceAgent reports whether email is a Google-managed service agent
-// (service-NUMBER@gs-project-accounts.iam.gserviceaccount.com,
+// (NUMBER@cloudbuild.gserviceaccount.com,
+// service-NUMBER@gs-project-accounts.iam.gserviceaccount.com,
 // service-NUMBER@gcp-sa-SERVICE.iam.gserviceaccount.com, ...). They live
 // in Google's projects, always exist and are bound in user policies, e.g.
 // the Cloud Storage agent publishing bucket notifications.
@@ -181,6 +182,9 @@ func isServiceAgent(email string) bool {
 	local, dom, _ := strings.Cut(email, "@")
 	p := strings.TrimSuffix(dom, ".iam.gserviceaccount.com")
 	if p == "gs-project-accounts" || strings.HasPrefix(p, "gcp-sa-") {
+		return true
+	}
+	if legacyCloudBuildRE.MatchString(email) {
 		return true
 	}
 	n, ok := strings.CutPrefix(local, "service-")

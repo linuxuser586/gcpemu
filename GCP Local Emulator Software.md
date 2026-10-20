@@ -620,7 +620,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 | Pub/Sub | — | Delivery, ordering, DLQ, filters, push, exactly-once | Message storage policy, CMEK |
 | Cloud DNS | DNS server | Zones, record sets, changes | DNSSEC signing, anycast name servers |
 | IAM | — | Policies, roles, tokens, impersonation, metadata server | Org policy, recommender, audit logs as a separate API |
-| Cloud Build | Build steps, Docker daemon | Builds API, Build triggers, substitutions, secrets, logs in Cloud Storage, `cloud-builds` notifications | Machine type, disk size, worker pools, logging mode, SCM-event triggers. Unlike GCP, Builds share one image cache (ADR 0016) |
+| Cloud Build | Build steps, Docker daemon | Builds API, Build triggers, substitutions, secrets, logs in Cloud Storage, `cloud-builds` notifications | Machine type, disk size, worker pools, logging mode, SCM-event triggers. Unlike GCP, Builds share one image cache (ADR 0016), and steps reach the metadata server at the Build agent's address (`GCE_METADATA_HOST`), not 169.254.169.254 |
 | Secret Manager | — | Secrets, versions, aliases, expiry, delayed destruction, event notifications, managed rotation of Cloud SQL credentials | Replication policy, CMEK, the secret's own identity (`policy_member`) |
 
 ### 10.3 Out of scope for v1.0
