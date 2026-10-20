@@ -28,8 +28,8 @@ docker build --build-arg TARGETARCH=amd64 -t gcpemu:check -f Dockerfile dist && 
 The release job signs `SHA256SUMS` with keyless cosign (`SHA256SUMS.sigstore.json`), writes an
 SPDX SBOM for each binary (`gcpemu-<os>-<arch>.spdx.json`), and records SLSA provenance and the
 SBOM as GitHub attestations for each binary, all before it publishes anything. If any of those
-steps fails, there is no GitHub release and the major tag doesn't move. Fix the cause and release
-it under a new patch tag.
+steps fails, there is no GitHub release and the major tag doesn't move. Re-run the workflow once
+the cause is fixed, or, if the fix needs a code change, release it under a new patch tag.
 
 The image job signs the pushed manifest list by digest, in Docker Hub and in GHCR, right after the
 push. If signing fails, the tags are already pushed but unsigned, and `cosign verify` fails for

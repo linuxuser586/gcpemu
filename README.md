@@ -894,7 +894,7 @@ env:
 
 ### Verifying a release
 
-Each release is signed with keyless cosign by its release workflow. `SHA256SUMS.sigstore.json`
+Each release is a signed release: its release workflow signs it with keyless cosign. `SHA256SUMS.sigstore.json`
 signs `SHA256SUMS`, which covers every binary. Each binary also has an SPDX SBOM
 (`gcpemu-<os>-<arch>.spdx.json`) and SLSA provenance, recorded as GitHub attestations. With
 [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and the
@@ -920,7 +920,9 @@ cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/linuxuser586/gcpemu:X.Y.Z
 ```
 
-See "Signing" in [docs/release.md](docs/release.md) for what happens when a signing step fails.
+A release whose signing fails is never published. If signing the image fails, its tags are
+already pushed but unsigned, and `cosign verify` fails for them until the maintainer re-runs the
+image job. See "Signing" in [docs/release.md](docs/release.md).
 
 ### Reference stack (SRS 11.2)
 

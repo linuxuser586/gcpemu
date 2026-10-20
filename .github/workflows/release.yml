@@ -63,6 +63,8 @@ jobs:
       - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/gcpemu-*
+      # One per binary: keep these in step with the platforms in the
+      # Taskfile's cross task.
       - uses: actions/attest-sbom@v4
         with:
           subject-path: dist/gcpemu-linux-amd64
