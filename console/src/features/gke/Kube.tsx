@@ -1,7 +1,6 @@
 import { useQueries, useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { ScrollText } from 'lucide-react'
 import { useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import { errorMessage } from '@/api/errors'
 import { endpointsQuery } from '@/api/queries'
@@ -18,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { useViewState } from '@/lib/viewState'
 
 import {
@@ -89,7 +89,7 @@ function NameFilter({
 /** NamespaceSelect sets ?namespace=, listing the cluster's namespaces. */
 function NamespaceSelect() {
   const ref = useClusterRef()
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const namespaces = useQuery(kubeQuery<KubeList<KubeNamespace>>(ref, '/api/v1/namespaces'))
   const current = search.get('namespace') ?? ''
   const names = namespaces.data?.items.map((n) => n.metadata.name) ?? []
@@ -277,7 +277,7 @@ function firstError(queries: UseQueryResult[]) {
 export function Workloads() {
   const ref = useClusterRef()
   const c = useCluster()
-  const [search] = useSearchParams()
+  const [search] = useLatestSearchParams()
   const namespace = search.get('namespace') ?? undefined
   const [text, setText] = useNameFilter()
   const queries = useQueries({
@@ -358,7 +358,7 @@ export function Workloads() {
 export function Pods() {
   const ref = useClusterRef()
   const c = useCluster()
-  const [search] = useSearchParams()
+  const [search] = useLatestSearchParams()
   const namespace = search.get('namespace') ?? undefined
   const [text, setText] = useNameFilter()
   const query = useQuery(
@@ -459,7 +459,7 @@ function externalAddrs(
 export function Services() {
   const ref = useClusterRef()
   const c = useCluster()
-  const [search] = useSearchParams()
+  const [search] = useLatestSearchParams()
   const namespace = search.get('namespace') ?? undefined
   const [text, setText] = useNameFilter()
   const query = useQuery(

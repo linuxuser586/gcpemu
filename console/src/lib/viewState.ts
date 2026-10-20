@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { useSearchParams } from 'react-router'
+
+import { useLatestSearchParams } from './latestSearchParams'
 
 // Shareable view state lives in the URL so that every view has a deep link
 // (FR-UI-005). Instance-wide views ignore it but keep it, so that it
@@ -19,7 +20,7 @@ export function viewParams(search: URLSearchParams): URLSearchParams {
 }
 
 export function useViewState(): [ViewState, (patch: ViewState) => void] {
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const state: ViewState = {}
   for (const k of VIEW_PARAMS) {
     const v = search.get(k)

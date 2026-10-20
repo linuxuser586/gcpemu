@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Pause, Play } from 'lucide-react'
 import { Fragment, useId, useState } from 'react'
-import { useSearchParams } from 'react-router'
 
 import type { RequestEntry } from '@/api/admin'
 import { requestsQuery } from '@/api/queries'
@@ -20,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { useViewState } from '@/lib/viewState'
 
 import { lastSeg } from '../lb/api'
@@ -124,7 +124,7 @@ export function TranslationLogPage() {
  */
 export function TranslationLog({ project, gateway }: { project: string; gateway?: string }) {
   const id = useId()
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   // The inputs lead the URL, which follows each keystroke.
   const [f, setF] = useState<Filters>({
     src: search.get('src') ?? '',

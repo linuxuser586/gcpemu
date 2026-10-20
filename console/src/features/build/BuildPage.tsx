@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Ban, RotateCcw } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { useParams } from 'react-router'
 
 import { Link, useCarriedNavigate } from '@/components/Link'
 import { QueryStatus } from '@/components/QueryStatus'
@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -159,7 +160,7 @@ function Details({ b }: { b: Build }) {
 
 /** Steps lists a Build's steps and shows the log of all of them or of one. */
 function Steps({ b }: { b: Build }) {
-  const [search, setSearch] = useSearchParams()
+  const [search, setSearch] = useLatestSearchParams()
   const steps = b.steps ?? []
   const raw = search.get('step')
   const step =

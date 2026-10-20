@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm, useWatch, type UseFormReturn } from 'react-hook-form'
-import { useParams, useSearchParams } from 'react-router'
+import { useParams } from 'react-router'
 import { z } from 'zod'
 
 import { useCarriedNavigate } from '@/components/Link'
@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import { formatLabels, parseLabels } from '@/lib/labels'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 
 import {
@@ -490,7 +491,7 @@ function SubscriptionFields({
 
 export function CreateSubscription() {
   const project = useProject()
-  const [search] = useSearchParams()
+  const [search] = useLatestSearchParams()
   const navigate = useCarriedNavigate()
   const qc = useQueryClient()
   const topics = useQuery({ ...topicsQuery(project), enabled: !!project })

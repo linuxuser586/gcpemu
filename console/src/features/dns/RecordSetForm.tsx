@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm, useWatch, type UseFormReturn } from 'react-hook-form'
-import { useParams, useSearchParams } from 'react-router'
+import { useParams } from 'react-router'
 import { z } from 'zod'
 
 import { errorMessage } from '@/api/errors'
@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
+import { useLatestSearchParams } from '@/lib/latestSearchParams'
 import { toast } from '@/lib/toast'
 
 import {
@@ -314,7 +315,7 @@ function RecordSetEditor({
 export function CreateRecordSet() {
   const zone = useZone()
   const r = useZoneRef()
-  const [search] = useSearchParams()
+  const [search] = useLatestSearchParams()
   const name = search.get('name')
   const prefill: ResourceRecordSet | undefined = name
     ? {
