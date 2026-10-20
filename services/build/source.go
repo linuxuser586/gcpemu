@@ -247,11 +247,11 @@ func (s *Service) fetchGit(ctx context.Context, rt *runtime.Manager, r *liveBuil
 }
 
 // withFetcher runs fn with a container of spec that has the Build's
-// /workspace mounted, removing it afterwards.
+// /workspace and builder home mounted, removing it afterwards.
 func (s *Service) withFetcher(ctx context.Context, rt *runtime.Manager, b *cloudbuildpb.Build, vols buildVolumes, spec runtime.ContainerSpec, fn func(id string) error) error {
 	spec.Name = rt.Name("build", b.GetId(), "fetch")
 	spec.Labels = rt.Labels("build", b.GetName(), "fetch")
-	spec.Mounts = []runtime.Mount{{Type: "volume", Source: vols[workspace], Target: workspace}}
+	spec.Mounts = []runtime.Mount{{Type: "volume", Source: vols[workspace], Target: workspace}, {Type: "volume", Source: vols[home], Target: home}}
 	// As with a step, the container is created even when the Build is
 	// stopped meanwhile, so that its cleanup finds it.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)

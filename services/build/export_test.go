@@ -14,3 +14,9 @@ import (
 func SetCheckpoint(svc emu.Service, f func(ctx context.Context, id, at string)) {
 	svc.(*Service).checkpoint = f
 }
+
+// SetUnprivileged makes the Build daemon start without privileges, as on
+// a container runtime that refuses them.
+func SetUnprivileged(svc emu.Service) {
+	svc.(*Service).unprivileged = true
+}

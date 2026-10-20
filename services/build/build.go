@@ -9,7 +9,10 @@
 // kept in memory for /_emu/v1/build/<build name>/log (logs.go). Steps
 // act as the Build's service account (serviceaccount.go) and reach the
 // Instance by real hostname through the Build agent (agent.go,
-// agentctl.go). Every status change is published to the Project's
+// agentctl.go), and build, run and push images with the Build daemon at
+// /var/run/docker.sock (daemon.go, credentials.go). Once the steps
+// succeed, images are pushed and artifacts.objects uploaded (results.go).
+// Every status change is published to the Project's
 // cloud-builds topic when it exists (notify.go). Cloud Build v2 answers
 // UNIMPLEMENTED.
 package build
@@ -66,6 +69,15 @@ type Service struct {
 	// hosts lists the Google front end's hostnames.
 	hosts func() []string
 
+	// daemonMu serializes starting the Build daemon (daemon.go), whose
+	// container is daemonID; daemonErr is why it last failed to start.
+	daemonMu  sync.Mutex
+	daemonID  string
+	daemonErr error
+	// unprivileged, set by the tests, starts the Build daemon without
+	// privileges, as a runtime refusing them would.
+	unprivileged bool
+
 	// stepsMu guards steps, the Build of each running step by address.
 	stepsMu sync.Mutex
 	steps   map[string]buildRef
@@ -100,8 +112,8 @@ func New(env *emu.Env) emu.Service {
 
 func (s *Service) Name() string { return "build" }
 
-// Register installs the gRPC service, the REST surface and the log
-// endpoint. The Build Operations are not listed with the Instance's other
+// Register installs the gRPC service, the REST surface, the log endpoint
+// and the Build daemon's Admin API (daemon.go). The Build Operations are not listed with the Instance's other
 // Operations: a State snapshot waits for those to finish, but must be
 // possible while a Build runs.
 func (s *Service) Register(r emu.Router) error {
@@ -112,6 +124,8 @@ func (s *Service) Register(r emu.Router) error {
 	s.ops.Register(r)
 	r.Mount("cloudbuild", []string{apiHost}, s.restHandler())
 	r.Handle("GET /_emu/v1/build/projects/{project}/locations/{location}/builds/{id}/log", http.HandlerFunc(s.serveLog))
+	r.Handle("GET /_emu/v1/build/daemon", http.HandlerFunc(s.serveDaemon))
+	r.Handle("POST /_emu/v1/build/daemon/prune", http.HandlerFunc(s.servePrune))
 	return nil
 }
 

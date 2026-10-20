@@ -103,6 +103,39 @@ func (s *Service) appendOnce(ctx context.Context, bucket, name, contentType stri
 	return err
 }
 
+// WriteObject implements emu.ObjectStore.
+func (s *Service) WriteObject(ctx context.Context, bucket, name, contentType string, r io.Reader) (int64, []byte, error) {
+	if err := s.running(); err != nil {
+		return 0, nil, err
+	}
+	if !validObjectName(name) {
+		return 0, nil, errInvalid("The specified object name is not valid.")
+	}
+	if err := s.env.Store.View(func(tx store.Tx) error {
+		_, err := loadBucket(tx, bucket)
+		return err
+	}); err != nil {
+		return 0, nil, err
+	}
+	bw, err := s.blobs.newWriter()
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, err := bw.ReadFrom(r); err != nil {
+		bw.abort()
+		return 0, nil, err
+	}
+	info, err := bw.commit()
+	if err != nil {
+		return 0, nil, err
+	}
+	rec, _, err := s.commitObject(system(ctx), &writeReq{bucket: bucket, meta: &storage.Object{Name: name, ContentType: contentType}, blob: info})
+	if err != nil {
+		return 0, nil, err
+	}
+	return rec.Object.Generation, info.MD5, nil
+}
+
 // copyBlob copies blob id into w.
 func (s *Service) copyBlob(w *blobWriter, id string) error {
 	f, err := s.blobs.open(id)

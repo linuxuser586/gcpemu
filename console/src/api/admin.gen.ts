@@ -711,6 +711,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/build/daemon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Build daemon's state and image cache size (build service; Web console, gcpemu doctor).
+         * @description The Build daemon (ADR 0016) starts with the first Build; until then, and while it is down, running is false and cacheBytes 0. A runtime that refused its privileged container is reported with privilegedRefused, and every Build fails until that changes.
+         */
+        get: operations["buildDaemon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/build/daemon/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prune the Build daemon's image cache (build service; Web console).
+         * @description Removes the daemon's stopped containers, unused images and volumes, and build cache, starting the daemon first if it is not running. Builds share the cache, so the next Build of each image builds and pulls its layers again.
+         */
+        post: operations["pruneBuildDaemon"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/sql/hosts": {
         parameters: {
             query?: never;
@@ -1201,6 +1241,18 @@ export interface components {
             natPort?: number;
             /** @description The first line the offline sink received. */
             request?: string;
+        };
+        BuildDaemon: {
+            running: boolean;
+            /**
+             * Format: int64
+             * @description Size of the daemon's image and layer cache while it runs.
+             */
+            cacheBytes: number;
+            /** @description Why the daemon last failed to start. */
+            error?: string;
+            /** @description The container runtime refused the daemon's privileged container. */
+            privilegedRefused: boolean;
         };
         NatSink: {
             enabled: boolean;
@@ -2334,6 +2386,56 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+        };
+    };
+    buildDaemon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Build daemon. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildDaemon"];
+                };
+            };
+        };
+    };
+    pruneBuildDaemon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What pruning freed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: int64 */
+                        reclaimedBytes: number;
+                        /**
+                         * Format: int64
+                         * @description The cache's size now.
+                         */
+                        cacheBytes: number;
+                    };
+                };
+            };
+            500: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     sqlHosts: {

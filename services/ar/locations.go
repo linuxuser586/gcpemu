@@ -75,6 +75,10 @@ func checkLocation(loc string) error {
 	return apierr.InvalidArgument("Invalid location: %s", loc).WithReason("artifactregistry.googleapis.com", "INVALID_LOCATION")
 }
 
+// Locations returns every Artifact Registry location, sorted; each has
+// the Docker host LOCATION-docker.pkg.dev.
+func Locations() []string { return locationNames() }
+
 func locationNames() []string {
 	out := make([]string, 0, len(arLocations))
 	for k := range arLocations {

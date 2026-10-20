@@ -47,6 +47,8 @@ func (f *stepFailure) Error() string { return f.o.detail }
 // ranToEnd reports whether the Build ran to its own end: setup completed,
 // and every step ended on its own or a step's failure ended the Build.
 // Otherwise the Build was stopped, and its stop's cause decides its status.
+// Once every step has ended, the Build's images and artifacts are
+// published.
 func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) (o outcome, ranToEnd bool) {
 	s.reach(r.ctx, b, "setup")
 	rt, err := s.env.Containers.Runtime(r.ctx)
@@ -60,6 +62,13 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) (o outcome, ranT
 	network, err := s.network(r.ctx, rt)
 	if err != nil {
 		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Creating the Build network: " + err.Error()}, false
+	}
+	daemon, err := s.buildDaemon(r.ctx, rt, network)
+	if err != nil {
+		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Starting the Build daemon: " + err.Error()}, false
+	}
+	if err := s.writeCredentials(r.ctx, rt, b, vols); err != nil {
+		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Writing the Build's credentials: " + err.Error()}, false
 	}
 	if err := s.fetchSource(r.ctx, rt, r, b, vols, network.name); err != nil {
 		var f *stepFailure
@@ -122,6 +131,12 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) (o outcome, ranT
 	// Every step ended on its own, though the Build's stop came first.
 	if f := late.Load(); f != nil {
 		return f.o, true
+	}
+	if err := s.publish(r.ctx, rt, r, b, vols, daemon); err != nil {
+		if errors.As(err, &f) {
+			return f.o, true
+		}
+		return outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}, false
 	}
 	return outcome{status: cloudbuildpb.Build_SUCCESS}, true
 }
@@ -343,8 +358,9 @@ func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Sta
 
 // stepSpec is the container of step i: its image, entrypoint and args or
 // script, env (the Build's options first), dir under the source's, the
-// Build's volumes and the Build network, labelled as the Build's so
-// cleanup finds it. The Build agent is its resolver, and the variables
+// Build's volumes, the Build daemon's socket and the Build network,
+// labelled as the Build's so cleanup finds it. The Build agent is its
+// resolver, and the variables
 // that point clients at the agent come before the Build's own.
 func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network buildNet) runtime.ContainerSpec {
 	st := b.GetSteps()[i]
@@ -356,7 +372,7 @@ func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vo
 		Env:        append(env, st.GetEnv()...),
 		Labels:     rt.Labels("build", b.GetName(), "step"),
 		WorkingDir: path.Join(sourceDir(b), st.GetDir()),
-		Mounts:     vols.mounts(b, st),
+		Mounts:     append(vols.mounts(b, st), runtime.Mount{Type: "volume", Source: daemonVolume(rt, "run"), Target: stepRun}),
 		Networks:   []runtime.Attachment{{Network: network.name}},
 		DNS:        []string{network.agent},
 		ExtraHosts: hosts,
