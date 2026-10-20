@@ -562,7 +562,9 @@ it only when it starts, so `ca install` and `ca uninstall` tell you to restart i
 adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
 which needs no administrator rights. Windows shows a security dialog to confirm the change, and
 another for `gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
-databases, and `gcpemu doctor` reports where it is trusted. Or trust it per shell with
+databases, and `gcpemu doctor` reports where it is trusted. The Web console's Certificate Manager
+view rotates a running Instance's CA too (Rotate CA), but changes no trust store: run
+`gcpemu ca install` afterwards. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
 holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator
 CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the host, use `curl

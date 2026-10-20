@@ -535,3 +535,70 @@ it('edits labels and description only, with an updateMask', async () => {
   expect(second.search.get('updateMask')).toBe('description')
   expect(second.body).toEqual({ description: '' })
 })
+
+it('asks before rotating the Instance CA, and Cancel rotates nothing', async () => {
+  const user = userEvent.setup()
+  let rotations = 0
+  server.use(
+    http.post('*/_emu/v1/ca/rotate', () => {
+      rotations++
+      return HttpResponse.json({ status: 'rotated', path: '/data/ca/ca.pem' })
+    }),
+  )
+  renderApp(`/certs?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Rotate CA' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Rotate the Instance CA?' })
+  expect(dialog).toHaveTextContent(/every Project of the Instance/)
+  expect(dialog).toHaveTextContent(/re-issues every Google-managed certificate/)
+  expect(dialog).toHaveTextContent(/Self-managed certificates are left as they are/)
+  expect(dialog).toHaveTextContent(/trust the new CA/)
+  expect(dialog).toHaveTextContent('gcpemu ca install')
+  expect(dialog).toHaveTextContent('gcpemu doctor')
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(rotations).toBe(0)
+})
+
+it('rotates the Instance CA, then reads the re-issued certificates again and says so', async () => {
+  const user = userEvent.setup()
+  server.use(
+    http.post('*/_emu/v1/ca/rotate', () => {
+      // The Service re-issues each managed certificate before it answers.
+      const c = certs.find((x) => x.name.endsWith('/managed'))!
+      c.expireTime = '2101-06-01T00:00:00Z'
+      return HttpResponse.json({ status: 'rotated', path: '/data/ca/ca.pem' })
+    }),
+  )
+  renderApp(`/certs?project=${P}`)
+  const table = await screen.findByRole('table', { name: 'Certificates' })
+  expect(within(table).getAllByTestId('certificate')[1]).not.toHaveTextContent('2101')
+  await user.click(screen.getByRole('button', { name: 'Rotate CA' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Rotate the Instance CA?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Rotate CA' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  const done = await screen.findByText(
+    'Rotated the Instance CA and re-issued the Google-managed certificates. Trust the new CA at /data/ca/ca.pem.',
+  )
+  expect(done.closest('[role]')).toHaveAttribute('role', 'status')
+  await waitFor(() =>
+    expect(within(table).getAllByTestId('certificate')[1]).toHaveTextContent('2101'),
+  )
+})
+
+it('keeps the dialog open and shows why when rotation fails', async () => {
+  const user = userEvent.setup()
+  server.use(
+    http.post('*/_emu/v1/ca/rotate', () =>
+      err(412, 'FAILED_PRECONDITION', 'The instance has no CA.'),
+    ),
+  )
+  renderApp(`/certs?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Rotate CA' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Rotate the Instance CA?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Rotate CA' }))
+  // The open dialog hides the rest of the page, the toast too.
+  expect(await screen.findByRole('alert', { hidden: true })).toHaveTextContent(
+    'The instance has no CA.',
+  )
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+})
