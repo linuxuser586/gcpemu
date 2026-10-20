@@ -111,7 +111,7 @@ func leafDER(t *testing.T) []byte {
 
 // --cert takes exactly one PEM CERTIFICATE block holding a CA certificate;
 // anything else fails with an error naming the problem.
-func TestReadCertFlagErrors(t *testing.T) {
+func TestReadCertFileErrors(t *testing.T) {
 	c, _ := testCA(t)
 	dir := t.TempDir()
 	key, _ := os.ReadFile(filepath.Join(filepath.Dir(c.Path()), "ca-key.pem"))
@@ -143,7 +143,7 @@ func TestReadCertFlagErrors(t *testing.T) {
 
 // --cert - reads stdin; a step that needs a path gets a temporary file,
 // which cleanup removes, or on a dry run a placeholder.
-func TestReadCertFlagStdin(t *testing.T) {
+func TestReadCertFileStdin(t *testing.T) {
 	c, _ := testCA(t)
 	f, err := readCertFile("-", bytes.NewReader(c.PEM()))
 	if err != nil {
