@@ -32,6 +32,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -333,12 +334,28 @@ func (in *Instance) Start(ctx context.Context) error {
 		}
 	}
 	in.startGFELAN()
+	in.warnContainerBind(ctx)
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
 	}
 	in.startHostNames()
 	in.Env.Log.Info("gcpemu started", "instance", in.Config.Instance, "id", in.ID, "gateway", in.Env.Endpoints.Get("gateway"), "dir", in.Dir)
 	return nil
+}
+
+// warnContainerBind warns, in a Containerized Instance on a bridge
+// network, that the --*-bind addresses set reach only container networks
+// (#497, ADR 0011).
+func (in *Instance) warnContainerBind(ctx context.Context) {
+	var flags []string
+	for _, b := range in.Config.LANBinds() {
+		if len(b.Addrs) > 0 {
+			flags = append(flags, b.Flag)
+		}
+	}
+	if len(flags) > 0 && in.Env.LANBind(ctx) == lanbind.Bridge {
+		in.Env.Log.Warn(lanbind.Warning(flags))
+	}
 }
 
 // mountConsole serves the Web console on the gateway unless it is turned

@@ -491,12 +491,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("--port %d: a port without a name must be 0 (every listener picks a free port)", p)
 		}
 	}
-	for _, b := range []struct {
-		flag  string
-		addrs []string
-	}{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}} {
-		flag := b.flag
-		for _, a := range b.addrs {
+	for _, b := range c.LANBinds() {
+		flag := b.Flag
+		for _, a := range b.Addrs {
 			ip := net.ParseIP(a)
 			if ip == nil {
 				return fmt.Errorf("invalid --%s %q (want an IP address of this host)", flag, a)
@@ -594,3 +591,15 @@ func ResolveServices(sel []string) []string {
 
 // ApplyFlags overlays the fields of flags whose Go field names are in changed.
 func (c *Config) ApplyFlags(flags *Config, changed map[string]bool) { c.overlay(flags, changed) }
+
+// LANBind is one of the --lb-bind, --gke-bind, --ar-bind and --gfe-bind
+// flags (Flag, without "--") and its addresses.
+type LANBind struct {
+	Flag  string
+	Addrs []string
+}
+
+// LANBinds lists the four --*-bind flags, set or not, in that order.
+func (c *Config) LANBinds() []LANBind {
+	return []LANBind{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}}
+}

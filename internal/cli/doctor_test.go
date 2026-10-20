@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -407,13 +408,15 @@ func TestCheckCATrust(t *testing.T) {
 // An --lb-bind address that is not local is checked against the
 // container's addresses in a Containerized Instance, whose fix lists them,
 // since the image has no `ip` (#493), and against the host's otherwise.
+// On a bridge network the fix also says how to reach the LAN (#497).
 func TestCheckLANBindAddress(t *testing.T) {
 	for _, tc := range []struct {
-		inContainer     bool
-		what, fixPrefix string
+		inContainer, bridge bool
+		what, fixPrefix     string
 	}{
-		{true, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
-		{false, "--lb-bind 203.0.113.7 is an address of this host", "pick one from " + listAddrsCmd(runtime.GOOS)},
+		{true, true, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
+		{true, false, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
+		{false, false, "--lb-bind 203.0.113.7 is an address of this host", "pick one from " + listAddrsCmd(runtime.GOOS)},
 	} {
 		var whats, fixes []string
 		failed := false
@@ -423,7 +426,10 @@ func TestCheckLANBindAddress(t *testing.T) {
 				whats, fixes = append(whats, what), append(fixes, fix)
 			}
 		}
-		checkLANBind(io.Discard, report, &config.Config{LBBind: []string{"203.0.113.7"}}, false, false, false, tc.inContainer)
+		checkLANBind(io.Discard, report, &config.Config{LBBind: []string{"203.0.113.7"}}, false, false, false, tc.inContainer, tc.bridge)
+		if got := len(fixes) == 1 && strings.Contains(fixes[0], lanbind.Fix); got != tc.bridge {
+			t.Errorf("inContainer=%v bridge=%v: fix %q names the LAN fix: %v", tc.inContainer, tc.bridge, fixes[0], got)
+		}
 		if !failed || len(whats) != 1 || whats[0] != tc.what || !strings.HasPrefix(fixes[0], tc.fixPrefix) {
 			t.Errorf("inContainer=%v: failed=%v %q %q, want %q %q...", tc.inContainer, failed, whats, fixes, tc.what, tc.fixPrefix)
 		}

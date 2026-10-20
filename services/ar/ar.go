@@ -154,7 +154,7 @@ func (s *Service) Start(ctx context.Context) error {
 	srv := gateway.NewServer(s.withRegistryAuth(h), s.env.Log)
 	srv.ConnState = s.conns.track
 	lanH := s.lanHandler(h)
-	lan := s.startLAN(l.Addr().(*net.TCPAddr).Port, lanH)
+	lan := s.startLAN(ctx, l.Addr().(*net.TCPAddr).Port, lanH)
 	s.mu.Lock()
 	if s.bgCtx.Err() != nil {
 		s.bgCtx, s.bgCancel = context.WithCancel(context.Background())

@@ -24,6 +24,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
@@ -157,6 +158,9 @@ type Env struct {
 	// RequestLog records data-plane requests in the instance's request log
 	// (FR-CORE-061); nil-safe for callers that check it.
 	RequestLog *reqlog.Log
+	// LANBindWhere locates the Instance for the --*-bind addresses
+	// (LANBind); nil uses runtime.InContainer and Containers.
+	LANBindWhere func(ctx context.Context) lanbind.Where
 
 	mu       sync.RWMutex
 	services map[string]Service

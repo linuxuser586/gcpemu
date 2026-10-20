@@ -575,7 +575,7 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 		}
 		_, apiPort = netplane.HostPort(hostAPI)
 	}
-	lanPort := s.serveLAN(d, key, contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name), rec.Int.LANPort, net.JoinHostPort(dial, "443"))
+	lanPort := s.serveLAN(ctx, d, key, contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name), rec.Int.LANPort, net.JoinHostPort(dial, "443"))
 	if err := s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		rec.Int.ServerIP, rec.Int.ExternalIP, rec.Int.APIHostPort, rec.Int.LANPort = ip, extIP, apiPort, lanPort
 		rec.Int.HostLB = hostLB
