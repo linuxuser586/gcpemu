@@ -61,7 +61,9 @@ func (e *env) pull() []buildEvent {
 			out = append(out, buildEvent{attrs: m.Message.Attributes, build: b})
 			acks = append(acks, m.AckID)
 		}
-		e.rest("POST", "/pubsub/v1/projects/"+testProject+"/subscriptions/builds:acknowledge", map[string]any{"ackIds": acks}, nil)
+		if c := e.rest("POST", "/pubsub/v1/projects/"+testProject+"/subscriptions/builds:acknowledge", map[string]any{"ackIds": acks}, nil); c != 200 {
+			e.t.Fatalf("acknowledge: %d", c)
+		}
 	}
 }
 
