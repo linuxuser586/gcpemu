@@ -18,7 +18,7 @@ import (
 // yet, and failed once it is in ERROR or STOPPING.
 func TestClusterWaitCondition(t *testing.T) {
 	inst := emutest.Start(t, []string{"gke"})
-	svc, _ := inst.Env.Lookup("gke")
+	svc, _ := inst.Internal().Env.Lookup("gke")
 	for name, st := range map[string]containerpb.Cluster_Status{
 		"up": containerpb.Cluster_RUNNING, "fixing": containerpb.Cluster_RECONCILING, "new": containerpb.Cluster_PROVISIONING,
 		"broken": containerpb.Cluster_ERROR, "going": containerpb.Cluster_STOPPING,

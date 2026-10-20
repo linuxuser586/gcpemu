@@ -36,6 +36,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     strategy:
+      fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
