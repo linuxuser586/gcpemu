@@ -542,7 +542,7 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | NFR-REL-001 | No data loss in a Persistent Instance (`--data-dir`) on SIGKILL for acknowledged writes (GCS objects, Pub/Sub publishes, control-plane mutations). | M |
-| NFR-REL-002 | `--deterministic` makes IDs, generated names, timestamps (from a fake clock) and Operation ordering reproducible run to run, giving a Deterministic Instance. | S |
+| NFR-REL-002 | `--deterministic` makes IDs, generated names, timestamps (from a fake clock that moves 1 ms per API request, ADR 0020) and Operation ordering reproducible run to run, giving a Deterministic Instance, for a client that sends one API request at a time. Console and admin traffic does not affect it; container-backed Operations and configured Operation latency are outside it. | S |
 | NFR-REL-003 | A failed service does not take down others; it reports not-ready with a reason. | M |
 | NFR-REL-004 | 24 h soak with continuous traffic shows no unbounded memory growth. | S |
 
