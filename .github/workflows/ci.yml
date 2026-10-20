@@ -182,8 +182,9 @@ jobs:
           name: playwright-report
           path: console/playwright-report
 
-  # SRS 11.2: v1.0 is accepted when the reference stack runs green on both
-  # architectures within 10 minutes (the test enforces the budget).
+  # SRS 11.2: v1.0 is accepted when the Reference stack runs green on both
+  # architectures within 10 minutes (the test enforces the budget). The same
+  # task runs the Containerized Instance tests (#494).
   e2e:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -208,7 +209,7 @@ jobs:
           path: ~/.cache/gcpemu-e2e
           key: gcpemu-e2e-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
           restore-keys: gcpemu-e2e-${{ runner.arch }}-
-      - name: Reference stack (SRS 11.2)
+      - name: Reference stack (SRS 11.2) and Containerized Instance tests
         run: task e2e
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
