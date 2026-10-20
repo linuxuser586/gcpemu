@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
@@ -99,11 +100,12 @@ func (f *Frontend) StartLAN(lan LAN) {
 	}
 	srv := f.lanServer(&lanHandler{f: f, lan: lan})
 	var relayed []string
+	containerized := sync.OnceValue(f.relayContainerized)
 	for _, ip := range binds {
 		addr := net.JoinHostPort(ip, strconv.Itoa(port))
 		l, err := f.listen("tcp", addr)
 		if err != nil {
-			if !set && f.relayable(err) {
+			if !set && f.relayable(err, containerized) {
 				relayed = append(relayed, addr)
 				continue
 			}

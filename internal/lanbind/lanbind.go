@@ -28,8 +28,10 @@ const (
 	// Bridge: a Containerized Instance whose runtime confirms its own
 	// container, so not on the host's network.
 	Bridge
-	// Unconfirmed: a container whose runtime can't confirm it (no
-	// socket, or not reachable yet); it may be on the host's network.
+	// Unconfirmed: a Containerized Instance by --containerized or the
+	// marker files alone, its runtime not confirming it (no socket, not
+	// reachable yet, or not finding its container); it may be on the
+	// host's network.
 	Unconfirmed
 )
 
@@ -43,19 +45,19 @@ func (w Where) String() string {
 	return "host"
 }
 
-// Locate decides Where: inContainer is runtime.InContainer, hasRuntime
-// whether the runtime was reached, and self its self container ("" on the
-// host and on the host's network).
-func Locate(inContainer, hasRuntime bool, self string) Where {
+// Locate decides Where: containerized is whether the Instance is a
+// Containerized Instance (runtime.DecideContainerized), and confirmed
+// whether the runtime found the emulator's own container, so that the
+// decision is its answer. Bridge needs that answer; a decision without it
+// is Unconfirmed (#564).
+func Locate(containerized, confirmed bool) Where {
 	switch {
-	case !inContainer:
+	case !containerized:
 		return Host
-	case !hasRuntime:
+	case !confirmed:
 		return Unconfirmed
-	case self != "":
-		return Bridge
 	}
-	return Host
+	return Bridge
 }
 
 // Explain adds the cause and Fix to err, the failure to bind a --*-bind

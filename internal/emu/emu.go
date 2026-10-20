@@ -159,7 +159,7 @@ type Env struct {
 	// (FR-CORE-061); nil-safe for callers that check it.
 	RequestLog *reqlog.Log
 	// LANBindWhere locates the Instance for the --*-bind addresses
-	// (LANBind); nil uses runtime.InContainer and Containers.
+	// (LANBind); nil decides as Containerized does.
 	LANBindWhere func(ctx context.Context) lanbind.Where
 	// ContainerizedProbe replaces what Containerized asks, in tests; nil
 	// uses runtime.InContainer and Containers.

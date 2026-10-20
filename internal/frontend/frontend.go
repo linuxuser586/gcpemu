@@ -51,7 +51,6 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
-	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // Endpoint is the frontend's name in emu.Endpoints (and netplane.Addr).
@@ -92,9 +91,9 @@ func Serves(hosts []string, name string) bool {
 type Frontend struct {
 	env   *emu.Env
 	hosts func() []string
-	// inContainer is runtime.InContainer (the marker files), replaced in
-	// tests; keepsRange asks emu.Env.Containerized instead.
-	inContainer func() bool
+	// containerized is emu.Env.Containerized, which relayable asks,
+	// replaced in tests.
+	containerized func(ctx context.Context) bool
 	// goos, listen, relayRuntime, newRelay and relayRetry are how
 	// StartLAN binds the --gfe-bind addresses and relays those it may
 	// not (lanrelay.go), replaced in tests.
@@ -125,7 +124,7 @@ type Frontend struct {
 // mounted hosts) plus LOCATION-docker.pkg.dev.
 func New(env *emu.Env, hosts func() []string) *Frontend {
 	ctx, cancel := context.WithCancel(context.Background())
-	f := &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, inContainer: runtime.InContainer,
+	f := &Frontend{env: env, hosts: hosts, conns: map[net.Conn]struct{}{}, containerized: env.Containerized,
 		goos: goruntime.GOOS, listen: net.Listen, relayRetry: relayRetry, ctx: ctx, cancel: cancel}
 	f.relayRuntime, f.newRelay = f.containerRuntime, f.containerRelay
 	return f

@@ -388,7 +388,7 @@ func TestCheckCATrust(t *testing.T) {
 		inContainer bool
 		want        string
 	}{
-		{true, "[--  ] Instance CA trust is the host's in a Containerized Instance: on the host, not in the container, run " +
+		{true, "[--  ] Instance CA trust is the host's in a container: on the host, not in the container, run " +
 			"`docker exec CONTAINER /gcpemu ca print > gcpemu-ca.pem` and `gcpemu --instance container ca install --cert gcpemu-ca.pem` " +
 			"(README: \"Trusting the CA on the host\")\n"},
 		{false, "[ok  ] emulator CA trusted by the OS trust store\n"},
@@ -406,17 +406,22 @@ func TestCheckCATrust(t *testing.T) {
 }
 
 // An --lb-bind address that is not local is checked against the
-// container's addresses in a Containerized Instance, whose fix lists them,
-// since the image has no `ip` (#493), and against the host's otherwise.
-// On a bridge network the fix also says how to reach the LAN (#497).
+// container's addresses in a Containerized Instance, and against the
+// host's otherwise, a container on the host's network included (#564).
+// In any container the fix lists the addresses, since the image has no
+// `ip` (#493). On a bridge network the fix also says how to reach the LAN
+// (#497).
 func TestCheckLANBindAddress(t *testing.T) {
 	for _, tc := range []struct {
-		inContainer, bridge bool
-		what, fixPrefix     string
+		name                           string
+		markers, containerized, bridge bool
+		what, fixPrefix                string
 	}{
-		{true, true, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
-		{true, false, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
-		{false, false, "--lb-bind 203.0.113.7 is an address of this host", "pick one from " + listAddrsCmd(runtime.GOOS)},
+		{"bridge network", true, true, true, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
+		{"unconfirmed", true, true, false, "--lb-bind 203.0.113.7 is an address of this container", "pick one of the container's addresses: "},
+		{"--containerized=true, no marker files", false, true, false, "--lb-bind 203.0.113.7 is an address of this container", "pick one from " + listAddrsCmd(runtime.GOOS)},
+		{"host network", true, false, false, "--lb-bind 203.0.113.7 is an address of this host", "pick one of this host's addresses: "},
+		{"host", false, false, false, "--lb-bind 203.0.113.7 is an address of this host", "pick one from " + listAddrsCmd(runtime.GOOS)},
 	} {
 		var whats, fixes []string
 		failed := false
@@ -426,29 +431,35 @@ func TestCheckLANBindAddress(t *testing.T) {
 				whats, fixes = append(whats, what), append(fixes, fix)
 			}
 		}
-		checkLANBind(io.Discard, report, &config.Config{LBBind: []string{"203.0.113.7"}}, false, false, false, tc.inContainer, tc.bridge)
-		if got := len(fixes) == 1 && strings.Contains(fixes[0], lanbind.Fix); got != tc.bridge {
-			t.Errorf("inContainer=%v bridge=%v: fix %q names the LAN fix: %v", tc.inContainer, tc.bridge, fixes[0], got)
-		}
+		checkLANBind(io.Discard, report, &config.Config{LBBind: []string{"203.0.113.7"}}, false, false, false,
+			containerFacts{markers: tc.markers, containerized: tc.containerized, bridge: tc.bridge})
 		if !failed || len(whats) != 1 || whats[0] != tc.what || !strings.HasPrefix(fixes[0], tc.fixPrefix) {
-			t.Errorf("inContainer=%v: failed=%v %q %q, want %q %q...", tc.inContainer, failed, whats, fixes, tc.what, tc.fixPrefix)
+			t.Errorf("%s: failed=%v %q %q, want %q %q...", tc.name, failed, whats, fixes, tc.what, tc.fixPrefix)
+			continue
 		}
-		if tc.inContainer && (strings.Contains(fixes[0], "ip -br addr") || strings.Contains(fixes[0], "127.0.0.1")) {
-			t.Errorf("container fix %q names a host command or a loopback address", fixes[0])
+		if got := strings.Contains(fixes[0], lanbind.Fix); got != tc.bridge {
+			t.Errorf("%s: fix %q names the LAN fix: %v", tc.name, fixes[0], got)
+		}
+		if tc.markers && (strings.Contains(fixes[0], "ip -br addr") || strings.Contains(fixes[0], "127.0.0.1")) {
+			t.Errorf("%s: container fix %q names a host command or a loopback address", tc.name, fixes[0])
 		}
 	}
 }
 
 // The fixes for privileged --gfe-bind and --lb-bind ports lower the
 // container's own sysctl with `docker run --sysctl` in a Containerized
-// Instance, and the host's with `sudo sysctl` otherwise (#493).
+// Instance, and the host's with `sudo sysctl` otherwise, a container on
+// the host's network included (#493, #564). In any container the lb-lan
+// relay needs the runtime's socket mounted.
 func TestPrivilegedPortFixes(t *testing.T) {
 	for _, tc := range []struct {
-		inContainer bool
-		gfe, lb     string
+		name                   string
+		markers, containerized bool
+		gfe, lb                string
 	}{
-		{true, "docker run --sysctl net.ipv4.ip_unprivileged_port_start=443", "docker run --sysctl net.ipv4.ip_unprivileged_port_start=80"},
-		{false, "sudo sysctl net.ipv4.ip_unprivileged_port_start=443", "sudo sysctl net.ipv4.ip_unprivileged_port_start=80"},
+		{"Containerized Instance", true, true, "docker run --sysctl net.ipv4.ip_unprivileged_port_start=443", "docker run --sysctl net.ipv4.ip_unprivileged_port_start=80"},
+		{"host network", true, false, "sudo sysctl net.ipv4.ip_unprivileged_port_start=443", "sudo sysctl net.ipv4.ip_unprivileged_port_start=80"},
+		{"host", false, false, "sudo sysctl net.ipv4.ip_unprivileged_port_start=443", "sudo sysctl net.ipv4.ip_unprivileged_port_start=80"},
 	} {
 		var fixes []string
 		report := func(ok bool, what, fix string) {
@@ -456,13 +467,21 @@ func TestPrivilegedPortFixes(t *testing.T) {
 				fixes = append(fixes, fix)
 			}
 		}
-		checkGFEPort(report, 1024, false, false, tc.inContainer)
-		checkLBPort(report, 1024, false, tc.inContainer)
+		c := containerFacts{markers: tc.markers, containerized: tc.containerized}
+		checkGFEPort(report, 1024, false, false, c)
+		checkLBPort(report, 1024, false, c)
 		if len(fixes) != 2 || !strings.Contains(fixes[0], tc.gfe) || !strings.Contains(fixes[1], tc.lb) {
-			t.Errorf("inContainer=%v: fixes %q, want ones naming %q and %q", tc.inContainer, fixes, tc.gfe, tc.lb)
+			t.Errorf("%s: fixes %q, want ones naming %q and %q", tc.name, fixes, tc.gfe, tc.lb)
+			continue
 		}
-		if tc.inContainer && strings.Contains(strings.Join(fixes, "\n"), "sudo sysctl") {
-			t.Errorf("container fixes %q name sudo sysctl", fixes)
+		if tc.containerized && strings.Contains(strings.Join(fixes, "\n"), "sudo sysctl") {
+			t.Errorf("%s: container fixes %q name sudo sysctl", tc.name, fixes)
+		}
+		if !tc.containerized && strings.Contains(strings.Join(fixes, "\n"), "docker run --sysctl") {
+			t.Errorf("%s: fixes %q name docker run --sysctl", tc.name, fixes)
+		}
+		if got := strings.Contains(fixes[1], "mount the container runtime's socket"); got != tc.markers {
+			t.Errorf("%s: lb fix %q says to mount the socket: %v", tc.name, fixes[1], got)
 		}
 	}
 }
@@ -475,7 +494,7 @@ func TestCheckHostOnly(t *testing.T) {
 		inContainer bool
 		want        []string
 	}{
-		{true, []string{"[--  ] ", "on a macOS host", "`" + loopback.InstallHint + "`", "native binary",
+		{true, []string{"[--  ] host checks not run in a container", "on a macOS host", "`" + loopback.InstallHint + "`", "native binary",
 			"on a Windows host", "--port-range", "`netsh int ipv4 show excludedportrange protocol=tcp`"}},
 		{false, nil},
 	} {
@@ -522,32 +541,41 @@ func TestReportBuildDaemon(t *testing.T) {
 	}
 }
 
-// doctor warns that the Instance guesses it is a Containerized Instance
-// only with the marker files, no answer from the runtime and
+// doctor decides once whether the Instance is a Containerized Instance,
+// and on a bridge network, for its network checks (#564), and warns that
+// it guesses only with the marker files, no answer from the runtime and
 // --containerized=auto, naming why (#502).
 func TestCheckContainerized(t *testing.T) {
 	for _, tc := range []struct {
 		setting                    string
 		markers, hasRuntime, found bool
+		self                       string
 		warn                       string
+		want                       containerFacts
 	}{
-		{"auto", true, false, false, "no container runtime socket"},
-		{"", true, false, false, "no container runtime socket"},
-		{"auto", true, true, false, emuruntime.SelfEnv},
-		{"auto", true, true, true, ""},
-		{"auto", false, false, false, ""},
-		{"false", true, false, false, ""},
-		{"true", true, true, false, ""},
+		{"auto", true, false, false, "", "no container runtime socket", containerFacts{markers: true, containerized: true}},
+		{"", true, false, false, "", "no container runtime socket", containerFacts{markers: true, containerized: true}},
+		{"auto", true, true, false, "", emuruntime.SelfEnv, containerFacts{markers: true, containerized: true}},
+		{"auto", true, true, true, "", "", containerFacts{markers: true}},
+		{"auto", true, true, true, "abc", "", containerFacts{markers: true, containerized: true, bridge: true}},
+		{"false", true, true, true, "abc", "", containerFacts{markers: true, containerized: true, bridge: true}},
+		{"auto", false, false, false, "", "", containerFacts{}},
+		{"false", true, false, false, "", "", containerFacts{markers: true}},
+		{"true", true, true, false, "", "", containerFacts{markers: true, containerized: true}},
+		{"true", false, false, false, "", "", containerFacts{containerized: true}},
 	} {
 		var out strings.Builder
-		checkContainerized(&out, tc.setting, tc.markers, tc.hasRuntime, tc.found)
-		got := out.String()
-		if tc.warn == "" && got != "" {
-			t.Errorf("%+v: output %q, want none", tc, got)
+		got := checkContainerized(&out, emuruntime.ContainerizedFacts{Setting: tc.setting, Markers: tc.markers, Runtime: tc.hasRuntime, Found: tc.found, Self: tc.self})
+		if got != tc.want {
+			t.Errorf("%+v: facts %+v, want %+v", tc, got, tc.want)
 		}
-		if tc.warn != "" && (!strings.HasPrefix(got, "[WARN] ") || !strings.Contains(got, tc.warn) ||
-			!strings.Contains(got, "--containerized=false") || strings.Count(got, "\n") != 1) {
-			t.Errorf("%+v: output %q, want one [WARN] line naming %q and --containerized=false", tc, got, tc.warn)
+		logged := out.String()
+		if tc.warn == "" && logged != "" {
+			t.Errorf("%+v: output %q, want none", tc, logged)
+		}
+		if tc.warn != "" && (!strings.HasPrefix(logged, "[WARN] ") || !strings.Contains(logged, tc.warn) ||
+			!strings.Contains(logged, "--containerized=false") || strings.Count(logged, "\n") != 1) {
+			t.Errorf("%+v: output %q, want one [WARN] line naming %q and --containerized=false", tc, logged, tc.warn)
 		}
 	}
 }

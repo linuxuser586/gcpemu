@@ -4,27 +4,20 @@ import (
 	"context"
 
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
-	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // LANBind reports where the Instance binds the --lb-bind, --gke-bind,
-// --ar-bind and --gfe-bind addresses. It asks the container runtime only
-// in a container, connecting it if needed.
+// --ar-bind and --gfe-bind addresses: in its own network namespace only in
+// a Containerized Instance (Containerized's decision, without logging),
+// which is Bridge only when the runtime found its container (#564). It
+// asks the container runtime only when the Instance may be one,
+// connecting it if needed.
 func (e *Env) LANBind(ctx context.Context) lanbind.Where {
 	if e.LANBindWhere != nil {
 		return e.LANBindWhere(ctx)
 	}
-	if !runtime.InContainer() {
-		return lanbind.Host
-	}
-	if e.Containers == nil {
-		return lanbind.Unconfirmed
-	}
-	rt, err := e.Containers.Runtime(ctx)
-	if err != nil {
-		return lanbind.Unconfirmed
-	}
-	return lanbind.Locate(true, true, rt.Self())
+	d, confirmed, _ := e.decideContainerized(ctx)
+	return lanbind.Locate(d.On, confirmed)
 }
 
 // ExplainBind is lanbind.Explain for err, the failure to bind a --*-bind

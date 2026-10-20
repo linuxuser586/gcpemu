@@ -25,8 +25,9 @@ import (
 // a relayed request gets the checks a direct one does, with the LAN
 // client's address.
 //
-// There is no relay off Linux, with --port gfe-lan set, inside a
-// container, without a container runtime or on a VM runtime, whose host
+// There is no relay off Linux, with --port gfe-lan set, in a
+// Containerized Instance (a container on the host's network is not one,
+// #564), without a container runtime or on a VM runtime, whose host
 // network is the VM's: the address is skipped with the sysctl advice. The
 // container lives until the Instance stops; if the runtime stops or
 // restarts it, /_emu/v1/ready names it as Disrupted.
@@ -49,9 +50,18 @@ var relayRetry = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Seco
 
 // relayable reports whether a --gfe-bind address whose bind failed with
 // err can be relayed: the bind was refused because the port is privileged,
-// on Linux, by an emulator that is not in a container.
-func (f *Frontend) relayable(err error) bool {
-	return f.goos == "linux" && loopback.RefusedOn(f.goos, err) == loopback.Privileged && !f.inContainer()
+// on Linux, by an emulator that is not a Containerized Instance
+// (containerized), so the relay on the host's network serves for it.
+func (f *Frontend) relayable(err error, containerized func() bool) bool {
+	return f.goos == "linux" && loopback.RefusedOn(f.goos, err) == loopback.Privileged && !containerized()
+}
+
+// relayContainerized reports whether the Instance is a Containerized
+// Instance, asking the runtime for up to emu.ContainerizedWait (#564).
+func (f *Frontend) relayContainerized() bool {
+	ctx, cancel := context.WithTimeout(f.ctx, emu.ContainerizedWait)
+	defer cancel()
+	return f.containerized(ctx)
 }
 
 // startRelay serves addrs through the LAN front-end relay once a usable
