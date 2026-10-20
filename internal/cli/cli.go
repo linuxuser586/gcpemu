@@ -168,7 +168,7 @@ func (o *rootOpts) startCmd() *cobra.Command {
 	f.StringVar(&o.flags.LoopbackAliases, "loopback-aliases", "auto", "for a Containerized Instance on a VM runtime: whether Cloud SQL instances may use the host's loopback aliases 127.0.0.2-127.0.0.254: auto (Docker Desktop only), true or false")
 	f.StringVar(&o.flags.Containerized, "containerized", "auto", "whether this is a Containerized Instance when the container runtime can't tell: auto (the container marker files decide), true or false (a container on the host's network); the runtime's answer wins")
 	f.IntVar(&o.flags.Build.Concurrency, "build-concurrency", 4, "how many Cloud Builds run at once; the rest wait QUEUED")
-	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (Linux hosts only, not in a Containerized Instance on a VM runtime; see gcpemu env and gcpemu hosts)")
+	f.BoolVar(&o.flags.HostMode, "host-mode", false, "serve real Google hostnames to host processes via the host-mode container and its DNS (Linux hosts only, not on a VM runtime such as Docker Desktop; see gcpemu env and gcpemu hosts)")
 	return cmd
 }
 

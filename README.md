@@ -575,7 +575,8 @@ metadata:
 ```
 
 **Host mode** (`gcpemu start --host-mode`, Linux hosts only: `start` refuses it on macOS and Windows,
-and in a Containerized Instance on a VM runtime) does the
+in a Containerized Instance on a VM runtime, and on a Linux host whose runtime is a VM runtime, such as Docker Desktop,
+where the VM relay is on) does the
 same for host processes without root. It starts a labelled container (`gcpemu-<id>-hostmode`) that the host reaches at its
 container IP. The container serves HTTPS on :443, plain HTTP on :80 and DNS on :53, answering the
 served names with its own IP. It forwards other `googleapis.com`/`pkg.dev` names to your real
