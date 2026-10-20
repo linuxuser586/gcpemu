@@ -328,6 +328,10 @@ _Avoid_: dind, docker host
 The Sidecar agent that gives Build steps the metadata server, Google hostnames and Artifact Registry as the Build's service account.
 _Avoid_: build sidecar
 
+**Substitution**:
+A `$KEY` variable expanded in a Build's config when the Build is created. *Built-in substitutions* come from the Build itself (its Project, ID, location and service account) or from its source or Build trigger. *User substitutions* are the `_KEY` values the caller supplies.
+_Avoid_: variable, parameter, template var
+
 ### Testing
 
 **Client compatibility suite**:

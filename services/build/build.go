@@ -4,8 +4,8 @@
 // Managed containers that share a per-Build /workspace volume (steps.go),
 // at most build.concurrency Builds at a time while the rest wait QUEUED
 // (runner.go). A Build's substitutions are expanded when it is created
-// (subst.go), and its availableSecrets read from Secret Manager when it
-// starts (secrets.go). timeout and queueTtl run on the Emulator clock. A
+// (subst.go), and the Secret versions in its availableSecrets read when
+// it starts (secrets.go). timeout and queueTtl run on the Emulator clock. A
 // Build's source comes from Cloud Storage or a Git URL (source.go). Step
 // logs are appended as they run to log-BUILD_ID.txt in the Build's
 // logsBucket, and kept in memory for /_emu/v1/build/<build name>/log (logs.go). Steps

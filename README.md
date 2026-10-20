@@ -424,8 +424,10 @@ isn't a built-in always fails. `options.dynamicSubstitutions` enables bash param
 substitutions. `availableSecrets.secretManager` versions are read as the Build's service account
 when it starts, so under `enforce` the account needs `secretmanager.versions.access`. A version
 that can't be read fails the Build. Each payload is set as its `env` in the steps that list it in
-`secretEnv` (or in `options.secretEnv`), and shows as `[REDACTED]` in the log. Cloud KMS `secrets`
-and `availableSecrets.inline` answer `UNIMPLEMENTED`.
+`secretEnv` (or in `options.secretEnv`), and shows as `[REDACTED]` in the log, along with each line of
+a multi-line payload that is 8 characters or longer. Unlike on GCP as far as is known, this masking
+is deliberate emulator behaviour. Cloud KMS `secrets` and `availableSecrets.inline` answer
+`UNIMPLEMENTED`.
 
 gcloud can't stream the log outside Host mode (SRS 11.3): it reads it from
 `storage.UNIVERSE_DOMAIN`, ignoring endpoint overrides, so `gcloud builds submit` fails even when

@@ -57,14 +57,14 @@ var builtinKeys = map[string]bool{
 }
 
 // builtins returns a Build's built-in substitutions: its own, and those
-// its source or Build trigger gives in source (COMMIT_SHA, BRANCH_NAME,
+// its source or Build trigger provides (COMMIT_SHA, BRANCH_NAME,
 // TRIGGER_NAME, ...). Any other built-in is empty.
-func builtins(b *cloudbuildpb.Build, location string, source map[string]string) map[string]string {
+func builtins(b *cloudbuildpb.Build, location string, provided map[string]string) map[string]string {
 	vars := map[string]string{}
 	for k := range builtinKeys {
 		vars[k] = ""
 	}
-	for k, v := range source {
+	for k, v := range provided {
 		if _, ok := builtinKeys[k]; ok {
 			vars[k] = v
 		}

@@ -177,9 +177,10 @@ func (s *Service) loadStored(r buildRef) (*stored, error) {
 
 // submit validates a Build, expands its substitutions (subst.go), stores
 // it QUEUED with the Operation that ends with it, publishes that, and has
-// the scheduler start it. source gives the built-in substitutions that
-// come of a source or Build trigger, such as COMMIT_SHA or TRIGGER_NAME.
-func (s *Service) submit(project, location string, in *cloudbuildpb.Build, source map[string]string) (*longrunningpb.Operation, error) {
+// the scheduler start it. provided gives the built-in substitutions that
+// a Build's source or Build trigger provides, such as COMMIT_SHA or
+// TRIGGER_NAME.
+func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provided map[string]string) (*longrunningpb.Operation, error) {
 	// The serviceAccount, which substitutions do not apply to, gives
 	// built-ins; the rest is validated as substituted.
 	if sa := in.GetServiceAccount(); sa != "" {
@@ -205,7 +206,7 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, sourc
 	for _, st := range b.Steps {
 		st.Status, st.ExitCode, st.Timing, st.PullTiming = cloudbuildpb.Build_QUEUED, 0, nil, nil
 	}
-	if err := substitute(b, builtins(b, location, source)); err != nil {
+	if err := substitute(b, builtins(b, location, provided)); err != nil {
 		return nil, err
 	}
 	if err := validate(b); err != nil {

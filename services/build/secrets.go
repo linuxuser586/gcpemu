@@ -13,14 +13,15 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
-// Build secrets (FR-CB-007, FR-INT-016): each availableSecrets.secretManager version
-// is read from Secret Manager as the Build's service account when the
-// Build starts, and given to the steps that list its env in secretEnv
-// (or to every step through options.secretEnv). The payloads are never
-// stored in the Build, and are masked in its log. Cloud KMS secrets and
-// availableSecrets.inline are Absent.
+// Secret versions made available to a Build's steps (FR-CB-007,
+// FR-INT-016): each availableSecrets.secretManager version is read from
+// Secret Manager as the Build's service account when the Build starts,
+// and given to the steps that list its env in secretEnv (or to every step
+// through options.secretEnv). The payloads are never stored in the Build,
+// and are masked in its log, which GCP is not known to do. Cloud KMS
+// secrets and availableSecrets.inline are Absent.
 
-// secretMask replaces a secret's payload in a Build's log.
+// secretMask replaces a Secret version's payload in a Build's log.
 const secretMask = "[REDACTED]"
 
 // validateSecrets refuses the secrets a Build cannot have: Cloud KMS ones,
