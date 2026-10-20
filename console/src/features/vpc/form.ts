@@ -84,7 +84,8 @@ export function rangesError(text: string): string | undefined {
       return invalid('secondaryIpRanges', r.rangeName, 'Secondary range names must be unique.')
     }
     seen.add(r.rangeName)
-    if (!parseCidr(r.ipCidrRange)) {
+    const c = parseCidr(r.ipCidrRange)
+    if (!c || c.bits < 4 || c.bits > 29) {
       return invalid(`secondaryIpRanges[${i}].ipCidrRange`, r.ipCidrRange, CIDR_INVALID)
     }
   }

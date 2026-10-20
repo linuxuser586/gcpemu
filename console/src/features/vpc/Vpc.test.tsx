@@ -584,6 +584,21 @@ describe('subnetworks', () => {
     ])
   })
 
+  it('checks a secondary range’s prefix length as the API does', async () => {
+    const user = userEvent.setup()
+    renderApp(`/compute/regions/us-central1/subnetworks/nodes/edit?project=${P}`)
+    const ranges = await screen.findByLabelText('Secondary ranges')
+    await user.clear(ranges)
+    await user.type(ranges, 'pods 10.8.0.0/30')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(
+      await screen.findByText(
+        "Invalid value for field 'resource.secondaryIpRanges[0].ipCidrRange': '10.8.0.0/30'. Must be a valid IPv4 CIDR network address range.",
+      ),
+    ).toBeVisible()
+    expect(writes()).toEqual([])
+  })
+
   it('deletes a subnetwork and returns to its network', async () => {
     const user = userEvent.setup()
     const { router } = renderApp(`/compute/regions/us-central1/subnetworks/nodes?project=${P}`)
