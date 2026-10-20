@@ -15,12 +15,13 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
 
 // Host mode is Linux-only: macOS and Windows refuse it at start, saying so, rather
 // than failing later in the netplane or the DNS wait (#175).
 func TestRefuseHostMode(t *testing.T) {
-	native := func() (runtime.VMDecision, bool) { return runtime.VMDecision{}, true }
+	native := func() (hostModeRuntime, bool) { return hostModeRuntime{}, true }
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		if err := refuseHostMode(&config.Config{}, goos, native); err != nil {
 			t.Errorf("%s without host mode: %v", goos, err)
@@ -61,11 +62,11 @@ func TestRefuseHostModeOnVMRuntime(t *testing.T) {
 		{name: "unreachable", setting: "true", inContainer: true, unreachable: true},
 	} {
 		cfg := &config.Config{HostMode: true, VMRuntime: tc.setting}
-		vm := func() (runtime.VMDecision, bool) {
+		vm := func() (hostModeRuntime, bool) {
 			if tc.unreachable {
-				return runtime.VMDecision{}, false
+				return hostModeRuntime{}, false
 			}
-			return runtime.DecideVM(cfg.VMRuntime, tc.inContainer, tc.info), true
+			return hostModeRuntime{VM: runtime.DecideVM(cfg.VMRuntime, tc.inContainer, tc.info)}, true
 		}
 		err := refuseHostMode(cfg, "linux", vm)
 		if tc.reason == "" {
@@ -80,6 +81,41 @@ func TestRefuseHostModeOnVMRuntime(t *testing.T) {
 	}
 }
 
+// An emulator on the host whose VM relay is on because the services
+// gateway cannot be bound is on a VM runtime too, as Docker Desktop on
+// Linux shows: the host cannot route to the host-mode container (#560).
+// A relay forced on by GCPEMU_VM_RELAY (Linux CI, where the host routes)
+// or off is no reason to refuse.
+func TestRefuseHostModeOnVMRelay(t *testing.T) {
+	const unbindable, bindable = "192.0.2.1", "127.0.0.1" // TEST-NET-1 is on no host interface
+	for _, tc := range []struct {
+		name    string
+		env     string
+		gateway string
+		reason  string // "" when host mode is accepted
+	}{
+		{name: "not bindable", gateway: unbindable, reason: "gateway 192.0.2.1 not bindable"},
+		{name: "forced on", env: "1", gateway: unbindable},
+		{name: "forced off", env: "0", gateway: unbindable},
+		{name: "off", gateway: bindable},
+	} {
+		t.Setenv(vmrelay.Env, tc.env)
+		probe := func() (hostModeRuntime, bool) {
+			return hostModeRuntime{Relay: vmrelay.Decide(false, tc.gateway)}, true
+		}
+		err := refuseHostMode(&config.Config{HostMode: true}, "linux", probe)
+		if tc.reason == "" {
+			if err != nil {
+				t.Errorf("%s: %v", tc.name, err)
+			}
+			continue
+		}
+		if !errors.Is(err, hostmode.ErrVMRelay) || !strings.HasPrefix(err.Error(), "--host-mode: ") || !strings.Contains(err.Error(), tc.reason) || !strings.Contains(err.Error(), "gcpemu env") {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+}
+
 // The runtime is consulted only for host mode on Linux: off Linux the GOOS
 // refusal comes first, and without --host-mode nothing is asked.
 func TestRefuseHostModeAsksRuntimeOnlyWhenNeeded(t *testing.T) {
@@ -89,7 +125,7 @@ func TestRefuseHostModeAsksRuntimeOnlyWhenNeeded(t *testing.T) {
 		want     bool
 	}{{"linux", true, true}, {"linux", false, false}, {"darwin", true, false}, {"windows", false, false}} {
 		asked := false
-		vm := func() (runtime.VMDecision, bool) { asked = true; return runtime.VMDecision{}, true }
+		vm := func() (hostModeRuntime, bool) { asked = true; return hostModeRuntime{}, true }
 		_ = refuseHostMode(&config.Config{HostMode: tc.hostMode}, tc.goos, vm)
 		if asked != tc.want {
 			t.Errorf("%s host mode %v: asked %v", tc.goos, tc.hostMode, asked)
@@ -105,8 +141,8 @@ func TestNewRefusesHostModeOnVMRuntime(t *testing.T) {
 	}
 	probe := hostModeVM
 	t.Cleanup(func() { hostModeVM = probe })
-	hostModeVM = func(string) (runtime.VMDecision, bool) {
-		return runtime.VMDecision{On: true, Reason: "forced by GCPEMU_VM_RUNTIME"}, true
+	hostModeVM = func(string) (hostModeRuntime, bool) {
+		return hostModeRuntime{VM: runtime.VMDecision{On: true, Reason: "forced by GCPEMU_VM_RUNTIME"}}, true
 	}
 	cfg := config.Defaults()
 	cfg.DataDir = filepath.Join(t.TempDir(), "absent")

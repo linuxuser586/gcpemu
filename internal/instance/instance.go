@@ -36,6 +36,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
+	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 	"github.com/linuxuser586/gcpemu/internal/webconsole"
 )
 
@@ -95,7 +96,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if err := refuseHostMode(cfg, goruntime.GOOS, func() (runtime.VMDecision, bool) { return hostModeVM(cfg.VMRuntime) }); err != nil {
+	if err := refuseHostMode(cfg, goruntime.GOOS, func() (hostModeRuntime, bool) { return hostModeVM(cfg.VMRuntime) }); err != nil {
 		return nil, err
 	}
 	dir := cfg.InstanceDir()
@@ -212,12 +213,21 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	return in, nil
 }
 
+// hostModeRuntime is what host mode's start-time refusal needs from the
+// runtime: whether this is a Containerized Instance on a VM runtime, and
+// the VM relay decision of an emulator on the host.
+type hostModeRuntime struct {
+	VM    runtime.VMDecision
+	Relay vmrelay.Decision
+}
+
 // refuseHostMode fails when cfg asks for host mode on an OS other than
 // Linux (#175), or on Linux in a Containerized Instance on a VM runtime
-// (#492), before anything starts. vm returns the VM decision, or false
-// when the runtime cannot be reached; host mode then fails later, saying
-// it needs a container runtime, as it would anyway.
-func refuseHostMode(cfg *config.Config, goos string, vm func() (runtime.VMDecision, bool)) error {
+// (#492) or on the host with the VM relay on because the gateway cannot
+// be bound (#560), before anything starts. vm returns the runtime's
+// decisions, or false when the runtime cannot be reached; host mode then
+// fails later, saying it needs a container runtime, as it would anyway.
+func refuseHostMode(cfg *config.Config, goos string, vm func() (hostModeRuntime, bool)) error {
 	if !cfg.HostMode {
 		return nil
 	}
@@ -228,27 +238,43 @@ func refuseHostMode(cfg *config.Config, goos string, vm func() (runtime.VMDecisi
 	if !ok {
 		return nil
 	}
-	if err := hostmode.UnsupportedVM(d); err != nil {
+	if err := hostmode.UnsupportedVM(d.VM); err != nil {
+		return fmt.Errorf("--host-mode: %w", err)
+	}
+	if err := hostmode.UnsupportedRelay(d.Relay); err != nil {
 		return fmt.Errorf("--host-mode: %w", err)
 	}
 	return nil
 }
 
-// hostModeVM decides, as the runtime manager will, whether this Instance
-// is a Containerized Instance on a VM runtime, or reports false when the
-// runtime cannot be reached within a few seconds. A variable for tests.
-var hostModeVM = func(setting string) (runtime.VMDecision, bool) {
+// hostModeVM decides, as the runtime manager and the netplane will,
+// whether this Instance is a Containerized Instance on a VM runtime and
+// whether it uses the VM relay, or reports false when the runtime cannot
+// be reached within a few seconds. The services network does not exist
+// yet, so the runtime's default bridge network's gateway stands in for
+// its gateway, as in gcpemu doctor; without one the relay is decided off.
+// A variable for tests.
+var hostModeVM = func(setting string) (hostModeRuntime, bool) {
 	cl, err := runtime.Detect()
 	if err != nil {
-		return runtime.VMDecision{}, false
+		return hostModeRuntime{}, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	info, err := cl.Info(ctx)
 	if err != nil {
-		return runtime.VMDecision{}, false
+		return hostModeRuntime{}, false
 	}
-	return runtime.DecideVM(setting, cl.Self() != "", info), true
+	r := hostModeRuntime{VM: runtime.DecideVM(setting, cl.Self() != "", info)}
+	if cl.Self() == "" {
+		for _, name := range []string{"bridge", "podman"} {
+			if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
+				r.Relay = vmrelay.Decide(false, n.Gateway)
+				break
+			}
+		}
+	}
+	return r, true
 }
 
 // defaultServices is every Service, less the Runtime Services when detect

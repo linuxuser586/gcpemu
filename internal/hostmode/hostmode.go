@@ -51,6 +51,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/locations"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
 
 // Image runs the host-mode agent (any image works: the agent is a static
@@ -81,6 +82,22 @@ func UnsupportedVM(d runtime.VMDecision) error {
 		return nil
 	}
 	return fmt.Errorf("%w (%s); point clients at the emulator with `eval \"$(gcpemu env)\"` instead", ErrVMRuntime, d.Reason)
+}
+
+// ErrVMRelay is why an emulator on the host refuses host mode when its VM
+// relay is on because the services gateway cannot be bound: its GOOS is
+// linux, but the runtime keeps container networks in a VM the host cannot
+// route to, as Docker Desktop on Linux does (#560).
+var ErrVMRelay = errors.New("host mode needs a host that can route to container networks, and this host cannot on its VM runtime")
+
+// UnsupportedRelay reports why host mode cannot run with the VM relay
+// decision d, naming d's reason, or nil unless d is Unroutable: a relay
+// forced on by GCPEMU_VM_RELAY, as on Linux CI, leaves the host routing.
+func UnsupportedRelay(d vmrelay.Decision) error {
+	if !d.Unroutable() {
+		return nil
+	}
+	return fmt.Errorf("%w (VM relay %s); point clients at the emulator with `eval \"$(gcpemu env)\"` instead", ErrVMRelay, d.Reason)
 }
 
 // RoutedDomains are the DNS domains to route to the host-mode resolver.
