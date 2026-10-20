@@ -30,7 +30,7 @@ import (
 )
 
 // cloudSDK is the Cloud SDK image the gcloud steps run.
-const cloudSDK = "gcr.io/google.com/cloudsdktool/cloud-sdk:589.0.0-alpine"
+const cloudSDK = "gcr.io/google.com/cloudsdktool/google-cloud-cli:589.0.0-alpine"
 
 // metadataEmail is a busybox step script printing the service account the
 // metadata server answers as.

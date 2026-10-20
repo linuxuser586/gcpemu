@@ -133,6 +133,14 @@ func TestErrNoLoopback(t *testing.T) {
 	if !strings.Contains(img, "GCPEMU_LOOPBACK_ALIASES=true") || strings.Contains(host, "GCPEMU_LOOPBACK_ALIASES") {
 		t.Errorf("only the Containerized Instance's message names GCPEMU_LOOPBACK_ALIASES:\n%s\n%s", host, img)
 	}
+	// The container can't tell the host OS, so the message covers every
+	// host: only macOS needs the install, and the setting is needed only
+	// when the runtime isn't Docker Desktop.
+	for _, want := range []string{"only a macOS host", "Linux and Windows hosts already have them", "unless the runtime is Docker Desktop"} {
+		if !strings.Contains(img, want) {
+			t.Errorf("Containerized Instance's message lacks %q:\n%s", want, img)
+		}
+	}
 }
 
 // `gcpemu doctor` reads each public instance's host address: its loopback

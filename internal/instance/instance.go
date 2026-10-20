@@ -94,7 +94,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if err := refuseHostMode(cfg, goruntime.GOOS); err != nil {
+	if err := refuseHostMode(cfg, goruntime.GOOS, func() (runtime.VMDecision, bool) { return hostModeVM(cfg.VMRuntime) }); err != nil {
 		return nil, err
 	}
 	dir := cfg.InstanceDir()
@@ -212,15 +212,42 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 }
 
 // refuseHostMode fails when cfg asks for host mode on an OS other than
-// Linux, before anything starts (#175).
-func refuseHostMode(cfg *config.Config, goos string) error {
+// Linux (#175), or on Linux in a Containerized Instance on a VM runtime
+// (#492), before anything starts. vm returns the VM decision, or false
+// when the runtime cannot be reached; host mode then fails later, saying
+// it needs a container runtime, as it would anyway.
+func refuseHostMode(cfg *config.Config, goos string, vm func() (runtime.VMDecision, bool)) error {
 	if !cfg.HostMode {
 		return nil
 	}
 	if err := hostmode.UnsupportedOn(goos); err != nil {
 		return fmt.Errorf("--host-mode: %w", err)
 	}
+	d, ok := vm()
+	if !ok {
+		return nil
+	}
+	if err := hostmode.UnsupportedVM(d); err != nil {
+		return fmt.Errorf("--host-mode: %w", err)
+	}
 	return nil
+}
+
+// hostModeVM decides, as the runtime manager will, whether this Instance
+// is a Containerized Instance on a VM runtime, or reports false when the
+// runtime cannot be reached within a few seconds. A variable for tests.
+var hostModeVM = func(setting string) (runtime.VMDecision, bool) {
+	cl, err := runtime.Detect()
+	if err != nil {
+		return runtime.VMDecision{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info, err := cl.Info(ctx)
+	if err != nil {
+		return runtime.VMDecision{}, false
+	}
+	return runtime.DecideVM(setting, cl.Self() != "", info), true
 }
 
 // defaultServices is every Service, less the Runtime Services when detect

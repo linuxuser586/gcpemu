@@ -29,7 +29,8 @@
 // (or SSL_CERT_FILE from `gcpemu env --trust`). `gcpemu env` prints these
 // instructions (to stderr) when host mode is on. On macOS and Windows the
 // container IP is not routable from the host, so host mode is Linux-only:
-// an Instance elsewhere refuses it at start (UnsupportedOn).
+// an Instance elsewhere refuses it at start (UnsupportedOn), as does a
+// Containerized Instance on a VM runtime (UnsupportedVM).
 package hostmode
 
 import (
@@ -65,6 +66,21 @@ func UnsupportedOn(goos string) error {
 		return ErrLinuxOnly
 	}
 	return nil
+}
+
+// ErrVMRuntime is why a Containerized Instance on a VM runtime refuses host
+// mode: its GOOS is linux, but the host cannot route to the container's
+// bridge IP (#492).
+var ErrVMRuntime = errors.New("host mode needs a host that can route to container networks, and this Containerized Instance is on a VM runtime")
+
+// UnsupportedVM reports why host mode cannot run on the VM runtime d
+// describes, naming d's reason so the user sees which GCPEMU_VM_RUNTIME
+// override applies, or nil when d is off.
+func UnsupportedVM(d runtime.VMDecision) error {
+	if !d.On {
+		return nil
+	}
+	return fmt.Errorf("%w (%s); point clients at the emulator with `eval \"$(gcpemu env)\"` instead", ErrVMRuntime, d.Reason)
 }
 
 // RoutedDomains are the DNS domains to route to the host-mode resolver.
@@ -119,7 +135,9 @@ func New(env *emu.Env, hosts func() []string) *Manager {
 }
 
 // Start brings the container up in the background; Status reports
-// progress. It never fails instance start (NFR-REL-003).
+// progress. Once the Instance has passed the start-time refusals
+// (UnsupportedOn, UnsupportedVM), it never fails instance start
+// (NFR-REL-003).
 func (m *Manager) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()

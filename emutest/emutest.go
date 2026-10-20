@@ -28,6 +28,12 @@ func WithIAMMode(mode string) Option { return func(c *config.Config) { c.IAMMode
 // WithDeterministic enables deterministic IDs and the fake clock.
 func WithDeterministic() Option { return func(c *config.Config) { c.Deterministic = true } }
 
+// WithConsole serves the Web console under /console, as it is even under
+// CI=true.
+func WithConsole() Option {
+	return func(c *config.Config) { on := true; c.Console = &on }
+}
+
 // WithSQLHostClients has Cloud SQL instances with a public IP serve host
 // clients on a loopback address on a VM runtime (ADR 0005), as gcpemu
 // does, for tests that dial the address an instance reports (the Cloud
