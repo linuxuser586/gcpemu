@@ -155,3 +155,57 @@ func TestValidatedAsSubstituted(t *testing.T) {
 		t.Errorf("location = %q", got)
 	}
 }
+
+// With automapSubstitutions, a step reads the Build's substitutions from
+// its environment, as resolved at creation and under the step's own env:
+// a step's own setting overrides the Build's options, and a step without
+// automapping gets none. Under MUST_MATCH, automapping uses every user
+// substitution.
+func TestAutomapSubstitutions(t *testing.T) {
+	e := start(t)
+	no, yes := false, true
+	show := `echo "[${PROJECT_ID-unset}][${_FOO-unset}][${TAG_NAME-unset}][${_TAG-unset}]"`
+	op, _ := e.create(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo", "_TAG": "${PROJECT_ID}-dev"},
+		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true, DynamicSubstitutions: true},
+		Steps: []*cloudbuildpb.BuildStep{
+			{Name: busybox, Id: "on", Script: show},
+			{Name: busybox, Id: "off", AutomapSubstitutions: &no, Script: show},
+			{Name: busybox, Id: "args", Entrypoint: "sh", Args: []string{"-c", `echo "[$$_FOO]"`}},
+			{Name: busybox, Id: "env", Env: []string{"PROJECT_ID=other"}, Script: show},
+		},
+	})
+	b, err := op.Wait(e.ctx)
+	if err != nil {
+		t.Fatalf("Wait: %v (%s)", err, b.GetStatusDetail())
+	}
+	log := e.log(b)
+	for _, want := range []string{
+		`Step #0 - "on": [` + testProject + `][foo][][` + testProject + `-dev]`,
+		`Step #1 - "off": [unset][unset][unset][unset]`,
+		`Step #2 - "args": [foo]`,
+		`Step #3 - "env": [other][foo][][` + testProject + `-dev]`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q:\n%s", want, log)
+		}
+	}
+
+	op, _ = e.create(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo"},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Id: "step", AutomapSubstitutions: &yes, Script: show}},
+	})
+	b, err = op.Wait(e.ctx)
+	if err != nil {
+		t.Fatalf("Wait: %v (%s)", err, b.GetStatusDetail())
+	}
+	if log, want := e.log(b), `Step #0 - "step": [`+testProject+`][foo][][unset]`; !strings.Contains(log, want) {
+		t.Errorf("log lacks %q:\n%s", want, log)
+	}
+
+	wantInvalid(t, e.createErr(&cloudbuildpb.Build{
+		Substitutions: map[string]string{"_FOO": "foo"},
+		Options:       &cloudbuildpb.BuildOptions{AutomapSubstitutions: true},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, AutomapSubstitutions: &no, Script: show}},
+	}), `invalid build: key "_FOO" in the substitution data is not matched in the template`)
+}

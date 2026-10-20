@@ -87,10 +87,12 @@ func builtins(b *cloudbuildpb.Build, location string, provided map[string]string
 // do not use, or a $_KEY they use with no value, is INVALID_ARGUMENT;
 // a key that is neither a user substitution nor a built-in always is.
 // With options.dynamicSubstitutions, ${KEY...} takes bash's parameter
-// expansions, and user values may refer to other substitutions.
-func substitute(b *cloudbuildpb.Build, vars map[string]string) error {
+// expansions, and user values may refer to other substitutions. It
+// returns the value of every substitution, which automapped steps get
+// as environment variables.
+func substitute(b *cloudbuildpb.Build, vars map[string]string) (map[string]string, error) {
 	if err := checkSubstitutions(b.GetSubstitutions()); err != nil {
-		return err
+		return nil, err
 	}
 	dynamic := b.GetOptions().GetDynamicSubstitutions()
 	fields := substitutedFields(b)
@@ -113,26 +115,54 @@ func substitute(b *cloudbuildpb.Build, vars map[string]string) error {
 			}
 		})
 		if bad != "" {
-			return apierr.InvalidArgument("invalid build: key in the template %q is not a valid built-in substitution", bad)
+			return nil, apierr.InvalidArgument("invalid build: key in the template %q is not a valid built-in substitution", bad)
 		}
 	}
+	// An automapped step gets every user substitution, so each counts as
+	// used. Unverified against GCP, whose documentation does not say how
+	// MUST_MATCH treats automapping.
+	automaps := anyAutomapped(b)
 	for _, k := range slices.Sorted(maps.Keys(b.GetSubstitutions())) {
-		if !used[k] {
+		if !used[k] && !automaps {
 			warnings = append(warnings, fmt.Sprintf("key %q in the substitution data is not matched in the template", k))
 		}
 	}
 	if len(warnings) > 0 && b.GetOptions().GetSubstitutionOption() != cloudbuildpb.BuildOptions_ALLOW_LOOSE {
-		return apierr.InvalidArgument("invalid build: %s", strings.Join(warnings, ";"))
+		return nil, apierr.InvalidArgument("invalid build: %s", strings.Join(warnings, ";"))
 	}
 
 	values, err := resolve(vars, b.GetSubstitutions(), dynamic)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, f := range fields {
 		*f = expand(*f, dynamic, values)
 	}
-	return nil
+	return values, nil
+}
+
+// automapped reports whether step st of b gets the Build's substitutions
+// as environment variables: its own automapSubstitutions, or when that is
+// unset, the Build's options.automapSubstitutions.
+func automapped(b *cloudbuildpb.Build, st *cloudbuildpb.BuildStep) bool {
+	if st.AutomapSubstitutions != nil {
+		return st.GetAutomapSubstitutions()
+	}
+	return b.GetOptions().GetAutomapSubstitutions()
+}
+
+// anyAutomapped reports whether any step of b is automapped.
+func anyAutomapped(b *cloudbuildpb.Build) bool {
+	return slices.ContainsFunc(b.GetSteps(), func(st *cloudbuildpb.BuildStep) bool { return automapped(b, st) })
+}
+
+// automapEnv returns the substitutions as KEY=value variables, by key.
+func automapEnv(values map[string]string) []string {
+	var env []string
+	for _, k := range slices.Sorted(maps.Keys(values)) {
+		env = append(env, k+"="+values[k])
+	}
+	return env
 }
 
 // checkSubstitutions refuses a substitutions map that breaks GCP's
