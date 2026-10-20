@@ -166,16 +166,26 @@ import { snapshotsQuery } from '@/features/state/api'
 import { SaveSnapshot } from '@/features/state/SaveSnapshot'
 import { State } from '@/features/state/State'
 import {
+  firewallQuery,
+  firewallsQuery,
   hostOffersQuery,
   networkQuery,
   networksQuery,
+  routeQuery,
+  routesQuery,
   subnetQuery,
   subnetsQuery,
 } from '@/features/vpc/api'
+import { CreateFirewall, EditFirewall } from '@/features/vpc/FirewallForm'
+import { FirewallPage } from '@/features/vpc/FirewallPage'
+import { Firewalls } from '@/features/vpc/Firewalls'
 import { CreateNetwork, EditNetwork } from '@/features/vpc/NetworkForm'
 import { NetworkPage } from '@/features/vpc/NetworkPage'
 import { Networks } from '@/features/vpc/Networks'
 import { OfferedPorts } from '@/features/vpc/OfferedPorts'
+import { CreateRoute } from '@/features/vpc/RouteForm'
+import { RoutePage } from '@/features/vpc/RoutePage'
+import { Routes } from '@/features/vpc/Routes'
 import { CreateSubnetwork, EditSubnetwork } from '@/features/vpc/SubnetworkForm'
 import { SubnetworkPage } from '@/features/vpc/SubnetworkPage'
 import { Subnetworks } from '@/features/vpc/Subnetworks'
@@ -1019,10 +1029,11 @@ function natRoutes(queryClient: QueryClient): RouteObject[] {
 }
 
 // The VPC network view (SRS 4.8.3), the compute Service. Paths follow the
-// API's resource names, global/networks/N and regions/R/subnetworks/S,
-// with the Project in ?project=; create pages are not under them, so
-// that no name is shadowed, and the subnetwork one takes the network in
-// ?network=. Offered ports are the Instance's, at /compute/offers.
+// API's resource names, global/networks/N, regions/R/subnetworks/S,
+// global/firewalls/F and global/routes/R, with the Project in ?project=;
+// create pages are not under them, so that no name is shadowed, and the
+// subnetwork, firewall rule and route ones take the network in ?network=.
+// Offered ports are the Instance's, at /compute/offers.
 function vpcRoutes(queryClient: QueryClient): RouteObject[] {
   const warm = (...queries: Promise<unknown>[]) => Promise.allSettled(queries).then(() => null)
   const lists: RouteObject['loader'] = ({ request }) => {
@@ -1071,6 +1082,45 @@ function vpcRoutes(queryClient: QueryClient): RouteObject[] {
       },
     },
     { path: 'regions/:region/subnetworks/:subnetwork/edit', element: <EditSubnetwork /> },
+    {
+      path: 'firewalls',
+      element: <Firewalls />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(firewallsQuery(project))) : null
+      },
+    },
+    { path: 'create-firewall', element: <CreateFirewall /> },
+    {
+      path: 'global/firewalls/:firewall',
+      element: <FirewallPage />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(queryClient.ensureQueryData(firewallQuery(project, params.firewall ?? '')))
+          : null
+      },
+    },
+    { path: 'global/firewalls/:firewall/edit', element: <EditFirewall /> },
+    {
+      path: 'routes',
+      element: <Routes />,
+      loader: ({ request }) => {
+        const project = projectOf(request)
+        return project ? warm(queryClient.ensureQueryData(routesQuery(project))) : null
+      },
+    },
+    { path: 'create-route', element: <CreateRoute /> },
+    {
+      path: 'global/routes/:route',
+      element: <RoutePage />,
+      loader: ({ request, params }) => {
+        const project = projectOf(request)
+        return project
+          ? warm(queryClient.ensureQueryData(routeQuery(project, params.route ?? '')))
+          : null
+      },
+    },
   ]
 }
 

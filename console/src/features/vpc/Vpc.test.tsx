@@ -325,6 +325,9 @@ beforeEach(() => {
       subnets = subnets.filter((s) => s !== sub(params.region, params.name))
       return HttpResponse.json(op)
     }),
+    // Firewall rules and routes are in Firewalls.test.tsx.
+    http.get('*/compute/v1/projects/:p/global/firewalls', () => HttpResponse.json({})),
+    http.get('*/compute/v1/projects/:p/global/routes', () => HttpResponse.json({})),
     http.get('*/_emu/v1/vpc/containerNetworks', ({ request }) => {
       const q = new URL(request.url).searchParams
       const n = q.get('network')
