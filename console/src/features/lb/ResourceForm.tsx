@@ -23,6 +23,7 @@ import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
+import { CERT_MAP_PREFIX, mapLabel, mapsQuery } from '../certs/api'
 import {
   insertResource,
   kindInfo,
@@ -135,6 +136,7 @@ function SpecField({
   const error = form.formState.errors[f.key]?.message
   const reg = form.register(f.key)
   const options = useRefOptions(project, region, f.targets ?? [])
+  const maps = useQuery({ ...mapsQuery(project), enabled: f.type === 'certmap' && !!project })
   const mono = f.mono ? 'font-mono' : undefined
   switch (f.type) {
     case 'checkbox':
@@ -191,6 +193,28 @@ function SpecField({
         </NativeSelect>
       )
       break
+    case 'certmap': {
+      // A proxy names a map with the API's prefix; another Project's is kept.
+      const cur = values[f.key] as string
+      const opts = (maps.data ?? []).map((m) => ({
+        value: `${CERT_MAP_PREFIX}${m.name}`,
+        label: mapLabel(m.name, project),
+      }))
+      if (cur && !opts.some((o) => o.value === cur)) {
+        opts.push({ value: cur, label: mapLabel(cur, project) })
+      }
+      control = (
+        <NativeSelect className="font-mono" {...fieldAria(id, error, f.hint)} {...reg}>
+          <option value="">{f.emptyOption ?? 'None'}</option>
+          {opts.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </NativeSelect>
+      )
+      break
+    }
     case 'refs': {
       const opts = withCurrent(options, values[f.key] as string[])
       control =

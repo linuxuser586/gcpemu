@@ -1056,6 +1056,43 @@ paths:
               schema: { $ref: "#/components/schemas/HostOffers" }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/vpc/containerNetworks:
+    get:
+      summary: The VPC container networks of a Project (compute service; Web console VPC network view).
+      operationId: listContainerNetworks
+      description: >-
+        The emulator's own view of each VPC container network: the container
+        network that backs one subnetwork or private services access
+        allocation, its Declared range, the Fallback range it uses instead
+        when the Declared range overlapped another network on the host, and
+        the Managed containers attached to it with the address each reports
+        and the one it holds. A subnetwork gets its VPC container network
+        when a Managed container first uses it; listing never realises one,
+        nor connects the container runtime: until a Service has, no
+        containers are listed.
+      parameters:
+        - name: project
+          in: query
+          required: true
+          description: The Project ID or number.
+          schema: { type: string }
+        - name: network
+          in: query
+          description: Only this VPC network's (a name, or projects/P/global/networks/N).
+          schema: { type: string }
+      responses:
+        "200":
+          description: The realised VPC container networks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [containerNetworks]
+                properties:
+                  containerNetworks:
+                    type: array
+                    items: { $ref: "#/components/schemas/ContainerNetwork" }
+        "400": { $ref: "#/components/responses/Error" }
   /_emu/v1/host/services:
     get:
       summary: The Kubernetes Services host clients reach by name (gke service; `gcpemu status`, `gcpemu doctor`, ADR 0014).
@@ -1309,6 +1346,51 @@ components:
             properties:
               port: { type: integer }
               protocol: { type: string, enum: [tcp, udp] }
+    ContainerNetwork:
+      type: object
+      required: [network, bridge, declaredRange, fallbackRange, translated, hostAddress, containers]
+      properties:
+        network: { type: string, description: "projects/P/global/networks/N" }
+        subnetwork:
+          type: string
+          description: The subnetwork it backs (projects/P/regions/R/subnetworks/S); absent for a private services access allocation.
+        allocation:
+          type: string
+          description: The private services access allocation it backs (projects/P/global/addresses/A); absent for a subnetwork.
+        region: { type: string, description: The subnetwork's region. }
+        bridge: { type: string, description: The container network's name in the container runtime. }
+        declaredRange: { type: string, description: The range GCP reports, e.g. the subnetwork's ipCidrRange. }
+        fallbackRange:
+          type: string
+          description: The range the container network uses instead, because the Declared range overlapped another network on the host; empty on the Declared range.
+        translated:
+          type: boolean
+          description: >-
+            On a Fallback range, whether Managed containers still hold and
+            report Declared-range addresses, aliased onto their interfaces
+            (ADR 0004). When false, they report Fallback-range addresses.
+        hostAddress:
+          type: string
+          description: >-
+            The Host address of a subnetwork's network, at which its workloads
+            reach the host. It is not the subnetwork's gatewayAddress, though
+            the two are the same IP on the Declared range where the host routes
+            to the network. Empty when it is not known yet (on a VM runtime,
+            until the VM relay joins the network), for a Containerized
+            Instance, and for a private services access allocation.
+        containers:
+          type: array
+          items:
+            type: object
+            required: [name, service, role, declaredAddress, address]
+            properties:
+              name: { type: string, description: The container's name. }
+              service: { type: string, description: The Service that owns it, e.g. sql, gke, compute. }
+              role: { type: string, description: 'Its role, e.g. postgres, node, server, nat (the NAT egress proxy).' }
+              declaredAddress:
+                type: string
+                description: The address the emulator reports for it, as GCP would. Empty when it is not known.
+              address: { type: string, description: The address it holds on the container network. }
     CdnBackend:
       type: object
       required: [backend, entries, bytes, hits, misses, revalidated, uncacheable]

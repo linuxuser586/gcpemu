@@ -7,7 +7,7 @@ import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
-import type { Network, Subnetwork } from './api'
+import type { ContainerNetwork, Network, Subnetwork } from './api'
 import { networkRecipe, subnetRecipe } from './copy'
 
 const P = 'alpha-project'
@@ -156,9 +156,11 @@ describe('Copy as', () => {
 })
 
 // A small in-memory compute API: networks and subnetworks, their custom
-// methods, and the Offered ports of the admin API.
+// methods, and the Offered ports and VPC container networks of the admin
+// API.
 let networks: Network[]
 let subnets: Subnetwork[]
+let containerNets: ContainerNetwork[]
 let requests: { method: string; path: string; body: unknown }[]
 
 const op = { name: 'op-1', status: 'DONE', selfLink: link('global/operations/op-1') }
@@ -166,8 +168,41 @@ const err = (code: number, message: string) =>
   HttpResponse.json({ error: { code, message } }, { status: code })
 const lastOf = (s?: string) => s?.split('/').pop() ?? ''
 
+const SP = `projects/${P}/regions/us-central1/subnetworks/nodes`
+
+/** onNodes is the VPC container network of subnetwork nodes. */
+const onNodes = (over: Partial<ContainerNetwork> = {}): ContainerNetwork => ({
+  network: `projects/${P}/global/networks/vpc`,
+  subnetwork: SP,
+  region: 'us-central1',
+  bridge: 'gcpemu-x-vpc-vpc-nodes-1234',
+  declaredRange: '10.0.0.0/24',
+  fallbackRange: '',
+  translated: false,
+  hostAddress: '10.0.0.1',
+  // Sorted by name, as the API sends them.
+  containers: [
+    {
+      name: 'gcpemu-x-nat-vpc',
+      service: 'compute',
+      role: 'nat',
+      declaredAddress: '10.0.0.254',
+      address: '10.0.0.254',
+    },
+    {
+      name: 'gcpemu-x-sql-db',
+      service: 'sql',
+      role: 'postgres',
+      declaredAddress: '10.0.0.2',
+      address: '10.0.0.2',
+    },
+  ],
+  ...over,
+})
+
 beforeEach(() => {
   requests = []
+  containerNets = []
   fake.info.services = ['iam', 'compute']
   networks = [
     vpc(),
@@ -289,6 +324,17 @@ beforeEach(() => {
       await record(request)
       subnets = subnets.filter((s) => s !== sub(params.region, params.name))
       return HttpResponse.json(op)
+    }),
+    http.get('*/_emu/v1/vpc/containerNetworks', ({ request }) => {
+      const q = new URL(request.url).searchParams
+      const n = q.get('network')
+      return HttpResponse.json({
+        containerNetworks: containerNets.filter(
+          (c) =>
+            c.network.startsWith(`projects/${q.get('project')}/`) &&
+            (!n || c.network.endsWith(`/networks/${n}`)),
+        ),
+      })
     }),
     http.get('*/_emu/v1/host/offers', () =>
       HttpResponse.json({
@@ -656,4 +702,113 @@ it('shows every Project’s Offered ports, or the chosen Project’s', async () 
   const row = screen.getByTestId('host-offers')
   expect(row).toHaveTextContent('10.0.0.254')
   expect(row).toHaveTextContent('8080/tcp')
+})
+
+describe('container networks', () => {
+  const panel = () => screen.findByRole('region', { name: 'Container network' })
+
+  it('says when a subnetwork has no container network yet', async () => {
+    renderApp(`/compute/regions/us-central1/subnetworks/nodes?project=${P}`)
+    expect(
+      await within(await panel()).findByText(
+        /No container network yet: the emulator creates one when a Managed container/,
+      ),
+    ).toBeVisible()
+  })
+
+  it('shows a subnetwork’s container network on its Declared range', async () => {
+    containerNets = [onNodes()]
+    renderApp(`/compute/regions/us-central1/subnetworks/nodes?project=${P}`)
+    const p = await panel()
+    const details = await within(p).findByLabelText('Container network details')
+    expect(details).toHaveTextContent('gcpemu-x-vpc-vpc-nodes-1234')
+    expect(details).toHaveTextContent('Declared range10.0.0.0/24')
+    expect(details).toHaveTextContent('Fallback rangeNone: on the Declared range')
+    expect(details).toHaveTextContent('Gateway address10.0.0.1')
+    expect(details).toHaveTextContent('Host address10.0.0.1')
+    expect(p).not.toHaveTextContent(/not at the Gateway address/)
+    const rows = within(p).getAllByTestId('managed-container')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveTextContent('gcpemu-x-nat-vpc')
+    expect(rows[0]).toHaveTextContent('NAT egress proxy')
+    expect(rows[1]).toHaveTextContent('gcpemu-x-sql-db')
+    expect(rows[1]).toHaveTextContent('sql')
+    expect(rows[1]).toHaveTextContent('10.0.0.2')
+  })
+
+  it('flags a Translated Fallback range and the Host address apart from the gateway', async () => {
+    containerNets = [
+      onNodes({
+        fallbackRange: '10.240.16.0/24',
+        translated: true,
+        hostAddress: '10.240.16.1',
+        containers: [
+          {
+            name: 'gcpemu-x-sql-db',
+            service: 'sql',
+            role: 'postgres',
+            declaredAddress: '10.0.0.2',
+            address: '10.240.16.2',
+          },
+        ],
+      }),
+    ]
+    renderApp(`/compute/regions/us-central1/subnetworks/nodes?project=${P}`)
+    const p = await panel()
+    const details = await within(p).findByLabelText('Container network details')
+    expect(details).toHaveTextContent('Fallback range10.240.16.0/24Translated')
+    expect(within(p).getByRole('note', { name: 'Fallback range' })).toHaveTextContent(
+      /overlapped another network on the host.*Declared addresses still work/,
+    )
+    expect(within(p).getByRole('note', { name: 'Host address' })).toHaveTextContent(
+      'Workloads reach the host at its Host address 10.240.16.1, not at the Gateway address 10.0.0.1.',
+    )
+    const row = within(p).getByTestId('managed-container')
+    expect(row).toHaveTextContent('10.0.0.2')
+    expect(row).toHaveTextContent('10.240.16.2')
+  })
+
+  it('says clients must use Fallback addresses when the network is not translated', async () => {
+    containerNets = [
+      onNodes({ fallbackRange: '10.240.16.0/24', translated: false, hostAddress: '' }),
+    ]
+    renderApp(`/compute/regions/us-central1/subnetworks/nodes?project=${P}`)
+    const p = await panel()
+    const details = await within(p).findByLabelText('Container network details')
+    expect(details).toHaveTextContent('Fallback range10.240.16.0/24Not translated')
+    expect(details).toHaveTextContent('Host addressNot known yet')
+    expect(within(p).getByRole('note', { name: 'Fallback range' })).toHaveTextContent(
+      /Fallback-range addresses are what clients must use/,
+    )
+  })
+
+  it('sums up each subnetwork’s container network on its network', async () => {
+    containerNets = [
+      onNodes({ fallbackRange: '10.240.16.0/24', translated: true, hostAddress: '10.240.16.1' }),
+      onNodes({
+        subnetwork: undefined,
+        allocation: `projects/${P}/global/addresses/psa`,
+        region: undefined,
+        bridge: 'gcpemu-x-vpc-vpc-psa-5678',
+        declaredRange: '10.8.0.0/16',
+        hostAddress: '',
+        containers: [],
+      }),
+    ]
+    renderApp(`/compute/global/networks/vpc?project=${P}`)
+    const table = await screen.findByRole('table', { name: 'Container networks' })
+    const rows = within(table).getAllByTestId('container-network')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]!).getByRole('link', { name: 'nodes' })).toHaveAttribute(
+      'href',
+      `/compute/regions/us-central1/subnetworks/nodes?project=${P}`,
+    )
+    expect(rows[0]).toHaveTextContent('10.240.16.0/24')
+    expect(rows[0]).toHaveTextContent('Translated')
+    expect(rows[0]).toHaveTextContent('10.240.16.1')
+    expect(rows[0]).toHaveTextContent('2 containers')
+    expect(rows[1]).toHaveTextContent('psa')
+    expect(rows[1]).toHaveTextContent('Private services access')
+    expect(rows[1]).toHaveTextContent('Declared range')
+  })
 })

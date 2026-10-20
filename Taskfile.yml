@@ -163,13 +163,15 @@ tasks:
           flush
           exit $status
 
-  # SRS 11.2 reference stack (container runtime + tofu; steps 2 and 4-8
-  # download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them),
-  # and the Containerized Instance's LoadBalancer ingress (#276; needs the net too).
+  # The whole e2e package, with no -run filter (#494), so no test is left out:
+  # the SRS 11.2 Reference stack (container runtime + tofu; steps 2 and 4-8
+  # download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them)
+  # and the Containerized Instance tests, which build the OCI image (they need
+  # the net and Docker too). Each test's own checks decide whether it runs.
   e2e:
-    desc: Run the SRS 11.2 reference stack and LoadBalancer ingress tests
+    desc: Run the SRS 11.2 Reference stack and the Containerized Instance tests
     cmds:
-      - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -run 'TestReferenceStack|TestContainerizedLBIngress' -count=1 -timeout 30m -v
+      - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -count=1 -timeout 30m -v
 
   # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
   # psql, the Cloud SQL Auth Proxy and dig against a detached instance.

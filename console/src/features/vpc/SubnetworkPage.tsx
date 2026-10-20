@@ -33,6 +33,7 @@ import {
   type Subnetwork,
   type SubnetRef,
 } from './api'
+import { ContainerNetworkPanel } from './ContainerNetworks'
 import { subnetRecipe } from './copy'
 import { CIDR_INVALID, parseCidr } from './form'
 import { networkPage, NetworkLink, subnetPage } from './links'
@@ -130,6 +131,7 @@ export function SubnetworkPage() {
               ]}
             />
           </Card>
+          <ContainerNetworkPanel r={ref} gateway={s.gatewayAddress} />
           <GoogleAccess r={ref} subnet={s} />
           <Card>
             <CardTitle>Resource</CardTitle>

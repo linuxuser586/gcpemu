@@ -833,6 +833,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/vpc/containerNetworks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The VPC container networks of a Project (compute service; Web console VPC network view).
+         * @description The emulator's own view of each VPC container network: the container network that backs one subnetwork or private services access allocation, its Declared range, the Fallback range it uses instead when the Declared range overlapped another network on the host, and the Managed containers attached to it with the address each reports and the one it holds. A subnetwork gets its VPC container network when a Managed container first uses it; listing never realises one, nor connects the container runtime: until a Service has, no containers are listed.
+         */
+        get: operations["listContainerNetworks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/host/services": {
         parameters: {
             query?: never;
@@ -1004,6 +1024,38 @@ export interface components {
                 port: number;
                 /** @enum {string} */
                 protocol: "tcp" | "udp";
+            }[];
+        };
+        ContainerNetwork: {
+            /** @description projects/P/global/networks/N */
+            network: string;
+            /** @description The subnetwork it backs (projects/P/regions/R/subnetworks/S); absent for a private services access allocation. */
+            subnetwork?: string;
+            /** @description The private services access allocation it backs (projects/P/global/addresses/A); absent for a subnetwork. */
+            allocation?: string;
+            /** @description The subnetwork's region. */
+            region?: string;
+            /** @description The container network's name in the container runtime. */
+            bridge: string;
+            /** @description The range GCP reports */
+            declaredRange: string;
+            /** @description The range the container network uses instead, because the Declared range overlapped another network on the host; empty on the Declared range. */
+            fallbackRange: string;
+            /** @description On a Fallback range, whether Managed containers still hold and report Declared-range addresses, aliased onto their interfaces (ADR 0004). When false, they report Fallback-range addresses. */
+            translated: boolean;
+            /** @description The Host address of a subnetwork's network, at which its workloads reach the host. It is not the subnetwork's gatewayAddress, though the two are the same IP on the Declared range where the host routes to the network. Empty when it is not known yet (on a VM runtime, until the VM relay joins the network), for a Containerized Instance, and for a private services access allocation. */
+            hostAddress: string;
+            containers: {
+                /** @description The container's name. */
+                name: string;
+                /** @description The Service that owns it */
+                service: string;
+                /** @description Its role, e.g. postgres, node, server, nat (the NAT egress proxy). */
+                role: string;
+                /** @description The address the emulator reports for it, as GCP would. Empty when it is not known. */
+                declaredAddress: string;
+                /** @description The address it holds on the container network. */
+                address: string;
             }[];
         };
         CdnBackend: {
@@ -2606,6 +2658,34 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listContainerNetworks: {
+        parameters: {
+            query: {
+                /** @description The Project ID or number. */
+                project: string;
+                /** @description Only this VPC network's (a name, or projects/P/global/networks/N). */
+                network?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The realised VPC container networks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        containerNetworks: components["schemas"]["ContainerNetwork"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
         };
     };
     listHostServices: {

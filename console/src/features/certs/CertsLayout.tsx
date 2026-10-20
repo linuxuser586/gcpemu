@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import { useViewState } from '@/lib/viewState'
 
 import { NotEnabled } from '../services/ServicePage'
-import type { CertRef } from './api'
+import { mapLabel, mapRefOf, type CertRef, type EntryRef, type MapRef } from './api'
 
 /**
  * CertsLayout gates the Certificate Manager view (SRS 4.8.3) on the
@@ -38,7 +38,10 @@ export function ChooseProject({ what }: { what: ReactNode }) {
 }
 
 // Each resource type the view covers has a section; later ones add theirs.
-const SECTIONS = [['/certs', 'Certificates']] as const
+const SECTIONS = [
+  ['/certs', 'Certificates'],
+  ['/certs/maps', 'Certificate maps'],
+] as const
 
 /** CertsNav switches between the view's resource types. */
 export function CertsNav() {
@@ -78,3 +81,43 @@ const enc = encodeURIComponent
 /** certPath is the console path of a certificate, or of a page under it. */
 export const certPath = (r: Pick<CertRef, 'location' | 'cert'>, sub = '') =>
   `/certs/locations/${enc(r.location)}/certificates/${enc(r.cert)}${sub ? `/${sub}` : ''}`
+
+/** useMapRef is the certificate map the route names, in the chosen Project. */
+export function useMapRef(): MapRef {
+  const [view] = useViewState()
+  const { map = '' } = useParams()
+  return { project: view.project ?? '', map }
+}
+
+/** useEntryRef is the certificate map entry the route names. */
+export function useEntryRef(): EntryRef {
+  const { entry = '' } = useParams()
+  return { ...useMapRef(), entry }
+}
+
+/** mapPath is the console path of a certificate map, or of a page under it. */
+export const mapPath = (r: Pick<MapRef, 'map'>, sub = '') =>
+  `/certs/locations/global/certificateMaps/${enc(r.map)}${sub ? `/${sub}` : ''}`
+
+/** entryPath is the console path of a page of a certificate map entry. */
+export const entryPath = (r: Pick<EntryRef, 'map' | 'entry'>, sub: string) =>
+  mapPath(r, `certificateMapEntries/${enc(r.entry)}/${sub}`)
+
+/**
+ * MapLink links a certificate map's name, in any of its forms, to its
+ * page in the Project that holds it.
+ */
+export function MapLink({ name }: { name: string }) {
+  const [view] = useViewState()
+  const r = mapRefOf(name)
+  if (!r) return <span className="font-mono break-all">{name}</span>
+  return (
+    <Link
+      className="font-mono text-primary underline-offset-4 hover:underline"
+      to={r.project === view.project ? mapPath(r) : `${mapPath(r)}?project=${enc(r.project)}`}
+      title={`certificate map ${r.map}`}
+    >
+      {mapLabel(name, view.project ?? '')}
+    </Link>
+  )
+}

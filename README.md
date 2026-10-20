@@ -827,9 +827,13 @@ in-process emulator at IAM enforcement level `enforce`:
 10. `tofu destroy` leaves no containers (`gcpemu status` lists the instance's containers).
 
 ```sh
-task e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run TestReferenceStack -timeout 30m -v
+task e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -timeout 30m -v
 GCPEMU_NET_TESTS=0 task e2e       # offline-ish: steps 1, 3, 9 and 10 only
 ```
+
+`task e2e` runs the whole `e2e` package: the Reference stack and the Containerized Instance tests,
+which build the OCI image and drive a Containerized Instance from the host. Those need Docker and
+`GCPEMU_NET_TESTS=1`, and skip themselves otherwise. The 10-minute budget is the Reference stack's alone.
 
 It needs a container runtime and `tofu` on `PATH`; `tofu init` downloads the `google` and `tls`
 providers. Steps 2 and 4–8 download Helm and the Istio release for its charts (both pinned and
