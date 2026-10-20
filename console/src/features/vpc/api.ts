@@ -4,15 +4,17 @@ import { admin, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 import { gcpFetch } from '@/api/fetch'
 
+import { waitOperation as waitLong, type Operation as LongOperation } from '../certs/api'
 import { relPath, waitOperation, type Operation, type Resource } from '../lb/api'
 
 // The VPC network view's reads and writes: networks and subnetworks on
 // compute v1, with their custom methods (switchToCustomMode,
 // expandIpCidrRange, setPrivateIpGoogleAccess), firewall rules, routes,
-// and regional and global addresses. The Host attachment (ADR 0014) is
-// not modelled on GCP: its Offered ports are on the admin API only. Other
-// views (Cloud NAT, Cloud DNS) read networks, subnetworks and addresses
-// from here.
+// regional and global addresses and network peerings, and private
+// services access connections on servicenetworking v1. The Host
+// attachment (ADR 0014) is not modelled on GCP: its Offered ports are on
+// the admin API only. Other views (Cloud NAT, Cloud DNS) read networks,
+// subnetworks and addresses from here.
 
 export type HostOffers = components['schemas']['HostOffers']
 export type ContainerNetwork = components['schemas']['ContainerNetwork']
@@ -23,6 +25,42 @@ export interface Network extends Resource {
   routingConfig?: { routingMode?: 'REGIONAL' | 'GLOBAL'; [field: string]: unknown }
   subnetworks?: string[]
   gatewayIPv4?: string
+  peerings?: NetworkPeering[]
+}
+
+/**
+ * NetworkPeering is one of a network's VPC Network Peerings. It is ACTIVE
+ * once the peer network peers back. Its route exchange settings are
+ * Recorded: no routes are exchanged.
+ */
+export interface NetworkPeering {
+  name: string
+  network: string
+  state?: 'ACTIVE' | 'INACTIVE'
+  stateDetails?: string
+  autoCreateRoutes?: boolean
+  exchangeSubnetRoutes?: boolean
+  exportCustomRoutes?: boolean
+  importCustomRoutes?: boolean
+  exportSubnetRoutesWithPublicIp?: boolean
+  importSubnetRoutesWithPublicIp?: boolean
+  stackType?: string
+  peerMtu?: number
+  [field: string]: unknown
+}
+
+/** PSA_PEERING is the peering a private services access connection adds to its network. */
+export const PSA_PEERING = 'servicenetworking-googleapis-com'
+
+/** PSA_SERVICE is the only service producer a private services access connection reaches. */
+export const PSA_SERVICE = 'servicenetworking.googleapis.com'
+
+/** Connection is a network's private services access connection (servicenetworking v1). */
+export interface Connection {
+  network: string
+  reservedPeeringRanges?: string[]
+  peering?: string
+  service?: string
 }
 
 export interface SecondaryRange {
@@ -234,6 +272,71 @@ export const insertRoute = (project: string, body: unknown) =>
 export const deleteRoute = (project: string, name: string) =>
   write(routePath(project, name), 'DELETE')
 
+// ---- peerings ----
+
+/** addPeering peers network r with peering's network. */
+export const addPeering = (r: NetworkRef, networkPeering: NetworkPeering) =>
+  write(`${networkPath(r)}/addPeering`, 'POST', { networkPeering })
+
+/** updatePeering changes a peering's route exchange; the peer network cannot change. */
+export const updatePeering = (r: NetworkRef, networkPeering: NetworkPeering) =>
+  write(`${networkPath(r)}/updatePeering`, 'PATCH', { networkPeering })
+
+export const removePeering = (r: NetworkRef, name: string) =>
+  write(`${networkPath(r)}/removePeering`, 'POST', { name })
+
+// ---- private services access ----
+
+const SERVICENETWORKING = '/servicenetworking/v1'
+
+/** CONNECTIONS is the path of the service producer's private services access connections. */
+export const CONNECTIONS = `${SERVICENETWORKING}/services/${PSA_SERVICE}/connections`
+
+/** waitConnection waits for a servicenetworking Operation, a google.longrunning one. */
+const waitConnection = async (res: Promise<LongOperation>) => waitLong(await res, SERVICENETWORKING)
+
+export const listConnections = async (r: NetworkRef) =>
+  (
+    await gcpFetch<{ connections?: Connection[] }>(
+      `${CONNECTIONS}?${new URLSearchParams({ network: networkPath(r) })}`,
+    )
+  ).connections ?? []
+
+/** createConnection connects network r to the service producer over its allocated ranges. */
+export const createConnection = (r: NetworkRef, reservedPeeringRanges: string[]) =>
+  waitConnection(
+    gcpFetch<LongOperation>(CONNECTIONS, {
+      method: 'POST',
+      body: JSON.stringify({ network: networkPath(r), reservedPeeringRanges }),
+    }),
+  )
+
+/**
+ * patchConnection replaces a connection's allocated ranges. force removes
+ * a range even while producer services use it.
+ */
+export const patchConnection = (r: NetworkRef, reservedPeeringRanges: string[], force = false) =>
+  waitConnection(
+    gcpFetch<LongOperation>(
+      `${CONNECTIONS}/${PSA_PEERING}?${new URLSearchParams({
+        updateMask: 'reservedPeeringRanges',
+        force: String(force),
+      })}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ network: networkPath(r), reservedPeeringRanges }),
+      },
+    ),
+  )
+
+export const deleteConnection = (r: NetworkRef) =>
+  waitConnection(
+    gcpFetch<LongOperation>(`${CONNECTIONS}/${PSA_PEERING}:deleteConnection`, {
+      method: 'POST',
+      body: JSON.stringify({ consumerNetwork: networkPath(r) }),
+    }),
+  )
+
 // ---- addresses ----
 
 /** addressesPath is the path of a region's addresses, or the global ones. */
@@ -340,6 +443,13 @@ export const routeQuery = (project: string, name: string) =>
   queryOptions({
     queryKey: ['compute', 'vpc', 'route', project, name],
     queryFn: () => getRoute(project, name),
+  })
+
+export const connectionsQuery = (r: NetworkRef) =>
+  queryOptions({
+    queryKey: ['compute', 'vpc', 'connections', r],
+    queryFn: () => listConnections(r),
+    enabled: !!r.project,
   })
 
 export const allAddressesQuery = (project: string) =>

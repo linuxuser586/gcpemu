@@ -26,6 +26,23 @@ export const subnetPage = (r: Pick<SubnetRef, 'region' | 'subnetwork'>, sub = ''
 export const firewallPage = (name: string, sub = '') =>
   `/compute/global/firewalls/${enc(name)}${sub ? `/${sub}` : ''}`
 
+/** peeringEditPage is the console path of the form that edits a network's peering. */
+export const peeringEditPage = (network: string, peering: string) =>
+  networkPage(network, `peerings/${enc(peering)}/edit`)
+
+/** addPeeringPage is the console path of the form that adds a peering to network. */
+export const addPeeringPage = (network: string) => networkPage(network, 'add-peering')
+
+/** connectionPage is the console path of network's private services access connection form. */
+export const connectionPage = (network: string) => networkPage(network, 'connection')
+
+/** allocatePage is the reserve form, set for a private services access range of network. */
+export const allocatePage = (network: string) =>
+  `/compute/create-address?network=${enc(network)}&purpose=VPC_PEERING`
+
+/** containerNetworkAnchor is the id of a VPC container network's row in its network's panel. */
+export const containerNetworkAnchor = (bridge: string) => `container-network-${bridge}`
+
 /** routePage is the console path of a route. */
 export const routePage = (name: string) => `/compute/global/routes/${enc(name)}`
 

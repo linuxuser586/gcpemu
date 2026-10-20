@@ -562,4 +562,12 @@ describe('addresses', () => {
       },
     })
   })
+
+  it('starts a private services access range from a network', async () => {
+    renderApp(`/compute/create-address?network=main&purpose=VPC_PEERING&project=${P}`)
+    expect(await screen.findByLabelText('Scope')).toHaveValue('global')
+    expect(screen.getByLabelText('Type')).toHaveValue('INTERNAL')
+    expect(screen.getByLabelText('Purpose')).toHaveValue('VPC_PEERING')
+    expect(screen.getByLabelText('Network')).toHaveValue('main')
+  })
 })

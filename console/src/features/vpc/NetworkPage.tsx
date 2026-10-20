@@ -29,11 +29,14 @@ import { RecordedNotice } from './RecordedNotice'
 import { RouteTable } from './Routes'
 import { bySubnet, SubnetTable } from './Subnetworks'
 import { networkPage } from './links'
+import { Peerings } from './Peerings'
+import { PrivateServicesAccess } from './PrivateServicesAccess'
 import { useNetworkRef } from './VpcLayout'
 
 /**
  * NetworkPage is one VPC network: its settings, its subnetworks,
- * firewall rules and routes, and the network as the API returns it.
+ * firewall rules, routes, peerings and private services access, and the
+ * network as the API returns it.
  */
 export function NetworkPage() {
   const ref = useNetworkRef()
@@ -195,6 +198,8 @@ export function NetworkPage() {
             )}
             {myRoutes.length > 0 && <RouteTable routes={myRoutes} />}
           </Card>
+          <Peerings r={ref} network={n} />
+          <PrivateServicesAccess r={ref} />
           <ContainerNetworkSummary project={ref.project} network={ref.network} />
           <Card>
             <CardTitle>Resource</CardTitle>
