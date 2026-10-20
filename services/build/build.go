@@ -6,8 +6,10 @@
 // (runner.go). timeout and queueTtl run on the Emulator clock. A Build's
 // source comes from Cloud Storage or a Git URL (source.go). Step logs are
 // appended as they run to log-BUILD_ID.txt in the Build's logsBucket, and
-// kept in memory for /_emu/v1/build/<build name>/log (logs.go). Cloud
-// Build v2 answers UNIMPLEMENTED.
+// kept in memory for /_emu/v1/build/<build name>/log (logs.go). Steps
+// act as the Build's service account (serviceaccount.go) and reach the
+// Instance by real hostname through the Build agent (agent.go,
+// agentctl.go). Cloud Build v2 answers UNIMPLEMENTED.
 package build
 
 import (
@@ -53,8 +55,18 @@ type Service struct {
 	// work counts running Builds, which Reset and Stop wait for.
 	work inflight.Tracker
 
-	// netMu serializes creating the Build network.
-	netMu sync.Mutex
+	// netMu serializes creating the Build network and starting the Build
+	// agent, agentID.
+	netMu   sync.Mutex
+	agentID string
+	// agentSecret authorizes the Build agent's endpoints (agentctl.go).
+	agentSecret string
+	// hosts lists the Google front end's hostnames.
+	hosts func() []string
+
+	// stepsMu guards steps, the Build of each running step by address.
+	stepsMu sync.Mutex
+	steps   map[string]buildRef
 
 	probeMu sync.Mutex
 	checked time.Time
@@ -73,7 +85,7 @@ var (
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {
-	s := &Service{env: env, kickC: make(chan struct{}, 1), live: map[string]*liveBuild{}}
+	s := &Service{env: env, kickC: make(chan struct{}, 1), live: map[string]*liveBuild{}, agentSecret: newSecret(), steps: map[string]buildRef{}}
 	s.api = &api{s: s}
 	s.ops = lro.NewManager(env, "build")
 	s.ops.OnCancel = s.cancelOp
@@ -87,6 +99,9 @@ func (s *Service) Name() string { return "build" }
 // Operations: a State snapshot waits for those to finish, but must be
 // possible while a Build runs.
 func (s *Service) Register(r emu.Router) error {
+	if hr, ok := r.(interface{ Hosts() []string }); ok {
+		s.hosts = hr.Hosts
+	}
 	cloudbuildpb.RegisterCloudBuildServer(r.GRPC(), s.api)
 	s.ops.Register(r)
 	r.Mount("cloudbuild", []string{apiHost}, s.restHandler())

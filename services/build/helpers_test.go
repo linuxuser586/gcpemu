@@ -129,7 +129,9 @@ func (e *env) buildObjects() (containers, volumes []string) {
 		e.t.Fatal(err)
 	}
 	for _, c := range cs {
-		containers = append(containers, c.Name)
+		if c.Labels[runtime.LabelResource] != "" { // not the Build agent, which is the Instance's
+			containers = append(containers, c.Name)
+		}
 	}
 	vs, err := rt.ListVolumes(e.ctx, sel)
 	if err != nil {
