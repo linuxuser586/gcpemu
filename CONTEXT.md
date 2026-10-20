@@ -398,7 +398,7 @@ Starting a release's amd64 OCI image, with the host's container runtime, and req
 _Avoid_: smoke test
 
 **Escape guard**:
-A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it.
+A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine.
 _Avoid_: egress check, leak detector
 
 ## Flagged ambiguities

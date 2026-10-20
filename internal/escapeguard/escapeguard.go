@@ -3,7 +3,9 @@
 // Escaped request fails the test, naming the host, instead of reaching
 // Google.
 //
-// The guard refuses every request; it never forwards one. A client
+// The guard never forwards a request off the machine. It refuses every
+// request, except that after Tunnel a CONNECT to a host Host mode serves
+// goes to the Google front end, which runs on this machine. A client
 // reaches it through HTTPS_PROXY and HTTP_PROXY (Env). Requests to the
 // API gateway bypass it: Go never proxies loopback addresses, and NO_PROXY
 // exempts them for clients such as gcloud that otherwise would. The guard
@@ -12,12 +14,14 @@ package escapeguard
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
@@ -38,6 +42,9 @@ type Guard struct {
 	addr string
 	mu   sync.Mutex
 	seen []string // hosts not yet taken, in order, without duplicates
+
+	tunnelIP string          // the Google front end's IP
+	tunneled map[string]bool // the hosts it serves
 }
 
 // New starts a guard on a loopback port and stops it when t ends.
@@ -48,7 +55,7 @@ func New(t testing.TB) *Guard {
 		t.Fatalf("escape guard: %v", err)
 	}
 	g := &Guard{addr: ln.Addr().String()}
-	srv := &http.Server{Handler: http.HandlerFunc(g.refuse)}
+	srv := &http.Server{Handler: http.HandlerFunc(g.serve)}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 	return g
@@ -70,6 +77,21 @@ func (g *Guard) Env() []string {
 	}
 }
 
+// Tunnel passes each CONNECT to one of hosts on to ip, at the port the
+// client asked for, instead of refusing it. Host mode serves hosts at ip,
+// the Google front end's address on this machine, so a client that resolves
+// Google hostnames through the guard reaches Host mode without a change
+// to /etc/hosts or the system resolver.
+func (g *Guard) Tunnel(ip string, hosts []string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.tunnelIP = ip
+	g.tunneled = map[string]bool{}
+	for _, h := range hosts {
+		g.tunneled[h] = true
+	}
+}
+
 // Take returns the hosts refused since the last call.
 func (g *Guard) Take() []string {
 	g.mu.Lock()
@@ -79,22 +101,53 @@ func (g *Guard) Take() []string {
 	return out
 }
 
-func (g *Guard) refuse(w http.ResponseWriter, r *http.Request) {
+// serve tunnels a CONNECT to a host Tunnel named and refuses every other
+// request, recording its host.
+func (g *Guard) serve(w http.ResponseWriter, r *http.Request) {
 	// A CONNECT names its target in Host; a proxied plain request in its
 	// absolute URL.
 	host := r.Host
 	if r.Method != http.MethodConnect && r.URL.Host != "" {
 		host = r.URL.Host
 	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
+	port := "443"
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		host, port = h, p
 	}
 	g.mu.Lock()
+	if r.Method == http.MethodConnect && g.tunneled[host] {
+		ip := g.tunnelIP
+		g.mu.Unlock()
+		tunnel(w, net.JoinHostPort(ip, port))
+		return
+	}
 	if !slices.Contains(g.seen, host) {
 		g.seen = append(g.seen, host)
 	}
 	g.mu.Unlock()
 	http.Error(w, "gcpemu escape guard: refused "+Describe(host), http.StatusForbidden)
+}
+
+// tunnel answers a CONNECT and copies bytes between the client and addr.
+func tunnel(w http.ResponseWriter, addr string) {
+	up, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		http.Error(w, "gcpemu escape guard: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer up.Close()
+	w.WriteHeader(http.StatusOK)
+	conn, buf, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		return
+	}
+	// Closing both ends when either side is done ends the other copy.
+	defer conn.Close()
+	go func() {
+		_, _ = io.Copy(up, buf) // buf holds what the client sent after the CONNECT
+		up.Close()
+	}()
+	_, _ = io.Copy(conn, up)
 }
 
 // Describe explains why a request from OpenTofu to host escaped.

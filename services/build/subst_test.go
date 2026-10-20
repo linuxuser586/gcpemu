@@ -7,6 +7,8 @@ import (
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/linuxuser586/gcpemu/internal/project"
 )
 
 // Built-in and user substitutions expand in a step's args and in images,
@@ -16,12 +18,15 @@ func TestSubstitutionsExpand(t *testing.T) {
 	e := start(t)
 	op, b := e.create(&cloudbuildpb.Build{
 		Substitutions: map[string]string{"_TAG": "v1"},
-		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"echo", "$PROJECT_ID/$BUILD_ID:${_TAG}-$$HOME"}}},
+		Steps:         []*cloudbuildpb.BuildStep{{Name: busybox, Args: []string{"echo", "$PROJECT_ID/$BUILD_ID:${_TAG}-$$HOME", "$PROJECT_NUMBER@$LOCATION"}}},
 		Images:        []string{"us-docker.pkg.dev/$PROJECT_ID/repo/app:$_TAG"},
 	})
 	want := testProject + "/" + b.GetId() + ":v1-$HOME"
 	if got := b.GetSteps()[0].GetArgs()[1]; got != want {
 		t.Errorf("args[1] = %q, want %q", got, want)
+	}
+	if got, want := b.GetSteps()[0].GetArgs()[2], project.NumberString(testProject)+"@global"; got != want {
+		t.Errorf("args[2] = %q, want %q", got, want)
 	}
 	if got, want := b.GetImages()[0], "us-docker.pkg.dev/"+testProject+"/repo/app:v1"; got != want {
 		t.Errorf("images[0] = %q, want %q", got, want)
