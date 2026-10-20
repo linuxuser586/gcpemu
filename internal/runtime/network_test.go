@@ -154,3 +154,59 @@ func TestPinnedNetwork(t *testing.T) {
 		})
 	}
 }
+
+// TestPinnedNetworkProbeName: the probe of a pinned create has a name of
+// its own and the real network's labels, so the real name is created
+// exactly once (#588).
+func TestPinnedNetworkProbeName(t *testing.T) {
+	var mu sync.Mutex
+	type create struct {
+		name, subnet string
+		labels       map[string]string
+	}
+	var creates []create
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/networks/create"):
+			var body struct {
+				Name   string
+				Labels map[string]string
+				IPAM   *struct{ Config []map[string]string }
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			c := create{name: body.Name, labels: body.Labels}
+			if body.IPAM != nil {
+				c.subnet = body.IPAM.Config[0]["Subnet"]
+			}
+			creates = append(creates, c)
+			_, _ = io.WriteString(w, `{"Id":"n`+strconv.Itoa(len(creates))+`"}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/networks/n"):
+			_, _ = io.WriteString(w, `{"Id":"n1","Name":"x","IPAM":{"Config":[{"Subnet":"172.18.0.0/16","Gateway":"172.18.0.1"}]}}`)
+		case r.Method == "DELETE":
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	labels := map[string]string{"gcpemu.instance": "i1"}
+	if _, err := cl.CreateNetwork(context.Background(), NetworkSpec{Name: "gcpemu-i1-svc", Labels: labels, Pin: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(creates) != 2 {
+		t.Fatalf("creates = %+v; want a probe and the real network", creates)
+	}
+	probe, pinned := creates[0], creates[1]
+	if probe.name == "gcpemu-i1-svc" || !strings.HasPrefix(probe.name, "gcpemu-i1-svc-probe-") || probe.labels["gcpemu.instance"] != "i1" {
+		t.Errorf("probe = %+v; want its own name and the real network's labels", probe)
+	}
+	if pinned.name != "gcpemu-i1-svc" || pinned.subnet != "172.18.0.0/16" {
+		t.Errorf("pinned = %+v; want gcpemu-i1-svc on 172.18.0.0/16", pinned)
+	}
+}

@@ -158,6 +158,13 @@ func (e *apiError) Is(target error) bool {
 	return target == ErrNotFound && e.Status == http.StatusNotFound
 }
 
+// IsAlreadyExists reports a runtime conflict (HTTP 409 or "already
+// exists"), such as creating a network whose name is taken.
+func IsAlreadyExists(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && (ae.Status == http.StatusConflict || strings.Contains(ae.Message, "already exists"))
+}
+
 // do performs a request; body may be nil, an io.Reader or a value to JSON-encode.
 func (c *Client) do(ctx context.Context, method, p string, q url.Values, body any, out any) error {
 	resp, err := c.raw(ctx, method, p, q, body, "")
@@ -407,15 +414,19 @@ func (c *Client) createNetwork(ctx context.Context, s NetworkSpec) (string, erro
 var pinMu sync.Mutex
 
 // createPinned creates s on the subnet the runtime picks (see
-// NetworkSpec.Pin): it creates the network, reads the subnet and creates
-// it again with that subnet. If other processes keep taking the subnet in
-// between, the network is left unpinned.
+// NetworkSpec.Pin): it creates a probe network, reads its subnet, deletes
+// it and creates s with that subnet. The probe has a name of its own, so
+// that s's name is created once (#588), and s's labels, so that Instance
+// cleanup removes a probe a crash left behind. If other processes keep
+// taking the subnet in between, the network is left unpinned.
 func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error) {
 	pinMu.Lock()
 	defer pinMu.Unlock()
 	s.Pin = false
 	for attempt := 0; attempt < 10; attempt++ {
-		id, err := c.createNetwork(ctx, s)
+		probe := s
+		probe.Name = fmt.Sprintf("%s-probe-%08x", s.Name, rand.Uint32())
+		id, err := c.createNetwork(ctx, probe)
 		if err != nil {
 			return "", err
 		}
@@ -423,11 +434,11 @@ func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error
 		if err != nil {
 			return "", err
 		}
-		if n.Subnet == "" {
-			return id, nil
-		}
 		if err := c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(id), nil, nil, nil); err != nil {
 			return "", fmt.Errorf("create network %s: %w", s.Name, err)
+		}
+		if n.Subnet == "" {
+			return c.createNetwork(ctx, s)
 		}
 		p := s
 		p.Subnet, p.Gateway = n.Subnet, n.Gateway

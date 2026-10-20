@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -154,24 +153,19 @@ func (c *Client) attach(ctx context.Context, network, container string, reserved
 		ip = c.highestFree(ctx, n)
 	}
 	err := c.Connect(ctx, network, container, ip)
-	if err != nil && pinned != "" && ip == pinned && !alreadyConnected(err) {
+	if err != nil && pinned != "" && ip == pinned && !IsAlreadyExists(err) {
 		// Taken, or outside a recreated network's subnet: as unpinned.
 		if ip = c.highestFree(ctx, n); ip != "" {
 			err = c.Connect(ctx, network, container, ip)
 		}
 	}
-	if err != nil && ip != "" && !alreadyConnected(err) {
+	if err != nil && ip != "" && !IsAlreadyExists(err) {
 		err = c.Connect(ctx, network, container, "")
 	}
-	if alreadyConnected(err) {
+	if IsAlreadyExists(err) {
 		err = nil
 	}
 	return n, err
-}
-
-func alreadyConnected(err error) bool {
-	var ae *apiError
-	return errors.As(err, &ae) && (ae.Status == http.StatusConflict || strings.Contains(ae.Message, "already exists"))
 }
 
 // highestFree returns the highest address of n below its second-to-last
