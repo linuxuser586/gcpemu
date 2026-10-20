@@ -24,12 +24,19 @@ func (e *env) stopAt(at string, stop func()) {
 		e.t.Fatal("no build Service")
 	}
 	var fired atomic.Bool
-	stopped := make(chan struct{})
+	returned := make(chan struct{})
 	// Registered after startWith's cb.Close, so it runs first. Claiming
-	// fired keeps stop from starting once the test is over.
+	// fired keeps stop from starting once the test is over. The wait is
+	// bounded: a test that failed before handing stop its Build leaves
+	// stop blocked.
 	e.t.Cleanup(func() {
-		if !fired.CompareAndSwap(false, true) {
-			<-stopped
+		if fired.CompareAndSwap(false, true) {
+			return
+		}
+		select {
+		case <-returned:
+		case <-time.After(time.Minute):
+			e.t.Errorf("stop at %q did not return", at)
 		}
 	})
 	build.SetCheckpoint(svc, func(ctx context.Context, _, point string) {
@@ -37,7 +44,7 @@ func (e *env) stopAt(at string, stop func()) {
 			return
 		}
 		go func() {
-			defer close(stopped)
+			defer close(returned)
 			stop()
 		}()
 		select {
