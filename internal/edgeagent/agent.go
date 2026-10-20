@@ -1,4 +1,9 @@
-package lb
+// Package edgeagent is the Edge relay's Sidecar agent, which relays TCP
+// connections to an ingress in the emulator with a PROXY v2 header, and
+// the LAN relay containers that run it in LAN mode on the host network:
+// lb-lan for --lb-bind and gfe-lan, the LAN front-end relay, for
+// --gfe-bind.
+package edgeagent
 
 import (
 	"bufio"
@@ -18,7 +23,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/agent"
 )
 
-// The "lb-edge" agent runs in the lb-edge container (edge.go). It
+// The "lb-edge" agent runs in the lb-edge container (services/lb/edge.go). It
 //
 //   - owns one address per forwarding rule on the lb network and listens on
 //     the rule's real port (80/443), relaying each connection to the
@@ -32,31 +37,47 @@ import (
 //     stream is spliced.
 //
 // The emulator configures it over a token-protected HTTP control port.
+//
+// The "lb-lan" agent is the same agent in LAN mode (runLANAgent), for a
+// LANRelay container.
 
 const (
-	edgeAgentName   = "lb-edge"
-	edgeControlPort = 15080
-	edgeRelayPort   = 15081
-	edgeTokenHeader = "X-Gcpemu-Lb-Token"
+	// EdgeAgentName runs the lb-edge container's agent.
+	EdgeAgentName = "lb-edge"
+	// LANAgentName runs the agent in LAN mode, in a LANRelay container.
+	LANAgentName = "lb-lan"
+	// ControlPort and RelayPort are the lb-edge agent's ports.
+	ControlPort = 15080
+	RelayPort   = 15081
+	// TokenHeader carries the control port's token.
+	TokenHeader = "X-Gcpemu-Lb-Token"
 )
 
-func init() { agent.Register(edgeAgentName, runEdgeAgent) }
+// Image is the image the edge containers run the agent in.
+const Image = "rancher/k3s:v1.36.5-k3s1"
 
-// edgeConfig is the desired state the emulator posts to the agent.
-type edgeConfig struct {
-	Ingress   string         `json:"ingress"`
-	Listeners []edgeListener `json:"listeners"`
-	Routes    []edgeRoute    `json:"routes"`
-	// Public are external forwarding rule addresses and ports (#187).
-	Public []edgeListener `json:"public,omitempty"`
+func init() {
+	agent.Register(EdgeAgentName, runEdgeAgent)
+	agent.Register(LANAgentName, runLANAgent)
 }
 
-type edgeListener struct {
+// Config is the desired state the emulator posts to the agent.
+type Config struct {
+	Ingress   string     `json:"ingress"`
+	Listeners []Listener `json:"listeners"`
+	Routes    []Route    `json:"routes"`
+	// Public are external forwarding rule addresses and ports (#187).
+	Public []Listener `json:"public,omitempty"`
+}
+
+// Listener is an address and port the agent listens on.
+type Listener struct {
 	IP   string `json:"ip"`
 	Port int    `json:"port"`
 }
 
-type edgeRoute struct {
+// Route is a route the agent installs.
+type Route struct {
 	CIDR string `json:"cidr"`
 	Via  string `json:"via"`
 }
@@ -64,8 +85,8 @@ type edgeRoute struct {
 type edgeAgent struct {
 	token  string
 	subnet *net.IPNet
-	// lan: the --lb-bind relay (lan.go) listens on host addresses and
-	// owns none.
+	// lan: in a LANRelay container (lan.go), it listens on host
+	// addresses and owns none.
 	lan bool
 
 	mu        sync.Mutex
@@ -82,7 +103,7 @@ func runEdgeAgent(ctx context.Context, _ []string) error {
 	if _, n, err := net.ParseCIDR(os.Getenv("GCPEMU_LB_SUBNET")); err == nil {
 		a.subnet = n
 	}
-	relay, err := net.Listen("tcp", ":"+strconv.Itoa(edgeRelayPort))
+	relay, err := net.Listen("tcp", ":"+strconv.Itoa(RelayPort))
 	if err != nil {
 		return err
 	}
@@ -90,7 +111,7 @@ func runEdgeAgent(ctx context.Context, _ []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("POST /config", a.handleConfig)
-	srv := &http.Server{Addr: ":" + strconv.Itoa(edgeControlPort), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":" + strconv.Itoa(ControlPort), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); srv.Close(); relay.Close() }()
 	if err := srv.ListenAndServe(); err != nil && ctx.Err() == nil {
 		return err
@@ -99,11 +120,11 @@ func runEdgeAgent(ctx context.Context, _ []string) error {
 }
 
 func (a *edgeAgent) handleConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get(edgeTokenHeader) != a.token {
+	if r.Header.Get(TokenHeader) != a.token {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	var cfg edgeConfig
+	var cfg Config
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -141,14 +162,14 @@ func (a *edgeAgent) lbInterface() (string, int) {
 	return "eth0", ones
 }
 
-func (a *edgeAgent) apply(cfg edgeConfig) error {
+func (a *edgeAgent) apply(cfg Config) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.ingress = cfg.Ingress
 	var errs []string
 	iface, ones := a.lbInterface()
 	want := map[string]bool{}
-	wantL := map[string]edgeListener{}
+	wantL := map[string]Listener{}
 	for _, l := range cfg.Listeners {
 		want[l.IP] = true
 		wantL[net.JoinHostPort(l.IP, strconv.Itoa(l.Port))] = l
@@ -250,7 +271,7 @@ func (a *edgeAgent) serveListener(ln net.Listener) {
 			defer u.Close()
 			src, _ := c.RemoteAddr().(*net.TCPAddr)
 			dst, _ := c.LocalAddr().(*net.TCPAddr)
-			if src == nil || dst == nil || writeProxyV2(u, src, dst) != nil {
+			if src == nil || dst == nil || WriteProxyV2(u, src, dst) != nil {
 				return
 			}
 			splice(c, u)

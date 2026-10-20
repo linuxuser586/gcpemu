@@ -1,8 +1,6 @@
 package lb
 
 import (
-	"bufio"
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"net"
@@ -122,23 +120,6 @@ func TestHeaderActions(t *testing.T) {
 	applyCustomHeaders(h, []string{"X-Custom: v {client_encrypted}"}, rs)
 	if h.Get("X-Custom") != "v false" {
 		t.Errorf("custom = %q", h.Get("X-Custom"))
-	}
-}
-
-func TestProxyProtocol(t *testing.T) {
-	var buf bytes.Buffer
-	src := &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 51234}
-	dst := &net.TCPAddr{IP: net.ParseIP("172.30.0.250"), Port: 443}
-	if err := writeProxyV2(&buf, src, dst); err != nil {
-		t.Fatal(err)
-	}
-	buf.WriteString("GET / HTTP/1.1\r\n")
-	s, d, err := readProxyV2(bufio.NewReader(&buf))
-	if err != nil || s.String() != src.String() || d.String() != dst.String() {
-		t.Fatalf("parsed %v %v %v", s, d, err)
-	}
-	if _, _, err := readProxyV2(bufio.NewReader(bytes.NewBufferString("GET / HTTP/1.1\r\n\r\n"))); err == nil {
-		t.Error("plain HTTP accepted as PROXY header")
 	}
 }
 
