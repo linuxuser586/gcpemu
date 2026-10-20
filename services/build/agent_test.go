@@ -213,8 +213,9 @@ func (e *env) grant(role, member string) {
 		{"role":"`+role+`","members":["`+member+`"]}]}}`)
 }
 
-// noProxyAgent exempts the Build agent from the Escape guard's proxy.
-const noProxyAgent = `export NO_PROXY="$NO_PROXY,$GCE_METADATA_HOST" no_proxy="$no_proxy,$GCE_METADATA_HOST"; `
+// noProxyAgent exempts the Build agent from the Escape guard's proxy; $$
+// escapes the shell's variables from substitution.
+const noProxyAgent = `export NO_PROXY="$$NO_PROXY,$$GCE_METADATA_HOST" no_proxy="$$no_proxy,$$GCE_METADATA_HOST"; `
 
 var guards sync.Map // *testing.T → *escapeguard.Guard
 

@@ -33,6 +33,10 @@ type liveBuild struct {
 	// volumes are gone.
 	done chan struct{}
 
+	// secrets are the Build's secret payloads by env, once its setup read
+	// them (secrets.go).
+	secrets map[string]string
+
 	mu sync.Mutex
 	// stepStops stops the running steps, by index, for a step timeout.
 	stepStops map[int]context.CancelCauseFunc

@@ -50,7 +50,7 @@ func (a *api) CreateBuild(ctx context.Context, req *cloudbuildpb.CreateBuildRequ
 	if err := a.s.checkActAs(ctx, project, req.GetBuild()); err != nil {
 		return nil, err
 	}
-	return a.s.submit(project, location, req.GetBuild())
+	return a.s.submit(project, location, req.GetBuild(), nil)
 }
 
 func (a *api) GetBuild(ctx context.Context, req *cloudbuildpb.GetBuildRequest) (*cloudbuildpb.Build, error) {
@@ -152,7 +152,7 @@ func (a *api) RetryBuild(ctx context.Context, req *cloudbuildpb.RetryBuildReques
 	if err := a.s.checkActAs(ctx, r.Project, st.request); err != nil {
 		return nil, err
 	}
-	return a.s.submit(r.Project, r.Location, st.request)
+	return a.s.submit(r.Project, r.Location, st.request, nil)
 }
 
 // load returns a stored Build.
@@ -175,11 +175,18 @@ func (s *Service) loadStored(r buildRef) (*stored, error) {
 	return st, err
 }
 
-// submit validates a Build, stores it QUEUED with the Operation that ends
-// with it, publishes that, and has the scheduler start it.
-func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*longrunningpb.Operation, error) {
-	if err := validate(in); err != nil {
-		return nil, err
+// submit validates a Build, expands its substitutions (subst.go), stores
+// it QUEUED with the Operation that ends with it, publishes that, and has
+// the scheduler start it. provided gives the built-in substitutions that
+// a Build's source or Build trigger provides, such as COMMIT_SHA or
+// TRIGGER_NAME.
+func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provided map[string]string) (*longrunningpb.Operation, error) {
+	// The serviceAccount, which substitutions do not apply to, gives
+	// built-ins; the rest is validated as substituted.
+	if sa := in.GetServiceAccount(); sa != "" {
+		if _, err := serviceAccountEmail(sa); err != nil {
+			return nil, err
+		}
 	}
 	b := proto.Clone(in).(*cloudbuildpb.Build)
 	r := buildRef{project, location, s.env.IDs.UUID()}
@@ -198,6 +205,12 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build) (*lon
 	}
 	for _, st := range b.Steps {
 		st.Status, st.ExitCode, st.Timing, st.PullTiming = cloudbuildpb.Build_QUEUED, 0, nil, nil
+	}
+	if err := substitute(b, builtins(b, location, provided)); err != nil {
+		return nil, err
+	}
+	if err := validate(b); err != nil {
+		return nil, err
 	}
 	if err := s.logsBucket(b); err != nil {
 		return nil, err
@@ -258,16 +271,11 @@ func validate(b *cloudbuildpb.Build) error {
 	if err := validateSource(b.GetSource()); err != nil {
 		return err
 	}
-	if sa := b.GetServiceAccount(); sa != "" {
-		if _, err := serviceAccountEmail(sa); err != nil {
-			return err
-		}
-	}
 	if err := validateArtifacts(b.GetArtifacts()); err != nil {
 		return err
 	}
-	if len(b.GetSecrets()) > 0 || b.GetAvailableSecrets() != nil {
-		return apierr.New(codes.Unimplemented, "Build secrets are not emulated yet.")
+	if err := validateSecrets(b); err != nil {
+		return err
 	}
 	for _, d := range []*durationpb.Duration{b.GetTimeout(), b.GetQueueTtl()} {
 		if d != nil && d.AsDuration() < 0 {
@@ -281,9 +289,6 @@ func validate(b *cloudbuildpb.Build) error {
 		}
 		if st.GetScript() != "" && len(st.GetArgs()) > 0 {
 			return apierr.InvalidArgument("invalid build: build step %d: script and args are mutually exclusive.", i)
-		}
-		if len(st.GetSecretEnv()) > 0 {
-			return apierr.New(codes.Unimplemented, "Build secrets are not emulated yet.")
 		}
 		if st.GetTimeout() != nil && st.GetTimeout().AsDuration() < 0 {
 			return apierr.InvalidArgument("invalid build: build step %d: timeout must not be negative.", i)

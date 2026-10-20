@@ -70,6 +70,13 @@ func (s *Service) runSteps(r *liveBuild, b *cloudbuildpb.Build) (o outcome, ranT
 	if err := s.writeCredentials(r.ctx, rt, b, vols); err != nil {
 		return outcome{status: cloudbuildpb.Build_INTERNAL_ERROR, detail: "Writing the Build's credentials: " + err.Error()}, false
 	}
+	if r.secrets, err = s.resolveSecrets(r.ctx, r, b); err != nil {
+		var f *stepFailure
+		if errors.As(err, &f) {
+			return f.o, true
+		}
+		return outcome{status: cloudbuildpb.Build_CANCELLED, detail: "Build was cancelled."}, false
+	}
 	if err := s.fetchSource(r.ctx, rt, r, b, vols, network.name); err != nil {
 		var f *stepFailure
 		if errors.As(err, &f) {
@@ -287,7 +294,7 @@ func (s *Service) runStep(ctx context.Context, rt *runtime.Manager, r *liveBuild
 	// a create cut off mid-request may still be carried out by the
 	// runtime, after the Build's cleanup looked for its containers.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-	id, err := rt.CreateContainer(cctx, s.stepSpec(rt, b, i, vols, network))
+	id, err := rt.CreateContainer(cctx, s.stepSpec(rt, b, i, vols, network, r.secrets))
 	cancel()
 	if err != nil {
 		return failed(err.Error())
@@ -357,19 +364,19 @@ func (s *Service) stopped(ctx context.Context, ended func(cloudbuildpb.Build_Sta
 }
 
 // stepSpec is the container of step i: its image, entrypoint and args or
-// script, env (the Build's options first), dir under the source's, the
-// Build's volumes, the Build daemon's socket and the Build network,
-// labelled as the Build's so cleanup finds it. The Build agent is its
-// resolver, and the variables
-// that point clients at the agent come before the Build's own.
-func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network buildNet) runtime.ContainerSpec {
+// script, env (the Build's options first, then the step's secretEnv
+// payloads from secrets), dir under the source's, the Build's volumes,
+// the Build daemon's socket and the Build network, labelled as the
+// Build's so cleanup finds it. The Build agent is its resolver, and the
+// variables that point clients at the agent come before the Build's own.
+func (s *Service) stepSpec(rt *runtime.Manager, b *cloudbuildpb.Build, i int, vols buildVolumes, network buildNet, secrets map[string]string) runtime.ContainerSpec {
 	st := b.GetSteps()[i]
 	agentEnv, hosts := s.stepEnv(network.agent)
 	env := append(append([]string{"HOME=" + home}, agentEnv...), b.GetOptions().GetEnv()...)
 	spec := runtime.ContainerSpec{
 		Name:       rt.Name("build", b.GetId(), "step", strconv.Itoa(i)),
 		Image:      st.GetName(),
-		Env:        append(env, st.GetEnv()...),
+		Env:        append(append(env, st.GetEnv()...), secretEnv(b, i, secrets)...),
 		Labels:     rt.Labels("build", b.GetName(), "step"),
 		WorkingDir: path.Join(sourceDir(b), st.GetDir()),
 		Mounts:     append(vols.mounts(b, st), runtime.Mount{Type: "volume", Source: daemonVolume(rt, "run"), Target: stepRun}),

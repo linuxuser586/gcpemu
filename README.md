@@ -26,7 +26,7 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 | GKE | `services/gke` | container v1 (gRPC + REST) over real k3s clusters; node pools, IAM-backed kube auth, Workload Identity, private nodes via NAT, NEG sync, Ingress (`gce`) and Gateway API (`gke-l7-global-external-managed`, `gke-l7-gxlb`) controllers building load balancers, real-hostname Google APIs in pods; Connect gateway (`connectgateway` v1) to each cluster's Kubernetes API; Gateway API CRDs, the Secret Manager add-on (`secrets-store-gke.csi.k8s.io`) and SecretSync from cluster settings; system metrics over OTLP |
 | Application Load Balancer | `services/lb` | Forwarding rules, proxies, URL maps, backend services/buckets, health checks, SSL certs/policies; in-process L7 proxy with frontend/backend mTLS, NEG and bucket backends, access logs; Cloud Armor policies, TCP/SSL/gRPC proxies and legacy health checks (recorded) |
 | Cloud CDN | `services/cdn` | Cache modes, keys, TTLs, revalidation, negative caching, signed URLs/cookies, invalidation, LRU disk cache |
-| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket`; steps run as the Build's `serviceAccount` (the Compute Engine default without one; naming one needs `iam.serviceAccounts.actAs`) and reach the Instance by real hostname through the Build agent, with the metadata server, the Instance CA trusted and an Artifact Registry proxy |
+| Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket`; steps run as the Build's `serviceAccount` (the Compute Engine default without one; naming one needs `iam.serviceAccounts.actAs`) and reach the Instance by real hostname through the Build agent, with the metadata server, the Instance CA trusted and an Artifact Registry proxy; substitutions (`substitutionOption`, `dynamicSubstitutions`) and `availableSecrets.secretManager` |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
 ## Quick start
@@ -410,6 +410,24 @@ sources answer `UNIMPLEMENTED`. Every step's output goes to `log-BUILD_ID.txt` i
 `gs://PROJECT_NUMBER.cloudbuild-logs.googleusercontent.com`, which the emulator creates.
 `options.logging` is recorded, and the log always goes to Cloud Storage. `logUrl` opens the Build in
 the Web console.
+
+Substitutions expand when the Build is created, in each step's `name`, `args`, `env`, `dir` and
+`entrypoint`, in `images`, `tags`, `logsBucket`, `artifacts` and each `availableSecrets` `versionName`,
+and the Build shows the expanded values. The built-ins are `$PROJECT_ID`, `$PROJECT_NUMBER`, `$BUILD_ID`,
+`$LOCATION`, `$SERVICE_ACCOUNT` and `$SERVICE_ACCOUNT_EMAIL`. The source and Build trigger ones, such as
+`$COMMIT_SHA` and `$BRANCH_NAME`, are empty unless something sets them. User `$_KEY` and `${_KEY}`
+substitutions expand too, and `$$` is a literal `$`. As on GCP, a `script` isn't substituted. Under
+`options.substitutionOption: MUST_MATCH` (the default), an unused user substitution or a `$_KEY`
+with no value fails `builds.create` with `INVALID_ARGUMENT`. `ALLOW_LOOSE` allows both. A `$KEY` that
+isn't a built-in always fails. `options.dynamicSubstitutions` enables bash parameter expansion
+(`${_SHA:0:7}`, `${_REF##*/}`, `${_X/a/b}`, `${_X,,}`, ...) and lets user values refer to other
+substitutions. `availableSecrets.secretManager` versions are read as the Build's service account
+when it starts, so under `enforce` the account needs `secretmanager.versions.access`. A version
+that can't be read fails the Build. Each payload is set as its `env` in the steps that list it in
+`secretEnv` (or in `options.secretEnv`), and shows as `[REDACTED]` in the log, along with each line of
+a multi-line payload that is 8 characters or longer. Unlike on GCP as far as is known, this masking
+is deliberate emulator behaviour. Cloud KMS `secrets` and `availableSecrets.inline` answer
+`UNIMPLEMENTED`.
 
 gcloud can't stream the log outside Host mode (SRS 11.3): it reads it from
 `storage.UNIVERSE_DOMAIN`, ignoring endpoint overrides, so `gcloud builds submit` fails even when
