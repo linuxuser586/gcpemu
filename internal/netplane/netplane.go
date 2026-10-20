@@ -175,14 +175,15 @@ func (p *Plane) externalLocked(ctx context.Context) (Net, error) {
 
 // ensure finds or creates a network named gcpemu-<id>-<suffix>; the runtime
 // picks a free subnet, pinned so that containers can ask for fixed
-// addresses on it (a Cloud SQL instance's public IP).
+// addresses on it (a Cloud SQL instance's public IP). A network created by
+// someone else between the inspect and the create is used as found (#588).
 func (p *Plane) ensure(ctx context.Context, suffix string, internal bool) (Net, error) {
 	name := p.rt.Name(suffix)
 	n, err := p.rt.InspectNetwork(ctx, name)
 	if errors.Is(err, runtime.ErrNotFound) {
 		if _, err := p.rt.CreateNetwork(ctx, runtime.NetworkSpec{
 			Name: name, Internal: internal, Labels: p.rt.Labels("core", suffix, "network"), Pin: true,
-		}); err != nil {
+		}); err != nil && !runtime.IsAlreadyExists(err) {
 			return Net{}, err
 		}
 		n, err = p.rt.InspectNetwork(ctx, name)
