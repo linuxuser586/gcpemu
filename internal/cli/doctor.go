@@ -62,7 +62,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			cl, det, rtErr := emuruntime.Locate()
 			checkRuntimeDetection(out, report, det, rtErr)
 			hasRuntime := rtErr == nil
-			checkContainerized(out, cfg.Containerized, inContainer, hasRuntime)
+			checkContainerized(out, cfg.Containerized, inContainer, hasRuntime, hasRuntime && cl.SelfFound())
 			// hostRuntime: a runtime whose host network is this host's,
 			// for a relay container there.
 			hostRuntime := false
@@ -796,12 +796,12 @@ func checkRuntimeDetection(out io.Writer, report func(ok bool, what, fix string)
 }
 
 // checkContainerized warns when the Instance can only guess from the
-// marker files that it is a Containerized Instance: in a container with
-// no runtime and --containerized=auto (#502).
-func checkContainerized(out io.Writer, setting string, markers, hasRuntime bool) {
-	d := emuruntime.DecideContainerized(setting, markers, hasRuntime, "")
-	if d.Guess {
-		fmt.Fprintln(out, "[WARN] "+emuruntime.GuessWarning)
+// marker files that it is a Containerized Instance: in a container whose
+// runtime is missing or can't find it, under --containerized=auto (#502).
+func checkContainerized(out io.Writer, setting string, markers, hasRuntime, found bool) {
+	d := emuruntime.DecideContainerized(emuruntime.ContainerizedFacts{Setting: setting, Markers: markers, Runtime: hasRuntime, Found: found})
+	if d.Guess != "" {
+		fmt.Fprintln(out, "[WARN] "+d.Guess)
 	}
 }
 

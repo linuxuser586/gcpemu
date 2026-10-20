@@ -122,16 +122,18 @@ func SetPodRoutes(svc emu.Service, f func(ctx context.Context) []gke.PodRoute) {
 
 // SetSelfRuntime makes the data plane run as in a container, learning
 // its Published ports anew from rt (emu.Containers.Runtime) and
-// selfPorts (the Manager's Self and SelfPorts), served on host instead
+// selfPorts (the Manager's Self, SelfFound and SelfPorts), served on host instead
 // of the wildcard (call it before creating forwarding rules).
-func SetSelfRuntime(svc emu.Service, rt func(ctx context.Context) (*runtime.Manager, error), selfPorts func(ctx context.Context) (string, map[int]string, error), host string) {
+func SetSelfRuntime(svc emu.Service, rt func(ctx context.Context) (*runtime.Manager, error), selfPorts func(ctx context.Context) (string, bool, map[int]string, error), host string) {
 	d := svc.(*Service).dp
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.self = &selfProbe{
 		inContainer: func() bool { return true },
 		runtime:     rt,
-		selfPorts:   func(ctx context.Context, _ *runtime.Manager) (string, map[int]string, error) { return selfPorts(ctx) },
+		selfPorts: func(ctx context.Context, _ *runtime.Manager) (string, bool, map[int]string, error) {
+			return selfPorts(ctx)
+		},
 	}
 	d.pub, d.pubKnown, d.pubRetry = publishing{}, false, time.Time{}
 	d.edge.mu.Lock()

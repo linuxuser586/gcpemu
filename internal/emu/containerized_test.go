@@ -23,19 +23,22 @@ func TestContainerized(t *testing.T) {
 		setting string
 		markers bool
 		self    string
+		found   bool
 		err     error
 		want    bool
 		asked   bool
 		log     string
 	}{
-		{"on the host", "auto", false, "", nil, false, false, ""},
-		{"runtime: bridge container", "auto", true, "abc", nil, true, true, ""},
-		{"runtime: host network", "auto", true, "", nil, false, true, ""},
-		{"runtime: bridge container, set false", "false", true, "abc", nil, true, true, "disagrees with the container runtime"},
-		{"no runtime: set false", "false", true, "", noRT, false, true, ""},
-		{"no runtime: auto", "auto", true, "", noRT, true, true, "--containerized=false"},
-		{"runtime not reachable yet: auto", "auto", true, "", errors.New("timeout"), true, true, ""},
-		{"no markers, set true, no runtime", "true", false, "", noRT, true, true, ""},
+		{"on the host", "auto", false, "", false, nil, false, false, ""},
+		{"runtime: bridge container", "auto", true, "abc", true, nil, true, true, ""},
+		{"runtime: host network", "auto", true, "", true, nil, false, true, ""},
+		{"runtime: bridge container, set false", "false", true, "abc", true, nil, true, true, "disagrees with the container runtime"},
+		{"runtime: can't find its container", "auto", true, "", false, nil, true, true, "GCPEMU_SELF_CONTAINER"},
+		{"runtime: can't find its container, set true", "true", false, "", false, nil, true, true, ""},
+		{"no runtime: set false", "false", true, "", false, noRT, false, true, ""},
+		{"no runtime: auto", "auto", true, "", false, noRT, true, true, "no container runtime socket"},
+		{"runtime not reachable yet: auto", "auto", true, "", false, errors.New("timeout"), true, true, ""},
+		{"no markers, set true, no runtime", "true", false, "", false, noRT, true, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Defaults()
@@ -44,9 +47,9 @@ func TestContainerized(t *testing.T) {
 			asked := false
 			e := &Env{Config: &cfg, Log: slog.New(slog.NewTextHandler(&buf, nil)), ContainerizedProbe: &ContainerizedProbe{
 				Markers: func() bool { return tc.markers },
-				Self: func(context.Context) (string, error) {
+				Self: func(context.Context) (string, bool, error) {
 					asked = true
-					return tc.self, tc.err
+					return tc.self, tc.found, tc.err
 				},
 			}}
 			for range 2 {
@@ -76,9 +79,9 @@ func TestContainerizedRuntimeSlow(t *testing.T) {
 	defer close(block)
 	e := &Env{Config: &cfg, Log: slog.New(slog.DiscardHandler), ContainerizedProbe: &ContainerizedProbe{
 		Markers: func() bool { return true },
-		Self: func(context.Context) (string, error) {
+		Self: func(context.Context) (string, bool, error) {
 			<-block
-			return "abc", nil
+			return "abc", true, nil
 		},
 	}}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

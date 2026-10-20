@@ -1,35 +1,51 @@
 package runtime
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// The runtime's answer wins when there is one, conflicting with a set
-// --containerized; without it a set --containerized decides, and auto
-// goes by the marker files, a guess when they say yes (#502).
+// The runtime's answer, when it found the emulator's own container, wins,
+// conflicting with a set --containerized; without it a set
+// --containerized decides, and auto goes by the marker files, a guess
+// when they say yes that names why the runtime can't tell (#502).
 func TestDecideContainerized(t *testing.T) {
+	const (
+		noSocket = "no container runtime socket"
+		notFound = SelfEnv
+	)
 	for _, tc := range []struct {
-		name               string
-		setting            string
-		markers, rt        bool
-		self               string
-		on, guess, clashes bool
+		name    string
+		f       ContainerizedFacts
+		on      bool
+		guess   string
+		clashes bool
 	}{
-		{"runtime: own bridge container", "auto", true, true, "abc", true, false, false},
-		{"runtime: host network", "auto", true, true, "", false, false, false},
-		{"runtime: on the host", "auto", false, true, "", false, false, false},
-		{"runtime: bridge container, set false", "false", true, true, "abc", true, false, true},
-		{"runtime: host network, set true", "true", true, true, "", false, false, true},
-		{"runtime: bridge container, set true", "TRUE", true, true, "abc", true, false, false},
-		{"no runtime: set false", "false", true, false, "", false, false, false},
-		{"no runtime: set true", "true", false, false, "", true, false, false},
-		{"no runtime: auto, markers", "auto", true, false, "", true, true, false},
-		{"no runtime: default, markers", "", true, false, "", true, true, false},
-		{"no runtime: auto, no markers", "auto", false, false, "", false, false, false},
+		{"found: own bridge container", ContainerizedFacts{"auto", true, true, true, "abc"}, true, "", false},
+		{"found: host network", ContainerizedFacts{"auto", true, true, true, ""}, false, "", false},
+		{"found: bridge container, set false", ContainerizedFacts{"false", true, true, true, "abc"}, true, "", true},
+		{"found: host network, set true", ContainerizedFacts{"true", true, true, true, ""}, false, "", true},
+		{"found: bridge container, set true", ContainerizedFacts{"TRUE", true, true, true, "abc"}, true, "", false},
+		{"not found: set true, no markers", ContainerizedFacts{"true", false, true, false, ""}, true, "", false},
+		{"not found: set false", ContainerizedFacts{"false", true, true, false, ""}, false, "", false},
+		{"not found: auto, markers", ContainerizedFacts{"auto", true, true, false, ""}, true, notFound, false},
+		{"not found: on the host", ContainerizedFacts{"auto", false, true, false, ""}, false, "", false},
+		{"no runtime: set false", ContainerizedFacts{"false", true, false, false, ""}, false, "", false},
+		{"no runtime: set true", ContainerizedFacts{"true", false, false, false, ""}, true, "", false},
+		{"no runtime: auto, markers", ContainerizedFacts{"auto", true, false, false, ""}, true, noSocket, false},
+		{"no runtime: default, markers", ContainerizedFacts{"", true, false, false, ""}, true, noSocket, false},
+		{"no runtime: auto, no markers", ContainerizedFacts{"auto", false, false, false, ""}, false, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := DecideContainerized(tc.setting, tc.markers, tc.rt, tc.self)
-			if d.On != tc.on || d.Guess != tc.guess || (d.Conflict != "") != tc.clashes {
-				t.Errorf("DecideContainerized(%q, %v, %v, %q) = %+v; want On=%v Guess=%v conflict=%v",
-					tc.setting, tc.markers, tc.rt, tc.self, d, tc.on, tc.guess, tc.clashes)
+			d := DecideContainerized(tc.f)
+			if d.On != tc.on || (d.Conflict != "") != tc.clashes {
+				t.Errorf("DecideContainerized(%+v) = %+v; want On=%v conflict=%v", tc.f, d, tc.on, tc.clashes)
+			}
+			if (d.Guess != "") != (tc.guess != "") || !strings.Contains(d.Guess, tc.guess) {
+				t.Errorf("DecideContainerized(%+v): guess %q, want one naming %q", tc.f, d.Guess, tc.guess)
+			}
+			if d.Guess != "" && !strings.Contains(d.Guess, "--containerized=false") {
+				t.Errorf("guess %q does not name --containerized=false", d.Guess)
 			}
 		})
 	}

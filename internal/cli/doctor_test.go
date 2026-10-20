@@ -523,28 +523,31 @@ func TestReportBuildDaemon(t *testing.T) {
 }
 
 // doctor warns that the Instance guesses it is a Containerized Instance
-// only with the marker files, no runtime and --containerized=auto (#502).
+// only with the marker files, no answer from the runtime and
+// --containerized=auto, naming why (#502).
 func TestCheckContainerized(t *testing.T) {
 	for _, tc := range []struct {
-		setting             string
-		markers, hasRuntime bool
-		warn                bool
+		setting                    string
+		markers, hasRuntime, found bool
+		warn                       string
 	}{
-		{"auto", true, false, true},
-		{"", true, false, true},
-		{"auto", true, true, false},
-		{"auto", false, false, false},
-		{"false", true, false, false},
-		{"true", true, false, false},
+		{"auto", true, false, false, "no container runtime socket"},
+		{"", true, false, false, "no container runtime socket"},
+		{"auto", true, true, false, emuruntime.SelfEnv},
+		{"auto", true, true, true, ""},
+		{"auto", false, false, false, ""},
+		{"false", true, false, false, ""},
+		{"true", true, true, false, ""},
 	} {
 		var out strings.Builder
-		checkContainerized(&out, tc.setting, tc.markers, tc.hasRuntime)
+		checkContainerized(&out, tc.setting, tc.markers, tc.hasRuntime, tc.found)
 		got := out.String()
-		if !tc.warn && got != "" {
+		if tc.warn == "" && got != "" {
 			t.Errorf("%+v: output %q, want none", tc, got)
 		}
-		if tc.warn && (!strings.HasPrefix(got, "[WARN] ") || !strings.Contains(got, "--containerized=false") || strings.Count(got, "\n") != 1) {
-			t.Errorf("%+v: output %q, want one [WARN] line naming --containerized=false", tc, got)
+		if tc.warn != "" && (!strings.HasPrefix(got, "[WARN] ") || !strings.Contains(got, tc.warn) ||
+			!strings.Contains(got, "--containerized=false") || strings.Count(got, "\n") != 1) {
+			t.Errorf("%+v: output %q, want one [WARN] line naming %q and --containerized=false", tc, got, tc.warn)
 		}
 	}
 }

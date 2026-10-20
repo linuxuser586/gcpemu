@@ -202,8 +202,8 @@ func TestPublishedRuntimeTransient(t *testing.T) {
 	rng := freePort(t)
 	rt := &fakeRuntime{errs: []error{errors.New("runtime socket not ready")}}
 	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
-		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
-			return "self", map[int]string{rng: "127.0.0.1:40001"}, nil
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
+			return "self", true, map[int]string{rng: "127.0.0.1:40001"}, nil
 		}, bind)
 	})
 	svc, _ := e.inst.Env.Lookup("lb")
@@ -235,9 +235,9 @@ func TestPublishedRuntimeTransient(t *testing.T) {
 func TestPublishedRuntimeNone(t *testing.T) {
 	rt := &fakeRuntime{errs: []error{emu.NoRuntime(errors.New("no runtime found"))}}
 	e, dial := startContainerized(t, "", func(svc emu.Service, bind string) {
-		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
 			t.Error("published ports read without a runtime")
-			return "", nil, nil
+			return "", false, nil, nil
 		}, bind)
 	})
 	svc, _ := e.inst.Env.Lookup("lb")
@@ -264,9 +264,9 @@ func TestPublishedNoRuntimeNotContainerized(t *testing.T) {
 	rt := &fakeRuntime{errs: []error{emu.NoRuntime(errors.New("no runtime found"))}}
 	e, _ := startContainerized(t, "", func(svc emu.Service, bind string) {
 		lb.SetContainerized(svc, "false")
-		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
 			t.Error("published ports read without a runtime")
-			return "", nil, nil
+			return "", false, nil, nil
 		}, bind)
 	})
 	svc, _ := e.inst.Env.Lookup("lb")
@@ -290,13 +290,29 @@ func TestPublishedRuntimeWinsOverSetting(t *testing.T) {
 	rt := &fakeRuntime{}
 	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
 		lb.SetContainerized(svc, "false")
-		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, map[int]string, error) {
-			return "self", map[int]string{rng: "127.0.0.1:40001"}, nil
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
+			return "self", true, map[int]string{rng: "127.0.0.1:40001"}, nil
 		}, bind)
 	})
 	e.forwardingRule("a", 8080)
 	e.waitEndpoint(ep("a"), "127.0.0.1:40001")
 	e.serves(dial(rng))
+}
+
+// A runtime that can't find the emulator's own container is no answer:
+// under auto the marker files make it a Containerized Instance, whose
+// published ports are unknown, so rules are served as without the runtime
+// socket (#502).
+func TestPublishedSelfNotFound(t *testing.T) {
+	rt := &fakeRuntime{}
+	e, dial := startContainerized(t, "", func(svc emu.Service, bind string) {
+		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
+			return "", false, nil, nil
+		}, bind)
+	})
+	e.forwardingRule("a", 8080)
+	e.waitEndpoint(ep("a"), "127.0.0.1:8080")
+	e.serves(dial(8080))
 }
 
 // freePort returns a TCP port free on 127.0.0.1.

@@ -31,14 +31,16 @@ func TestStartPortRange(t *testing.T) {
 		markers bool
 		setting string
 		self    string
+		found   bool
 		err     error
 		inRange bool
 	}{
-		{"on the host", false, "auto", "", noRT, true},
-		{"runtime: bridge container", true, "auto", "abc", nil, false},
-		{"runtime: host network", true, "auto", "", nil, true},
-		{"no runtime: guessed containerized", true, "auto", "", noRT, false},
-		{"no runtime: set false", true, "false", "", noRT, true},
+		{"on the host", false, "auto", "", false, noRT, true},
+		{"runtime: bridge container", true, "auto", "abc", true, nil, false},
+		{"runtime: host network", true, "auto", "", true, nil, true},
+		{"runtime: can't find its container, set false", true, "false", "", false, nil, true},
+		{"no runtime: guessed containerized", true, "auto", "", false, noRT, false},
+		{"no runtime: set false", true, "false", "", false, noRT, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Defaults()
@@ -47,7 +49,7 @@ func TestStartPortRange(t *testing.T) {
 			env := &emu.Env{Config: &cfg, Endpoints: emu.NewEndpoints(), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 				ContainerizedProbe: &emu.ContainerizedProbe{
 					Markers: func() bool { return tc.markers },
-					Self:    func(context.Context) (string, error) { return tc.self, tc.err },
+					Self:    func(context.Context) (string, bool, error) { return tc.self, tc.found, tc.err },
 				}}
 			f := New(env, nil)
 			if err := f.Start(); err != nil {

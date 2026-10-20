@@ -15,10 +15,11 @@ const ContainerizedWait = 3 * time.Second
 
 // ContainerizedProbe stands in for what Containerized asks, in tests:
 // Markers for runtime.InContainer, and Self for the runtime's self
-// container ("" on the host's network), an error being no answer.
+// container ("" on the host's network) and whether it found it
+// (runtime.Client.SelfFound), an error being no runtime.
 type ContainerizedProbe struct {
 	Markers func() bool
-	Self    func(ctx context.Context) (string, error)
+	Self    func(ctx context.Context) (self string, found bool, err error)
 }
 
 // Containerized reports whether the Instance is a Containerized Instance
@@ -27,22 +28,19 @@ type ContainerizedProbe struct {
 // without an answer --containerized and the marker files decide. The
 // guess and any conflict are logged once (NoteContainerized).
 func (e *Env) Containerized(ctx context.Context) bool {
-	markers := e.markers()
-	if !runtime.MayBeContainerized(e.Config.Containerized, markers) {
+	f := runtime.ContainerizedFacts{Setting: e.Config.Containerized, Markers: e.markers()}
+	if !runtime.MayBeContainerized(f.Setting, f.Markers) {
 		return false
 	}
-	self, err := e.self(ctx)
-	if err != nil {
-		d := runtime.DecideContainerized(e.Config.Containerized, markers, false, "")
-		if !errors.Is(err, ErrNoRuntime) {
-			// The runtime may yet answer: not the no-socket guess.
-			e.Log.Debug("container runtime not reachable; deciding the Containerized Instance without it", "err", err, "containerized", d.On)
-			return d.On
-		}
-		e.NoteContainerized(d)
+	self, found, err := e.self(ctx)
+	if err != nil && !errors.Is(err, ErrNoRuntime) {
+		// The runtime may yet answer: not the no-socket guess.
+		d := runtime.DecideContainerized(f)
+		e.Log.Info("container runtime not reachable yet; deciding whether this is a Containerized Instance without it", "err", err, "containerized", d.On)
 		return d.On
 	}
-	d := runtime.DecideContainerized(e.Config.Containerized, markers, true, self)
+	f.Runtime, f.Found, f.Self = err == nil, found, self
+	d := runtime.DecideContainerized(f)
 	e.NoteContainerized(d)
 	return d.On
 }
@@ -50,17 +48,13 @@ func (e *Env) Containerized(ctx context.Context) bool {
 // NoteContainerized logs, once each, that d is a guess from the marker
 // files or that --containerized disagrees with the runtime.
 func (e *Env) NoteContainerized(d runtime.ContainerizedDecision) {
-	if d.Guess {
-		e.warnOnce(runtime.GuessWarning)
-	}
-	if d.Conflict != "" {
-		e.warnOnce(d.Conflict)
-	}
-}
-
-func (e *Env) warnOnce(msg string) {
-	if _, done := e.containerizedWarned.LoadOrStore(msg, true); !done {
-		e.Log.Warn(msg)
+	for _, msg := range []string{d.Guess, d.Conflict} {
+		if msg == "" {
+			continue
+		}
+		if _, done := e.containerizedWarned.LoadOrStore(msg, true); !done {
+			e.Log.Warn(msg)
+		}
 	}
 }
 
@@ -71,35 +65,36 @@ func (e *Env) markers() bool {
 	return runtime.InContainer()
 }
 
-// self asks the runtime for its self container, giving up when ctx ends
-// even while another caller connects it.
-func (e *Env) self(ctx context.Context) (string, error) {
-	ask := func(ctx context.Context) (string, error) {
+// self asks the runtime for its self container and whether it found it,
+// giving up when ctx ends even while another caller connects it.
+func (e *Env) self(ctx context.Context) (string, bool, error) {
+	ask := func(ctx context.Context) (string, bool, error) {
 		if e.ContainerizedProbe != nil {
 			return e.ContainerizedProbe.Self(ctx)
 		}
 		if e.Containers == nil {
-			return "", ErrNoRuntime
+			return "", false, ErrNoRuntime
 		}
 		rt, err := e.Containers.Runtime(ctx)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
-		return rt.Self(), nil
+		return rt.Self(), rt.SelfFound(), nil
 	}
 	type answer struct {
-		self string
-		err  error
+		self  string
+		found bool
+		err   error
 	}
 	ch := make(chan answer, 1)
 	go func() {
-		self, err := ask(ctx)
-		ch <- answer{self, err}
+		self, found, err := ask(ctx)
+		ch <- answer{self, found, err}
 	}()
 	select {
 	case a := <-ch:
-		return a.self, a.err
+		return a.self, a.found, a.err
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", false, ctx.Err()
 	}
 }

@@ -58,3 +58,41 @@ func TestSelfPorts(t *testing.T) {
 		t.Errorf("SelfPorts = %v, want %v", got, want)
 	}
 }
+
+// detectSelf tells the emulator's own container on a bridge network and
+// on the host's network, both found, from a container it can't find
+// (#502).
+func TestDetectSelfFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/bridged/json"):
+			_, _ = io.WriteString(w, `{"Id":"bridged1","HostConfig":{"NetworkMode":"bridge"}}`)
+		case strings.HasSuffix(r.URL.Path, "/containers/hostnet/json"):
+			_, _ = io.WriteString(w, `{"Id":"hostnet1","HostConfig":{"NetworkMode":"host"}}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name, self string
+		want       string
+		found      bool
+	}{
+		{"bridge network", "bridged", "bridged1", true},
+		{"host network", "hostnet", "", true},
+		{"not found", "gone", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(SelfEnv, tc.self)
+			cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cl.detectSelf(context.Background())
+			if cl.Self() != tc.want || cl.SelfFound() != tc.found {
+				t.Errorf("Self, SelfFound = %q, %v; want %q, %v", cl.Self(), cl.SelfFound(), tc.want, tc.found)
+			}
+		})
+	}
+}
