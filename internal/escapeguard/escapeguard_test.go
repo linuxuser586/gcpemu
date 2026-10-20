@@ -1,7 +1,10 @@
 package escapeguard
 
 import (
+	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
@@ -40,6 +43,51 @@ func TestRefusesAndRecords(t *testing.T) {
 	}
 	if got := g.Take(); len(got) != 0 {
 		t.Errorf("second Take() = %v, want none", got)
+	}
+}
+
+// proxyClient returns a client that sends every request through g.
+func proxyClient(t *testing.T, g *Guard, tr *http.Transport) *http.Client {
+	t.Helper()
+	for _, kv := range g.Env() {
+		if v, ok := strings.CutPrefix(kv, "HTTPS_PROXY="); ok {
+			u, err := url.Parse(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr.Proxy = http.ProxyURL(u)
+		}
+	}
+	return &http.Client{Transport: tr}
+}
+
+func TestTunnelsServedHosts(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "served "+r.Host)
+	}))
+	defer srv.Close()
+	ip, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	g := New(t)
+	g.Tunnel(ip, []string{"storage.googleapis.com"})
+	tr := srv.Client().Transport.(*http.Transport).Clone()
+	tr.TLSClientConfig.ServerName = "example.com" // in httptest's certificate
+	cl := proxyClient(t, g, tr)
+	// The tunnel keeps the port the client asked for.
+	resp, err := cl.Get("https://storage.googleapis.com:" + port + "/b/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if got, want := string(b), "served storage.googleapis.com:"+port; got != want {
+		t.Errorf("tunnelled GET = %q, want %q", got, want)
+	}
+	if resp, err := cl.Get("https://pubsub.googleapis.com:" + port + "/"); err == nil {
+		resp.Body.Close()
+		t.Errorf("GET of a host not served: %s", resp.Status)
+	}
+	if got, want := g.Take(), []string{"pubsub.googleapis.com"}; !slices.Equal(got, want) {
+		t.Errorf("Take() = %v, want %v", got, want)
 	}
 }
 

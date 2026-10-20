@@ -106,8 +106,8 @@ jobs:
         with:
           path: ~/.cache/gcpemu-compat
           key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
-      - name: gcloud container, kubectl and Helm (SRS 7.1)
-        run: go test -tags compat ./compat -run 'TestClients/gcloud/container\+kubectl\+helm' -count=1 -timeout 15m -v
+      - name: gcloud container, kubectl, Helm and builds (SRS 7.1)
+        run: go test -tags compat ./compat -run 'TestClients/gcloud/(container\+kubectl\+helm|builds)' -count=1 -timeout 25m -v
 
   # FR-UI-001/020: the Web console's lint, types, unit tests, build and
   # bundle budget, and admin API types generated from openapi.yaml.

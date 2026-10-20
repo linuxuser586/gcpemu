@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -126,9 +127,22 @@ func TestServiceAccountUnderEnforce(t *testing.T) {
 	e.upload(bucket, "hello.txt", []byte("hello from gcs"))
 	src := e.probeSource()
 
+	// cloudbuild.* permissions apply: a viewer may list but not create.
+	viewer := "user:viewer@example.com"
+	e.grant("roles/cloudbuild.builds.viewer", viewer)
+	if _, err := e.cb.ListBuilds(e.as(viewer), &cloudbuildpb.ListBuildsRequest{ProjectId: testProject}).Next(); err != nil && err != iterator.Done {
+		t.Errorf("ListBuilds as a viewer: %v", err)
+	}
+	_, err := e.cb.CreateBuild(e.as(viewer), &cloudbuildpb.CreateBuildRequest{ProjectId: testProject, Build: &cloudbuildpb.Build{
+		Steps: []*cloudbuildpb.BuildStep{step("", "true")},
+	}})
+	if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "cloudbuild.builds.create") {
+		t.Fatalf("CreateBuild as a viewer: %v", err)
+	}
+
 	dev := "user:builder@example.com"
 	e.grant("roles/cloudbuild.builds.editor", dev)
-	_, err := e.cb.CreateBuild(e.as(dev), &cloudbuildpb.CreateBuildRequest{ProjectId: testProject, Build: &cloudbuildpb.Build{
+	_, err = e.cb.CreateBuild(e.as(dev), &cloudbuildpb.CreateBuildRequest{ProjectId: testProject, Build: &cloudbuildpb.Build{
 		ServiceAccount: sa, Steps: []*cloudbuildpb.BuildStep{step("", "true")},
 	}})
 	if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "iam.serviceAccounts.actAs") {

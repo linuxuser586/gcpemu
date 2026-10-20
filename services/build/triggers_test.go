@@ -119,6 +119,13 @@ func TestBuildTriggerCRUD(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].GetId() != tr.GetId() {
 		t.Errorf("global list = %v, %v", list, err)
 	}
+	list, _, err = e.cb.ListBuildTriggers(e.ctx, &cloudbuildpb.ListBuildTriggersRequest{Parent: "projects/" + testProject + "/locations/us-central1"}).InternalFetch(10, "")
+	if err != nil || len(list) != 1 || list[0].GetId() != regional.GetId() {
+		t.Errorf("regional list = %v, %v", list, err)
+	}
+	if got, err := e.cb.GetBuildTrigger(e.ctx, &cloudbuildpb.GetBuildTriggerRequest{Name: regional.GetResourceName()}); err != nil || got.GetId() != regional.GetId() {
+		t.Errorf("regional get = %v, %v", got, err)
+	}
 
 	up, err := e.cb.UpdateBuildTrigger(e.ctx, &cloudbuildpb.UpdateBuildTriggerRequest{
 		ProjectId: testProject, TriggerId: tr.GetId(),
