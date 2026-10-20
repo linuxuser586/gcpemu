@@ -181,6 +181,9 @@ func (o *rootOpts) caTrustCmd(install bool, loadCA func(*cobra.Command) (*config
 		if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
 			return err
 		}
+		if install {
+			criInstallNote(cmd.OutOrStdout(), h)
+		}
 		afterPlan()
 		return nil
 	}
@@ -231,6 +234,10 @@ type trustHost struct {
 	nssUser    string
 	nssHas     func(db, nick string) bool
 	fileExists func(string) bool
+
+	// containerd runs the containerd binary with args and returns its
+	// output (checkCRIConfigPath).
+	containerd func(args ...string) ([]byte, error)
 }
 
 func hostTrust() trustHost {
@@ -241,6 +248,7 @@ func hostTrust() trustHost {
 		isDir:      func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
 		nssHas:     nssHas,
 		fileExists: fileExists,
+		containerd: runContainerd,
 	}
 	h.home, h.nssUser = nssUser(h.root)
 	return h
@@ -369,8 +377,11 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 // own per-registry trust, read on every pull, so no daemon restart is
 // needed. Docker reads every *.crt in certs.d/HOST, so the CA goes in as
 // gcpemu-INSTANCE.crt next to the user's files; containerd's hosts.toml
-// is written only where none exists or gcpemu wrote it (config_path must
-// point at /etc/containerd/certs.d, as on GKE and k3s). Linux only: Docker
+// is written only where none exists or gcpemu wrote it. Kubernetes (CRI)
+// pulls read it only when the CRI registry config_path includes
+// /etc/containerd/certs.d, which it does by default only on containerd
+// 2.2+ on Linux (checkCRIConfigPath, #583); k3s and GKE nodes use their
+// own folders, which this does not cover. Linux only: Docker
 // Desktop on macOS uses the system keychain, and a VM runtime's own store
 // is left to the command from vmTrustCommand.
 func containerTrustPlan(h trustHost, instance string, c trustCert, install bool) []trustStep {

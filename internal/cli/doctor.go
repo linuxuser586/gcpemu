@@ -609,6 +609,7 @@ func checkNSSTrust(out io.Writer, instance string, trusted func(ok bool, where s
 func checkRuntimeTrust(out io.Writer, h trustHost, instance string, pemBytes []byte, endpoint string) {
 	if h.goos == "linux" {
 		checkLinuxRuntimeTrust(out, h, instance, pemBytes)
+		checkCRIConfigPath(h).write(out)
 	}
 	v := vmTrustCommand(endpoint, instance, &certFile{pem: pemBytes}, true)
 	if v.what == "" {

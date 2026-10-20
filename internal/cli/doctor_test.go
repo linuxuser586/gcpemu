@@ -422,7 +422,8 @@ func TestCheckCATrust(t *testing.T) {
 }
 
 // testEtc returns a temporary /etc with the given subdirectories, for
-// checkRuntimeTrust.
+// checkRuntimeTrust, and a containerd with CRI disabled, as Docker's
+// containerd.io package ships it.
 func testEtc(t *testing.T, dirs ...string) trustHost {
 	t.Helper()
 	etc := t.TempDir()
@@ -431,7 +432,8 @@ func testEtc(t *testing.T, dirs ...string) trustHost {
 			t.Fatal(err)
 		}
 	}
-	return trustHost{goos: "linux", etc: etc, isDir: func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }}
+	return trustHost{goos: "linux", etc: etc, isDir: func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
+		containerd: fakeContainerd(containerdIOVersion, containerdIODump)}
 }
 
 // writeTestFile writes b to name, creating its directory.
@@ -728,6 +730,250 @@ func TestCheckContainerized(t *testing.T) {
 		if tc.warn != "" && (!strings.HasPrefix(logged, "[WARN] ") || !strings.Contains(logged, tc.warn) ||
 			!strings.Contains(logged, "--containerized=false") || strings.Count(logged, "\n") != 1) {
 			t.Errorf("%+v: output %q, want one [WARN] line naming %q and --containerized=false", tc, logged, tc.warn)
+		}
+	}
+}
+
+// fakeContainerd returns a containerd runner that answers `--version` with
+// version and `config dump` with dump, as trustHost.containerd.
+func fakeContainerd(version, dump string) func(...string) ([]byte, error) {
+	return func(args ...string) ([]byte, error) {
+		switch strings.Join(args, " ") {
+		case "--version":
+			return []byte(version), nil
+		case "config dump":
+			return []byte(dump), nil
+		}
+		return nil, fmt.Errorf("unexpected containerd %q", args)
+	}
+}
+
+// A 1.7 dump, as Ubuntu's package ships it: CRI enabled, no config_path.
+const containerd17Dump = `disabled_plugins = []
+root = "/var/lib/containerd"
+version = 2
+
+[plugins]
+
+  [plugins."io.containerd.grpc.v1.cri"]
+    sandbox_image = "registry.k8s.io/pause:3.8"
+
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = ""
+
+      [plugins."io.containerd.grpc.v1.cri".registry.auths]
+
+      [plugins."io.containerd.grpc.v1.cri".registry.configs]
+
+      [plugins."io.containerd.grpc.v1.cri".registry.headers]
+
+      [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+`
+
+// criLines runs doctor's runtime trust check against a containerd that
+// answers with version and dump, and returns only its CRI output.
+func criLines(t *testing.T, version, dump string) string {
+	t.Helper()
+	h := testEtc(t, "containerd")
+	h.containerd = fakeContainerd(version, dump)
+	var out strings.Builder
+	checkRuntimeTrust(&out, h, "dev", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("der")}), "")
+	_, cri, _ := strings.Cut(out.String(), "registry hosts (run `gcpemu ca install`)\n")
+	return cri
+}
+
+// containerd 1.x reads /etc/containerd/certs.d for Kubernetes (CRI) pulls
+// only when config_path says so, which it does not by default: the note
+// gives the version 2 stanza and the restart (#583).
+func TestCheckCRIConfigPath1x(t *testing.T) {
+	got := criLines(t, "containerd github.com/containerd/containerd 1.7.24\n", containerd17Dump)
+	want := "[--  ] Kubernetes (CRI) image pulls on containerd 1.7.24 do not read /etc/containerd/certs.d, so they ignore its hosts.toml files (Docker pulls are unaffected)\n" +
+		"       fix: make containerd's config.toml read as below, editing its version line and this table where they exist rather than adding them again, then run `sudo systemctl restart containerd`:\n" +
+		"         version = 2\n" +
+		"\n" +
+		"         [plugins.\"io.containerd.grpc.v1.cri\".registry]\n" +
+		"           config_path = \"/etc/containerd/certs.d\"\n"
+	if got != want {
+		t.Errorf("output %q, want %q", got, want)
+	}
+}
+
+// Docker's containerd.io package disables CRI.
+const (
+	containerdIOVersion = "containerd containerd.io 1.7.27 05044ec0a9a75232cad458027ca83437aae3f4da\n"
+	containerdIODump    = "disabled_plugins = [\"cri\"]\nversion = 2\n\n[plugins]\n\n  [plugins.\"io.containerd.grpc.v1.cri\"]\n\n    [plugins.\"io.containerd.grpc.v1.cri\".registry]\n      config_path = \"\"\n"
+)
+
+// With the CRI plugin disabled, under any of its names, there are no
+// Kubernetes (CRI) pulls to report on (#583).
+func TestCheckCRIConfigPathDisabled(t *testing.T) {
+	for _, name := range []string{"cri", "io.containerd.grpc.v1.cri", "io.containerd.cri.v1.images"} {
+		dump := strings.Replace(containerdIODump, `"cri"`, `"`+name+`"`, 1)
+		for _, version := range []string{containerdIOVersion, "containerd github.com/containerd/containerd/v2 v2.0.5 fb4c30d\n"} {
+			if got := criLines(t, version, dump); got != "" {
+				t.Errorf("%s disabled on %q: output %q, want none", name, version, got)
+			}
+		}
+	}
+}
+
+// A 2.x dump, in go-toml v2's quoting: CRI enabled, no config_path, which
+// 2.2.2 and later still print once the plugin applies the 2.2 default.
+const containerd2Dump = `disabled_plugins = []
+imports = []
+version = 3
+
+[plugins]
+  [plugins.'io.containerd.cri.v1.images']
+    snapshotter = 'overlayfs'
+
+    [plugins.'io.containerd.cri.v1.images'.registry]
+      config_path = ''
+
+      [plugins.'io.containerd.cri.v1.images'.registry.mirrors]
+`
+
+// containerd 2.0 and 2.1 read no certs.d for CRI pulls by default; the
+// note's stanza is the version 3 one under io.containerd.cri.v1.images.
+// From 2.2, an empty config_path without mirrors means
+// /etc/containerd/certs.d:/etc/docker/certs.d on Linux (#583).
+func TestCheckCRIConfigPath2x(t *testing.T) {
+	for _, v := range []string{"2.0.5", "2.1.4"} {
+		got := criLines(t, "containerd github.com/containerd/containerd/v2 v"+v+" fb4c30d\n", containerd2Dump)
+		want := "[--  ] Kubernetes (CRI) image pulls on containerd " + v + " do not read /etc/containerd/certs.d, so they ignore its hosts.toml files (Docker pulls are unaffected)\n" +
+			"       fix: make containerd's config.toml read as below, editing its version line and this table where they exist rather than adding them again, then run `sudo systemctl restart containerd`:\n" +
+			"         version = 3\n" +
+			"\n" +
+			"         [plugins.\"io.containerd.cri.v1.images\".registry]\n" +
+			"           config_path = \"/etc/containerd/certs.d\"\n"
+		if got != want {
+			t.Errorf("%s: output %q, want %q", v, got, want)
+		}
+	}
+	for _, v := range []string{"2.2.0", "2.4.1"} {
+		got := criLines(t, "containerd github.com/containerd/containerd/v2 v"+v+" fb4c30d\n", containerd2Dump)
+		if want := "[ok  ] Kubernetes (CRI) image pulls on containerd " + v + " read /etc/containerd/certs.d (Docker pulls are unaffected)\n"; got != want {
+			t.Errorf("%s: output %q, want %q", v, got, want)
+		}
+	}
+}
+
+// config_path is a colon-separated list: it is enough that it names
+// /etc/containerd/certs.d, and the fix adds that folder to the folders it
+// already lists rather than replacing them (#583).
+func TestCheckCRIConfigPathList(t *testing.T) {
+	const version = "containerd github.com/containerd/containerd 1.7.24\n"
+	listed := strings.Replace(containerd17Dump, `config_path = ""`, `config_path = "/etc/docker/certs.d:/etc/containerd/certs.d"`, 1)
+	if got, want := criLines(t, version, listed), "[ok  ] Kubernetes (CRI) image pulls on containerd 1.7.24 read /etc/containerd/certs.d (Docker pulls are unaffected)\n"; got != want {
+		t.Errorf("listed: output %q, want %q", got, want)
+	}
+	other := strings.Replace(containerd17Dump, `config_path = ""`, `config_path = "/etc/docker/certs.d"`, 1)
+	got := criLines(t, version, other)
+	want := "[--  ] Kubernetes (CRI) image pulls on containerd 1.7.24 do not read /etc/containerd/certs.d, so they ignore its hosts.toml files (Docker pulls are unaffected)\n" +
+		"       fix: add /etc/containerd/certs.d to the folders config_path lists: make containerd's config.toml read as below, editing its version line and this table where they exist rather than adding them again, then run `sudo systemctl restart containerd`:\n" +
+		"         version = 2\n" +
+		"\n" +
+		"         [plugins.\"io.containerd.grpc.v1.cri\".registry]\n" +
+		"           config_path = \"/etc/docker/certs.d:/etc/containerd/certs.d\"\n"
+	if got != want {
+		t.Errorf("other folder: output %q, want %q", got, want)
+	}
+}
+
+// With registry.mirrors set and no config_path, CRI uses the mirrors and
+// ignores certs.d, even on 2.2+, and 1.x refuses both at once: the fix
+// moves the mirrors into hosts.toml files first and gives no stanza (#583).
+func TestCheckCRIConfigPathMirrors(t *testing.T) {
+	for _, tc := range []struct{ v, version, dump, mirrors string }{
+		{"1.7.24", "containerd github.com/containerd/containerd 1.7.24\n", containerd17Dump, `      [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+        endpoint = ["https://mirror.example.com"]
+`},
+		{"2.2.0", "containerd github.com/containerd/containerd/v2 v2.2.0 fb4c30d\n", containerd2Dump, `        [plugins.'io.containerd.cri.v1.images'.registry.mirrors.'docker.io']
+          endpoint = ['https://mirror.example.com']
+`},
+	} {
+		got := criLines(t, tc.version, tc.dump+"\n"+tc.mirrors)
+		want := "[--  ] Kubernetes (CRI) image pulls on containerd " + tc.v + " do not read /etc/containerd/certs.d, so they ignore its hosts.toml files (Docker pulls are unaffected)\n" +
+			"       fix: containerd's config.toml sets registry.mirrors, which containerd uses instead of certs.d: move those mirrors into hosts.toml files under /etc/containerd/certs.d (https://github.com/containerd/containerd/blob/main/docs/hosts.md), make config_path include /etc/containerd/certs.d, keeping any folders it lists, then run `sudo systemctl restart containerd`\n"
+		if got != want {
+			t.Errorf("%s: output %q, want %q", tc.v, got, want)
+		}
+	}
+}
+
+// When containerd cannot be run or its config cannot be read, the note
+// says it cannot check, and why, rather than guess (#583).
+func TestCheckCRIConfigPathUnknown(t *testing.T) {
+	const version = "containerd github.com/containerd/containerd 1.7.24\n"
+	failDump := func(args ...string) ([]byte, error) {
+		if args[0] == "--version" {
+			return []byte(version), nil
+		}
+		return nil, errors.New(`exit status 1: failed to load TOML from /etc/containerd/config.toml: invalid plugin key URI "cri"`)
+	}
+	missing := func(...string) ([]byte, error) {
+		return nil, errors.New(`exec: "containerd": executable file not found in $PATH`)
+	}
+	for _, tc := range []struct {
+		name   string
+		run    func(...string) ([]byte, error)
+		reason string
+	}{
+		{"missing binary", missing, "`containerd --version` failed: exec: \"containerd\": executable file not found in $PATH"},
+		{"failing dump", failDump, "`containerd config dump` failed: exit status 1: failed to load TOML from /etc/containerd/config.toml: invalid plugin key URI \"cri\""},
+	} {
+		h := testEtc(t, "containerd")
+		h.containerd = tc.run
+		var out strings.Builder
+		checkCRIConfigPath(h).write(&out)
+		if want := "[--  ] cannot check whether Kubernetes (CRI) image pulls on containerd read /etc/containerd/certs.d: " + tc.reason + "\n"; out.String() != want {
+			t.Errorf("%s: output %q, want %q", tc.name, out.String(), want)
+		}
+	}
+}
+
+// Without /etc/containerd, or off Linux, there is no CRI line, and
+// containerd is not run (#583).
+func TestCheckCRIConfigPathNotApplicable(t *testing.T) {
+	ran := func(...string) ([]byte, error) { t.Error("containerd was run"); return nil, errors.New("no") }
+	noDir := testEtc(t, "docker")
+	noDir.containerd = ran
+	darwin := testEtc(t, "containerd")
+	darwin.goos, darwin.containerd = "darwin", ran
+	for name, h := range map[string]trustHost{"no /etc/containerd": noDir, "darwin": darwin} {
+		var out strings.Builder
+		checkCRIConfigPath(h).write(&out)
+		if out.Len() != 0 {
+			t.Errorf("%s: output %q, want none", name, out.String())
+		}
+	}
+}
+
+// After its containerd step, `ca install` prints doctor's CRI note when
+// the check is not ok, and nothing when it is, or CRI is disabled (#583).
+func TestCRIInstallNote(t *testing.T) {
+	const v17 = "containerd github.com/containerd/containerd 1.7.24\n"
+	for _, tc := range []struct {
+		name     string
+		version  string
+		dump     string
+		wantNote bool
+	}{
+		{"1.7 default", v17, containerd17Dump, true},
+		{"2.2 default", "containerd github.com/containerd/containerd/v2 v2.2.0 fb4c30d\n", containerd2Dump, false},
+		{"CRI disabled", containerdIOVersion, containerdIODump, false},
+	} {
+		h := testEtc(t, "containerd")
+		h.containerd = fakeContainerd(tc.version, tc.dump)
+		var note, doctor strings.Builder
+		criInstallNote(&note, h)
+		checkCRIConfigPath(h).write(&doctor)
+		want := ""
+		if tc.wantNote {
+			want = doctor.String()
+		}
+		if note.String() != want || tc.wantNote && want == "" {
+			t.Errorf("%s: note %q, want %q", tc.name, note.String(), want)
 		}
 	}
 }
