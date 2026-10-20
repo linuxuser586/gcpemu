@@ -74,6 +74,7 @@ beforeEach(() => {
     ],
     targetHttpsProxies: [],
     targetSslProxies: [],
+    targetTcpProxies: [],
     urlMaps: [
       res('urlMaps', 'web-map', {
         defaultService: link('global/backendBuckets/static'),
@@ -607,6 +608,225 @@ describe('target SSL proxies', () => {
   })
 })
 
+describe('target TCP proxies', () => {
+  const RECORDED =
+    'Recorded: stored and returned. A forwarding rule that targets this proxy carries no Data plane traffic; the emulator’s load balancer proxies HTTP and HTTPS only.'
+  /** regionalRes is a resource in region, or a global one for "". */
+  const regionalRes = (coll: string, name: string, region: string, over: Partial<Resource>) =>
+    res(coll, name, {
+      ...(region && {
+        selfLink: link(`regions/${region}/${coll}/${name}`),
+        region: link(`regions/${region}`),
+      }),
+      ...over,
+    })
+  const tcp = (name: string, region = '', over: Partial<Resource> = {}) =>
+    regionalRes('targetTcpProxies', name, region, {
+      service: link(`${region ? `regions/${region}` : 'global'}/backendServices/tcp`),
+      proxyHeader: 'NONE',
+      ...over,
+    })
+
+  beforeEach(() => {
+    state.backendServices!.push(
+      res('backendServices', 'tcp', { protocol: 'TCP' }),
+      res('backendServices', 'tls', { protocol: 'SSL' }),
+      regionalRes('backendServices', 'tcp', 'us-east1', { protocol: 'TCP' }),
+      regionalRes('backendServices', 'east-http', 'us-east1', { protocol: 'HTTP' }),
+      regionalRes('backendServices', 'west-tcp', 'us-west1', { protocol: 'TCP' }),
+    )
+    server.use(
+      http.get(`${API}/regions/:region/:coll/:name`, ({ params }) => {
+        const r = state[params.coll as string]?.find((x) => x.name === params.name)
+        return r ? HttpResponse.json(r) : notFound(params.name as string)
+      }),
+      http.post(`${API}/regions/:region/:coll`, async ({ request }) => {
+        await record(request)
+        return HttpResponse.json(op)
+      }),
+      http.post(`${API}/global/targetTcpProxies/:name/:method`, async ({ request }) => {
+        await record(request)
+        return HttpResponse.json(op)
+      }),
+    )
+  })
+
+  it('lists global and regional target TCP proxies, with the Recorded note', async () => {
+    state.targetTcpProxies = [tcp('tcp'), tcp('east', 'us-east1', { proxyHeader: 'PROXY_V1' })]
+    renderApp(`/lb/targetTcpProxies?project=${P}`)
+    const table = await screen.findByRole('table', { name: 'TCP proxies' })
+    const rows = within(table).getAllByTestId('resource')
+    expect(rows).toHaveLength(2)
+    expect(rows.find((r) => r.textContent?.includes('east'))).toHaveTextContent(
+      /east.*us-east1.*tcp.*PROXY_V1/,
+    )
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+  })
+
+  it('creates a global one, offering global TCP and SSL backend services only', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/targetTcpProxies?project=${P}`)
+    await user.type(await screen.findByLabelText('Name'), 'tcp')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    const service = screen.getByLabelText('Backend service')
+    await waitFor(() => expect(within(service).getAllByRole('option')).toHaveLength(3))
+    expect(within(service).getByRole('option', { name: 'tls' })).toBeInTheDocument()
+    await user.selectOptions(service, 'tcp')
+    await user.type(screen.getByLabelText('Description'), 'raw')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetTcpProxies/tcp'),
+    )
+    expect(requests).toEqual([
+      {
+        method: 'POST',
+        path: `/compute/v1/projects/${P}/global/targetTcpProxies`,
+        body: {
+          name: 'tcp',
+          description: 'raw',
+          service: `projects/${P}/global/backendServices/tcp`,
+          proxyHeader: 'NONE',
+        },
+      },
+    ])
+  })
+
+  it('creates a regional one, offering TCP and SSL backend services of its region only', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/targetTcpProxies?project=${P}`)
+    await user.type(await screen.findByLabelText('Name'), 'east')
+    await user.type(screen.getByLabelText('Region'), 'us-east1')
+    const service = screen.getByLabelText('Backend service')
+    await waitFor(() =>
+      expect(
+        within(service)
+          .getAllByRole('option')
+          .map((o) => o.textContent),
+      ).toEqual([expect.anything(), 'tcp']),
+    )
+    await user.selectOptions(service, 'tcp')
+    await user.selectOptions(screen.getByLabelText('Proxy header'), 'PROXY_V1')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/regions/us-east1/targetTcpProxies/east'),
+    )
+    expect(requests).toEqual([
+      {
+        method: 'POST',
+        path: `/compute/v1/projects/${P}/regions/us-east1/targetTcpProxies`,
+        body: {
+          name: 'east',
+          service: `projects/${P}/regions/us-east1/backendServices/tcp`,
+          proxyHeader: 'PROXY_V1',
+        },
+      },
+    ])
+  })
+
+  it('edits a global one through setBackendService and setProxyHeader', async () => {
+    state.targetTcpProxies = [tcp('tcp', '', { description: 'kept' })]
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/global/targetTcpProxies/tcp?project=${P}`)
+    const details = await screen.findByLabelText('target TCP proxy details')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    expect(within(details).getByRole('link', { name: 'tcp' })).toHaveAttribute(
+      'href',
+      `/lb/global/backendServices/tcp?project=${P}`,
+    )
+    await user.click(screen.getByRole('link', { name: 'Edit' }))
+    const service = await screen.findByLabelText('Backend service')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    expect(screen.queryByLabelText('Description')).not.toBeInTheDocument()
+    await waitFor(() => expect(within(service).getAllByRole('option')).toHaveLength(3))
+
+    // An unchanged form sends nothing.
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetTcpProxies/tcp'),
+    )
+    expect(requests).toEqual([])
+
+    await user.click(await screen.findByRole('link', { name: 'Edit' }))
+    await user.selectOptions(await screen.findByLabelText('Proxy header'), 'PROXY_V1')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetTcpProxies/tcp'),
+    )
+    const base = `/compute/v1/projects/${P}/global/targetTcpProxies/tcp`
+    expect(requests).toEqual([
+      { method: 'POST', path: `${base}/setProxyHeader`, body: { proxyHeader: 'PROXY_V1' } },
+    ])
+
+    requests = []
+    await user.click(await screen.findByRole('link', { name: 'Edit' }))
+    const picker = await screen.findByLabelText('Backend service')
+    await waitFor(() => expect(within(picker).getAllByRole('option')).toHaveLength(3))
+    await user.selectOptions(picker, 'tls')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/lb/global/targetTcpProxies/tcp'),
+    )
+    expect(requests).toEqual([
+      {
+        method: 'POST',
+        path: `${base}/setBackendService`,
+        body: { service: `projects/${P}/global/backendServices/tls` },
+      },
+    ])
+  })
+
+  it('has no Edit for a regional one, whose API has no set* methods', async () => {
+    state.targetTcpProxies = [tcp('east', 'us-east1')]
+    const { router } = renderApp(`/lb/regions/us-east1/targetTcpProxies/east?project=${P}`)
+    const details = await screen.findByLabelText('target TCP proxy details')
+    expect(screen.getByRole('note')).toHaveTextContent(RECORDED)
+    expect(within(details).getByRole('link', { name: 'tcp' })).toHaveAttribute(
+      'href',
+      `/lb/regions/us-east1/backendServices/tcp?project=${P}`,
+    )
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Edit' })).not.toBeInTheDocument()
+
+    await act(() => router.navigate(`/lb/regions/us-east1/targetTcpProxies/east/edit?project=${P}`))
+    expect(
+      await screen.findByText(/A regional target TCP proxy cannot be changed/),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+  })
+
+  it('is a target of forwarding rules in its scope, whose page shows the Recorded note', async () => {
+    state.targetTcpProxies = [tcp('tcp'), tcp('east', 'us-east1')]
+    state.forwardingRules!.push(
+      regionalRes('forwardingRules', 'east-tcp', 'us-east1', {
+        IPAddress: '10.0.0.10',
+        portRange: '5432-5432',
+        loadBalancingScheme: 'INTERNAL_MANAGED',
+        target: link('regions/us-east1/targetTcpProxies/east'),
+      }),
+    )
+    const user = userEvent.setup()
+    const { router } = renderApp(`/lb/create/forwardingRules?project=${P}`)
+    const target = await screen.findByLabelText('Target proxy')
+    expect(
+      await within(target).findByRole('option', { name: 'tcp (target TCP proxy)' }),
+    ).toBeInTheDocument()
+    expect(
+      within(target).queryByRole('option', { name: 'east (target TCP proxy)' }),
+    ).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('Region'), 'us-east1')
+    const regionalTarget = screen.getByLabelText('Target proxy')
+    expect(
+      await within(regionalTarget).findByRole('option', { name: 'east (target TCP proxy)' }),
+    ).toBeInTheDocument()
+    expect(
+      within(regionalTarget).queryByRole('option', { name: 'tcp (target TCP proxy)' }),
+    ).not.toBeInTheDocument()
+
+    await act(() => router.navigate(`/lb/regions/us-east1/forwardingRules/east-tcp?project=${P}`))
+    expect(await screen.findByRole('note')).toHaveTextContent(RECORDED)
+  })
+})
+
 describe('server TLS policies', () => {
   const NS = `projects/${P}/locations/global/serverTlsPolicies`
   beforeEach(() => {
@@ -1000,6 +1220,65 @@ describe('Copy as', () => {
     expect(r.tofu).toContain('resource "google_compute_target_ssl_proxy" "ssl"')
     expect(r.tofu).toContain(`backend_service = "projects/${P}/global/backendServices/tcp"`)
     expect(r.tofu).toContain('proxy_header    = "PROXY_V1"')
+  })
+
+  it('copies global and regional target TCP proxies', () => {
+    const global = recipeFor(
+      ref('targetTcpProxies'),
+      res('targetTcpProxies', 'tcp', {
+        kind: 'compute#targetTcpProxy',
+        description: 'raw TCP',
+        service: link('global/backendServices/tcp'),
+        proxyHeader: 'PROXY_V1',
+      }),
+    )
+    expect(global.gcloud).toEqual([
+      [
+        'gcloud compute target-tcp-proxies create tcp \\',
+        `    --project=${P} \\`,
+        '    --global \\',
+        '    --backend-service=tcp \\',
+        '    --global-backend-service \\',
+        '    --proxy-header=PROXY_V1 \\',
+        "    --description='raw TCP'",
+      ].join('\n'),
+    ])
+    expect(global.rest).toEqual({
+      method: 'POST',
+      path: `/compute/v1/projects/${P}/global/targetTcpProxies`,
+      body: {
+        name: 'tcp',
+        description: 'raw TCP',
+        service: `projects/${P}/global/backendServices/tcp`,
+        proxyHeader: 'PROXY_V1',
+      },
+    })
+    expect(global.tofu).toContain('resource "google_compute_target_tcp_proxy" "tcp" {')
+    expect(global.tofu).toContain(`backend_service = "projects/${P}/global/backendServices/tcp"`)
+
+    const east = recipeFor(
+      ref('targetTcpProxies', 'us-east1'),
+      res('targetTcpProxies', 'east', {
+        selfLink: regional('targetTcpProxies/east'),
+        region: link('regions/us-east1'),
+        service: regional('backendServices/tcp'),
+        proxyHeader: 'NONE',
+      }),
+    )
+    expect(east.gcloud).toEqual([
+      [
+        'gcloud compute target-tcp-proxies create east \\',
+        `    --project=${P} \\`,
+        '    --region=us-east1 \\',
+        '    --backend-service=tcp \\',
+        '    --backend-service-region=us-east1',
+      ].join('\n'),
+    ])
+    expect(east.rest).toMatchObject({
+      path: `/compute/v1/projects/${P}/regions/us-east1/targetTcpProxies`,
+    })
+    expect(east.tofu).toContain('resource "google_compute_region_target_tcp_proxy" "east" {')
+    expect(east.tofu).toContain('region          = "us-east1"')
   })
 
   it('copies a target SSL proxy that uses a certificate map', () => {

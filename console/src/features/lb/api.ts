@@ -33,6 +33,7 @@ export type Coll =
   | 'targetHttpProxies'
   | 'targetHttpsProxies'
   | 'targetSslProxies'
+  | 'targetTcpProxies'
   | 'urlMaps'
   | 'backendServices'
   | 'backendBuckets'
@@ -56,6 +57,11 @@ export interface KindInfo {
    * no patch), and false means it cannot change (SSL certificates).
    */
   edit: 'patch' | 'set' | false
+  /**
+   * regionalEdit false: regional resources cannot change, though global
+   * ones can (regionTargetTcpProxies has no set* methods).
+   */
+  regionalEdit?: false
   /**
    * recorded: the resources are Recorded, stored and returned with no
    * effect; forwarding rules that target them carry no Data plane traffic.
@@ -96,6 +102,16 @@ export const KINDS: readonly KindInfo[] = [
     api: 'targetSslProxies',
     regional: false,
     edit: 'set',
+    recorded: true,
+  },
+  {
+    coll: 'targetTcpProxies',
+    title: 'TCP proxies',
+    singular: 'target TCP proxy',
+    api: 'targetTcpProxies',
+    regional: true,
+    edit: 'set',
+    regionalEdit: false,
     recorded: true,
   },
   {
@@ -151,6 +167,10 @@ export const KINDS: readonly KindInfo[] = [
 const byColl = new Map(KINDS.map((k) => [k.coll, k]))
 
 export const kindInfo = (coll: string) => byColl.get(coll as Coll)
+
+/** editOf is how the API changes a resource of kind k in region ("" for global). */
+export const editOf = (k: KindInfo, region: string): KindInfo['edit'] =>
+  region && k.regionalEdit === false ? false : k.edit
 
 /** Ref names one resource: a Project, "" (global) or a region, and a name. */
 export interface Ref {

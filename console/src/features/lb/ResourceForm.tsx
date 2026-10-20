@@ -26,6 +26,7 @@ import { useViewState } from '@/lib/viewState'
 import { CERT_MAP_PREFIX, locationOf, mapLabel, mapsQuery } from '../certs/api'
 import { tlsLabel, tlsListQuery } from '../certs/tls'
 import {
+  editOf,
   insertResource,
   kindInfo,
   kindQuery,
@@ -66,7 +67,7 @@ import {
 // from the kind's field specs (spec.ts). Writes are compute Operations,
 // which the forms wait for. Create sends insert; edit sends patch, a JSON
 // merge patch of what changed, or for a kind without patch (target SSL
-// proxies) the set* method of each changed field, one at a time.
+// and TCP proxies) the set* method of each changed field, one at a time.
 
 /** apiMethod names the API method a request goes to, e.g. regionUrlMaps.patch. */
 export function apiMethod(k: KindInfo, region: string, verb: string) {
@@ -549,6 +550,7 @@ function CreateForm({ k }: { k: KindInfo }) {
 export function EditResource() {
   const ref = useLbRef()
   const k = kindInfo(ref.coll)
+  const edit = k && editOf(k, ref.region)
   const query = useQuery(resourceQuery(ref))
   return (
     <div className="flex flex-col gap-6">
@@ -557,14 +559,16 @@ export function EditResource() {
       </h1>
       {k?.recorded && <RecordedNote />}
       <QueryStatus query={query} />
-      {k && !k.edit && (
+      {k && !edit && (
         <Card role="status">
           <p className="text-sm text-muted-foreground">
-            {k.title} cannot be changed: create a new one and point the proxies at it.
+            {ref.region && k.edit
+              ? `A regional ${k.singular} cannot be changed: the API has no method that changes it. Create a new one and point the forwarding rules at it.`
+              : `${k.title} cannot be changed: create a new one and point the proxies at it.`}
           </p>
         </Card>
       )}
-      {k?.edit && query.data && <EditForm k={k} r={ref} cur={query.data} />}
+      {k && edit && query.data && <EditForm k={k} r={ref} cur={query.data} />}
     </div>
   )
 }
