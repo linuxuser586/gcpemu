@@ -131,7 +131,6 @@ func (s *Service) storeBucket(ctx context.Context, proj string, b *storage.Bucke
 	b.ProjectNumber = uint64(project.Number(proj))
 	b.TimeCreated, b.Updated = ts(now), ts(now)
 	b.Metageneration = 1
-	b.Generation = now.UnixMicro()
 	b.Acl, b.DefaultObjectAcl, b.Owner = nil, nil, nil
 	b.SelfLink, b.Etag = "", ""
 	if b.Rpo == "" && b.LocationType != "region" {
@@ -167,6 +166,11 @@ func (s *Service) storeBucket(ctx context.Context, proj string, b *storage.Bucke
 			}
 			return apierr.AlreadyExists("The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.")
 		}
+		// A bucket recreated within one deterministic instant still gets a
+		// new generation.
+		var prev int64
+		_ = store.GetJSON(tx, nsBucketGens, b.Name, &prev)
+		b.Generation = newGeneration(now, prev)
 		return store.PutJSON(tx, nsBuckets, b.Name, rec)
 	})
 	if err != nil {
@@ -430,6 +434,9 @@ func (s *Service) removeBucket(ctx context.Context, name string, c conds) error 
 			}
 		}
 		_ = tx.Delete(nsIAM, name)
+		if err := store.PutJSON(tx, nsBucketGens, name, rec.Bucket.Generation); err != nil {
+			return err
+		}
 		return tx.Delete(nsBuckets, name)
 	})
 	if err != nil {

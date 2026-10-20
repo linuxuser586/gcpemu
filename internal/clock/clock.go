@@ -1,5 +1,6 @@
-// Package clock provides the emulator's clock: real by default, a fake
-// advanceable clock under --deterministic or `gcpemu time advance` (NFR-REL-002).
+// Package clock provides the Emulator clock (NFR-REL-002): real by default,
+// or under --deterministic a fake clock that moves once per API request.
+// Both can be advanced with `gcpemu time advance`.
 package clock
 
 import (
@@ -12,20 +13,17 @@ type Clock interface {
 	Now() time.Time
 }
 
-// Peeker reports the current instant without advancing the clock.
-// Background (wall-clock-driven) readers use it so that, under
-// --deterministic, only request-driven reads move the fake clock.
-type Peeker interface {
-	Peek() time.Time
+// Stepper is a clock that moves once per API request (ADR 0020).
+type Stepper interface {
+	RequestStep()
 }
 
-// Peek reports c's current instant without advancing it, falling back to
-// Now for clocks that are not Peekers.
-func Peek(c Clock) time.Time {
-	if p, ok := c.(Peeker); ok {
-		return p.Peek()
+// RequestStep moves c one request step if it is a Stepper; the real clock
+// is not, so the call is a no-op there.
+func RequestStep(c Clock) {
+	if s, ok := c.(Stepper); ok {
+		s.RequestStep()
 	}
-	return c.Now()
 }
 
 // Real is the wall clock.
@@ -49,12 +47,8 @@ func (o *Offset) Now() time.Time {
 	return o.base.Now().Add(o.offset)
 }
 
-// Peek is Now without advancing a fake base clock.
-func (o *Offset) Peek() time.Time {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return Peek(o.base).Add(o.offset)
-}
+// RequestStep moves a fake base clock one request step.
+func (o *Offset) RequestStep() { RequestStep(o.base) }
 
 // Advance moves the clock forward by d.
 func (o *Offset) Advance(d time.Duration) {
@@ -63,8 +57,9 @@ func (o *Offset) Advance(d time.Duration) {
 	o.mu.Unlock()
 }
 
-// Fake is a deterministic clock that starts at a fixed instant and ticks
-// forward by Step on every call to Now.
+// Fake is a deterministic clock that starts at a fixed instant and moves
+// forward by Step on each RequestStep; Now never moves it, so every read
+// within one request returns the same instant (ADR 0020).
 type Fake struct {
 	mu   sync.Mutex
 	t    time.Time
@@ -79,14 +74,13 @@ func NewFake() *Fake {
 func (f *Fake) Now() time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	t := f.t
-	f.t = f.t.Add(f.Step)
-	return t
+	return f.t
 }
 
-// Peek returns the instant the next Now will return, without advancing.
-func (f *Fake) Peek() time.Time {
+// RequestStep moves the clock forward by Step, as an API request arriving
+// at a Deterministic Instance does.
+func (f *Fake) RequestStep() {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.t
+	f.t = f.t.Add(f.Step)
+	f.mu.Unlock()
 }

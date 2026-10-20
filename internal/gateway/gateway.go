@@ -81,6 +81,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainUnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (resp any, err error) {
 			start := time.Now()
 			timer := clock.StartStopwatch()
+			clock.RequestStep(g.env.Clock)
 			ctx, leave, err := g.gate.enter(ctx)
 			if err == nil {
 				defer leave()
@@ -119,6 +120,7 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 		grpc.ChainStreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
 			start := time.Now()
 			timer := clock.StartStopwatch()
+			clock.RequestStep(g.env.Clock) // once, when the stream opens
 			ctx, leave, err := g.gate.enter(ss.Context())
 			if err == nil {
 				defer leave()
@@ -363,6 +365,10 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		timer := clock.StartStopwatch()
+		if isAPIRequest(r.URL.Path) {
+			// Before authentication, which reads the clock (ADR 0020).
+			clock.RequestStep(g.env.Clock)
+		}
 		ctx, leave, err := g.gate.enter(r.Context())
 		if err == nil {
 			defer leave()
@@ -422,6 +428,17 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 			},
 		})
 	})
+}
+
+// isAPIRequest reports whether an HTTP request to a service handler is a
+// GCP API call, which moves a deterministic clock one step (ADR 0020).
+// Service-owned admin routes and internal endpoints (/_emu/...) and
+// in-container agent callbacks (/_agent/..., .../_gcpemu/...) arrive on
+// wall-clock schedules and do not. path is as the service handler sees
+// it, so a mount's API prefix may already be stripped.
+func isAPIRequest(path string) bool {
+	return !strings.HasPrefix(path, "/_emu/") && !strings.HasPrefix(path, "/_agent/") &&
+		!strings.Contains(path, "/_gcpemu/")
 }
 
 // teeBody copies what the handler reads of a request body to c.

@@ -148,18 +148,62 @@ func TestDeterministic(t *testing.T) {
 	}
 }
 
-// TestDeterministicIgnoresWallTime is NFR-REL-002 (#436): under
-// --deterministic, wall time passing before a request (background tickers
-// firing) must not change the timestamps that request sees.
+// TestDeterministicIgnoresWallTime is NFR-REL-002 (#436, #441): under
+// --deterministic, wall time passing before a request (background sweeps
+// and tickers firing, here past the 1 s sweep tick) must not change the
+// timestamps that request sees.
 func TestDeterministicIgnoresWallTime(t *testing.T) {
 	run := func(delay time.Duration) []byte {
-		inst := emutest.Start(t, []string{"compute", "pubsub"}, emutest.WithDeterministic())
+		inst := emutest.Start(t, []string{"compute", "pubsub", "sql", "secrets"}, emutest.WithDeterministic())
+		gw := inst.GatewayURL()
+		call(t, "PUT", gw+"/pubsub/v1/projects/det-proj/topics/topic1", `{}`)
+		call(t, "POST", gw+"/secretmanager/v1/projects/det-proj/secrets?secretId=s1", `{"replication":{"automatic":{}},"ttl":"3600s"}`)
 		time.Sleep(delay)
-		return call(t, "POST", inst.GatewayURL()+"/compute/v1/projects/det-proj/global/networks", `{"name":"net","autoCreateSubnetworks":false}`)
+		return call(t, "POST", gw+"/compute/v1/projects/det-proj/global/networks", `{"name":"net","autoCreateSubnetworks":false}`)
 	}
-	a, b := run(0), run(300*time.Millisecond)
+	a, b := run(0), run(1500*time.Millisecond)
 	if !bytes.Equal(a, b) {
 		t.Fatalf("runs differ:\n%s\n---\n%s", a, b)
+	}
+}
+
+// TestDeterministicStepsPerAPIRequest is ADR 0020 (#441): each API request
+// moves the deterministic clock one 1 ms step, and admin API and console
+// traffic between two API requests does not move it.
+func TestDeterministicStepsPerAPIRequest(t *testing.T) {
+	type op struct{ InsertTime string }
+	run := func(between func(gw string)) (first, second op) {
+		inst := emutest.Start(t, []string{"compute"}, emutest.WithDeterministic())
+		gw := inst.GatewayURL()
+		insert := func(name string) (o op) {
+			b := call(t, "POST", gw+"/compute/v1/projects/det-proj/global/networks", `{"name":"`+name+`","autoCreateSubnetworks":false}`)
+			if err := json.Unmarshal(b, &o); err != nil {
+				t.Fatalf("decode %s: %v", b, err)
+			}
+			return o
+		}
+		first = insert("net1")
+		between(gw)
+		return first, insert("net2")
+	}
+	first, second := run(func(string) {})
+	if first.InsertTime != "2025-12-31T17:00:00.001-07:00" || second.InsertTime != "2025-12-31T17:00:00.002-07:00" {
+		t.Fatalf("insertTimes = %q, %q; want one 1 ms step per request", first.InsertTime, second.InsertTime)
+	}
+	_, admin := run(func(gw string) {
+		call(t, "GET", gw+"/_emu/v1/resources/counts", "")
+		call(t, "GET", gw+"/_emu/v1/info", "")
+		call(t, "GET", gw+"/console/", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, "GET", gw+"/_emu/v1/events", nil)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	})
+	if admin != second {
+		t.Fatalf("after admin and console calls insertTime = %q, want %q", admin.InsertTime, second.InsertTime)
 	}
 }
 

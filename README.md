@@ -538,6 +538,18 @@ internal calls with no Principal are exempt. Under `audit` a denied call is logg
 Denial conditions on `request.time` and `resource.*` are evaluated; conditions on resource tags
 are refused, since the emulator has no tags.
 
+### Deterministic Instances
+
+`--deterministic` (`emutest.WithDeterministic()`) makes generated IDs and timestamps the same run
+to run, for golden-file tests. The clock starts at 2026-01-01T00:00:00Z and moves 1 ms each time
+an API request arrives; every timestamp within one request is the same, and real time passing
+never moves it. `gcpemu time advance` still moves it on purpose. The guarantee holds for a client
+that sends one API request at a time. Console and admin API traffic (`/_emu/`) does not move the
+clock, so it does not affect the output. Operations with no `--lro-latency` come back `DONE` from
+the call that started them. Operations backed by runtime containers (GKE clusters, Cloud SQL
+instances, backups, imports and exports) and any operation once latency is configured are outside
+the guarantee.
+
 ### Seed files
 
 Top-level keys are `projects`, `faults` and Service IDs (`iam`, `compute`, `gcs`, `pubsub`,

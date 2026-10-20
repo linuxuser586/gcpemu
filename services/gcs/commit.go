@@ -56,7 +56,7 @@ func maxGeneration(tx store.Tx, bucket, name string, live *objectRec) int64 {
 }
 
 // newGeneration returns a microsecond-timestamp generation greater than
-// every earlier generation of the object.
+// prevMax, the highest earlier generation of the object or bucket name.
 func newGeneration(now time.Time, prevMax int64) int64 {
 	g := now.UnixMicro()
 	if g <= prevMax {

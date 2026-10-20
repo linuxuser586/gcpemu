@@ -15,15 +15,16 @@ import (
 // Store namespaces. Object keys are "<bucket>\x00<name>" so a prefix scan
 // over "<bucket>\x00<prefix>" yields a bucket's objects in name order.
 const (
-	nsBuckets  = "gcs/buckets"        // name → bucketRec
-	nsObjects  = "gcs/objects"        // bucket\x00name → objectRec (live)
-	nsVersions = "gcs/versions"       // bucket\x00name\x00gen → objectRec (noncurrent)
-	nsUploads  = "gcs/uploads"        // upload id → uploadRec (resumable sessions)
-	nsNotifs   = "gcs/notifications"  // bucket\x00id → storage.Notification
-	nsIAM      = "gcs/iam"            // bucket → policy JSON (fallback when iam is absent)
-	nsHMAC     = "gcs/hmac"           // accessId → hmacRec
-	nsMPU      = "gcs/mpu"            // XML multipart upload id → mpuRec
-	nsFolders  = "gcs/managedFolders" // bucket\x00name → folderRec
+	nsBuckets    = "gcs/buckets"           // name → bucketRec
+	nsObjects    = "gcs/objects"           // bucket\x00name → objectRec (live)
+	nsVersions   = "gcs/versions"          // bucket\x00name\x00gen → objectRec (noncurrent)
+	nsUploads    = "gcs/uploads"           // upload id → uploadRec (resumable sessions)
+	nsNotifs     = "gcs/notifications"     // bucket\x00id → storage.Notification
+	nsIAM        = "gcs/iam"               // bucket → policy JSON (fallback when iam is absent)
+	nsHMAC       = "gcs/hmac"              // accessId → hmacRec
+	nsMPU        = "gcs/mpu"               // XML multipart upload id → mpuRec
+	nsFolders    = "gcs/managedFolders"    // bucket\x00name → folderRec
+	nsBucketGens = "gcs/bucketGenerations" // name → generation of the last deleted bucket of that name
 )
 
 // sep separates key components; it cannot occur in bucket or object names.
