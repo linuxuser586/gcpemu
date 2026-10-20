@@ -80,6 +80,6 @@ func Warning(flags []string) string {
 	for i, f := range flags {
 		named[i] = "--" + f
 	}
-	return fmt.Sprintf("%s: the emulator runs in a container on a bridge network, so these addresses reach only container networks, not the LAN; %s",
+	return fmt.Sprintf("%s: the Instance runs in a container on a bridge network, so these addresses reach only container networks, not the LAN; %s",
 		strings.Join(named, ", "), Fix)
 }

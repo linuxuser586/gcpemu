@@ -102,7 +102,7 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 		r.id, r.pushed = "", ""
 	}
 	if rt.Self() != "" {
-		return errors.New("the emulator runs in a container on a bridge network, whose addresses reach only container networks; " + lanbind.Fix)
+		return errors.New("the Instance runs in a container on a bridge network, whose addresses reach only container networks; " + lanbind.Fix)
 	}
 	if err := rt.EnsureImage(ctx, Image, r.Offline); err != nil {
 		return fmt.Errorf("%s image %s: %w", r.Name, Image, err)

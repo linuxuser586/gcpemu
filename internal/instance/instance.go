@@ -348,12 +348,9 @@ func (in *Instance) Start(ctx context.Context) error {
 // (#497, ADR 0011).
 func (in *Instance) warnContainerBind(ctx context.Context) {
 	var flags []string
-	for _, b := range []struct {
-		flag  string
-		addrs []string
-	}{{"lb-bind", in.Config.LBBind}, {"gke-bind", in.Config.GKEBind}, {"ar-bind", in.Config.ARBind}, {"gfe-bind", in.Config.GFEBind}} {
-		if len(b.addrs) > 0 {
-			flags = append(flags, b.flag)
+	for _, b := range in.Config.LANBinds() {
+		if len(b.Addrs) > 0 {
+			flags = append(flags, b.Flag)
 		}
 	}
 	if len(flags) > 0 && in.Env.LANBind(ctx) == lanbind.Bridge {
