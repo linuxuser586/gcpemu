@@ -309,7 +309,16 @@ func TestRetryTriggeredBuild(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 	ids := map[string]bool{}
-	for range 3 {
+	for i := range 3 {
+		if i > 0 {
+			retry, err := e.cb.RetryBuild(e.ctx, &cloudbuildpb.RetryBuildRequest{ProjectId: testProject, Id: got.GetId()})
+			if err != nil {
+				t.Fatalf("RetryBuild: %v", err)
+			}
+			if got, err = retry.Wait(e.ctx); err != nil {
+				t.Fatalf("Wait: %v", err)
+			}
+		}
 		if ids[got.GetId()] {
 			t.Fatalf("Build %s ran twice", got.GetId())
 		}
@@ -319,13 +328,6 @@ func TestRetryTriggeredBuild(t *testing.T) {
 			if !strings.Contains(log, want) {
 				t.Errorf("Build %s log lacks %q:\n%s", got.GetId(), want, log)
 			}
-		}
-		retry, err := e.cb.RetryBuild(e.ctx, &cloudbuildpb.RetryBuildRequest{ProjectId: testProject, Id: got.GetId()})
-		if err != nil {
-			t.Fatalf("RetryBuild: %v", err)
-		}
-		if got, err = retry.Wait(e.ctx); err != nil {
-			t.Fatalf("Wait: %v", err)
 		}
 	}
 }
