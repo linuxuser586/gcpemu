@@ -258,9 +258,12 @@ as Argo Workflows' GCS artifact driver, pass `--gfe-bind <address>` (repeatable;
 (`--port gfe-lan=N` for another port), with certificates from the instance CA, for every name it
 serves: `storage.googleapis.com`, `oauth2.googleapis.com`, `iam.googleapis.com`,
 `LOCATION-docker.pkg.dev` and the rest. Point that machine's DNS for those names at the address
-and have it trust `<data-dir>/ca.pem`. Port 443 is privileged on Linux, so an unprivileged
-emulator needs `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`; `gcpemu doctor` checks
-this. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
+and have it trust `<data-dir>/ca.pem`. Port 443 is privileged on Linux: when an unprivileged
+emulator can't bind it, a labelled `gcpemu-<id>-gfe-lan` container on the host network listens
+there instead and relays each connection, still encrypted, to the Google front end. That needs a
+container runtime that isn't a VM runtime, an emulator not running in a container and no
+`--port gfe-lan`; otherwise run `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`.
+`gcpemu doctor` checks which applies. Nothing else is exposed (`docs/adr/0021-google-front-end-on-the-lan.md`):
 
 - Every request needs credentials, whatever the IAM enforcement level: a bearer token the
   Instance issued, or a signed URL or V4 signature for the Cloud Storage XML API. The token

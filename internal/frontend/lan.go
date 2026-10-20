@@ -46,6 +46,10 @@ import (
 //     the XML API a signature Cloud Storage verifies.
 //
 // The Admin API and the Web console are never served there.
+//
+// On port 443, which an unprivileged emulator on Linux may not bind, the
+// LAN front-end relay can listen instead and relay to the same handler
+// (lanrelay.go).
 
 // LANEndpoint is the --gfe-bind listeners' Service endpoint name in
 // emu.Endpoints.
@@ -81,17 +85,57 @@ type Storage interface {
 	Signed(r *http.Request) bool
 }
 
-// StartLAN serves lan on every --gfe-bind address. A failed address is
-// logged and skipped.
+// StartLAN serves lan on every --gfe-bind address. An address whose port
+// 443 the emulator may not bind is relayed by the LAN front-end relay when
+// it can be (lanrelay.go); any other failed address is logged and skipped.
 func (f *Frontend) StartLAN(lan LAN) {
 	binds := f.env.Config.GFEBind
 	if len(binds) == 0 {
 		return
 	}
-	port, ok := f.env.Config.PortSet(LANEndpoint)
-	if !ok {
+	port, set := f.env.Config.PortSet(LANEndpoint)
+	if !set {
 		port = 443
 	}
+	srv := f.lanServer(&lanHandler{f: f, lan: lan})
+	var relayed []string
+	for _, ip := range binds {
+		addr := net.JoinHostPort(ip, strconv.Itoa(port))
+		l, err := f.listen("tcp", addr)
+		if err != nil {
+			if !set && f.relayable(err) {
+				relayed = append(relayed, addr)
+				continue
+			}
+			f.lanSkipped(addr, err)
+			continue
+		}
+		f.serveLAN(srv(), l, "direct", l.Addr().String())
+	}
+	if len(relayed) > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		f.mu.Lock()
+		closed := f.closed
+		if !closed {
+			f.relayStop, f.relayDone = cancel, done
+		}
+		f.mu.Unlock()
+		if closed {
+			cancel()
+			return
+		}
+		go func() {
+			defer close(done)
+			defer cancel()
+			f.startRelay(ctx, srv, relayed)
+		}()
+	}
+}
+
+// lanServer returns a function making the http.Server of one --gfe-bind
+// listener, serving h with the TLS configuration they share.
+func (f *Frontend) lanServer(h http.Handler) func() *http.Server {
 	cfg := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		NextProtos: []string{"h2", "http/1.1"},
@@ -102,47 +146,62 @@ func (f *Frontend) StartLAN(lan LAN) {
 			return f.certificate(hello)
 		},
 	}
-	h := &lanHandler{f: f, lan: lan}
-	var addrs []string
-	for _, ip := range binds {
-		l, err := net.Listen("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
-		if err != nil {
-			f.env.Log.Warn("Google front end: cannot serve on --gfe-bind address; clients there expect port 443, which an unprivileged process binds only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`",
-				"address", ip, "port", port, "err", err)
-			continue
-		}
-		srv := &http.Server{
+	return func() *http.Server {
+		return &http.Server{
 			Handler:           h,
 			TLSConfig:         cfg,
 			ReadHeaderTimeout: 30 * time.Second,
 			ErrorLog:          slog.NewLogLogger(f.env.Log.Handler(), slog.LevelDebug),
 		}
-		f.mu.Lock()
-		f.lan = append(f.lan, srv)
-		f.mu.Unlock()
-		addrs = append(addrs, l.Addr().String())
-		go func() {
-			if err := srv.ServeTLS(l, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				f.env.Log.Error("Google front end stopped on --gfe-bind address", "address", l.Addr().String(), "err", err)
-			}
-		}()
-		f.env.Log.Info("Google front end exposed", "address", l.Addr().String())
-	}
-	if len(addrs) > 0 {
-		sort.Strings(addrs)
-		f.env.Endpoints.Set(LANEndpoint, strings.Join(addrs, ","))
 	}
 }
 
-// closeLAN stops the --gfe-bind listeners. Callers hold f.mu.
-func (f *Frontend) closeLAN() {
+// serveLAN serves srv on l, which serves the --gfe-bind addresses addrs
+// (mode "direct" or "relay"), and records them as the gfe-lan endpoint.
+// It reports false, having served nothing, once the frontend is closed.
+func (f *Frontend) serveLAN(srv *http.Server, l net.Listener, mode string, addrs ...string) bool {
+	f.mu.Lock()
+	if f.closed {
+		f.mu.Unlock()
+		l.Close()
+		return false
+	}
+	f.lan = append(f.lan, srv)
+	f.lanAddrs = append(f.lanAddrs, addrs...)
+	sort.Strings(f.lanAddrs)
+	f.env.Endpoints.Set(LANEndpoint, strings.Join(f.lanAddrs, ","))
+	f.mu.Unlock()
+	go func() {
+		if err := srv.ServeTLS(l, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			f.env.Log.Error("Google front end stopped on --gfe-bind address", "address", l.Addr().String(), "err", err)
+		}
+	}()
+	for _, a := range addrs {
+		f.env.Log.Info("Google front end exposed", "address", a, "mode", mode)
+	}
+	return true
+}
+
+// lanSkipped logs a --gfe-bind address (host:port) the Google front end
+// does not serve.
+func (f *Frontend) lanSkipped(addr string, err error) {
+	ip, port, _ := net.SplitHostPort(addr)
+	f.env.Log.Warn("Google front end: cannot serve on --gfe-bind address; clients there expect port 443, which an unprivileged process binds only after `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`",
+		"address", ip, "port", port, "err", err)
+}
+
+// closeLAN stops the --gfe-bind listeners and returns the relay, for the
+// caller to close. Callers hold f.mu.
+func (f *Frontend) closeLAN() lanRelay {
 	for _, s := range f.lan {
 		_ = s.Close()
 	}
-	if f.lan != nil {
+	if f.lanAddrs != nil {
 		f.env.Endpoints.Delete(LANEndpoint)
 	}
-	f.lan = nil
+	relay := f.relay
+	f.lan, f.lanAddrs, f.relay = nil, nil, nil
+	return relay
 }
 
 type lanHandler struct {
