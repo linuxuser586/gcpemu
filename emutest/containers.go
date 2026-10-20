@@ -103,11 +103,10 @@ func RequireRelayStream(t testing.TB, inst *Instance, what, key string) {
 	t.Errorf("the VM relay carried no stream for %s (%s): %v", what, key, st)
 }
 
-// VMRuntime reports whether the Instance's container runtime runs in a
-// VM, whose host network is not the host's: whether the services
-// network's gateway cannot be bound on the host (vmrelay.Decision.VM),
-// whatever GCPEMU_VM_RELAY forces. It creates the services network if
-// it does not exist yet.
+// VMRuntime reports whether the Instance's container runtime is a VM
+// runtime (vmrelay.Decision.VM), whatever GCPEMU_VM_RELAY forces; it is
+// false when the emulator runs in a container. It creates the services
+// network if it does not exist yet.
 func VMRuntime(t testing.TB, inst *Instance) bool {
 	t.Helper()
 	ctx := context.Background()
