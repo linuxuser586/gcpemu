@@ -562,13 +562,19 @@ func (g *Gateway) Serve(l net.Listener) error {
 	g.srv.ConnContext = connContext
 	srv := g.srv
 	g.mu.Unlock()
+	// Shutdown closes g.front before srv, so its Serve can end with
+	// net.ErrClosed rather than ErrServerClosed. After Shutdown, Serve
+	// waits for it, so nothing logs after Serve returns.
+	front := make(chan struct{})
 	go func() {
-		if err := srv.Serve(g.front); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		defer close(front)
+		if err := srv.Serve(g.front); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			g.env.Log.Error("API gateway stopped serving the Google front end", "err", err)
 		}
 	}()
 	err := srv.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
+		<-front
 		return nil
 	}
 	return err
