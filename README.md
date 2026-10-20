@@ -29,6 +29,20 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 | Cloud Build | `services/build` | Builds API v1 (gRPC + REST, global and regional) with Operations; steps run in order or by `waitFor` as containers sharing `/workspace`, with `script`, `allowFailure`/`allowExitCodes` and volumes; `timeout` and `queueTtl` on the Emulator clock; `build.concurrency` (default 4) Builds at once; sources from Cloud Storage (`storageSource`, as `gcloud builds submit` uploads it) or a public Git URL (`gitSource`); step logs written as they run to `log-BUILD_ID.txt` in the Build's `logsBucket`; steps run as the Build's `serviceAccount` (the Compute Engine default without one; naming one needs `iam.serviceAccounts.actAs`) and reach the Instance by real hostname through the Build agent, with the metadata server, the Instance CA trusted and an Artifact Registry proxy; substitutions (`substitutionOption`, `dynamicSubstitutions`) and `availableSecrets.secretManager` |
 | Certificate Manager, Network Security | `services/certs` | Certificates (self-managed and managed via the local CA), maps, trust configs, DNS authorizations; backend authentication configs, server TLS policies |
 
+## Development
+
+Builds and tests run through [Task](https://taskfile.dev/installation) (3.54.0 or later), on
+macOS, Linux and Windows:
+
+```sh
+task          # lists the tasks
+task doctor   # checks the tools they need (Go, git, Node.js and pnpm, a container runtime, ...)
+```
+
+`task doctor` fails when a required tool (Task, Go, git) is missing or too old, and warns about
+optional ones, naming the tasks each one blocks and how to install it. It checks the tools for
+building and testing gcpemu; `gcpemu doctor` checks a host for running it.
+
 ## Quick start
 
 ```sh
@@ -975,7 +989,7 @@ task cross         # the same binaries without building the console (no Node.js)
 
 The tasks in `Taskfile.yml` need Task 3.54 or later, from any shell (brew, winget, or
 `go install github.com/go-task/task/v3/cmd/task@v3.54.0`), and only the tools each task calls
-(go, git, pnpm, docker, npm). A bare `task` runs `task build`, which writes `bin/gcpemu.exe` on
+(go, git, pnpm, docker, npm); `task doctor` checks them. `task build` writes `bin/gcpemu.exe` on
 Windows. `task race` needs a C compiler for cgo.
 
 The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` embeds its
