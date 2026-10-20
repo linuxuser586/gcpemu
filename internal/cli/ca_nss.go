@@ -5,8 +5,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-
-	"github.com/linuxuser586/gcpemu/internal/ca"
 )
 
 // Browsers on Linux ignore the OS trust store: Chrome reads the user's
@@ -89,7 +87,7 @@ const (
 // replaces it. Without certutil the plan is empty and note says what to
 // install. The steps are soft: a failing browser database never fails the
 // rest of the install.
-func nssPlan(h trustHost, instance string, c *ca.CA, mode nssMode) (plan []trustStep, note string) {
+func nssPlan(h trustHost, instance string, c trustCert, mode nssMode) (plan []trustStep, note string) {
 	if h.goos != "linux" {
 		return nil, ""
 	}

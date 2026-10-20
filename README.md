@@ -600,7 +600,9 @@ it only when it starts, so `ca install` and `ca uninstall` tell you to restart i
 adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
 which needs no administrator rights. Windows shows a security dialog to confirm the change, and
 another for `gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
-databases, and `gcpemu doctor` reports where it is trusted. The Web console's Certificate Manager
+databases, and `gcpemu doctor` reports where it is trusted. `ca install --cert FILE` and
+`ca uninstall --cert FILE` (`-` for stdin) do the same for another CA certificate, such as a
+Containerized Instance's (see "Trusting the CA on the host"). The Web console's Certificate Manager
 view rotates a running Instance's CA too (Rotate CA), but changes no Host trust: run `gcpemu ca install`
 afterwards. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
@@ -700,6 +702,28 @@ shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints i
 `docker exec gcpemu /gcpemu doctor` checks the container, not the host: CA trust and the
 host-only checks (loopback aliases, Windows' excluded port ranges) are notes for the host, and
 every fix names a `docker run` flag or a host command.
+
+#### Trusting the CA on the host
+
+The container creates its own CA in `/data`, which the host doesn't trust, so HTTPS from the host
+to load balancers and the Google front end fails verification until you trust it. Print the CA
+certificate and install it with the native binary on the host:
+
+```sh
+docker exec gcpemu /gcpemu ca print > gcpemu-ca.pem
+gcpemu --instance container ca install --cert gcpemu-ca.pem
+```
+
+`podman exec` works the same, as does `docker cp gcpemu:/data/ca.pem gcpemu-ca.pem`; `--cert -`
+reads the certificate from stdin, and then needs `--yes`, since stdin can't also confirm.
+`--cert` needs `--instance`, which names the trust entries, so the container's CA doesn't replace
+a native instance's; `ca install --cert` trusts it in the same stores as `gcpemu ca install`
+and never touches an instance data directory. Keep `gcpemu-ca.pem`: remove the trust with
+`gcpemu --instance container ca uninstall --cert gcpemu-ca.pem`, or run that before removing the
+container or its volume. After `ca rotate` in the container, uninstall with the old file, then
+print the new certificate and install it again. A persistent `/data` volume keeps the same CA
+across containers, while a container without one has a new CA each time. To trust it per client
+without installing it, use `curl --cacert gcpemu-ca.pem` or `SSL_CERT_FILE=gcpemu-ca.pem`.
 
 A load balancer forwarding rule listens on a loopback address inside the container, which `-p`
 never forwards to, so each rule is also served on a port the container publishes (ADR 0012), and

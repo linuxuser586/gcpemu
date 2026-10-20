@@ -63,62 +63,8 @@ func (o *rootOpts) caCmd() *cobra.Command {
 			return err
 		},
 	}
-	var yes, dryRun bool
-	install := &cobra.Command{
-		Use:   "install",
-		Short: "Add the CA to the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo on Linux and macOS)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, c, err := loadCA(cmd)
-			if err != nil {
-				return err
-			}
-			h := hostTrust()
-			plan, err := trustPlan(h, cfg.Instance, c, true)
-			if err != nil {
-				return err
-			}
-			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, true)...)
-			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, true, dryRun)
-			nss, note := nssPlan(h, cfg.Instance, c, nssInstall)
-			if note != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
-			}
-			windowsTrustNote(cmd.ErrOrStderr(), h, true)
-			if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
-				return err
-			}
-			afterPlan()
-			return nil
-		},
-	}
-	install.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
-	install.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
-	uninstall := &cobra.Command{
-		Use:   "uninstall",
-		Short: "Remove the CA from the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo on Linux and macOS)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, c, err := loadCA(cmd)
-			if err != nil {
-				return err
-			}
-			h := hostTrust()
-			plan, err := trustPlan(h, cfg.Instance, c, false)
-			if err != nil {
-				return err
-			}
-			plan = append(plan, containerTrustPlan(h, cfg.Instance, c, false)...)
-			afterPlan := printVMTrust(cmd.OutOrStdout(), cfg.Instance, c, false, dryRun)
-			nss, _ := nssPlan(h, cfg.Instance, c, nssUninstall)
-			windowsTrustNote(cmd.ErrOrStderr(), h, false)
-			if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
-				return err
-			}
-			afterPlan()
-			return nil
-		},
-	}
-	uninstall.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
-	uninstall.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
+	install := o.caTrustCmd(true, loadCA)
+	uninstall := o.caTrustCmd(false, loadCA)
 	rotate := &cobra.Command{
 		Use:   "rotate",
 		Short: "Replace the CA with a new one and re-issue managed certificates",
@@ -161,6 +107,87 @@ func (o *rootOpts) caCmd() *cobra.Command {
 	}
 	root.AddCommand(path, print, install, uninstall, rotate)
 	return root
+}
+
+// caTrustCmd returns `ca install` (install) or `ca uninstall`. With
+// --cert they trust (or untrust) that certificate, such as a Containerized
+// Instance's, under the --instance name given, never reading or creating
+// the instance data directory; without it, the instance's own CA (#496).
+func (o *rootOpts) caTrustCmd(install bool, loadCA func(*cobra.Command) (*config.Config, *ca.CA, error)) *cobra.Command {
+	var yes, dryRun bool
+	var certFlag string
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Add the CA to the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo on Linux and macOS)",
+		Long: "Adds the instance CA to the OS, Docker, containerd and browser (NSS) trust stores.\n" +
+			"--cert FILE (- for stdin) trusts that CA certificate instead, such as a Containerized\n" +
+			"Instance's from `docker exec gcpemu /gcpemu ca print`; it needs --instance, which names\n" +
+			"the trust entries. A real run with --cert - needs --yes, since stdin holds the certificate:\n\n" +
+			"  docker exec gcpemu /gcpemu ca print > gcpemu-ca.pem\n" +
+			"  gcpemu --instance container ca install --cert gcpemu-ca.pem",
+	}
+	if !install {
+		cmd.Use = "uninstall"
+		cmd.Short = "Remove the CA from the OS, Docker, containerd and browser (NSS) trust stores (asks for confirmation; uses sudo on Linux and macOS)"
+		cmd.Long = "Removes the instance CA from the OS, Docker, containerd and browser (NSS) trust stores.\n" +
+			"--cert FILE (- for stdin) removes the trust `ca install --cert` added for that CA\n" +
+			"certificate under the same --instance:\n\n" +
+			"  gcpemu --instance container ca uninstall --cert gcpemu-ca.pem"
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		h := hostTrust()
+		var instance string
+		var c trustCert
+		if cmd.Flags().Changed("cert") {
+			if !cmd.Flags().Changed("instance") {
+				return errors.New("--cert needs --instance <name>, so its trust entries don't replace another instance's (for example: gcpemu --instance container ca " + cmd.Name() + " --cert FILE)")
+			}
+			cfg, err := o.load(cmd.Flags())
+			if err != nil {
+				return err
+			}
+			f, err := readCertFile(certFlag, cmd.InOrStdin())
+			if err != nil {
+				return err
+			}
+			cleanup, err := f.ensurePath(install && (h.goos == "darwin" || h.goos == "windows"), dryRun)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			instance, c = cfg.Instance, f
+		} else {
+			cfg, own, err := loadCA(cmd)
+			if err != nil {
+				return err
+			}
+			instance, c = cfg.Instance, own
+		}
+		plan, err := trustPlan(h, instance, c, install)
+		if err != nil {
+			return err
+		}
+		plan = append(plan, containerTrustPlan(h, instance, c, install)...)
+		afterPlan := printVMTrust(cmd.OutOrStdout(), instance, c, install, dryRun)
+		mode := nssInstall
+		if !install {
+			mode = nssUninstall
+		}
+		nss, note := nssPlan(h, instance, c, mode)
+		if note != "" {
+			fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
+		}
+		windowsTrustNote(cmd.ErrOrStderr(), h, install)
+		if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
+			return err
+		}
+		afterPlan()
+		return nil
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its own dialog)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only print the commands")
+	cmd.Flags().StringVar(&certFlag, "cert", "", "CA certificate (PEM) to use instead of the instance's own, - for stdin (then --yes is needed to run it); needs --instance")
+	return cmd
 }
 
 // rotateTrust replaces the old CA with c in the browser databases that
@@ -234,7 +261,7 @@ type trustStep struct {
 func (s trustStep) String() string { return strings.Join(s.args, " ") }
 
 // trustPlan returns the commands that add (install) or remove the CA.
-func trustPlan(h trustHost, instance string, c *ca.CA, install bool) ([]trustStep, error) {
+func trustPlan(h trustHost, instance string, c trustCert, install bool) ([]trustStep, error) {
 	sudo := func(args ...string) []string {
 		if h.root {
 			return args
@@ -285,7 +312,7 @@ func trustPlan(h trustHost, instance string, c *ca.CA, install bool) ([]trustSte
 
 // thumbprint is the CA certificate's SHA-1 hash in hex, which the macOS
 // keychain and the Windows certificate stores identify it by.
-func thumbprint(c *ca.CA) string {
+func thumbprint(c trustCert) string {
 	sum := sha1.Sum(c.Certificate().Raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -346,7 +373,7 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 // point at /etc/containerd/certs.d, as on GKE and k3s). Linux only: Docker
 // Desktop on macOS uses the system keychain, and a VM runtime's own store
 // is left to the command from vmTrustCommand.
-func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []trustStep {
+func containerTrustPlan(h trustHost, instance string, c trustCert, install bool) []trustStep {
 	if h.goos != "linux" {
 		return nil
 	}
@@ -375,7 +402,7 @@ func containerTrustPlan(h trustHost, instance string, c *ca.CA, install bool) []
 // see vmTrustCommand. A restart is printed only by the returned afterPlan,
 // once the plan has changed the store the runtime rebuilds from (or, on a
 // dry run, been listed for the user to run).
-func printVMTrust(out io.Writer, instance string, c *ca.CA, install, dryRun bool) (afterPlan func()) {
+func printVMTrust(out io.Writer, instance string, c trustCert, install, dryRun bool) (afterPlan func()) {
 	_, det, _ := emuruntime.Locate()
 	v := vmTrustCommand(socketTarget(det.Endpoint), instance, c, install)
 	if v.store != "" {
@@ -460,7 +487,7 @@ type vmTrust struct {
 // /var/run/docker.sock to the socket behind it first. docker_engine is
 // Docker Desktop too: Docker Engine for Windows serves only Windows
 // containers, which detection refuses (ADR 0015).
-func vmTrustCommand(endpoint, instance string, c *ca.CA, install bool) vmTrust {
+func vmTrustCommand(endpoint, instance string, c trustCert, install bool) vmTrust {
 	var v vmTrust
 	var ssh string
 	var dirs []string
@@ -501,7 +528,7 @@ func vmTrustCommand(endpoint, instance string, c *ca.CA, install bool) vmTrust {
 // for every registry host in each certs.d directory of dirs (Docker's and
 // Podman's read every *.crt in DIR/HOST) and, with containerd, in
 // containerd's hosts.toml files. The CA itself goes in etc/gcpemu.
-func certsDirScript(etc, instance string, c *ca.CA, dirs []string, containerd, install bool) string {
+func certsDirScript(etc, instance string, c trustCert, dirs []string, containerd, install bool) string {
 	var hosts []string
 	for _, n := range hostmode.HostsBlockNames(nil) {
 		if frontend.IsRegistryHost(n) {
