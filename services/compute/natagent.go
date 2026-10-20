@@ -18,7 +18,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/agent"
 )
 
-// The "nat-gateway" agent runs inside the NAT egress gateway container. It
+// The "nat-egress-proxy" agent runs inside the NAT egress proxy container. It
 // keeps the container alive, serves the --offline egress sink (connections
 // REDIRECTed by iptables; the original destination comes from
 // SO_ORIGINAL_DST), streams conntrack NEW events and reads the NFLOG copies
@@ -118,7 +118,7 @@ func watchConntrack(ctx context.Context, r *natReporter) {
 			err = cmd.Start()
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "nat-gateway: conntrack: %v\n", err)
+			fmt.Fprintf(os.Stderr, "nat-egress-proxy: conntrack: %v\n", err)
 			return
 		}
 		sc := bufio.NewScanner(out)
@@ -138,7 +138,7 @@ func watchConntrack(ctx context.Context, r *natReporter) {
 // natDropDedup suppresses repeats of one dropped flow (SYN retransmits).
 const natDropDedup = 30 * time.Second
 
-// watchDrops reports connections the gateway drops or rejects, once per
+// watchDrops reports connections the proxy drops or rejects, once per
 // flow within natDropDedup.
 func watchDrops(ctx context.Context, r *natReporter) {
 	seen := map[string]time.Time{}
@@ -161,7 +161,7 @@ func watchDrops(ctx context.Context, r *natReporter) {
 		}
 	})
 	if err != nil && ctx.Err() == nil {
-		fmt.Fprintf(os.Stderr, "nat-gateway: nflog: %v (dropped connections are not logged)\n", err)
+		fmt.Fprintf(os.Stderr, "nat-egress-proxy: nflog: %v (dropped connections are not logged)\n", err)
 	}
 }
 
@@ -231,7 +231,7 @@ func (r *natReporter) run(ctx context.Context) {
 				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 			} else {
-				fmt.Fprintf(os.Stderr, "nat-gateway: report: %v\n", err)
+				fmt.Fprintf(os.Stderr, "nat-egress-proxy: report: %v\n", err)
 			}
 		}
 		batch = batch[:0]

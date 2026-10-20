@@ -200,11 +200,11 @@ func (s *Service) natAllocations(np string) (map[string]natPorts, error) {
 	return out, err
 }
 
-// natPortRules renders the gateway's per-workload rules: filter rules
+// natPortRules renders the proxy's per-workload rules: filter rules
 // dropping workloads without ports, nat rules translating each other
 // workload onto its block, and commands capping a workload's connections
 // at its block under endpoint-independent mapping.
-func natPortRules(g *gateway, nats map[string]natPorts) (filter, nat, limits string) {
+func natPortRules(g *egressProxy, nats map[string]natPorts) (filter, nat, limits string) {
 	var f, n, l strings.Builder
 	for _, k := range slices.Sorted(maps.Keys(nats)) {
 		a := nats[k]

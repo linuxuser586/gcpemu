@@ -16,11 +16,11 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
-// TestGatewayAliasIsolated (#173): the NAT gateway aliases each Translated
+// TestProxyAliasIsolated (#173): the NAT egress proxy aliases each Translated
 // network on its own, so one whose VLAN link the kernel can't create
 // fails with a clear error while the others, and the NAT rules, are
 // unaffected.
-func TestGatewayAliasIsolated(t *testing.T) {
+func TestProxyAliasIsolated(t *testing.T) {
 	var mu sync.Mutex
 	execs := map[string]string{} // exec id -> script
 	var scripts []string
@@ -66,7 +66,7 @@ func TestGatewayAliasIsolated(t *testing.T) {
 		{Name: "gcpemu-b", Range: "10.0.1.0/24", Subnet: "10.242.0.0/24", Fallback: true, Translated: true, Network: tNet},
 		{Name: "gcpemu-c", Range: "10.0.2.0/24", Subnet: "10.0.2.0/24", Network: tNet},
 	}
-	g := &gateway{s: s, network: tNet, id: "gw", extIP: "172.22.0.2", extGW: "172.22.0.1"}
+	g := &egressProxy{s: s, network: tNet, id: "gw", extIP: "172.22.0.2", extGW: "172.22.0.1"}
 
 	g.alias(context.Background(), rt, nets)
 	var nv *emu.NoVLANError

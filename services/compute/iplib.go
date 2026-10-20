@@ -64,7 +64,7 @@ func (c cidr) covers(o cidr) bool { return c.contains(o.base) && c.contains(o.la
 func (c cidr) gateway() uint32 { return c.base + 1 }
 
 // reservedTail is the second-to-last address, which GCP reserves for
-// future use; the emulator's egress gateway lives there.
+// future use; the emulator's NAT egress proxy lives there.
 func (c cidr) reservedTail() uint32 { return c.last() - 1 }
 
 // usable reports whether ip may be handed to a workload: not the network

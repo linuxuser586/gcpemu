@@ -222,8 +222,8 @@ func TestNatEgressRequestLog(t *testing.T) {
 func TestNatSinkSwitch(t *testing.T) {
 	s, _ := natTestService(t, nil)
 	s.env.Config.NATSinkResponse = "418:offline"
-	s.egress = map[string]*gateway{}
-	g := &gateway{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
+	s.egress = map[string]*egressProxy{}
+	g := &egressProxy{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
 	redirect := "-A GCPEMU-PRE -s 10.0.0.0/24 -p tcp -j REDIRECT --to-ports 15001\n"
 	rules := func() string {
 		r, err := s.natRules(g, s.netsOf(tNet))
@@ -255,13 +255,13 @@ func TestNatSinkSwitch(t *testing.T) {
 	}
 }
 
-// TestNatRulesPublicRoutes: the gateway routes the load balancer's
+// TestNatRulesPublicRoutes: the proxy routes the load balancer's
 // forwarding rule addresses via the Edge relay, and the offline sink lets
 // them through, since the load balancer is emulated (#187).
 func TestNatRulesPublicRoutes(t *testing.T) {
 	s, _ := natTestService(t, nil)
 	s.SetNATSink(true)
-	g := &gateway{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
+	g := &egressProxy{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
 	rules := func() string {
 		r, err := s.natRules(g, s.netsOf(tNet))
 		if err != nil {
@@ -293,7 +293,7 @@ func TestNatRulesDropChain(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		s, _ := natTestService(t, nil)
 		s.env.Config.NATReject = reject
-		g := &gateway{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
+		g := &egressProxy{s: s, network: tNet, extIP: "172.22.0.2", extGW: "172.22.0.1"}
 		rules, err := s.natRules(g, s.netsOf(tNet))
 		if err != nil {
 			t.Fatal(err)

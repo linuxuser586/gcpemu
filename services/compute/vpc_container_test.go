@@ -25,7 +25,7 @@ const probeImage = "rancher/k3s:v1.36.5-k3s1"
 
 // workload starts a container holding ip on net, as a Managed container
 // would (aliased on a Translated network), with its default route via the
-// egress gateway gw when set, as a private GKE node would be.
+// NAT egress proxy at gw when set, as a private GKE node would be.
 func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw string) (*runtime.Manager, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func testEgressThroughNAT(t *testing.T, rng string, overlapped bool) {
 	if overlapped {
 		translated(t, net, rng)
 	}
-	gw, err := vpc.EgressGateway(ctx, sp)
+	gw, err := vpc.EgressProxy(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,14 +214,14 @@ func testEgressThroughNAT(t *testing.T, rng string, overlapped bool) {
 		t.Fatalf("AllocateIP not idempotent: %s vs %s", ip, again)
 	}
 	if !net2(net.Subnet, ip) || !net2(net.ContainerSubnet, gw) {
-		t.Fatalf("ip %s not in %s or gateway %s not in %s", ip, net.Subnet, gw, net.ContainerSubnet)
+		t.Fatalf("ip %s not in %s or NAT egress proxy %s not in %s", ip, net.Subnet, gw, net.ContainerSubnet)
 	}
 	rt, id := workload(t, inst, net, ip, gw)
 
 	if out := fetch(t, rt, id); connected(out) {
 		t.Fatalf("egress without NAT must fail: %s", out)
 	}
-	// The gateway reports the refused connection (FR-NAT-004 drop events).
+	// The proxy reports the refused connection (FR-NAT-004 drop events).
 	egressLogged(t, inst, "DROPPED", "projects/"+proj+"/global/networks/vpc")
 	natRouter(t, c)
 	eventually(t, "egress with NAT", func() (bool, string) { out := fetch(t, rt, id); return connected(out), out })
@@ -290,7 +290,7 @@ func TestOfflineSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gw, err := vpc.EgressGateway(ctx, sp)
+	gw, err := vpc.EgressProxy(ctx, sp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func TestSubnetOverlapFallback(t *testing.T) {
 }
 
 // TestIntraVPCRouting: workloads in different subnetworks and on the
-// private services access range reach each other through the gateway
+// private services access range reach each other through the NAT egress proxy
 // (VPC implied routes), e.g. GKE pods → Cloud SQL private IP.
 func TestIntraVPCRouting(t *testing.T) {
 	emutest.RequireRuntime(t)
@@ -403,7 +403,7 @@ func TestIntraVPCRouting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		gw, err := vpc.EgressGateway(ctx, sp)
+		gw, err := vpc.EgressProxy(ctx, sp)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -418,7 +418,7 @@ func TestIntraVPCRouting(t *testing.T) {
 	_, _, ipB := start("projects/"+proj+"/regions/europe-west1/subnetworks/b", "vm-b")
 
 	// A Cloud SQL-like container on the PSA network keeps the runtime's
-	// default route (it does not know about the gateway).
+	// default route (it does not know about the proxy).
 	psa, err := vpc.PrivateServicesNetwork(ctx, "projects/"+proj+"/global/networks/vpc")
 	if err != nil {
 		t.Fatal(err)
@@ -431,8 +431,8 @@ func TestIntraVPCRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	workload(t, inst, psa, ipDB, "")
-	if _, err := vpc.EgressGateway(ctx, "projects/"+proj+"/regions/us-central1/subnetworks/a"); err != nil {
-		t.Fatal(err) // re-sync attaches the gateway to the PSA network
+	if _, err := vpc.EgressProxy(ctx, "projects/"+proj+"/regions/us-central1/subnetworks/a"); err != nil {
+		t.Fatal(err) // re-sync attaches the proxy to the PSA network
 	}
 	for _, target := range []string{ipB, ipDB} {
 		eventually(t, "ping "+target, func() (bool, string) {
