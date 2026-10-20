@@ -92,3 +92,32 @@ func TestServicesNetwork(t *testing.T) {
 		t.Error("services network should have no egress")
 	}
 }
+
+// TestNetworkBridge checks that the services and external networks carry
+// the host bridge interface the runtime reports for them (#495).
+func TestNetworkBridge(t *testing.T) {
+	emutest.RequireRuntime(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &runtime.Manager{Client: cl, InstanceID: "nptestbridge", Ephemeral: true, Log: slog.Default()}
+	t.Cleanup(func() { _ = m.Cleanup(context.Background(), true) })
+	p := netplane.New(m, func() map[string]string { return nil }, slog.Default())
+	defer p.Close()
+	for name, get := range map[string]func(context.Context) (netplane.Net, error){"services": p.Services, "external": p.External} {
+		n, err := get(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rn, err := m.InspectNetwork(ctx, n.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n.Bridge == "" || n.Bridge != rn.Bridge {
+			t.Errorf("%s network bridge = %q, runtime reports %q", name, n.Bridge, rn.Bridge)
+		}
+	}
+}

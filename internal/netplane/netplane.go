@@ -32,6 +32,9 @@ type Net struct {
 	Subnet string
 	// Gateway is the host-side address on the network.
 	Gateway string
+	// Bridge is the host interface holding Gateway, as the runtime
+	// reports it ("" if it doesn't).
+	Bridge string
 }
 
 // Plane manages the services and external networks of one instance.
@@ -190,7 +193,7 @@ func (p *Plane) ensure(ctx context.Context, suffix string, internal bool) (Net, 
 	if n.Gateway == "" {
 		return Net{}, fmt.Errorf("network %s has no IPv4 gateway", name)
 	}
-	return Net{Name: n.Name, Subnet: n.Subnet, Gateway: n.Gateway}, nil
+	return Net{Name: n.Name, Subnet: n.Subnet, Gateway: n.Gateway, Bridge: n.Bridge}, nil
 }
 
 // Addr returns the address at which containers on the services network

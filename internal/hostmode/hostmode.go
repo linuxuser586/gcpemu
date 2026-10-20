@@ -305,7 +305,7 @@ func (m *Manager) run(ctx context.Context) (Status, error) {
 		logs, _ := rt.Logs(context.Background(), id, 20)
 		return Status{}, fmt.Errorf("host-mode container did not answer DNS on %s: %w\n%s", ip, err, logs)
 	}
-	return Status{IP: ip, Interface: interfaceWith(ext.Gateway)}, nil
+	return Status{IP: ip, Interface: hostInterface(interfaceWith(ext.Gateway), ext.Bridge)}, nil
 }
 
 // waitDNS polls the container's resolver for a served name.
@@ -326,6 +326,17 @@ func waitDNS(ctx context.Context, ip string, timeout time.Duration) error {
 		}
 	}
 	return err
+}
+
+// hostInterface picks the host interface holding the external network's
+// Gateway address: own, the one among the emulator process's interfaces, else
+// bridge, the one the runtime reports. A Containerized Instance (ADR 0003)
+// has its own network namespace, so only the runtime knows (#495).
+func hostInterface(own, bridge string) string {
+	if own != "" {
+		return own
+	}
+	return bridge
 }
 
 // interfaceWith returns the host interface holding ip ("" if none).
