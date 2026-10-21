@@ -26,6 +26,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 )
 
 // TestContainerizedSQLHostClients (#290): on a VM runtime a Containerized
@@ -59,13 +60,13 @@ func TestContainerizedSQLHostClients(t *testing.T) {
 	image := name + ":test"
 	buildEmulatorImage(t, image)
 	proxyBin := authProxy(t)
-	gid := socketGroup(t, "/var/run/docker.sock")
+	gid := hosttest.SocketGroup(t, "/var/run/docker.sock")
 	run := func(t *testing.T, suffix string, env ...string) (string, string) {
 		args := []string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid}
 		for _, e := range env {
 			args = append(args, "-e", e)
 		}
-		return runEmulator(t, name+"-"+suffix, image, args), name + "-" + suffix
+		return hosttest.RunEmulator(t, name+"-"+suffix, image, "", args), name + "-" + suffix
 	}
 
 	t.Run("aliases", func(t *testing.T) {
@@ -87,7 +88,7 @@ func TestContainerizedSQLHostClients(t *testing.T) {
 			viaConnector(t, d, c.conn(in))
 			viaAuthProxy(t, proxyBin, gw, c.conn(in))
 		}
-		out := docker(t, "exec", ctr, "/gcpemu", "doctor")
+		out := hosttest.Docker(t, "exec", ctr, "/gcpemu", "doctor")
 		for _, want := range []string{"loopback aliases for Cloud SQL: yes (forced by GCPEMU_LOOPBACK_ALIASES)",
 			"Cloud SQL instance " + c.conn("a") + ": host clients reach it on " + a,
 			"Cloud SQL instance " + c.conn("b") + ": host clients reach it on " + b} {
@@ -127,7 +128,7 @@ func TestContainerizedSQLHostClients(t *testing.T) {
 		if ip := net.ParseIP(c.await("plain")); ip == nil || ip.IsLoopback() {
 			t.Fatalf("PRIMARY %s, want the instance's bridge IP", ip)
 		}
-		ports := docker(t, "port", c.container("plain"))
+		ports := hosttest.Docker(t, "port", c.container("plain"))
 		if strings.Contains(ports, "3307") || strings.Count(strings.TrimSpace(ports), "\n") != 0 {
 			t.Errorf("instance container publishes %q, want only its GCPEMU_SQL_* port", ports)
 		}
@@ -183,7 +184,7 @@ func (c *sqlClient) await(name string) string {
 		State       string
 		IpAddresses []struct{ Type, IpAddress string }
 	}
-	eventually(c.t, 5*time.Minute, "instance "+name+" RUNNABLE", func() bool {
+	hosttest.Eventually(c.t, 5*time.Minute, "instance "+name+" RUNNABLE", func() bool {
 		code, body := c.call(http.MethodGet, "/"+name, nil)
 		return code == http.StatusOK && json.Unmarshal(body, &in) == nil && (in.State == "RUNNABLE" || in.State == "FAILED")
 	}, nil)
@@ -204,7 +205,7 @@ func (c *sqlClient) conn(name string) string { return sqlProject + ":" + sqlRegi
 // container is the name of instance name's container.
 func (c *sqlClient) container(name string) string {
 	c.t.Helper()
-	out := docker(c.t, "ps", "-q", "--filter", "label=gcpemu.service=sql", "--filter", "label=gcpemu.resource=projects/"+sqlProject+"/instances/"+name)
+	out := hosttest.Docker(c.t, "ps", "-q", "--filter", "label=gcpemu.service=sql", "--filter", "label=gcpemu.resource=projects/"+sqlProject+"/instances/"+name)
 	if out == "" || strings.Contains(out, "\n") {
 		c.t.Fatalf("containers of instance %s: %q", name, out)
 	}
@@ -264,7 +265,7 @@ func viaAuthProxy(t *testing.T, bin, gw, icn string) {
 			t.Logf("auth proxy log:\n%s", log.String())
 		}
 	}()
-	eventually(t, 10*time.Second, "the auth proxy to start", func() bool {
+	hosttest.Eventually(t, 10*time.Second, "the auth proxy to start", func() bool {
 		return strings.Contains(log.String(), "ready for new connections")
 	}, log.String)
 	cfg, err := pgx.ParseConfig(fmt.Sprintf("host=127.0.0.1 port=%d user=postgres dbname=postgres sslmode=disable", port))

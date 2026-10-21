@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -46,14 +47,14 @@ func TestContainerizedLBIngress(t *testing.T) {
 		t.Skip("docker is not on PATH")
 	}
 	const sock = "/var/run/docker.sock"
-	gid := socketGroup(t, sock)
+	gid := hosttest.SocketGroup(t, sock)
 	// The default VPC goes on a Fallback range; plain's range stays its own.
 	decoyNetwork(t, "10.128.0.0/20")
 
 	name := fmt.Sprintf("gcpemu-e2e-containerized-%d", time.Now().UnixNano())
 	image := name + ":test"
 	buildEmulatorImage(t, image)
-	info := strings.SplitN(docker(t, "info", "--format", "{{.OperatingSystem}}\n{{.KernelVersion}}")+"\n", "\n", 3)
+	info := strings.SplitN(hosttest.Docker(t, "info", "--format", "{{.OperatingSystem}}\n{{.KernelVersion}}")+"\n", "\n", 3)
 	auto := runtime.DecideVM("auto", true, runtime.Info{OS: info[0], Kernel: info[1]})
 	t.Logf("runtime %q, kernel %q: VM runtime %s", info[0], info[1], auto)
 
@@ -87,20 +88,20 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 		args = append(args, "-p", "127.0.0.1:"+vmRange+":"+vmRange, "-p", "127.0.0.1:"+vmOwnPort+":"+vmOwnPort)
 		start = append(start, "--port-range", vmRange)
 	}
-	gateway := runEmulator(t, name, image, args, start...)
-	gcpemuEnv := func() string { return docker(t, "exec", name, "/gcpemu", "env") }
+	gateway := hosttest.RunEmulator(t, name, image, "", args, start...)
+	gcpemuEnv := func() string { return hosttest.Docker(t, "exec", name, "/gcpemu", "env") }
 	if vm {
-		if out := docker(t, "exec", name, "/gcpemu", "doctor"); !strings.Contains(out, "VM runtime: yes") || strings.Contains(out, "[WARN] VM runtime") {
+		if out := hosttest.Docker(t, "exec", name, "/gcpemu", "doctor"); !strings.Contains(out, "VM runtime: yes") || strings.Contains(out, "[WARN] VM runtime") {
 			t.Errorf("gcpemu doctor does not report a VM runtime with published ports:\n%s", out)
 		}
 	}
 
 	const project, region = "e2e-containerized", "us-central1"
 	post(t, gateway, "/compute/v1/projects/"+project+"/global/networks", map[string]any{"name": "plain", "autoCreateSubnetworks": false})
-	eventually(t, 30*time.Second, "network plain", func() bool { return getOK(gateway, "/compute/v1/projects/"+project+"/global/networks/plain") }, nil)
+	hosttest.Eventually(t, 30*time.Second, "network plain", func() bool { return getOK(gateway, "/compute/v1/projects/"+project+"/global/networks/plain") }, nil)
 	post(t, gateway, "/compute/v1/projects/"+project+"/regions/"+region+"/subnetworks", map[string]any{
 		"name": "plain", "network": "projects/" + project + "/global/networks/plain", "ipCidrRange": plainRange})
-	eventually(t, 30*time.Second, "subnetwork plain", func() bool {
+	hosttest.Eventually(t, 30*time.Second, "subnetwork plain", func() bool {
 		return getOK(gateway, "/compute/v1/projects/"+project+"/regions/"+region+"/subnetworks/plain")
 	}, nil)
 	createCluster(t, gateway, project, map[string]any{"name": "plain", "network": "plain", "subnetwork": "plain",
@@ -121,7 +122,7 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 				if len(ingress) != 1 || ingress[0] != "127.0.0.1" {
 					t.Fatalf("ingress %v, want [127.0.0.1]", ingress)
 				}
-				addr := envAddr(t, gcpemuEnv, envKey)
+				addr := hosttest.EnvValue(t, gcpemuEnv, envKey)
 				if _, p, _ := net.SplitHostPort(addr); !inRange(p, vmRange) {
 					t.Errorf("%s=%s, want a port of --port-range %s", envKey, addr, vmRange)
 				}
@@ -129,7 +130,7 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 				if !tc.translated {
 					lbService(k, "own", vmOwnPort)
 					lbIngress(t, k, "own", 2*time.Minute, func(ing []string) bool { return len(ing) > 0 })
-					addr := envAddr(t, gcpemuEnv, "GCPEMU_GKE_PLAIN_DEFAULT_OWN_"+vmOwnPort)
+					addr := hosttest.EnvValue(t, gcpemuEnv, "GCPEMU_GKE_PLAIN_DEFAULT_OWN_"+vmOwnPort)
 					if want := "127.0.0.1:" + vmOwnPort; addr != want {
 						t.Errorf("Service own is at %s, want its own published port %s", addr, want)
 					}
@@ -138,7 +139,7 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 				}
 				// Every published port is taken now.
 				lbService(k, "full", "8082")
-				eventually(t, 30*time.Second, "a warning about Service full", func() bool {
+				hosttest.Eventually(t, 30*time.Second, "a warning about Service full", func() bool {
 					logs, _ := exec.Command("docker", "logs", name).CombinedOutput()
 					return bytes.Contains(logs, []byte("no free published port")) && bytes.Contains(logs, []byte("default/full"))
 				}, nil)
@@ -163,7 +164,7 @@ func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env 
 			}
 			if tc.translated {
 				want := envKey + "='" + net.JoinHostPort(ingress[0], "8081") + "'"
-				eventually(t, 10*time.Second, "gcpemu env prints "+want, func() bool {
+				hosttest.Eventually(t, 10*time.Second, "gcpemu env prints "+want, func() bool {
 					return strings.Contains(gcpemuEnv(), want)
 				}, gcpemuEnv)
 			}
@@ -200,24 +201,11 @@ func createCluster(t *testing.T, gateway, project string, c map[string]any) {
 func clusterKube(t *testing.T, gateway, project, name string) *kube {
 	t.Helper()
 	cluster := "projects/" + project + "/locations/" + gkeZone + "/clusters/" + name
-	eventually(t, 5*time.Minute, "cluster "+name+" RUNNING", func() bool {
+	hosttest.Eventually(t, 5*time.Minute, "cluster "+name+" RUNNING", func() bool {
 		var c struct{ Status string }
 		return getJSON(gateway, "/container/v1/"+cluster, &c) && c.Status == "RUNNING"
 	}, nil)
 	return newKube(t, gateway, cluster)
-}
-
-// socketGroup returns the group that owns the runtime's socket where the
-// runtime runs, which on a VM runtime is inside the VM: on Docker Desktop
-// root (0), whatever the host's socket says, or whether the host has one.
-// It skips the test when containers cannot mount the socket.
-func socketGroup(t *testing.T, sock string) string {
-	t.Helper()
-	out, err := exec.Command("docker", "run", "--rm", "-v", sock+":"+sock, "busybox:1.37", "stat", "-c", "%g", sock).CombinedOutput()
-	if err != nil {
-		t.Skipf("containers cannot mount the Docker socket %s: %v\n%s", sock, err, out)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // lbIngress returns the ingress IPs of LoadBalancer Service default/name
@@ -243,7 +231,7 @@ func lbIngress(t *testing.T, k *kube, name string, timeout time.Duration, done f
 		read()
 		return ingress
 	}
-	eventually(t, timeout, "LoadBalancer ingress of "+name, read, nil)
+	hosttest.Eventually(t, timeout, "LoadBalancer ingress of "+name, read, nil)
 	return ingress
 }
 
@@ -259,26 +247,10 @@ func lbService(k *kube, name, port string) {
 	})
 }
 
-// envAddr waits for `gcpemu env` to print key, and returns its value.
-func envAddr(t *testing.T, gcpemuEnv func() string, key string) string {
-	t.Helper()
-	var addr string
-	eventually(t, 30*time.Second, "gcpemu env prints "+key, func() bool {
-		for _, line := range strings.Split(gcpemuEnv(), "\n") {
-			if v, ok := strings.CutPrefix(strings.TrimPrefix(line, "export "), key+"="); ok {
-				addr = strings.Trim(v, "'")
-				return true
-			}
-		}
-		return false
-	}, gcpemuEnv)
-	return addr
-}
-
 // getWeb waits for lbWeb's server to answer "ok" at addr from the host.
 func getWeb(t *testing.T, addr string) {
 	t.Helper()
-	eventually(t, 60*time.Second, "web reachable from the host at "+addr, func() bool {
+	hosttest.Eventually(t, 60*time.Second, "web reachable from the host at "+addr, func() bool {
 		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
 		if err != nil {
 			return false
@@ -302,14 +274,14 @@ func inRange(port, r string) bool {
 // gcpemu for the runtime's architecture, and removes it at cleanup.
 func buildEmulatorImage(t *testing.T, tag string) {
 	t.Helper()
-	arch := docker(t, "version", "--format", "{{.Server.Arch}}")
+	arch := hosttest.Docker(t, "version", "--format", "{{.Server.Arch}}")
 	dir := t.TempDir()
 	cmd := exec.Command("go", "build", "-trimpath", "-o", filepath.Join(dir, "gcpemu-linux-"+arch), "github.com/linuxuser586/gcpemu/cmd/gcpemu")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build gcpemu (%s): %v\n%s", arch, err, out)
 	}
-	docker(t, "build", "-q", "--build-arg", "TARGETARCH="+arch, "-t", tag, "-f", "../Dockerfile", dir)
+	hosttest.Docker(t, "build", "-q", "--build-arg", "TARGETARCH="+arch, "-t", tag, "-f", "../Dockerfile", dir)
 	t.Cleanup(func() { _, _ = exec.Command("docker", "rmi", "-f", tag).CombinedOutput() })
 }
 
@@ -338,17 +310,7 @@ func lbWeb(t *testing.T, k *kube) {
 		"spec": map[string]any{"type": "LoadBalancer", "selector": map[string]string{"app": "web"},
 			"ports": []map[string]any{{"port": 8081, "targetPort": 8080}}},
 	})
-	eventually(t, 3*time.Minute, "deployment web ready", func() bool { return k.deploymentReady("default", "web") }, nil)
-}
-
-// docker runs the docker CLI and returns its trimmed output.
-func docker(t *testing.T, args ...string) string {
-	t.Helper()
-	out, err := exec.Command("docker", args...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("docker %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
+	hosttest.Eventually(t, 3*time.Minute, "deployment web ready", func() bool { return k.deploymentReady("default", "web") }, nil)
 }
 
 func getOK(gateway, path string) bool { return getJSON(gateway, path, nil) }

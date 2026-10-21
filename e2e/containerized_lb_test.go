@@ -17,6 +17,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 )
 
 // TestContainerizedForwardingRules (#289): in a Containerized Instance a
@@ -48,22 +49,22 @@ func TestContainerizedForwardingRules(t *testing.T) {
 
 	t.Run("socket", func(t *testing.T) {
 		const own, rng = "28080", "20410"
-		gid := socketGroup(t, "/var/run/docker.sock")
-		gw := runEmulator(t, name+"-socket", image,
+		gid := hosttest.SocketGroup(t, "/var/run/docker.sock")
+		gw := hosttest.RunEmulator(t, name+"-socket", image, "",
 			[]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid,
 				"-p", "127.0.0.1:" + own + ":8080", "-p", "127.0.0.1:" + rng + ":" + rng},
 			"--port-range", rng+"-"+rng)
-		gcpemuEnv := func() string { return docker(t, "exec", name+"-socket", "/gcpemu", "env") }
+		gcpemuEnv := func() string { return hosttest.Docker(t, "exec", name+"-socket", "/gcpemu", "env") }
 		lb := newLBClient(t, gw)
 		lb.rule("a")
 		for _, v := range []string{"GCPEMU_LB_E2E_FRULES_GLOBAL_A", "GCPEMU_LB_A"} {
-			if got := envAddr(t, gcpemuEnv, v); got != "127.0.0.1:"+own {
+			if got := hosttest.EnvValue(t, gcpemuEnv, v); got != "127.0.0.1:"+own {
 				t.Fatalf("%s=%s, want 127.0.0.1:%s", v, got, own)
 			}
 		}
 		answers(t, "127.0.0.1:"+own)
 		lb.rule("b")
-		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_E2E_FRULES_GLOBAL_B"); got != "127.0.0.1:"+rng {
+		if got := hosttest.EnvValue(t, gcpemuEnv, "GCPEMU_LB_E2E_FRULES_GLOBAL_B"); got != "127.0.0.1:"+rng {
 			t.Fatalf("GCPEMU_LB_E2E_FRULES_GLOBAL_B=%s, want 127.0.0.1:%s of --port-range", got, rng)
 		}
 		answers(t, "127.0.0.1:"+rng)
@@ -71,7 +72,7 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		// The loopback listener still answers inside the container. The
 		// admin API needs the token beyond loopback.
 		req, _ := http.NewRequest(http.MethodGet, "http://"+gw+"/_emu/v1/lb/listeners", nil)
-		req.Header.Set(gateway.AdminTokenHeader, docker(t, "exec", name+"-socket", "/gcpemu", "admin", "token"))
+		req.Header.Set(gateway.AdminTokenHeader, hosttest.Docker(t, "exec", name+"-socket", "/gcpemu", "admin", "token"))
 		var ls struct {
 			Listeners []struct {
 				ForwardingRule, Listener string
@@ -86,7 +87,7 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		if err != nil || len(ls.Listeners) == 0 {
 			t.Fatalf("listeners: %d, %v", resp.StatusCode, err)
 		}
-		docker(t, "run", "--rm", "--network", "container:"+name+"-socket", "busybox:1.37",
+		hosttest.Docker(t, "run", "--rm", "--network", "container:"+name+"-socket", "busybox:1.37",
 			"sh", "-c", "wget -S -O /dev/null http://"+ls.Listeners[0].Listener+"/ 2>&1 | grep -q 'HTTP/'")
 
 		lb.rule("c")
@@ -94,11 +95,11 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		if out := gcpemuEnv(); strings.Contains(out, "GCPEMU_LB_C=") || strings.Contains(out, "GCPEMU_LB_E2E_FRULES_GLOBAL_C=") {
 			t.Fatalf("rule c has no free published port, but gcpemu env prints it:\n%s", out)
 		}
-		if out := docker(t, "exec", name+"-socket", "/gcpemu", "doctor"); !strings.Contains(out, "forwardingRules/c (port 8080) has no published port") {
+		if out := hosttest.Docker(t, "exec", name+"-socket", "/gcpemu", "doctor"); !strings.Contains(out, "forwardingRules/c (port 8080) has no published port") {
 			t.Errorf("gcpemu doctor does not list rule c:\n%s", out)
 		}
 		lb.delete("a")
-		eventually(t, 30*time.Second, "rule c takes port "+own, func() bool {
+		hosttest.Eventually(t, 30*time.Second, "rule c takes port "+own, func() bool {
 			out := gcpemuEnv()
 			return strings.Contains(out, "GCPEMU_LB_E2E_FRULES_GLOBAL_C='127.0.0.1:"+own+"'") && !strings.Contains(out, "GCPEMU_LB_A=")
 		}, gcpemuEnv)
@@ -110,10 +111,10 @@ func TestContainerizedForwardingRules(t *testing.T) {
 			c.Close()
 			t.Skip("127.0.0.1:8080 is in use on the host")
 		}
-		gw := runEmulator(t, name+"-nosocket", image, []string{"-p", "127.0.0.1:8080:8080"})
-		gcpemuEnv := func() string { return docker(t, "exec", name+"-nosocket", "/gcpemu", "env") }
+		gw := hosttest.RunEmulator(t, name+"-nosocket", image, "", []string{"-p", "127.0.0.1:8080:8080"})
+		gcpemuEnv := func() string { return hosttest.Docker(t, "exec", name+"-nosocket", "/gcpemu", "env") }
 		newLBClient(t, gw).rule("a")
-		if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_E2E_FRULES_GLOBAL_A"); got != "127.0.0.1:8080" {
+		if got := hosttest.EnvValue(t, gcpemuEnv, "GCPEMU_LB_E2E_FRULES_GLOBAL_A"); got != "127.0.0.1:8080" {
 			t.Fatalf("GCPEMU_LB_E2E_FRULES_GLOBAL_A=%s, want 127.0.0.1:8080", got)
 		}
 		answers(t, "127.0.0.1:8080")
@@ -145,13 +146,13 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 	name := fmt.Sprintf("gcpemu-e2e-contention-%d", time.Now().UnixNano())
 	image := name + ":test"
 	buildEmulatorImage(t, image)
-	gid := socketGroup(t, "/var/run/docker.sock")
-	gw := runEmulator(t, name, image,
+	gid := hosttest.SocketGroup(t, "/var/run/docker.sock")
+	gw := hosttest.RunEmulator(t, name, image, "",
 		[]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid,
 			"-e", "GCPEMU_VM_RUNTIME=true", "-p", addr + ":" + port},
 		"--port-range", port+"-"+port)
-	gcpemuEnv := func() string { return docker(t, "exec", name, "/gcpemu", "env") }
-	doctor := func() string { return docker(t, "exec", name, "/gcpemu", "doctor") }
+	gcpemuEnv := func() string { return hosttest.Docker(t, "exec", name, "/gcpemu", "env") }
+	doctor := func() string { return hosttest.Docker(t, "exec", name, "/gcpemu", "doctor") }
 	const svcKey = "GCPEMU_GKE_CONTEND_DEFAULT_WEB_8081"
 	// holders reports which of rule and Service web gcpemu env gives the
 	// port, and fails if it gives it to both.
@@ -183,7 +184,7 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 
 	// 1. A rule takes the port.
 	lb.rule("first")
-	if got := envAddr(t, gcpemuEnv, "GCPEMU_LB_FIRST"); got != addr {
+	if got := hosttest.EnvValue(t, gcpemuEnv, "GCPEMU_LB_FIRST"); got != addr {
 		t.Fatalf("GCPEMU_LB_FIRST=%s, want %s of --port-range", got, addr)
 	}
 	answers(t, addr)
@@ -192,7 +193,7 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 	// warning.
 	k := clusterKube(t, gw, lbProject, "contend")
 	lbWeb(t, k)
-	eventually(t, 30*time.Second, "a warning about Service web", func() bool { return svcWarnings() > 0 }, nil)
+	hosttest.Eventually(t, 30*time.Second, "a warning about Service web", func() bool { return svcWarnings() > 0 }, nil)
 	time.Sleep(3 * time.Second)
 	if n := svcWarnings(); n != 1 {
 		t.Errorf("%d no-free-published-port warnings for Service web, want 1", n)
@@ -209,7 +210,7 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 
 	// 3. The rule goes; the Service takes the port.
 	lb.delete("first")
-	eventually(t, 30*time.Second, "Service web takes "+addr, func() bool {
+	hosttest.Eventually(t, 30*time.Second, "Service web takes "+addr, func() bool {
 		_, svcHolds := holders("first")
 		return svcHolds
 	}, gcpemuEnv)
@@ -220,7 +221,7 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 
 	// 4. A new rule finds it taken: no GCPEMU_LB_SECOND, and doctor lists it.
 	lb.rule("second")
-	eventually(t, 30*time.Second, "gcpemu doctor lists rule second", func() bool {
+	hosttest.Eventually(t, 30*time.Second, "gcpemu doctor lists rule second", func() bool {
 		return strings.Contains(doctor(), "forwardingRules/second (port 8080) has no published port")
 	}, doctor)
 	if out := gcpemuEnv(); strings.Contains(out, "GCPEMU_LB_SECOND=") {
@@ -232,13 +233,13 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 
 	// 5. The Service goes; the rule takes the port.
 	k.delete("Service", "default", "web")
-	eventually(t, 30*time.Second, "rule second takes "+addr, func() bool {
+	hosttest.Eventually(t, 30*time.Second, "rule second takes "+addr, func() bool {
 		ruleHolds, _ := holders("second")
 		return ruleHolds
 	}, gcpemuEnv)
 	// The rule's backend service has no backends, so it answers 503, where
 	// Service web answered 200.
-	eventually(t, 30*time.Second, "a 503 from rule second at "+addr, func() bool {
+	hosttest.Eventually(t, 30*time.Second, "a 503 from rule second at "+addr, func() bool {
 		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
 		if err != nil {
 			return false
@@ -246,28 +247,6 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode == http.StatusServiceUnavailable
 	}, nil)
-}
-
-// runEmulator runs the image as an Ephemeral Instance in container name,
-// with extra docker run args and start args, waits until it is healthy,
-// and returns the host address of its API gateway.
-func runEmulator(t *testing.T, name, image string, args []string, start ...string) string {
-	t.Helper()
-	run := append([]string{"run", "-d", "--name", name, "-p", "127.0.0.1::4510"}, args...)
-	docker(t, append(append(run, image, "start", "--ephemeral"), start...)...)
-	t.Cleanup(func() {
-		if t.Failed() {
-			out, _ := exec.Command("docker", "logs", "--tail", "80", name).CombinedOutput()
-			t.Logf("emulator logs:\n%s", out)
-		}
-		// An Ephemeral Instance removes its containers and networks on stop.
-		_, _ = exec.Command("docker", "stop", "-t", "60", name).CombinedOutput()
-		_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
-	})
-	eventually(t, 3*time.Minute, "emulator healthy", func() bool {
-		return docker(t, "inspect", "-f", "{{.State.Health.Status}}", name) == "healthy"
-	}, nil)
-	return strings.TrimSpace(strings.Split(docker(t, "port", name, "4510/tcp"), "\n")[0])
 }
 
 // lbClient creates external Application Load Balancers through the
@@ -319,7 +298,7 @@ func (c *lbClient) call(method, coll string, body any) {
 // rather than the empty reply of a port nothing listens on behind -p.
 func answers(t *testing.T, addr string) {
 	t.Helper()
-	eventually(t, 30*time.Second, "an HTTP response from "+addr, func() bool {
+	hosttest.Eventually(t, 30*time.Second, "an HTTP response from "+addr, func() bool {
 		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
 		if err != nil {
 			return false

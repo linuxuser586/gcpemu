@@ -28,6 +28,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/lb"
@@ -277,12 +278,12 @@ func (r *run) step2(t *testing.T) {
 		"selector": map[string]string{"app": "app"},
 		"ports":    []any{map[string]any{"name": "http", "port": 8080, "targetPort": 8080}},
 	}}))
-	eventually(t, 3*time.Minute, "app deployment ready", func() bool { return k.deploymentReady("app", "app") },
+	hosttest.Eventually(t, 3*time.Minute, "app deployment ready", func() bool { return k.deploymentReady("app", "app") },
 		func() string { return k.logs("app", "app=app") })
 	r.mark("  app deployed")
 
 	// The gateway's NEG now exists: add the API backend service.
-	eventually(t, 2*time.Minute, "gateway NEG with an endpoint", func() bool {
+	hosttest.Eventually(t, 2*time.Minute, "gateway NEG with an endpoint", func() bool {
 		l, err := r.compute.NetworkEndpointGroups.ListNetworkEndpoints(r.out["project"], r.out["zone"], gatewayNEG,
 			&computev1.NetworkEndpointGroupsListEndpointsRequest{}).Do()
 		return err == nil && len(l.Items) > 0
@@ -342,7 +343,7 @@ func (r *run) step3(t *testing.T) {
 	// The managed certificate becomes ACTIVE once DNS points at the LB.
 	var first *http.Response
 	var body string
-	eventually(t, 2*time.Minute, "https://app.example.test/", func() bool {
+	hosttest.Eventually(t, 2*time.Minute, "https://app.example.test/", func() bool {
 		first, body = r.get(t, "/")
 		return first != nil && first.StatusCode == 200
 	}, func() string { return body })
@@ -379,7 +380,7 @@ func (r *run) step3(t *testing.T) {
 func (r *run) step4(t *testing.T) {
 	var resp *http.Response
 	var body string
-	eventually(t, 2*time.Minute, "https://app.example.test/api/health", func() bool {
+	hosttest.Eventually(t, 2*time.Minute, "https://app.example.test/api/health", func() bool {
 		resp, body = r.get(t, "/api/health")
 		return resp != nil && resp.StatusCode == 200
 	}, func() string { return body + "\n" + r.kube.logs("istio-system", "istio=ingressgateway") })
@@ -481,13 +482,13 @@ func (r *run) step5b(t *testing.T) {
 		"serviceAccountName": "app", "secretProviderClassName": "app-config",
 		"secretObject": map[string]any{"type": "Opaque", "data": []any{map[string]string{"sourcePath": "config.txt", "targetKey": "CONFIG"}}},
 	}}))
-	eventually(t, 3*time.Minute, "the CSI-mounted secret", func() bool {
+	hosttest.Eventually(t, 3*time.Minute, "the CSI-mounted secret", func() bool {
 		return strings.Contains(k.logs("app", "app=config-reader"), "CONFIG=ref-config-v1")
 	}, func() string { return k.logs("app", "app=config-reader") })
 	var sec struct {
 		Data map[string][]byte `json:"data"`
 	}
-	eventually(t, time.Minute, "the synced Secret", func() bool {
+	hosttest.Eventually(t, time.Minute, "the synced Secret", func() bool {
 		return k.get(objPath("Secret", "app", "app-config"), &sec) && string(sec.Data["CONFIG"]) == "ref-config-v1"
 	}, func() string { return fmt.Sprint(sec.Data) })
 }
@@ -501,7 +502,7 @@ func (r *run) step6(t *testing.T) {
 		Attributes map[string]string
 	}
 	var app, notify bool
-	eventually(t, time.Minute, "push deliveries of the app message and the bucket notification", func() bool {
+	hosttest.Eventually(t, time.Minute, "push deliveries of the app message and the bucket notification", func() bool {
 		resp, body := r.get(t, "/api/received")
 		if resp == nil || resp.StatusCode != 200 {
 			return false
@@ -539,7 +540,7 @@ func (r *run) egress(t *testing.T) (bool, string) {
 // NAT, as on GCP (#187).
 func (r *run) step6b(t *testing.T) {
 	var body string
-	eventually(t, time.Minute, "a pod calling https://"+r.appHost()+"/api/health", func() bool {
+	hosttest.Eventually(t, time.Minute, "a pod calling https://"+r.appHost()+"/api/health", func() bool {
 		ok, b := r.podGet(t, "https://"+r.appHost()+"/api/health")
 		body = b
 		return ok
@@ -552,7 +553,7 @@ func (r *run) step6b(t *testing.T) {
 func (r *run) step6c(t *testing.T) {
 	ref := r.out["image_repo"] + "/api:v1"
 	var body string
-	eventually(t, time.Minute, "a pod resolving "+ref, func() bool {
+	hosttest.Eventually(t, time.Minute, "a pod resolving "+ref, func() bool {
 		var resp *http.Response
 		resp, body = r.get(t, "/api/digest?ref="+url.QueryEscape(ref))
 		var out struct{ Digest string }
@@ -579,13 +580,13 @@ func (r *run) podGet(t *testing.T, u string) (bool, string) {
 func (r *run) step7(t *testing.T) {
 	r.tf.t = t
 	var body string
-	eventually(t, time.Minute, "egress through Cloud NAT", func() bool {
+	hosttest.Eventually(t, time.Minute, "egress through Cloud NAT", func() bool {
 		var ok bool
 		ok, body = r.egress(t)
 		return ok
 	}, func() string { return body })
 	r.tf.apply(map[string]string{"nat_enabled": "false"})
-	eventually(t, time.Minute, "egress blocked without NAT", func() bool {
+	hosttest.Eventually(t, time.Minute, "egress blocked without NAT", func() bool {
 		ok, b := r.egress(t)
 		body = b
 		return !ok
@@ -643,7 +644,7 @@ func (r *run) step10(t *testing.T) {
 	// `gcpemu status`: the instance owns no Managed containers for
 	// resources any more.
 	var left []string
-	eventually(t, time.Minute, "no leftover containers", func() bool {
+	hosttest.Eventually(t, time.Minute, "no leftover containers", func() bool {
 		cts, err := r.inst.Internal().Containers(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -784,21 +785,4 @@ func (r *run) curl(t *testing.T, path string) (string, bool) {
 		t.Errorf("curl %s: %v\n%s", path, err, out)
 	}
 	return string(out), true
-}
-
-// eventually polls cond until it holds or timeout passes; diag explains a
-// failure.
-func eventually(t *testing.T, timeout time.Duration, what string, cond func() bool, diag func() string) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for !cond() {
-		if time.Now().After(deadline) {
-			msg := ""
-			if diag != nil {
-				msg = "\n" + diag()
-			}
-			t.Fatalf("timed out after %v waiting for %s%s", timeout, what, msg)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
 }
