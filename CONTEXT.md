@@ -125,6 +125,10 @@ _Avoid_: loopback IP (unqualified), alias (unqualified)
 The development aid, not modelled on GCP, that links the host with an Instance's VPC networks in both directions: host clients reach a GKE cluster's Kubernetes Services by name, and VPC workloads reach Offered ports at the Host address. It exists so that a process on the host can stand in for a pod, which GCP has no equivalent for (ADR 0014).
 _Avoid_: VPN, tunnel, bridge
 
+**Resolver route**:
+A rule in the host's resolver that sends queries for one DNS suffix, and every name under it, to an Instance's `dns` Service endpoint, so host clients resolve emulated Cloud DNS zones and Host attachment names. Each suffix has at most one Instance's Resolver route. An Instance removes only the Resolver routes it added.
+_Avoid_: DNS rule, resolver entry, split DNS
+
 **Host address**:
 The address at which workloads on one VPC container network reach the host: the VPC container network's own gateway IP where the host can route to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance. It is not the subnetwork's Gateway address, though the two can be the same IP when there is no Fallback range.
 _Avoid_: host IP, gateway (unqualified)
