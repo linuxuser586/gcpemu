@@ -262,18 +262,23 @@ type trustStep struct {
 	script bool
 	// soft steps only warn on failure; the rest of the plan still runs.
 	soft bool
+	// text is a script passed in args instead (PowerShell's
+	// -EncodedCommand), shown below the command like a script on stdin;
+	// shown replaces the args when the plan is printed.
+	text  []byte
+	shown string
 }
 
-func (s trustStep) String() string { return strings.Join(s.args, " ") }
+func (s trustStep) String() string {
+	if s.shown != "" {
+		return s.shown
+	}
+	return strings.Join(s.args, " ")
+}
 
 // trustPlan returns the commands that add (install) or remove the CA.
 func trustPlan(h trustHost, instance string, c trustCert, install bool) ([]trustStep, error) {
-	sudo := func(args ...string) []string {
-		if h.root {
-			return args
-		}
-		return append([]string{"sudo"}, args...)
-	}
+	sudo := func(args ...string) []string { return sudoUnless(h.root, args...) }
 	file := "gcpemu-" + instance + ".crt"
 	switch h.goos {
 	case "linux":
@@ -330,8 +335,12 @@ func runPlan(cmd *cobra.Command, plan []trustStep, yes, dryRun bool) error {
 	fmt.Fprintln(out, "The following commands will be run:")
 	for _, s := range plan {
 		fmt.Fprintf(out, "  %s\n", s)
+		body := s.text
 		if s.script {
-			for _, l := range strings.Split(strings.TrimRight(string(s.stdin), "\n"), "\n") {
+			body = s.stdin
+		}
+		if body != nil {
+			for _, l := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
 				fmt.Fprintf(out, "      | %s\n", l)
 			}
 		}
@@ -399,11 +408,7 @@ func containerTrustPlan(h trustHost, instance string, c trustCert, install bool)
 		dirs = append(dirs, etc+"/docker/certs.d")
 	}
 	script := certsDirScript(etc, instance, c, dirs, containerd, install)
-	args := []string{"sh", "-s"}
-	if !h.root {
-		args = append([]string{"sudo"}, args...)
-	}
-	return []trustStep{{args: args, stdin: []byte(script), script: true}}
+	return []trustStep{{args: sudoUnless(h.root, "sh", "-s"), stdin: []byte(script), script: true}}
 }
 
 // printVMTrust prints what to do so the container trust store inside the
