@@ -79,8 +79,8 @@ task prerelease RUNTIMES=desktop-linux,colima,orbstack
 
 It ends with a table of runtime × check (pass, fail or skip) and each runtime's version, which it
 also writes to `dist/prerelease-<os>-<commit>.md`. Put it in the release PR. A check that's
-skipped didn't run: only the checks that depend on the host say why they skip, such as 5432 being
-taken on Windows.
+skipped didn't run: only the checks that depend on the host say why they skip, such as 5432 or 53
+being taken on Windows.
 
 The real `gcloud`, `kubectl` and, on Windows, `cloud-sql-proxy` drive the emulator. The checks
 connect to PostgreSQL and HTTP themselves, so `psql` and `curl` aren't needed. Each check runs
@@ -91,7 +91,7 @@ even when it fails.
 
 Needs `go`, `task`, `docker`, `gcloud` with `gke-gcloud-auth-plugin`, `kubectl`, and OpenTofu for
 the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your password once
-(`sudo -v`) for `gcpemu loopback install`.
+(`sudo -v`) for `gcpemu loopback install` and `gcpemu dns install`.
 
 1. **Reference stack:** `task e2e`. The Reference stack and the Containerized Instance tests pass,
    and the Reference stack finishes within its 10-minute budget. See "Reference stack (SRS 11.2)"
@@ -107,15 +107,19 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
    and the runtime's version go into the runtime table under "Container runtime" in the README.
    Commit that change before tagging.
 5. **Host attachment:** see below.
+6. **Resolver routes:** see below. The names resolve through `dscacheutil -q host -a name`, and
+   after `uninstall` the `/etc/resolver` files gcpemu wrote are gone.
 
 The suite also runs on Linux, but only for the runtimes `RUNTIMES` names, so it can be worked on
-with Docker Desktop for Linux.
+with Docker Desktop for Linux. Check 6 changes the host's resolver there only with
+`GCPEMU_RESOLVER_TESTS=1`.
 
 ### Windows (Containerized Instance)
 
-Needs `docker`, `gcloud`, `kubectl` and `cloud-sql-proxy`. To build the image it also needs `go`,
-`task`, Node and pnpm: `task prerelease` runs `task release` and builds `gcpemu:rc` from `dist/`.
-`IMAGE=<ref>` uses an image already built instead. The container publishes `127.0.0.1:4510` and
+Needs `go`, `task`, `docker`, `gcloud`, `kubectl` and `cloud-sql-proxy`, with or without
+`IMAGE=<ref>`: `task prerelease` always builds `bin/gcpemu.exe` for the checks that run on the host.
+To build the image it also needs Node and pnpm: it runs `task release` and builds `gcpemu:rc` from
+`dist/`. `IMAGE=<ref>` uses an image already built instead. The container publishes `127.0.0.1:4510` and
 `127.0.0.1:20000-20019`, so those ports must be free. With Podman machine, the container also
 gets `GCPEMU_VM_RUNTIME=true`.
 
@@ -132,12 +136,16 @@ gets `GCPEMU_VM_RUNTIME=true`.
 4. **A forwarding rule from the host:** a global forwarding rule on port 8080, in front of a
    backend bucket, has `GCPEMU_LB_SITE` on `127.0.0.1` and a port of the published range, and
    `index.html` there reads `lb ok`.
-5. **Host attachment:** see below. It runs on the host, not in the container, so it needs `go`
-   even with `IMAGE=<ref>`.
+5. **Host attachment:** see below. It runs on the host, not in the container.
+6. **Resolver routes:** see below. This is the native stage: `gcpemu.exe` on the host, on the same
+   runtime, with `--port dns=53`, since NRPT can't name a port (ADR 0026). The names resolve
+   through `Resolve-DnsName`, and after `uninstall` no NRPT rule gcpemu wrote is left. `install`
+   and `uninstall` each show a UAC dialog: accept both. When port 53 is in use on the host (ICS,
+   Hyper-V or WSL's DNS proxy may hold it), the check is skipped and says so.
 
 ### Host attachment (macOS and Windows)
 
-The last check on each runtime runs the Host attachment tests (ADR 0014) with `go test`, against
+Check 5 on each runtime runs the Host attachment tests (ADR 0014) with `go test`, against
 that runtime: `TestHostAttachmentOffers` and `TestHostAttachmentSurvivesRestart` (a VPC workload
 reaches a host listener at its subnetwork's Host address) in `services/compute`, and
 `TestHostServices` (host clients reach a cluster's Services at Loopback aliases) in `services/gke`.
@@ -145,6 +153,23 @@ On macOS it runs with the Loopback aliases installed, as check 2 does. Any failu
 and so does a skip: the outward test skips without Loopback aliases, which never happens on Windows.
 `TestOfferHeldOnWildcard` runs too and skips on every VM runtime, since the VM relay holds the Host
 address.
+
+### Resolver routes (macOS and Windows)
+
+The last check on each runtime starts an Ephemeral Instance of its own, `prerelease-dns`, with
+Cloud DNS and GKE. It creates a public zone `prerelease.test.` with an A record, and a GKE
+ClusterIP Service `web`. Then `gcpemu dns install --yes --suffix prerelease.test` adds the Resolver
+routes (#608), and the host's resolver answers `www.prerelease.test` with the record's address and
+`web.default.svc.cluster.local` with a Loopback alias. `gcpemu dns uninstall --yes` takes the routes
+away again. The Instance is stopped and its routes uninstalled even when the check fails.
+
+When another Instance already has Resolver routes on the host, `install` refuses, and the check
+fails naming that Instance: run `gcpemu --instance <name> dns uninstall` for it first. The check
+never removes routes it didn't add.
+
+CI runs the same check on Linux (`TestResolverRoutes`, in the `compat` job), through
+systemd-resolved and without the GKE Service: after `uninstall`, the `gcpemu-dnsN` link and its
+routing domains are gone.
 
 ### What stays manual
 

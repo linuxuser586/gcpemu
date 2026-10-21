@@ -17,18 +17,31 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
 )
 
-// gcpemuBin is the binary `task build` makes, which the macOS checks run
-// on the host.
-var gcpemuBin = filepath.Join(repo, "bin", "gcpemu")
+// gcpemuBin is the binary `task build` makes, which the macOS checks and
+// the Windows native stage run on the host.
+var gcpemuBin = filepath.Join(repo, "bin", "gcpemu"+exeExt())
+
+func exeExt() string {
+	if goruntime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
+
+// requireBin fails t unless gcpemuBin is built.
+func requireBin(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat(gcpemuBin); err != nil {
+		t.Fatalf("%s: %v (task build makes it)", gcpemuBin, err)
+	}
+}
 
 // hostInstanceChecks runs the macOS checks on runtime rt: the gcpemu
 // binary on the host, with the VM relay, against the runtime's VM.
 func hostInstanceChecks(t *testing.T, rt string) {
 	done := setup(t, rt)
 	requireTools(t, "docker", "task", "go", "gcloud", "gke-gcloud-auth-plugin", "kubectl")
-	if _, err := os.Stat(gcpemuBin); err != nil {
-		t.Fatalf("%s: %v (task build makes it)", gcpemuBin, err)
-	}
+	requireBin(t)
 	useRuntime(t, rt)
 	// A dev build's Sidecar agent, for this runtime's architecture.
 	task(t, context.Background(), "agent")
@@ -44,6 +57,7 @@ func hostInstanceChecks(t *testing.T, rt string) {
 	step(t, rt, "3-gke-loadbalancer", 30*time.Minute, hostLoadBalancer)
 	step(t, rt, "4-vlan", 30*time.Minute, func(t *testing.T, ctx context.Context) { vlan(t, ctx, rt) })
 	step(t, rt, "5-host-attachment", 30*time.Minute, hostAttachment)
+	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
 }
 
 // doctor returns `gcpemu doctor`'s output.
@@ -54,18 +68,22 @@ func doctor(t *testing.T) string {
 }
 
 // hostInstance is an Ephemeral Instance of gcpemuBin, detached, in a data
-// directory of its own.
-type hostInstance struct{ dir string }
+// directory of its own, named name unless that is "".
+type hostInstance struct{ dir, name string }
 
-// startHost starts an Ephemeral Instance running services, and stops it
-// at cleanup.
-func startHost(t *testing.T, ctx context.Context, services string) *hostInstance {
+// startHost starts an Ephemeral Instance running services, with every
+// listener on a free port unless ports (--port values) say otherwise, and
+// stops it at cleanup.
+func startHost(t *testing.T, ctx context.Context, name, services string, ports ...string) *hostInstance {
 	t.Helper()
-	h := &hostInstance{dir: filepath.Join(t.TempDir(), "data")}
-	out, err := exec.CommandContext(ctx, gcpemuBin, "start", "--detach", "--ephemeral", "--data-dir", h.dir,
-		"--port", "0", "--services", services, "--wait-timeout", "300s").CombinedOutput()
+	h := &hostInstance{dir: filepath.Join(t.TempDir(), "data"), name: name}
+	args := []string{"start", "--detach", "--ephemeral", "--services", services, "--wait-timeout", "300s"}
+	for _, p := range append([]string{"0"}, ports...) {
+		args = append(args, "--port", p)
+	}
+	out, err := h.gcpemu(ctx, args...)
 	t.Cleanup(func() {
-		if out, err := exec.Command(gcpemuBin, "stop", "--data-dir", h.dir).CombinedOutput(); err != nil {
+		if out, err := h.gcpemu(context.Background(), "stop"); err != nil {
 			t.Errorf("gcpemu stop: %v\n%s", err, out)
 		}
 	})
@@ -75,10 +93,25 @@ func startHost(t *testing.T, ctx context.Context, services string) *hostInstance
 	return h
 }
 
+// flags select this Instance.
+func (h *hostInstance) flags() []string {
+	if h.name == "" {
+		return []string{"--data-dir", h.dir}
+	}
+	return []string{"--data-dir", h.dir, "--instance", h.name}
+}
+
+// gcpemu runs gcpemuBin with args for this Instance and returns its
+// output.
+func (h *hostInstance) gcpemu(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, gcpemuBin, append(args, h.flags()...)...).CombinedOutput()
+	return string(out), err
+}
+
 // env returns what `gcpemu env` prints now: it grows as resources appear.
 func (h *hostInstance) env(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command(gcpemuBin, "env", "--data-dir", h.dir).Output()
+	out, err := exec.Command(gcpemuBin, append([]string{"env"}, h.flags()...)...).Output()
 	if err != nil {
 		t.Fatalf("gcpemu env: %v", err)
 	}
@@ -94,9 +127,7 @@ func requireAliases(t *testing.T, ctx context.Context) {
 		return
 	}
 	if !strings.Contains(doctor(t), aliasesPresent) {
-		if out, err := exec.Command("sudo", "-n", "true").CombinedOutput(); err != nil {
-			t.Fatalf("sudo needs a password: run `sudo -v` first (task prerelease does): %v\n%s", err, out)
-		}
+		requireSudo(t)
 		sudo(t, ctx, "install")
 		// Only aliases this check added come out again.
 		t.Cleanup(func() { sudo(t, context.Background(), "uninstall") })
@@ -108,7 +139,7 @@ func requireAliases(t *testing.T, ctx context.Context) {
 // a loopback alias of its own, which host clients reach together.
 func twoSQLInstances(t *testing.T, ctx context.Context) {
 	requireAliases(t, ctx)
-	h := startHost(t, ctx, "sql")
+	h := startHost(t, ctx, "", "sql")
 	c := newClients(t)
 	c.load(hosttest.ParseEnv(h.env(t)))
 	for _, name := range []string{"one", "two"} {
@@ -171,7 +202,7 @@ func keepSudo() (stop func()) {
 // hostLoadBalancer is macOS step 3: a GKE LoadBalancer Service reached
 // from the host at the loopback address it reports.
 func hostLoadBalancer(t *testing.T, ctx context.Context) {
-	h := startHost(t, ctx, "gke")
+	h := startHost(t, ctx, "", "gke")
 	c := newClients(t)
 	c.load(hosttest.ParseEnv(h.env(t)))
 	c.run(t, ctx, "gcloud", "container", "clusters", "create", "lb", "--zone="+zone, "--num-nodes=1")

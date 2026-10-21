@@ -384,6 +384,26 @@ func (c *clients) run(t *testing.T, ctx context.Context, bin string, args ...str
 	return strings.TrimSpace(string(out))
 }
 
+// kubeconfig writes cluster's kubeconfig from the API gateway's
+// /container/_emu/kubeconfig to the clients' KUBECONFIG, which needs no
+// gke-gcloud-auth-plugin.
+func (c *clients) kubeconfig(t *testing.T, cluster string) {
+	t.Helper()
+	u := "http://" + c.vars["GCPEMU_GATEWAY"] + "/container/_emu/kubeconfig?cluster=projects/" + project + "/locations/" + zone + "/clusters/" + cluster
+	resp, err := http.Get(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: %d %s", u, resp.StatusCode, kubeconfig)
+	}
+	if err := os.WriteFile(c.vars["KUBECONFIG"], kubeconfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // lbService deploys nginx behind LoadBalancer Service web on port 80, as
 // the checklist does, and returns the Service's ingress IP.
 func (c *clients) lbService(t *testing.T, ctx context.Context) string {
