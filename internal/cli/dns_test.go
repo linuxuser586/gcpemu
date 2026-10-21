@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -293,6 +294,19 @@ Add-DnsClientNrptRule -Namespace '.gke.internal' -NameServers '127.0.0.1' -Comme
 			t.Errorf("over %s: err = %v", n, err)
 		}
 	}
+	// So does a namespace in the effective NRPT policy that no local rule
+	// explains, such as one Group Policy or a VPN client pushes; the
+	// policy's copy of the Instance's own rule doesn't.
+	gpo := resolverHost{goos: "windows", nrpt: []nrptRule{
+		{Name: "{1}", Namespace: []string{".svc.cluster.local"}, Comment: ours},
+		{Name: "{2}", Namespace: []string{".gke.internal"}, Comment: ours},
+	}, policy: []string{".svc.cluster.local", ".gke.internal", ".corp.example"}}
+	if _, err := resolverPlan(gpo, nil, "default", []string{"corp.example"}, 53, true); err == nil || !strings.Contains(err.Error(), "corp.example (NRPT policy for .corp.example") {
+		t.Errorf("over a policy namespace: err = %v", err)
+	}
+	if _, err := resolverPlan(gpo, nil, "default", defaultResolverSuffixes, 53, true); err != nil {
+		t.Errorf("over the policy's copy of its own rules: %v", err)
+	}
 	if _, err := resolverPlan(h, map[string]resolverRecord{"other": {Suffixes: []string{"a.test"}, Port: 53}}, "default", []string{"a.test"}, 53, true); err == nil ||
 		!strings.Contains(err.Error(), `instance "other"`) {
 		t.Errorf("over another Instance's route: err = %v", err)
@@ -546,5 +560,21 @@ func TestStatusResolverRoutes(t *testing.T) {
 	}
 	if want := "resolver routes to 127.0.0.1:5353:\n  svc.cluster.local\n  gke.internal\n  example.dev.test\n"; !strings.Contains(out, want) {
 		t.Errorf("status:\n%s\nwant it to contain:\n%s", out, want)
+	}
+	out, err = gcpemu(t, "--data-dir", dir, "status", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		ResolverRoutes struct {
+			Port     int
+			Suffixes []string
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	if want := []string{"svc.cluster.local", "gke.internal", "example.dev.test"}; v.ResolverRoutes.Port != 5353 || !slices.Equal(v.ResolverRoutes.Suffixes, want) {
+		t.Errorf("status --json resolverRoutes = %+v, want port 5353 and %v", v.ResolverRoutes, want)
 	}
 }

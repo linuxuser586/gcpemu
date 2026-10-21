@@ -66,6 +66,14 @@ func readResolverHost(goos, etc string, read bool) (resolverHost, error) {
 		if h.nrpt, err = parseNRPT(out); err != nil {
 			return h, fmt.Errorf("reading the NRPT rules: %w", err)
 		}
+		out, err = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+			"ConvertTo-Json -Compress -InputObject @(Get-DnsClientNrptPolicy | ForEach-Object { [string]$_.Namespace })").Output()
+		if err != nil {
+			return h, fmt.Errorf("reading the NRPT policy (Get-DnsClientNrptPolicy): %w", err)
+		}
+		if err := json.Unmarshal(out, &h.policy); err != nil {
+			return h, fmt.Errorf("reading the NRPT policy: %w", err)
+		}
 	}
 	return h, nil
 }

@@ -255,8 +255,10 @@ type resolverHost struct {
 	// that exist; etc is "/etc" unless set (tests).
 	etc   string
 	files map[string]string
-	// Windows: the NRPT rules.
-	nrpt []nrptRule
+	// Windows: the local NRPT rules, and the namespaces of the effective
+	// NRPT policy, which has Group Policy's and VPN clients' rules too.
+	nrpt   []nrptRule
+	policy []string
 }
 
 // nrptRule is one rule of Windows' Name Resolution Policy Table.
@@ -447,6 +449,15 @@ func windowsResolverPlan(h resolverHost, e resolverEdit) (resolverChange, error)
 				ours = true
 			} else {
 				foreign = append(foreign, fmt.Sprintf("%s (NRPT rule %s for %s)", s, r.Name, strings.Join(r.Namespace, " ")))
+			}
+		}
+		local := ours
+		for _, r := range h.nrpt {
+			local = local || slices.Contains(r.Namespace, "."+s) || slices.Contains(r.Namespace, s)
+		}
+		for _, n := range h.policy {
+			if !local && (n == "."+s || n == s) {
+				foreign = append(foreign, fmt.Sprintf("%s (NRPT policy for %s, from Group Policy or a VPN client)", s, n))
 			}
 		}
 		if !ours {

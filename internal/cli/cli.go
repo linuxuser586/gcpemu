@@ -517,8 +517,16 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			if err != nil {
 				hostSvcs = []byte(`{"services":[],"collisions":[],"unserved":[],"poolExhausted":false}`)
 			}
+			var routes resolverRecord
+			if recs, err := readResolverRecords(); err == nil {
+				routes = recs[cfg.Instance]
+			}
 			if asJSON {
-				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s,\"hostServices\":%s}\n", info, ready, cts, offers, hostSvcs)
+				if routes.Suffixes == nil {
+					routes.Suffixes = []string{}
+				}
+				rr, _ := json.Marshal(routes)
+				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s,\"hostServices\":%s,\"resolverRoutes\":%s}\n", info, ready, cts, offers, hostSvcs, rr)
 				return notReady()
 			}
 			var i struct {
@@ -564,9 +572,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				}
 			}
 			printHostServices(out, hostSvcs)
-			if recs, err := readResolverRecords(); err == nil {
-				printResolverRoutes(out, recs[cfg.Instance])
-			}
+			printResolverRoutes(out, routes)
 			return notReady()
 		},
 	}
