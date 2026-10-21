@@ -106,6 +106,7 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
    support, and the check passes too. Any other failure, or a skip, fails the check. The result
    and the runtime's version go into the runtime table under "Container runtime" in the README.
    Commit that change before tagging.
+5. **Host attachment:** see below.
 
 The suite also runs on Linux, but only for the runtimes `RUNTIMES` names, so it can be worked on
 with Docker Desktop for Linux.
@@ -131,6 +132,19 @@ gets `GCPEMU_VM_RUNTIME=true`.
 4. **A forwarding rule from the host:** a global forwarding rule on port 8080, in front of a
    backend bucket, has `GCPEMU_LB_SITE` on `127.0.0.1` and a port of the published range, and
    `index.html` there reads `lb ok`.
+5. **Host attachment:** see below. It runs on the host, not in the container, so it needs `go`
+   even with `IMAGE=<ref>`.
+
+### Host attachment (macOS and Windows)
+
+The last check on each runtime runs the Host attachment tests (ADR 0014) with `go test`, against
+that runtime: `TestHostAttachmentOffers` and `TestHostAttachmentSurvivesRestart` (a VPC workload
+reaches a host listener at its subnetwork's Host address) in `services/compute`, and
+`TestHostServices` (host clients reach a cluster's Services at Loopback aliases) in `services/gke`.
+On macOS it runs with the Loopback aliases installed, as check 2 does. Any failure fails the check,
+and so does a skip: the outward test skips without Loopback aliases, which never happens on Windows.
+`TestOfferHeldOnWildcard` runs too and skips on every VM runtime, since the VM relay holds the Host
+address.
 
 ### What stays manual
 

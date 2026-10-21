@@ -531,8 +531,9 @@ NAT, so they need one, and the backend sees the NAT's address (ADR 0007).
 
 ### Kubernetes Services from the host
 
-A process on the host can call a GKE cluster's Kubernetes Services by name, as its pods do (ADR 0014). The
-emulator's DNS (Service endpoint `dns`, `127.0.0.1:5353` by default) answers host queries for
+A process on the host can call a GKE cluster's Kubernetes Services by name, as its pods do (ADR
+0014), on Linux, macOS and native Windows (ADR 0015). The emulator's DNS (Service endpoint `dns`,
+`127.0.0.1:5353` by default) answers host queries for
 
 - `<service>.<namespace>.svc.<cluster>.<location>.<project>.gke.internal`, always, and
 - `<service>.<namespace>.svc.cluster.local`, while exactly one cluster has that Service. When a
@@ -543,9 +544,9 @@ emulator's DNS (Service endpoint `dns`, `127.0.0.1:5353` by default) answers hos
 The answer is a Loopback alias (`127.0.0.x`) the Service gets on the first query and keeps until
 it's deleted, also across `gcpemu stop` and `start` of an Instance with a data dir. The emulator
 serves each of the Service's TCP ports there, so `curl http://web.default.svc.cluster.local:8080`
-reaches a pod, on Linux and on a VM runtime alike. Headless Services aren't answered;
-ExternalName Services are answered with their CNAME. Queries from the VPC (pods, through their
-node's DNS relay) are unaffected.
+reaches a pod, on Linux and on a VM runtime (as on macOS and Windows) alike. Headless Services
+aren't answered; ExternalName Services are answered with their CNAME. Queries from the VPC (pods,
+through their node's DNS relay) are unaffected.
 
 Send the two domains to the emulator's DNS with `gcpemu dns install`, which adds a Resolver route
 for each one. Add a `--suffix` for each emulated Cloud DNS zone the host should resolve too:
@@ -577,18 +578,20 @@ that configuration it didn't write already covers, and then changes nothing.
 or point at another port.
 
 Aliases come from the `127.0.0.2`–`127.0.0.254` pool that Cloud SQL instances and forwarding rules
-also use. On macOS run `sudo gcpemu loopback install` first. When no alias is free, or on a Mac
-without them, the DNS answers SERVFAIL and the emulator logs why; `gcpemu doctor` flags both.
-`gcpemu status` lists the Services that hold aliases. The host must allow binding a Service's
-port: Linux refuses ports below 1024 to non-root users unless
-`net.ipv4.ip_unprivileged_port_start` allows them, and those ports aren't served. A
-Containerized Instance has no host loopback, so it doesn't answer these names.
+also use. On macOS run `sudo gcpemu loopback install` first; Linux and Windows route all of
+`127.0.0.0/8` already and need no install. When no alias is free, or on a Mac without them, the DNS
+answers SERVFAIL and the emulator logs why; `gcpemu doctor` flags both. `gcpemu status` lists the
+Services that hold aliases. The host must allow binding a Service's port: Linux refuses ports below
+1024 to non-root users unless `net.ipv4.ip_unprivileged_port_start` allows them, and those ports
+aren't served. Windows has no privileged ports, but a Service port in one of Windows' excluded port
+ranges isn't served on its alias (`netsh int ipv4 show excludedportrange protocol=tcp` lists them).
+A Containerized Instance has no host loopback, so it doesn't answer these names.
 
 ### VPC workloads reaching the host
 
-A process on the host can stand in for a pod (ADR 0014): offer its port, and workloads on a
-subnetwork reach it at the subnetwork's Host address, which forwards to `127.0.0.1` on the host.
-The process only needs to listen on loopback.
+A process on the host can stand in for a pod (ADR 0014), on Linux, macOS and native Windows (ADR
+0015): offer its port, and workloads on a subnetwork reach it at the subnetwork's Host address,
+which forwards to `127.0.0.1` on the host. The process only needs to listen on loopback.
 
 ```sh
 gcpemu offer 8080 53/udp --subnetwork projects/my-project/regions/us-central1/subnetworks/default
@@ -599,9 +602,10 @@ gcpemu withdraw 8080 --subnetwork projects/my-project/regions/us-central1/subnet
 
 Where the host routes to the network (Linux), the Host address is the network's gateway and the
 emulator binds the offered port there, so offering a port that a process holds on `0.0.0.0` or
-`[::]` fails: have it listen on `127.0.0.1` instead. On a VM runtime the VM relay holds the
-address. Ports that aren't offered aren't reachable. The Host address and the offers survive
-`gcpemu stop` and `start` of an Instance with a data dir, and `gcpemu status` lists them.
+`[::]` fails: have it listen on `127.0.0.1` instead. On a VM runtime (as on macOS and Windows) the
+VM relay holds the address. Ports that aren't offered aren't reachable. The Host address and the
+offers survive `gcpemu stop` and `start` of an Instance with a data dir, and `gcpemu status` lists
+them.
 
 ### Real hostnames: GKE pods and host mode
 

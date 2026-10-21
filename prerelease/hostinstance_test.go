@@ -3,9 +3,7 @@
 package prerelease
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -45,6 +43,7 @@ func hostInstanceChecks(t *testing.T, rt string) {
 	step(t, rt, "2-two-sql-instances", 30*time.Minute, twoSQLInstances)
 	step(t, rt, "3-gke-loadbalancer", 30*time.Minute, hostLoadBalancer)
 	step(t, rt, "4-vlan", 30*time.Minute, func(t *testing.T, ctx context.Context) { vlan(t, ctx, rt) })
+	step(t, rt, "5-host-attachment", 30*time.Minute, hostAttachment)
 }
 
 // doctor returns `gcpemu doctor`'s output.
@@ -86,23 +85,29 @@ func (h *hostInstance) env(t *testing.T) string {
 	return string(out)
 }
 
+// requireAliases installs the loopback aliases on macOS for the rest of t,
+// unless they are present already. Linux and Windows route all of
+// 127.0.0.0/8 already, and doctor says nothing about aliases there.
+func requireAliases(t *testing.T, ctx context.Context) {
+	t.Helper()
+	if goruntime.GOOS != "darwin" {
+		return
+	}
+	if !strings.Contains(doctor(t), aliasesPresent) {
+		if out, err := exec.Command("sudo", "-n", "true").CombinedOutput(); err != nil {
+			t.Fatalf("sudo needs a password: run `sudo -v` first (task prerelease does): %v\n%s", err, out)
+		}
+		sudo(t, ctx, "install")
+		// Only aliases this check added come out again.
+		t.Cleanup(func() { sudo(t, context.Background(), "uninstall") })
+	}
+	requireDoctor(t, doctor(t), aliasesPresent)
+}
+
 // twoSQLInstances is macOS step 2: two Cloud SQL instances at once, each on
 // a loopback alias of its own, which host clients reach together.
 func twoSQLInstances(t *testing.T, ctx context.Context) {
-	// Linux routes all of 127.0.0.0/8 already, and doctor says nothing
-	// about aliases there.
-	if goruntime.GOOS == "darwin" {
-		if !strings.Contains(doctor(t), aliasesPresent) {
-			if out, err := exec.Command("sudo", "-n", "true").CombinedOutput(); err != nil {
-				t.Fatalf("sudo needs a password: run `sudo -v` first (task prerelease does): %v\n%s", err, out)
-			}
-			sudo(t, ctx, "install")
-			// Only aliases this check added come out again.
-			t.Cleanup(func() { sudo(t, context.Background(), "uninstall") })
-		}
-		requireDoctor(t, doctor(t), aliasesPresent)
-	}
-
+	requireAliases(t, ctx)
 	h := startHost(t, ctx, "sql")
 	c := newClients(t)
 	c.load(hosttest.ParseEnv(h.env(t)))
@@ -193,36 +198,11 @@ func vlan(t *testing.T, ctx context.Context, rt string) {
 	if row == "" {
 		t.Logf("README.md's runtime table has no row for %s; the result is not recorded there", rt)
 	}
-	cmd := exec.CommandContext(ctx, "go", "test", "-json", "-count=1", "-timeout", "25m",
-		"-run", "^("+strings.Join(vlanTests, "|")+")$", "./services/compute")
-	cmd.Dir = repo
-	out, _ := cmd.Output()
-	ended := map[string]string{}
-	logs := map[string]*strings.Builder{}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	sc.Buffer(make([]byte, 1<<20), 1<<24)
-	for sc.Scan() {
-		var ev struct{ Action, Test, Output string }
-		if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Test == "" || strings.Contains(ev.Test, "/") {
-			continue
-		}
-		if logs[ev.Test] == nil {
-			logs[ev.Test] = &strings.Builder{}
-		}
-		switch ev.Action {
-		case "output":
-			logs[ev.Test].WriteString(ev.Output)
-		case "pass", "fail", "skip":
-			ended[ev.Test] = ev.Action
-		}
-	}
+	runs, out := goTests(ctx, vlanTests, "./services/compute")
 	supported := true
 	for _, name := range vlanTests {
-		log := ""
-		if logs[name] != nil {
-			log = logs[name].String()
-		}
-		switch ended[name] {
+		log := runs[name].log
+		switch runs[name].ended {
 		case "pass":
 		case "fail":
 			if !strings.Contains(log, "has no VLAN (8021q) support") {
