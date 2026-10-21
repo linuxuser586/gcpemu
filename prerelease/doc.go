@@ -18,7 +18,9 @@
 // (8021q) check, whose result goes into README.md's runtime table. On
 // Windows each runtime runs the release's image as a Containerized
 // Instance and reaches Cloud SQL, a GKE LoadBalancer Service and a
-// forwarding rule from the host.
+// forwarding rule from the host. On both, each runtime then runs the
+// Host attachment (ADR 0014) tests of the compute and GKE services, with
+// gcpemu on the host.
 //
 // The run ends with a summary table, printed and written to
 // dist/prerelease-<os>-<commit>.md.

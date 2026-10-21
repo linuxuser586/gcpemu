@@ -71,6 +71,9 @@ func containerizedChecks(t *testing.T, rt string) {
 	step(t, rt, "2-sql", 30*time.Minute, containerizedSQL)
 	step(t, rt, "3-gke-loadbalancer", 30*time.Minute, containerizedLoadBalancer)
 	step(t, rt, "4-forwarding-rule", 15*time.Minute, forwardingRule)
+	// Not in the container: the Host attachment links the host's own
+	// loopback with the VPC, so it needs gcpemu running on the host.
+	step(t, rt, "5-host-attachment", 30*time.Minute, hostAttachment)
 }
 
 // containerEnv returns what `gcpemu env --shell powershell` prints in the
