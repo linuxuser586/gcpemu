@@ -221,6 +221,40 @@ _Avoid_: session token, console token
 Whether an Instance ignores IAM (off), logs denials but allows them (audit), or rejects them (enforce). Audit is the default.
 _Avoid_: IAM mode
 
+### Connecting Instances
+
+**Delegate**:
+A server to which an Instance forwards requests it does not answer itself: a Linked Instance for the Projects delegated to it, or an External emulator for the APIs delegated to it. An Instance never delegates a single Service of its own, because its Services rely on each other within a Project.
+_Avoid_: node, peer, remote, upstream
+
+**Linked Instance**:
+Another Instance, usually on another machine, that an Instance delegates one or more Projects to. The front Instance authenticates each caller and asserts their Principal to the Linked Instance, which checks IAM itself. Two Instances become linked only by Pairing.
+_Avoid_: peer (collides with VPC network peering), remote Instance, node
+
+**Pairing**:
+The explicit act, approved on both sides, by which two Instances each come to trust the other's Instance CA, so that each accepts the other's asserted Principals. Discovery never pairs Instances.
+_Avoid_: joining, trusting (unqualified)
+
+**Shared Project**:
+A Project that an Instance offers to the Instances it is paired with. Sharing alone forwards nothing.
+_Avoid_: exported project, public project
+
+**Delegated Project**:
+A Project that the front Instance forwards to the Linked Instance that shares it, and holds no state for itself. A reference to it never creates it locally, and an Instance cannot delegate a Project it already has. Reset and State snapshots of the front Instance leave it untouched.
+_Avoid_: remote project, linked project, proxied project
+
+**Delegated API**:
+An API that has no Service, such as Firestore's, which an Instance forwards to an External emulator. The Instance does not check IAM for it and claims no Fidelity for it.
+_Avoid_: external service, proxied API
+
+**External emulator**:
+A Delegate that is not an Instance but speaks a GCP API's wire format, such as Google's Firestore, Spanner or Bigtable emulator, to which an Instance delegates an API it has no Service for. It is always configured by address.
+_Avoid_: third-party emulator, compatible node
+
+**Discovered Instance**:
+An Instance found on the LAN because it advertises itself, which is not (yet) a Linked Instance. Only Instances that opted into LAN reach advertise.
+_Avoid_: peer, neighbour
+
 ### Fidelity
 
 **Fidelity**:
@@ -458,4 +492,5 @@ _Avoid_: egress check, leak detector
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
 - "Condition" on its own is ambiguous: Kubernetes objects inside a GKE cluster have their own conditions. Use *Wait condition* for what a script blocks on.
 - "Kubernetes pulls" on its own is ambiguous: an emulated GKE cluster's nodes pull with their own registry settings, apart from Host trust. Say *a kubelet on the host* for a Kubernetes cluster that runs directly on the user's machine and pulls through the host's containerd.
+- "Node" on its own always means a GKE node. Another Instance is a *Linked Instance* or *Discovered Instance*, and a non-gcpemu server is an *External emulator*.
 - "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.

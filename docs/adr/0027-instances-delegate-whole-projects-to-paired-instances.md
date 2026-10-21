@@ -1,0 +1,30 @@
+# Instances delegate whole Projects to paired Instances, which trust asserted Principals
+
+A team shares one long-lived Instance on an office machine, as in ADR 0011 and ADR 0021, while each member keeps their own Instance on a laptop. They want a client pointed at the laptop to see the office's Projects too, without a second set of Endpoint overrides. Clients also want APIs that no Service implements, such as Firestore, Spanner or Bigtable, for which Google ships its own emulators. We decided that an Instance forwards requests it does not answer itself to a Delegate: a Linked Instance for the Projects delegated to it, or an External emulator for the APIs delegated to it.
+
+**By Project, never by Service.** A Linked Instance shares a Project, and the front Instance delegates it, and only then does the front Instance forward every request naming that Project, whatever the Service. A Project the front Instance already has cannot be delegated, and a reference to a Delegated Project never creates it locally (an exception to ADR 0001), so local state is never shadowed or merged. Requests that name no Project are routed by what owns them: a bucket by the ownership list the Linked Instance keeps the front Instance up to date with, a service account by the Project in its email, and `projects/-` and aggregated lists by asking every Instance and merging the answers.
+
+**Asserted Principals over Pairing.** The front Instance authenticates each caller and forwards the request over mutual TLS with their Principal asserted. The Linked Instance accepts the assertion only from an Instance it has paired with, and checks IAM itself at its own IAM enforcement level. Pairing is approved on both sides, and each side pins the other's Instance CA. Discovery over mDNS/DNS-SD only lists Discovered Instances and never pairs them, and only Instances bound with `--link-bind` advertise.
+
+**Data plane addresses by caller.** A Linked Instance answers a request that came over a link with the addresses its LAN listeners (`--gke-bind`, `--ar-bind`, `--lb-bind`, `--gfe-bind`) serve, as the metadata server picks its universe by caller (ADR 0009). Clients then reach the Data plane directly, through the same credential checks as any LAN client. A Data plane that is not bound on the LAN is reported as unavailable over the link, never as a loopback address that would be wrong on the caller's machine.
+
+**Delegated APIs are a passthrough.** An External emulator ignores credentials, and the emulator has no permission map for APIs it has no Service for. The front Instance forwards REST and gRPC as they come, including through the Google front end in Host mode, does not check IAM, and claims no Fidelity for them. On `--gfe-bind` it still requires credentials the Instance issued before forwarding.
+
+## Considered options
+
+- **Delegating a single Service**, such as `gke` to a bigger machine. GKE pulls from Artifact Registry, Workload Identity takes tokens from `iam`, pods reach Cloud SQL private IPs, and Secret sync reads Secret Manager, all within one Instance. Splitting Services across machines breaks each of these, while a whole Project keeps them together.
+- **Passing the caller's token through**, and having the Linked Instance ask the issuing Instance to validate it. It costs a round trip per request, and a Linked Instance would have to trust every Instance that can issue a token, not only the ones it paired with.
+- **Real credentials only**, as on `--gfe-bind`. Each team member would need a key issued by the office Instance, and the front Instance's own login would mean nothing for a Delegated Project.
+- **Linking automatically**, by shared secret or for every Discovered Instance. Pairing gives another machine the authority to assert Principals, which must not happen without someone choosing it.
+- **Shared or replicated state** across Instances. It is a distributed system, which a local emulator should not become.
+- **Linking VPC networks** across machines. That is close to Cloud VPN or Interconnect, which the SRS leaves out of scope.
+- **The front Instance relaying the Data plane** and rewriting addresses into its own Loopback aliases. It duplicates the LAN listeners and their credential checks, and puts a second hop on every byte.
+
+## Consequences
+
+- A Delegated Project whose Linked Instance is unreachable fails with UNAVAILABLE, naming it. The front Instance's readiness does not depend on its Delegates, and `gcpemu doctor` reports each link.
+- Reset and State snapshots act on local Projects only. Links and Pairings are configuration and survive Reset. A Deterministic Instance's guarantee covers local Projects only.
+- Creating a bucket whose name exists in either Instance fails with 409, as GCP does for a name taken globally.
+- Linked Instances negotiate a protocol version, and an incompatible one is refused at Pairing and on connect, naming both versions.
+- Cloud SQL has no LAN listener yet, so a Delegated Project's Cloud SQL instances report no address over a link until `--sql-bind` exists.
+- An External emulator is always configured by address. Running one as a Managed container is a separate decision.
