@@ -18,7 +18,7 @@ import (
 )
 
 // gcpemuBin is the binary `task build` makes, which the macOS checks and
-// the Windows native stage run on the host.
+// the Windows Resolver routes check run on the host.
 var gcpemuBin = filepath.Join(repo, "bin", "gcpemu"+exeExt())
 
 func exeExt() string {

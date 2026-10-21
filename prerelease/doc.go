@@ -23,9 +23,9 @@
 // gcpemu on the host, and the Resolver routes check: an Ephemeral Instance
 // of its own, prerelease-dns, with a Cloud DNS zone and a GKE Service,
 // whose `gcpemu dns install` routes resolve both through the host's
-// resolver until `gcpemu dns uninstall` takes them away. On Windows that
-// is the native stage, gcpemu.exe on the host with dns on port 53 (ADR
-// 0026), so `task prerelease` builds it there too.
+// resolver until `gcpemu dns uninstall` takes them away. On Windows its
+// Instance is on the host, gcpemu.exe, with dns on port 53 (ADR 0026), so
+// `task prerelease` builds it there too.
 //
 // TestResolverRoutes is the same check on Linux, without the GKE Service,
 // for CI: it runs only with GCPEMU_RESOLVER_TESTS=1.

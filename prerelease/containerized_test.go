@@ -40,10 +40,10 @@ var release = sync.OnceValue(func() error {
 // containerizedChecks runs the Windows checks on runtime rt: the release's
 // image as a Containerized Instance, with the runtime's socket and a port
 // range, reached by the host's clients through its published ports.
-// Then the native stage runs gcpemu.exe on the host.
+// Then the Resolver routes check runs an Instance on the host, gcpemu.exe.
 func containerizedChecks(t *testing.T, rt string) {
 	done := setup(t, rt)
-	// task and go build gcpemu.exe for the native stage.
+	// task and go build gcpemu.exe for the Resolver routes check.
 	requireTools(t, "docker", "task", "go", "gcloud", "kubectl", "cloud-sql-proxy")
 	requireBin(t)
 	useRuntime(t, rt)
@@ -76,7 +76,7 @@ func containerizedChecks(t *testing.T, rt string) {
 	// Not in the container: the Host attachment links the host's own
 	// loopback with the VPC, so it needs gcpemu running on the host.
 	step(t, rt, "5-host-attachment", 30*time.Minute, hostAttachment)
-	// The native stage: gcpemu.exe on the host, with dns on port 53,
+	// An Instance on the host, gcpemu.exe, with dns on port 53,
 	// since NRPT can't name a port (ADR 0015, ADR 0026).
 	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
 }

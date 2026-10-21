@@ -137,11 +137,12 @@ gets `GCPEMU_VM_RUNTIME=true`.
    backend bucket, has `GCPEMU_LB_SITE` on `127.0.0.1` and a port of the published range, and
    `index.html` there reads `lb ok`.
 5. **Host attachment:** see below. It runs on the host, not in the container.
-6. **Resolver routes:** see below. This is the native stage: `gcpemu.exe` on the host, on the same
-   runtime, with `--port dns=53`, since NRPT can't name a port (ADR 0026). The names resolve
-   through `Resolve-DnsName`, and after `uninstall` no NRPT rule gcpemu wrote is left. `install`
-   and `uninstall` each show a UAC dialog: accept both. When port 53 is in use on the host (ICS,
-   Hyper-V or WSL's DNS proxy may hold it), the check is skipped and says so.
+6. **Resolver routes:** see below. Unlike checks 1–4, it runs an Instance on the host,
+   `gcpemu.exe`, on the same runtime, with `--port dns=53`, since NRPT can't name a port
+   (ADR 0026). The names resolve through `Resolve-DnsName`, and after `uninstall` no NRPT rule
+   gcpemu wrote is left. `install` and `uninstall` each show a UAC dialog: accept both. When port
+   53 is in use on the host (ICS, Hyper-V or WSL's DNS proxy may hold it), the check is skipped and
+   says so.
 
 ### Host attachment (macOS and Windows)
 
