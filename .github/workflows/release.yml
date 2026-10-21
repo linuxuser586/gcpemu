@@ -56,7 +56,8 @@ jobs:
             name="$(basename "$bin" .exe)"
             "$SYFT" scan "file:$bin" -o "spdx-json=sbom/$name.spdx.json"
           done
-      - uses: sigstore/cosign-installer@v4
+      # cosign-installer publishes no major tag (v4), only full versions.
+      - uses: sigstore/cosign-installer@v4.1.2
       # Only SHA256SUMS is signed: it covers each binary through its hash.
       - name: Sign SHA256SUMS
         run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
@@ -183,7 +184,7 @@ jobs:
       # registry. A failure leaves the pushed tags unsigned until the job
       # is re-run, which pushes the tags again and signs the digest they
       # then name (docs/release.md).
-      - uses: sigstore/cosign-installer@v4
+      - uses: sigstore/cosign-installer@v4.1.2
       - name: Sign the image
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
