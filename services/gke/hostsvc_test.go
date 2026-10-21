@@ -55,7 +55,7 @@ func (p planeOnly) Netplane(context.Context) (*netplane.Plane, error) { return p
 func hostFixture(t *testing.T) *Service {
 	t.Helper()
 	s := newUnitService(t)
-	s.env.Containers = planeOnly{np: netplane.New(nil, nil, s.env.Log)}
+	s.env.Containers = planeOnly{np: netplane.New(nil, nil, "127.0.0.1", s.env.Log)}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

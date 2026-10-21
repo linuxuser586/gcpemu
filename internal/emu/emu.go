@@ -232,9 +232,11 @@ type Endpoints struct {
 
 func NewEndpoints() *Endpoints { return &Endpoints{m: map[string]string{}} }
 
+// Set records addr, a listener's address, as Dialable(addr): a Service
+// endpoint is never an unspecified address (#613).
 func (e *Endpoints) Set(name, addr string) {
 	e.mu.Lock()
-	e.m[name] = addr
+	e.m[name] = Dialable(addr)
 	e.mu.Unlock()
 }
 
@@ -271,6 +273,18 @@ func (e *Endpoints) Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Dialable is addr, a listener's address, with an unspecified IP
+// (--bind 0.0.0.0 or ::) made 127.0.0.1, which can be dialled on every OS.
+// Go reports a listener on 0.0.0.0 as [::], which Windows refuses to dial.
+func Dialable(addr string) string {
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		if ip := net.ParseIP(h); ip != nil && ip.IsUnspecified() {
+			return net.JoinHostPort("127.0.0.1", p)
+		}
+	}
+	return addr
 }
 
 // Seeder is implemented by services that accept a section of the seed file

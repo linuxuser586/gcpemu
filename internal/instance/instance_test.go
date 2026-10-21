@@ -18,6 +18,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
+	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -803,5 +804,74 @@ func TestContainerBindWarning(t *testing.T) {
 				t.Errorf("warning names --lb-bind, which isn't set:\n%s", out.String())
 			}
 		}
+	}
+}
+
+// listenSvc opens its own Service endpoint, as Pub/Sub does, and gives
+// clients an Endpoint override for it. It stands in for "dns" because the
+// instance tests' factories are keyed by a real Service name.
+type listenSvc struct {
+	fakeSvc
+	env *emu.Env
+	l   net.Listener
+}
+
+func (s *listenSvc) Start(context.Context) (err error) {
+	s.l, err = s.env.Listen("pubsub")
+	return err
+}
+func (s *listenSvc) Stop(context.Context) error { return s.l.Close() }
+func (s *listenSvc) EnvVars(gw string, eps map[string]string) map[string]string {
+	return map[string]string{"PUBSUB_EMULATOR_HOST": eps["pubsub"], "CLOUDSDK_API_ENDPOINT_OVERRIDES_DNS": "http://" + gw + "/dns/"}
+}
+
+// TestEnvVarsBoundToAllInterfaces: an Instance bound to all interfaces,
+// as the OCI image is, gives clients loopback addresses, never [::],
+// which Windows refuses to dial (#613).
+func TestEnvVarsBoundToAllInterfaces(t *testing.T) {
+	for _, bind := range []string{"0.0.0.0", "::"} {
+		t.Run(bind, func(t *testing.T) {
+			t.Setenv("CI", "")
+			cfg := config.Defaults()
+			cfg.Ephemeral = true
+			cfg.DataDir = t.TempDir()
+			cfg.Services = []string{"dns"}
+			cfg.Ports["gateway"] = 0
+			cfg.Ports["pubsub"] = 0
+			cfg.Ports[frontend.Endpoint] = 0
+			cfg.Bind = bind
+			cfg.LogFormat = "text"
+			var log syncBuffer
+			in, err := New(&cfg, map[string]Factory{"dns": func(env *emu.Env) emu.Service { return &listenSvc{env: env} }}, &log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if err := in.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer in.Shutdown(ctx)
+
+			gw := in.Env.Endpoints.Get("gateway")
+			if h, _, _ := net.SplitHostPort(gw); h != "127.0.0.1" {
+				t.Fatalf("gateway Service endpoint = %q, want 127.0.0.1:<port>", gw)
+			}
+			var vars map[string]string
+			getJSON(t, "http://"+gw+"/_emu/v1/env", http.Header{gateway.AdminTokenHeader: {in.AdminToken()}}, &vars)
+			if vars["GCPEMU_GATEWAY"] != gw {
+				t.Errorf("GCPEMU_GATEWAY = %q, want %q", vars["GCPEMU_GATEWAY"], gw)
+			}
+			if got := vars["CLOUDSDK_API_ENDPOINT_OVERRIDES_DNS"]; got != "http://"+gw+"/dns/" {
+				t.Errorf("CLOUDSDK_API_ENDPOINT_OVERRIDES_DNS = %q, want http://%s/dns/", got, gw)
+			}
+			if h, _, _ := net.SplitHostPort(vars["PUBSUB_EMULATOR_HOST"]); h != "127.0.0.1" {
+				t.Errorf("PUBSUB_EMULATOR_HOST = %q, want 127.0.0.1:<port>", vars["PUBSUB_EMULATOR_HOST"])
+			}
+			for name, addr := range in.Env.Endpoints.All() {
+				if h, _, _ := net.SplitHostPort(addr); h != "127.0.0.1" {
+					t.Errorf("Service endpoint %s = %q, want 127.0.0.1:<port>", name, addr)
+				}
+			}
+		})
 	}
 }
