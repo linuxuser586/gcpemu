@@ -208,7 +208,7 @@ func forwardingRule(t *testing.T, ctx context.Context) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"storage", "buckets", "create", "gs://lb-site"},
+		{"storage", "buckets", "create", "gs://lb-site", "--location=us-central1"},
 		{"storage", "cp", "index.html", "gs://lb-site/index.html"},
 		{"compute", "backend-buckets", "create", "site", "--gcs-bucket-name=lb-site"},
 		{"compute", "url-maps", "create", "site", "--default-backend-bucket=site"},
