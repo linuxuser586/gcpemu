@@ -166,7 +166,7 @@ func TestLBServicesSync(t *testing.T) {
 			defer kube.Close()
 			s.rtFor(rec.key()).kube = &kubeClient{base: kube.URL, hc: kube.Client()}
 
-			np := netplane.New(nil, nil, s.env.Log)
+			np := netplane.New(nil, nil, "127.0.0.1", s.env.Log)
 			lbs := map[string]*lbService{}
 			ctx := context.Background()
 			if err := s.syncLBServices(ctx, np, rec.key(), mode, nil, lbs); err != nil {
@@ -280,7 +280,7 @@ func TestLBServicesPublished(t *testing.T) {
 	defer kube.Close()
 	s.rtFor(rec.key()).kube = &kubeClient{base: kube.URL, hc: kube.Client()}
 
-	np := netplane.New(nil, nil, s.env.Log)
+	np := netplane.New(nil, nil, "127.0.0.1", s.env.Log)
 	lbs := map[string]*lbService{}
 	defer func() {
 		for id, l := range lbs {

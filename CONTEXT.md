@@ -41,7 +41,7 @@ The resource-management APIs that create, read, update and delete GCP resources.
 The traffic those resources carry: object bytes, load-balanced requests, Postgres connections, DNS queries.
 
 **Service endpoint**:
-A named address at which an Instance serves clients, such as a Service's own port, the API gateway, or a forwarding rule's host listener. The names are those in `endpoints.json`.
+A named address at which an Instance serves clients, such as a Service's own port, the API gateway, or a forwarding rule's host listener. The names are those in `endpoints.json`. It is never an unspecified address: an Instance bound to all interfaces gives the loopback address, so a host client can always dial it.
 _Avoid_: endpoint (unqualified)
 
 **Endpoint override**:

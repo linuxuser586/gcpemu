@@ -78,6 +78,26 @@ func freePortWindow(t *testing.T, n int) int {
 	return 0
 }
 
+// TestEndpointsDialable: a Service endpoint is never an unspecified
+// address; a listener bound to all interfaces is recorded as loopback,
+// which clients on every OS can dial (#613).
+func TestEndpointsDialable(t *testing.T) {
+	for _, tc := range []struct{ addr, want string }{
+		{"0.0.0.0:4510", "127.0.0.1:4510"},
+		{"[::]:4510", "127.0.0.1:4510"},
+		{"127.0.0.1:4510", "127.0.0.1:4510"},
+		{"[::1]:4510", "[::1]:4510"},
+		{"192.0.2.1:4510", "192.0.2.1:4510"},
+		{"192.0.2.1:443,192.0.2.2:443", "192.0.2.1:443,192.0.2.2:443"},
+	} {
+		e := NewEndpoints()
+		e.Set("gateway", tc.addr)
+		if got := e.Get("gateway"); got != tc.want {
+			t.Errorf("Set(%q): Get = %q, want %q", tc.addr, got, tc.want)
+		}
+	}
+}
+
 // NoRuntime marks a permanent runtime failure and keeps the error it
 // wraps, message and all (#313).
 func TestNoRuntime(t *testing.T) {

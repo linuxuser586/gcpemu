@@ -36,7 +36,7 @@ func TestServicesNetwork(t *testing.T) {
 	go srv.Serve(l)
 	defer srv.Close()
 
-	p := netplane.New(m, func() map[string]string { return map[string]string{"gateway": l.Addr().String()} }, slog.Default())
+	p := netplane.New(m, func() map[string]string { return map[string]string{"gateway": l.Addr().String()} }, "127.0.0.1", slog.Default())
 	defer p.Close()
 	svc, err := p.Services(ctx)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestNetworkBridge(t *testing.T) {
 	}
 	m := &runtime.Manager{Client: cl, InstanceID: "nptestbridge", Ephemeral: true, Log: slog.Default()}
 	t.Cleanup(func() { _ = m.Cleanup(context.Background(), true) })
-	p := netplane.New(m, func() map[string]string { return nil }, slog.Default())
+	p := netplane.New(m, func() map[string]string { return nil }, "127.0.0.1", slog.Default())
 	defer p.Close()
 	for name, get := range map[string]func(context.Context) (netplane.Net, error){"services": p.Services, "external": p.External} {
 		n, err := get(ctx)

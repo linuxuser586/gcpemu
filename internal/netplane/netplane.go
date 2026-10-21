@@ -41,7 +41,10 @@ type Net struct {
 type Plane struct {
 	rt        *runtime.Manager
 	endpoints func() map[string]string
-	log       *slog.Logger
+	// allInterfaces is whether the Instance binds its Service endpoints to
+	// every interface; the recorded addresses are loopback either way (#613).
+	allInterfaces bool
+	log           *slog.Logger
 
 	mu     sync.Mutex
 	svc    *Net
@@ -60,9 +63,11 @@ type Plane struct {
 }
 
 // New returns a plane. endpoints returns the current host endpoint map
-// (name → host:port), as recorded by emu.Endpoints.
-func New(rt *runtime.Manager, endpoints func() map[string]string, log *slog.Logger) *Plane {
-	return &Plane{rt: rt, endpoints: endpoints, log: log, fwd: map[string]*forwarder{}, relayed: map[string]string{}, offers: map[offerKey]*forwarder{}}
+// (name → host:port), as recorded by emu.Endpoints; bind is the address
+// the Instance binds them on (--bind).
+func New(rt *runtime.Manager, endpoints func() map[string]string, bind string, log *slog.Logger) *Plane {
+	ip := net.ParseIP(bind)
+	return &Plane{rt: rt, endpoints: endpoints, allInterfaces: bind == "" || ip != nil && ip.IsUnspecified(), log: log, fwd: map[string]*forwarder{}, relayed: map[string]string{}, offers: map[offerKey]*forwarder{}}
 }
 
 // Runtime returns the runtime manager.
@@ -222,7 +227,7 @@ func (p *Plane) Addr(ctx context.Context, name string) (string, error) {
 	if target == "" {
 		return "", fmt.Errorf("endpoint %q is not running", name)
 	}
-	host, port, _ := net.SplitHostPort(target)
+	_, port, _ := net.SplitHostPort(target)
 	if p.relay != nil {
 		a, err := p.relay.Listen(ctx, name, net.JoinHostPort(p.relay.IP(), port), name == "dns")
 		if err != nil {
@@ -238,7 +243,7 @@ func (p *Plane) Addr(ctx context.Context, name string) (string, error) {
 	if self, err := p.rt.SelfIP(ctx, svc.Name); err != nil {
 		return "", err
 	} else if self != "" {
-		if host == "" || host == "0.0.0.0" || host == "::" {
+		if p.allInterfaces {
 			return net.JoinHostPort(self, port), nil
 		}
 		ip = self

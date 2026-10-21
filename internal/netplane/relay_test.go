@@ -61,7 +61,7 @@ func TestVMRelay(t *testing.T) {
 	defer dnsSrv.Shutdown()
 	endpoints := map[string]string{"gateway": l.Addr().String(), "dns": pc.LocalAddr().String()}
 
-	p := netplane.New(m, func() map[string]string { return endpoints }, slog.Default())
+	p := netplane.New(m, func() map[string]string { return endpoints }, "127.0.0.1", slog.Default())
 	defer p.Close()
 	svc, err := p.Services(ctx)
 	if err != nil {

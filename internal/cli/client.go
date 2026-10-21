@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 )
@@ -58,9 +58,10 @@ func clientFor(cfg *config.Config) (*adminClient, error) {
 	return newAdminClient(eps, readAdminToken(cfg)), nil
 }
 
-// newAdminClient returns a client for the Admin API on the gateway in eps.
+// newAdminClient returns a client for the Admin API on the gateway in eps,
+// which an older gcpemu may have recorded as an unspecified address.
 func newAdminClient(eps map[string]string, token string) *adminClient {
-	return &adminClient{base: "http://" + dialable(eps["gateway"]), endpoints: eps, http: &http.Client{Timeout: 10 * time.Second}, token: token}
+	return &adminClient{base: "http://" + emu.Dialable(eps["gateway"]), endpoints: eps, http: &http.Client{Timeout: 10 * time.Second}, token: token}
 }
 
 // newRequest builds an admin API request carrying the Admin token.
@@ -85,22 +86,11 @@ func (c *adminClient) consoleURL() string {
 // unspecified address (--bind 0.0.0.0) becomes 127.0.0.1, which browsers
 // open; from another machine, use this host's name instead.
 func consoleURL(addr, token string) string {
-	u := "http://" + dialable(addr) + "/console/"
+	u := "http://" + emu.Dialable(addr) + "/console/"
 	if token != "" {
 		u += "?" + gateway.AdminTokenQuery + "=" + url.QueryEscape(token)
 	}
 	return u
-}
-
-// dialable is addr, a listener's address, with an unspecified IP
-// (--bind 0.0.0.0) made 127.0.0.1, which can be dialled on every OS.
-func dialable(addr string) string {
-	if h, p, err := net.SplitHostPort(addr); err == nil {
-		if ip := net.ParseIP(h); ip != nil && ip.IsUnspecified() {
-			return net.JoinHostPort("127.0.0.1", p)
-		}
-	}
-	return addr
 }
 
 func (c *adminClient) do(method, path string) (int, []byte, error) {

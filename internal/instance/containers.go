@@ -120,7 +120,7 @@ func (c *containers) Netplane(ctx context.Context) (*netplane.Plane, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.plane == nil {
-		c.plane = netplane.New(rt, c.in.Env.Endpoints.All, c.in.Env.Log.With("component", "netplane"))
+		c.plane = netplane.New(rt, c.in.Env.Endpoints.All, c.in.Config.Bind, c.in.Env.Log.With("component", "netplane"))
 	}
 	return c.plane, nil
 }
