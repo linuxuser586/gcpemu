@@ -50,3 +50,7 @@ func groupGetsCtrlC() bool {
 	pg, err := unix.IoctlGetInt(int(f.Fd()), unix.TIOCGPGRP)
 	return err == nil && pg == unix.Getpgrp()
 }
+
+// elevated reports whether the process may change the host's resolver
+// itself: it runs as root.
+func elevated() bool { return os.Geteuid() == 0 }

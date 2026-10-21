@@ -114,6 +114,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				checkBuildDaemon(report, cfg)
 			}
 			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
+			if !inContainer {
+				checkResolver(out, cfg)
+			}
 
 			dir := cfg.InstanceDir()
 			if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -140,6 +143,37 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			fmt.Fprintln(out, "all checks passed")
 			return nil
 		},
+	}
+}
+
+// checkResolver reports the Instance's Resolver routes and, on Windows,
+// whether port 53, which they need dns on, is free while dns is elsewhere.
+func checkResolver(out io.Writer, cfg *config.Config) {
+	recs, err := readResolverRecords()
+	if err != nil {
+		fmt.Fprintf(out, "[--  ] Resolver routes: cannot read their record: %v\n", err)
+		return
+	}
+	rec := recs[cfg.Instance]
+	if len(rec.Suffixes) == 0 {
+		return
+	}
+	h, err := resolverHostNow(true)
+	if err != nil {
+		fmt.Fprintf(out, "[--  ] Resolver routes: %v\n", err)
+		return
+	}
+	port := dnsPort(cfg)
+	checkResolverRoutes(out, h, cfg.Instance, rec, port)
+	if h.goos == "windows" && port != 53 {
+		u, err := net.ListenPacket("udp", "127.0.0.1:53")
+		if err == nil {
+			u.Close()
+			fmt.Fprintln(out, "[ok  ] port 127.0.0.1:53/udp free for --port dns=53")
+			return
+		}
+		fmt.Fprintln(out, "[WARN] port 127.0.0.1:53/udp is taken, so the Instance can't start with --port dns=53, which Resolver routes need")
+		fmt.Fprintln(out, "       fix: stop whatever holds it (Internet Connection Sharing, or a Hyper-V or WSL DNS proxy)")
 	}
 }
 

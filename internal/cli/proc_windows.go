@@ -60,3 +60,7 @@ func exitStatus(ps *os.ProcessState) int { return ps.ExitCode() }
 // `gcpemu run` runs without it: the console sends it to every process
 // attached to it.
 func groupGetsCtrlC() bool { return true }
+
+// elevated reports whether the process may change the host's resolver
+// itself: its token is elevated (an administrator's, past UAC).
+func elevated() bool { return windows.GetCurrentProcessToken().IsElevated() }

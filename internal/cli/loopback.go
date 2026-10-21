@@ -67,11 +67,7 @@ func loopbackPlan(root bool, dir string, install bool) []trustStep {
 		b.WriteString("rm -f " + plist + "\n")
 		b.WriteString(loopbackAliasLoop("ifconfig lo0 -alias 127.0.0.$i 2>/dev/null || true") + "\n")
 	}
-	args := []string{"sh", "-s"}
-	if !root {
-		args = append([]string{"sudo"}, args...)
-	}
-	return []trustStep{{args: args, stdin: []byte(b.String()), script: true}}
+	return []trustStep{{args: sudoUnless(root, "sh", "-s"), stdin: []byte(b.String()), script: true}}
 }
 
 // loopbackAliasLoop runs cmd for each i of the aliases.

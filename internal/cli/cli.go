@@ -90,6 +90,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 	root.AddCommand(o.offerCmd(), o.withdrawCmd(), o.hostAddressCmd())
 	root.AddCommand(o.caCmd())
 	root.AddCommand(loopbackCmd(goruntime.GOOS))
+	root.AddCommand(o.dnsCmd())
 	root.AddCommand(o.adminCmd())
 	return root
 }
@@ -563,6 +564,9 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				}
 			}
 			printHostServices(out, hostSvcs)
+			if recs, err := readResolverRecords(); err == nil {
+				printResolverRoutes(out, recs[cfg.Instance])
+			}
 			return notReady()
 		},
 	}

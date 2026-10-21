@@ -547,16 +547,34 @@ reaches a pod, on Linux and on a VM runtime alike. Headless Services aren't answ
 ExternalName Services are answered with their CNAME. Queries from the VPC (pods, through their
 node's DNS relay) are unaffected.
 
-Send the two domains to the emulator's DNS:
+Send the two domains to the emulator's DNS with `gcpemu dns install`, which adds a Resolver route
+for each one. Add a `--suffix` for each emulated Cloud DNS zone the host should resolve too:
 
 ```sh
-# macOS: one file per domain
-for d in svc.cluster.local gke.internal; do
-  printf 'nameserver 127.0.0.1\nport 5353\n' | sudo tee /etc/resolver/$d
-done
-# Linux with systemd-resolved, on any non-loopback link, e.g. the docker0 bridge
-sudo resolvectl dns docker0 127.0.0.1:5353 && sudo resolvectl domain docker0 '~svc.cluster.local' '~gke.internal'
+gcpemu dns install                                # svc.cluster.local and gke.internal
+gcpemu dns install --suffix example.dev.test      # adds a public zone's DNS name
+gcpemu dns uninstall --suffix example.dev.test    # removes that one route
+gcpemu dns uninstall                              # removes every route this Instance added
 ```
+
+Like `gcpemu loopback`, it prints the commands, asks before running them (`--yes` skips that,
+`--dry-run` only prints them) and runs only that step as root: through sudo on Linux and macOS,
+and through UAC on Windows, whose dialog shows even with `--yes`. It doesn't need the Instance to
+be running, and it reads the Instance's `dns` port. Running it again adds to the routes the
+Instance has and moves them all to that port. It records what it changed in the user config
+directory, so `uninstall` removes only that. It refuses a suffix another Instance routes, or one
+that configuration it didn't write already covers, and then changes nothing.
+
+- **Linux** (systemd-resolved): the routes are on a dummy link that the command creates,
+  `gcpemu-dns0` (`gcpemu-dns1` and on for other Instances) (ADR 0026). They last until reboot; `gcpemu doctor` reports routes that are gone. Without
+  systemd-resolved it refuses and prints the address and suffixes to set up by hand.
+- **macOS**: one `/etc/resolver/<suffix>` file per suffix.
+- **Windows**: one NRPT rule per suffix. NRPT can't name a port, so start the Instance with
+  `--port dns=53` first; `install` refuses otherwise. Then `Resolve-DnsName web.default.svc.cluster.local`
+  answers from the emulator.
+
+`gcpemu status` lists the Instance's Resolver routes, and `gcpemu doctor` reports any that are gone
+or point at another port.
 
 Aliases come from the `127.0.0.2`–`127.0.0.254` pool that Cloud SQL instances and forwarding rules
 also use. On macOS run `sudo gcpemu loopback install` first. When no alias is free, or on a Mac
