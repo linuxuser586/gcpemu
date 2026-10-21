@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -41,13 +40,16 @@ var release = sync.OnceValue(func() error {
 // containerizedChecks runs the Windows checks on runtime rt: the release's
 // image as a Containerized Instance, with the runtime's socket and a port
 // range, reached by the host's clients through its published ports.
+// Then the Resolver routes check runs an Instance on the host, gcpemu.exe.
 func containerizedChecks(t *testing.T, rt string) {
 	done := setup(t, rt)
-	requireTools(t, "docker", "gcloud", "kubectl", "cloud-sql-proxy")
+	// task and go build gcpemu.exe for the Resolver routes check.
+	requireTools(t, "docker", "task", "go", "gcloud", "kubectl", "cloud-sql-proxy")
+	requireBin(t)
 	useRuntime(t, rt)
 	image := os.Getenv(imageEnv)
 	if image == "" {
-		requireTools(t, "task", "go", "pnpm")
+		requireTools(t, "pnpm")
 		if err := release(); err != nil {
 			t.Fatalf("task release: %v", err)
 		}
@@ -74,6 +76,9 @@ func containerizedChecks(t *testing.T, rt string) {
 	// Not in the container: the Host attachment links the host's own
 	// loopback with the VPC, so it needs gcpemu running on the host.
 	step(t, rt, "5-host-attachment", 30*time.Minute, hostAttachment)
+	// An Instance on the host, gcpemu.exe, with dns on port 53,
+	// since NRPT can't name a port (ADR 0015, ADR 0026).
+	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
 }
 
 // containerEnv returns what `gcpemu env --shell powershell` prints in the
@@ -177,19 +182,7 @@ func containerizedSQL(t *testing.T, ctx context.Context) {
 func containerizedLoadBalancer(t *testing.T, ctx context.Context) {
 	c := containerClients(t)
 	c.run(t, ctx, "gcloud", "container", "clusters", "create", "lb", "--zone="+zone, "--num-nodes=1")
-	u := "http://" + c.vars["GCPEMU_GATEWAY"] + "/container/_emu/kubeconfig?cluster=projects/" + project + "/locations/" + zone + "/clusters/lb"
-	resp, err := http.Get(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kubeconfig, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s: %d %s", u, resp.StatusCode, kubeconfig)
-	}
-	if err := os.WriteFile(c.vars["KUBECONFIG"], kubeconfig, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	c.kubeconfig(t, "lb")
 	if ip := c.lbService(t, ctx); ip != "127.0.0.1" {
 		t.Fatalf("Service web's EXTERNAL-IP is %s, want 127.0.0.1", ip)
 	}
