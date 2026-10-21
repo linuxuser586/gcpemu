@@ -280,6 +280,24 @@ tasks:
     cmds:
       - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -count=1 -timeout 30m -v
 
+  # #606: the Pre-release host checks (docs/release.md) on each runtime in
+  # RUNTIMES, docker contexts (default: the Required runtimes). On macOS
+  # they run bin/gcpemu, so build it first, and loopback install needs
+  # sudo, whose timestamp the tests keep alive; on Linux they run only for
+  # the runtimes named. On Windows they build the release's image unless
+  # IMAGE names one. Each runtime's VLAN result goes into README.md.
+  prerelease:
+    desc: Run the Pre-release host checks on macOS or Windows (RUNTIMES=<context,...>, IMAGE=<ref> on Windows)
+    env:
+      GCPEMU_PRERELEASE_RUNTIMES: "{{.RUNTIMES}}"
+      GCPEMU_PRERELEASE_IMAGE: "{{.IMAGE}}"
+    cmds:
+      - task: build
+        if: '[ "{{OS}}" != windows ]'
+      - cmd: sudo -v
+        platforms: [darwin]
+      - go test -tags prerelease ./prerelease -count=1 -timeout 2h -v
+
   # #498: the Image readiness check. Runs IMAGE, already built, the way the
   # Dockerfile's header documents: with the Docker socket and its group, so
   # the Runtime Services start too. It fails unless Docker reports the

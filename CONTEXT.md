@@ -421,6 +421,16 @@ _Avoid_: image tests
 Starting a release's amd64 OCI image, with the host's container runtime, and requiring it to report ready before any of its tags is pushed. Unlike the Containerized Instance tests, it runs the image built from the release's binaries.
 _Avoid_: smoke test
 
+**Pre-release host checks**:
+The checks run on macOS and Windows hosts before a release is tagged, on the container runtimes CI cannot run. They drive real host clients against the Instance the way a user on that host would.
+_Avoid_: manual tests, smoke tests
+
+**Required runtime**:
+A VM runtime the Pre-release host checks must pass on before a release is tagged: Docker Desktop and Colima on macOS, Docker Desktop on Windows.
+
+**Best-effort runtime**:
+A VM runtime the Pre-release host checks run on only when one is at hand; a release does not wait for it. OrbStack and Podman machine are best-effort.
+
 **Signed release**:
 A release whose `SHA256SUMS` comes with a Sigstore bundle proving it was produced by this repository's release workflow for that same tag. Releases from the first signed release onward are always signed; setup-gcpemu refuses one that isn't, and only warns for releases before it.
 _Avoid_: "verified release" (setup-gcpemu always hash-verifies the binary, signed or not)
