@@ -7,7 +7,7 @@ import (
 )
 
 // LANBind reports where the Instance binds the --lb-bind, --gke-bind,
-// --ar-bind and --gfe-bind addresses: in its own network namespace only in
+// --ar-bind, --gfe-bind and --link-bind addresses: in its own network namespace only in
 // a Containerized Instance (Containerized's decision, without logging),
 // which is Bridge only when the runtime found its container (#564). It
 // asks the container runtime only when the Instance may be one,

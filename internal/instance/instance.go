@@ -33,6 +33,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
+	"github.com/linuxuser586/gcpemu/internal/link"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -80,6 +81,7 @@ type Instance struct {
 	containers   *containers
 	fe           *frontend.Frontend // Google frontend (FR-INT-007, FR-CORE-043)
 	hm           *hostmode.Manager  // nil unless --host-mode
+	link         *link.Manager      // links to other Instances (ADR 0027)
 	adcMu        sync.Mutex         // serialises serveADCKey
 	stateMu      sync.Mutex         // serialises Reset and State snapshots
 	shutdownOnce sync.Once
@@ -119,6 +121,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	if len(cfg.GFEBind) > 0 {
 		logger.Info("the Google front end is also served beyond loopback, over TLS to authenticated callers only", "gfeBind", cfg.GFEBind)
+	}
+	if len(cfg.LinkBind) > 0 {
+		logger.Info("the link protocol is served beyond loopback, over mutual TLS to paired Instances and to Pairing requests", "linkBind", cfg.LinkBind)
 	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, holds: map[string]error{}, done: make(chan struct{})}
@@ -172,6 +177,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	env.CA = authority
 	in.Env = env
+	if in.link, err = in.newLink(); err != nil {
+		return nil, fmt.Errorf("links: %w", err)
+	}
 	in.containers = &containers{in: in}
 	env.Containers = in.containers
 	in.gw = gateway.New(env, in.Log)
@@ -357,6 +365,7 @@ func (in *Instance) Start(ctx context.Context) error {
 		}
 	}
 	in.startGFELAN()
+	in.startLink()
 	in.warnContainerBind(ctx)
 	in.warnContainerized(ctx)
 	if err := in.writeRuntimeFiles(); err != nil {
@@ -636,6 +645,7 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		}
 		in.hm.Stop()
 		in.fe.StopLAN()
+		errs = append(errs, in.link.Close())
 		errs = append(errs, in.containers.shutdown())
 		errs = append(errs, in.fe.Close())
 		in.Events.Close() // end event streams so the gateway can drain

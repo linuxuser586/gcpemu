@@ -346,6 +346,48 @@ container on the host's network qualifies) and no `--port gfe-lan`; otherwise ru
 
 `gcpemu status` lists the addresses as `gfe-lan`.
 
+### Linked Instances
+
+A team can share one long-lived Instance on an office machine while each member keeps their own on a
+laptop. Two Instances first pair, after which each accepts the other over a link
+(`docs/adr/0027-instances-delegate-whole-projects-to-paired-instances.md`). Pairing is approved on
+both sides, because it gives the other machine the authority to assert Principals.
+
+The Instance that accepts Pairing requests, the office one here, passes `--link-bind <address>`
+(repeatable; `linkBind` / `GCPEMU_LINK_BIND`). It then serves the link protocol on
+`<address>:4511` (`--port link=N` for another port) over mutual TLS: each side presents a
+certificate from its own Instance CA. Nothing else is served there, and every request but a
+Pairing request needs a Pairing, so `--link-bind` needs no `--i-understand-this-is-insecure`.
+`gcpemu status` lists the addresses as `link`.
+
+```sh
+# on the laptop: shows the office Instance's name, Instance ID and CA fingerprint, and asks to go on
+gcpemu link pair 192.168.1.20
+# on the office machine: shows the laptop's request, with its own fingerprint, and asks to approve it
+gcpemu link requests
+gcpemu link approve            # or: gcpemu link approve <request> / gcpemu link reject <request>
+```
+
+`link pair` waits up to 5 minutes for the approval. Compare the fingerprints with the other
+machine's owner before approving; `--yes` skips the questions, for scripts. Once approved, each side
+pins the other's Instance CA, and names the link after the other Instance (`--name` for another
+name, which is needed when two links would share one). The Admin API serves the same steps under
+`/_emu/v1/links`, for the Web console.
+
+- `gcpemu link list` lists the links. `gcpemu link unpair <name>` removes one; that side stops
+  accepting the other at once. Unpair it on the other side too.
+- An Instance that is not paired, or whose Instance CA no longer matches the one pinned, is refused,
+  and the error says which. `gcpemu ca rotate` therefore breaks an Instance's Pairings: both sides
+  report it, naming the link. Pairing again replaces the old Pairing; the request then warns which
+  link it replaces, so that a stranger claiming that Instance's ID is not approved by mistake.
+- Instances negotiate a link protocol version. One with no version in common is refused, at Pairing
+  and on connect, with an error naming both versions.
+- Pairings are configuration, kept in `<data-dir>/links.json`: Reset and State snapshots leave them
+  alone, and a Persistent Instance keeps them across restarts. An Ephemeral Instance keeps them in
+  memory.
+- `gcpemu doctor` reports each link: its state, whether the other Instance answers, and at which
+  protocol version. A link whose other side has no `--link-bind` is inbound only.
+
 ### Container runtime
 
 Cloud SQL, GKE, Cloud NAT and Cloud Build need Docker Engine (>= 24) or Podman (>= 4.9,
@@ -832,7 +874,7 @@ shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints i
 host-only checks (loopback aliases, Windows' excluded port ranges) are notes for the host, and
 every fix names a `docker run` flag or a host command.
 
-`--lb-bind`, `--gke-bind`, `--ar-bind` and `--gfe-bind` serve the LAN only from the host's
+`--lb-bind`, `--gke-bind`, `--ar-bind`, `--gfe-bind` and `--link-bind` serve the LAN only from the host's
 network. On Linux, run the image with `--network host` and they work as documented. On a bridge
 network they bind only the container's own addresses, which only container networks reach, and
 the emulator warns at start. Publishing a port on a LAN address is no substitute: the published

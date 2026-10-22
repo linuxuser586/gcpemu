@@ -124,6 +124,7 @@ Services create and manage the GKE and Cloud SQL containers; the data planes car
 | 5000 | Artifact Registry (OCI) |
 | 5353 | DNS (UDP and TCP) |
 | 8988 | Metadata server (host side) |
+| 4511 | Link protocol, on `--link-bind` addresses only (FR-LINK-001) |
 | 54320+ | Cloud SQL instance public IPs, one per instance |
 | 127.0.0.x:80/443 or 18080+ | LB forwarding rules |
 | 127.0.0.x:3307 and :5432 | Cloud SQL instance PRIMARY addresses on a VM runtime (ADR 0005), 127.0.0.1 without loopback aliases |
@@ -265,6 +266,27 @@ The web console is a React single-page app compiled into the binary and served a
 | FR-UI-021 | First load to interactive on localhost | ≤ 1 s | S |
 | FR-UI-022 | Large lists (objects, records, log lines) stay responsive by virtualizing rows | 100,000 rows | S |
 | FR-UI-023 | Playwright end-to-end tests cover every **M** console requirement on Chromium, Firefox and WebKit | 100% of M | M |
+
+### 4.9 Linked Instances
+
+An Instance forwards requests it does not answer itself to a Delegate: a Linked Instance for the Projects delegated to it, or an External emulator for the APIs delegated to it (ADR 0027). Nothing here brings VPC peering, interconnect or VPN into scope (10.3): only API requests cross a link, and clients reach a Linked Instance's Data plane directly through its LAN listeners.
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-LINK-001 | `--link-bind <address>` serves the link protocol over mutual TLS on port 4511, each side presenting a certificate from its own Instance CA. `gcpemu link pair <address>` asks another Instance to pair, showing its name, Instance ID and CA fingerprint for the user to approve; the other Instance shows the request through the CLI and the Admin API, and pairs only once approved there too. Each side then pins the other's Instance CA. | C |
+| FR-LINK-002 | A link request from an Instance that is not paired, or whose Instance CA no longer matches the pinned one, is refused with an error naming the reason. `gcpemu link unpair <name>` removes the trust on that side at once. A rotated Instance CA breaks its Pairings, and both sides report this, naming the link. | C |
+| FR-LINK-003 | Linked Instances negotiate a link protocol version; an incompatible Instance is refused at Pairing and on connect, with an error naming both versions. | C |
+| FR-LINK-004 | Pairings are configuration: they persist for a Persistent Instance, survive Reset and are listed by `gcpemu link list`. `gcpemu doctor` reports each link's state, whether it is reachable, and its protocol version. | C |
+| FR-LINK-010 | A Linked Instance shares Projects (`gcpemu link share`) and the front Instance delegates them (`gcpemu link delegate`). Every request naming a Delegated Project, whatever the Service, is forwarded over the link, REST and gRPC, with the caller's Principal asserted; the Linked Instance checks IAM at its own IAM enforcement level. A Project the front Instance already has cannot be delegated, and a reference to a Delegated Project never creates it locally. | C |
+| FR-LINK-011 | A Delegated Project whose Linked Instance is unreachable fails with UNAVAILABLE naming it, and the front Instance's readiness does not depend on it. Reset and State snapshots act on local Projects only, the Request log marks forwarded requests, and a Deterministic Instance's guarantee covers local Projects only. | C |
+| FR-LINK-012 | Requests that name no Project are routed across links: a bucket by the ownership list the Linked Instance keeps current, a service account flow by the Project in its email, and `projects/-` wildcards and aggregated lists by asking every Instance and merging the answers. Creating a bucket whose name exists in either Instance fails with 409. | C |
+| FR-LINK-013 | Over a link, a Linked Instance reports the Data plane addresses of its LAN listeners (`--gke-bind`, `--ar-bind`, `--lb-bind`, `--gfe-bind`), chosen by caller; a Data plane not bound on the LAN is reported as unavailable, naming the missing flag, never as a loopback address. | C |
+| FR-LINK-014 | `--sql-bind <address>` exposes Cloud SQL instances' Postgres on the LAN, requiring credentials whatever the IAM enforcement level, so that a Delegated Project's Cloud SQL instances have an address over a link. | C |
+| FR-LINK-015 | An Instance with `--link-bind` advertises itself over mDNS/DNS-SD, and `gcpemu link discover` lists Discovered Instances, without pairing them or taking port 5353 from Host mode. | C |
+| FR-LINK-016 | The Web console lists Delegated Projects in the Project picker, and shows a Links view with Pairing requests to approve or reject; an unreachable Linked Instance shows as unavailable, never as an empty Project. | C |
+| FR-LINK-020 | An API with no Service (Firestore, Datastore, Spanner, Bigtable, …) can be delegated to an External emulator by address (`--external <api>=<address>`); the API gateway, including the Google front end in Host mode, forwards its REST and gRPC requests unchanged. Delegating an API that a Service serves is refused. | S |
+| FR-LINK-021 | A Delegated API has no IAM check and no Fidelity claim, except that on `--gfe-bind` its requests still need credentials the Instance issued. An unreachable External emulator returns UNAVAILABLE naming it, does not affect readiness, and is reported by `gcpemu doctor`. | S |
+| FR-LINK-022 | `gcpemu env` prints the External emulators' variables (`FIRESTORE_EMULATOR_HOST`, `SPANNER_EMULATOR_HOST`, …) pointing at the API gateway, and the Web console lists the Delegated APIs. | S |
 
 ## 5. Functional requirements: services
 

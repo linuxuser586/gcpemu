@@ -673,6 +673,166 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links:
+    get:
+      summary: This Instance's links and their state, without dialling them (`gcpemu link list`).
+      operationId: listLinks
+      description: >-
+        Each Pairing, with the other Instance's pinned Instance CA. A link is
+        broken once this Instance's CA was rotated after Pairing. Pairings are
+        configuration: Reset and State snapshots leave them alone (ADR 0027).
+      responses:
+        "200":
+          description: The links, by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  links: { type: array, items: { $ref: "#/components/schemas/Link" } }
+                  fingerprint: { type: string, description: "This Instance's own CA fingerprint, for the other side of a Pairing to compare." }
+    post:
+      summary: Pair with the Instance at a link address (`gcpemu link pair`).
+      operationId: pairLink
+      description: >-
+        Asks the other Instance to pair, presenting the Instance CA with the
+        fingerprint given, and waits, up to 5 minutes, for it to approve. The
+        caller approves this side by sending the fingerprint it was shown by
+        identify. Refusals by the other Instance (rejected, incompatible
+        protocol version) are 409, failing to reach it 502.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, fingerprint]
+              properties:
+                address: { type: string, description: "host:port of the other Instance's --link-bind listener (port 4511 if omitted)." }
+                fingerprint: { type: string, description: "The other Instance's CA fingerprint, sha256:HEX." }
+                name: { type: string, description: The link's name here; defaults to the other Instance's name. }
+      responses:
+        "200":
+          description: Paired.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pairing" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/identify:
+    post:
+      summary: Ask the Instance at a link address who it is, without pairing.
+      operationId: identifyLink
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address: { type: string }
+      responses:
+        "200":
+          description: The other Instance's identity.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  id: { type: string, description: Its Instance ID. }
+                  fingerprint: { type: string, description: The fingerprint of the Instance CA it presented. }
+                  version: { type: integer, description: The newest link protocol version it speaks. }
+                  minVersion: { type: integer }
+        "502": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/status:
+    get:
+      summary: Dial each link and report whether it is reachable, and at which protocol version (`gcpemu doctor`).
+      operationId: linkStatus
+      responses:
+        "200":
+          description: Each link's status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  links:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        state: { type: string, enum: [paired, broken] }
+                        inboundOnly: { type: boolean, description: "The other Instance has no --link-bind address, so this one cannot dial it." }
+                        reachable: { type: boolean }
+                        version: { type: integer }
+                        error: { type: string, description: Why it is not reachable or broken, naming the link. }
+  /_emu/v1/links/{name}:
+    delete:
+      summary: Unpair a link (`gcpemu link unpair`); this Instance stops accepting the other at once.
+      operationId: unpairLink
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/requests:
+    get:
+      summary: Incoming Pairing requests waiting for this Instance's approval (`gcpemu link requests`).
+      operationId: listPairingRequests
+      responses:
+        "200":
+          description: The waiting requests, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        replaces: { type: string, description: "The link that approving it replaces: one to the same Instance ID, pinned to another CA." }
+                        name: { type: string, description: The requesting Instance's name. }
+                        instanceId: { type: string }
+                        fingerprint: { type: string }
+                        address: { type: string }
+                        version: { type: integer, description: The link protocol version negotiated. }
+                        received: { type: string, format: date-time }
+  /_emu/v1/links/requests/{id}/approve:
+    post:
+      summary: Approve a Pairing request (`gcpemu link approve`), pinning the requester's Instance CA.
+      operationId: approvePairingRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, description: The link's name here; defaults to the requesting Instance's name. }
+      responses:
+        "200":
+          description: Paired.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pairing" }
+        "400": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/requests/{id}/reject:
+    post:
+      summary: Reject a Pairing request (`gcpemu link reject`).
+      operationId: rejectPairingRequest
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "404": { $ref: "#/components/responses/Error" }
   /_emu/v1/shutdown:
     post:
       summary: Shut the instance down gracefully (`gcpemu stop`).
@@ -1235,6 +1395,25 @@ components:
             properties:
               error: { type: string }
   schemas:
+    Pairing:
+      type: object
+      properties:
+        name: { type: string, description: The link's name on this Instance. }
+        instance: { type: string, description: The other Instance's name. }
+        instanceId: { type: string }
+        address: { type: string, description: "The other Instance's --link-bind address; absent when it only connects to this one." }
+        fingerprint: { type: string, description: "The pinned Instance CA's fingerprint, sha256:HEX." }
+        ca: { type: string, description: The pinned Instance CA, PEM. }
+        localFingerprint: { type: string, description: This Instance's CA fingerprint at Pairing. }
+        version: { type: integer, description: The link protocol version negotiated at Pairing. }
+        pairedAt: { type: string, format: date-time }
+    Link:
+      allOf:
+        - { $ref: "#/components/schemas/Pairing" }
+        - type: object
+          properties:
+            state: { type: string, enum: [paired, broken] }
+            problem: { type: string, description: Why the link is broken. }
     IamEnforcement:
       type: object
       required: [level]

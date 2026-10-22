@@ -39,6 +39,7 @@ var flagFields = map[string]string{
 	"gke-bind":                      "GKEBind",
 	"ar-bind":                       "ARBind",
 	"gfe-bind":                      "GFEBind",
+	"link-bind":                     "LinkBind",
 	"port":                          "Ports",
 	"port-range":                    "PortRange",
 	"iam-mode":                      "IAMMode",
@@ -92,6 +93,7 @@ func New(factories map[string]instance.Factory) *cobra.Command {
 	root.AddCommand(loopbackCmd(goruntime.GOOS))
 	root.AddCommand(o.dnsCmd())
 	root.AddCommand(o.adminCmd())
+	root.AddCommand(o.linkCmd())
 	return root
 }
 
@@ -161,6 +163,7 @@ func (o *rootOpts) instanceFlags(f *pflag.FlagSet) {
 	f.StringSliceVar(&o.flags.GKEBind, "gke-bind", nil, "also serve every GKE cluster's Kubernetes API on this address (repeatable), e.g. a LAN IP; it then accepts only real credentials")
 	f.StringSliceVar(&o.flags.ARBind, "ar-bind", nil, "also serve the Artifact Registry registry on this address (repeatable), e.g. a LAN IP, over TLS and to authenticated callers only")
 	f.StringSliceVar(&o.flags.GFEBind, "gfe-bind", nil, "also serve the Google front end (storage.googleapis.com, oauth2.googleapis.com, LOCATION-docker.pkg.dev, ...) on port 443 of this address (repeatable), e.g. a LAN IP, to authenticated callers only")
+	f.StringSliceVar(&o.flags.LinkBind, "link-bind", nil, "also serve the link protocol on port 4511 of this address (repeatable), e.g. a LAN IP, over mutual TLS to Instances this one paired with (see gcpemu link)")
 	f.StringSliceVar(&o.ports, "port", nil, "port overrides, e.g. gateway=0,gcs=4443; a bare 0 makes every listener pick a free port")
 	f.StringVar(&o.flags.PortRange, "port-range", "", "LO-HI range that free ports are picked from, e.g. 20000-20999")
 	f.StringVar(&o.flags.IAMMode, "iam-mode", config.IAMAudit, "IAM enforcement level: off, audit, enforce")

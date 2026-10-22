@@ -87,6 +87,10 @@ type Config struct {
 	// CA and only to authenticated callers, whatever the IAM enforcement
 	// level (ADR 0021).
 	GFEBind []string `yaml:"gfeBind" env:"GFE_BIND"`
+	// LinkBind lists addresses on which the Instance serves the link
+	// protocol to Linked Instances, over mutual TLS and only to Instances
+	// it paired with, except for Pairing requests (ADR 0027).
+	LinkBind []string `yaml:"linkBind" env:"LINK_BIND"`
 	// AdminToken is the Admin token used when the API gateway is bound
 	// beyond loopback (FR-UI-009); empty means a random one per start.
 	// There is no flag, so that it never shows in a process listing.
@@ -603,14 +607,14 @@ func ResolveServices(sel []string) []string {
 // ApplyFlags overlays the fields of flags whose Go field names are in changed.
 func (c *Config) ApplyFlags(flags *Config, changed map[string]bool) { c.overlay(flags, changed) }
 
-// LANBind is one of the --lb-bind, --gke-bind, --ar-bind and --gfe-bind
-// flags (Flag, without "--") and its addresses.
+// LANBind is one of the --lb-bind, --gke-bind, --ar-bind, --gfe-bind and
+// --link-bind flags (Flag, without "--") and its addresses.
 type LANBind struct {
 	Flag  string
 	Addrs []string
 }
 
-// LANBinds lists the four --*-bind flags, set or not, in that order.
+// LANBinds lists the five --*-bind flags, set or not, in that order.
 func (c *Config) LANBinds() []LANBind {
-	return []LANBind{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}}
+	return []LANBind{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}, {"link-bind", c.LinkBind}}
 }

@@ -1,5 +1,5 @@
 // Package lanbind holds what the emulator says about the --lb-bind,
-// --gke-bind, --ar-bind and --gfe-bind addresses in a Containerized
+// --gke-bind, --ar-bind, --gfe-bind and --link-bind addresses in a Containerized
 // Instance, in one place so that start, the Services and doctor say the
 // same (#497, ADR 0011).
 //
