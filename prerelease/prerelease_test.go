@@ -15,6 +15,7 @@ import (
 	"regexp"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -86,6 +87,8 @@ var summary struct {
 	commit   string
 	results  []result
 	versions map[string]string
+	// notes says why a runtime's setup didn't pass, by runtime.
+	notes map[string]string
 }
 
 func record(rt, step, outcome string) {
@@ -133,6 +136,7 @@ func setup(t *testing.T, rt string) (done func()) {
 func TestMain(m *testing.M) {
 	summary.commit = commit()
 	summary.versions = map[string]string{}
+	summary.notes = map[string]string{}
 	stop := keepSudo()
 	code := m.Run()
 	stop()
@@ -192,6 +196,14 @@ func report() (requiredSkipped bool) {
 		}
 		b.WriteByte('\n')
 	}
+	if len(summary.notes) > 0 {
+		b.WriteByte('\n')
+	}
+	for _, rt := range rts {
+		if n := summary.notes[rt]; n != "" {
+			fmt.Fprintf(&b, "- %s: %s\n", rt, n)
+		}
+	}
 	if requiredSkipped {
 		b.WriteString("\nA Required runtime was skipped, so the release is not checked.\n")
 	}
@@ -208,22 +220,57 @@ func report() (requiredSkipped bool) {
 
 // ---- Runtimes ----
 
+// minMemory is the least memory a runtime's VM may report for the
+// Reference stack's cluster and Istio: Colima's and Podman machine's
+// default 2 GiB runs out. A VM given 8 GiB reports a little less, its
+// kernel's share.
+const minMemory = 7 << 30
+
+// memoryHint says how to give runtime rt's VM 8 GiB.
+func memoryHint(rt string) string {
+	switch tableRow(rt) {
+	case "Docker Desktop":
+		return "Docker Desktop: Settings > Resources > Memory limit"
+	case "Colima":
+		return "colima stop && colima start --memory 8"
+	case "OrbStack":
+		return "orbctl config set memory_mib 8192"
+	case "Podman machine":
+		return "podman machine stop && podman machine set --memory 8192 && podman machine start"
+	}
+	return "see the runtime's settings"
+}
+
 // useRuntime points docker and gcpemu at the docker context rt for the
 // rest of t, and records the runtime's version. A Required runtime that
-// is missing or not running fails t; a Best-effort one skips it.
+// is missing, not running or short of memory fails t; a Best-effort one
+// skips it.
 func useRuntime(t *testing.T, rt string) {
 	t.Helper()
-	missing := t.Skipf
-	if isRequired(rt) {
-		missing = t.Fatalf
+	missing := func(format string, args ...any) {
+		t.Helper()
+		reason := fmt.Sprintf(format, args...)
+		summary.Lock()
+		summary.notes[rt], _, _ = strings.Cut(reason, "\n")
+		summary.Unlock()
+		if isRequired(rt) {
+			t.Fatal(reason)
+		}
+		t.Skip(reason)
 	}
 	if out, err := exec.Command("docker", "context", "inspect", rt).CombinedOutput(); err != nil {
 		missing("runtime %s: no docker context %q: %v\n%s", rt, rt, err, out)
 	}
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", rt)
-	if out, err := exec.Command("docker", "info", "--format", "{{.OperatingSystem}}").CombinedOutput(); err != nil {
+	out, err := exec.Command("docker", "info", "--format", "{{.MemTotal}}").CombinedOutput()
+	if err != nil {
 		missing("runtime %s does not answer: %v\n%s", rt, err, out)
+	}
+	if mem, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64); err != nil {
+		t.Fatalf("runtime %s: docker info's MemTotal %q: %v", rt, out, err)
+	} else if mem < minMemory {
+		missing("runtime %s has %.1f GiB of memory; the Reference stack needs its VM given 8 GiB (%s)", rt, float64(mem)/(1<<30), memoryHint(rt))
 	}
 	v := runtimeVersion(rt)
 	summary.Lock()

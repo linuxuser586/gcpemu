@@ -60,9 +60,9 @@ func TestContainerizedSQLHostClients(t *testing.T) {
 	image := name + ":test"
 	buildEmulatorImage(t, image)
 	proxyBin := authProxy(t)
-	gid := hosttest.SocketGroup(t, "/var/run/docker.sock")
+	socket := hosttest.SocketArgs(t)
 	run := func(t *testing.T, suffix string, env ...string) (string, string) {
-		args := []string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid}
+		args := append([]string{}, socket...)
 		for _, e := range env {
 			args = append(args, "-e", e)
 		}

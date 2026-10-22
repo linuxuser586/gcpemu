@@ -4,6 +4,7 @@ package prerelease
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -135,8 +136,10 @@ func requireAliases(t *testing.T, ctx context.Context) {
 	requireDoctor(t, doctor(t), aliasesPresent)
 }
 
-// twoSQLInstances is macOS step 2: two Cloud SQL instances at once, each on
-// a loopback alias of its own, which host clients reach together.
+// twoSQLInstances is macOS step 2: two Cloud SQL instances at once, each
+// with a loopback alias of its own as its PRIMARY address, on which host
+// clients reach both together. GCPEMU_SQL_<INSTANCE> is a published port
+// on 127.0.0.1 whatever the aliases, so it isn't what this checks.
 func twoSQLInstances(t *testing.T, ctx context.Context) {
 	requireAliases(t, ctx)
 	h := startHost(t, ctx, "", "sql")
@@ -148,31 +151,48 @@ func twoSQLInstances(t *testing.T, ctx context.Context) {
 	for _, name := range []string{"one", "two"} {
 		c.run(t, ctx, "gcloud", "sql", "users", "set-password", "postgres", "--instance="+name, "--password=pw")
 	}
-	env := func() string { return h.env(t) }
-	one := hosttest.EnvValue(t, env, "GCPEMU_SQL_ONE")
-	two := hosttest.EnvValue(t, env, "GCPEMU_SQL_TWO")
-	hostOne, _, _ := net.SplitHostPort(one)
-	hostTwo, _, _ := net.SplitHostPort(two)
-	if !strings.HasPrefix(hostOne, "127.0.0.") || !strings.HasPrefix(hostTwo, "127.0.0.") || hostOne == hostTwo {
-		t.Fatalf("GCPEMU_SQL_ONE=%s and GCPEMU_SQL_TWO=%s, want different 127.0.0.x addresses", one, two)
+	one, two := c.primaryIP(t, ctx, "one"), c.primaryIP(t, ctx, "two")
+	if !loopbackAlias(one) || !loopbackAlias(two) || one == two {
+		t.Fatalf("the PRIMARY addresses of one and two are %s and %s, want different 127.0.0.x other than 127.0.0.1", one, two)
 	}
 	// Both connections open before either queries: at the same time.
+	one, two = net.JoinHostPort(one, "5432"), net.JoinHostPort(two, "5432")
 	connOne, connTwo := pgConnect(t, ctx, one), pgConnect(t, ctx, two)
 	selectOne(t, ctx, connOne, "one at "+one)
 	selectOne(t, ctx, connTwo, "two at "+two)
 }
 
+// primaryIP returns Cloud SQL instance name's PRIMARY address.
+func (c *clients) primaryIP(t *testing.T, ctx context.Context, name string) string {
+	t.Helper()
+	var inst struct {
+		IPAddresses []struct{ Type, IPAddress string }
+	}
+	out := c.run(t, ctx, "gcloud", "sql", "instances", "describe", name, "--format=json")
+	if err := json.Unmarshal([]byte(out), &inst); err != nil {
+		t.Fatalf("gcloud sql instances describe %s: %v\n%s", name, err, out)
+	}
+	for _, a := range inst.IPAddresses {
+		if a.Type == "PRIMARY" {
+			return a.IPAddress
+		}
+	}
+	t.Fatalf("Cloud SQL instance %s has no PRIMARY address:\n%s", name, out)
+	return ""
+}
+
 const aliasesPresent = "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present"
 
-// sudo runs `sudo gcpemu loopback <verb>`.
+// sudo runs `sudo gcpemu loopback <verb> --yes`: without a terminal to
+// confirm on, it would abort.
 func sudo(t *testing.T, ctx context.Context, verb string) {
 	t.Helper()
 	bin, err := filepath.Abs(gcpemuBin)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.CommandContext(ctx, "sudo", "-n", bin, "loopback", verb).CombinedOutput(); err != nil {
-		t.Errorf("sudo gcpemu loopback %s: %v\n%s", verb, err, out)
+	if out, err := exec.CommandContext(ctx, "sudo", "-n", bin, "loopback", verb, "--yes").CombinedOutput(); err != nil {
+		t.Errorf("sudo gcpemu loopback %s --yes: %v\n%s", verb, err, out)
 	}
 }
 
