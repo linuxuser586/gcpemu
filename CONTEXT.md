@@ -456,7 +456,7 @@ Tests that build the OCI image and drive a Containerized Instance from the host.
 _Avoid_: image tests
 
 **Image readiness check**:
-Starting a release's amd64 OCI image, with the host's container runtime, and requiring it to report ready before any of its tags is pushed. Unlike the Containerized Instance tests, it runs the image built from the release's binaries.
+Starting each platform's OCI image of a release, with the host's container runtime, and requiring every one to report ready before any of its tags is pushed. Unlike the Containerized Instance tests, it runs the image built from the release's binaries.
 _Avoid_: smoke test
 
 **Pre-release host checks**:

@@ -2,11 +2,12 @@ name: release
 # A vX.Y.Z tag publishes the static binaries and SHA256SUMS that
 # setup-gcpemu downloads and verifies (FR-CI-001), and moves the major tag
 # (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves. The image
-# job then publishes the same linux binaries as the OCI image (NFR-PORT-004).
-# Both jobs sign what they publish with keyless cosign, and the binaries get
-# an SBOM each and SLSA provenance (NFR-SEC-005); docs/release.md shows how
-# to verify them. Run the manual macOS checks in docs/release.md before
-# pushing the tag.
+# job then publishes the same linux binaries as the OCI image (NFR-PORT-004),
+# once image-check has run each platform's image natively (#498, #630).
+# The release and image jobs sign what they publish with keyless cosign,
+# and the binaries get an SBOM each and SLSA provenance (NFR-SEC-005);
+# docs/release.md shows how to verify them. Run the manual macOS checks in
+# docs/release.md before pushing the tag.
 on:
   push:
     tags: ["v*.*.*"]
@@ -114,10 +115,47 @@ jobs:
           git tag -f "$major" "$GITHUB_REF_NAME^{commit}"
           git push -f origin "refs/tags/$major"
 
-  # A separate job, so a registry outage never holds up the binaries that
-  # setup-gcpemu downloads, and it can be re-run on its own.
-  image:
+  # #498, #630: the Image readiness check. Each platform's image, built on
+  # a runner of its own architecture from the same dist binaries and
+  # Dockerfile as the image job's push, must report ready before any tag is
+  # pushed. A failure on either leaves the GitHub release published without
+  # an image (docs/release.md).
+  image-check:
     needs: release
+    strategy:
+      # Each leg reports on its own; the image job runs only if both pass.
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-binaries
+          path: dist
+      - uses: docker/setup-buildx-action@v4
+      # No platforms: buildx builds for the runner's own.
+      - uses: docker/build-push-action@v7
+        with:
+          context: dist
+          file: Dockerfile
+          load: true
+          tags: gcpemu:check
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - name: Image readiness check
+        run: task image-check IMAGE=gcpemu:check
+
+  # A separate job, so a registry outage never holds up the binaries that
+  # setup-gcpemu downloads, and it can be re-run on its own. It rebuilds
+  # both platforms rather than reusing image-check's builds: the Dockerfile
+  # only copies files.
+  image:
+    needs: image-check
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -130,23 +168,6 @@ jobs:
           name: linux-binaries
           path: dist
       - uses: docker/setup-buildx-action@v4
-      # #498: the Image readiness check. The amd64 image, from the same
-      # dist binaries and Dockerfile as the push below, must report ready
-      # before any tag is pushed; the push reuses this build's cache. A
-      # failure leaves the GitHub release published without an image
-      # (docs/release.md).
-      - uses: docker/build-push-action@v7
-        with:
-          context: dist
-          file: Dockerfile
-          platforms: linux/amd64
-          load: true
-          tags: gcpemu:check
-      - uses: go-task/setup-task@v2
-        with:
-          version: 3.54.0
-      - name: Image readiness check
-        run: task image-check IMAGE=gcpemu:check
       - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
