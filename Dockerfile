@@ -13,7 +13,7 @@
 #   docker run -v /var/run/docker.sock:/var/run/docker.sock \
 #     --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
 #     -p 4510:4510 ... IMAGE
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
 
 ARG TARGETARCH
 COPY --chmod=0755 gcpemu-linux-${TARGETARCH} /gcpemu
