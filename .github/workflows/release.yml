@@ -67,27 +67,27 @@ jobs:
           subject-path: dist/gcpemu-*
       # One per binary: keep these in step with the platforms in the
       # Taskfile's cross task.
-      - uses: actions/attest-sbom@v4
+      - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-linux-amd64
           sbom-path: sbom/gcpemu-linux-amd64.spdx.json
-      - uses: actions/attest-sbom@v4
+      - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-linux-arm64
           sbom-path: sbom/gcpemu-linux-arm64.spdx.json
-      - uses: actions/attest-sbom@v4
+      - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-darwin-amd64
           sbom-path: sbom/gcpemu-darwin-amd64.spdx.json
-      - uses: actions/attest-sbom@v4
+      - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-darwin-arm64
           sbom-path: sbom/gcpemu-darwin-arm64.spdx.json
-      - uses: actions/attest-sbom@v4
+      - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-windows-amd64.exe
           sbom-path: sbom/gcpemu-windows-amd64.spdx.json
-      - uses: actions/attest-sbom@v4
+      - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-windows-arm64.exe
           sbom-path: sbom/gcpemu-windows-arm64.spdx.json
