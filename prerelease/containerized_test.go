@@ -54,12 +54,11 @@ func containerizedChecks(t *testing.T, rt string) {
 			t.Fatalf("task release: %v", err)
 		}
 		arch := hosttest.Docker(t, "version", "--format", "{{.Server.Arch}}")
-		hosttest.Docker(t, "build", "-q", "--build-arg", "TARGETARCH="+arch, "-t", rcImage, "-f", filepath.Join(repo, "Dockerfile"), filepath.Join(repo, "dist"))
+		hosttest.Docker(t, "build", "-q", "--provenance=false", "--output", "type=docker,oci-mediatypes=false", "--build-arg", "TARGETARCH="+arch, "-t", rcImage, "-f", filepath.Join(repo, "Dockerfile"), filepath.Join(repo, "dist"))
 		image = rcImage
 	}
 	_, _ = exec.Command("docker", "rm", "-f", container).CombinedOutput()
-	args := []string{"-p", "127.0.0.1:" + portRange + ":" + portRange,
-		"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", hosttest.SocketGroup(t, "/var/run/docker.sock")}
+	args := append(hosttest.SocketArgs(t), "-p", "127.0.0.1:"+portRange+":"+portRange)
 	if strings.Contains(rt, "podman") {
 		args = append(args, "-e", "GCPEMU_VM_RUNTIME=true")
 	}

@@ -38,17 +38,22 @@ func Docker(t testing.TB, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// SocketGroup returns the group that owns the runtime's socket where the
-// runtime runs, which on a VM runtime is inside the VM: on Docker Desktop
-// root (0), whatever the host's socket says, or whether the host has one.
-// It skips the test when containers cannot mount the socket.
-func SocketGroup(t testing.TB, sock string) string {
+// SocketArgs returns the docker run args that mount the runtime's socket
+// at /var/run/docker.sock, with the group that owns it where the runtime
+// runs, which on a VM runtime is inside the VM: on Docker Desktop root (0),
+// whatever the host's socket says, or whether the host has one. They turn
+// off SELinux labelling, without which Podman machine's SELinux denies the
+// container the socket. It skips the test when containers cannot mount the
+// socket.
+func SocketArgs(t testing.TB) []string {
 	t.Helper()
-	out, err := exec.Command("docker", "run", "--rm", "-v", sock+":"+sock, "busybox:1.37", "stat", "-c", "%g", sock).CombinedOutput()
+	const sock = "/var/run/docker.sock"
+	mount := []string{"-v", sock + ":" + sock, "--security-opt", "label=disable"}
+	out, err := exec.Command("docker", append(append([]string{"run", "--rm"}, mount...), "busybox:1.37", "stat", "-c", "%g", sock)...).CombinedOutput()
 	if err != nil {
 		t.Skipf("containers cannot mount the Docker socket %s: %v\n%s", sock, err, out)
 	}
-	return strings.TrimSpace(string(out))
+	return append(mount, "--group-add", strings.TrimSpace(string(out)))
 }
 
 // RunEmulator runs the image as an Ephemeral Instance in container name,

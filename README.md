@@ -386,10 +386,10 @@ runtime; give the subnetwork a range that doesn't overlap, and everything else k
 
 | Runtime | VLAN (8021q) support |
 | --- | --- |
-| Docker Desktop | not yet checked |
-| Colima | not yet checked |
-| OrbStack | not yet checked |
-| Podman machine | not yet checked |
+| Docker Desktop | supported (4.96.2) |
+| Colima | supported (0.10.3) |
+| OrbStack | supported (2.2.4) |
+| Podman machine | supported (6.1.4) |
 
 The emulator copies a static linux gcpemu binary into containers as a Sidecar agent, for the
 runtime's architecture. On a linux host of that architecture it's its own executable. Otherwise
@@ -906,7 +906,9 @@ leading slash (`//var/run/docker.sock`, `//s`, `//gcpemu`).
 Podman serves the same API on a socket of its own (best-effort): put its path in place of the
 host side of both `-v` mounts above, keeping `/var/run/docker.sock` and `/s` in the container.
 Rootless Podman on Linux serves `$XDG_RUNTIME_DIR/podman/podman.sock`; a rootful Podman machine
-on macOS and Windows (`podman machine set --rootful`) serves `/run/podman/podman.sock`.
+on macOS and Windows (`podman machine set --rootful`) serves `/run/podman/podman.sock`. Where
+SELinux enforces, as in a Podman machine, add `--security-opt label=disable` to both `docker run`
+lines, or SELinux denies the container the socket (`stat: can't stat '/s': Permission denied`).
 
 The emulator finds its own container and joins the networks it creates (taking each
 subnetwork's reserved second-to-last address), so it works on a normal bridge or compose

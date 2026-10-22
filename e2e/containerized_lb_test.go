@@ -49,10 +49,8 @@ func TestContainerizedForwardingRules(t *testing.T) {
 
 	t.Run("socket", func(t *testing.T) {
 		const own, rng = "28080", "20410"
-		gid := hosttest.SocketGroup(t, "/var/run/docker.sock")
 		gw := hosttest.RunEmulator(t, name+"-socket", image, "",
-			[]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid,
-				"-p", "127.0.0.1:" + own + ":8080", "-p", "127.0.0.1:" + rng + ":" + rng},
+			append(hosttest.SocketArgs(t), "-p", "127.0.0.1:"+own+":8080", "-p", "127.0.0.1:"+rng+":"+rng),
 			"--port-range", rng+"-"+rng)
 		gcpemuEnv := func() string { return hosttest.Docker(t, "exec", name+"-socket", "/gcpemu", "env") }
 		lb := newLBClient(t, gw)
@@ -146,10 +144,8 @@ func TestContainerizedRuleServiceContention(t *testing.T) {
 	name := fmt.Sprintf("gcpemu-e2e-contention-%d", time.Now().UnixNano())
 	image := name + ":test"
 	buildEmulatorImage(t, image)
-	gid := hosttest.SocketGroup(t, "/var/run/docker.sock")
 	gw := hosttest.RunEmulator(t, name, image, "",
-		[]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid,
-			"-e", "GCPEMU_VM_RUNTIME=true", "-p", addr + ":" + port},
+		append(hosttest.SocketArgs(t), "-e", "GCPEMU_VM_RUNTIME=true", "-p", addr+":"+port),
 		"--port-range", port+"-"+port)
 	gcpemuEnv := func() string { return hosttest.Docker(t, "exec", name, "/gcpemu", "env") }
 	doctor := func() string { return hosttest.Docker(t, "exec", name, "/gcpemu", "doctor") }

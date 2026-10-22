@@ -70,8 +70,10 @@ to be tagged. It runs every check below on each runtime, one after the other, th
 context, and confirms each choice with `gcpemu doctor`. By default it checks the Required runtimes:
 **Docker Desktop** (`desktop-linux`) and **Colima** (`colima`) on macOS, and **Docker Desktop** in
 Linux-containers mode on Windows. A Required runtime that isn't installed or running fails the run.
-OrbStack and Podman machine are best-effort: name them when one is at hand, and a release doesn't
-wait for them:
+Each runtime's VM needs 8 GiB of memory for the Reference stack (Colima's and Podman machine's
+default 2 GiB runs out): one with less than 7 GiB as `docker info` reports it fails setup if
+Required and is skipped otherwise, and a note under the table says why and how to give it more. OrbStack and Podman machine are best-effort: name them
+when one is at hand, and a release doesn't wait for them:
 
 ```sh
 task prerelease RUNTIMES=desktop-linux,colima,orbstack
@@ -97,8 +99,8 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
    and the Reference stack finishes within its 10-minute budget. See "Reference stack (SRS 11.2)"
    in the README.
 2. **Two Cloud SQL instances at once:** with the loopback aliases installed (and taken out again
-   if the check added them), `GCPEMU_SQL_ONE` and `GCPEMU_SQL_TWO` are on different `127.0.0.x`
-   addresses, and both connections answer `select 1` while both are open.
+   if the check added them), the instances' `PRIMARY` addresses are different `127.0.0.x`, and
+   connections to both on port 5432 answer `select 1` while both are open.
 3. **A GKE `LoadBalancer` Service from the host:** the Service's EXTERNAL-IP is a loopback
    address, and nginx answers at `GCPEMU_GKE_LB_DEFAULT_WEB_80` on that address.
 4. **VLAN (8021q) support:** the Translated network tests pass on a runtime with VLAN support. On

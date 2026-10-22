@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,8 +34,10 @@ import (
 // at 127.0.0.1: the Service's own port when published at the same host
 // port, otherwise one of --port-range, and `gcpemu env` prints which. A
 // Service with no free published port has no ingress. The "auto" case
-// runs as the runtime's info says; "forced" sets GCPEMU_VM_RUNTIME=true,
-// and runs only where "auto" is not on a VM runtime already.
+// runs as the runtime's info says, except where off Linux the info names
+// no VM runtime (Colima, Podman machine): every runtime there is one, and
+// ADR 0012 has it set GCPEMU_VM_RUNTIME=true, which "forced" does. "forced"
+// runs only where "auto" is not on a VM runtime already.
 //
 // It builds the image from the repository's Dockerfile, whose base image
 // comes from the internet, so it runs only with GCPEMU_NET_TESTS=1.
@@ -46,8 +49,7 @@ func TestContainerizedLBIngress(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker is not on PATH")
 	}
-	const sock = "/var/run/docker.sock"
-	gid := hosttest.SocketGroup(t, sock)
+	socket := hosttest.SocketArgs(t)
 	// The default VPC goes on a Fallback range; plain's range stays its own.
 	decoyNetwork(t, "10.128.0.0/20")
 
@@ -58,12 +60,17 @@ func TestContainerizedLBIngress(t *testing.T) {
 	auto := runtime.DecideVM("auto", true, runtime.Info{OS: info[0], Kernel: info[1]})
 	t.Logf("runtime %q, kernel %q: VM runtime %s", info[0], info[1], auto)
 
-	t.Run("auto", func(t *testing.T) { containerizedLBIngress(t, name+"-auto", image, gid, auto.On, nil) })
+	t.Run("auto", func(t *testing.T) {
+		if !auto.On && goruntime.GOOS != "linux" {
+			t.Skipf("VM runtime %s, but on %s every runtime is one, whose node addresses the host can't reach: the forced case covers it", auto, goruntime.GOOS)
+		}
+		containerizedLBIngress(t, name+"-auto", image, socket, auto.On, nil)
+	})
 	t.Run("forced", func(t *testing.T) {
 		if auto.On {
 			t.Skip("the auto case ran on a VM runtime already")
 		}
-		containerizedLBIngress(t, name+"-forced", image, gid, true, []string{"-e", "GCPEMU_VM_RUNTIME=true"})
+		containerizedLBIngress(t, name+"-forced", image, socket, true, []string{"-e", "GCPEMU_VM_RUNTIME=true"})
 	})
 }
 
@@ -80,9 +87,9 @@ const (
 // checks the ingress of LoadBalancer Services on an ordinary and a
 // Translated network: on published ports when vm, otherwise at node
 // addresses.
-func containerizedLBIngress(t *testing.T, name, image, gid string, vm bool, env []string) {
+func containerizedLBIngress(t *testing.T, name, image string, socket []string, vm bool, env []string) {
 	const plainRange = "10.213.0.0/20"
-	args := append([]string{"-v", "/var/run/docker.sock:/var/run/docker.sock", "--group-add", gid}, env...)
+	args := append(append([]string{}, socket...), env...)
 	var start []string
 	if vm {
 		args = append(args, "-p", "127.0.0.1:"+vmRange+":"+vmRange, "-p", "127.0.0.1:"+vmOwnPort+":"+vmOwnPort)
@@ -271,7 +278,10 @@ func inRange(port, r string) bool {
 }
 
 // buildEmulatorImage builds the repository's Dockerfile around a static
-// gcpemu for the runtime's architecture, and removes it at cleanup.
+// gcpemu for the runtime's architecture, and removes it at cleanup. The
+// image is loaded into the runtime, which Podman's docker-container builder
+// does not do by default, with Docker media types, since Podman drops the
+// HEALTHCHECK of an OCI image.
 func buildEmulatorImage(t *testing.T, tag string) {
 	t.Helper()
 	arch := hosttest.Docker(t, "version", "--format", "{{.Server.Arch}}")
@@ -281,7 +291,7 @@ func buildEmulatorImage(t *testing.T, tag string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build gcpemu (%s): %v\n%s", arch, err, out)
 	}
-	hosttest.Docker(t, "build", "-q", "--build-arg", "TARGETARCH="+arch, "-t", tag, "-f", "../Dockerfile", dir)
+	hosttest.Docker(t, "build", "-q", "--provenance=false", "--output", "type=docker,oci-mediatypes=false", "--build-arg", "TARGETARCH="+arch, "-t", tag, "-f", "../Dockerfile", dir)
 	t.Cleanup(func() { _, _ = exec.Command("docker", "rmi", "-f", tag).CombinedOutput() })
 }
 
