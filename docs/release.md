@@ -11,16 +11,18 @@ commit `docs/releases/vX.Y.Z.md` before tagging: the workflow puts it above that
 
 ## Image readiness check
 
-Before it pushes any image tag, the release workflow builds the amd64 image from the release's
-binaries and runs it with the runner's Docker socket. The image must report healthy within 120
-seconds. If it doesn't, the GitHub release and its binaries stay published, but neither Docker Hub
-nor GHCR gets any of that release's tags, `latest` included. The job prints the container's logs
-and its last health-check output. Fix the cause and release it under a new patch tag.
+Before it pushes any image tag, the release workflow checks each platform's image natively: the
+amd64 image on an amd64 runner and the arm64 image on an arm64 runner. Each is built from the
+release's binaries and run with its runner's Docker socket, and must report healthy within 120
+seconds. If either doesn't, the GitHub release and its binaries stay published, but neither Docker
+Hub nor GHCR gets any of that release's tags, `latest` included. The failing job prints the
+container's logs and its last health-check output. Fix the cause and release it under a new patch
+tag.
 
-To run the check locally after `task release`, on a host with Docker:
+To run the check locally after `task release`, on a host with Docker and Go, for the host's architecture:
 
 ```sh
-docker build --build-arg TARGETARCH=amd64 -t gcpemu:check -f Dockerfile dist && task image-check IMAGE=gcpemu:check
+docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist && task image-check IMAGE=gcpemu:check
 ```
 
 ## Signing

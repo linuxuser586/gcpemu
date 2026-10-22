@@ -214,14 +214,13 @@ jobs:
           restore-keys: gcpemu-e2e-${{ runner.arch }}-
       - name: Reference stack (SRS 11.2) and Containerized Instance tests
         run: task e2e
-      # #498: the release workflow's Image readiness check, run on every
-      # change so it keeps working between releases, on an image built from
-      # task cross output.
+      # #498, #630: the release workflow's Image readiness check, run on
+      # every change so it keeps working between releases. Each runner
+      # checks its own platform's image, built from task cross output.
       - name: Image readiness check
-        if: matrix.runner == 'ubuntu-24.04'
         run: |
           task cross
-          docker build --build-arg TARGETARCH=amd64 -t gcpemu:check -f Dockerfile dist
+          docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist
           task image-check IMAGE=gcpemu:check
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
