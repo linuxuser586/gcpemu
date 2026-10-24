@@ -248,7 +248,7 @@ The web console is a React single-page app compiled into the binary and served a
 | Cloud Storage | Bucket browser by prefix, object metadata, generations, notifications | Drag-and-drop upload, download, delete, restore a generation, generate a V4 signed URL | M |
 | Pub/Sub | Topics, subscriptions, backlog, oldest unacked age, dead-letter counts | Publish with attributes and ordering key, pull and ack, peek without ack, seek, purge | M |
 | Cloud SQL | Instances, databases, users, flags, connection names and strings | Start, stop, restart; SQL query runner with read-only default; backups and restore | M |
-| GKE | Clusters, node pools, nodes, namespaces, workloads and pod status, NEGs | Download kubeconfig, resize node pool, view pod logs | M |
+| GKE | Clusters with their mode (Standard or Autopilot), node pools, nodes (read-only on Autopilot clusters), namespaces, workloads and pod status, NEGs | Download kubeconfig, resize node pool (Standard clusters only), view pod logs | M |
 | Load Balancer | Forwarding rules with local listener addresses, proxies, URL maps rendered as a route tree, backend health per network endpoint, cert status | Edit URL map; "test a URL" shows which route and backend would serve a given host, path and headers | M |
 | Cloud CDN | Cache settings per backend, hit ratio, cached entries and sizes | Invalidate a path, purge all | M |
 | Certificate Manager | Certificates with per-domain authorization status, maps and map entries with the load balancers using them, DNS authorizations, trust configs, issuance configs, TLS policies | Create, edit, delete; rotate the Instance CA | M |
@@ -384,7 +384,7 @@ Each GKE cluster is a real, CNCF-conformant Kubernetes cluster (a k3s-class dist
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| FR-GKE-001 | Clusters (Standard mode): create, get, list, update, delete, with `Operation`s; `endpoint`, `masterAuth.clusterCaCertificate`, `currentMasterVersion`, `status` and `location` (zonal or regional) reported. | M |
+| FR-GKE-001 | Clusters (Standard and Autopilot): create, get, list, update, delete, with `Operation`s; `endpoint`, `masterAuth.clusterCaCertificate`, `currentMasterVersion`, `status` and `location` (zonal or regional) reported. | M |
 | FR-GKE-002 | Kubernetes minor version selected by `initialClusterVersion`/release channel from the three most recent minors; `getServerConfig` reports them. Upgrades of control plane and node pools by version change. | M |
 | FR-GKE-003 | Node pools: create, delete, resize (adds/removes node containers), labels, taints, machine type stored; `nodeCount` honoured up to a host limit (default 5 nodes per instance). Node arch = host arch. | M |
 | FR-GKE-004 | `gcloud container clusters get-credentials` and `gke-gcloud-auth-plugin` produce a working kubeconfig; the API server accepts emulator IAM tokens and maps IAM roles (`container.admin`, `container.developer`, `container.viewer`) plus RBAC to Kubernetes auth. | M |
@@ -395,9 +395,12 @@ Each GKE cluster is a real, CNCF-conformant Kubernetes cluster (a k3s-class dist
 | FR-GKE-009 | Istio (or any mesh) can be installed with standard Helm charts; the cluster supports `LoadBalancer`-type Services via an internal L4 allocator. | M |
 | FR-GKE-010 | GKE Ingress and Gateway API controllers (`gke-l7-global-external-managed`) that create LB resources from Kubernetes objects. | S |
 | FR-GKE-011 | Network policy enforcement (Dataplane V2 semantics). | S |
-| FR-GKE-012 | Autopilot mode, excluded from v1.0; until then, clusters with Autopilot enabled are rejected as UNIMPLEMENTED. | C |
+| FR-GKE-012 | Autopilot clusters (`autopilot.enabled`): regional only; Workload Identity, Dataplane V2 network policy, a release channel and Shielded nodes are set as GKE sets them, and fields that contradict them are rejected with GKE's error. `workloadPolicyConfig.allowNetAdmin` is stored and updatable (FR-GKE-016). The node pools API reports the Autopilot-managed pools; creating, resizing or deleting them fails with `FAILED_PRECONDITION`. | M |
 | FR-GKE-013 | Cluster settings that install components, on create and update, removed (keeping CRDs, user objects and synced Secrets) when disabled: `networkConfig.gatewayApiConfig` installs the Gateway API CRDs of the channel (v1.5.1); `secretManagerConfig` installs the Secrets Store CSI driver as `secrets-store-gke.csi.k8s.io` with the `gke` provider reading Secret Manager as the pod's Workload Identity, with optional rotation; `secretSyncConfig` runs the `SecretSync` (`secret-sync.gke.io/v1`) controller that copies Secret Manager versions into Kubernetes Secrets. IAM matches GKE's `principal://…/subject/ns/NS/sa/KSA` and `principalSet://…/namespace/NS` members. | S |
 | FR-GKE-014 | System metrics: a cluster whose `monitoringConfig.componentConfig` enables `SYSTEM_COMPONENTS` exports, at `OTEL_METRIC_EXPORT_INTERVAL`, to the OTLP endpoint of the standard OTel env vars in the Instance's environment (`OTEL_EXPORTER_OTLP_[METRICS_]ENDPOINT`, `_PROTOCOL` `grpc` or `http/protobuf`, `_HEADERS` etc.): container, pod and node CPU and memory (working set) usage, container CPU/memory requests and limits, node allocatable, and container restarts with the last termination reason (e.g. `OOMKilled`). The Instance reads the kubelets and API server itself; names follow the OTel Collector's `kubeletstats` and `k8s_cluster` receivers, with resource attributes for cluster, namespace, pod, container, node and owning workload. With no endpoint set the setting is recorded only. No Cloud Monitoring API is served (10.3). | S |
+| FR-GKE-015 | Autopilot node provisioning: a cluster starts with one node and never has fewer. A node is added when a pod is Pending for lack of capacity and removed once empty. Each node advertises the allocatable CPU, memory and pods of the machine shape GKE would choose, whatever the host has (ADR 0031). Autopilot and Standard nodes share the host node limit (FR-GKE-003); pods beyond it stay Pending with GKE's scale-up-failure events. `cloud.google.com/compute-class` and Spot node selectors are recorded as labels on the provisioned node. | M |
+| FR-GKE-016 | Workload restrictions on Autopilot clusters, with GKE's messages and warnings. Refused: privileged containers, `hostPath`, `hostNetwork` and `hostPort`, capabilities beyond Autopilot's defaults (`NET_ADMIN` only with `allowNetAdmin`), and user writes to `kube-system`. Resource requests follow GKE's rules for clusters with bursting: at least 50m CPU and 52 MiB memory; memory or CPU raised to keep 1–6.5 GiB per vCPU; 0.5 vCPU, 2 GiB memory and 1 GiB ephemeral storage where none is set; init and sidecar containers counted as GKE counts them. | M |
+| FR-GKE-017 | `CheckAutopilotCompatibility` reports the workloads of a Standard cluster that FR-GKE-016 would reject or change. | C |
 
 ### 5.8 Application Load Balancer
 
@@ -543,13 +546,14 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | --- | --- | --- | --- |
 | NFR-PERF-001 | Cold start to ready, all services except GKE and Cloud SQL | ≤ 2 s | M |
 | NFR-PERF-002 | Cloud SQL instance insert to `RUNNABLE` | ≤ 10 s | M |
-| NFR-PERF-003 | GKE cluster create to `RUNNING` with 1 node pool of 1 node | ≤ 60 s | M |
+| NFR-PERF-003 | GKE cluster create to `RUNNING` with 1 node pool of 1 node, or an Autopilot cluster with its first node | ≤ 60 s | M |
 | NFR-PERF-004 | Idle RSS of the binary, all non-container services | ≤ 150 MB | M |
 | NFR-PERF-005 | Control-plane API p99 latency (calls that return no Operation, no Operation latency) | ≤ 20 ms | M |
 | NFR-PERF-006 | Pub/Sub publish-to-pull throughput, 1 KB messages | ≥ 10,000 msg/s | S |
 | NFR-PERF-007 | LB + CDN cache hit p99 added latency | ≤ 2 ms | S |
 | NFR-PERF-008 | LB throughput, cache miss to a local backend | ≥ 5,000 req/s | S |
 | NFR-PERF-009 | Binary size (compressed download) | ≤ 120 MB | S |
+| NFR-PERF-010 | Autopilot pod Pending for lack of capacity to running on a new node | ≤ 30 s | M |
 
 ### 8.2 Portability
 
@@ -634,7 +638,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 
 | Service | Real | Faithful | Recorded only |
 | --- | --- | --- | --- |
-| GKE | Kubernetes, container runtime, pod networking, Secrets Store CSI driver | Cluster API, node pools, Workload Identity, NEG sync, private nodes, Gateway API CRD install, Secret Manager add-on and secret synchronization, system metrics (`monitoringConfig` `SYSTEM_COMPONENTS`) over OTLP | Machine types, autoscaling bounds, maintenance windows, logging config, monitoring config other than `SYSTEM_COMPONENTS` |
+| GKE | Kubernetes, container runtime, pod networking, Secrets Store CSI driver | Cluster API, node pools, Autopilot node provisioning, settings and Workload restrictions, Workload Identity, NEG sync, private nodes, Gateway API CRD install, Secret Manager add-on and secret synchronization, system metrics (`monitoringConfig` `SYSTEM_COMPONENTS`) over OTLP | Machine types (except the allocatable of Autopilot nodes), autoscaling bounds, Autopilot compute classes and Spot selectors, maintenance windows, logging config, monitoring config other than `SYSTEM_COMPONENTS` |
 | ALB | HTTP/TLS proxying | URL map semantics, health checks, backend mTLS, managed-cert lifecycle | Global anycast, regional failover, capacity scaler, Cloud Armor |
 | Cloud CDN | HTTP cache | Cache modes, keys, TTLs, invalidation, signed URLs | Edge locations, cache fill between PoPs |
 | Cloud NAT | Packet egress | Coverage rules, port allocation reporting, logging | Exact port-allocation algorithm, NAT IP reputation |
@@ -653,7 +657,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 - Billing, quotas (except a configurable soft cap per resource type), budgets, SLAs
 - Organisation, folder and Shared VPC hierarchies; VPC peering; Private Service Connect; interconnect and VPN
 - Classic Application Load Balancer and network (L4) load balancers except the in-cluster `LoadBalancer` Service allocator
-- GKE Autopilot, GKE Enterprise/fleet features, Config Sync, Binary Authorization, GPUs, Windows nodes
+- GKE Enterprise/fleet features, Config Sync, Binary Authorization, GPUs, Windows nodes
 - Cloud SQL for MySQL and SQL Server, and AlloyDB
 - Performance testing that depends on GCP's real latency, scale or network topology
 - Running as a shared multi-user service; the emulator is single-user by design
@@ -670,7 +674,7 @@ v1.0 is accepted when every **M** requirement has a passing automated test and t
 | Conformance suite: the same Go tests run against the emulator and, nightly, against a real GCP sandbox project; responses diffed field by field (ignoring IDs and timestamps) | Faithful-level behaviour, drift detection |
 | Client compatibility tests for every row of 7.1 | IF-001 to IF-009 |
 | OpenTofu acceptance: apply → plan (expect no diff) → destroy for each supported resource type | IF-001 |
-| Kubernetes conformance (Sonobuoy quick mode) on an emulated GKE cluster | FR-GKE-001 to FR-GKE-003 |
+| Kubernetes conformance (Sonobuoy quick mode) on an emulated Standard and Autopilot cluster | FR-GKE-001 to FR-GKE-003, FR-GKE-012 |
 | Benchmarks in CI with thresholds | Section 8.1 |
 
 ### 11.2 Reference stack acceptance test
@@ -698,7 +702,7 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | Default IAM enforcement level | `audit` |
 | Backend mTLS API surface | Follow the current googleapis/googleapis protos on GitHub |
 | GKE on macOS | Supported in v1.0 through the VM relay (ADR 0005) |
-| Autopilot | Excluded from v1.0 |
+| Autopilot | In v1.0, Faithful; the Reference stack stays on a Standard cluster unchanged, and Autopilot is accepted by its own test (11.4) |
 | `gcloud builds submit` log streaming without Host mode | Accepted and documented. gcloud reads the log from `https://storage.UNIVERSE_DOMAIN/BUCKET/log-BUILD_ID.txt` and ignores Endpoint overrides, so under the Invalid universe it never reaches the log, and its final poll fails the command even when the Build succeeds; `gcloud builds log` fails the same way. Without Host mode, users pass `--async` or set `options.logging: NONE` in the build config (`--suppress-logs` still reads the log), and read the log with `gcloud storage cat`, the Web console or `logUrl`. Streaming works in Host mode, with `gcpemu env --no-universe`. |
 
 ### 11.4 Release plan
@@ -708,7 +712,7 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | M1 | Core, IAM, GCS, Pub/Sub, DNS, AR | Go libs, gcloud and OpenTofu tests green |
 | M2 | Cloud SQL, GKE, NAT | Workload Identity and private cluster tests green |
 | M3 | ALB, CDN, backend mTLS, NEGs | Reference stack steps 1–4 and 9 green |
-| v1.0 | All | Full Reference stack on both arches; all **M** requirements tested |
+| v1.0 | All | Full Reference stack on both arches; an Autopilot cluster from OpenTofu `enable_autopilot = true` passes Kubernetes conformance, scales a Deployment past one node and rejects a privileged pod; all **M** requirements tested |
 | M4 | Cloud Build | `gcloud builds submit --tag` and `--config` in the Client compatibility suite and `google_cloudbuild_trigger` in OpenTofu acceptance green; all **M** FR-CB requirements tested |
 
 The web console ships with each milestone: the shell, dashboard, request log and IAM views in M1, then each service's view in the milestone that delivers the service.
