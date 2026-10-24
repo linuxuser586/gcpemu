@@ -96,6 +96,12 @@ type Config struct {
 	HasProject func(id string) bool
 	// Serve serves the requests paired Instances forward; nil refuses them.
 	Serve ServeFunc
+	// Authenticate returns the Principal of an access token this Instance
+	// issued, which paired Instances ask about (see Manager.Authenticate).
+	Authenticate func(ctx context.Context, token string) (principal string, ok bool)
+	// Buckets returns this Instance's Cloud Storage buckets and their
+	// Projects, which paired Instances watch (see Manager.BucketOwner).
+	Buckets func() map[string]string
 }
 
 // Manager manages an Instance's links: its --link-bind listeners, the
@@ -113,6 +119,15 @@ type Manager struct {
 	client   *tls.Certificate
 	// transports forward over each link (see transport).
 	transports map[string]*http.Transport
+	// tokens holds what Linked Instances said of tokens, by token.
+	tokens map[string]tokenAnswer
+	// watching is set by StartWatching; watchers stop watching the buckets
+	// of each link a Project is delegated to, and buckets holds them, by
+	// link and then bucket.
+	watching bool
+	watchMu  sync.Mutex // serialises watch, which reads the Delegations
+	watchers map[string]context.CancelFunc
+	buckets  map[string]map[string]string
 	// warnings holds, by link name, the latest refused connection that
 	// claimed that link's Instance ID with another CA, until the Instance
 	// pinned connects again. It is unverified, so it is never stored and
@@ -128,7 +143,8 @@ func New(cfg Config) *Manager {
 	if cfg.ApprovalTimeout == 0 {
 		cfg.ApprovalTimeout = DefaultApprovalTimeout
 	}
-	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}, transports: map[string]*http.Transport{}}
+	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}, transports: map[string]*http.Transport{}, tokens: map[string]tokenAnswer{},
+		watchers: map[string]context.CancelFunc{}, buckets: map[string]map[string]string{}}
 }
 
 // Identity is what an Instance tells another about itself.
@@ -222,6 +238,10 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	servers := m.servers
 	m.servers, m.closed = nil, true
+	for _, stop := range m.watchers {
+		stop()
+	}
+	clear(m.watchers)
 	for _, t := range m.transports {
 		t.CloseIdleConnections()
 	}
@@ -249,6 +269,8 @@ func (m *Manager) handler() http.Handler {
 	})
 	mux.HandleFunc("POST /link/v1/pairings", m.servePair)
 	mux.HandleFunc("GET /link/v1/shared", m.serveShared)
+	mux.HandleFunc("POST /link/v1/tokens", m.serveToken)
+	mux.HandleFunc("GET /link/v1/buckets", m.serveBuckets)
 	mux.HandleFunc("GET /link/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		p, v, ok := m.admit(w, r)
 		if !ok {
@@ -734,6 +756,7 @@ func (m *Manager) Unpair(name string) error {
 	m.mu.Lock()
 	delete(m.warnings, name)
 	m.mu.Unlock()
+	defer m.watch()
 	return m.cfg.Store.Update(func(ps []Link) ([]Link, error) {
 		for i, p := range ps {
 			if p.Name == name {
