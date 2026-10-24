@@ -197,9 +197,9 @@ func (e *Env) ServiceDir(name string) (string, error) {
 }
 
 // Listen opens a TCP listener for a named port on the configured bind
-// address and records it in Endpoints.
+// address (ListenBind) and records it in Endpoints.
 func (e *Env) Listen(name string) (net.Listener, error) {
-	l, err := e.ListenTCP(e.Config.Bind, e.Config.Port(name))
+	l, err := e.ListenBind(e.Config.Port(name), true)
 	if err != nil {
 		return nil, err
 	}

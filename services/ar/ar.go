@@ -1,6 +1,6 @@
 // Package ar emulates Artifact Registry (SRS 5.3): the artifactregistry v1
 // control plane over gRPC and REST on the gateway, and an OCI Distribution
-// v1.1 registry on its own port (default 5000).
+// v1.1 registry on its own port (default 4561).
 //
 // # Control plane
 //
@@ -24,10 +24,10 @@
 //   - Host mode: the request Host is "LOCATION-docker.pkg.dev" and the path
 //     is /v2/PROJECT/REPO/IMAGE[/...]. The location comes from the host.
 //   - Location in the path: /v2/LOCATION-docker.pkg.dev/PROJECT/REPO/IMAGE,
-//     e.g. "localhost:5000/us-docker.pkg.dev/p/r/app". This keeps the real
+//     e.g. "localhost:4561/us-docker.pkg.dev/p/r/app". This keeps the real
 //     image reference intact after a registry-host prefix and is
 //     unambiguous.
-//   - Plain port: /v2/PROJECT/REPO/IMAGE, e.g. "localhost:5000/p/r/app". The
+//   - Plain port: /v2/PROJECT/REPO/IMAGE, e.g. "localhost:4561/p/r/app". The
 //     repository is found by project and repository ID across locations; if
 //     the same ID exists in several locations the request fails with
 //     NAME_INVALID naming them, and the caller must use one of the forms

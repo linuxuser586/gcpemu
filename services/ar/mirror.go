@@ -23,7 +23,7 @@ import (
 // (pullthrough.go). Clients without mirror support (crane, ko, docker
 // with an explicit host) can use the path form instead:
 //
-//	localhost:5000/docker.io/library/busybox:latest
+//	localhost:4561/docker.io/library/busybox:latest
 //
 // The first path segment then names the upstream registry; it is
 // recognised by containing a '.' or ':' (or being "localhost"), which no

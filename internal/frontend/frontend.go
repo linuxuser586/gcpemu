@@ -157,13 +157,7 @@ func (f *Frontend) Serves(name string) bool { return Serves(f.Hosts(), name) }
 // the endpoint is recorded, so it never moves.
 func (f *Frontend) Start() error {
 	port := f.env.Config.Port(Endpoint)
-	var l net.Listener
-	var err error
-	if port == 0 && f.keepsRange() {
-		l, err = net.Listen("tcp", net.JoinHostPort(f.env.Config.Bind, "0"))
-	} else {
-		l, err = f.env.ListenTCP(f.env.Config.Bind, port)
-	}
+	l, err := f.env.ListenBind(port, port != 0 || !f.keepsRange())
 	if err != nil {
 		return fmt.Errorf("Google front end listen %s: %w", net.JoinHostPort(f.env.Config.Bind, strconv.Itoa(f.env.Config.Port(Endpoint))), err)
 	}

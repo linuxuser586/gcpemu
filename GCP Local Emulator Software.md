@@ -121,7 +121,7 @@ Services create and manage the GKE and Cloud SQL containers; the data planes car
 | 4510 | API gateway (all APIs, REST and gRPC) |
 | 4443 | Cloud Storage (for `STORAGE_EMULATOR_HOST`) |
 | 8085 | Pub/Sub gRPC (for `PUBSUB_EMULATOR_HOST`) |
-| 5000 | Artifact Registry (OCI) |
+| 4561 | Artifact Registry (OCI) |
 | 5353 | DNS (UDP and TCP) |
 | 8988 | Metadata server (host side) |
 | 4511 | Link protocol, on `--link-bind` addresses only (FR-LINK-001) |

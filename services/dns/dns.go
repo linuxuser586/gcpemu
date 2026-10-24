@@ -137,7 +137,7 @@ const (
 
 // listenPair binds TCP and then UDP to port.
 func (s *Service) listenPair(ctx context.Context, port int) (net.Listener, net.PacketConn, error) {
-	tl, err := s.env.ListenTCP(s.env.Config.Bind, port)
+	tl, err := s.env.ListenBind(port, true)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dns tcp listen: %w", err)
 	}

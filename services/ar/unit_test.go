@@ -76,7 +76,7 @@ func TestHostLocation(t *testing.T) {
 	if l, ok := hostLocation("us-central1-docker.pkg.dev:443"); !ok || l != "us-central1" {
 		t.Fatal(l, ok)
 	}
-	if _, ok := hostLocation("localhost:5000"); ok {
+	if _, ok := hostLocation("localhost:4561"); ok {
 		t.Fatal("localhost matched")
 	}
 }

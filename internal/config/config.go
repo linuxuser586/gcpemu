@@ -155,7 +155,7 @@ var DefaultPorts = map[string]int{
 	"gateway":  4510,
 	"gcs":      4443,
 	"pubsub":   8085,
-	"ar":       5000,
+	"ar":       4561,
 	"dns":      5353,
 	"metadata": 8988,
 }
