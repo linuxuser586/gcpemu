@@ -46,6 +46,7 @@ var flagFields = map[string]string{
 	"log-format":                    "LogFormat",
 	"log-level":                     "LogLevel",
 	"lro-latency":                   "LROLatency",
+	"external":                      "External",
 	"deterministic":                 "Deterministic",
 	"strict-projects":               "StrictProjects",
 	"seed":                          "Seed",
@@ -65,6 +66,7 @@ type rootOpts struct {
 	console    bool
 	ports      []string
 	lro        map[string]string
+	external   map[string]string
 	configFile string
 	factories  map[string]instance.Factory
 }
@@ -122,6 +124,7 @@ func (o *rootOpts) loadOver(fs *pflag.FlagSet, c config.Config) (*config.Config,
 		o.flags.Ports = ports
 	}
 	o.flags.LROLatency = o.lro
+	o.flags.External = o.external
 	if fs.Changed("console") {
 		o.flags.Console = &o.console
 	}
@@ -167,6 +170,7 @@ func (o *rootOpts) instanceFlags(f *pflag.FlagSet) {
 	f.StringVar(&o.flags.DefaultPrincipal, "default-principal", "user:dev@example.com", "principal for unauthenticated requests")
 	f.StringVar(&o.flags.LogFormat, "log-format", "text", "log format: text or json")
 	f.StringVar(&o.flags.LogLevel, "log-level", "info", "log level")
+	f.StringToStringVar(&o.external, "external", nil, "delegate an API no Service serves to the External emulator at host:port, keyed by API name, e.g. firestore=localhost:8080 (repeatable)")
 	f.StringToStringVar(&o.lro, "lro-latency", nil, "Operation latency per Service ID, e.g. gke=20s or *=1s (default instant)")
 	f.BoolVar(&o.flags.Deterministic, "deterministic", false, "run a Deterministic Instance: reproducible IDs and a fake clock")
 	f.BoolVar(&o.flags.StrictProjects, "strict-projects", false, "require projects to be declared")

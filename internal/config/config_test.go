@@ -369,3 +369,38 @@ func TestBuildConcurrency(t *testing.T) {
 		t.Error("concurrency 0 accepted")
 	}
 }
+
+// External emulators are keyed by API name and configured by address
+// (#623, ADR 0027).
+func TestExternal(t *testing.T) {
+	c := Defaults()
+	if err := c.LoadEnv(func(k string) string {
+		if k == "GCPEMU_EXTERNAL" {
+			return "firestore=localhost:8080, spanner=127.0.0.1:9010"
+		}
+		return ""
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"firestore": "localhost:8080", "spanner": "127.0.0.1:9010"}
+	if !reflect.DeepEqual(c.External, want) {
+		t.Fatalf("External = %v, want %v", c.External, want)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []map[string]string{
+		{"firestore": "localhost"},          // no port
+		{"firestore": "localhost:http"},     // not a port number
+		{"firestore": ""},                   // no address
+		{"Firestore": "localhost:8080"},     // not an API name
+		{"firestore.v1": "localhost:8080"},  // not an API name
+		{"": "localhost:8080"},              // no API name
+		{"firestore": "http://localhost:1"}, // a URL, not an address
+	} {
+		c.External = bad
+		if err := c.Validate(); err == nil {
+			t.Errorf("--external %v: expected an error", bad)
+		}
+	}
+}

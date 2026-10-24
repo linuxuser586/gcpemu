@@ -346,6 +346,46 @@ container on the host's network qualifies) and no `--port gfe-lan`; otherwise ru
 
 `gcpemu status` lists the addresses as `gfe-lan`.
 
+### External emulators
+
+Firestore, Datastore, Spanner and Bigtable are not emulated, but Google ships emulators for them.
+`--external <api>=<host:port>` (repeatable; `external` / `GCPEMU_EXTERNAL`, e.g.
+`firestore=localhost:8080,spanner=localhost:9010`) makes the API gateway forward that API to such
+an External emulator, or to any server speaking the API's wire format, so clients use one address
+and Host mode covers the API too (`docs/adr/0027-instances-delegate-whole-projects-to-paired-instances.md`).
+The key is the API name, the first label of its `googleapis.com` host. An API that a running
+Service serves can't be delegated: `--external storage=…` fails at start because `gcs` serves it,
+while `--external pubsub=…` works with `--services` leaving out `pubsub`.
+
+```sh
+gcloud emulators firestore start --host-port=localhost:8080 &
+docker run -d -p 9010:9010 gcr.io/cloud-spanner-emulator/emulator
+gcpemu start --external firestore=localhost:8080 --external spanner=localhost:9010
+eval "$(gcpemu env)"
+```
+
+- gRPC, streaming included, goes through as it comes, for the API's `google.<api>.*` services
+  and for `google.longrunning` calls naming one of its Operations (a Spanner database's, say).
+  REST goes through under `/<api>/` on the API gateway, with the prefix taken off, and Firestore's
+  and Datastore's REST paths also at the gateway's root, where their clients send them to
+  `FIRESTORE_EMULATOR_HOST` and `DATASTORE_EMULATOR_HOST`. The External emulator must serve REST
+  on the same address for REST clients: Spanner's emulator serves REST on a port of its own, so
+  delegate it for gRPC clients.
+- `gcpemu env` points `FIRESTORE_EMULATOR_HOST`, `DATASTORE_EMULATOR_HOST`,
+  `SPANNER_EMULATOR_HOST`, `BIGTABLE_EMULATOR_HOST` or `PUBSUB_EMULATOR_HOST` at the API gateway
+  for the APIs delegated. In Go tests, `emutest.WithExternal("firestore", addr)` does the same as
+  the flag.
+- In Host mode, and on `--gfe-bind`, the Google front end also serves the API's real hostnames
+  (`firestore.googleapis.com`; for Bigtable also `bigtableadmin.googleapis.com`), so clients
+  need no Endpoint override. On `--gfe-bind` a request still needs credentials the Instance
+  issued before it is forwarded.
+- No IAM check is made for a Delegated API and the emulator claims no Fidelity for it: whatever
+  the External emulator does is what clients get. Reset, State snapshots, Fault injection and
+  the Request log leave Delegated APIs out.
+- An External emulator that can't be reached answers UNAVAILABLE, naming the API and its
+  address. The Instance stays ready without it. `gcpemu doctor` reports each External emulator,
+  and so do the Web console's dashboard and `GET /_emu/v1/external`.
+
 ### Container runtime
 
 Cloud SQL, GKE, Cloud NAT and Cloud Build need Docker Engine (>= 24) or Podman (>= 4.9,

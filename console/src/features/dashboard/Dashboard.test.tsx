@@ -53,6 +53,38 @@ it('lists Managed containers', async () => {
   expect(await screen.findByText('gcpemu-a1b2-sql-main')).toBeInTheDocument()
 })
 
+it('lists Delegated APIs and whether their External emulators answer', async () => {
+  fake.external = [
+    {
+      api: 'firestore',
+      address: 'localhost:8080',
+      hosts: ['firestore.googleapis.com'],
+      reachable: true,
+    },
+    {
+      api: 'spanner',
+      address: 'localhost:9010',
+      hosts: ['spanner.googleapis.com'],
+      reachable: false,
+      error: 'connection refused',
+    },
+  ]
+  renderApp('/')
+  const table = await screen.findByRole('table', { name: 'Delegated APIs' })
+  const firestore = within(table).getByText('firestore').closest('tr')!
+  expect(within(firestore).getByText('localhost:8080')).toBeInTheDocument()
+  expect(within(firestore).getByText('Reachable')).toBeInTheDocument()
+  const spanner = within(table).getByText('spanner').closest('tr')!
+  expect(within(spanner).getByText('Unreachable')).toBeInTheDocument()
+  expect(within(spanner).getByText('connection refused')).toBeInTheDocument()
+})
+
+it('shows no Delegated APIs card without --external', async () => {
+  renderApp('/')
+  await screen.findByRole('table', { name: 'Service endpoints' })
+  expect(screen.queryByRole('table', { name: 'Delegated APIs' })).not.toBeInTheDocument()
+})
+
 it('says when no container runtime is reachable', async () => {
   fake.info.runtime = { kind: 'none', reachable: false, error: 'no container runtime found' }
   renderApp('/')

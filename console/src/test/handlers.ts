@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw'
 
-import type { Container, Info, Operation, Readiness, ResourceCounts } from '@/api/admin'
+import type { Container, External, Info, Operation, Readiness, ResourceCounts } from '@/api/admin'
 import type { Project } from '@/api/queries'
 import type { FaultRule } from '@/features/faults/api'
 import type { Snapshot } from '@/features/state/api'
@@ -13,6 +13,7 @@ export interface Fake {
   ready: Readiness
   endpoints: Record<string, string>
   containers: Container[] | { status: number; error: string }
+  external: External[]
   counts: ResourceCounts
   env: Record<string, string>
   projects: Project[]
@@ -50,6 +51,7 @@ export function defaultFake(): Fake {
     },
     endpoints: { gateway: '127.0.0.1:4510', gcs: '127.0.0.1:4443', pubsub: '127.0.0.1:8085' },
     containers: [],
+    external: [],
     counts: {
       iam: { projects: 2, serviceAccounts: 1 },
       gcs: { buckets: 3, objects: 12 },
@@ -150,6 +152,7 @@ export const handlers = [
       ? HttpResponse.json({ containers: fake.containers })
       : HttpResponse.json({ error: fake.containers.error }, { status: fake.containers.status }),
   ),
+  http.get('*/_emu/v1/external', () => HttpResponse.json({ external: fake.external })),
   http.get('*/_emu/v1/resources/counts', () => HttpResponse.json(fake.counts)),
   http.get('*/_emu/v1/env', () => HttpResponse.json(fake.env)),
   http.get('*/_emu/v1/operations', ({ request }) => {
