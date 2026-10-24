@@ -316,6 +316,17 @@ A GCP project that exists in an Instance. It is created implicitly the first tim
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
+**Standard cluster**:
+A GKE cluster whose node pools the user creates, sizes and deletes.
+
+**Autopilot cluster**:
+A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes them once empty, always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools.
+_Avoid_: managed cluster, serverless cluster
+
+**Workload restrictions**:
+What an Autopilot cluster refuses or changes in a pod before it is admitted: it rejects privileged pods, host namespaces, most host paths and disallowed capabilities, refuses user writes to `kube-system`, and sets resource requests to Autopilot's minimums and ratios.
+_Avoid_: Warden (GKE's internal name), Autopilot policy
+
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
 _Avoid_: secret (unqualified)
@@ -520,5 +531,6 @@ _Avoid_: egress check, leak detector
 - The Cloud SQL Auth Proxy keeps its product name and is not a Sidecar agent.
 - "Condition" on its own is ambiguous: Kubernetes objects inside a GKE cluster have their own conditions. Use *Wait condition* for what a script blocks on.
 - "Kubernetes pulls" on its own is ambiguous: an emulated GKE cluster's nodes pull with their own registry settings, apart from Host trust. Say *a kubelet on the host* for a Kubernetes cluster that runs directly on the user's machine and pulls through the host's containerd.
+- "Cluster" on its own means a GKE cluster in either mode. Say *Autopilot cluster* or *Standard cluster* when the mode matters.
 - "Node" on its own always means a GKE node. Another Instance is a *Linked Instance* or *Discovered Instance*, and a non-gcpemu server is an *External emulator*.
 - "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.
