@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
 // --gfe-bind (Config.GFEBind): the Google front end also serves on port
@@ -222,6 +223,13 @@ type lanHandler struct {
 }
 
 func (h *lanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Services report the Data plane addresses this caller's machine can
+	// reach, such as Cloud SQL's --sql-bind address.
+	var local string
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		local, _, _ = net.SplitHostPort(a.String())
+	}
+	r = r.WithContext(emu.WithLANCaller(r.Context(), local))
 	host := r.Host
 	if hh, _, err := net.SplitHostPort(host); err == nil {
 		host = hh

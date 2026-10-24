@@ -314,6 +314,29 @@ the admin API and every other listener stay on `--bind`, and neither flag needs
 
 `gcpemu status` lists the addresses as `gke-lan:<context>` and `ar-lan`.
 
+To reach Cloud SQL from another machine, pass `--sql-bind <address>` (repeatable; `sqlBind` /
+`GCPEMU_SQL_BIND`). Every instance with a public IP is then also served there, and, as with
+`--gke-bind`, nothing else is exposed and no `--i-understand-this-is-insecure` is needed:
+
+- Postgres is served on `<address>:<a port of its own>`: the instance's loopback host port when
+  that is free on the address, kept across restarts. `gcpemu status` lists it as
+  `sql-lan:<connection name>`, so `psql "host=<address> port=<port> user=postgres"`. Postgres's
+  own password authentication applies to built-in users, and IAM database users need an access
+  token the Instance issued, whatever the IAM enforcement level. The connection reaches the
+  instance as a host client's does, so authorized networks must admit `127.0.0.1/32` for it, as
+  for psql on the emulator's machine (#639).
+- Port 3307 on the address serves the Cloud SQL Auth Proxy and the connectors for every
+  instance. They all dial `<address>:3307`, so it routes each connection by the TLS server name
+  they send, the instance's `dnsName` (`<id>.<region>.sql.goog.`, which its server certificate
+  names; `docs/adr/0028-connectors-reach-every-instance-on-a-lan-address-by-its-dnsname.md`). A connector that sends none reaches the address's only instance, if it has just one.
+- A caller that arrives through the LAN, through `--gfe-bind` or at a `--bind` or `--sql-bind`
+  address beyond loopback, is told `<address>` as the instance's only `ipAddresses` entry
+  (`PRIMARY`), and no address for an instance with no public IP. Callers on the emulator's
+  machine still see the instance's own addresses. With `--gfe-bind` too, the Auth Proxy on another
+  machine works with an access token the Instance issued, for example
+  `cloud-sql-proxy --token <token> <connection name>` with `sqladmin.googleapis.com` pointed at
+  the `--gfe-bind` address.
+
 For clients on another machine that call Google by its real hostnames and take no Endpoint override, such
 as Argo Workflows' GCS artifact driver, pass `--gfe-bind <address>` (repeatable; `gfeBind` /
 `GCPEMU_GFE_BIND`). The Google front end is then also served on `<address>:443`
@@ -924,8 +947,8 @@ shows the console URL with it, `docker exec gcpemu /gcpemu admin token` prints i
 host-only checks (loopback aliases, Windows' excluded port ranges) are notes for the host, and
 every fix names a `docker run` flag or a host command.
 
-`--lb-bind`, `--gke-bind`, `--ar-bind`, `--gfe-bind` and `--link-bind` serve the LAN only from the host's
-network. On Linux, run the image with `--network host` and they work as documented. On a bridge
+`--lb-bind`, `--gke-bind`, `--ar-bind`, `--gfe-bind`, `--sql-bind` and `--link-bind` serve the LAN
+only from the host's network. On Linux, run the image with `--network host` and they work as documented. On a bridge
 network they bind only the container's own addresses, which only container networks reach, and
 the emulator warns at start. Publishing a port on a LAN address is no substitute: the published
 listeners are `--bind`'s, which don't require credentials, and the certificates don't name the

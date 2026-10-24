@@ -122,6 +122,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if len(cfg.GFEBind) > 0 {
 		logger.Info("the Google front end is also served beyond loopback, over TLS to authenticated callers only", "gfeBind", cfg.GFEBind)
 	}
+	if len(cfg.SQLBind) > 0 {
+		logger.Info("Cloud SQL instances are also served beyond loopback, to their users' credentials only", "sqlBind", cfg.SQLBind)
+	}
 	if len(cfg.LinkBind) > 0 {
 		logger.Info("the link protocol is served beyond loopback, over mutual TLS to paired Instances and to Pairing requests", "linkBind", cfg.LinkBind)
 	}

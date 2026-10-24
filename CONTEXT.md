@@ -110,6 +110,14 @@ _Avoid_: edge (unqualified), LB proxy
 The Managed container that listens on `--gfe-bind` addresses at port 443 when the emulator cannot bind them itself, and relays each connection to the Google front end, which checks its credentials as on any `--gfe-bind` listener.
 _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 
+**LAN listener**:
+A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane, the Google front end or the link protocol, and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule, and otherwise only credentials the Instance issued, whatever the IAM enforcement level. The link protocol's admits only paired Instances and Pairing requests.
+_Avoid_: LAN binding, bind address (unqualified), exposed port
+
+**LAN caller**:
+A caller whose request reached the Instance from another machine: through a LAN listener, at a `--bind` address beyond loopback, or over a link from a Linked Instance. The Instance tells it the Data plane addresses that machine can reach, its LAN listeners', and no address for a Data plane with none.
+_Avoid_: remote caller, external client
+
 **VM runtime**:
 A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, Docker Desktop or Podman machine on Windows, and Docker Desktop on Linux.
 

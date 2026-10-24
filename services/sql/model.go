@@ -59,6 +59,9 @@ type instanceRecord struct {
 	// LoopIP is the loopback address that stands in for PublicIP on a VM
 	// runtime (loopback.go): reported as PRIMARY and served on the host.
 	LoopIP string `json:"loopIp,omitempty"`
+	// LANPort is the port Postgres is served on at the --sql-bind
+	// addresses (lan.go), tried first on the next start.
+	LANPort int `json:"lanPort,omitempty"`
 	// AppliedFlags are the database flags currently applied to PostgreSQL.
 	AppliedFlags map[string]string `json:"appliedFlags,omitempty"`
 	// SeedHash records the init SQL applied by the seed (FR-CORE-011).
