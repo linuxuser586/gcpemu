@@ -94,6 +94,10 @@ type Config struct {
 	// connectors' port 3307, routed by TLS server name. Callers arriving
 	// through the LAN are told the address (ADR 0011, ADR 0027).
 	SQLBind []string `yaml:"sqlBind" env:"SQL_BIND"`
+	// LinkBind lists addresses on which the Instance serves the link
+	// protocol to Linked Instances, over mutual TLS and only to Instances
+	// it paired with, except for Pairing requests (ADR 0027).
+	LinkBind []string `yaml:"linkBind" env:"LINK_BIND"`
 	// External maps the API name of each Delegated API, one no Service
 	// serves (e.g. "firestore"), to the host:port of the External emulator
 	// the API gateway forwards it to (ADR 0027).
@@ -647,14 +651,14 @@ func ResolveServices(sel []string) []string {
 // ApplyFlags overlays the fields of flags whose Go field names are in changed.
 func (c *Config) ApplyFlags(flags *Config, changed map[string]bool) { c.overlay(flags, changed) }
 
-// LANBind is one of the --lb-bind, --gke-bind, --ar-bind, --gfe-bind and
-// --sql-bind flags (Flag, without "--") and its addresses.
+// LANBind is one of the --lb-bind, --gke-bind, --ar-bind, --gfe-bind,
+// --sql-bind and --link-bind flags (Flag, without "--") and its addresses.
 type LANBind struct {
 	Flag  string
 	Addrs []string
 }
 
-// LANBinds lists the five --*-bind flags, set or not, in that order.
+// LANBinds lists the six --*-bind flags, set or not, in that order.
 func (c *Config) LANBinds() []LANBind {
-	return []LANBind{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}, {"sql-bind", c.SQLBind}}
+	return []LANBind{{"lb-bind", c.LBBind}, {"gke-bind", c.GKEBind}, {"ar-bind", c.ARBind}, {"gfe-bind", c.GFEBind}, {"sql-bind", c.SQLBind}, {"link-bind", c.LinkBind}}
 }
