@@ -28,7 +28,7 @@ The short canonical name of a Service (e.g. `gcs`, `sql`, `gke`, `ar`). It is us
 _Avoid_: using the API name (`storage`, `sqladmin`, `container`) except where GCP's wire format requires it
 
 **Runtime Service**:
-A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT, Cloud Build). An Instance with no usable runtime runs every other Service.
+A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT, Cloud Build). An Instance with no usable runtime runs every other Service. A Managed emulator likewise needs a runtime, and without one its Delegated API is unavailable.
 _Avoid_: container service, container-backed service
 
 **API name**:
@@ -264,8 +264,12 @@ An API that has no Service, such as Firestore's, which an Instance forwards to a
 _Avoid_: external service, proxied API
 
 **External emulator**:
-A Delegate that is not an Instance but speaks a GCP API's wire format, such as Google's Firestore, Spanner or Bigtable emulator, to which an Instance delegates an API it has no Service for. It is always configured by address.
+A Delegate that is not an Instance but speaks a GCP API's wire format, such as Google's Firestore, Spanner or Bigtable emulator, to which an Instance delegates an API it has no Service for. It is configured by address, or the Instance runs it as a Managed emulator.
 _Avoid_: third-party emulator, compatible node
+
+**Managed emulator**:
+An External emulator that the Instance runs itself as a Managed container, from Google's own emulator, for Firestore, Datastore, Spanner or Bigtable. Reset clears its data, and State snapshots do not hold it.
+_Avoid_: built-in emulator, bundled emulator
 
 **Discovered Instance**:
 An Instance found on the LAN because it advertises itself, which is not (yet) a Linked Instance. Only Instances that opted into LAN reach advertise.
