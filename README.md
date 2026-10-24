@@ -268,9 +268,10 @@ GCS 4443, Pub/Sub 8085, registry 4561, DNS 5353 (UDP+TCP), metadata 8988, Cloud 
 54320+. With `--bind 127.0.0.1` or `localhost` (the default), each of these TCP listeners, the API
 gateway's and the Google front end's also listen on `[::1]` at the same port, so a client that
 resolves `localhost` to `::1` reaches the Instance and not another process holding the port on all
-interfaces (macOS's AirPlay Receiver holds 5000 and 7000). `gcpemu env` also exports `KUBECONFIG` for GKE clusters. `--port name=0` picks a free port for one
-listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports included);
-`--port-range 20000-20999` draws those free ports from a range. The choices are written to
+interfaces (macOS's AirPlay Receiver holds 5000 and 7000). `gcpemu env` also exports `KUBECONFIG`
+for GKE clusters. `--port name=0` picks a free port for one listener and a bare `--port 0` for
+all of them (LB and Cloud SQL host ports included); `--port-range 20000-20999` draws those free
+ports from a range. The choices are written to
 `<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
 Each load balancer forwarding rule's host listener is printed as
