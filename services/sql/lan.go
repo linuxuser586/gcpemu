@@ -188,7 +188,7 @@ func lanIPAddresses(lanIP string) []*sqladmin.IpMapping {
 
 // --sql-bind (Config.SQLBind): every instance with a public IP is also
 // served on each configured address, so that psql and the connectors on
-// another machine reach it (#620, ADR 0011):
+// another machine reach it (#620, ADR 0011, ADR 0028):
 //
 //   - Postgres on a port of its own, its loopback host port when that is
 //     free there and kept across restarts (instanceRecord.LANPort),

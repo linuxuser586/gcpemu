@@ -324,11 +324,11 @@ To reach Cloud SQL from another machine, pass `--sql-bind <address>` (repeatable
   own password authentication applies to built-in users, and IAM database users need an access
   token the Instance issued, whatever the IAM enforcement level. The connection reaches the
   instance as a host client's does, so authorized networks must admit `127.0.0.1/32` for it, as
-  for psql on the emulator's machine.
+  for psql on the emulator's machine (#639).
 - Port 3307 on the address serves the Cloud SQL Auth Proxy and the connectors for every
   instance. They all dial `<address>:3307`, so it routes each connection by the TLS server name
   they send, the instance's `dnsName` (`<id>.<region>.sql.goog.`, which its server certificate
-  names). A connector that sends none reaches the address's only instance, if it has just one.
+  names; `docs/adr/0028-connectors-reach-every-instance-on-a-lan-address-by-its-dnsname.md`). A connector that sends none reaches the address's only instance, if it has just one.
 - A caller that arrives through the LAN, through `--gfe-bind` or at a `--bind` or `--sql-bind`
   address beyond loopback, is told `<address>` as the instance's only `ipAddresses` entry
   (`PRIMARY`), and no address for an instance with no public IP. Callers on the emulator's
