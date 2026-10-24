@@ -165,6 +165,13 @@ func IsAlreadyExists(err error) bool {
 	return errors.As(err, &ae) && (ae.Status == http.StatusConflict || strings.Contains(ae.Message, "already exists"))
 }
 
+// IsAddressInUse reports a start refused because an address is taken. The
+// runtime says "Address already in use" both for a container's fixed
+// address on a network and for a published host port.
+func IsAddressInUse(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "address already in use")
+}
+
 // do performs a request; body may be nil, an io.Reader or a value to JSON-encode.
 func (c *Client) do(ctx context.Context, method, p string, q url.Values, body any, out any) error {
 	resp, err := c.raw(ctx, method, p, q, body, "")

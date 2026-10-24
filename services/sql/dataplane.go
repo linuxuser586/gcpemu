@@ -325,7 +325,7 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 		// The runtime says "Address already in use" both for a taken
 		// container address and for a taken host port: drop the recorded
 		// address first, then pick another port.
-		if publicIP != "" && strings.Contains(msg, "address already in use") {
+		if publicIP != "" && runtime.IsAddressInUse(err) {
 			// Something outside the emulator holds the recorded address.
 			s.env.Log.Warn("sql: public IP taken; using a new one", "instance", project+":"+name, "ip", publicIP)
 			publicIP = ""
@@ -333,7 +333,7 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 		}
 		// A dynamic host port is free when picked but bound by the runtime
 		// only now, so another process may have taken it in between.
-		portBusy := strings.Contains(msg, "already allocated") || strings.Contains(msg, "address already in use")
+		portBusy := strings.Contains(msg, "already allocated") || runtime.IsAddressInUse(err)
 		if !portBusy || attempt >= 20 {
 			return err
 		}
