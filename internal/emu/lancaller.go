@@ -3,6 +3,8 @@ package emu
 import (
 	"context"
 	"net"
+	"net/http"
+	"slices"
 )
 
 type lanCallerKey struct{}
@@ -22,15 +24,28 @@ func LANCaller(ctx context.Context) (ip string, ok bool) {
 	return ip, ok
 }
 
-// LANServed picks the one of served, the addresses (host or host:port) a
-// Data plane is served on on the LAN, to tell the caller in ctx: the one on
-// the address it arrived at, else the first, or "" when there is none. lan
-// is false for a caller that did not arrive through the LAN, which is told
-// the addresses it is told otherwise.
-func LANServed(ctx context.Context, served []string) (addr string, lan bool) {
+// LANServed reports whether the caller in ctx came from another machine
+// (a LAN caller), and which of served, the addresses (host or host:port) a
+// Data plane is served on on the LAN, to tell it: the one on the address it
+// arrived at, else the first, or "" when there is none. It came through the
+// LAN when a LAN listener or a link marked it (WithLANCaller), or when it
+// reached one of lanIPs, the Instance's LAN addresses such as --bind, that
+// isn't loopback. Any other caller is told the addresses it is told
+// otherwise.
+func LANServed(ctx context.Context, served, lanIPs []string) (addr string, lan bool) {
 	ip, ok := LANCaller(ctx)
 	if !ok {
-		return "", false
+		a, _ := ctx.Value(http.LocalAddrContextKey).(*net.TCPAddr)
+		if a == nil || a.IP.IsLoopback() {
+			return "", false
+		}
+		ip = a.IP.String()
+		if v4 := a.IP.To4(); v4 != nil {
+			ip = v4.String()
+		}
+		if !slices.Contains(lanIPs, ip) {
+			return "", false
+		}
 	}
 	for _, a := range served {
 		if h, _, err := net.SplitHostPort(a); a == ip || (err == nil && h == ip) {

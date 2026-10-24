@@ -117,25 +117,30 @@ func TestClusterEndpointByCaller(t *testing.T) {
 	s := lanTestService(config.IAMOff, "192.168.1.20", "10.0.0.5")
 	s.env.Config.Projects = []string{"proj-1"}
 	putRunningCluster(t, s, "127.0.0.1:41000", "192.168.1.20:42000", "10.0.0.5:42000")
-	for ctx, want := range map[context.Context]string{
-		context.Background(): "127.0.0.1:41000",
-		emu.WithLANCaller(context.Background(), "10.0.0.5"): "10.0.0.5:42000",
-		emu.WithLANCaller(context.Background(), "10.9.9.9"): "192.168.1.20:42000",
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"loopback", context.Background(), "127.0.0.1:41000"},
+		{"arrived at a --gke-bind address", emu.WithLANCaller(context.Background(), "10.0.0.5"), "10.0.0.5:42000"},
+		{"arrived elsewhere", emu.WithLANCaller(context.Background(), "10.9.9.9"), "192.168.1.20:42000"},
 	} {
+		ctx, want := tc.ctx, tc.want
 		c, err := s.api.GetCluster(ctx, &containerpb.GetClusterRequest{Name: "projects/proj-1/locations/us-central1/clusters/c"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		ipc := c.GetControlPlaneEndpointsConfig().GetIpEndpointsConfig()
 		if c.Endpoint != want || ipc.GetPublicEndpoint() != want || ipc.GetPrivateEndpoint() != want || c.StatusMessage != "" {
-			t.Errorf("endpoints = %q %q %q (%q), want %q", c.Endpoint, ipc.GetPublicEndpoint(), ipc.GetPrivateEndpoint(), c.StatusMessage, want)
+			t.Errorf("%s: endpoints = %q %q %q (%q), want %q", tc.name, c.Endpoint, ipc.GetPublicEndpoint(), ipc.GetPrivateEndpoint(), c.StatusMessage, want)
 		}
 		l, err := s.api.ListClusters(ctx, &containerpb.ListClustersRequest{Parent: "projects/proj-1/locations/-"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(l.Clusters) != 1 || l.Clusters[0].Endpoint != want {
-			t.Errorf("listed = %v, want endpoint %q", l.Clusters, want)
+			t.Errorf("%s: listed = %v, want endpoint %q", tc.name, l.Clusters, want)
 		}
 	}
 }
@@ -156,5 +161,10 @@ func TestClusterEndpointUnavailableOffLAN(t *testing.T) {
 	}
 	if !strings.Contains(c.StatusMessage, "--gke-bind") || c.Status != containerpb.Cluster_RUNNING {
 		t.Errorf("status = %v %q, want RUNNING with a message naming --gke-bind", c.Status, c.StatusMessage)
+	}
+	w := httptest.NewRecorder()
+	s.serveKubeconfig(w, httptest.NewRequestWithContext(emu.WithLANCaller(context.Background(), "192.168.1.20"), "GET", "/_emu/kubeconfig", nil))
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "--gke-bind") {
+		t.Errorf("kubeconfig for a LAN caller = %d %s, want a refusal naming --gke-bind", w.Code, w.Body)
 	}
 }

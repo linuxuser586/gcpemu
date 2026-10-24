@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -145,36 +144,6 @@ func connectRoute(targets map[string]string, sni string) (string, bool) {
 
 // normalizeDNSName lowercases name and drops its trailing dot.
 func normalizeDNSName(name string) string { return strings.ToLower(strings.TrimSuffix(name, ".")) }
-
-// lanCaller reports whether the request in ctx came from another machine
-// on the LAN, and the address of served (the --sql-bind addresses an
-// instance is served on) it should be told: the one it arrived at, else
-// the first, or "" when there is none. It came through the LAN when the
-// --gfe-bind listeners marked it (emu.WithLANCaller), or when it reached
-// one of lanIPs (the --sql-bind and --bind addresses) that isn't loopback.
-func lanCaller(ctx context.Context, served, lanIPs []string) (string, bool) {
-	ip, ok := emu.LANCaller(ctx)
-	if !ok {
-		a, _ := ctx.Value(http.LocalAddrContextKey).(*net.TCPAddr)
-		if a == nil || a.IP.IsLoopback() {
-			return "", false
-		}
-		ip = a.IP.String()
-		if v4 := a.IP.To4(); v4 != nil {
-			ip = v4.String()
-		}
-		if !slices.Contains(lanIPs, ip) {
-			return "", false
-		}
-	}
-	switch {
-	case slices.Contains(served, ip):
-		return ip, true
-	case len(served) > 0:
-		return served[0], true
-	}
-	return "", true
-}
 
 // lanIPAddresses is what a LAN caller is told of an instance's addresses:
 // the --sql-bind address lanIP as PRIMARY, or nothing when the instance
@@ -322,12 +291,11 @@ func (s *Service) closeAllLAN() {
 }
 
 // forCaller is in as the caller in ctx is told it: with the --sql-bind
-// address for a caller that came through the LAN (lanIPAddresses).
+// address for a caller that came through the LAN, over a link or the
+// Google front end (lanIPAddresses), and no address when the instance is
+// served on none, never its loopback addresses (ADR 0027).
 func (s *Service) forCaller(ctx context.Context, in *sqladmin.DatabaseInstance) *sqladmin.DatabaseInstance {
 	cfg := s.env.Config
-	if len(cfg.SQLBind) == 0 {
-		return in
-	}
 	lanIPs := cfg.SQLBind
 	if !config.IsLoopback(cfg.Bind) {
 		lanIPs = append(slices.Clip(lanIPs), cfg.Bind)
@@ -338,7 +306,7 @@ func (s *Service) forCaller(ctx context.Context, in *sqladmin.DatabaseInstance) 
 		served = l.ips
 	}
 	s.lanMu.Unlock()
-	ip, ok := lanCaller(ctx, served, lanIPs)
+	ip, ok := emu.LANServed(ctx, served, lanIPs)
 	if !ok {
 		return in
 	}

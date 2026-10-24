@@ -12,6 +12,7 @@ import (
 	"cloud.google.com/go/container/apiv1/containerpb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
@@ -105,12 +106,12 @@ func (rt *clusterRT) lanServer(ip string) (string, bool) {
 	return "", false
 }
 
-// forCaller returns c, the cluster key, as the caller in ctx is told it. A
-// caller that arrived through the LAN, over a link (ADR 0027) or the
-// Google front end, is told the --gke-bind address of its API server
-// (emu.LANServed) as every endpoint, since the loopback addresses would be
-// wrong on its machine; when it is served on none, no endpoint and a status
-// message naming --gke-bind.
+// forCaller returns c, the cluster stored under key, as the caller in ctx
+// is told it. A LAN caller, over a link (ADR 0027), the Google front end
+// or a --bind address beyond loopback, is told the --gke-bind address of
+// its API server (emu.LANServed) as every endpoint, since the loopback
+// addresses would be wrong on its machine; when it is served on none, no
+// endpoint and a status message naming --gke-bind.
 func (s *Service) forCaller(ctx context.Context, key string, c *containerpb.Cluster) *containerpb.Cluster {
 	if c.Endpoint == "" {
 		return c
@@ -119,7 +120,7 @@ func (s *Service) forCaller(ctx context.Context, key string, c *containerpb.Clus
 	rt.mu.Lock()
 	served := slices.Clone(rt.lanAddrs)
 	rt.mu.Unlock()
-	addr, lan := emu.LANServed(ctx, served)
+	addr, lan := emu.LANServed(ctx, served, s.lanIPs())
 	if !lan {
 		return c
 	}
@@ -137,6 +138,18 @@ func (s *Service) forCaller(ctx context.Context, key string, c *containerpb.Clus
 		}
 	}
 	return c
+}
+
+// lanIPs are the Instance's LAN addresses on which the API servers or the
+// GKE API may be reached: the --gke-bind addresses, and --bind unless it is
+// loopback.
+func (s *Service) lanIPs() []string {
+	cfg := s.env.Config
+	ips := slices.Clip(cfg.GKEBind)
+	if !config.IsLoopback(cfg.Bind) {
+		ips = append(ips, cfg.Bind)
+	}
+	return ips
 }
 
 // lanAddress resolves the kubeconfig endpoint's lan parameter to a

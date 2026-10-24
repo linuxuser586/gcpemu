@@ -124,7 +124,10 @@ func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*htt
 // as a caller that came over a link must use it (ADR 0027): behind the
 // --ar-bind address it should be told, in the location-in-path form, since
 // on its machine pkg.dev names reach the front Instance instead. Any other
-// caller, or a link to an Instance without --ar-bind, keeps uri.
+// caller keeps uri: one through --gfe-bind reaches pkg.dev names here, unlike
+// the GKE and Cloud SQL addresses every LAN caller is told. So does a
+// caller over a link to an Instance without --ar-bind, since a Repository
+// has no field to say why there is no address (ADR 0027).
 func (s *Service) linkURI(ctx context.Context, uri string) string {
 	if _, _, ok := emu.AssertedBy(ctx); !ok || uri == "" {
 		return uri
@@ -133,7 +136,7 @@ func (s *Service) linkURI(ctx context.Context, uri string) string {
 	if v := s.env.Endpoints.Get("ar-lan"); v != "" {
 		served = strings.Split(v, ",")
 	}
-	if addr, _ := emu.LANServed(ctx, served); addr != "" {
+	if addr, _ := emu.LANServed(ctx, served, nil); addr != "" {
 		return addr + "/" + uri
 	}
 	return uri

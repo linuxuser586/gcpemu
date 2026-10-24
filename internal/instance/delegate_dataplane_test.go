@@ -19,17 +19,15 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
-// A Linked Instance answers a request that came over a link with the
-// Data plane addresses of its LAN listeners, which the caller's machine
-// can reach (ADR 0027).
-
 // withAR runs Artifact Registry too, served on the LAN at 127.0.0.1.
 func withAR(c *config.Config) {
 	c.Services = append(c.Services, "ar")
 	c.ARBind = []string{"127.0.0.1"}
 }
 
-// A repository read through the laptop names the office's --ar-bind
+// A Linked Instance answers a request that came over a link with the
+// Data plane addresses of its LAN listeners, which the caller's machine
+// can reach (ADR 0027). A repository read through the laptop names the office's --ar-bind
 // address, from which an image pushes and pulls by the name the API
 // reported. Read on the office itself, it keeps the pkg.dev name.
 func TestDelegatedRepositoryNamesARBind(t *testing.T) {

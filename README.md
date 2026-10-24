@@ -477,10 +477,11 @@ gcpemu link delegate team-shared --to office
   image URIs put the `--ar-bind` address in front of the pkg.dev name
   (`<address>:<port>/us-central1-docker.pkg.dev/<project>/<repository>`), which pulls and pushes
   as is; without `--ar-bind`, they keep the pkg.dev name. Cloud SQL reports the `--sql-bind`
-  address, or no address without it. A key created through a real Google hostname names
+  address, or no address without it, and then refuses the connectors' settings with a message
+  naming `--sql-bind`. A key created through a real Google hostname names
   Google's endpoints (ADR 0021). Forwarding rules and LoadBalancer Services still report the
-  office's own addresses (#669). A client reaching the office through `--gfe-bind` is told the
-  same `--gke-bind` and `--sql-bind` addresses.
+  office's own addresses (#669). A client reaching the office through `--gfe-bind`, or at a
+  `--bind` address beyond loopback, is told the same `--gke-bind` and `--sql-bind` addresses.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,
   and under `--strict-projects` it counts as existing, since its requests are forwarded. Anything
   that would still create state for it on the laptop, such as a request naming it only in its
