@@ -3,6 +3,7 @@ package link_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"path/filepath"
@@ -15,9 +16,9 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/link"
 )
 
-// node is a link.Manager serving on a loopback listener, with what a test
+// linked is a link.Manager serving on a loopback listener, with what a test
 // needs to reach it.
-type node struct {
+type linked struct {
 	*link.Manager
 	addr  string
 	ca    *ca.CA
@@ -43,9 +44,9 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-// newNode starts the Node of an Instance named name, with its own Instance
+// newLinked starts the link.Manager of an Instance named name, with its own Instance
 // CA and pairings file in dir (a new temp dir when "").
-func newNode(t *testing.T, name, dir string, opts ...func(*link.Config)) *node {
+func newLinked(t *testing.T, name, dir string, opts ...func(*link.Config)) *linked {
 	t.Helper()
 	if dir == "" {
 		dir = t.TempDir()
@@ -70,7 +71,7 @@ func newNode(t *testing.T, name, dir string, opts ...func(*link.Config)) *node {
 	}
 	go func() { _ = n.Serve(l) }()
 	t.Cleanup(func() { _ = n.Close() })
-	return &node{Manager: n, addr: l.Addr().String(), ca: authority, dir: dir, store: store, log: logs}
+	return &linked{Manager: n, addr: l.Addr().String(), ca: authority, dir: dir, store: store, log: logs}
 }
 
 func ctxT(t *testing.T) context.Context {
@@ -80,7 +81,7 @@ func ctxT(t *testing.T) context.Context {
 }
 
 // waitRequest waits until n has an incoming Pairing request and returns it.
-func waitRequest(t *testing.T, n *node) link.Request {
+func waitRequest(t *testing.T, n *linked) link.Request {
 	t.Helper()
 	for i := 0; i < 200; i++ {
 		if reqs := n.Requests(); len(reqs) > 0 {
@@ -99,7 +100,7 @@ type pairResult struct {
 
 // pairAsync starts from pairing with to, as `gcpemu link pair` does once
 // its user has approved to's identity.
-func pairAsync(t *testing.T, from, to *node) <-chan pairResult {
+func pairAsync(t *testing.T, from, to *linked) <-chan pairResult {
 	t.Helper()
 	id, err := from.Identify(ctxT(t), to.addr)
 	if err != nil {
@@ -114,7 +115,7 @@ func pairAsync(t *testing.T, from, to *node) <-chan pairResult {
 }
 
 // pair pairs a with b, approved on both sides.
-func pair(t *testing.T, a, b *node) {
+func pair(t *testing.T, a, b *linked) {
 	t.Helper()
 	done := pairAsync(t, a, b)
 	if _, err := b.Approve(waitRequest(t, b).ID, ""); err != nil {
@@ -137,7 +138,7 @@ func names(ps []link.Pairing) []string {
 // approves the other's identity before asking, and the other side approves
 // the request. Each then lists the other, pinning its Instance CA.
 func TestPairingIsApprovedOnBothSides(t *testing.T) {
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "office", "")
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 
 	id, err := laptop.Identify(ctxT(t), office.addr)
 	if err != nil {
@@ -203,7 +204,7 @@ func refused(t *testing.T, what string, err error, reason string, want ...string
 // A connection from an Instance that the other side never paired with is
 // refused, saying so.
 func TestUnpairedInstanceIsRefused(t *testing.T) {
-	office, stranger := newNode(t, "office", ""), newNode(t, "stranger", "")
+	office, stranger := newLinked(t, "office", ""), newLinked(t, "stranger", "")
 	id, err := stranger.Identify(ctxT(t), office.addr)
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +227,7 @@ func TestUnpairedInstanceIsRefused(t *testing.T) {
 
 // Unpairing on either side removes the trust on that side at once.
 func TestUnpairTakesEffectAtOnce(t *testing.T) {
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "office", "")
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 	pair(t, laptop, office)
 	if err := office.Unpair("laptop"); err != nil {
 		t.Fatal(err)
@@ -244,7 +245,7 @@ func TestUnpairTakesEffectAtOnce(t *testing.T) {
 
 // A rejected Pairing request pins nothing on either side.
 func TestRejectedPairing(t *testing.T) {
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "office", "")
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 	done := pairAsync(t, laptop, office)
 	if err := office.Reject(waitRequest(t, office).ID); err != nil {
 		t.Fatal(err)
@@ -258,7 +259,7 @@ func TestRejectedPairing(t *testing.T) {
 // `gcpemu ca rotate` breaks an Instance's Pairings, and both sides report
 // it, naming the link.
 func TestRotatedCABreaksPairings(t *testing.T) {
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "office", "")
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 	pair(t, laptop, office)
 	if err := laptop.ca.Rotate("laptop"); err != nil {
 		t.Fatal(err)
@@ -286,7 +287,7 @@ func TestRotatedCABreaksPairings(t *testing.T) {
 // on connect, naming both versions.
 func TestIncompatibleVersionIsRefused(t *testing.T) {
 	v2 := func(c *link.Config) { c.Versions = link.Versions{Min: 2, Max: 2} }
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "future", "", v2)
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "future", "", v2)
 	id, err := laptop.Identify(ctxT(t), office.addr)
 	if err != nil {
 		t.Fatal(err)
@@ -297,9 +298,9 @@ func TestIncompatibleVersionIsRefused(t *testing.T) {
 	}
 
 	// Paired at version 1, then the office is upgraded past it.
-	office = newNode(t, "office", "")
+	office = newLinked(t, "office", "")
 	pair(t, laptop, office)
-	upgraded := newNode(t, "office", office.dir, v2)
+	upgraded := newLinked(t, "office", office.dir, v2)
 	_ = office.Close()
 	if err := laptop.store.Update(func(ps []link.Pairing) ([]link.Pairing, error) {
 		ps[0].Address = upgraded.addr
@@ -317,7 +318,7 @@ func TestIncompatibleVersionIsRefused(t *testing.T) {
 // rotated, the other side still reports the link broken once it tries,
 // naming it, without dialling back.
 func TestRotationReportedOnInboundOnlyLink(t *testing.T) {
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "office", "")
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 	pair(t, laptop, office)
 	// The laptop had no listener of its own: the office cannot dial it.
 	if err := office.store.Update(func(ps []link.Pairing) ([]link.Pairing, error) {
@@ -345,7 +346,7 @@ func TestRotationReportedOnInboundOnlyLink(t *testing.T) {
 // Approving a request from an Instance already paired under another CA
 // replaces that Pairing, so the request says so before anyone approves it.
 func TestRequestReplacingAPairingSaysSo(t *testing.T) {
-	laptop, office := newNode(t, "laptop", ""), newNode(t, "office", "")
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 	pair(t, laptop, office)
 	if err := laptop.ca.Rotate("laptop"); err != nil {
 		t.Fatal(err)
@@ -364,4 +365,59 @@ func TestRequestReplacingAPairingSaysSo(t *testing.T) {
 	if ls := office.Links(); len(ls) != 1 || ls[0].Fingerprint != link.Fingerprint(laptop.ca.Certificate()) || ls[0].State != link.StatePaired {
 		t.Errorf("office's links after pairing again = %+v", ls)
 	}
+}
+
+// The side that did not rotate its CA reports the link broken as soon as
+// it dials the other, before the other has connected in.
+func TestRotationReportedWhenDiallingOut(t *testing.T) {
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
+	pair(t, laptop, office)
+	if err := office.ca.Rotate("office"); err != nil {
+		t.Fatal(err)
+	}
+	st := laptop.Check(ctxT(t), "office")
+	if st.State != link.StateBroken || st.Reachable || !strings.Contains(st.Error, `the Instance CA of link "office" no longer matches`) {
+		t.Errorf("laptop's Check after the office rotated = %+v", st)
+	}
+	if ls := laptop.Links(); len(ls) != 1 || ls[0].State != link.StateBroken {
+		t.Errorf("laptop's links after dialling the rotated office = %+v", ls)
+	}
+}
+
+// Approving under a link name already taken fails and leaves the request
+// waiting, so that it can be approved under another name.
+func TestApproveUnderTakenNameKeepsRequest(t *testing.T) {
+	laptop, desktop, office := newLinked(t, "laptop", ""), newLinked(t, "desktop", ""), newLinked(t, "office", "")
+	pair(t, laptop, office)
+	done := pairAsync(t, desktop, office)
+	req := waitRequest(t, office)
+	if _, err := office.Approve(req.ID, "laptop"); err == nil {
+		t.Fatal("approved under a taken name")
+	}
+	if reqs := office.Requests(); len(reqs) != 1 || reqs[0].ID != req.ID {
+		t.Fatalf("requests after a failed approval = %+v", reqs)
+	}
+	if _, err := office.Approve(req.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-done; r.err != nil {
+		t.Fatal(r.err)
+	}
+}
+
+// Requests beyond the cap are refused at once instead of waiting.
+func TestPendingRequestsAreCapped(t *testing.T) {
+	office := newLinked(t, "office", "")
+	for i := 0; i < link.MaxPendingRequests; i++ {
+		pairAsync(t, newLinked(t, fmt.Sprintf("laptop%d", i), ""), office)
+	}
+	ctx := ctxT(t)
+	for len(office.Requests()) < link.MaxPendingRequests {
+		if ctx.Err() != nil {
+			t.Fatalf("%d of %d Pairing requests arrived", len(office.Requests()), link.MaxPendingRequests)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r := <-pairAsync(t, newLinked(t, "one-too-many", ""), office)
+	refused(t, "a request beyond the cap", r.err, link.ReasonBusy)
 }

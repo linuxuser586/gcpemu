@@ -69,7 +69,12 @@ const (
 	ReasonRejected     = "rejected"
 	ReasonTimeout      = "not-approved"
 	ReasonSelf         = "self"
+	ReasonBusy         = "too-many-requests"
 )
+
+// MaxPendingRequests caps the Pairing requests waiting for approval, since
+// any Instance may make one.
+const MaxPendingRequests = 16
 
 // Config configures a Manager.
 type Config struct {
@@ -94,11 +99,12 @@ type Manager struct {
 	mu       sync.Mutex
 	pending  map[string]*pendingRequest
 	servers  []*http.Server
+	closed   bool
 	addrs    []string
 	clientCA string // fingerprint clientCert was issued under
 	client   *tls.Certificate
 	// mismatch holds, by link name, the CA mismatch of the latest
-	// connection in on that link, until one is admitted again.
+	// connection on that link, in or out, until one succeeds again.
 	mismatch map[string]error
 }
 
@@ -179,6 +185,10 @@ func (m *Manager) Serve(l net.Listener) error {
 		},
 	}
 	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return l.Close()
+	}
 	m.servers = append(m.servers, srv)
 	m.addrs = append(m.addrs, l.Addr().String())
 	m.mu.Unlock()
@@ -199,7 +209,7 @@ func (m *Manager) Addresses() []string {
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	servers := m.servers
-	m.servers = nil
+	m.servers, m.closed = nil, true
 	for id, p := range m.pending {
 		p.decide <- errors.New("the Instance is shutting down")
 		delete(m.pending, id)
@@ -236,9 +246,12 @@ func (m *Manager) handler() http.Handler {
 // errCAMismatch says that link name presented the CA presented, not the
 // one pinned at Pairing.
 func errCAMismatch(name, pinned, presented string) error {
-	return fmt.Errorf("the Instance CA of link %q no longer matches the one pinned at Pairing: pinned %s, presented %s; if it was rotated (`gcpemu ca rotate`), unpair and pair again",
-		name, pinned, presented)
+	return caMismatchError{fmt.Errorf("the Instance CA of link %q no longer matches the one pinned at Pairing: pinned %s, presented %s; if it was rotated (`gcpemu ca rotate`), unpair and pair again",
+		name, pinned, presented)}
 }
+
+// caMismatchError is an errCAMismatch.
+type caMismatchError struct{ error }
 
 // errSelf refuses Pairing an Instance with itself.
 var errSelf = errors.New("an Instance cannot pair with itself")
@@ -352,23 +365,40 @@ func (m *Manager) servePair(w http.ResponseWriter, r *http.Request) {
 		decide:  make(chan error, 1),
 	}
 	m.mu.Lock()
+	if len(m.pending) >= MaxPendingRequests {
+		m.mu.Unlock()
+		m.cfg.Log.Warn("Pairing refused: too many requests waiting", "instance", body.Name, "instanceId", body.ID)
+		m.refuse(w, http.StatusTooManyRequests, ReasonBusy,
+			fmt.Sprintf("Instance %q already has %d Pairing requests waiting for approval; try again later", m.cfg.Instance, MaxPendingRequests))
+		return
+	}
 	m.pending[req.ID] = req
 	m.mu.Unlock()
-	m.cfg.Log.Info("Pairing requested; approve it with `gcpemu link approve` or refuse it with `gcpemu link reject "+req.ID+"`",
+	m.cfg.Log.Info("Pairing requested; approve it with `gcpemu link approve "+req.ID+"` or refuse it with `gcpemu link reject "+req.ID+"`",
 		"request", req.ID, "instance", body.Name, "instanceId", body.ID, "fingerprint", fp)
 	timer := time.NewTimer(m.cfg.ApprovalTimeout)
 	defer timer.Stop()
 	var decision error
+	decided := false
 	select {
 	case decision = <-req.decide:
+		decided = true
 	case <-r.Context().Done():
 		decision = r.Context().Err()
 	case <-timer.C:
 		decision = fmt.Errorf("Instance %q did not approve the Pairing request within %s", m.cfg.Instance, m.cfg.ApprovalTimeout)
 	}
-	m.mu.Lock()
-	delete(m.pending, req.ID)
-	m.mu.Unlock()
+	if !decided {
+		m.mu.Lock()
+		_, waiting := m.pending[req.ID]
+		delete(m.pending, req.ID)
+		m.mu.Unlock()
+		if !waiting {
+			// Approve, Reject or Close took it first: their decision
+			// stands, so that the two sides agree on it.
+			decision = <-req.decide
+		}
+	}
 	switch {
 	case decision == nil:
 		writeJSON(w, http.StatusOK, reply)
@@ -410,8 +440,11 @@ func (m *Manager) takeRequest(id string) (*pendingRequest, error) {
 // requester's Instance CA under the link name name (default the
 // requester's Instance name).
 func (m *Manager) Approve(id, name string) (Pairing, error) {
-	p, err := m.takeRequest(id)
-	if err != nil {
+	m.mu.Lock()
+	p, ok := m.pending[id]
+	m.mu.Unlock()
+	if !ok {
+		_, err := m.takeRequest(id)
 		return Pairing{}, err
 	}
 	pairing := Pairing{
@@ -419,11 +452,16 @@ func (m *Manager) Approve(id, name string) (Pairing, error) {
 		Fingerprint: p.Fingerprint, CA: string(p.ca), LocalFingerprint: m.fingerprint(),
 		Version: p.Version, PairedAt: time.Now().UTC(),
 	}
+	// Refused while still waiting: the user may approve it under another
+	// name.
+	if err := m.checkName(&pairing); err != nil {
+		return Pairing{}, err
+	}
+	if _, err := m.takeRequest(id); err != nil {
+		return Pairing{}, err
+	}
 	if err := m.pin(&pairing); err != nil {
-		// Still waiting: the user may approve it under another name.
-		m.mu.Lock()
-		m.pending[id] = p
-		m.mu.Unlock()
+		p.decide <- fmt.Errorf("Instance %q could not record the Pairing: %w", m.cfg.Instance, err)
 		return Pairing{}, err
 	}
 	p.decide <- nil
@@ -538,7 +576,7 @@ func (m *Manager) Links() []Link {
 }
 
 // broken reports how p broke since Pairing, if it did: this Instance's CA
-// was rotated, or the other Instance last connected in with another CA.
+// was rotated, or the other Instance last presented another CA.
 func (m *Manager) broken(p Pairing) error {
 	if p.LocalFingerprint != m.fingerprint() {
 		return fmt.Errorf("this Instance's CA was rotated after Pairing with link %q (`gcpemu ca rotate`), so %q no longer accepts it; unpair and pair again", p.Name, p.Name)
@@ -575,6 +613,12 @@ func (m *Manager) Check(ctx context.Context, name string) Status {
 	// reports it too.
 	var reply struct{ Version int }
 	if _, err := m.callPaired(ctx, *p, http.MethodGet, "/link/v1/status", &reply); err != nil {
+		if errors.As(err, new(caMismatchError)) {
+			m.mu.Lock()
+			m.mismatch[p.Name] = err
+			m.mu.Unlock()
+			st.State = StateBroken
+		}
 		if st.Error == "" {
 			st.Error = err.Error()
 		}
@@ -583,6 +627,9 @@ func (m *Manager) Check(ctx context.Context, name string) Status {
 	if st.State == StateBroken {
 		return st
 	}
+	m.mu.Lock()
+	delete(m.mismatch, p.Name)
+	m.mu.Unlock()
 	st.Reachable, st.Version = true, reply.Version
 	return st
 }
@@ -675,8 +722,11 @@ func certPEM(c *x509.Certificate) []byte {
 // is returned as an error saying why. It returns the CA presented.
 func (m *Manager) call(ctx context.Context, addr, method, path string, verify func(*x509.Certificate) error, in, out any) (*x509.Certificate, error) {
 	addr = Dialable(addr)
-	var root *x509.Certificate
-	var verr error
+	var (
+		mu   sync.Mutex
+		root *x509.Certificate
+		verr error
+	)
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS13,
@@ -689,7 +739,9 @@ func (m *Manager) call(ctx context.Context, addr, method, path string, verify fu
 				if err == nil && verify != nil {
 					err = verify(r)
 				}
+				mu.Lock()
 				root, verr = r, err
+				mu.Unlock()
 				return err
 			},
 		},
@@ -707,8 +759,11 @@ func (m *Manager) call(ctx context.Context, addr, method, path string, verify fu
 	req.Header.Set(versionsHeader, m.cfg.Versions.String())
 	req.Header.Set(instanceIDHeader, m.cfg.ID)
 	resp, err := (&http.Client{Transport: tr}).Do(req)
-	if verr != nil {
-		return nil, verr
+	mu.Lock()
+	presented, verifyErr := root, verr
+	mu.Unlock()
+	if verifyErr != nil {
+		return nil, verifyErr
 	}
 	if err != nil {
 		return nil, fmt.Errorf("link %s: %w", addr, err)
@@ -727,7 +782,7 @@ func (m *Manager) call(ctx context.Context, addr, method, path string, verify fu
 			return nil, fmt.Errorf("link %s: %w", addr, err)
 		}
 	}
-	return root, nil
+	return presented, nil
 }
 
 // RefusedError is a link request the other Instance refused.

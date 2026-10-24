@@ -857,7 +857,11 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 		}
 		return
 	}
-	if len(cfg.LBBind)+len(cfg.GKEBind)+len(cfg.ARBind)+len(cfg.GFEBind)+len(cfg.LinkBind) == 0 {
+	bound := false
+	for _, b := range cfg.LANBinds() {
+		bound = bound || len(b.Addrs) > 0
+	}
+	if !bound {
 		return
 	}
 	local := map[string]bool{}

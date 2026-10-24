@@ -368,7 +368,8 @@ gcpemu link requests
 gcpemu link approve            # or: gcpemu link approve <request> / gcpemu link reject <request>
 ```
 
-`link pair` waits up to 5 minutes for the approval. Compare the fingerprints with the other
+`link pair` waits up to 5 minutes for the approval; an Instance keeps at most 16 Pairing requests
+waiting, and refuses more until one is decided. Compare the fingerprints with the other
 machine's owner before approving; `--yes` skips the questions, for scripts. Once approved, each side
 pins the other's Instance CA, and names the link after the other Instance (`--name` for another
 name, which is needed when two links would share one). The Admin API serves the same steps under
