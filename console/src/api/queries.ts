@@ -49,6 +49,14 @@ export const containersQuery = () =>
     refetchInterval: POLL_MS,
   })
 
+/** externalQuery lists the Delegated APIs and whether their External emulators answer. */
+export const externalQuery = () =>
+  queryOptions({
+    queryKey: ['admin', 'external'],
+    queryFn: async () => (await unwrap(admin.GET('/_emu/v1/external'))).external,
+    refetchInterval: POLL_MS,
+  })
+
 export const resourceCountsQuery = () =>
   queryOptions({
     queryKey: ['admin', 'resources', 'counts'],
