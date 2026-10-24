@@ -215,7 +215,7 @@ hit and miss totals survive a purge and are cleared by `gcpemu reset`.
 Its Artifact Registry view lists repositories in every location by asking each one in turn, as
 the API lists one location at a time. Deleting a digest deletes the tags on it too
 (`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when Host mode is
-ready and the registry port (`127.0.0.1:5000/LOCATION-docker.pkg.dev/...`) otherwise.
+ready and the registry port (`127.0.0.1:4561/LOCATION-docker.pkg.dev/...`) otherwise.
 Its Cloud DNS view edits record sets only through `changes.create` (an edit deletes and re-adds
 the record set in one change), and deleting a zone first deletes its record sets in one change.
 Its query box asks `GET /_emu/v1/dns/query?name=N&type=T[&network=projects/P/global/networks/V]`,
@@ -264,10 +264,14 @@ messages) are left out.
 All Control plane APIs are served by the API gateway (default `127.0.0.1:4510`), under
 `/<api>/` (for example `/pubsub/v1/…`, `/iam/v1/…`) and at their native root paths where
 unambiguous (`/storage/v1/`, `/dns/v1/`, `/compute/v1/`, `/sql/v1beta4/`). Per-Service ports:
-GCS 4443, Pub/Sub 8085, registry 5000, DNS 5353 (UDP+TCP), metadata 8988, Cloud SQL host ports
-54320+. `gcpemu env` also exports `KUBECONFIG` for GKE clusters. `--port name=0` picks a free port for one
-listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports included);
-`--port-range 20000-20999` draws those free ports from a range. The choices are written to
+GCS 4443, Pub/Sub 8085, registry 4561, DNS 5353 (UDP+TCP), metadata 8988, Cloud SQL host ports
+54320+. With `--bind 127.0.0.1` or `localhost` (the default), each of these TCP listeners, the API
+gateway's and the Google front end's also listen on `[::1]` at the same port, so a client that
+resolves `localhost` to `::1` reaches the Instance and not another process holding the port on all
+interfaces (macOS's AirPlay Receiver holds 5000 and 7000). `gcpemu env` also exports `KUBECONFIG`
+for GKE clusters. `--port name=0` picks a free port for one listener and a bare `--port 0` for
+all of them (LB and Cloud SQL host ports included); `--port-range 20000-20999` draws those free
+ports from a range. The choices are written to
 `<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
 Each load balancer forwarding rule's host listener is printed as

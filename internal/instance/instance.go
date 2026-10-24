@@ -349,7 +349,7 @@ func (in *Instance) Start(ctx context.Context) error {
 	in.gw.HandleAdmin(newAdmin(in))
 	in.mountConsole()
 
-	l, err := in.Env.ListenTCP(in.Config.Bind, in.Config.Port("gateway"))
+	l, err := in.Env.ListenBind(in.Config.Port("gateway"), true)
 	if err != nil {
 		return fmt.Errorf("gateway listen %s: %w", net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway"))), err)
 	}

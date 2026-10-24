@@ -27,7 +27,7 @@ ENV GCPEMU_BIND=0.0.0.0 \
 WORKDIR /data
 
 # API gateway, gcs, pubsub, ar, dns, metadata.
-EXPOSE 4510 4443 8085 5000 5353/tcp 5353/udp 8988
+EXPOSE 4510 4443 8085 4561 5353/tcp 5353/udp 8988
 
 HEALTHCHECK --interval=5s --timeout=5s --start-period=60s CMD ["/gcpemu", "status", "--ready"]
 

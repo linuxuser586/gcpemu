@@ -24,6 +24,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
@@ -96,13 +97,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 					if p == 0 {
 						continue
 					}
-					addr := net.JoinHostPort(cfg.Bind, strconv.Itoa(p))
-					l, err := net.Listen("tcp", addr)
-					if err == nil {
-						l.Close()
-					}
-					report(err == nil, fmt.Sprintf("port %s (%s) free", addr, n),
-						fmt.Sprintf("stop whatever holds it or use --port %s=0", n))
+					checkPort(out, report, runtime.GOOS, n, p, probePort(cfg.Bind, p))
 					if n == "dns" {
 						checkDNSUDP(out, report, cfg.Bind, strconv.Itoa(p))
 					}
@@ -180,6 +175,90 @@ func checkLinks(out io.Writer, report func(bool, string, string), cfg *config.Co
 		if l.Warning != "" {
 			fmt.Fprintf(out, "[WARN] link %q: %s\n", l.Name, l.Warning)
 		}
+	}
+}
+
+// portProbe is what doctor found binding and dialling a named port.
+type portProbe struct {
+	// addr is the --bind address probed, and err its bind.
+	addr string
+	err  error
+	// v6 reports [::1] probed too: the Instance twins a loopback --bind
+	// there (emu.ListenBind), if the host has IPv6 loopback.
+	v6    bool
+	v6Err error
+	// answered reports a connection to the port accepted after the binds
+	// succeeded: another process holds it on all interfaces.
+	answered bool
+}
+
+// probePort binds bind:port, and [::1]:port on a loopback --bind, then
+// dials the port. macOS lets a specific bind sit beside another process's
+// on all interfaces, so a free bind there does not mean a free port (#641).
+func probePort(bind string, port int) portProbe {
+	ps := strconv.Itoa(port)
+	host := bind
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	pr := portProbe{addr: net.JoinHostPort(host, ps)}
+	if pr.err = probeBind(pr.addr); pr.err != nil {
+		return pr
+	}
+	dial := []string{emu.Dialable(pr.addr)}
+	if emu.Twinned(bind) {
+		v6 := net.JoinHostPort("::1", ps)
+		if err := probeBind(v6); err == nil || loopback.AddrInUse(err) {
+			pr.v6, pr.v6Err = true, err
+			if err != nil {
+				return pr
+			}
+			dial = append(dial, v6)
+		}
+	}
+	for _, a := range dial {
+		if c, err := net.DialTimeout("tcp", a, 300*time.Millisecond); err == nil {
+			c.Close()
+			pr.answered = true
+		}
+	}
+	return pr
+}
+
+func probeBind(addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err == nil {
+		l.Close()
+	}
+	return err
+}
+
+// checkPort reports a named port from its probe, warning when another
+// process answers on it on all interfaces. On macOS, 5000 and 7000 are
+// AirPlay Receiver's.
+func checkPort(out io.Writer, report func(bool, string, string), goos, name string, port int, pr portProbe) {
+	fix := fmt.Sprintf("stop whatever holds it or use --port %s=0", name)
+	if pr.err != nil {
+		report(false, fmt.Sprintf("port %s (%s) free", pr.addr, name), fix)
+		return
+	}
+	v6 := net.JoinHostPort("::1", strconv.Itoa(port))
+	if pr.v6Err != nil {
+		report(false, fmt.Sprintf("port %s (%s) free on IPv6", v6, name), fix)
+		return
+	}
+	what := fmt.Sprintf("port %s (%s) free", pr.addr, name)
+	if pr.v6 {
+		what += ", and " + v6
+	}
+	report(true, what, "")
+	if !pr.answered {
+		return
+	}
+	fmt.Fprintf(out, "[WARN] port %d (%s): another process also holds it on all interfaces; "+
+		"the Instance's loopback listeners take precedence, but clients on other addresses reach that process\n", port, name)
+	if goos == "darwin" && (port == 5000 || port == 7000) {
+		fmt.Fprintln(out, "       it is likely AirPlay Receiver: turn it off in System Settings → General → AirDrop & Handoff")
 	}
 }
 

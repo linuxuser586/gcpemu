@@ -239,6 +239,10 @@ func TestPorts(t *testing.T) {
 	if c.Port("gateway") != 4510 {
 		t.Fatalf("default gateway port = %d", c.Port("gateway"))
 	}
+	// Not 5000, which macOS's AirPlay Receiver holds on all interfaces (#641).
+	if c.Port("ar") != 4561 {
+		t.Errorf("default registry port = %d, want 4561", c.Port("ar"))
+	}
 	if _, ok := c.PortSet("lb"); ok {
 		t.Error("lb port set by default")
 	}

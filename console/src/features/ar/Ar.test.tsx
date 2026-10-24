@@ -42,7 +42,7 @@ const docker = (image: string, digest: string, over: Partial<DockerImage> = {}):
 beforeEach(() => {
   requests = []
   fake.info.services = ['iam', 'ar']
-  fake.endpoints = { gateway: '127.0.0.1:4510', ar: '127.0.0.1:5000' }
+  fake.endpoints = { gateway: '127.0.0.1:4510', ar: '127.0.0.1:4561' }
   repos = [
     {
       name: REPO,
@@ -304,11 +304,11 @@ it('shows an index with its per-arch manifests, copies pull commands and deletes
 
   await user.click(screen.getByRole('button', { name: `Copy pull command of 111111111111` }))
   expect(await navigator.clipboard.readText()).toBe(
-    `docker pull 127.0.0.1:5000/us-central1-docker.pkg.dev/${P}/images/app:latest`,
+    `docker pull 127.0.0.1:4561/us-central1-docker.pkg.dev/${P}/images/app:latest`,
   )
   await user.click(screen.getByRole('button', { name: 'Copy pull command of linux/arm64/v8' }))
   expect(await navigator.clipboard.readText()).toBe(
-    `docker pull 127.0.0.1:5000/us-central1-docker.pkg.dev/${P}/images/app@${d('b')}`,
+    `docker pull 127.0.0.1:4561/us-central1-docker.pkg.dev/${P}/images/app@${d('b')}`,
   )
 
   await user.click(screen.getByRole('button', { name: 'Delete tag v1' }))
@@ -382,7 +382,7 @@ it('shows a digest’s manifest, platforms and pull commands', async () => {
   expect(screen.getAllByTestId('platform')).toHaveLength(2)
   expect(
     await screen.findByText(
-      `docker pull 127.0.0.1:5000/us-central1-docker.pkg.dev/${P}/images/app:v1`,
+      `docker pull 127.0.0.1:4561/us-central1-docker.pkg.dev/${P}/images/app:v1`,
     ),
   ).toBeInTheDocument()
 })
@@ -396,7 +396,7 @@ it('shows a repository’s configuration and deletes it', async () => {
   expect(details).toHaveTextContent('App images')
   expect(details).toHaveTextContent('team=web')
   expect(
-    screen.getByText(`docker push 127.0.0.1:5000/us-central1-docker.pkg.dev/${P}/images/IMAGE:TAG`),
+    screen.getByText(`docker push 127.0.0.1:4561/us-central1-docker.pkg.dev/${P}/images/IMAGE:TAG`),
   ).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Delete repository' }))
   await user.click(
