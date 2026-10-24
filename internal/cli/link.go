@@ -57,7 +57,7 @@ func (o *rootOpts) linkPairCmd() *cobra.Command {
 				}
 			}
 			fmt.Fprintf(out, "Waiting for Instance %q to approve: run `gcpemu link approve` there.\n", id.Name)
-			var p link.Pairing
+			var p link.Link
 			body := map[string]string{"address": addr, "fingerprint": id.Fingerprint, "name": name}
 			if err := o.linkCall(cmd, http.MethodPost, "/_emu/v1/links", body, link.DefaultApprovalTimeout+30*time.Second, &p); err != nil {
 				return err
@@ -80,7 +80,7 @@ func (o *rootOpts) linkListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var r struct {
-				Links []link.Link `json:"links"`
+				Links []link.LinkState `json:"links"`
 			}
 			if err := o.linkCall(cmd, http.MethodGet, "/_emu/v1/links", nil, 0, &r); err != nil {
 				return err
@@ -106,6 +106,9 @@ func (o *rootOpts) linkListCmd() *cobra.Command {
 			for _, l := range r.Links {
 				if l.Problem != "" {
 					fmt.Fprintf(out, "%s: %s\n", l.Name, l.Problem)
+				}
+				if l.Warning != "" {
+					fmt.Fprintf(out, "%s: warning: %s\n", l.Name, l.Warning)
 				}
 			}
 			return nil
@@ -224,7 +227,7 @@ func (o *rootOpts) linkApproveCmd() *cobra.Command {
 						continue
 					}
 				}
-				var p link.Pairing
+				var p link.Link
 				if err := o.linkCall(cmd, http.MethodPost, "/_emu/v1/links/requests/"+url.PathEscape(r.ID)+"/approve", map[string]string{"name": name}, 0, &p); err != nil {
 					return err
 				}

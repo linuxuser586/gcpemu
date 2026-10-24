@@ -17,7 +17,7 @@ import (
 )
 
 // newLink returns the Instance's link Manager (ADR 0027). A Persistent
-// Instance keeps its Pairings in its instance dir, outside the state that
+// Instance keeps its Links in its instance dir, outside the state that
 // Reset and State snapshots replace; an Ephemeral Instance keeps them in
 // memory.
 func (in *Instance) newLink() (*link.Manager, error) {
@@ -68,10 +68,10 @@ func (in *Instance) startLink() {
 // `gcpemu link` and the Web console pair and unpair Instances.
 func (in *Instance) linkRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /_emu/v1/links", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"links": in.link.Links(), "fingerprint": link.Fingerprint(in.Env.CA.Certificate())})
+		writeJSON(w, http.StatusOK, map[string]any{"links": in.link.States(), "fingerprint": link.Fingerprint(in.Env.CA.Certificate())})
 	})
 	mux.HandleFunc("GET /_emu/v1/links/status", func(w http.ResponseWriter, r *http.Request) {
-		ps := in.link.Pairings()
+		ps := in.link.Links()
 		out := make([]link.Status, len(ps))
 		var wg sync.WaitGroup
 		for i, p := range ps {

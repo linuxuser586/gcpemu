@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// StoreFile holds a Persistent Instance's Pairings in its instance
+// StoreFile holds a Persistent Instance's Links in its instance
 // directory. They are configuration, not state, so Reset and State
 // snapshots leave them alone (ADR 0027).
 const StoreFile = "links.json"
 
-// Pairing is one side's record of a Pairing: the other Instance and the
-// Instance CA it pinned.
-type Pairing struct {
+// Link is what one side of a Pairing keeps of the other: the other
+// Instance and the Instance CA it pinned.
+type Link struct {
 	// Name is the link's name on this side, unique within the Instance.
 	Name string `json:"name"`
 	// Instance and InstanceID are the other Instance's name and ID.
@@ -31,22 +31,26 @@ type Pairing struct {
 	Fingerprint string `json:"fingerprint"`
 	CA          string `json:"ca"`
 	// LocalFingerprint is this Instance's CA at Pairing; once it no longer
-	// is, `gcpemu ca rotate` has broken the Pairing.
+	// is, `gcpemu ca rotate` has broken the Link.
 	LocalFingerprint string `json:"localFingerprint"`
 	// Version is the link protocol version negotiated at Pairing.
 	Version  int       `json:"version"`
 	PairedAt time.Time `json:"pairedAt"`
+	// Broken is what the latest dial over the Link found wrong with the
+	// other Instance's CA, at BrokenAt; "" once a dial finds it fine.
+	Broken   string    `json:"broken,omitempty"`
+	BrokenAt time.Time `json:"brokenAt,omitzero"`
 }
 
-// Store keeps an Instance's Pairings in a file, or in memory only.
+// Store keeps an Instance's Links in a file, or in memory only.
 type Store struct {
 	path string
 
 	mu       sync.Mutex
-	pairings []Pairing
+	pairings []Link
 }
 
-// OpenStore opens the Pairings in the file at path; a missing file has
+// OpenStore opens the Links in the file at path; a missing file has
 // none. An empty path keeps them in memory, as an Ephemeral Instance does.
 func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path}
@@ -66,19 +70,19 @@ func OpenStore(path string) (*Store, error) {
 	return s, nil
 }
 
-// List returns the Pairings by name.
-func (s *Store) List() []Pairing {
+// List returns the Links by name.
+func (s *Store) List() []Link {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]Pairing(nil), s.pairings...)
+	return append([]Link(nil), s.pairings...)
 }
 
-// Update replaces the Pairings with what change makes of them, and saves
+// Update replaces the Links with what change makes of them, and saves
 // them; an error from change changes nothing.
-func (s *Store) Update(change func([]Pairing) ([]Pairing, error)) error {
+func (s *Store) Update(change func([]Link) ([]Link, error)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next, err := change(append([]Pairing(nil), s.pairings...))
+	next, err := change(append([]Link(nil), s.pairings...))
 	if err != nil {
 		return err
 	}

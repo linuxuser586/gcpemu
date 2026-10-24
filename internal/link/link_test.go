@@ -94,7 +94,7 @@ func waitRequest(t *testing.T, n *linked) link.Request {
 }
 
 type pairResult struct {
-	p   link.Pairing
+	p   link.Link
 	err error
 }
 
@@ -126,7 +126,7 @@ func pair(t *testing.T, a, b *linked) {
 	}
 }
 
-func names(ps []link.Pairing) []string {
+func names(ps []link.Link) []string {
 	out := []string{}
 	for _, p := range ps {
 		out = append(out, p.Name)
@@ -153,7 +153,7 @@ func TestPairingIsApprovedOnBothSides(t *testing.T) {
 	if req.Name != "laptop" || req.InstanceID != "laptop-id" || req.Fingerprint != link.Fingerprint(laptop.ca.Certificate()) {
 		t.Errorf("request = %+v", req)
 	}
-	if len(laptop.Pairings()) != 0 || len(office.Pairings()) != 0 {
+	if len(laptop.Links()) != 0 || len(office.Links()) != 0 {
 		t.Fatal("paired before the other side approved")
 	}
 	p, err := office.Approve(req.ID, "")
@@ -170,10 +170,10 @@ func TestPairingIsApprovedOnBothSides(t *testing.T) {
 	if r.p.Name != "office" || r.p.InstanceID != "office-id" || r.p.Address != office.addr {
 		t.Errorf("laptop's link = %+v", r.p)
 	}
-	if got := names(laptop.Pairings()); len(got) != 1 || got[0] != "office" {
+	if got := names(laptop.Links()); len(got) != 1 || got[0] != "office" {
 		t.Errorf("laptop lists %v", got)
 	}
-	if got := names(office.Pairings()); len(got) != 1 || got[0] != "laptop" {
+	if got := names(office.Links()); len(got) != 1 || got[0] != "laptop" {
 		t.Errorf("office lists %v", got)
 	}
 	if len(office.Requests()) != 0 {
@@ -210,8 +210,8 @@ func TestUnpairedInstanceIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The stranger pins the office's CA on its own, without a Pairing.
-	if err := stranger.store.Update(func(ps []link.Pairing) ([]link.Pairing, error) {
-		return append(ps, link.Pairing{Name: "office", InstanceID: id.ID, Address: office.addr, Fingerprint: id.Fingerprint,
+	if err := stranger.store.Update(func(ps []link.Link) ([]link.Link, error) {
+		return append(ps, link.Link{Name: "office", InstanceID: id.ID, Address: office.addr, Fingerprint: id.Fingerprint,
 			LocalFingerprint: link.Fingerprint(stranger.ca.Certificate()), Version: 1}), nil
 	}); err != nil {
 		t.Fatal(err)
@@ -232,8 +232,8 @@ func TestUnpairTakesEffectAtOnce(t *testing.T) {
 	if err := office.Unpair("laptop"); err != nil {
 		t.Fatal(err)
 	}
-	if len(office.Pairings()) != 0 {
-		t.Errorf("office still lists %v", names(office.Pairings()))
+	if len(office.Links()) != 0 {
+		t.Errorf("office still lists %v", names(office.Links()))
 	}
 	if st := laptop.Check(ctxT(t), "office"); st.Reachable || !strings.Contains(st.Error, "not paired") {
 		t.Errorf("Check after the other side unpaired = %+v", st)
@@ -251,8 +251,8 @@ func TestRejectedPairing(t *testing.T) {
 		t.Fatal(err)
 	}
 	refused(t, "rejected Pair", (<-done).err, link.ReasonRejected, `"office" rejected`)
-	if len(laptop.Pairings())+len(office.Pairings()) != 0 {
-		t.Errorf("rejected Pairing pinned %v and %v", names(laptop.Pairings()), names(office.Pairings()))
+	if len(laptop.Links())+len(office.Links()) != 0 {
+		t.Errorf("rejected Pairing pinned %v and %v", names(laptop.Links()), names(office.Links()))
 	}
 }
 
@@ -266,7 +266,7 @@ func TestRotatedCABreaksPairings(t *testing.T) {
 	}
 
 	// The rotating side knows without dialling.
-	ls := laptop.Links()
+	ls := laptop.States()
 	if len(ls) != 1 || ls[0].State != "broken" || !strings.Contains(ls[0].Problem, `link "office"`) || !strings.Contains(ls[0].Problem, "rotated") {
 		t.Errorf("laptop's links after rotating = %+v", ls)
 	}
@@ -302,7 +302,7 @@ func TestIncompatibleVersionIsRefused(t *testing.T) {
 	pair(t, laptop, office)
 	upgraded := newLinked(t, "office", office.dir, v2)
 	_ = office.Close()
-	if err := laptop.store.Update(func(ps []link.Pairing) ([]link.Pairing, error) {
+	if err := laptop.store.Update(func(ps []link.Link) ([]link.Link, error) {
 		ps[0].Address = upgraded.addr
 		return ps, nil
 	}); err != nil {
@@ -315,13 +315,13 @@ func TestIncompatibleVersionIsRefused(t *testing.T) {
 }
 
 // An Instance with no --link-bind connects in only; when its CA is
-// rotated, the other side still reports the link broken once it tries,
-// naming it, without dialling back.
+// rotated, the other side cannot check that itself, so it warns on the
+// link, naming it, without calling it broken.
 func TestRotationReportedOnInboundOnlyLink(t *testing.T) {
 	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
 	pair(t, laptop, office)
 	// The laptop had no listener of its own: the office cannot dial it.
-	if err := office.store.Update(func(ps []link.Pairing) ([]link.Pairing, error) {
+	if err := office.store.Update(func(ps []link.Link) ([]link.Link, error) {
 		ps[0].Address = ""
 		return ps, nil
 	}); err != nil {
@@ -334,11 +334,12 @@ func TestRotationReportedOnInboundOnlyLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	laptop.Check(ctxT(t), "office")
-	ls := office.Links()
-	if len(ls) != 1 || ls[0].State != link.StateBroken || !strings.Contains(ls[0].Problem, `the Instance CA of link "laptop" no longer matches`) {
+	ls := office.States()
+	if len(ls) != 1 || ls[0].State != link.StatePaired || !strings.Contains(ls[0].Warning, `link "laptop"`) ||
+		!strings.Contains(ls[0].Warning, link.Fingerprint(laptop.ca.Certificate())) || !strings.Contains(ls[0].Warning, "unpair and pair again") {
 		t.Errorf("office's links after the laptop rotated = %+v", ls)
 	}
-	if st := office.Check(ctxT(t), "laptop"); st.State != link.StateBroken {
+	if st := office.Check(ctxT(t), "laptop"); st.State != link.StatePaired || st.Warning == "" {
 		t.Errorf("office's Check after the laptop rotated = %+v", st)
 	}
 }
@@ -362,7 +363,7 @@ func TestRequestReplacingAPairingSaysSo(t *testing.T) {
 	if r := <-done; r.err != nil {
 		t.Fatal(r.err)
 	}
-	if ls := office.Links(); len(ls) != 1 || ls[0].Fingerprint != link.Fingerprint(laptop.ca.Certificate()) || ls[0].State != link.StatePaired {
+	if ls := office.States(); len(ls) != 1 || ls[0].Fingerprint != link.Fingerprint(laptop.ca.Certificate()) || ls[0].State != link.StatePaired {
 		t.Errorf("office's links after pairing again = %+v", ls)
 	}
 }
@@ -379,8 +380,78 @@ func TestRotationReportedWhenDiallingOut(t *testing.T) {
 	if st.State != link.StateBroken || st.Reachable || !strings.Contains(st.Error, `the Instance CA of link "office" no longer matches`) {
 		t.Errorf("laptop's Check after the office rotated = %+v", st)
 	}
-	if ls := laptop.Links(); len(ls) != 1 || ls[0].State != link.StateBroken {
+	if ls := laptop.States(); len(ls) != 1 || ls[0].State != link.StateBroken {
 		t.Errorf("laptop's links after dialling the rotated office = %+v", ls)
+	}
+	// What the dial found is kept: it is still broken after a restart.
+	restarted := newLinked(t, "laptop", laptop.dir)
+	if ls := restarted.States(); len(ls) != 1 || ls[0].State != link.StateBroken || !strings.Contains(ls[0].Problem, `link "office"`) {
+		t.Errorf("laptop's links after a restart = %+v", ls)
+	}
+}
+
+// A dial that finds the pinned CA again clears what an earlier dial found.
+func TestGoodDialClearsBroken(t *testing.T) {
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
+	pair(t, laptop, office)
+	if err := laptop.store.Update(func(ls []link.Link) ([]link.Link, error) {
+		ls[0].Broken, ls[0].BrokenAt = "an earlier dial found another CA", time.Now()
+		return ls, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if st := laptop.Check(ctxT(t), "office"); st.State != link.StatePaired || !st.Reachable {
+		t.Errorf("Check of a link that is fine again = %+v", st)
+	}
+	if ls := laptop.Links(); ls[0].Broken != "" || !ls[0].BrokenAt.IsZero() {
+		t.Errorf("link after a good dial = %+v", ls[0])
+	}
+}
+
+// An Instance that merely claims a paired Instance's ID, with another CA,
+// is refused and warned about, but cannot make the link broken; the real
+// Instance connecting clears the warning.
+func TestImpostorOnlyWarns(t *testing.T) {
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
+	pair(t, laptop, office)
+	impostor := newLinked(t, "laptop", "") // the same Instance ID, its own CA
+	if err := impostor.store.Update(func(ls []link.Link) ([]link.Link, error) {
+		return append(ls, link.Link{Name: "office", InstanceID: "office-id", Address: office.addr, Fingerprint: link.Fingerprint(office.ca.Certificate()),
+			LocalFingerprint: link.Fingerprint(impostor.ca.Certificate()), Version: 1}), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	impostor.Check(ctxT(t), "office")
+	ls := office.States()
+	if len(ls) != 1 || ls[0].State != link.StatePaired || !strings.Contains(ls[0].Warning, link.Fingerprint(impostor.ca.Certificate())) {
+		t.Fatalf("office's links after the impostor connected = %+v", ls)
+	}
+	if st := laptop.Check(ctxT(t), "office"); !st.Reachable {
+		t.Fatalf("the real laptop's Check = %+v", st)
+	}
+	if ls := office.States(); ls[0].Warning != "" {
+		t.Errorf("warning after the real laptop connected = %q", ls[0].Warning)
+	}
+}
+
+// A newer Pairing request from the same Instance CA replaces the one still
+// waiting, which is refused as superseded.
+func TestNewerRequestSupersedes(t *testing.T) {
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
+	first := pairAsync(t, laptop, office)
+	old := waitRequest(t, office)
+	second := pairAsync(t, laptop, office)
+	r := <-first
+	refused(t, "the older request", r.err, link.ReasonSuperseded, "newer")
+	reqs := office.Requests()
+	if len(reqs) != 1 || reqs[0].ID == old.ID {
+		t.Fatalf("requests after a newer one = %+v", reqs)
+	}
+	if _, err := office.Approve(reqs[0].ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-second; r.err != nil {
+		t.Fatal(r.err)
 	}
 }
 

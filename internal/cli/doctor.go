@@ -113,7 +113,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if running == nil {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
-				checkLinks(report, cfg)
+				checkLinks(out, report, cfg)
 			}
 			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
 			if !inContainer {
@@ -151,8 +151,8 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 // checkLinks reports each link of the running Instance: its state, and
 // whether the other Instance answers over it and at which protocol
 // version (ADR 0027). A link the other Instance only connects in on is
-// reported, not failed.
-func checkLinks(report func(bool, string, string), cfg *config.Config) {
+// reported, not failed, and so is a warning, which this side cannot verify.
+func checkLinks(out io.Writer, report func(bool, string, string), cfg *config.Config) {
 	c, err := clientFor(cfg)
 	if err != nil {
 		return
@@ -175,6 +175,9 @@ func checkLinks(report func(bool, string, string), cfg *config.Config) {
 		default:
 			report(false, fmt.Sprintf("link %q: %s, not reachable: %s", l.Name, l.State, l.Error),
 				"start the other Instance with --link-bind, or unpair and pair again if its address or CA changed")
+		}
+		if l.Warning != "" {
+			fmt.Fprintf(out, "[WARN] link %q: %s\n", l.Name, l.Warning)
 		}
 	}
 }

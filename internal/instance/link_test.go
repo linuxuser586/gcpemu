@@ -65,7 +65,7 @@ func callAdmin(t *testing.T, in *Instance, method, path string, body, out any) {
 
 func linkNames(t *testing.T, in *Instance) []string {
 	t.Helper()
-	var got struct{ Links []link.Link }
+	var got struct{ Links []link.LinkState }
 	callAdmin(t, in, http.MethodGet, "/_emu/v1/links", nil, &got)
 	out := []string{}
 	for _, l := range got.Links {
@@ -90,9 +90,9 @@ func TestLinkPairingThroughAdminAPI(t *testing.T) {
 	if id.Name != "office" || id.ID != office.ID {
 		t.Fatalf("identify = %+v", id)
 	}
-	paired := make(chan link.Pairing, 1)
+	paired := make(chan link.Link, 1)
 	go func() {
-		var p link.Pairing
+		var p link.Link
 		callAdmin(t, laptop, http.MethodPost, "/_emu/v1/links", map[string]string{"address": addr, "fingerprint": id.Fingerprint}, &p)
 		paired <- p
 	}()

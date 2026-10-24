@@ -7,7 +7,7 @@
 // The listener accepts any client certificate that chains to the CA the
 // client presents, and decides at each request: the hello and Pairing
 // requests are open to any Instance, everything else only to one whose CA
-// is pinned. A client pins the other side's CA itself, so a Pairing gives
+// is pinned. A client pins the other side's CA itself, so a Link gives
 // no authority to a machine that merely presents an approved address.
 package link
 
@@ -70,6 +70,7 @@ const (
 	ReasonTimeout      = "not-approved"
 	ReasonSelf         = "self"
 	ReasonBusy         = "too-many-requests"
+	ReasonSuperseded   = "superseded"
 )
 
 // MaxPendingRequests caps the Pairing requests waiting for approval, since
@@ -103,9 +104,11 @@ type Manager struct {
 	addrs    []string
 	clientCA string // fingerprint clientCert was issued under
 	client   *tls.Certificate
-	// mismatch holds, by link name, the CA mismatch of the latest
-	// connection on that link, in or out, until one succeeds again.
-	mismatch map[string]error
+	// warnings holds, by link name, the latest refused connection that
+	// claimed that link's Instance ID with another CA, until the Instance
+	// pinned connects again. It is unverified, so it is never stored and
+	// never makes the link broken.
+	warnings map[string]string
 }
 
 // New returns cfg's Manager; Serve makes it reachable.
@@ -116,7 +119,7 @@ func New(cfg Config) *Manager {
 	if cfg.ApprovalTimeout == 0 {
 		cfg.ApprovalTimeout = DefaultApprovalTimeout
 	}
-	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, mismatch: map[string]error{}}
+	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}}
 }
 
 // Identity is what an Instance tells another about itself.
@@ -267,28 +270,28 @@ func (m *Manager) refuse(w http.ResponseWriter, code int, reason, msg string) {
 	writeJSON(w, code, refusal{Reason: reason, Error: msg})
 }
 
-// admit decides a request that needs a Pairing: it comes from an Instance
+// admit decides a request that needs a Link: it comes from an Instance
 // whose CA this one pinned, speaking a common protocol version. Otherwise
 // it refuses, naming the reason, and logs it so that this side reports it
 // too.
-func (m *Manager) admit(w http.ResponseWriter, r *http.Request) (Pairing, int, bool) {
+func (m *Manager) admit(w http.ResponseWriter, r *http.Request) (Link, int, bool) {
 	root, err := presentedCA(r.TLS.PeerCertificates, x509.ExtKeyUsageClientAuth)
 	if err != nil {
 		m.refuse(w, http.StatusForbidden, ReasonUnpaired, err.Error())
-		return Pairing{}, 0, false
+		return Link{}, 0, false
 	}
 	fp, id := Fingerprint(root), r.Header.Get(instanceIDHeader)
-	var claimed *Pairing
+	var claimed *Link
 	for _, p := range m.cfg.Store.List() {
 		if p.Fingerprint == fp {
 			v, err := Negotiate(m.cfg.Versions, parseVersions(r.Header.Get(versionsHeader)), strconv.Quote(p.Name))
 			if err != nil {
 				m.cfg.Log.Warn("link refused", "link", p.Name, "err", err)
 				m.refuse(w, http.StatusConflict, ReasonIncompatible, err.Error())
-				return Pairing{}, 0, false
+				return Link{}, 0, false
 			}
 			m.mu.Lock()
-			delete(m.mismatch, p.Name)
+			delete(m.warnings, p.Name)
 			m.mu.Unlock()
 			return p, v, true
 		}
@@ -299,16 +302,17 @@ func (m *Manager) admit(w http.ResponseWriter, r *http.Request) (Pairing, int, b
 	if claimed != nil {
 		err := errCAMismatch(claimed.Name, claimed.Fingerprint, fp)
 		m.mu.Lock()
-		m.mismatch[claimed.Name] = err
+		m.warnings[claimed.Name] = fmt.Sprintf("at %s an Instance claiming to be link %q (Instance ID %s) connected with CA %s, not the pinned %s, and was refused; if %q rotated its CA (`gcpemu ca rotate`), unpair and pair again",
+			time.Now().UTC().Format(time.RFC3339), claimed.Name, id, fp, claimed.Fingerprint, claimed.Name)
 		m.mu.Unlock()
 		m.cfg.Log.Warn("link refused", "link", claimed.Name, "err", err)
 		m.refuse(w, http.StatusForbidden, ReasonCAMismatch, err.Error())
-		return Pairing{}, 0, false
+		return Link{}, 0, false
 	}
 	msg := fmt.Sprintf("Instance %s (CA %s) is not paired with Instance %q; pair them with `gcpemu link pair`", id, fp, m.cfg.Instance)
 	m.cfg.Log.Warn("link refused", "err", msg)
 	m.refuse(w, http.StatusForbidden, ReasonUnpaired, msg)
-	return Pairing{}, 0, false
+	return Link{}, 0, false
 }
 
 // pairBody is the body of a Pairing request.
@@ -365,6 +369,13 @@ func (m *Manager) servePair(w http.ResponseWriter, r *http.Request) {
 		decide:  make(chan error, 1),
 	}
 	m.mu.Lock()
+	for id, p := range m.pending {
+		if p.Fingerprint == fp {
+			// Taking it from pending decides it, as Approve does.
+			delete(m.pending, id)
+			p.decide <- errSuperseded
+		}
+	}
 	if len(m.pending) >= MaxPendingRequests {
 		m.mu.Unlock()
 		m.cfg.Log.Warn("Pairing refused: too many requests waiting", "instance", body.Name, "instanceId", body.ID)
@@ -402,6 +413,8 @@ func (m *Manager) servePair(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case decision == nil:
 		writeJSON(w, http.StatusOK, reply)
+	case errors.Is(decision, errSuperseded):
+		m.refuse(w, http.StatusConflict, ReasonSuperseded, fmt.Sprintf("a newer Pairing request from the same Instance CA replaced this one at Instance %q", m.cfg.Instance))
 	case errors.Is(decision, errRejected):
 		m.refuse(w, http.StatusForbidden, ReasonRejected, fmt.Sprintf("Instance %q rejected the Pairing request", m.cfg.Instance))
 	default:
@@ -409,8 +422,13 @@ func (m *Manager) servePair(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// errRejected decides a Pairing request that this side rejected.
-var errRejected = errors.New("rejected")
+// errRejected decides a Pairing request that this side rejected, and
+// errSuperseded one that a newer request from the same Instance CA
+// replaced.
+var (
+	errRejected   = errors.New("rejected")
+	errSuperseded = errors.New("superseded")
+)
 
 // Requests returns the incoming Pairing requests, oldest first.
 func (m *Manager) Requests() []Request {
@@ -439,15 +457,15 @@ func (m *Manager) takeRequest(id string) (*pendingRequest, error) {
 // Approve approves the incoming Pairing request id, pinning the
 // requester's Instance CA under the link name name (default the
 // requester's Instance name).
-func (m *Manager) Approve(id, name string) (Pairing, error) {
+func (m *Manager) Approve(id, name string) (Link, error) {
 	m.mu.Lock()
 	p, ok := m.pending[id]
 	m.mu.Unlock()
 	if !ok {
 		_, err := m.takeRequest(id)
-		return Pairing{}, err
+		return Link{}, err
 	}
-	pairing := Pairing{
+	pairing := Link{
 		Name: name, Instance: p.Name, InstanceID: p.InstanceID, Address: p.Address,
 		Fingerprint: p.Fingerprint, CA: string(p.ca), LocalFingerprint: m.fingerprint(),
 		Version: p.Version, PairedAt: time.Now().UTC(),
@@ -455,14 +473,14 @@ func (m *Manager) Approve(id, name string) (Pairing, error) {
 	// Refused while still waiting: the user may approve it under another
 	// name.
 	if err := m.checkName(&pairing); err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
 	if _, err := m.takeRequest(id); err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
 	if err := m.pin(&pairing); err != nil {
 		p.decide <- fmt.Errorf("Instance %q could not record the Pairing: %w", m.cfg.Instance, err)
-		return Pairing{}, err
+		return Link{}, err
 	}
 	p.decide <- nil
 	return pairing, nil
@@ -495,29 +513,29 @@ func (m *Manager) Identify(ctx context.Context, addr string) (Identity, error) {
 // Pair asks the Instance at addr, whose Instance CA has the fingerprint
 // the user approved, to pair, and waits for its approval. It then pins
 // that CA under the link name name (default the other Instance's name).
-func (m *Manager) Pair(ctx context.Context, addr, fingerprint, name string) (Pairing, error) {
+func (m *Manager) Pair(ctx context.Context, addr, fingerprint, name string) (Link, error) {
 	addr = Dialable(addr)
 	if fingerprint == m.fingerprint() {
-		return Pairing{}, errSelf
+		return Link{}, errSelf
 	}
 	pinned := pinnedTo(fingerprint, func(got string) error {
 		return fmt.Errorf("the Instance at %s presents CA %s, not the approved %s", addr, got, fingerprint)
 	})
 	var id Identity
 	if _, err := m.call(ctx, addr, http.MethodGet, "/link/v1/hello", pinned, nil, &id); err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
 	v, err := Negotiate(m.cfg.Versions, id.versions(), fmt.Sprintf("Instance %q", id.Name))
 	if err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
-	pairing := Pairing{
+	pairing := Link{
 		Name: name, Instance: id.Name, InstanceID: id.ID, Address: addr, Fingerprint: fingerprint,
 		LocalFingerprint: m.fingerprint(), Version: v,
 	}
 	// Refuse a name already taken before bothering the other side.
 	if err := m.checkName(&pairing); err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
 	body := pairBody{Identity: m.identity()}
 	if a := m.Addresses(); len(a) > 0 {
@@ -526,13 +544,13 @@ func (m *Manager) Pair(ctx context.Context, addr, fingerprint, name string) (Pai
 	var reply pairReply
 	root, err := m.call(ctx, addr, http.MethodPost, "/link/v1/pairings", pinned, body, &reply)
 	if err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
 	pairing.Version = reply.Negotiated
 	pairing.CA = string(certPEM(root))
 	pairing.PairedAt = time.Now().UTC()
 	if err := m.pin(&pairing); err != nil {
-		return Pairing{}, err
+		return Link{}, err
 	}
 	return pairing, nil
 }
@@ -550,23 +568,29 @@ type Status struct {
 	Reachable bool   `json:"reachable"`
 	Version   int    `json:"version,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Warning is an unverified sign of trouble, as LinkState's.
+	Warning string `json:"warning,omitempty"`
 }
 
-// Link is a Pairing and its State, as `gcpemu link list` shows it.
-type Link struct {
-	Pairing
+// LinkState is a Link and its State, as `gcpemu link list` shows it.
+type LinkState struct {
+	Link
 	State   string `json:"state"`
 	Problem string `json:"problem,omitempty"`
+	// Warning is the latest refused connection that claimed to be the
+	// other Instance with another CA. This side cannot verify it, so it
+	// leaves State alone.
+	Warning string `json:"warning,omitempty"`
 }
 
-// Pairings returns this Instance's Pairings by name.
-func (m *Manager) Pairings() []Pairing { return m.cfg.Store.List() }
+// Links returns this Instance's Links by name.
+func (m *Manager) Links() []Link { return m.cfg.Store.List() }
 
-// Links returns the Pairings and their State, without dialling anything.
-func (m *Manager) Links() []Link {
-	out := []Link{}
-	for _, p := range m.Pairings() {
-		l := Link{Pairing: p, State: StatePaired}
+// States returns the Links and their State, without dialling anything.
+func (m *Manager) States() []LinkState {
+	out := []LinkState{}
+	for _, p := range m.Links() {
+		l := LinkState{Link: p, State: StatePaired, Warning: m.warning(p.Name)}
 		if err := m.broken(p); err != nil {
 			l.State, l.Problem = StateBroken, err.Error()
 		}
@@ -575,22 +599,62 @@ func (m *Manager) Links() []Link {
 	return out
 }
 
-// broken reports how p broke since Pairing, if it did: this Instance's CA
-// was rotated, or the other Instance last presented another CA.
-func (m *Manager) broken(p Pairing) error {
+// broken reports how p broke since Pairing, if it did, as this side
+// itself saw: this Instance's CA was rotated, or a dial over p last found
+// the other Instance presenting another CA.
+func (m *Manager) broken(p Link) error {
+	if err := m.rotated(p); err != nil {
+		return err
+	}
+	if p.Broken != "" {
+		return errors.New(p.Broken)
+	}
+	return nil
+}
+
+// rotated reports whether this Instance's CA was rotated since Pairing.
+func (m *Manager) rotated(p Link) error {
 	if p.LocalFingerprint != m.fingerprint() {
 		return fmt.Errorf("this Instance's CA was rotated after Pairing with link %q (`gcpemu ca rotate`), so %q no longer accepts it; unpair and pair again", p.Name, p.Name)
 	}
+	return nil
+}
+
+// warning returns the link name's warning, if any.
+func (m *Manager) warning(name string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.mismatch[p.Name]
+	return m.warnings[name]
+}
+
+// found stores what a dial over p found wrong with the other Instance's
+// CA, nil once it found the pinned one, so that it outlives a restart.
+func (m *Manager) found(p Link, err error) error {
+	broken := ""
+	if err != nil {
+		broken = err.Error()
+	}
+	if broken == p.Broken {
+		return nil
+	}
+	return m.cfg.Store.Update(func(ls []Link) ([]Link, error) {
+		for i := range ls {
+			if ls[i].Name == p.Name && ls[i].Fingerprint == p.Fingerprint {
+				ls[i].Broken, ls[i].BrokenAt = broken, time.Time{}
+				if broken != "" {
+					ls[i].BrokenAt = time.Now().UTC()
+				}
+			}
+		}
+		return ls, nil
+	})
 }
 
 // Check dials the link name and reports its Status.
 func (m *Manager) Check(ctx context.Context, name string) Status {
-	st := Status{Name: name, State: StatePaired}
-	var p *Pairing
-	for _, q := range m.Pairings() {
+	st := Status{Name: name, State: StatePaired, Warning: m.warning(name)}
+	var p *Link
+	for _, q := range m.Links() {
 		if q.Name == name {
 			p = &q
 		}
@@ -599,38 +663,45 @@ func (m *Manager) Check(ctx context.Context, name string) Status {
 		st.State, st.Error = "", fmt.Sprintf("no link named %q", name)
 		return st
 	}
+	brokenBy := func(err error) {
+		if err != nil {
+			st.State, st.Error = StateBroken, err.Error()
+		}
+	}
 	if p.Address == "" {
 		st.InboundOnly = true
 		st.Error = fmt.Sprintf("link %q has no --link-bind address; it connects to this Instance", name)
-	}
-	if err := m.broken(*p); err != nil {
-		st.State, st.Error = StateBroken, err.Error()
-	}
-	if p.Address == "" {
+		brokenBy(m.broken(*p))
 		return st
 	}
 	// A broken link is dialled all the same, so that the other side
-	// reports it too.
+	// reports it too, and so that a dial can find it fine again.
 	var reply struct{ Version int }
-	if _, err := m.callPaired(ctx, *p, http.MethodGet, "/link/v1/status", &reply); err != nil {
-		if errors.As(err, new(caMismatchError)) {
-			m.mu.Lock()
-			m.mismatch[p.Name] = err
-			m.mu.Unlock()
-			st.State = StateBroken
+	_, err := m.callPaired(ctx, *p, http.MethodGet, "/link/v1/status", &reply)
+	switch {
+	case errors.As(err, new(caMismatchError)):
+		if serr := m.found(*p, err); serr != nil {
+			m.cfg.Log.Warn("could not store the link's state", "link", name, "err", serr)
 		}
+		brokenBy(m.rotated(*p))
+		if st.State != StateBroken {
+			brokenBy(err)
+		}
+	case err != nil:
+		brokenBy(m.broken(*p))
 		if st.Error == "" {
 			st.Error = err.Error()
 		}
-		return st
+	default:
+		if serr := m.found(*p, nil); serr != nil {
+			m.cfg.Log.Warn("could not store the link's state", "link", name, "err", serr)
+		}
+		if err := m.rotated(*p); err != nil {
+			brokenBy(err)
+			return st
+		}
+		st.Reachable, st.Version = true, reply.Version
 	}
-	if st.State == StateBroken {
-		return st
-	}
-	m.mu.Lock()
-	delete(m.mismatch, p.Name)
-	m.mu.Unlock()
-	st.Reachable, st.Version = true, reply.Version
 	return st
 }
 
@@ -638,9 +709,9 @@ func (m *Manager) Check(ctx context.Context, name string) Status {
 // other Instance, at once.
 func (m *Manager) Unpair(name string) error {
 	m.mu.Lock()
-	delete(m.mismatch, name)
+	delete(m.warnings, name)
 	m.mu.Unlock()
-	return m.cfg.Store.Update(func(ps []Pairing) ([]Pairing, error) {
+	return m.cfg.Store.Update(func(ps []Link) ([]Link, error) {
 		for i, p := range ps {
 			if p.Name == name {
 				return append(ps[:i], ps[i+1:]...), nil
@@ -655,14 +726,14 @@ var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // checkName defaults p's name to the other Instance's, and refuses one
 // that is malformed or names a link to another Instance.
-func (m *Manager) checkName(p *Pairing) error {
+func (m *Manager) checkName(p *Link) error {
 	if p.Name == "" {
 		p.Name = p.Instance
 	}
 	if !nameRE.MatchString(p.Name) {
 		return fmt.Errorf("invalid link name %q: use lowercase letters, digits and hyphens (pass --name)", p.Name)
 	}
-	for _, q := range m.Pairings() {
+	for _, q := range m.Links() {
 		if q.Name == p.Name && q.InstanceID != p.InstanceID {
 			return fmt.Errorf("a link named %q already exists, to Instance %s; pass --name to name this one", p.Name, q.InstanceID)
 		}
@@ -670,13 +741,13 @@ func (m *Manager) checkName(p *Pairing) error {
 	return nil
 }
 
-// pin stores p, replacing any earlier Pairing with the same Instance, as
+// pin stores p, replacing any earlier Link to the same Instance, as
 // when pairing again after `gcpemu ca rotate`.
-func (m *Manager) pin(p *Pairing) error {
+func (m *Manager) pin(p *Link) error {
 	if err := m.checkName(p); err != nil {
 		return err
 	}
-	err := m.cfg.Store.Update(func(ps []Pairing) ([]Pairing, error) {
+	err := m.cfg.Store.Update(func(ps []Link) ([]Link, error) {
 		out := ps[:0]
 		for _, q := range ps {
 			if q.InstanceID != p.InstanceID && q.Name != p.Name {
@@ -689,14 +760,14 @@ func (m *Manager) pin(p *Pairing) error {
 		return err
 	}
 	m.mu.Lock()
-	delete(m.mismatch, p.Name)
+	delete(m.warnings, p.Name)
 	m.mu.Unlock()
 	m.cfg.Log.Info("paired", "link", p.Name, "instanceId", p.InstanceID, "fingerprint", p.Fingerprint)
 	return nil
 }
 
 // callPaired makes a request over the link p, trusting only its pinned CA.
-func (m *Manager) callPaired(ctx context.Context, p Pairing, method, path string, out any) (*x509.Certificate, error) {
+func (m *Manager) callPaired(ctx context.Context, p Link, method, path string, out any) (*x509.Certificate, error) {
 	pinned := pinnedTo(p.Fingerprint, func(got string) error { return errCAMismatch(p.Name, p.Fingerprint, got) })
 	return m.call(ctx, p.Address, method, path, pinned, nil, out)
 }

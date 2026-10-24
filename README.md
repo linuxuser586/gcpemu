@@ -369,7 +369,8 @@ gcpemu link approve            # or: gcpemu link approve <request> / gcpemu link
 ```
 
 `link pair` waits up to 5 minutes for the approval; an Instance keeps at most 16 Pairing requests
-waiting, and refuses more until one is decided. Compare the fingerprints with the other
+waiting, and refuses more until one is decided. A newer request from the same Instance replaces its
+older one, which is refused as superseded. Compare the fingerprints with the other
 machine's owner before approving; `--yes` skips the questions, for scripts. Once approved, each side
 pins the other's Instance CA, and names the link after the other Instance (`--name` for another
 name, which is needed when two links would share one). The Admin API serves the same steps under
@@ -378,12 +379,20 @@ name, which is needed when two links would share one). The Admin API serves the 
 - `gcpemu link list` lists the links. `gcpemu link unpair <name>` removes one; that side stops
   accepting the other at once. Unpair it on the other side too.
 - An Instance that is not paired, or whose Instance CA no longer matches the one pinned, is refused,
-  and the error says which. `gcpemu ca rotate` therefore breaks an Instance's Pairings: both sides
-  report it, naming the link. Pairing again replaces the old Pairing; the request then warns which
-  link it replaces, so that a stranger claiming that Instance's ID is not approved by mistake.
+  and the error says which. `gcpemu ca rotate` therefore breaks an Instance's links, and both sides
+  report it, naming the link. A side calls a link broken only on what it saw itself: its own CA was
+  rotated, or dialling the other Instance found another CA, which `link list` keeps showing, across
+  restarts, until a dial finds the pinned CA again. A refused connection that only claims to be the
+  other Instance, with another CA, is a warning on the link instead, since anyone could claim it; on
+  a link the other side only connects in on, that warning is all this side can see of a rotation.
+  Pairing again replaces the old link; the request then warns which link it replaces, so that a
+  stranger claiming that Instance's ID is not approved by mistake.
+- If `link pair` loses its connection just as the other side approves, only the other side keeps
+  the link. Run `gcpemu link pair` again: the other side answers at once, since it is already
+  paired.
 - Instances negotiate a link protocol version. One with no version in common is refused, at Pairing
   and on connect, with an error naming both versions.
-- Pairings are configuration, kept in `<data-dir>/links.json`: Reset and State snapshots leave them
+- Links are configuration, kept in `<data-dir>/links.json`: Reset and State snapshots leave them
   alone, and a Persistent Instance keeps them across restarts. An Ephemeral Instance keeps them in
   memory.
 - `gcpemu doctor` reports each link: its state, whether the other Instance answers, and at which

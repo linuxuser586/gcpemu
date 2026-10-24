@@ -232,8 +232,16 @@ Another Instance, usually on another machine, that an Instance delegates one or 
 _Avoid_: peer (collides with VPC network peering), remote Instance, node
 
 **Pairing**:
-The explicit act, approved on both sides, by which two Instances each come to trust the other's Instance CA, so that each accepts the other's asserted Principals. Discovery never pairs Instances.
+The explicit act, approved on both sides, by which two Instances each come to trust the other's Instance CA, so that each accepts the other's asserted Principals. It leaves each side with a Link to the other. Discovery never pairs Instances.
 _Avoid_: joining, trusting (unqualified)
+
+**Pairing request**:
+One Instance asking another to pair, which waits for that other Instance's approval or rejection and lapses if neither comes.
+_Avoid_: join request, link request
+
+**Link**:
+What each of two paired Instances keeps of the other: a name, and the Instance CA it pinned at Pairing. A Link is broken once that Instance CA no longer matches what this side itself sees: its own Instance CA was rotated, or the other Instance answered with another one. Unpairing removes the Link on that side only.
+_Avoid_: Pairing (for what lasts after the act), peering, trust
 
 **Shared Project**:
 A Project that an Instance offers to the Instances it is paired with. Sharing alone forwards nothing.

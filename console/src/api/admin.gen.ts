@@ -554,6 +554,132 @@ export interface paths {
         patch: operations["setFaultDisabled"];
         trace?: never;
     };
+    "/_emu/v1/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This Instance's links and their state, without dialling them (`gcpemu link list`).
+         * @description Each link, with the other Instance's pinned Instance CA. A link is broken only on what this side saw itself: its own CA was rotated after Pairing, or the latest dial over it found the other Instance presenting another CA. A refused connection that only claims to be the other Instance is a warning, which leaves the state alone. Links are configuration: Reset and State snapshots leave them alone (ADR 0027).
+         */
+        get: operations["listLinks"];
+        put?: never;
+        /**
+         * Pair with the Instance at a link address (`gcpemu link pair`).
+         * @description Asks the other Instance to pair, presenting the Instance CA with the fingerprint given, and waits, up to 5 minutes, for it to approve. The caller approves this side by sending the fingerprint it was shown by identify. Refusals by the other Instance (rejected, incompatible protocol version, too many requests waiting, superseded by a newer request from this Instance) are 409, failing to reach it 502.
+         */
+        post: operations["pairLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/identify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask the Instance at a link address who it is, without pairing. */
+        post: operations["identifyLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dial each link and report whether it is reachable, and at which protocol version (`gcpemu doctor`). */
+        get: operations["linkStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unpair a link (`gcpemu link unpair`); this Instance stops accepting the other at once. */
+        delete: operations["unpairLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Incoming Pairing requests waiting for this Instance's approval (`gcpemu link requests`). */
+        get: operations["listPairingRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/requests/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a Pairing request (`gcpemu link approve`), pinning the requester's Instance CA. */
+        post: operations["approvePairingRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/requests/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a Pairing request (`gcpemu link reject`). */
+        post: operations["rejectPairingRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/shutdown": {
         parameters: {
             query?: never;
@@ -909,6 +1035,40 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        Link: {
+            /** @description The link's name on this Instance. */
+            name?: string;
+            /** @description The other Instance's name. */
+            instance?: string;
+            instanceId?: string;
+            /** @description The other Instance's --link-bind address; absent when it only connects to this one. */
+            address?: string;
+            /** @description The pinned Instance CA's fingerprint, sha256:HEX. */
+            fingerprint?: string;
+            /** @description The pinned Instance CA */
+            ca?: string;
+            /** @description This Instance's CA fingerprint at Pairing. */
+            localFingerprint?: string;
+            /** @description The link protocol version negotiated at Pairing. */
+            version?: number;
+            /** Format: date-time */
+            pairedAt?: string;
+            /** @description What the latest dial over the link found wrong with the other Instance's CA; absent once a dial finds it fine. */
+            broken?: string;
+            /**
+             * Format: date-time
+             * @description When that dial was.
+             */
+            brokenAt?: string;
+        };
+        LinkState: components["schemas"]["Link"] & {
+            /** @enum {string} */
+            state?: "paired" | "broken";
+            /** @description Why the link is broken. */
+            problem?: string;
+            /** @description The latest refused connection that claimed to be the other Instance with another CA; unverified, so it leaves the state alone. */
+            warning?: string;
+        };
         IamEnforcement: {
             /** @enum {string} */
             level: "off" | "audit" | "enforce";
@@ -2227,6 +2387,229 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The links, by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        links?: components["schemas"]["LinkState"][];
+                        /** @description This Instance's own CA fingerprint, for the other side of a Pairing to compare. */
+                        fingerprint?: string;
+                    };
+                };
+            };
+        };
+    };
+    pairLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description host:port of the other Instance's --link-bind listener (port 4511 if omitted). */
+                    address: string;
+                    /** @description The other Instance's CA fingerprint, sha256:HEX. */
+                    fingerprint: string;
+                    /** @description The link's name here; defaults to the other Instance's name. */
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Paired. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+        };
+    };
+    identifyLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    address: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The other Instance's identity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        name?: string;
+                        /** @description Its Instance ID. */
+                        id?: string;
+                        /** @description The fingerprint of the Instance CA it presented. */
+                        fingerprint?: string;
+                        /** @description The newest link protocol version it speaks. */
+                        version?: number;
+                        minVersion?: number;
+                    };
+                };
+            };
+            502: components["responses"]["Error"];
+        };
+    };
+    linkStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Each link's status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        links?: {
+                            name?: string;
+                            /** @enum {string} */
+                            state?: "paired" | "broken";
+                            /** @description The other Instance has no --link-bind address, so this one cannot dial it. */
+                            inboundOnly?: boolean;
+                            reachable?: boolean;
+                            version?: number;
+                            /** @description Why it is not reachable or broken */
+                            error?: string;
+                            /** @description The latest refused connection that claimed to be the other Instance with another CA; unverified, so it leaves the state alone. */
+                            warning?: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    unpairLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listPairingRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The waiting requests, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        requests?: {
+                            id?: string;
+                            /** @description The link that approving it replaces: one to the same Instance ID, pinned to another CA. */
+                            replaces?: string;
+                            /** @description The requesting Instance's name. */
+                            name?: string;
+                            instanceId?: string;
+                            fingerprint?: string;
+                            address?: string;
+                            /** @description The link protocol version negotiated. */
+                            version?: number;
+                            /** Format: date-time */
+                            received?: string;
+                        }[];
+                    };
+                };
+            };
+        };
+    };
+    approvePairingRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description The link's name here; defaults to the requesting Instance's name. */
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Paired. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Link"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    rejectPairingRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
             404: components["responses"]["Error"];
         };
     };

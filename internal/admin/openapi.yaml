@@ -678,9 +678,12 @@ paths:
       summary: This Instance's links and their state, without dialling them (`gcpemu link list`).
       operationId: listLinks
       description: >-
-        Each Pairing, with the other Instance's pinned Instance CA. A link is
-        broken once this Instance's CA was rotated after Pairing. Pairings are
-        configuration: Reset and State snapshots leave them alone (ADR 0027).
+        Each link, with the other Instance's pinned Instance CA. A link is
+        broken only on what this side saw itself: its own CA was rotated after
+        Pairing, or the latest dial over it found the other Instance
+        presenting another CA. A refused connection that only claims to be
+        the other Instance is a warning, which leaves the state alone. Links
+        are configuration: Reset and State snapshots leave them alone (ADR 0027).
       responses:
         "200":
           description: The links, by name.
@@ -689,7 +692,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  links: { type: array, items: { $ref: "#/components/schemas/Link" } }
+                  links: { type: array, items: { $ref: "#/components/schemas/LinkState" } }
                   fingerprint: { type: string, description: "This Instance's own CA fingerprint, for the other side of a Pairing to compare." }
     post:
       summary: Pair with the Instance at a link address (`gcpemu link pair`).
@@ -699,7 +702,8 @@ paths:
         fingerprint given, and waits, up to 5 minutes, for it to approve. The
         caller approves this side by sending the fingerprint it was shown by
         identify. Refusals by the other Instance (rejected, incompatible
-        protocol version) are 409, failing to reach it 502.
+        protocol version, too many requests waiting, superseded by a newer
+        request from this Instance) are 409, failing to reach it 502.
       requestBody:
         required: true
         content:
@@ -716,7 +720,7 @@ paths:
           description: Paired.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Pairing" }
+              schema: { $ref: "#/components/schemas/Link" }
         "400": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
@@ -770,6 +774,7 @@ paths:
                         reachable: { type: boolean }
                         version: { type: integer }
                         error: { type: string, description: Why it is not reachable or broken, naming the link. }
+                        warning: { type: string, description: "The latest refused connection that claimed to be the other Instance with another CA; unverified, so it leaves the state alone." }
   /_emu/v1/links/{name}:
     delete:
       summary: Unpair a link (`gcpemu link unpair`); this Instance stops accepting the other at once.
@@ -822,7 +827,7 @@ paths:
           description: Paired.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Pairing" }
+              schema: { $ref: "#/components/schemas/Link" }
         "400": { $ref: "#/components/responses/Error" }
   /_emu/v1/links/requests/{id}/reject:
     post:
@@ -1395,7 +1400,7 @@ components:
             properties:
               error: { type: string }
   schemas:
-    Pairing:
+    Link:
       type: object
       properties:
         name: { type: string, description: The link's name on this Instance. }
@@ -1407,13 +1412,16 @@ components:
         localFingerprint: { type: string, description: This Instance's CA fingerprint at Pairing. }
         version: { type: integer, description: The link protocol version negotiated at Pairing. }
         pairedAt: { type: string, format: date-time }
-    Link:
+        broken: { type: string, description: "What the latest dial over the link found wrong with the other Instance's CA; absent once a dial finds it fine." }
+        brokenAt: { type: string, format: date-time, description: When that dial was. }
+    LinkState:
       allOf:
-        - { $ref: "#/components/schemas/Pairing" }
+        - { $ref: "#/components/schemas/Link" }
         - type: object
           properties:
             state: { type: string, enum: [paired, broken] }
             problem: { type: string, description: Why the link is broken. }
+            warning: { type: string, description: "The latest refused connection that claimed to be the other Instance with another CA; unverified, so it leaves the state alone." }
     IamEnforcement:
       type: object
       required: [level]
