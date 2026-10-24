@@ -275,6 +275,7 @@ func newAdmin(in *Instance) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 	})
+	in.linkRoutes(mux)
 	mux.HandleFunc("POST /_emu/v1/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "shutting down"})
 		in.RequestShutdown()

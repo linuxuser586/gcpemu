@@ -28,7 +28,7 @@ The short canonical name of a Service (e.g. `gcs`, `sql`, `gke`, `ar`). It is us
 _Avoid_: using the API name (`storage`, `sqladmin`, `container`) except where GCP's wire format requires it
 
 **Runtime Service**:
-A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT, Cloud Build). An Instance with no usable runtime runs every other Service.
+A Service that does nothing without a container runtime, because its resources are Managed containers (Cloud SQL, GKE, Cloud NAT, Cloud Build). An Instance with no usable runtime runs every other Service. A Managed emulator likewise needs a runtime, and without one its Delegated API is unavailable.
 _Avoid_: container service, container-backed service
 
 **API name**:
@@ -111,7 +111,7 @@ The Managed container that listens on `--gfe-bind` addresses at port 443 when th
 _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 
 **LAN listener**:
-A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane or the Google front end and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule, and otherwise only credentials the Instance issued, whatever the IAM enforcement level.
+A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane, the Google front end or the link protocol, and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule, and otherwise only credentials the Instance issued, whatever the IAM enforcement level. The link protocol's admits only paired Instances and Pairing requests.
 _Avoid_: LAN binding, bind address (unqualified), exposed port
 
 **LAN caller**:
@@ -240,8 +240,16 @@ Another Instance, usually on another machine, that an Instance delegates one or 
 _Avoid_: peer (collides with VPC network peering), remote Instance, node
 
 **Pairing**:
-The explicit act, approved on both sides, by which two Instances each come to trust the other's Instance CA, so that each accepts the other's asserted Principals. Discovery never pairs Instances.
+The explicit act, approved on both sides, by which two Instances each come to trust the other's Instance CA, so that each accepts the other's asserted Principals. It leaves each side with a Link to the other. Discovery never pairs Instances.
 _Avoid_: joining, trusting (unqualified)
+
+**Pairing request**:
+One Instance asking another to pair, which waits for that other Instance's approval or rejection and lapses if neither comes.
+_Avoid_: join request, link request
+
+**Link**:
+What each of two paired Instances keeps of the other: a name, and the Instance CA it pinned at Pairing. A Link is broken once that Instance CA no longer matches what this side itself sees: its own Instance CA was rotated, or the other Instance answered with another one. Unpairing removes the Link on that side only.
+_Avoid_: Pairing (for what lasts after the act), peering, trust
 
 **Shared Project**:
 A Project that an Instance offers to the Instances it is paired with. Sharing alone forwards nothing.
@@ -256,8 +264,12 @@ An API that has no Service, such as Firestore's, which an Instance forwards to a
 _Avoid_: external service, proxied API
 
 **External emulator**:
-A Delegate that is not an Instance but speaks a GCP API's wire format, such as Google's Firestore, Spanner or Bigtable emulator, to which an Instance delegates an API it has no Service for. It is always configured by address.
+A Delegate that is not an Instance but speaks a GCP API's wire format, such as Google's Firestore, Spanner or Bigtable emulator, to which an Instance delegates an API it has no Service for. It is configured by address, or the Instance runs it as a Managed emulator.
 _Avoid_: third-party emulator, compatible node
+
+**Managed emulator**:
+An External emulator that the Instance runs itself as a Managed container, from Google's own emulator, for Firestore, Datastore, Spanner or Bigtable. Reset clears its data, and State snapshots do not hold it.
+_Avoid_: built-in emulator, bundled emulator
 
 **Discovered Instance**:
 An Instance found on the LAN because it advertises itself, which is not (yet) a Linked Instance. Only Instances that opted into LAN reach advertise.
