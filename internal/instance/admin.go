@@ -95,6 +95,7 @@ func newAdmin(in *Instance) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"containers": cts})
 	})
 	mux.HandleFunc("GET /_emu/v1/env", in.serveEnv)
+	mux.HandleFunc("GET /_emu/v1/external", in.serveExternal)
 	mux.HandleFunc("GET /_emu/v1/hostmode", in.serveHostMode)
 	mux.HandleFunc("POST /_emu/v1/adc-key", in.serveADCKey)
 	mux.HandleFunc("POST /_emu/v1/seed", func(w http.ResponseWriter, r *http.Request) {

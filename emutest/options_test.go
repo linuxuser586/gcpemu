@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,4 +190,23 @@ func httpOptions(t *testing.T, inst *emutest.Instance, api string) []option.Clie
 		t.Fatal(err)
 	}
 	return opts
+}
+
+// TestWithExternal: the Instance forwards the Delegated API to the
+// External emulator.
+func TestWithExternal(t *testing.T) {
+	ext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "external "+r.URL.Path)
+	}))
+	defer ext.Close()
+	inst := emutest.Start(t, []string{"iam"}, emutest.WithExternal("firestore", ext.Listener.Addr().String()))
+	resp, err := http.Get(inst.GatewayURL() + "/firestore/v1/projects/p/databases/(default)/documents/c/d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if want := "external /v1/projects/p/databases/(default)/documents/c/d"; string(b) != want {
+		t.Errorf("got %d %q, want %q", resp.StatusCode, b, want)
+	}
 }

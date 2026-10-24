@@ -86,6 +86,7 @@ func (in *Instance) EnvVars() map[string]string {
 		}
 	}
 	in.hostNameEnvVars(out)
+	in.externalEnvVars(out, gw)
 	if in.adminToken != "" {
 		out["GCPEMU_ADMIN_TOKEN"] = in.adminToken
 	}

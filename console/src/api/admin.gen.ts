@@ -148,6 +148,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Delegated APIs, which the API gateway forwards to the External emulators configured with --external (ADR 0027), and whether each External emulator accepts connections now. The Instance's readiness never depends on them. */
+        get: operations["external"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/adc-key": {
         parameters: {
             query?: never;
@@ -1126,6 +1143,19 @@ export interface components {
             endpoints: components["schemas"]["Endpoints"];
             runtime: components["schemas"]["RuntimeStatus"];
         };
+        /** @description A Delegated API and its External emulator. */
+        External: {
+            /** @description The API name, e.g. firestore. */
+            api: string;
+            /** @description The External emulator's host:port. */
+            address: string;
+            /** @description The real hostnames the Google front end serves for the API. */
+            hosts: string[];
+            /** @description Whether the External emulator accepted a TCP connection. */
+            reachable: boolean;
+            /** @description Why it did not. */
+            error?: string;
+        };
         /** @description The container runtime the instance uses, or would use once a service needs one. Probed at most every few seconds. */
         RuntimeStatus: {
             /** @enum {string} */
@@ -1849,6 +1879,28 @@ export interface operations {
                 };
             };
             500: components["responses"]["Error"];
+        };
+    };
+    external: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delegated APIs, sorted by API name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        external: components["schemas"]["External"][];
+                    };
+                };
+            };
         };
     };
     adcKey: {

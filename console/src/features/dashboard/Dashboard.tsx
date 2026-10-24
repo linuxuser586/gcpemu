@@ -1,7 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 
 import type { Info } from '@/api/admin'
-import { containersQuery, endpointsQuery, infoQuery, readinessQuery } from '@/api/queries'
+import {
+  containersQuery,
+  endpointsQuery,
+  externalQuery,
+  infoQuery,
+  readinessQuery,
+} from '@/api/queries'
 import { QueryStatus } from '@/components/QueryStatus'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -157,6 +163,53 @@ function EndpointsCard() {
   )
 }
 
+/**
+ * ExternalCard lists the Delegated APIs, which the API gateway forwards to
+ * External emulators (--external), when there are any.
+ */
+function ExternalCard() {
+  const query = useQuery(externalQuery())
+  if (query.isSuccess && query.data.length === 0) return null
+  return (
+    <Card aria-labelledby="external-title">
+      <CardHeader>
+        <CardTitle id="external-title">Delegated APIs</CardTitle>
+      </CardHeader>
+      <QueryStatus query={query} />
+      {!!query.data?.length && (
+        <Table aria-labelledby="external-title">
+          <TableHeader>
+            <TableRow>
+              <TableHead>API</TableHead>
+              <TableHead>External emulator</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Reason</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {query.data.map((e) => (
+              <TableRow key={e.api}>
+                <TableCell className="font-mono">{e.api}</TableCell>
+                <TableCell className="font-mono">{e.address}</TableCell>
+                <TableCell>
+                  <Badge variant={e.reachable ? 'success' : 'destructive'}>
+                    {e.reachable ? 'Reachable' : 'Unreachable'}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground">{e.error}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      <CardDescription>
+        Forwarded as they come, with no IAM check. What the External emulator does is what clients
+        get.
+      </CardDescription>
+    </Card>
+  )
+}
+
 function ContainersCard() {
   const query = useQuery(containersQuery())
   return (
@@ -212,6 +265,9 @@ export function Dashboard() {
         </div>
         <EndpointsCard />
         <ResourceCountsCard />
+        <div className="empty:hidden xl:col-span-2">
+          <ExternalCard />
+        </div>
         <div className="xl:col-span-2">
           <ContainersCard />
         </div>

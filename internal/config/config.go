@@ -4,11 +4,13 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -91,6 +93,10 @@ type Config struct {
 	// protocol to Linked Instances, over mutual TLS and only to Instances
 	// it paired with, except for Pairing requests (ADR 0027).
 	LinkBind []string `yaml:"linkBind" env:"LINK_BIND"`
+	// External maps the API name of each Delegated API, one no Service
+	// serves (e.g. "firestore"), to the host:port of the External emulator
+	// the API gateway forwards it to (ADR 0027).
+	External map[string]string `yaml:"external" env:"EXTERNAL"`
 	// AdminToken is the Admin token used when the API gateway is bound
 	// beyond loopback (FR-UI-009); empty means a random one per start.
 	// There is no flag, so that it never shows in a process listing.
@@ -518,6 +524,9 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if err := c.validateExternal(); err != nil {
+		return err
+	}
 	if c.Build.Concurrency < 1 {
 		return fmt.Errorf("invalid --build-concurrency (GCPEMU_BUILD_CONCURRENCY, build.concurrency) %d (want at least 1)", c.Build.Concurrency)
 	}
@@ -533,6 +542,36 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateExternal checks that each --external key is an API name and
+// each value a host:port.
+func (c *Config) validateExternal() error {
+	for _, api := range slices.Sorted(maps.Keys(c.External)) {
+		addr := c.External[api]
+		if !IsAPIName(api) {
+			return fmt.Errorf("invalid --external %s=%s: %q is not an API name (want lower-case letters and digits, e.g. firestore)", api, addr, api)
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if _, perr := strconv.Atoi(port); err != nil || perr != nil || host == "" || strings.Contains(host, "/") {
+			return fmt.Errorf("invalid --external %s=%s: want the External emulator's host:port, e.g. localhost:8080", api, addr)
+		}
+	}
+	return nil
+}
+
+// IsAPIName reports whether s has the form of a GCP API name, the first
+// label of its API.googleapis.com host (firestore, bigtableadmin).
+func IsAPIName(s string) bool {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func known(s string) bool {

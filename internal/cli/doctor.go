@@ -114,6 +114,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
 				checkLinks(out, report, cfg)
+				checkExternal(report, cfg)
 			}
 			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
 			if !inContainer {
@@ -417,6 +418,42 @@ func checkBuildDaemon(report func(bool, string, string), cfg *config.Config) {
 	}
 	if b, err := c.get("/_emu/v1/build/daemon"); err == nil {
 		reportBuildDaemon(report, b)
+	}
+}
+
+// checkExternal reports the running Instance's External emulators.
+func checkExternal(report func(bool, string, string), cfg *config.Config) {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return
+	}
+	if b, err := c.get("/_emu/v1/external"); err == nil {
+		reportExternal(report, b)
+	}
+}
+
+// reportExternal reports whether each Delegated API's External emulator
+// accepts connections (ADR 0027). The Instance stays ready without one,
+// but its API answers UNAVAILABLE.
+func reportExternal(report func(bool, string, string), body []byte) {
+	var v struct {
+		External []struct {
+			API       string `json:"api"`
+			Address   string `json:"address"`
+			Reachable bool   `json:"reachable"`
+			Error     string `json:"error"`
+		} `json:"external"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return
+	}
+	for _, e := range v.External {
+		if e.Reachable {
+			report(true, fmt.Sprintf("External emulator for %s at %s accepts connections", e.API, e.Address), "")
+			continue
+		}
+		report(false, fmt.Sprintf("External emulator for %s at %s does not accept connections, so %s requests fail with UNAVAILABLE: %s", e.API, e.Address, e.API, e.Error),
+			fmt.Sprintf("start the External emulator at %s, or restart the Instance with --external %s=HOST:PORT naming where it listens", e.Address, e.API))
 	}
 }
 

@@ -338,6 +338,9 @@ func (in *Instance) Start(ctx context.Context) error {
 			in.Env.Log.Error("service registration failed", "service", s.Name(), "err", err)
 		}
 	}
+	if err := in.delegate(); err != nil {
+		return err
+	}
 	in.gw.HandleAdmin(newAdmin(in))
 	in.mountConsole()
 
