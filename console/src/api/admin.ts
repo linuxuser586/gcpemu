@@ -7,6 +7,7 @@ import { origin } from './fetch'
 export type Info = components['schemas']['Info']
 export type Readiness = components['schemas']['Readiness']
 export type Container = components['schemas']['Container']
+export type External = components['schemas']['External']
 export type ResourceCounts = components['schemas']['ResourceCounts']
 export type Endpoints = components['schemas']['Endpoints']
 export type RequestEntry = components['schemas']['RequestEntry']

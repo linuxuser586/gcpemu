@@ -785,3 +785,25 @@ func TestCheckContainerized(t *testing.T) {
 		}
 	}
 }
+
+// doctor reports each Delegated API's External emulator, failing for one
+// that does not accept connections and naming its address (#623).
+func TestReportExternal(t *testing.T) {
+	var oks []bool
+	var whats, fixes []string
+	reportExternal(func(ok bool, what, fix string) {
+		oks, whats, fixes = append(oks, ok), append(whats, what), append(fixes, fix)
+	}, []byte(`{"external":[
+		{"api":"firestore","address":"localhost:8080","hosts":["firestore.googleapis.com"],"reachable":true},
+		{"api":"spanner","address":"localhost:9010","hosts":["spanner.googleapis.com"],"reachable":false,"error":"dial tcp [::1]:9010: connect: connection refused"}]}`))
+	if len(oks) != 2 {
+		t.Fatalf("reported %v %q, want firestore and spanner", oks, whats)
+	}
+	if !oks[0] || whats[0] != "External emulator for firestore at localhost:8080 accepts connections" {
+		t.Errorf("firestore: %v %q", oks[0], whats[0])
+	}
+	if oks[1] || !strings.Contains(whats[1], "spanner") || !strings.Contains(whats[1], "localhost:9010") ||
+		!strings.Contains(whats[1], "connection refused") || !strings.Contains(fixes[1], "--external spanner=") {
+		t.Errorf("spanner: %v %q fix %q", oks[1], whats[1], fixes[1])
+	}
+}

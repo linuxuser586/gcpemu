@@ -44,10 +44,15 @@ type Gateway struct {
 	mu         sync.RWMutex
 	hosts      map[string]http.Handler // Host → handler (host mode)
 	grpcOwners map[string]string       // gRPC service name → emu service
+	apiOwners  map[string]string       // mounted API name or host → emu service
 	srv        *http.Server
 	adminToken string   // see SetAdminToken
 	gate       gate     // see CloseGate
 	front      *handoff // see ServeFrontend
+	// delegated are the Delegated APIs, delegatedHosts them by hostname
+	// (see Delegate).
+	delegated      []*delegatedAPI
+	delegatedHosts map[string]*delegatedAPI
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -61,7 +66,10 @@ func New(env *emu.Env, log *reqlog.Log) *Gateway {
 		mux:        http.NewServeMux(),
 		hosts:      map[string]http.Handler{},
 		grpcOwners: map[string]string{},
+		apiOwners:  map[string]string{},
 		front:      newHandoff(),
+
+		delegatedHosts: map[string]*delegatedAPI{},
 	}
 	g.grpc = grpc.NewServer(g.GRPCOptions("")...)
 	reflection.Register(g.grpc)
@@ -284,8 +292,10 @@ func (r *router) Mount(api string, hosts []string, h http.Handler) {
 	prefix := "/" + api
 	r.g.mux.Handle(prefix+"/", http.StripPrefix(prefix, wrapped))
 	r.g.mu.Lock()
+	r.g.apiOwners[api] = r.service
 	for _, host := range hosts {
 		r.g.hosts[host] = wrapped
+		r.g.apiOwners[host] = r.service
 	}
 	r.g.mu.Unlock()
 }
@@ -340,18 +350,22 @@ func (g *Gateway) HandleConsole(h http.Handler) {
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	markFrontend(r)
 	if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+		if d := g.grpcDelegated(r); d != nil {
+			d.grpc.ServeHTTP(w, r)
+			return
+		}
 		g.grpc.ServeHTTP(w, r)
 		return
 	}
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
 	g.mu.RLock()
-	h, ok := g.hosts[host]
+	h, ok := g.hosts[hostOnly(r.Host)]
 	g.mu.RUnlock()
 	if ok {
 		h.ServeHTTP(w, r)
+		return
+	}
+	if d := g.restDelegated(r); d != nil {
+		d.rest.ServeHTTP(w, r)
 		return
 	}
 	if !g.checkAdmin(w, r) {

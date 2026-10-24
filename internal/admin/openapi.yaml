@@ -181,6 +181,26 @@ paths:
                 type: object
                 additionalProperties: { type: string }
         "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/external:
+    get:
+      summary: >-
+        The Delegated APIs, which the API gateway forwards to the External
+        emulators configured with --external (ADR 0027), and whether each
+        External emulator accepts connections now. The Instance's readiness
+        never depends on them.
+      operationId: external
+      responses:
+        "200":
+          description: Delegated APIs, sorted by API name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [external]
+                properties:
+                  external:
+                    type: array
+                    items: { $ref: "#/components/schemas/External" }
   /_emu/v1/adc-key:
     post:
       summary: >-
@@ -1285,6 +1305,19 @@ components:
           items: { type: string }
         endpoints: { $ref: "#/components/schemas/Endpoints" }
         runtime: { $ref: "#/components/schemas/RuntimeStatus" }
+    External:
+      type: object
+      description: A Delegated API and its External emulator.
+      required: [api, address, hosts, reachable]
+      properties:
+        api: { type: string, description: "The API name, e.g. firestore." }
+        address: { type: string, description: "The External emulator's host:port." }
+        hosts:
+          type: array
+          description: The real hostnames the Google front end serves for the API.
+          items: { type: string }
+        reachable: { type: boolean, description: Whether the External emulator accepted a TCP connection. }
+        error: { type: string, description: Why it did not. }
     RuntimeStatus:
       type: object
       description: >-

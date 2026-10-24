@@ -67,6 +67,18 @@ func WithStrictProjects() Option {
 // nothing is read through from Google.
 func WithOffline() Option { return WithConfig(func(c *config.Config) { c.Offline = true }) }
 
+// WithExternal delegates the API named api ("firestore", "spanner", …),
+// which no Service serves, to the External emulator at addr (host:port),
+// as `gcpemu start --external api=addr` does.
+func WithExternal(api, addr string) Option {
+	return WithConfig(func(c *config.Config) {
+		if c.External == nil {
+			c.External = map[string]string{}
+		}
+		c.External[api] = addr
+	})
+}
+
 // WithConfig edits the Instance's configuration directly. It is for
 // gcpemu's own tests only: config.Config is internal to gcpemu, and the
 // knobs it reaches carry no compatibility promise.
