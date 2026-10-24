@@ -117,9 +117,10 @@ type Relay struct {
 	target func(string) string
 	id     string
 	ip     string // on the services network
-	// lookup finds the control port's current address on the host: the
-	// runtime moves it when a network the relay joins becomes its gateway
-	// endpoint (#555). nil keeps ctrl.
+	// lookup finds the control port's current address on the host: when
+	// a network the relay joins becomes its gateway endpoint, the native
+	// Docker Engine moves it (#555) while Docker Desktop for macOS keeps
+	// it (#647), and the relay copes with either. nil keeps ctrl.
 	lookup func(ctx context.Context) (string, error)
 
 	mu      sync.Mutex
