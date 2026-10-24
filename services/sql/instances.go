@@ -129,6 +129,7 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	in.ServerCaCert = sslCertOf(rec.ServerCAPEM, project, in.Name)
 	in.Etag = etagOf(in.Settings)
 	rec.Instance = &in
+	ensureDNSName(rec)
 	rec.AppliedFlags = serverFlags(in.Settings) // applied by the bootstrap script
 
 	if ipc.Ipv4Enabled && (in.Settings.ActivationPolicy != "NEVER" || after != nil) {
@@ -239,7 +240,7 @@ func (s *Service) getInstanceH(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, r, rec.Instance)
+	writeJSON(w, r, s.forCaller(r.Context(), rec.Instance))
 }
 
 func (s *Service) listInstances(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +262,7 @@ func (s *Service) listInstances(w http.ResponseWriter, r *http.Request) {
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		scanJSON(tx, nsInstances, project+"/", func(_ string, rec *instanceRecord) {
 			if rec.Instance != nil && match(rec.Instance) {
-				items[rec.Instance.Name] = rec.Instance
+				items[rec.Instance.Name] = s.forCaller(r.Context(), rec.Instance)
 			}
 		})
 		return nil

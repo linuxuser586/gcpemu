@@ -782,8 +782,8 @@ type containerFacts struct {
 	markers, containerized, bridge bool
 }
 
-// checkLANBind reports the --lb-bind, --gke-bind, --ar-bind and --gfe-bind
-// addresses: what the running instance serves on them, otherwise whether
+// checkLANBind reports the --lb-bind, --gke-bind, --ar-bind, --gfe-bind
+// and --sql-bind addresses: what the running instance serves on them, otherwise whether
 // the configured ones can be bound (an address of this host; privileged
 // --lb-bind ports need the lb-lan relay, and --gfe-bind's 443 an
 // unprivileged port start at or below it, or the gfe-lan relay, which
@@ -812,6 +812,9 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 			if name, ok := strings.CutPrefix(n, "gke-lan:"); ok {
 				fmt.Fprintf(out, "[ok  ] Kubernetes API of %s exposed beyond loopback on %s\n", name, i.Endpoints[n])
 			}
+			if name, ok := strings.CutPrefix(n, "sql-lan:"); ok {
+				fmt.Fprintf(out, "[ok  ] Cloud SQL instance %s exposed beyond loopback on %s (credentials required)\n", name, i.Endpoints[n])
+			}
 			if n == "ar-lan" {
 				fmt.Fprintf(out, "[ok  ] Artifact Registry registry exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
 			}
@@ -821,7 +824,7 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 		}
 		return
 	}
-	if len(cfg.LBBind)+len(cfg.GKEBind)+len(cfg.ARBind)+len(cfg.GFEBind) == 0 {
+	if !slices.ContainsFunc(cfg.LANBinds(), func(b config.LANBind) bool { return len(b.Addrs) > 0 }) {
 		return
 	}
 	local := map[string]bool{}
