@@ -27,6 +27,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
+	"github.com/linuxuser586/gcpemu/internal/link"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
@@ -112,6 +113,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if running == nil {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
+				checkLinks(out, report, cfg)
 				checkExternal(report, cfg)
 			}
 			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
@@ -144,6 +146,40 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			fmt.Fprintln(out, "all checks passed")
 			return nil
 		},
+	}
+}
+
+// checkLinks reports each link of the running Instance: its state, and
+// whether the other Instance answers over it and at which protocol
+// version (ADR 0027). A link the other Instance only connects in on is
+// reported, not failed, and so is a warning, which this side cannot verify.
+func checkLinks(out io.Writer, report func(bool, string, string), cfg *config.Config) {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return
+	}
+	c.http.Timeout = 30 * time.Second
+	b, err := c.get("/_emu/v1/links/status")
+	if err != nil {
+		return
+	}
+	var r struct{ Links []link.Status }
+	_ = json.Unmarshal(b, &r)
+	for _, l := range r.Links {
+		switch {
+		case l.Reachable:
+			report(true, fmt.Sprintf("link %q: %s, reachable, protocol version %d", l.Name, l.State, l.Version), "")
+		case l.State == link.StateBroken:
+			report(false, fmt.Sprintf("link %q: broken", l.Name), l.Error)
+		case l.InboundOnly:
+			report(true, fmt.Sprintf("link %q: %s, inbound only (%s)", l.Name, l.State, l.Error), "")
+		default:
+			report(false, fmt.Sprintf("link %q: %s, not reachable: %s", l.Name, l.State, l.Error),
+				"start the other Instance with --link-bind, or unpair and pair again if its address or CA changed")
+		}
+		if l.Warning != "" {
+			fmt.Fprintf(out, "[WARN] link %q: %s\n", l.Name, l.Warning)
+		}
 	}
 }
 
@@ -819,8 +855,8 @@ type containerFacts struct {
 	markers, containerized, bridge bool
 }
 
-// checkLANBind reports the --lb-bind, --gke-bind, --ar-bind, --gfe-bind
-// and --sql-bind addresses: what the running instance serves on them, otherwise whether
+// checkLANBind reports the --lb-bind, --gke-bind, --ar-bind, --gfe-bind,
+// --sql-bind and --link-bind addresses: what the running instance serves on them, otherwise whether
 // the configured ones can be bound (an address of this host; privileged
 // --lb-bind ports need the lb-lan relay, and --gfe-bind's 443 an
 // unprivileged port start at or below it, or the gfe-lan relay, which
@@ -857,6 +893,9 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 			}
 			if n == frontend.LANEndpoint {
 				fmt.Fprintf(out, "[ok  ] Google front end exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
+			}
+			if n == link.Endpoint {
+				fmt.Fprintf(out, "[ok  ] link protocol exposed beyond loopback on %s (mutual TLS, paired Instances and Pairing requests only)\n", i.Endpoints[n])
 			}
 		}
 		return

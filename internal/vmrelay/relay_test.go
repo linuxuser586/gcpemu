@@ -227,7 +227,7 @@ func TestInwardUDPTwinRefused(t *testing.T) {
 // one the relay listens on.
 func TestInwardKeepsFreePort(t *testing.T) {
 	r := startInProcess(t, map[string]string{"dns": echoUDP(t)})
-	want := freePort(t, "udp")
+	want := freePair(t)
 	got, err := r.Listen(context.Background(), "dns", want, true)
 	if err != nil || got != want {
 		t.Fatalf("listen = %q, %v; want %q", got, err, want)
@@ -326,6 +326,29 @@ func freePort(t *testing.T, network string) string {
 	}
 	defer l.Close()
 	return l.Addr().String()
+}
+
+// freePair returns a loopback address whose port is free for both TCP and
+// UDP, as an inward listen with UDP needs: a port only free for UDP may
+// have its TCP side held by another package's connection, and the relay
+// then rightly moves.
+func freePair(t *testing.T) string {
+	t.Helper()
+	for range 100 {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := l.Addr().String()
+		pc, err := net.ListenPacket("udp", addr)
+		_ = l.Close()
+		if err == nil {
+			_ = pc.Close()
+			return addr
+		}
+	}
+	t.Fatal("no port free for both TCP and UDP")
+	return ""
 }
 
 // TestOfferThroughRelay is the relay side of an Offered port (ADR 0014):
