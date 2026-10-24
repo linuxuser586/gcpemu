@@ -120,6 +120,9 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	if len(cfg.GFEBind) > 0 {
 		logger.Info("the Google front end is also served beyond loopback, over TLS to authenticated callers only", "gfeBind", cfg.GFEBind)
 	}
+	if len(cfg.SQLBind) > 0 {
+		logger.Info("Cloud SQL instances are also served beyond loopback, to their users' credentials only", "sqlBind", cfg.SQLBind)
+	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, holds: map[string]error{}, done: make(chan struct{})}
 	in.ID = instanceID(dir, cfg.Ephemeral)

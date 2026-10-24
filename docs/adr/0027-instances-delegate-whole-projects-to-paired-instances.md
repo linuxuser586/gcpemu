@@ -6,7 +6,7 @@ A team shares one long-lived Instance on an office machine, as in ADR 0011 and A
 
 **Asserted Principals over Pairing.** The front Instance authenticates each caller and forwards the request over mutual TLS with their Principal asserted. The Linked Instance accepts the assertion only from an Instance it has paired with, and checks IAM itself at its own IAM enforcement level. Pairing is approved on both sides, and each side pins the other's Instance CA. Discovery over mDNS/DNS-SD only lists Discovered Instances and never pairs them, and only Instances bound with `--link-bind` advertise.
 
-**Data plane addresses by caller.** A Linked Instance answers a request that came over a link with the addresses its LAN listeners (`--gke-bind`, `--ar-bind`, `--lb-bind`, `--gfe-bind`) serve, as the metadata server picks its universe by caller (ADR 0009). Clients then reach the Data plane directly, through the same credential checks as any LAN client. A Data plane that is not bound on the LAN is reported as unavailable over the link, never as a loopback address that would be wrong on the caller's machine.
+**Data plane addresses by caller.** A Linked Instance answers a request that came over a link with the addresses its LAN listeners (`--gke-bind`, `--ar-bind`, `--lb-bind`, `--gfe-bind`, `--sql-bind`) serve, as the metadata server picks its universe by caller (ADR 0009). Clients then reach the Data plane directly, through the same credential checks as any LAN client. A Data plane that is not bound on the LAN is reported as unavailable over the link, never as a loopback address that would be wrong on the caller's machine.
 
 **Delegated APIs are a passthrough.** An External emulator ignores credentials, and the emulator has no permission map for APIs it has no Service for. The front Instance forwards REST and gRPC as they come, including through the Google front end in Host mode, does not check IAM, and claims no Fidelity for them. On `--gfe-bind` it still requires credentials the Instance issued before forwarding.
 
@@ -26,5 +26,5 @@ A team shares one long-lived Instance on an office machine, as in ADR 0011 and A
 - Reset and State snapshots act on local Projects only. Links and Pairings are configuration and survive Reset. A Deterministic Instance's guarantee covers local Projects only.
 - Creating a bucket whose name exists in either Instance fails with 409, as GCP does for a name taken globally.
 - Linked Instances negotiate a protocol version, and an incompatible one is refused at Pairing and on connect, naming both versions.
-- Cloud SQL has no LAN listener yet, so a Delegated Project's Cloud SQL instances report no address over a link until `--sql-bind` exists.
+- Cloud SQL's LAN listener is `--sql-bind` (#620). It already reports its address to callers arriving through `--gfe-bind`; reporting it over a link comes with the links themselves.
 - An External emulator is always configured by address. Running one as a Managed container is a separate decision.

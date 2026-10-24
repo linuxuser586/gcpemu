@@ -57,6 +57,12 @@ type Service struct {
 	// alias, so a Containerized Instance uses only 127.0.0.1 (ADR 0012).
 	aliasRefused atomic.Bool
 
+	// lanMu guards lan and routers: how instances are served on the
+	// --sql-bind addresses (lan.go).
+	lanMu   sync.Mutex
+	lan     map[string]*instanceLAN   // "P/I" → its listeners
+	routers map[string]*connectRouter // --sql-bind address → its port 3307
+
 	recovering atomic.Int32
 
 	// sweepMu serialises backup expiry sweeps (and Reset with them).
@@ -70,7 +76,7 @@ type Service struct {
 // New returns the service.
 func New(env *emu.Env) emu.Service {
 	s := &Service{env: env, locks: map[string]*sync.Mutex{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases,
-		inUse: map[string]int{}}
+		lan: map[string]*instanceLAN{}, routers: map[string]*connectRouter{}, inUse: map[string]int{}}
 	s.mux = s.routes()
 	s.bg = newBackground()
 	return s
@@ -216,6 +222,7 @@ func (s *Service) Stop(ctx context.Context) error {
 	g := s.bg
 	g.cancel(context.Canceled)
 	s.bgMu.Unlock()
+	defer s.closeAllLAN()
 	defer s.closeAllLoopback()
 	return g.wait(ctx)
 }
@@ -262,6 +269,7 @@ func (s *Service) Reset(ctx context.Context) error {
 		return fmt.Errorf("sql: waiting for background work: %w", err)
 	}
 	s.closeAllLoopback()
+	s.closeAllLAN()
 	s.sweepMu.Lock()
 	s.removeAllBackupFiles()
 	s.sweepMu.Unlock()

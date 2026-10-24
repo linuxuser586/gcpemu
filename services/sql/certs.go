@@ -13,8 +13,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math/big"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,8 +24,8 @@ import (
 )
 
 // PKI (FR-SQL-005, FR-SQL-007). Each instance has a server CA that signs
-// its server certificate (CN "project:instance", which the Go connector
-// and the Auth Proxy verify) and a client CA that signs sslCerts client
+// its server certificate (CN "project:instance" and the instance's
+// dnsName, which the Go connector and the Auth Proxy verify) and a client CA that signs sslCerts client
 // certificates and the connector's ephemeral certificates. Certificate
 // validity always uses the real clock because TLS peers check it.
 
@@ -136,10 +138,17 @@ func initPKI(rec *instanceRecord, project, name string) error {
 	if rec.ClientCAPEM, rec.ClientCAKeyPEM, err = newCA(clientCACN); err != nil {
 		return err
 	}
+	return issueServerCert(rec, project+":"+name, nil)
+}
+
+// issueServerCert issues the instance's server certificate for cn and
+// dnsNames from its server CA.
+func issueServerCert(rec *instanceRecord, cn string, dnsNames []string) error {
 	k := newECKey()
 	now := time.Now().Add(-5 * time.Minute)
 	der, err := sign(rec.ServerCAPEM, rec.ServerCAKeyPEM, &x509.Certificate{
-		Subject:     pkix.Name{Country: []string{"US"}, Organization: []string{"Google, Inc"}, CommonName: project + ":" + name},
+		Subject:     pkix.Name{Country: []string{"US"}, Organization: []string{"Google, Inc"}, CommonName: cn},
+		DNSNames:    dnsNames,
 		NotBefore:   now,
 		NotAfter:    now.Add(caValidity),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -150,6 +159,35 @@ func initPKI(rec *instanceRecord, project, name string) error {
 	}
 	rec.ServerCertPEM, rec.ServerKeyPEM = certPEM(der), keyPEM(k)
 	return nil
+}
+
+// dnsNameOf is an instance's dnsName, <id>.<region>.sql.goog. as on GCP,
+// with an id taken from its connection name so that it never changes.
+func dnsNameOf(in *sqladmin.DatabaseInstance) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(in.ConnectionName))
+	return fmt.Sprintf("%016x.%s.sql.goog.", h.Sum64(), in.Region)
+}
+
+// ensureDNSName gives the instance its dnsName and a server certificate
+// that names it, re-issuing an older certificate that doesn't from the
+// same server CA, and reports whether it changed the record. Connectors
+// send the name as the TLS server name, by which a --sql-bind address's
+// port 3307 routes them (lan.go).
+func ensureDNSName(rec *instanceRecord) bool {
+	in := rec.Instance
+	name := dnsNameOf(in)
+	host := strings.TrimSuffix(name, ".")
+	if c, err := parseCert(rec.ServerCertPEM); err == nil && in.DnsName == name && slices.Contains(c.DNSNames, host) {
+		return false
+	}
+	// On failure the instance stays as it was, and connectors verify the
+	// old certificate's CN.
+	if issueServerCert(rec, in.Project+":"+in.Name, []string{host}) != nil {
+		return false
+	}
+	in.DnsName = name
+	return true
 }
 
 // sslCertOf describes a PEM certificate as an sql#sslCert.

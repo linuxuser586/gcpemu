@@ -16,19 +16,21 @@ import (
 // Connector support (FR-SQL-005) and SSL certificates (FR-SQL-007).
 
 // connectSettings returns what the Cloud SQL connectors need: addresses,
-// the server CA and the database version. No DNS name is reported, so the
-// connectors verify the server certificate's CN ("project:instance").
+// the server CA, the database version and the dnsName, which connectors
+// send as the TLS server name and verify the server certificate against,
+// falling back to its CN ("project:instance").
 func (s *Service) connectSettings(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.instanceFor(r, "cloudsql.instances.get")
 	if err != nil {
 		apierr.Write(w, err)
 		return
 	}
-	in := rec.Instance
+	in := s.forCaller(r.Context(), rec.Instance)
 	writeJSON(w, r, &sqladmin.ConnectSettings{
 		Kind:            "sql#connectSettings",
 		BackendType:     in.BackendType,
 		DatabaseVersion: in.DatabaseVersion,
+		DnsName:         in.DnsName,
 		IpAddresses:     in.IpAddresses,
 		Region:          in.Region,
 		ServerCaCert:    in.ServerCaCert,

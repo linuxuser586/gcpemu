@@ -1,7 +1,7 @@
 // Package lanbind holds what the emulator says about the --lb-bind,
-// --gke-bind, --ar-bind and --gfe-bind addresses in a Containerized
-// Instance, in one place so that start, the Services and doctor say the
-// same (#497, ADR 0011).
+// --gke-bind, --ar-bind, --gfe-bind and --sql-bind addresses in a
+// Containerized Instance, in one place so that start, the Services and
+// doctor say the same (#497, ADR 0011).
 //
 // A Containerized Instance on a bridge network has only its container's
 // addresses: they reach container networks, never the LAN. Publishing a

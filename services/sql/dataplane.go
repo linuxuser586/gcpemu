@@ -142,6 +142,16 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	if err != nil {
 		return err
 	}
+	// Instances created before dnsName existed get it here, with a server
+	// certificate that names it.
+	if ensureDNSName(rec) {
+		if err := s.updateRecord(project, name, func(r *instanceRecord) error {
+			r.Instance.DnsName, r.ServerCertPEM, r.ServerKeyPEM = rec.Instance.DnsName, rec.ServerCertPEM, rec.ServerKeyPEM
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
 	ver, ok := pgVersions[rec.Instance.DatabaseVersion]
 	if !ok {
 		return newOpError("INVALID_REQUEST", "unsupported database version %s", rec.Instance.DatabaseVersion)
@@ -380,8 +390,9 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	default:
 		s.closeLoopback(project, name)
 	}
+	lanPort := s.serveLAN(ctx, plane, rec, publicIP, hostPort)
 	return s.updateRecord(project, name, func(r *instanceRecord) error {
-		r.HostPort, r.PublicIP, r.LoopIP = hostPort, publicIP, loopIP
+		r.HostPort, r.PublicIP, r.LoopIP, r.LANPort = hostPort, publicIP, loopIP, lanPort
 		if rec.PrivateNet != nil && r.PrivateNet != nil {
 			r.PrivateNet = rec.PrivateNet
 		}
@@ -464,6 +475,7 @@ func (s *Service) stopContainer(ctx context.Context, project, name string) error
 		return err
 	}
 	s.closeLoopback(project, name)
+	s.closeLAN(project, name)
 	cname := containerName(rt, project, name)
 	_ = rt.StopContainer(ctx, cname, stopTimeout)
 	if err := rt.RemoveContainer(ctx, cname, true); err != nil {
@@ -558,6 +570,7 @@ func (s *Service) destroyInstance(ctx context.Context, project, name string) err
 		return nil
 	}
 	s.closeLoopback(project, name)
+	s.closeLAN(project, name)
 	if rt, _, err := s.plane(ctx); err == nil {
 		if err := removeLabelled(ctx, rt, map[string]string{
 			runtime.LabelInstance: rt.InstanceID, runtime.LabelService: "sql", runtime.LabelResource: resourceLabel(project, name),
