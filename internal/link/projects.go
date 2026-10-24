@@ -85,7 +85,7 @@ func (m *Manager) serveShared(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delegate delegates the Project id to the link to, which must share it
-// with this Instance. It refuses a Project this Instance has, or shares,
+// with this Instance, and learns the link's buckets before it returns. It refuses a Project this Instance has, or shares,
 // since local state is never shadowed or merged.
 func (m *Manager) Delegate(ctx context.Context, id, to string) (Delegation, error) {
 	if !project.ValidID(id) {
@@ -124,6 +124,9 @@ func (m *Manager) Delegate(ctx context.Context, id, to string) (Delegation, erro
 	}
 	m.cfg.Log.Info("Project delegated", "project", id, "link", to)
 	m.watch()
+	// The link's buckets are routed from the moment Delegate returns,
+	// not from when its watch first hears of them.
+	m.RefreshBuckets(ctx, to)
 	return d, nil
 }
 

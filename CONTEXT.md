@@ -263,6 +263,10 @@ _Avoid_: exported project, public project
 A Project that the front Instance forwards to the Linked Instance that shares it, and holds no state for itself. A reference to it never creates it locally, and an Instance cannot delegate a Project it already has. Reset and State snapshots of the front Instance leave it untouched.
 _Avoid_: remote project, linked project, proxied project
 
+**Merged list**:
+A list that names no Project, such as the list of Projects, which the front Instance answers from every Instance: its own items, then each Linked Instance's items in the Projects delegated to it, paged through as one list. It fails when any of those Instances is unreachable.
+_Avoid_: aggregated list (Compute Engine's name for a list across the zones of one Project), federated list
+
 **Delegated API**:
 An API that has no Service, such as Firestore's, which an Instance forwards to an External emulator. The Instance does not check IAM for it and claims no Fidelity for it.
 _Avoid_: external service, proxied API

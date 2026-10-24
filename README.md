@@ -449,8 +449,12 @@ gcpemu link delegate team-shared --to office
   - **Buckets.** The office tells the laptop which buckets its Shared Projects own, and keeps that
     list current. A request on a bucket the laptop doesn't have goes to the office if the bucket is
     in a Delegated Project. That covers the JSON API, uploads (resumable ones included), downloads,
-    the XML API and signed URLs, but not batches. Bucket names are global across the link:
-    creating a bucket whose name the other side already holds fails with 409.
+    the XML API and signed URLs, but not batches, which the laptop always serves. The laptop learns
+    the list when it connects to the office, and `gcpemu link delegate` fetches it before it
+    returns. Bucket names are global across the link: creating a bucket whose name the other side
+    already holds fails with 409. Only the laptop checks this, and only against buckets in Projects
+    shared with it, so the office can still create a name the laptop holds, and the laptop's own
+    bucket then wins for requests through the laptop.
   - **Service accounts.** A service account under `projects/-` (`generateAccessToken`, `signBlob`,
     key creation) and the token endpoint's JWT-bearer grant are routed by the Project in the
     account's email. When a caller presents an access token the office issued, for a service
@@ -459,7 +463,9 @@ gcpemu link delegate team-shared --to office
   - **Merged lists.** Resource Manager's Project lists (`gcloud projects list`) and REST lists under
     `projects/-` go to the laptop and to every link it delegates to. Each office answers with the
     items of the Projects it shares, the laptop keeps those it delegates, and it pages through the
-    answers as one list, one Instance after another.
+    answers as one list, one Instance after another. If any office is unreachable, the whole list
+    fails with UNAVAILABLE. gRPC lists, and Resource Manager's v3 `projects.list` by parent, which
+    the emulator does not serve, are not merged.
 - The office serves a forwarded request only if every Project it names is shared with that link,
   and never serves its Admin API or Web console over a link.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,

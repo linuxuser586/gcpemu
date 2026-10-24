@@ -60,6 +60,7 @@ func TestDelegatedServiceAccountToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The key file names the office's token endpoint until #657.
 	cfg.TokenURL = "http://" + laptop.Env.Endpoints.Get("gateway") + "/oauth2/token"
 	tok, err := cfg.TokenSource(context.Background()).Token()
 	if err != nil {
@@ -223,5 +224,20 @@ func TestDelegatedProjectsListed(t *testing.T) {
 	}
 	if code, body := restGet(t, laptop, http.MethodGet, "/cloudresourcemanager/v3/projects:search"); code != http.StatusOK || !strings.Contains(body, `"laptop-own"`) {
 		t.Errorf("searching Projects through the laptop = %d %s", code, body)
+	}
+}
+
+// Delegating a Project fetches the office's buckets before it returns, so
+// a bucket the office already has is routed at once.
+func TestDelegatingFetchesBuckets(t *testing.T) {
+	laptop, office := startWithProjects(t, "laptop", nil), startWithProjects(t, "office", nil)
+	pairInstances(t, laptop, office)
+	callAdmin(t, office, http.MethodPost, "/_emu/v1/links/shares", map[string]string{"project": shared}, nil)
+	if err := storageClient(t, office).Bucket("office-made").Create(context.Background(), shared, nil); err != nil {
+		t.Fatal(err)
+	}
+	callAdmin(t, laptop, http.MethodPost, "/_emu/v1/links/delegations", map[string]string{"project": shared, "link": "office"}, nil)
+	if _, err := storageClient(t, laptop).Bucket("office-made").Attrs(context.Background()); err != nil {
+		t.Errorf("the office's bucket through the laptop right after delegating: %v", err)
 	}
 }
