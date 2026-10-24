@@ -207,7 +207,7 @@ _Avoid_: orphan, dead instance
 The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
 
 **Deterministic Instance**:
-An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it.
+An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it. It covers local Projects only, never Delegated Projects.
 _Avoid_: deterministic mode
 
 **Fault rule**:

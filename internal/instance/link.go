@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +33,12 @@ func (in *Instance) newLink() (*link.Manager, error) {
 	return link.New(link.Config{
 		CA: in.Env.CA, Instance: in.Config.Instance, ID: in.ID, Store: st,
 		Log: in.Env.Log.With("component", "link"),
+		HasProject: func(id string) bool {
+			return slices.Contains(in.Config.Projects, id) || slices.Contains(in.Env.Projects(), id)
+		},
+		Serve: func(w http.ResponseWriter, r *http.Request, from, principal string) {
+			in.gw.ServeLinked(w, r, from, principal)
+		},
 	}), nil
 }
 
@@ -68,7 +75,47 @@ func (in *Instance) startLink() {
 // `gcpemu link` and the Web console pair and unpair Instances.
 func (in *Instance) linkRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /_emu/v1/links", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"links": in.link.States(), "fingerprint": link.Fingerprint(in.Env.CA.Certificate())})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"links": in.link.States(), "fingerprint": link.Fingerprint(in.Env.CA.Certificate()),
+			"shared": in.link.Shares(), "delegated": in.link.Delegations(),
+		})
+	})
+	mux.HandleFunc("POST /_emu/v1/links/shares", func(w http.ResponseWriter, r *http.Request) {
+		var body link.Share
+		if !decodeBody(w, r, &body) {
+			return
+		}
+		if err := in.link.Share(body.Project, body.With); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
+	})
+	mux.HandleFunc("DELETE /_emu/v1/links/shares/{project}", func(w http.ResponseWriter, r *http.Request) {
+		if err := in.link.Unshare(r.PathValue("project"), r.URL.Query().Get("with")); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "unshared"})
+	})
+	mux.HandleFunc("POST /_emu/v1/links/delegations", func(w http.ResponseWriter, r *http.Request) {
+		var body link.Delegation
+		if !decodeBody(w, r, &body) {
+			return
+		}
+		d, err := in.link.Delegate(r.Context(), body.Project, body.Link)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
+	})
+	mux.HandleFunc("DELETE /_emu/v1/links/delegations/{project}", func(w http.ResponseWriter, r *http.Request) {
+		if err := in.link.Undelegate(r.PathValue("project")); err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "undelegated"})
 	})
 	mux.HandleFunc("GET /_emu/v1/links/status", func(w http.ResponseWriter, r *http.Request) {
 		ps := in.link.Links()
