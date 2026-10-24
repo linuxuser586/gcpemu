@@ -429,15 +429,16 @@ the Service, so `gcloud`, OpenTofu and SDK clients configured against the laptop
 office's Projects too:
 
 ```sh
-# on the office machine: share with every paired Instance, or with one: --with laptop
+# on the office machine: share with every paired Instance, including later ones, or with one: --with laptop
 gcpemu link share team-shared
 # on the laptop: the link must share it, and the laptop must not have a Project of that name
 gcpemu link delegate team-shared --to office
 ```
 
 - The laptop authenticates the caller, at its own IAM enforcement level, and asserts their
-  Principal over the link; the office checks IAM at its own level, as that Principal. A
-  PERMISSION_DENIED from the office names the Principal the laptop asserted.
+  Principal over the link; a caller with no credentials is the laptop's Default principal. The
+  office checks IAM at its own level, as that Principal. A PERMISSION_DENIED from the office names
+  the Principal the laptop asserted.
 - A request names a Project by `projects/P` (an ID or number) in its REST path or in a gRPC request
   message's resource names (gzip-compressed or not), or, for the bucket collection
   (`gcloud storage buckets list`), by its `project` parameter. Requests that name no Project, such
@@ -461,8 +462,10 @@ gcpemu link delegate team-shared --to office
   (`delegated` in the Admin API), and its fault rules still match it. Forwarded requests do not
   move the laptop's deterministic clock.
 - `gcpemu link unshare <project>` (or `--with <link>`) and `gcpemu link undelegate <project>` undo
-  them; `gcpemu link list` lists both. The Admin API serves them under `/_emu/v1/links/shares` and
-  `/_emu/v1/links/delegations`.
+  them, and `gcpemu link list` lists the Shared and Delegated Projects. A Project unshared while
+  still delegated fails with PERMISSION_DENIED until the laptop undelegates it. An Instance never
+  delegates a Project it shares, nor shares one it delegates. The Admin API serves them under
+  `/_emu/v1/links/shares` and `/_emu/v1/links/delegations`.
 
 ### External emulators
 

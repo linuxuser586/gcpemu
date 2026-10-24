@@ -23,6 +23,8 @@ A team shares one long-lived Instance on an office machine, as in ADR 0011 and A
 ## Consequences
 
 - A Delegated Project whose Linked Instance is unreachable fails with UNAVAILABLE, naming it. The front Instance's readiness does not depend on its Delegates, and `gcpemu doctor` reports each link.
+- A request naming Projects that no one Instance holds, such as a local subscription to a Delegated Project's topic, or Projects delegated to two links, is refused with FAILED_PRECONDITION rather than routed by the first Project it names, which would fail later on the other Instance.
+- Anything that would still create state for a Delegated Project on the front Instance, such as a request naming it only in its body, or a seed, is refused with FAILED_PRECONDITION naming the link, rather than counted as existing, so that local state never shadows the Linked Instance's. Requests naming it are forwarded, so under Strict projects it otherwise behaves as existing.
 - Reset and State snapshots act on local Projects only. Links and Pairings are configuration and survive Reset. A Deterministic Instance's guarantee covers local Projects only.
 - Creating a bucket whose name exists in either Instance fails with 409, as GCP does for a name taken globally.
 - Linked Instances negotiate a protocol version, and an incompatible one is refused at Pairing and on connect, naming both versions.
