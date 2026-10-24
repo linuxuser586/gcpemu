@@ -49,8 +49,10 @@ type relayAgent struct {
 	// wait bounds how long a connection or datagram waits for a session
 	// to carry it to the emulator.
 	wait time.Duration
-	// listenPacket binds listen's UDP sockets: net.ListenPacket, which
-	// tests replace to refuse binds as Windows does.
+	// listenTCP and listenPacket bind listen's TCP listeners and UDP
+	// sockets: net.Listen and net.ListenPacket, which tests replace to
+	// refuse binds as Windows does, or to hand over sockets they hold.
+	listenTCP    func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
 }
 
@@ -65,7 +67,7 @@ type agentListener struct {
 const inwardWait = 10 * time.Second
 
 func newRelayAgent() *relayAgent {
-	return &relayAgent{swapped: make(chan struct{}), listeners: map[string]*agentListener{}, wait: inwardWait, listenPacket: net.ListenPacket}
+	return &relayAgent{swapped: make(chan struct{}), listeners: map[string]*agentListener{}, wait: inwardWait, listenTCP: net.Listen, listenPacket: net.ListenPacket}
 }
 
 // serve accepts control connections until l closes. A new connection
@@ -287,14 +289,14 @@ func (a *relayAgent) listenPair(addr string, withUDP, udpPicks bool) (net.Listen
 		if err != nil {
 			return nil, nil, err
 		}
-		l, err := net.Listen("tcp", pc.LocalAddr().String())
+		l, err := a.listenTCP("tcp", pc.LocalAddr().String())
 		if err != nil {
 			pc.Close()
 			return nil, nil, fmt.Errorf("tcp on %s: %w", pc.LocalAddr(), err)
 		}
 		return l, pc, nil
 	}
-	l, err := net.Listen("tcp", addr)
+	l, err := a.listenTCP("tcp", addr)
 	if err != nil {
 		return nil, nil, err
 	}

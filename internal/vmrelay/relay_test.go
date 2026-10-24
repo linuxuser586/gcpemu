@@ -224,10 +224,43 @@ func TestInwardUDPTwinRefused(t *testing.T) {
 }
 
 // TestInwardKeepsFreePort: a free port asked for over TCP and UDP is the
-// one the relay listens on.
+// one the relay listens on. The test holds the pair until the relay binds
+// it, so no other process can take the port in between (#643).
 func TestInwardKeepsFreePort(t *testing.T) {
-	r := startInProcess(t, map[string]string{"dns": echoUDP(t)})
-	want := freePort(t, "udp")
+	var (
+		l   net.Listener
+		pc  net.PacketConn
+		err error
+	)
+	for i := range udpPairAttempts {
+		if l, pc, err = newRelayAgent().listenPair("127.0.0.1:0", true, i%2 == 0); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close(); pc.Close() })
+	want := l.Addr().String()
+
+	a := newRelayAgent()
+	a.listenTCP = func(network, addr string) (net.Listener, error) {
+		if addr == want {
+			return l, nil
+		}
+		return net.Listen(network, addr)
+	}
+	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
+		if addr == want {
+			return pc, nil
+		}
+		return net.ListenPacket(network, addr)
+	}
+	ctl, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startOn(t, ctl, a, map[string]string{"dns": echoUDP(t)})
 	got, err := r.Listen(context.Background(), "dns", want, true)
 	if err != nil || got != want {
 		t.Fatalf("listen = %q, %v; want %q", got, err, want)
