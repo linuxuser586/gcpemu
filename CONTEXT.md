@@ -44,6 +44,10 @@ The traffic those resources carry: object bytes, load-balanced requests, Postgre
 A named address at which an Instance serves clients, such as a Service's own port, the API gateway, or a forwarding rule's host listener. The names are those in `endpoints.json`. It is never an unspecified address: an Instance bound to all interfaces gives the loopback address, so a host client can always dial it.
 _Avoid_: endpoint (unqualified)
 
+**Public endpoint**:
+The address at which a GKE cluster that is not private serves its Kubernetes API outside its VPC, as GKE's `publicEndpoint` reports it. The cluster's certificate always covers it. A cluster keeps it across starts, a State snapshot restore included, while the address is still free on the Instance's network, and otherwise gets a new one.
+_Avoid_: endpoint (unqualified), external IP
+
 **Endpoint override**:
 Client-side configuration (an env var, provider setting or SDK option) that points a client at a Service endpoint instead of at Google.
 
@@ -490,7 +494,7 @@ _Avoid_: egress check, leak detector
 - "Service" also appears as GCP and Kubernetes terms. Always qualify those: *backend service*, *Kubernetes Service*, *service account*. The container network that Services share is the *services network*.
 - "Snapshot" on its own is ambiguous. Use *State snapshot* or *Pub/Sub snapshot*.
 - "Datastore" on its own always means a GKE cluster's k3s Datastore. The GCP product is always called *Cloud Datastore* or *Firestore in Datastore mode*.
-- "Endpoint" on its own is ambiguous. Use *Service endpoint*, *Endpoint override*, or GCP's *network endpoint* (NEG).
+- "Endpoint" on its own is ambiguous. Use *Service endpoint*, *Endpoint override*, a cluster's *Public endpoint*, or GCP's *network endpoint* (NEG).
 - "Gateway" and "frontend" on their own are ambiguous. Load balancer frontends and the network's gateway IP keep their GCP meanings and are always qualified.
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
 - "Build" on its own is ambiguous: it also means compiling gcpemu, a Docker image build or the Web console's Vite build. Use *Build* (capitalised) only for a Cloud Build execution, and say *image build* or *compile* for the others.

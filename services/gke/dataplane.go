@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -454,7 +455,6 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 		if ext, err = d.np.External(ctx); err != nil {
 			return err
 		}
-		nets = append(nets, runtime.Attachment{Network: ext.Name})
 	}
 	args := []string{
 		"server", "--disable-agent", "--https-listen-port", "443",
@@ -473,9 +473,6 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 	args = append(args, policyArgs(c)...)
 	if ip != "" {
 		args = append(args, "--advertise-address", ip, "--tls-san", ip)
-	}
-	if rec.Int.ExternalIP != "" {
-		args = append(args, "--tls-san", rec.Int.ExternalIP)
 	}
 	args = append(args, s.lanSANs()...)
 	// Inside a container, or on a VM runtime, the host cannot reach the
@@ -511,35 +508,57 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 	if hostLB {
 		args = append(args, "--disable", "servicelb")
 	}
-	id, err := d.rt.CreateContainer(ctx, runtime.ContainerSpec{
-		Name:     name,
-		Image:    ver.Image,
-		Cmd:      args,
-		Env:      []string{"K3S_TOKEN=" + rec.Int.Token},
-		Labels:   labels,
-		Hostname: trunc("gke-"+c.Name, 40) + "-cp",
-		Networks: nets,
-		Ports:    ports,
-		Mounts:   []runtime.Mount{{Type: "volume", Source: name, Target: k3sDataDir}},
-		Tmpfs:    map[string]string{"/run": ""},
-		CapAdd:   capAdd,
-	})
-	if err != nil {
-		return err
-	}
 	files := []runtime.File{
 		{Name: strings.TrimPrefix(webhookDir, "/") + "/authn.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authn")},
 		{Name: strings.TrimPrefix(webhookDir, "/") + "/authz.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authz")},
 	}
-	if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
-		return err
-	}
-	if staged != "" && !again {
-		if err := writeDatastore(ctx, d.rt, id, staged); err != nil {
+	var id string
+	// start creates and starts the server, with extIP its fixed address on
+	// the external network, if it has one.
+	start := func(extIP string) error {
+		cmd, attach := args, nets
+		if extIP != "" {
+			cmd = append(slices.Clip(args), "--tls-san", extIP)
+			attach = append(slices.Clip(nets), runtime.Attachment{Network: ext.Name, IP: extIP})
+		}
+		var err error
+		id, err = d.rt.CreateContainer(ctx, runtime.ContainerSpec{
+			Name:     name,
+			Image:    ver.Image,
+			Cmd:      cmd,
+			Env:      []string{"K3S_TOKEN=" + rec.Int.Token},
+			Labels:   labels,
+			Hostname: trunc("gke-"+c.Name, 40) + "-cp",
+			Networks: attach,
+			Ports:    ports,
+			Mounts:   []runtime.Mount{{Type: "volume", Source: name, Target: k3sDataDir}},
+			Tmpfs:    map[string]string{"/run": ""},
+			CapAdd:   capAdd,
+		})
+		if err != nil {
 			return err
 		}
+		if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
+			return err
+		}
+		if staged != "" && !again {
+			if err := writeDatastore(ctx, d.rt, id, staged); err != nil {
+				return err
+			}
+		}
+		err = d.rt.StartContainer(ctx, id)
+		if runtime.IsAddressInUse(err) {
+			// Removed for the next address, which reuses the name.
+			_ = d.rt.RemoveContainer(ctx, id, true)
+		}
+		return err
 	}
-	if err := d.rt.StartContainer(ctx, id); err != nil {
+	if ext.Name == "" {
+		err = start("")
+	} else {
+		_, err = withExternalIP(ext, rec.Int.ExternalIP, start)
+	}
+	if err != nil {
 		return err
 	}
 	if err := d.rt.WaitRunning(ctx, id); err != nil {
