@@ -9,7 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"cloud.google.com/go/container/apiv1/containerpb"
+
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
 
@@ -100,6 +103,40 @@ func (rt *clusterRT) lanServer(ip string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// forCaller returns c, the cluster key, as the caller in ctx is told it. A
+// caller that arrived through the LAN, over a link (ADR 0027) or the
+// Google front end, is told the --gke-bind address of its API server
+// (emu.LANServed) as every endpoint, since the loopback addresses would be
+// wrong on its machine; when it is served on none, no endpoint and a status
+// message naming --gke-bind.
+func (s *Service) forCaller(ctx context.Context, key string, c *containerpb.Cluster) *containerpb.Cluster {
+	if c.Endpoint == "" {
+		return c
+	}
+	rt := s.rtFor(key)
+	rt.mu.Lock()
+	served := slices.Clone(rt.lanAddrs)
+	rt.mu.Unlock()
+	addr, lan := emu.LANServed(ctx, served)
+	if !lan {
+		return c
+	}
+	c.Endpoint = addr
+	if pc := c.PrivateClusterConfig; pc != nil {
+		pc.PrivateEndpoint, pc.PublicEndpoint = addr, addr
+	}
+	if ipc := c.GetControlPlaneEndpointsConfig().GetIpEndpointsConfig(); ipc != nil {
+		ipc.PrivateEndpoint, ipc.PublicEndpoint = addr, addr
+	}
+	if addr == "" && c.StatusMessage == "" {
+		c.StatusMessage = "The Kubernetes API is not served on the LAN: start gcpemu with --gke-bind."
+		if len(s.env.Config.GKEBind) > 0 {
+			c.StatusMessage = "The Kubernetes API is not served on any --gke-bind address; gcpemu's log says why."
+		}
+	}
+	return c
 }
 
 // lanAddress resolves the kubeconfig endpoint's lan parameter to a

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -207,6 +208,7 @@ func grpcStatus(h http.Header) codes.Code {
 // never serves the Admin API or the Web console. A merged list it answers
 // with the items of the Projects shared with that link.
 func (g *Gateway) ServeLinked(w http.ResponseWriter, r *http.Request, from, principal string) {
+	r = linkCaller(r)
 	ids, l := g.projectsOf(r), g.linker()
 	refuse := func(what string) {
 		writeErrorFor(w, r, apierr.PermissionDenied("The request forwarded by the Linked Instance %q %s.", from, what))
@@ -227,4 +229,15 @@ func (g *Gateway) ServeLinked(w http.ResponseWriter, r *http.Request, from, prin
 	}
 	r = r.WithContext(emu.WithAsserted(r.Context(), from, emu.Principal(principal)))
 	g.serve(w, r)
+}
+
+// linkCaller marks r as a request from the LAN, at the --link-bind address
+// it arrived at, so that Services report the Data plane addresses of their
+// LAN listeners, which the caller's machine can reach (ADR 0027).
+func linkCaller(r *http.Request) *http.Request {
+	var local string
+	if a, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		local, _, _ = net.SplitHostPort(a.String())
+	}
+	return r.WithContext(emu.WithLANCaller(r.Context(), local))
 }

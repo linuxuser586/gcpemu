@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 )
 
@@ -117,4 +118,23 @@ func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*htt
 		s.env.Endpoints.Set("ar-lan", strings.Join(addrs, ","))
 	}
 	return srvs
+}
+
+// linkURI returns uri, an image or repository URI on LOCATION-docker.pkg.dev,
+// as a caller that came over a link must use it (ADR 0027): behind the
+// --ar-bind address it should be told, in the location-in-path form, since
+// on its machine pkg.dev names reach the front Instance instead. Any other
+// caller, or a link to an Instance without --ar-bind, keeps uri.
+func (s *Service) linkURI(ctx context.Context, uri string) string {
+	if _, _, ok := emu.AssertedBy(ctx); !ok || uri == "" {
+		return uri
+	}
+	var served []string
+	if v := s.env.Endpoints.Get("ar-lan"); v != "" {
+		served = strings.Split(v, ",")
+	}
+	if addr, _ := emu.LANServed(ctx, served); addr != "" {
+		return addr + "/" + uri
+	}
+	return uri
 }

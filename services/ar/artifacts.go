@@ -82,7 +82,9 @@ func (a *api) ListDockerImages(ctx context.Context, req *artifactregistrypb.List
 	err = a.s.viewRepo(ctx, ref, "artifactregistry.dockerimages.list", func(tx store.Tx) error {
 		imgs, ms := listManifests(tx, ref, "")
 		for i, m := range ms {
-			out = append(out, dockerImage(ref, imgs[i], m, tagsFor(tx, ref, imgs[i], m.Digest)))
+			d := dockerImage(ref, imgs[i], m, tagsFor(tx, ref, imgs[i], m.Digest))
+			d.Uri = a.s.linkURI(ctx, d.Uri)
+			out = append(out, d)
 		}
 		return nil
 	})
@@ -149,6 +151,7 @@ func (a *api) GetDockerImage(ctx context.Context, req *artifactregistrypb.GetDoc
 			return entityNotFound()
 		}
 		out = dockerImage(ref, img, m, tagsFor(tx, ref, img, digest))
+		out.Uri = a.s.linkURI(ctx, out.Uri)
 		return nil
 	})
 	return out, err
