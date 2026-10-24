@@ -29,6 +29,9 @@ type Entry struct {
 	Status    int     `json:"status"`
 	Code      string  `json:"code,omitempty"`
 	LatencyMS float64 `json:"latencyMs"`
+	// Delegated is the link over which the API gateway forwarded the
+	// request, for a Project delegated to a Linked Instance (ADR 0027).
+	Delegated string `json:"delegated,omitempty"`
 	// LB is the load balancer's trace of a data-plane request.
 	LB *LBTrace `json:"lb,omitempty"`
 	// NAT is the NAT egress proxy's trace of an internet egress attempt.

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -243,23 +244,7 @@ func operationName(r *http.Request, method string) string {
 	if method == "ListOperations" {
 		field = 4
 	}
-	var head [5]byte
-	n, _ := io.ReadFull(r.Body, head[:])
-	read := head[:n]
-	defer func() {
-		r.Body = struct {
-			io.Reader
-			io.Closer
-		}{io.MultiReader(bytes.NewReader(read), r.Body), r.Body}
-	}()
-	size := binary.BigEndian.Uint32(head[1:])
-	if n < len(head) || head[0] != 0 || size > maxPeek {
-		return ""
-	}
-	msg := make([]byte, size)
-	m, _ := io.ReadFull(r.Body, msg)
-	read = append(read, msg[:m]...)
-	for b := msg[:m]; len(b) > 0; {
+	for b := firstMessage(r); len(b) > 0; {
 		num, typ, n := protowire.ConsumeTag(b)
 		if n < 0 {
 			return ""
@@ -275,6 +260,42 @@ func operationName(r *http.Request, method string) string {
 		b = b[n:]
 	}
 	return ""
+}
+
+// firstMessage returns a gRPC call's first request message, reading it and
+// putting it back, decompressed when it is gzip-compressed; nil when it is
+// otherwise compressed, larger than maxPeek or malformed.
+func firstMessage(r *http.Request) []byte {
+	var head [5]byte
+	n, _ := io.ReadFull(r.Body, head[:])
+	read := head[:n]
+	defer func() {
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(read), r.Body), r.Body}
+	}()
+	size := binary.BigEndian.Uint32(head[1:])
+	gzipped := head[0] == 1 && r.Header.Get("Grpc-Encoding") == "gzip"
+	if n < len(head) || head[0] != 0 && !gzipped || size > maxPeek {
+		return nil
+	}
+	msg := make([]byte, size)
+	m, _ := io.ReadFull(r.Body, msg)
+	read = append(read, msg[:m]...)
+	if m < len(msg) {
+		return nil
+	}
+	if gzipped {
+		zr, err := gzip.NewReader(bytes.NewReader(msg))
+		if err != nil {
+			return nil
+		}
+		if msg, err = io.ReadAll(io.LimitReader(zr, maxPeek+1)); err != nil || len(msg) > maxPeek {
+			return nil
+		}
+	}
+	return msg
 }
 
 // unavailable is the error a request gets when the External emulator could

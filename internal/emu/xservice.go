@@ -135,7 +135,8 @@ const projectsNS = "core/projects"
 
 // EnsureProject implements FR-CORE-020: any valid project ID is
 // auto-created on first use unless --strict-projects is set, in which case
-// it must be declared in config or the seed.
+// it must be declared in config or the seed. A Delegated Project is never
+// created: it is FAILED_PRECONDITION.
 func (e *Env) EnsureProject(id string) error {
 	if !project.ValidID(id) && !isNumeric(id) {
 		return apierr.InvalidArgument("Invalid project ID %q.", id).WithReason("googleapis.com", "INVALID_PROJECT_ID")
@@ -144,6 +145,13 @@ func (e *Env) EnsureProject(id string) error {
 		if p == id {
 			return nil
 		}
+	}
+	// A Delegated Project exists on its Linked Instance, and a reference
+	// to it never creates it, nor state in it, here (ADR 0027). Requests
+	// naming it are forwarded before any Service sees them, so one that
+	// gets here names it where the API gateway does not look.
+	if link, ok := e.delegatedTo(id); ok {
+		return apierr.FailedPrecondition("Project %s is delegated to the Linked Instance %q, so this Instance holds no state for it; send the request so that it names the Project in its path or resource names.", id, link)
 	}
 	var known bool
 	_ = e.Store.View(func(tx store.Tx) error { known = store.Exists(tx, projectsNS, id); return nil })
@@ -160,6 +168,14 @@ func (e *Env) EnsureProject(id string) error {
 			"createTime":    e.Clock.Now(),
 		})
 	})
+}
+
+// delegatedTo returns the link the Project id is delegated to.
+func (e *Env) delegatedTo(id string) (string, bool) {
+	if e.Delegated == nil {
+		return "", false
+	}
+	return e.Delegated(id)
 }
 
 // ProjectByNumber maps a project number to a known project ID.

@@ -2,6 +2,7 @@ package emu
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -180,7 +181,7 @@ func (a *PolicyAuthorizer) Check(ctx context.Context, permission, resource strin
 				a.log.Warn("iam audit: deny policy would deny", "principal", string(p), "permission", permission, "resource", resource, "policy", policy)
 				return nil
 			}
-			return apierr.PermissionDenied("Permission '%s' denied on resource '%s' by deny policy '%s'.", permission, resource, policy).
+			return apierr.PermissionDenied("Permission '%s' denied on resource '%s' by deny policy '%s'.%s", permission, resource, policy, assertedNote(ctx)).
 				WithReason("iam.googleapis.com", "IAM_PERMISSION_DENIED")
 		}
 	}
@@ -192,6 +193,17 @@ func (a *PolicyAuthorizer) Check(ctx context.Context, permission, resource strin
 		a.log.Warn("iam audit: would deny", "principal", string(p), "permission", permission, "resource", resource)
 		return nil
 	}
-	return apierr.PermissionDenied("Permission '%s' denied on resource '%s' (or it may not exist).", permission, resource).
+	return apierr.PermissionDenied("Permission '%s' denied on resource '%s' (or it may not exist).%s", permission, resource, assertedNote(ctx)).
 		WithReason("iam.googleapis.com", "IAM_PERMISSION_DENIED")
+}
+
+// assertedNote names, for a request a Linked Instance forwarded, the
+// Principal it asserted, since its caller cannot tell otherwise whose
+// permissions were checked.
+func assertedNote(ctx context.Context) string {
+	link, p, ok := AssertedBy(ctx)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(" The Principal %s was asserted by the Linked Instance %q.", p, link)
 }

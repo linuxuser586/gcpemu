@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -53,6 +54,8 @@ type Gateway struct {
 	// (see Delegate).
 	delegated      []*delegatedAPI
 	delegatedHosts map[string]*delegatedAPI
+	// links forward Delegated Projects (see SetLinks).
+	links Links
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -243,9 +246,13 @@ func (g *Gateway) authGRPC(ctx context.Context) (context.Context, error) {
 	return emu.WithPrincipal(ctx, p), nil
 }
 
-// principal implements FR-CORE-050/051.
+// principal implements FR-CORE-050/051. A request a Linked Instance
+// forwarded is its asserted Principal's, whatever its credentials say.
 func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, error) {
 	def := emu.Principal(g.env.Config.DefaultPrincipal)
+	if _, p, ok := emu.AssertedBy(ctx); ok {
+		return cmp.Or(p, def), nil
+	}
 	tok, ok := strings.CutPrefix(authz, "Bearer ")
 	if !ok {
 		tok, ok = strings.CutPrefix(authz, "bearer ")
@@ -346,10 +353,22 @@ func (g *Gateway) HandleConsole(h http.Handler) {
 	g.mux.Handle("/console/", h)
 }
 
-// ServeHTTP dispatches gRPC, host-mode and path-routed requests.
+// ServeHTTP dispatches gRPC, host-mode and path-routed requests, and
+// forwards those naming a Delegated Project.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	markFrontend(r)
-	if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+	if name, answered := g.delegation(w, r); answered {
+		return
+	} else if name != "" {
+		g.serveDelegated(w, r, name)
+		return
+	}
+	g.serve(w, r)
+}
+
+// serve dispatches gRPC, host-mode and path-routed requests.
+func (g *Gateway) serve(w http.ResponseWriter, r *http.Request) {
+	if isGRPC(r) {
 		if d := g.grpcDelegated(r); d != nil {
 			d.grpc.ServeHTTP(w, r)
 			return

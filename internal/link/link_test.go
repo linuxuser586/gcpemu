@@ -492,3 +492,100 @@ func TestPendingRequestsAreCapped(t *testing.T) {
 	r := <-pairAsync(t, newLinked(t, "one-too-many", ""), office)
 	refused(t, "a request beyond the cap", r.err, link.ReasonBusy)
 }
+
+// A Project is delegated only once the Linked Instance shares it with this
+// Instance, and never when this Instance already has it (ADR 0027).
+func TestDelegateNeedsAShare(t *testing.T) {
+	local := map[string]bool{"laptop-own": true}
+	laptop := newLinked(t, "laptop", "", func(c *link.Config) { c.HasProject = func(id string) bool { return local[id] } })
+	office, other := newLinked(t, "office", ""), newLinked(t, "other", "")
+	pair(t, laptop, office)
+	pair(t, other, office)
+
+	if _, err := laptop.Delegate(ctxT(t), "team-shared", "office"); err == nil || !strings.Contains(err.Error(), "not shared") {
+		t.Fatalf("Delegate before Share = %v, want refused as not shared", err)
+	}
+	if err := office.Share("team-shared", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.Delegate(ctxT(t), "team-shared", "office"); err == nil {
+		t.Fatal("Delegate of a Project shared with another link only succeeded")
+	}
+	if err := office.Share("team-shared", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := office.Share("laptop-own", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.Delegate(ctxT(t), "laptop-own", "office"); err == nil || !strings.Contains(err.Error(), "already has") {
+		t.Fatalf("Delegate of a local Project = %v, want refused", err)
+	}
+	if _, err := laptop.Delegate(ctxT(t), "team-shared", "nope"); err == nil {
+		t.Fatal("Delegate to no link succeeded")
+	}
+	d, err := laptop.Delegate(ctxT(t), "team-shared", "office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Project != "team-shared" || d.Link != "office" {
+		t.Errorf("Delegate = %+v", d)
+	}
+	if to, ok := laptop.DelegatedTo("team-shared"); !ok || to != "office" {
+		t.Errorf("DelegatedTo = %q, %v", to, ok)
+	}
+	if !office.Shared("laptop", "team-shared") || office.Shared("laptop", "other-proj") {
+		t.Error("Shared does not follow the shares")
+	}
+	if err := office.Share("team-shared", "nope"); err == nil {
+		t.Error("Share with no link succeeded")
+	}
+	if err := laptop.Share("team-shared", ""); err == nil {
+		t.Error("Share of a Delegated Project succeeded")
+	}
+
+	// Delegations and Shares are configuration, kept in links.json.
+	reopened, err := link.OpenStore(filepath.Join(laptop.dir, link.StoreFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := reopened.Delegations(); len(ds) != 1 || ds[0] != d {
+		t.Errorf("Delegations after reopening = %+v", ds)
+	}
+
+	if err := office.Unshare("team-shared", ""); err != nil {
+		t.Fatal(err)
+	}
+	if office.Shared("laptop", "team-shared") {
+		t.Error("still shared after Unshare")
+	}
+	if err := laptop.Undelegate("team-shared"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := laptop.DelegatedTo("team-shared"); ok {
+		t.Error("still delegated after Undelegate")
+	}
+}
+
+// Unpairing a link drops the Projects delegated to it and shared with it.
+func TestUnpairDropsDelegationsAndShares(t *testing.T) {
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
+	pair(t, laptop, office)
+	if err := office.Share("team-shared", "laptop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.Delegate(ctxT(t), "team-shared", "office"); err != nil {
+		t.Fatal(err)
+	}
+	if err := laptop.Unpair("office"); err != nil {
+		t.Fatal(err)
+	}
+	if err := office.Unpair("laptop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := laptop.DelegatedTo("team-shared"); ok {
+		t.Error("delegated to an unpaired link")
+	}
+	if len(office.Shares()) != 0 {
+		t.Errorf("shares with an unpaired link = %+v", office.Shares())
+	}
+}

@@ -714,6 +714,8 @@ paths:
                 properties:
                   links: { type: array, items: { $ref: "#/components/schemas/LinkState" } }
                   fingerprint: { type: string, description: "This Instance's own CA fingerprint, for the other side of a Pairing to compare." }
+                  shared: { type: array, items: { $ref: "#/components/schemas/Share" }, description: The Projects this Instance shares, by Project. }
+                  delegated: { type: array, items: { $ref: "#/components/schemas/Delegation" }, description: The Projects this Instance delegates, by Project. }
     post:
       summary: Pair with the Instance at a link address (`gcpemu link pair`).
       operationId: pairLink
@@ -744,6 +746,72 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/shares:
+    post:
+      summary: Share a Project with the paired Instances, or with one link (`gcpemu link share`).
+      operationId: shareProject
+      description: >-
+        Offers the Project to every link, including later ones, or only to
+        the link `with` names. Sharing alone forwards nothing: the other
+        Instance delegates the Project to forward requests naming it. A
+        Project this Instance delegates cannot be shared. Shares are
+        configuration: Reset and State snapshots leave them alone (ADR 0027).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Share" }
+      responses:
+        "200":
+          description: Shared.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Share" }
+        "400": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/shares/{project}:
+    delete:
+      summary: Stop sharing a Project (`gcpemu link unshare`).
+      operationId: unshareProject
+      description: Requests a front Instance still forwards for it are refused with PERMISSION_DENIED.
+      parameters:
+        - { name: project, in: path, required: true, schema: { type: string } }
+        - { name: with, in: query, schema: { type: string }, description: "Stop sharing with this link only." }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/delegations:
+    post:
+      summary: Delegate a Project to the link that shares it (`gcpemu link delegate`).
+      operationId: delegateProject
+      description: >-
+        Asks the link which Projects it shares with this Instance, and from
+        then on forwards every request naming the Project, REST and gRPC,
+        whatever the Service, asserting the caller's Principal; the Linked
+        Instance checks IAM. Refused when the Project is not shared with
+        this Instance, when this Instance already has or shares a Project of
+        that name, and when the link cannot be reached. Delegations are
+        configuration: Reset and State snapshots leave them alone (ADR 0027).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Delegation" }
+      responses:
+        "200":
+          description: Delegated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Delegation" }
+        "400": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/delegations/{project}:
+    delete:
+      summary: Stop delegating a Project (`gcpemu link undelegate`).
+      operationId: undelegateProject
+      parameters:
+        - { name: project, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Status" }
+        "404": { $ref: "#/components/responses/Error" }
   /_emu/v1/links/identify:
     post:
       summary: Ask the Instance at a link address who it is, without pairing.
@@ -1434,6 +1502,18 @@ components:
         pairedAt: { type: string, format: date-time }
         broken: { type: string, description: "What the latest dial over the link found wrong with the other Instance's CA; absent once a dial finds it fine." }
         brokenAt: { type: string, format: date-time, description: When that dial was. }
+    Share:
+      type: object
+      required: [project]
+      properties:
+        project: { type: string }
+        with: { type: string, description: The link it is shared with; absent for every link. }
+    Delegation:
+      type: object
+      required: [project, link]
+      properties:
+        project: { type: string }
+        link: { type: string, description: The link the Project is delegated to. }
     LinkState:
       allOf:
         - { $ref: "#/components/schemas/Link" }
@@ -1861,6 +1941,7 @@ components:
             refused.
         code: { type: string }
         latencyMs: { type: number }
+        delegated: { type: string, description: "The link the request was forwarded over, for a Project delegated to a Linked Instance." }
         lb: { $ref: "#/components/schemas/LbTrace" }
         nat: { $ref: "#/components/schemas/NatTrace" }
     RequestDetail:

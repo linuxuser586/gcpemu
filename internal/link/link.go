@@ -13,6 +13,7 @@ package link
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -30,6 +31,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +91,11 @@ type Config struct {
 	Versions Versions
 	// ApprovalTimeout zero means DefaultApprovalTimeout.
 	ApprovalTimeout time.Duration
+	// HasProject reports whether this Instance has the Project id, which
+	// it then cannot delegate.
+	HasProject func(id string) bool
+	// Serve serves the requests paired Instances forward; nil refuses them.
+	Serve ServeFunc
 }
 
 // Manager manages an Instance's links: its --link-bind listeners, the
@@ -104,6 +111,8 @@ type Manager struct {
 	addrs    []string
 	clientCA string // fingerprint clientCert was issued under
 	client   *tls.Certificate
+	// transports forward over each link (see transport).
+	transports map[string]*http.Transport
 	// warnings holds, by link name, the latest refused connection that
 	// claimed that link's Instance ID with another CA, until the Instance
 	// pinned connects again. It is unverified, so it is never stored and
@@ -119,7 +128,7 @@ func New(cfg Config) *Manager {
 	if cfg.ApprovalTimeout == 0 {
 		cfg.ApprovalTimeout = DefaultApprovalTimeout
 	}
-	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}}
+	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}, transports: map[string]*http.Transport{}}
 }
 
 // Identity is what an Instance tells another about itself.
@@ -213,6 +222,9 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	servers := m.servers
 	m.servers, m.closed = nil, true
+	for _, t := range m.transports {
+		t.CloseIdleConnections()
+	}
 	for id, p := range m.pending {
 		p.decide <- errors.New("the Instance is shutting down")
 		delete(m.pending, id)
@@ -228,13 +240,15 @@ func (m *Manager) Close() error {
 // --- the listener's side ---
 
 // handler serves the link protocol: hello and Pairing requests to any
-// Instance, everything else only to paired ones.
+// Instance, everything else, forwarded requests included, only to paired
+// ones.
 func (m *Manager) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /link/v1/hello", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, m.identity())
 	})
 	mux.HandleFunc("POST /link/v1/pairings", m.servePair)
+	mux.HandleFunc("GET /link/v1/shared", m.serveShared)
 	mux.HandleFunc("GET /link/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		p, v, ok := m.admit(w, r)
 		if !ok {
@@ -243,7 +257,15 @@ func (m *Manager) handler() http.Handler {
 		w.Header().Set(versionsHeader, m.cfg.Versions.String())
 		writeJSON(w, http.StatusOK, map[string]any{"name": m.cfg.Instance, "id": m.cfg.ID, "version": v, "link": p.Name})
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Forwarded requests keep their path as the client sent it, which
+		// the mux would clean.
+		if strings.HasPrefix(r.URL.Path, forwardPrefix+"/") {
+			m.serveForwarded(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // errCAMismatch says that link name presented the CA presented, not the
@@ -267,6 +289,7 @@ type refusal struct {
 
 // refuse writes a refusal for reason.
 func (m *Manager) refuse(w http.ResponseWriter, code int, reason, msg string) {
+	w.Header().Set(refusedHeader, cmp.Or(reason, "refused"))
 	writeJSON(w, code, refusal{Reason: reason, Error: msg})
 }
 
@@ -768,8 +791,12 @@ func (m *Manager) pin(p *Link) error {
 
 // callPaired makes a request over the link p, trusting only its pinned CA.
 func (m *Manager) callPaired(ctx context.Context, p Link, method, path string, out any) (*x509.Certificate, error) {
-	pinned := pinnedTo(p.Fingerprint, func(got string) error { return errCAMismatch(p.Name, p.Fingerprint, got) })
-	return m.call(ctx, p.Address, method, path, pinned, nil, out)
+	return m.call(ctx, p.Address, method, path, p.pinned(), nil, out)
+}
+
+// pinned verifies that a presented CA is p's pinned one.
+func (p Link) pinned() func(*x509.Certificate) error {
+	return pinnedTo(p.Fingerprint, func(got string) error { return errCAMismatch(p.Name, p.Fingerprint, got) })
 }
 
 // pinnedTo verifies that a presented CA has the fingerprint want, and
@@ -799,23 +826,11 @@ func (m *Manager) call(ctx context.Context, addr, method, path string, verify fu
 		verr error
 	)
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
-			// The chain is checked against the CA the server presents, and
-			// that CA against the pinned one, in VerifyConnection.
-			InsecureSkipVerify:   true,
-			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return m.clientCert() },
-			VerifyConnection: func(cs tls.ConnectionState) error {
-				r, err := presentedCA(cs.PeerCertificates, x509.ExtKeyUsageServerAuth)
-				if err == nil && verify != nil {
-					err = verify(r)
-				}
-				mu.Lock()
-				root, verr = r, err
-				mu.Unlock()
-				return err
-			},
-		},
+		TLSClientConfig: m.tlsConfig(verify, func(r *x509.Certificate, err error) {
+			mu.Lock()
+			root, verr = r, err
+			mu.Unlock()
+		}),
 	}
 	defer tr.CloseIdleConnections()
 	var body io.Reader

@@ -146,6 +146,9 @@ type Env struct {
 	Auth Authorizer
 	// Endpoints records listener addresses for endpoints.json.
 	Endpoints *Endpoints
+	// Delegated returns the link the Project id is delegated to (ADR
+	// 0027); nil delegates none.
+	Delegated func(id string) (link string, ok bool)
 	// Middleware wraps HTTP handlers on per-service ports with the same
 	// auth/logging the gateway applies.
 	Middleware func(service string, h http.Handler) http.Handler

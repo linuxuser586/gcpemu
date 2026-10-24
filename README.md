@@ -421,6 +421,52 @@ name, which is needed when two links would share one). The Admin API serves the 
 - `gcpemu doctor` reports each link: its state, whether the other Instance answers, and at which
   protocol version. A link whose other side has no `--link-bind` is inbound only.
 
+#### Shared and Delegated Projects
+
+Once paired, the office Instance shares Projects and the laptop delegates them. From then on the
+laptop forwards every request naming a Delegated Project over the link, REST and gRPC, whatever
+the Service, so `gcloud`, OpenTofu and SDK clients configured against the laptop work on the
+office's Projects too:
+
+```sh
+# on the office machine: share with every paired Instance, including later ones, or with one: --with laptop
+gcpemu link share team-shared
+# on the laptop: the link must share it, and the laptop must not have a Project of that name
+gcpemu link delegate team-shared --to office
+```
+
+- The laptop authenticates the caller, at its own IAM enforcement level, and asserts their
+  Principal over the link; a caller with no credentials is the laptop's Default principal. The
+  office checks IAM at its own level, as that Principal. A PERMISSION_DENIED from the office names
+  the Principal the laptop asserted.
+- A request names a Project by `projects/P` (an ID or number) in its REST path or in a gRPC request
+  message's resource names (gzip-compressed or not), or, for the bucket collection
+  (`gcloud storage buckets list`), by its `project` parameter. Requests that name no Project, such
+  as those on a bucket, are served by the laptop. A request naming Projects that are not all
+  delegated to one link, such as a local subscription to a delegated topic, fails with
+  FAILED_PRECONDITION, since no one Instance holds both.
+- The office serves a forwarded request only if every Project it names is shared with that link,
+  and never serves its Admin API or Web console over a link.
+- The laptop holds no state for a Delegated Project: a reference to it never creates it there,
+  and under `--strict-projects` it counts as existing, since its requests are forwarded. Anything
+  that would still create state for it on the laptop, such as a request naming it only in its
+  body, or a seed, fails with FAILED_PRECONDITION naming the link. A Project the laptop already
+  has, or shares, cannot be delegated, so local state is never shadowed or merged.
+- While the office is unreachable, requests for its Delegated Projects fail with UNAVAILABLE,
+  naming the link; the laptop stays ready.
+- The laptop's Reset and State snapshots act on its local Projects only, and the Delegated
+  Projects' resources stay on the office. Shares and Delegations are configuration in `links.json`,
+  like the links: they survive Reset. Unpairing a link drops the Shares with it and the Delegations
+  to it.
+- The laptop's Request log records each forwarded request, marked with the link it went over
+  (`delegated` in the Admin API), and its fault rules still match it. Forwarded requests do not
+  move the laptop's deterministic clock.
+- `gcpemu link unshare <project>` (or `--with <link>`) and `gcpemu link undelegate <project>` undo
+  them, and `gcpemu link list` lists the Shared and Delegated Projects. A Project unshared while
+  still delegated fails with PERMISSION_DENIED until the laptop undelegates it. An Instance never
+  delegates a Project it shares, nor shares one it delegates. The Admin API serves them under
+  `/_emu/v1/links/shares` and `/_emu/v1/links/delegations`.
+
 ### External emulators
 
 Firestore, Datastore, Spanner and Bigtable are not emulated, but Google ships emulators for them.
@@ -825,7 +871,7 @@ that sends one API request at a time. Console and admin API traffic (`/_emu/`) d
 clock, so it does not affect the output. Operations with no `--lro-latency` come back `DONE` from
 the call that started them. Operations backed by runtime containers (GKE clusters, Cloud SQL
 instances, backups, imports and exports) and any operation once latency is configured are outside
-the guarantee.
+the guarantee, and so are Delegated Projects: the guarantee covers local Projects only.
 
 ### Seed files
 

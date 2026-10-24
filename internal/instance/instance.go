@@ -186,6 +186,8 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	in.containers = &containers{in: in}
 	env.Containers = in.containers
 	in.gw = gateway.New(env, in.Log)
+	in.gw.SetLinks(in.link)
+	env.Delegated = in.link.DelegatedTo
 	if err := in.setupAdminToken(); err != nil {
 		return nil, err
 	}

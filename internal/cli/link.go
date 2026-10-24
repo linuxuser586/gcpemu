@@ -26,9 +26,12 @@ func (o *rootOpts) linkCmd() *cobra.Command {
 		Short: "Pair this Instance with other Instances, as Linked Instances",
 		Long: "Pairing makes two Instances each pin the other's Instance CA, so that each accepts the other\n" +
 			"over a link. It is approved on both sides: `link pair` on one Instance, which shows the other's\n" +
-			"identity, and `link approve` on the other, which must be started with --link-bind.",
+			"identity, and `link approve` on the other, which must be started with --link-bind.\n\n" +
+			"A Linked Instance then shares Projects (`link share`), and the front Instance delegates them\n" +
+			"(`link delegate`): it forwards every request naming a Delegated Project over the link.",
 	}
-	root.AddCommand(o.linkPairCmd(), o.linkListCmd(), o.linkUnpairCmd(), o.linkRequestsCmd(), o.linkApproveCmd(), o.linkRejectCmd())
+	root.AddCommand(o.linkPairCmd(), o.linkListCmd(), o.linkUnpairCmd(), o.linkRequestsCmd(), o.linkApproveCmd(), o.linkRejectCmd(),
+		o.linkShareCmd(), o.linkUnshareCmd(), o.linkDelegateCmd(), o.linkUndelegateCmd())
 	return root
 }
 
@@ -80,7 +83,9 @@ func (o *rootOpts) linkListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var r struct {
-				Links []link.LinkState `json:"links"`
+				Links     []link.LinkState  `json:"links"`
+				Shared    []link.Share      `json:"shared"`
+				Delegated []link.Delegation `json:"delegated"`
 			}
 			if err := o.linkCall(cmd, http.MethodGet, "/_emu/v1/links", nil, 0, &r); err != nil {
 				return err
@@ -110,6 +115,16 @@ func (o *rootOpts) linkListCmd() *cobra.Command {
 				if l.Warning != "" {
 					fmt.Fprintf(out, "%s: warning: %s\n", l.Name, l.Warning)
 				}
+			}
+			for _, sh := range r.Shared {
+				with := "every link"
+				if sh.With != "" {
+					with = fmt.Sprintf("link %q", sh.With)
+				}
+				fmt.Fprintf(out, "shares Project %s with %s\n", sh.Project, with)
+			}
+			for _, d := range r.Delegated {
+				fmt.Fprintf(out, "delegates Project %s to link %q\n", d.Project, d.Link)
 			}
 			return nil
 		},
@@ -252,6 +267,93 @@ func (o *rootOpts) linkRejectCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Rejected Pairing request %s.\n", args[0])
+			return nil
+		},
+	}
+}
+
+// linkShareCmd is `gcpemu link share`.
+func (o *rootOpts) linkShareCmd() *cobra.Command {
+	var with string
+	cmd := &cobra.Command{
+		Use:   "share PROJECT",
+		Short: "Share PROJECT with the paired Instances, or with one with --with, so that they can delegate it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.linkCall(cmd, http.MethodPost, "/_emu/v1/links/shares", link.Share{Project: args[0], With: with}, 0, nil); err != nil {
+				return err
+			}
+			to := "every paired Instance"
+			if with != "" {
+				to = fmt.Sprintf("link %q", with)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Shared Project %s with %s; delegate it there with `gcpemu link delegate %s --to NAME`.\n", args[0], to, args[0])
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&with, "with", "", "share with this link only")
+	return cmd
+}
+
+// linkUnshareCmd is `gcpemu link unshare`.
+func (o *rootOpts) linkUnshareCmd() *cobra.Command {
+	var with string
+	cmd := &cobra.Command{
+		Use:   "unshare PROJECT",
+		Short: "Stop sharing PROJECT, with every paired Instance or with one with --with",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := "/_emu/v1/links/shares/" + url.PathEscape(args[0])
+			if with != "" {
+				path += "?with=" + url.QueryEscape(with)
+			}
+			if err := o.linkCall(cmd, http.MethodDelete, path, nil, 0, nil); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Stopped sharing Project %s.\n", args[0])
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&with, "with", "", "stop sharing with this link only")
+	return cmd
+}
+
+// linkDelegateCmd is `gcpemu link delegate`.
+func (o *rootOpts) linkDelegateCmd() *cobra.Command {
+	var to string
+	cmd := &cobra.Command{
+		Use:   "delegate PROJECT --to NAME",
+		Short: "Forward every request naming PROJECT to the link NAME, which shares it",
+		Long: "Delegating PROJECT forwards every request naming it, whatever the Service, to the Linked\n" +
+			"Instance NAME, asserting the caller's Principal; it checks IAM itself. It is refused if NAME does\n" +
+			"not share PROJECT with this Instance, or if this Instance already has a Project of that name.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if to == "" {
+				return errors.New("--to names the link to delegate the Project to")
+			}
+			if err := o.linkCall(cmd, http.MethodPost, "/_emu/v1/links/delegations", link.Delegation{Project: args[0], Link: to}, 0, nil); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Delegated Project %s to link %q.\n", args[0], to)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&to, "to", "", "the link to delegate the Project to")
+	return cmd
+}
+
+// linkUndelegateCmd is `gcpemu link undelegate`.
+func (o *rootOpts) linkUndelegateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "undelegate PROJECT",
+		Short: "Stop forwarding PROJECT to the Linked Instance it is delegated to",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := o.linkCall(cmd, http.MethodDelete, "/_emu/v1/links/delegations/"+url.PathEscape(args[0]), nil, 0, nil); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Stopped delegating Project %s.\n", args[0])
 			return nil
 		},
 	}

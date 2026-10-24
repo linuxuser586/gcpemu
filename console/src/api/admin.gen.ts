@@ -595,6 +595,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/links/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Share a Project with the paired Instances, or with one link (`gcpemu link share`).
+         * @description Offers the Project to every link, including later ones, or only to the link `with` names. Sharing alone forwards nothing: the other Instance delegates the Project to forward requests naming it. A Project this Instance delegates cannot be shared. Shares are configuration: Reset and State snapshots leave them alone (ADR 0027).
+         */
+        post: operations["shareProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/shares/{project}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Stop sharing a Project (`gcpemu link unshare`).
+         * @description Requests a front Instance still forwards for it are refused with PERMISSION_DENIED.
+         */
+        delete: operations["unshareProject"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/delegations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delegate a Project to the link that shares it (`gcpemu link delegate`).
+         * @description Asks the link which Projects it shares with this Instance, and from then on forwards every request naming the Project, REST and gRPC, whatever the Service, asserting the caller's Principal; the Linked Instance checks IAM. Refused when the Project is not shared with this Instance, when this Instance already has or shares a Project of that name, and when the link cannot be reached. Delegations are configuration: Reset and State snapshots leave them alone (ADR 0027).
+         */
+        post: operations["delegateProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/links/delegations/{project}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Stop delegating a Project (`gcpemu link undelegate`). */
+        delete: operations["undelegateProject"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/links/identify": {
         parameters: {
             query?: never;
@@ -1078,6 +1155,16 @@ export interface components {
              */
             brokenAt?: string;
         };
+        Share: {
+            project: string;
+            /** @description The link it is shared with; absent for every link. */
+            with?: string;
+        };
+        Delegation: {
+            project: string;
+            /** @description The link the Project is delegated to. */
+            link: string;
+        };
         LinkState: components["schemas"]["Link"] & {
             /** @enum {string} */
             state?: "paired" | "broken";
@@ -1486,6 +1573,8 @@ export interface components {
             status?: number;
             code?: string;
             latencyMs?: number;
+            /** @description The link the request was forwarded over, for a Project delegated to a Linked Instance. */
+            delegated?: string;
             lb?: components["schemas"]["LbTrace"];
             nat?: components["schemas"]["NatTrace"];
         };
@@ -2461,6 +2550,10 @@ export interface operations {
                         links?: components["schemas"]["LinkState"][];
                         /** @description This Instance's own CA fingerprint, for the other side of a Pairing to compare. */
                         fingerprint?: string;
+                        /** @description The Projects this Instance shares */
+                        shared?: components["schemas"]["Share"][];
+                        /** @description The Projects this Instance delegates */
+                        delegated?: components["schemas"]["Delegation"][];
                     };
                 };
             };
@@ -2498,6 +2591,89 @@ export interface operations {
             400: components["responses"]["Error"];
             409: components["responses"]["Error"];
             502: components["responses"]["Error"];
+        };
+    };
+    shareProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Share"];
+            };
+        };
+        responses: {
+            /** @description Shared. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Share"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    unshareProject: {
+        parameters: {
+            query?: {
+                /** @description Stop sharing with this link only. */
+                with?: string;
+            };
+            header?: never;
+            path: {
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
+            404: components["responses"]["Error"];
+        };
+    };
+    delegateProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Delegation"];
+            };
+        };
+        responses: {
+            /** @description Delegated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Delegation"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    undelegateProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Status"];
+            404: components["responses"]["Error"];
         };
     };
     identifyLink: {
