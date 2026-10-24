@@ -34,3 +34,17 @@ func Number(id string) int64 {
 
 // NumberString is Number formatted as a decimal string.
 func NumberString(id string) string { return strconv.FormatInt(Number(id), 10) }
+
+// accountEmail matches the email of a service account: a user-managed one
+// in the Project ID, or the Compute Engine default one in its number.
+var accountEmail = regexp.MustCompile(`^[^@]+@([a-z][a-z0-9-]+)\.iam\.gserviceaccount\.com$|^([0-9]+)-compute@developer\.gserviceaccount\.com$`)
+
+// OfServiceAccount returns the Project, an ID or number, of the service
+// account email, or "" when it is no Project's service account.
+func OfServiceAccount(email string) string {
+	m := accountEmail.FindStringSubmatch(email)
+	if m == nil {
+		return ""
+	}
+	return m[1] + m[2]
+}

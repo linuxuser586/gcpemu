@@ -44,6 +44,16 @@ type IAMPolicyStore interface {
 	DeletePolicy(ctx context.Context, resource string) error
 }
 
+// Buckets is implemented by the gcs Service: the Project each bucket is
+// in, by which requests naming a bucket, and no Project, are routed
+// across links (ADR 0027).
+type Buckets interface {
+	// BucketProject returns the Project the bucket name is in.
+	BucketProject(name string) (project string, ok bool)
+	// Buckets returns the Project of every bucket, by bucket.
+	Buckets() map[string]string
+}
+
 // IAMResourceParents is optionally provided by the "iam" service alongside
 // IAMPolicyStore. Owning services call SetResourceParent when they create a
 // resource whose full name does not contain its project (e.g. a bucket:

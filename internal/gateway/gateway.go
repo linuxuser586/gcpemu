@@ -56,6 +56,8 @@ type Gateway struct {
 	delegatedHosts map[string]*delegatedAPI
 	// links forward Delegated Projects (see SetLinks).
 	links Links
+	// fallback is the Service that serves paths no other route matches.
+	fallback string
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -246,6 +248,9 @@ func (g *Gateway) authGRPC(ctx context.Context) (context.Context, error) {
 	return emu.WithPrincipal(ctx, p), nil
 }
 
+// emulatorToken prefixes the access tokens Instances issue.
+const emulatorToken = "ya29.gcpemu."
+
 // principal implements FR-CORE-050/051. A request a Linked Instance
 // forwarded is its asserted Principal's, whatever its credentials say.
 func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, error) {
@@ -262,6 +267,14 @@ func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, e
 	}
 	if p, ok := g.env.Auth.Authenticate(ctx, tok); ok {
 		return p, nil
+	}
+	// A token for a service account of a Delegated Project was issued by
+	// its Linked Instance (ADR 0027). Only a token an Instance could have
+	// issued is sent over a link, never Foreign credentials.
+	if l := g.linker(); l != nil && l.Delegating() && strings.HasPrefix(tok, emulatorToken) {
+		if p, ok := l.Authenticate(ctx, tok); ok {
+			return emu.Principal(p), nil
+		}
 	}
 	if g.env.Auth.Mode() == config.IAMEnforce {
 		return "", apierr.Unauthenticated("Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.").
@@ -319,6 +332,9 @@ func (r *router) Hosts() []string { return r.g.Hosts() }
 
 func (r *router) Fallback(h http.Handler) {
 	r.g.mux.Handle("/", r.g.Middleware(r.service, h))
+	r.g.mu.Lock()
+	r.g.fallback = r.service
+	r.g.mu.Unlock()
 }
 
 // PathHost is Google's legacy shared API host. Its URLs carry the API in
@@ -357,13 +373,19 @@ func (g *Gateway) HandleConsole(h http.Handler) {
 // forwards those naming a Delegated Project.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	markFrontend(r)
-	if name, answered := g.delegation(w, r); answered {
-		return
-	} else if name != "" {
+	name, answered := g.delegation(w, r)
+	l := g.linker()
+	delegating := l != nil && l.Delegating()
+	switch {
+	case answered:
+	case name != "":
 		g.serveDelegated(w, r, name)
-		return
+	case delegating && g.mergedList(r):
+		g.serveMerged(w, r, l)
+	case delegating && g.bucketTaken(w, r, l, ""):
+	default:
+		g.serve(w, r)
 	}
-	g.serve(w, r)
 }
 
 // serve dispatches gRPC, host-mode and path-routed requests.

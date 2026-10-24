@@ -24,6 +24,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 	"github.com/linuxuser586/gcpemu/internal/link"
+	"github.com/linuxuser586/gcpemu/services/gcs"
 	"github.com/linuxuser586/gcpemu/services/iam"
 	ps "github.com/linuxuser586/gcpemu/services/pubsub"
 )
@@ -31,20 +32,20 @@ import (
 const shared = "team-shared"
 
 // startWithProjects starts an Ephemeral Instance named name running the
-// pubsub and iam Services, its link listener on loopback.
+// pubsub, iam and gcs Services, its link listener on loopback.
 func startWithProjects(t *testing.T, name string, change func(*config.Config)) *Instance {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Instance = name
 	cfg.DataDir = t.TempDir()
 	cfg.Ephemeral = true
-	cfg.Services = []string{"iam", "pubsub"}
+	cfg.Services = []string{"iam", "pubsub", "gcs"}
 	cfg.Ports[config.AllPorts] = 0
 	cfg.LinkBind = []string{"127.0.0.1"}
 	if change != nil {
 		change(&cfg)
 	}
-	in, err := New(&cfg, map[string]Factory{"iam": iam.New, "pubsub": ps.New}, io.Discard)
+	in, err := New(&cfg, map[string]Factory{"iam": iam.New, "pubsub": ps.New, "gcs": gcs.New}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

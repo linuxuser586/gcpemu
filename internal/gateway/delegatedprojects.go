@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strconv"
@@ -25,14 +26,26 @@ import (
 type Links interface {
 	// Delegating reports whether any Project is delegated.
 	Delegating() bool
+	// DelegatedLinks returns the links any Project is delegated to, by
+	// name.
+	DelegatedLinks() []string
 	// DelegatedTo returns the link the Project ref, an ID or number, is
 	// delegated to.
 	DelegatedTo(ref string) (string, bool)
 	// Shared reports whether the Project ref is shared with the link name.
 	Shared(name, ref string) bool
+	// Authenticate returns the Principal of an access token this Instance
+	// did not issue, as a Linked Instance it delegates to issued it.
+	Authenticate(ctx context.Context, token string) (principal string, ok bool)
+	// BucketOwner returns the link whose Linked Instance has the bucket,
+	// and its Project there.
+	BucketOwner(bucket string) (link, project string, ok bool)
+	// RefreshBuckets asks the link name for its buckets now.
+	RefreshBuckets(ctx context.Context, name string)
 	// Forward forwards r over the link name, asserting principal, or calls
-	// fail, having written nothing.
-	Forward(w http.ResponseWriter, r *http.Request, name, principal string, fail func(http.ResponseWriter, error))
+	// fail, having written nothing. answered, when not nil, sees the
+	// Linked Instance's answer before it is written.
+	Forward(w http.ResponseWriter, r *http.Request, name, principal string, fail func(http.ResponseWriter, error), answered func(*http.Response))
 }
 
 // SetLinks has the API gateway forward Delegated Projects over links and
@@ -63,7 +76,10 @@ func (g *Gateway) delegation(w http.ResponseWriter, r *http.Request) (name strin
 	if l == nil || !l.Delegating() {
 		return "", false
 	}
-	ids := requestProjects(r)
+	ids := g.projectsOf(r)
+	if len(ids) == 0 {
+		return g.bucketLink(r, l), false
+	}
 	var to []string // the links, "" for a local Project
 	for _, id := range ids {
 		name, _ := l.DelegatedTo(id)
@@ -124,15 +140,25 @@ func (g *Gateway) serveDelegated(w http.ResponseWriter, r *http.Request, name st
 	}
 	links := g.linker()
 	p, err := g.principal(r.Context(), r.Header.Get("Authorization"))
+	var answered func(*http.Response)
+	if g.bucketChange(r) {
+		// So that the next request on the bucket is routed by the change.
+		answered = func(resp *http.Response) {
+			if resp.StatusCode < 300 {
+				links.RefreshBuckets(r.Context(), name)
+			}
+		}
+	}
 	switch {
 	case err != nil:
 		writeErrorFor(sw, r, err)
 	case grpcCall && g.injectGRPCError(sw, r, service, method):
 	case !grpcCall && g.injectHTTP(sw, r, service):
+	case g.bucketTaken(sw, r, links, name):
 	default:
 		links.Forward(sw, r, name, string(p), func(w http.ResponseWriter, err error) {
 			writeErrorFor(w, r, apierr.New(codes.Unavailable, "%v", err))
-		})
+		}, answered)
 	}
 	e := reqlog.Entry{
 		Time: start, Service: service, Protocol: "http", Method: method, Principal: string(p),
@@ -178,11 +204,16 @@ func grpcStatus(h http.Header) codes.Code {
 // from, asserting that its caller is principal. It serves only requests
 // naming Projects, all of which this Instance shares with that link, as
 // its API gateway serves them otherwise, but never forwards them on, and
-// never serves the Admin API or the Web console.
+// never serves the Admin API or the Web console. A merged list it answers
+// with the items of the Projects shared with that link.
 func (g *Gateway) ServeLinked(w http.ResponseWriter, r *http.Request, from, principal string) {
-	ids, l := requestProjects(r), g.linker()
+	ids, l := g.projectsOf(r), g.linker()
 	refuse := func(what string) {
 		writeErrorFor(w, r, apierr.PermissionDenied("The request forwarded by the Linked Instance %q %s.", from, what))
+	}
+	if len(ids) == 0 && l != nil && g.mergedList(r) {
+		g.serveSharedList(w, r.WithContext(emu.WithAsserted(r.Context(), from, emu.Principal(principal))), l, from)
+		return
 	}
 	if len(ids) == 0 || l == nil {
 		refuse("names no Project")

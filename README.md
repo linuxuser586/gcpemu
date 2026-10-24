@@ -441,10 +441,25 @@ gcpemu link delegate team-shared --to office
   the Principal the laptop asserted.
 - A request names a Project by `projects/P` (an ID or number) in its REST path or in a gRPC request
   message's resource names (gzip-compressed or not), or, for the bucket collection
-  (`gcloud storage buckets list`), by its `project` parameter. Requests that name no Project, such
-  as those on a bucket, are served by the laptop. A request naming Projects that are not all
-  delegated to one link, such as a local subscription to a delegated topic, fails with
-  FAILED_PRECONDITION, since no one Instance holds both.
+  (`gcloud storage buckets list`), by its `project` parameter, or for an XML API bucket by its
+  `x-goog-project-id`. A request naming Projects that are not all delegated to one link, such as
+  a local subscription to a delegated topic, fails with FAILED_PRECONDITION, since no one Instance
+  holds both.
+- Requests that name no Project are routed by what owns them:
+  - **Buckets.** The office tells the laptop which buckets its Shared Projects own, and keeps that
+    list current. A request on a bucket the laptop doesn't have goes to the office if the bucket is
+    in a Delegated Project. That covers the JSON API, uploads (resumable ones included), downloads,
+    the XML API and signed URLs, but not batches. Bucket names are global across the link:
+    creating a bucket whose name the other side already holds fails with 409.
+  - **Service accounts.** A service account under `projects/-` (`generateAccessToken`, `signBlob`,
+    key creation) and the token endpoint's JWT-bearer grant are routed by the Project in the
+    account's email. When a caller presents an access token the office issued, for a service
+    account of a Project it shares with the laptop, the laptop asks the office whose it is and
+    asserts that service account.
+  - **Merged lists.** Resource Manager's Project lists (`gcloud projects list`) and REST lists under
+    `projects/-` go to the laptop and to every link it delegates to. Each office answers with the
+    items of the Projects it shares, the laptop keeps those it delegates, and it pages through the
+    answers as one list, one Instance after another.
 - The office serves a forwarded request only if every Project it names is shared with that link,
   and never serves its Admin API or Web console over a link.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,

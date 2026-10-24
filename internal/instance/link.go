@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/link"
 )
 
@@ -38,6 +39,18 @@ func (in *Instance) newLink() (*link.Manager, error) {
 		},
 		Serve: func(w http.ResponseWriter, r *http.Request, from, principal string) {
 			in.gw.ServeLinked(w, r, from, principal)
+		},
+		Buckets: func() map[string]string {
+			if svc, ok := in.Env.Lookup("gcs"); ok {
+				if b, ok := svc.(emu.Buckets); ok {
+					return b.Buckets()
+				}
+			}
+			return nil
+		},
+		Authenticate: func(ctx context.Context, token string) (string, bool) {
+			p, ok := in.Env.Auth.Authenticate(ctx, token)
+			return string(p), ok
 		},
 	}), nil
 }
@@ -69,6 +82,7 @@ func (in *Instance) startLink() {
 		sort.Strings(addrs)
 		in.Env.Endpoints.Set(link.Endpoint, strings.Join(addrs, ","))
 	}
+	in.link.StartWatching()
 }
 
 // linkRoutes adds the Admin API's /_emu/v1/links routes, through which

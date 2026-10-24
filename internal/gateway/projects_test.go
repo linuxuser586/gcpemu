@@ -3,15 +3,19 @@ package gateway
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/binary"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
+	"cloud.google.com/go/iam/credentials/apiv1/credentialspb"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
@@ -39,7 +43,14 @@ func TestRequestProjects(t *testing.T) {
 		// collection, never of a bucket or object it names in its path.
 		{"/storage/v1/b/private-bucket/o?project=team-shared", nil},
 		{"/storage/v1/b/bucket/o/projects%2Fteam-shared%2Fx", nil},
-		{"/v1/projects/-/serviceAccounts/sa@team-shared.iam.gserviceaccount.com", nil},
+		// A service account named under projects/- names the Project in
+		// its email.
+		{"/v1/projects/-/serviceAccounts/sa@team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/iamcredentials/v1/projects/-/serviceAccounts/sa%40team-shared.iam.gserviceaccount.com:generateAccessToken", []string{"team-shared"}},
+		{"/iam/v1/projects/-/serviceAccounts/sa@team-shared.iam.gserviceaccount.com/keys", []string{"team-shared"}},
+		{"/v1/projects/-/serviceAccounts/123456789012-compute@developer.gserviceaccount.com:signBlob", []string{"123456789012"}},
+		{"/v1/projects/-/serviceAccounts/someone@example.com", nil},
+		{"/v1/projects/-/serviceAccounts", nil},
 		{"/storage/v1/b/projects/o", nil},
 		// The Admin API, the Web console and agent callbacks name none,
 		// however they are escaped.
@@ -52,6 +63,42 @@ func TestRequestProjects(t *testing.T) {
 	for _, c := range rest {
 		if got := requestProjects(httptest.NewRequest(http.MethodGet, c.target, nil)); !slices.Equal(got, c.want) {
 			t.Errorf("%s names Projects %q, want %q", c.target, got, c.want)
+		}
+	}
+
+	assertion := func(claims jwt.MapClaims) string {
+		s, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("k"))
+		return s
+	}
+	bodies := []struct {
+		name, method, host, target, contentType, header, body string
+		want                                                  []string
+	}{
+		{"JWT-bearer grant", http.MethodPost, "", "/oauth2/token", "application/x-www-form-urlencoded", "",
+			"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" + assertion(jwt.MapClaims{"iss": "sa@team-shared.iam.gserviceaccount.com"}), []string{"team-shared"}},
+		{"JWT-bearer grant in host mode", http.MethodPost, "oauth2.googleapis.com", "/token", "application/json", "",
+			`{"grant_type":"urn:ietf:params:oauth:grant-type:jwt-bearer","assertion":"` + assertion(jwt.MapClaims{"iss": "sa@team-shared.iam.gserviceaccount.com"}) + `"}`, []string{"team-shared"}},
+		{"JWT-bearer grant of no service account", http.MethodPost, "", "/oauth2/token", "application/x-www-form-urlencoded", "",
+			"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" + assertion(jwt.MapClaims{"iss": "someone@example.com"}), nil},
+		{"refresh grant", http.MethodPost, "", "/oauth2/token", "application/x-www-form-urlencoded", "", "grant_type=refresh_token&refresh_token=x", nil},
+		{"XML API bucket", http.MethodPut, "storage.googleapis.com", "/new-bucket", "", "team-shared", "", []string{"team-shared"}},
+	}
+	for _, c := range bodies {
+		r := httptest.NewRequest(c.method, c.target, strings.NewReader(c.body))
+		if c.host != "" {
+			r.Host = c.host
+		}
+		if c.contentType != "" {
+			r.Header.Set("Content-Type", c.contentType)
+		}
+		if c.header != "" {
+			r.Header.Set("X-Goog-Project-Id", c.header)
+		}
+		if got := requestProjects(r); !slices.Equal(got, c.want) {
+			t.Errorf("%s: names Projects %q, want %q", c.name, got, c.want)
+		}
+		if b, _ := io.ReadAll(r.Body); string(b) != c.body {
+			t.Errorf("%s: body after reading the Projects = %q, want %q", c.name, b, c.body)
 		}
 	}
 
@@ -73,6 +120,7 @@ func TestRequestProjects(t *testing.T) {
 		{"data and attributes", "/google.pubsub.v1.Publisher/Publish", marshal(t, &pubsubpb.PublishRequest{Topic: "projects/team-shared/topics/t", Messages: []*pubsubpb.PubsubMessage{{Data: []byte("projects/other-proj/x"), Attributes: map[string]string{"k": "projects/other-proj/x"}}}}), "", []string{"team-shared"}},
 		{"unknown field", "/google.pubsub.v1.Publisher/Publish", append(smuggled, real...), "", []string{"private"}},
 		{"no Project", "/google.pubsub.v1.Publisher/ListTopics", marshal(t, &pubsubpb.ListTopicsRequest{PageToken: "x"}), "", nil},
+		{"service account email", "/google.iam.credentials.v1.IAMCredentials/GenerateAccessToken", marshal(t, &credentialspb.GenerateAccessTokenRequest{Name: "projects/-/serviceAccounts/sa@team-shared.iam.gserviceaccount.com"}), "", []string{"team-shared"}},
 		{"gzip", "/google.pubsub.v1.Publisher/Publish", gzipped(t, marshal(t, topic)), "gzip", []string{"team-shared"}},
 		{"unknown method", "/google.pubsub.v1.Publisher/Nope", marshal(t, topic), "", nil},
 	}
@@ -130,13 +178,17 @@ type fakeLinks struct {
 	delegated map[string]string
 }
 
-func (f fakeLinks) Delegating() bool { return len(f.delegated) > 0 }
+func (f fakeLinks) Delegating() bool         { return len(f.delegated) > 0 }
+func (f fakeLinks) DelegatedLinks() []string { return nil }
 func (f fakeLinks) DelegatedTo(ref string) (string, bool) {
 	l, ok := f.delegated[ref]
 	return l, ok
 }
-func (f fakeLinks) Shared(_, ref string) bool { return slices.Contains(f.shared, ref) }
-func (f fakeLinks) Forward(w http.ResponseWriter, _ *http.Request, name, _ string, _ func(http.ResponseWriter, error)) {
+func (f fakeLinks) Authenticate(context.Context, string) (string, bool) { return "", false }
+func (f fakeLinks) Shared(_, ref string) bool                           { return slices.Contains(f.shared, ref) }
+func (f fakeLinks) BucketOwner(string) (string, string, bool)           { return "", "", false }
+func (f fakeLinks) RefreshBuckets(context.Context, string)              {}
+func (f fakeLinks) Forward(w http.ResponseWriter, _ *http.Request, name, _ string, _ func(http.ResponseWriter, error), _ func(*http.Response)) {
 	w.Header().Set("Forwarded-To", name)
 }
 

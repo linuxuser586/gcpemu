@@ -123,12 +123,14 @@ func (m *Manager) Delegate(ctx context.Context, id, to string) (Delegation, erro
 		return Delegation{}, err
 	}
 	m.cfg.Log.Info("Project delegated", "project", id, "link", to)
+	m.watch()
 	return d, nil
 }
 
 // Undelegate stops delegating the Project id. It holds no state on this
 // Instance, so it does not exist here until something uses it again.
 func (m *Manager) Undelegate(id string) error {
+	defer m.watch()
 	return m.cfg.Store.update(func(st *stored) error {
 		n := len(st.Delegated)
 		st.Delegated = slices.DeleteFunc(st.Delegated, func(d Delegation) bool { return d.Project == id })
@@ -151,6 +153,18 @@ func (m *Manager) DelegatedTo(ref string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// DelegatedLinks returns the links any Project is delegated to, by name.
+func (m *Manager) DelegatedLinks() []string {
+	var out []string
+	for _, d := range m.Delegations() {
+		if !slices.Contains(out, d.Link) {
+			out = append(out, d.Link)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Delegating reports whether this Instance delegates any Project.

@@ -50,11 +50,11 @@ func (m *Manager) serveForwarded(w http.ResponseWriter, r *http.Request) {
 }
 
 // Forward forwards r over the link name, asserting that its caller is
-// principal, and writes the Linked Instance's answer. When the link cannot
-// be used, the Linked Instance cannot be reached or it refuses the link,
-// Forward instead calls fail with an error naming the link, having written
-// nothing.
-func (m *Manager) Forward(w http.ResponseWriter, r *http.Request, name, principal string, fail func(http.ResponseWriter, error)) {
+// principal, and writes the Linked Instance's answer, which answered, when
+// not nil, sees first. When the link cannot be used, the Linked Instance
+// cannot be reached or it refuses the link, Forward instead calls fail
+// with an error naming the link, having written nothing.
+func (m *Manager) Forward(w http.ResponseWriter, r *http.Request, name, principal string, fail func(http.ResponseWriter, error), answered func(*http.Response)) {
 	p, err := m.usable(name)
 	if err != nil {
 		fail(w, fmt.Errorf("the Linked Instance %q is unavailable: %w", name, err))
@@ -70,15 +70,32 @@ func (m *Manager) Forward(w http.ResponseWriter, r *http.Request, name, principa
 				pr.Out.URL.RawPath = forwardPrefix + pr.In.URL.RawPath
 			}
 			pr.Out.Host = pr.In.Host
+			// The Linked Instance answers with URLs of this Instance, such
+			// as a resumable upload's, in the scheme the caller used.
+			proto := pr.In.Header.Get("X-Forwarded-Proto")
+			if proto == "" {
+				proto = "http"
+				if pr.In.TLS != nil {
+					proto = "https"
+				}
+			}
+			pr.Out.Header.Set("X-Forwarded-Proto", proto)
 			// The caller's credentials mean nothing to the Linked Instance,
-			// which takes the asserted Principal instead.
-			pr.Out.Header.Del("Authorization")
+			// which takes the asserted Principal instead, but a request's
+			// signature, as on a Cloud Storage XML API request, is checked
+			// by the Instance that holds the key.
+			if !signature(pr.In.Header.Get("Authorization")) {
+				pr.Out.Header.Del("Authorization")
+			}
 			pr.Out.Header.Set(principalHeader, principal)
 			pr.Out.Header.Set(versionsHeader, m.cfg.Versions.String())
 			pr.Out.Header.Set(instanceIDHeader, m.cfg.ID)
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			if resp.Header.Get(refusedHeader) == "" {
+				if answered != nil {
+					answered(resp)
+				}
 				return nil
 			}
 			return &RefusedError{Reason: resp.Header.Get(refusedHeader), Msg: fmt.Sprintf("link %q was refused by the other Instance (%s)", name, resp.Status)}
@@ -93,6 +110,12 @@ func (m *Manager) Forward(w http.ResponseWriter, r *http.Request, name, principa
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// signature reports whether the Authorization header authz carries a
+// request signature, by an HMAC or service account key, not a credential.
+func signature(authz string) bool {
+	return strings.HasPrefix(authz, "GOOG4-") || strings.HasPrefix(authz, "AWS4-")
 }
 
 // transport returns the HTTP/2 transport that forwards over the link p,
