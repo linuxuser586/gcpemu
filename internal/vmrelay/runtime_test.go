@@ -16,12 +16,14 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
 
-// TestControlPortMoves: a network the relay joins whose name sorts
-// before the external network's becomes the relay's gateway endpoint, and
-// the runtime publishes the control port on a new host port, as the
-// first Build's network does (#555). The relay reconnects there, and
-// dials and inward connections through it work again.
-func TestControlPortMoves(t *testing.T) {
+// TestRelayWhenNetworkTakesDefaultRoute: a network the relay joins whose
+// name sorts before the external network's becomes the relay's gateway
+// endpoint, as the first Build's network does (#555). The native Docker
+// Engine then publishes the control port on a new host port, while Docker
+// Desktop for macOS keeps it (#647). Either way, dials and inward
+// connections through the relay work, and Control() is the port the
+// runtime publishes.
+func TestRelayWhenNetworkTakesDefaultRoute(t *testing.T) {
 	emutest.RequireRuntime(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -84,9 +86,11 @@ func TestControlPortMoves(t *testing.T) {
 		t.Fatalf("%s does not sort before %s", build, ext)
 	}
 	after := ctrl()
-	if after == before {
-		t.Fatalf("the runtime kept the control port at %s after %s took the default route", before, build)
+	change := "stayed at " + before
+	if after != before {
+		change = "moved from " + before + " to " + after
 	}
+	t.Logf("the control port %s after %s took the default route", change, build)
 
 	id, err := m.CreateContainer(ctx, runtime.ContainerSpec{
 		Name: m.Name("probe"), Image: vmrelay.Image, Entrypoint: []string{"httpd", "-f", "-p", "8080", "-h", "/www"},
@@ -122,12 +126,12 @@ func TestControlPortMoves(t *testing.T) {
 		}
 		last = err
 		if time.Now().After(deadline) {
-			t.Fatalf("emulator → container after the control port moved from %s to %s: %v", before, after, last)
+			t.Fatalf("emulator → container after the control port %s: %v", change, last)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if got := r.Control(); got != after {
-		t.Fatalf("Control() = %s, want %s", got, after)
+	if got, want := r.Control(), ctrl(); got != want {
+		t.Fatalf("Control() = %s, want %s", got, want)
 	}
 	res, err := m.Exec(ctx, id, []string{"wget", "-qO-", "http://" + gw + "/"}, nil)
 	if err != nil || !strings.Contains(string(res.Stdout), "hello-from-host") {
