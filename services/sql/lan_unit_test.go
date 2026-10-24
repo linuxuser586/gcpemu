@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -178,45 +180,6 @@ func TestInstanceDNSName(t *testing.T) {
 	}
 }
 
-// arrivedAt is a request context whose connection's local address is ip.
-func arrivedAt(ip string) context.Context {
-	return context.WithValue(context.Background(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP(ip), Port: 443})
-}
-
-// A caller arrived through the LAN when the Google front end's --gfe-bind
-// listeners marked it, or when it reached a LAN address that isn't
-// loopback (--bind or --sql-bind). It is then told the --sql-bind address
-// it can reach: the one it came in on, or else the first served, or none
-// when the instance isn't served there.
-func TestLANCaller(t *testing.T) {
-	served := []string{"192.168.1.5", "127.0.0.1"}
-	lanIPs := []string{"192.168.1.5", "127.0.0.1", "192.168.1.7"}
-	for _, tc := range []struct {
-		name   string
-		ctx    context.Context
-		served []string
-		want   string
-	}{
-		{"loopback", arrivedAt("127.0.0.1"), served, ""},
-		{"loopback, no address served", arrivedAt("127.0.0.1"), nil, ""},
-		{"a --sql-bind address", arrivedAt("192.168.1.5"), served, "192.168.1.5"},
-		{"a container network", arrivedAt("172.18.0.1"), served, ""},
-		{"--bind, not a --sql-bind address", arrivedAt("192.168.1.7"), served, "192.168.1.5"},
-		{"--gfe-bind", emu.WithLANCaller(arrivedAt("192.168.1.9"), "192.168.1.9"), served, "192.168.1.5"},
-		{"--gfe-bind on a --sql-bind address", emu.WithLANCaller(arrivedAt("127.0.0.1"), "127.0.0.1"), served, "127.0.0.1"},
-	} {
-		got, ok := lanCaller(tc.ctx, tc.served, lanIPs)
-		if got != tc.want || ok != (tc.want != "") {
-			t.Errorf("%s: lanCaller = %q, %v; want %q", tc.name, got, ok, tc.want)
-		}
-	}
-	for name, ctx := range map[string]context.Context{"--gfe-bind": emu.WithLANCaller(context.Background(), "192.168.1.9"), "--bind": arrivedAt("192.168.1.7")} {
-		if ip, ok := lanCaller(ctx, nil, lanIPs); !ok || ip != "" {
-			t.Errorf("%s caller of an instance not served on the LAN: %q, %v; want a LAN caller with no address", name, ip, ok)
-		}
-	}
-}
-
 // A LAN caller sees the --sql-bind address as the instance's only
 // address, PRIMARY as on GCP's public path, and no address at all for an
 // instance the LAN can't reach.
@@ -227,5 +190,46 @@ func TestLANIPAddresses(t *testing.T) {
 	}
 	if got := lanIPAddresses(""); len(got) != 0 {
 		t.Errorf("LAN caller of an instance not on the LAN: %v", got)
+	}
+}
+
+// Without --sql-bind, a LAN caller, such as one over a link, is told no
+// address of an instance, never its loopback ones, and connectSettings
+// tells the connectors why, naming --sql-bind. A caller on loopback is
+// told the loopback addresses as before.
+func TestNoSQLBindLANCallerNoAddress(t *testing.T) {
+	s := testService(t, config.IAMOff)
+	putInstance(t, s, "p", "i", false)
+	if err := s.updateRecord("p", "i", func(r *instanceRecord) error {
+		r.Instance.IpAddresses = []*sqladmin.IpMapping{{Type: "PRIMARY", IpAddress: "127.0.0.5"}}
+		r.Instance.Settings.IpConfiguration = &sqladmin.IpConfiguration{Ipv4Enabled: true}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.loadRecord("p", "i")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := emu.WithLANCaller(context.Background(), "192.168.1.9")
+	if got := s.forCaller(link, rec.Instance).IpAddresses; len(got) != 0 {
+		t.Errorf("addresses told a LAN caller = %v, want none", got)
+	}
+	if got := s.forCaller(context.Background(), rec.Instance).IpAddresses; len(got) != 1 || got[0].IpAddress != "127.0.0.5" {
+		t.Errorf("addresses told a loopback caller = %v, want 127.0.0.5", got)
+	}
+	settings := func(ctx context.Context) *httptest.ResponseRecorder {
+		r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/projects/p/instances/i/connectSettings", nil)
+		r.SetPathValue("project", "p")
+		r.SetPathValue("instance", "i")
+		w := httptest.NewRecorder()
+		s.connectSettings(w, r)
+		return w
+	}
+	if w := settings(link); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "--sql-bind") {
+		t.Errorf("connectSettings for a LAN caller = %d %s, want FAILED_PRECONDITION naming --sql-bind", w.Code, w.Body)
+	}
+	if w := settings(context.Background()); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "127.0.0.5") {
+		t.Errorf("connectSettings for a loopback caller = %d %s", w.Code, w.Body)
 	}
 }

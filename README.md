@@ -472,6 +472,20 @@ gcpemu link delegate team-shared --to office
     the emulator does not serve, are not merged.
 - The office serves a forwarded request only if every Project it names is shared with that link,
   and never serves its Admin API or Web console over a link.
+- Over a link, the office reports the Data plane addresses of its LAN listeners, which the
+  laptop's machine can reach, rather than its loopback addresses: the `--link-bind` address the
+  request came in on when a listener serves it, otherwise the first one. Clients then connect to the
+  office directly, with the same credential checks as any LAN client. A GKE cluster's `endpoint` names its
+  `--gke-bind` address, so `gcloud container clusters get-credentials` through the laptop writes
+  a kubeconfig for the office. Without `--gke-bind`, the endpoint is empty and the cluster's `statusMessage` names the flag. Artifact Registry's `registryUri` and
+  image URIs put the `--ar-bind` address in front of the pkg.dev name
+  (`<address>:<port>/us-central1-docker.pkg.dev/<project>/<repository>`), which pulls and pushes
+  as is; without `--ar-bind`, they keep the pkg.dev name. Cloud SQL reports the `--sql-bind`
+  address, or no address without it, and then refuses the connectors' settings with a message
+  naming `--sql-bind`. A key created through a real Google hostname names
+  Google's endpoints (ADR 0021). Forwarding rules and LoadBalancer Services still report the
+  office's own addresses (#669). A client reaching the office through `--gfe-bind`, or at a
+  `--bind` address beyond loopback, is told the same `--gke-bind` and `--sql-bind` addresses.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,
   and under `--strict-projects` it counts as existing, since its requests are forwarded. Anything
   that would still create state for it on the laptop, such as a request naming it only in its

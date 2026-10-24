@@ -26,6 +26,15 @@ func (s *Service) connectSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := s.forCaller(r.Context(), rec.Instance)
+	if len(in.IpAddresses) == 0 && len(rec.Instance.IpAddresses) > 0 {
+		// A LAN caller, which no address of the instance reaches.
+		msg := "The instance is not served on the LAN: start gcpemu with --sql-bind."
+		if len(s.env.Config.SQLBind) > 0 {
+			msg = "The instance is not served on any --sql-bind address; only instances with a public IP are."
+		}
+		apierr.Write(w, apierr.FailedPrecondition("%s", msg))
+		return
+	}
 	writeJSON(w, r, &sqladmin.ConnectSettings{
 		Kind:            "sql#connectSettings",
 		BackendType:     in.BackendType,

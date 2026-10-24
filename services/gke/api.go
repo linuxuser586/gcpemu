@@ -86,7 +86,7 @@ func (a *api) ListClusters(ctx context.Context, req *containerpb.ListClustersReq
 	resp := &containerpb.ListClustersResponse{}
 	_ = a.s.env.Store.View(func(tx store.Tx) error {
 		for _, rec := range listClusters(tx, prefix) {
-			resp.Clusters = append(resp.Clusters, rec.cluster())
+			resp.Clusters = append(resp.Clusters, a.s.forCaller(ctx, rec.key(), rec.cluster()))
 		}
 		return nil
 	})
@@ -105,7 +105,7 @@ func (a *api) GetCluster(ctx context.Context, req *containerpb.GetClusterRequest
 	if err != nil {
 		return nil, err
 	}
-	return rec.cluster(), nil
+	return a.s.forCaller(ctx, rec.key(), rec.cluster()), nil
 }
 
 func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterRequest) (*containerpb.Operation, error) {

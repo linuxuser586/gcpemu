@@ -24,6 +24,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/fault"
 	"github.com/linuxuser586/gcpemu/internal/link"
+	"github.com/linuxuser586/gcpemu/services/ar"
 	"github.com/linuxuser586/gcpemu/services/gcs"
 	"github.com/linuxuser586/gcpemu/services/iam"
 	ps "github.com/linuxuser586/gcpemu/services/pubsub"
@@ -32,7 +33,8 @@ import (
 const shared = "team-shared"
 
 // startWithProjects starts an Ephemeral Instance named name running the
-// pubsub, iam and gcs Services, its link listener on loopback.
+// pubsub, iam and gcs Services (and ar when change adds it), its link
+// listener on loopback.
 func startWithProjects(t *testing.T, name string, change func(*config.Config)) *Instance {
 	t.Helper()
 	cfg := config.Defaults()
@@ -45,7 +47,7 @@ func startWithProjects(t *testing.T, name string, change func(*config.Config)) *
 	if change != nil {
 		change(&cfg)
 	}
-	in, err := New(&cfg, map[string]Factory{"iam": iam.New, "pubsub": ps.New, "gcs": gcs.New}, io.Discard)
+	in, err := New(&cfg, map[string]Factory{"iam": iam.New, "pubsub": ps.New, "gcs": gcs.New, "ar": ar.New}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
