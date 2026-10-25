@@ -1199,7 +1199,8 @@ paths:
         and volumes, and build cache, starting the daemon first if it is not
         running.
         Builds share the cache, so the next Build of each image builds and
-        pulls its layers again.
+        pulls its layers again. A prune while a Build runs does not keep the
+        cache size it reports.
       responses:
         "200":
           description: What pruning freed.
