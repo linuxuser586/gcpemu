@@ -216,10 +216,10 @@ func refused(err error, detail string) error {
 // clearDaemon removes every container in the Build daemon, which only
 // Builds' steps start, and its build history once no Build runs: Cloud
 // Build gives each Build a fresh worker, so none sees an earlier one's
-// containers or builds. Images, layers and build cache stay (ADR 0016).
-// Removing the history first waits for each build's pending trace,
-// which BuildKit writes up to 3s after the build ends. Callers keep
-// Builds from starting.
+// containers or builds (#681). Images, layers and build cache stay (ADR
+// 0016). Removing the history first waits for each build's pending
+// trace, which BuildKit writes up to 3s after the build ends. Callers
+// set clearing, so no Build starts meanwhile.
 func (s *Service) clearDaemon(rt *runtime.Manager) {
 	s.daemonMu.Lock()
 	id := s.daemonID
@@ -229,7 +229,7 @@ func (s *Service) clearDaemon(rt *runtime.Manager) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	res, err := rt.Exec(ctx, id, []string{"sh", "-c", `ids=$(docker ps -aq) && { [ -z "$ids" ] || docker rm -fv $ids >/dev/null; } && docker buildx history rm --all`}, nil)
+	res, err := rt.Exec(ctx, id, []string{"sh", "-c", `ids=$(docker ps -aq) && { [ -z "$ids" ] || docker rm -fv $ids >/dev/null; }; rc=$?; docker buildx history rm --all && exit $rc`}, nil)
 	if err == nil && res.ExitCode != 0 {
 		err = errors.New(strings.TrimSpace(string(res.Stderr)))
 	}

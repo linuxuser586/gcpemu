@@ -51,9 +51,10 @@ func TestStepsUseTheBuildDaemon(t *testing.T) {
 // a fresh Cloud Build worker, while the layers it built stay cached.
 func TestBuildHistoryIsCleared(t *testing.T) {
 	e := start(t)
+	// The first Build only makes the history and the cached layer.
 	e.cachedRun()
 	b := e.run(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{
-		dockerStep("history", "echo records=$(docker buildx history ls --format '{{.Ref}}' | grep -c .)"),
+		dockerStep("history", "refs=$(docker buildx history ls --format '{{.Ref}}') && echo records=$(echo \"$refs\" | grep -c .)"),
 	}})
 	if log := e.log(b); !strings.Contains(log, `Step #0 - "history": records=0`) {
 		t.Errorf("an earlier Build's build history is left in the daemon:\n%s", log)

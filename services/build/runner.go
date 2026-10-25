@@ -209,8 +209,8 @@ func (s *Service) execute(r *liveBuild, b *cloudbuildpb.Build) {
 		s.end(r.ref, o)
 	}
 	// No Build starts while clearing is set, so the daemon is cleared
-	// only of what this, the last running Build, left. Clearing waits up
-	// to 3s for BuildKit's traces, so it goes outside mu.
+	// only of what this, the last running Build, left. Clearing may wait
+	// for BuildKit's traces (clearDaemon), so it goes outside mu (#681).
 	s.mu.Lock()
 	last := len(s.live) == 1
 	delete(s.live, r.ref.key())
