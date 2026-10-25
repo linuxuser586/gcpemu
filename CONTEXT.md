@@ -280,8 +280,16 @@ An External emulator that the Instance runs itself as a Managed container, from 
 _Avoid_: built-in emulator, bundled emulator
 
 **Discovered Instance**:
-An Instance found on the LAN because it advertises itself, which is not (yet) a Linked Instance. Only Instances that opted into LAN reach advertise.
+An Instance found because it advertises itself on the LAN, or because it answers at a Static link address. Only an Instance with a link listener on the LAN (`--link-bind`) advertises. Being discovered says how it was found, not whether it is paired: a Discovered Instance may also be a Linked Instance. Discovery never pairs Instances.
 _Avoid_: peer, neighbour
+
+**Discovered name**:
+How `gcpemu link pair` names a Discovered Instance: its Instance name and the host it is found on, e.g. `office@desk`. It is neither the Instance name nor the name of a Link to it. Two Instances with the same Instance name on one host share a Discovered name, and only one of them is listed.
+_Avoid_: service name, mDNS name
+
+**Static link address**:
+A link address in an Instance's configuration (`--link-discover`) at which it looks for a Discovered Instance where multicast does not reach, as on container networks and in CI.
+_Avoid_: seed, peer list, bootstrap address
 
 ### Fidelity
 
