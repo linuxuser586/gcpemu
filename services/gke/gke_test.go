@@ -294,8 +294,8 @@ func TestGKE(t *testing.T) {
 		if code := gw(t, inst, "GET", "/container/v1/projects/"+project+"/locations/us-central1-z/clusters", nil, nil); code != 404 {
 			t.Errorf("bad location → %d", code)
 		}
-		if code := gw(t, inst, "POST", "/container/v1/"+parent+"/clusters", map[string]any{"cluster": map[string]any{"name": "ap", "autopilot": map[string]any{"enabled": true}}}, nil); code != 501 {
-			t.Errorf("autopilot → %d", code)
+		if code := gw(t, inst, "POST", "/container/v1/"+parent+"/clusters", map[string]any{"cluster": map[string]any{"name": "ap", "autopilot": map[string]any{"enabled": true}}}, nil); code != 400 {
+			t.Errorf("zonal autopilot → %d", code)
 		}
 		var ops struct{ Operations []map[string]any }
 		gw(t, inst, "GET", "/container/v1/"+parent+"/operations", nil, &ops)
