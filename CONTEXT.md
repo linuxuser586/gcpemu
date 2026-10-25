@@ -461,6 +461,10 @@ _Avoid_: trigger (unqualified)
 The Managed container, one per Instance, whose Docker daemon every Build's steps use to build, run and push images. Its image cache outlives Builds and Reset.
 _Avoid_: dind, docker host
 
+**Image cache**:
+Everything the Build daemon keeps after a Build ends: its images, layers, build cache and build history. Pruning empties it all.
+_Avoid_: daemon data, docker cache
+
 **Build agent**:
 The Sidecar agent that gives Build steps the metadata server, Google hostnames and Artifact Registry as the Build's service account.
 _Avoid_: build sidecar

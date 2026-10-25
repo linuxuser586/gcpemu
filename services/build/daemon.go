@@ -267,8 +267,11 @@ func (s *Service) serveDaemon(w http.ResponseWriter, r *http.Request) {
 }
 
 // servePrune is POST /_emu/v1/build/daemon/prune: it removes the Build
-// daemon's stopped containers, unused images and volumes, and build
-// cache, starting the daemon if needed to reach its cache.
+// daemon's build history, stopped containers, unused images and volumes,
+// and build cache, starting the daemon if needed to reach its cache.
+// BuildKit writes a build's trace to its history up to 3s after the
+// build ends; removing the history waits for it first, so the size the
+// prune answers is the one the daemon keeps.
 func (s *Service) servePrune(w http.ResponseWriter, r *http.Request) {
 	rt, err := s.env.Containers.Runtime(r.Context())
 	if err != nil {
@@ -291,7 +294,7 @@ func (s *Service) servePrune(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := rt.Exec(r.Context(), id, []string{"sh", "-c",
-		"docker container prune -f && docker image prune -af && docker volume prune -af && docker builder prune -af"}, nil)
+		"docker buildx history rm --all && docker container prune -f && docker image prune -af && docker volume prune -af && docker builder prune -af"}, nil)
 	if err == nil && res.ExitCode != 0 {
 		err = errors.New(strings.TrimSpace(string(res.Stderr)))
 	}
