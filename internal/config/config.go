@@ -98,6 +98,14 @@ type Config struct {
 	// protocol to Linked Instances, over mutual TLS and only to Instances
 	// it paired with, except for Pairing requests (ADR 0027).
 	LinkBind []string `yaml:"linkBind" env:"LINK_BIND"`
+	// LinkDiscover lists link addresses (host, or host:port) that `gcpemu
+	// link discover` asks besides browsing mDNS, for container networks and
+	// CI, where multicast usually doesn't cross bridges (ADR 0027).
+	LinkDiscover []string `yaml:"linkDiscover" env:"LINK_DISCOVER"`
+	// LinkMDNSPort is the port Instances advertise and browse on over mDNS;
+	// zero means 5353. Instances on another port find only each other, as
+	// tests' do. There is no flag.
+	LinkMDNSPort int `yaml:"linkMdnsPort" env:"LINK_MDNS_PORT"`
 	// External maps the API name of each Delegated API, one no Service
 	// serves (e.g. "firestore"), to the host:port of the External emulator
 	// the API gateway forwards it to (ADR 0027).

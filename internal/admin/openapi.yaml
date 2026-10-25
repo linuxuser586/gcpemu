@@ -812,6 +812,26 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "404": { $ref: "#/components/responses/Error" }
+  /_emu/v1/links/discovered:
+    get:
+      summary: List the Discovered Instances (`gcpemu link discover`).
+      operationId: discoverLinks
+      description: >-
+        Browses the LAN over mDNS/DNS-SD for Instances started with
+        `--link-bind`, which advertise `_gcpemu._tcp`, and asks the Instances
+        at the `--link-discover` addresses who they are. It takes about a
+        second and pairs nothing: Pairing is still approved on both sides
+        (ADR 0027). This Instance is not listed.
+      responses:
+        "200":
+          description: The Discovered Instances.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances: { type: array, items: { $ref: "#/components/schemas/DiscoveredInstance" } }
+        "502": { $ref: "#/components/responses/Error" }
   /_emu/v1/links/identify:
     post:
       summary: Ask the Instance at a link address who it is, without pairing.
@@ -1514,6 +1534,20 @@ components:
       properties:
         project: { type: string }
         link: { type: string, description: The link the Project is delegated to. }
+    DiscoveredInstance:
+      type: object
+      required: [name, address, source]
+      properties:
+        name: { type: string, description: "\"<Instance name>@<host>\", which `gcpemu link pair` takes." }
+        instance: { type: string, description: Its Instance name. }
+        instanceId: { type: string }
+        address: { type: string, description: "Its --link-bind listener, host:port." }
+        fingerprint: { type: string, description: "The Instance CA fingerprint it advertises, or presented at a static address; Pairing checks it again." }
+        version: { type: integer, description: The newest link protocol version it speaks. }
+        minVersion: { type: integer }
+        source: { type: string, enum: [mdns, static], description: "Browsed over mDNS, or asked at a --link-discover address." }
+        link: { type: string, description: "This Instance's link to it, when they are paired." }
+        problem: { type: string, description: "Why it cannot be paired as it is: an incompatible link protocol version, a CA other than its link's, or a static address that cannot be reached." }
     LinkState:
       allOf:
         - { $ref: "#/components/schemas/Link" }

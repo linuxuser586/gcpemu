@@ -5,10 +5,13 @@
 package hosttest
 
 import (
+	"net"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
 // Eventually polls cond until it holds or timeout passes; diag explains a
@@ -119,4 +122,60 @@ func EnvValue(t testing.TB, gcpemuEnv func() string, key string) string {
 		return ok
 	}, gcpemuEnv)
 	return v
+}
+
+// LANIP returns an IPv4 address of an up, multicast-capable interface
+// other than loopback on which this process can send multicast, or skips
+// the test: mDNS needs one. macOS's Local Network privacy refuses a
+// process the user hasn't allowed, as on GitHub's macOS runners.
+func LANIP(t testing.TB) string {
+	t.Helper()
+	ifs, _ := net.Interfaces()
+	var sendErr error
+	for _, ifi := range ifs {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifi.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLinkLocalUnicast() {
+				if sendErr = sendMulticast(ifi); sendErr == nil {
+					return n.IP.String()
+				}
+			}
+		}
+	}
+	if sendErr != nil {
+		t.Skipf("this process cannot send multicast on a LAN interface: %v", sendErr)
+	}
+	t.Skip("no multicast-capable LAN interface")
+	return ""
+}
+
+// sendMulticast sends a datagram to the discard port of the mDNS group on
+// ifi.
+func sendMulticast(ifi net.Interface) error {
+	c, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	pc := ipv4.NewPacketConn(c)
+	if err := pc.SetMulticastInterface(&ifi); err != nil {
+		return err
+	}
+	_, err = pc.WriteTo([]byte("gcpemu"), nil, &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 9})
+	return err
+}
+
+// FreeUDPPort returns a UDP port free on the wildcard address, such as a
+// test's own mDNS port, so that its Instances meet no others.
+func FreeUDPPort(t testing.TB) int {
+	t.Helper()
+	pc, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	return pc.LocalAddr().(*net.UDPAddr).Port
 }
