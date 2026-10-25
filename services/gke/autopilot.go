@@ -7,10 +7,13 @@ import (
 )
 
 // Autopilot clusters (FR-GKE-012). GKE owns their nodes: it sets Workload
-// Identity, Dataplane V2, a release channel and Shielded nodes, refuses
-// requests that contradict them, and reports the node pools it manages
-// while refusing to let the user change them. Until node provisioning
-// (FR-GKE-015) lands, the managed pool runs one node.
+// Identity, Dataplane V2, a release channel, Shielded nodes and vertical
+// Pod autoscaling, refuses requests that contradict them, and reports the
+// node pools it manages while refusing to let the user change them. Until
+// node provisioning (FR-GKE-015) lands, the managed pool runs one node.
+//
+// No Recording of an Autopilot cluster exists yet (ADR 0023), so the
+// error messages below are GKE's as best known, not checked against one.
 
 func autopilotOn(c *containerpb.Cluster) bool { return c.GetAutopilot().GetEnabled() }
 
@@ -23,14 +26,8 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 	if len(c.NodePools) > 0 || c.InitialNodeCount != 0 {
 		return apierr.InvalidArgument("Autopilot clusters do not support node pools; GKE manages them.")
 	}
-	if wi := c.WorkloadIdentityConfig; wi != nil && wi.WorkloadPool == "" {
-		return autopilotErr("Workload Identity")
-	}
-	if c.GetShieldedNodes() != nil && !c.ShieldedNodes.Enabled {
-		return autopilotErr("Shielded nodes")
-	}
-	if c.ReleaseChannel != nil && c.ReleaseChannel.Channel == containerpb.ReleaseChannel_UNSPECIFIED {
-		return apierr.InvalidArgument("Autopilot clusters must be enrolled in a release channel.")
+	if err := checkKept(c.WorkloadIdentityConfig, c.ShieldedNodes, c.ReleaseChannel, c.VerticalPodAutoscaling); err != nil {
+		return err
 	}
 	if dp := c.GetNetworkConfig().GetDatapathProvider(); dp != containerpb.DatapathProvider_DATAPATH_PROVIDER_UNSPECIFIED && dp != containerpb.DatapathProvider_ADVANCED_DATAPATH {
 		return autopilotErr("Dataplane V2")
@@ -52,7 +49,41 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 		c.IpAllocationPolicy = &containerpb.IPAllocationPolicy{}
 	}
 	c.IpAllocationPolicy.UseIpAliases = true
+	// The managed pool gets GKE's node config, not the request's.
+	c.NodeConfig = nil
 	return nil
+}
+
+// checkAutopilotUpdate refuses a ClusterUpdate that would undo what GKE
+// sets on an Autopilot cluster, and Autopilot settings on a Standard one.
+func checkAutopilotUpdate(c *containerpb.Cluster, u *containerpb.ClusterUpdate) error {
+	if !autopilotOn(c) {
+		if u.DesiredAutopilotWorkloadPolicyConfig != nil {
+			return apierr.InvalidArgument("Workload policies can only be set on Autopilot clusters.")
+		}
+		return nil
+	}
+	return checkKept(u.DesiredWorkloadIdentityConfig, u.DesiredShieldedNodes, u.DesiredReleaseChannel, u.DesiredVerticalPodAutoscaling)
+}
+
+// checkKept refuses, in a create request or a ClusterUpdate, turning off
+// a setting GKE keeps on for Autopilot clusters; nil leaves it as it is.
+func checkKept(wi *containerpb.WorkloadIdentityConfig, sn *containerpb.ShieldedNodes, rc *containerpb.ReleaseChannel, vpa *containerpb.VerticalPodAutoscaling) error {
+	switch {
+	case wi != nil && wi.WorkloadPool == "":
+		return autopilotErr("Workload Identity")
+	case sn != nil && !sn.Enabled:
+		return autopilotErr("Shielded nodes")
+	case vpa != nil && !vpa.Enabled:
+		return autopilotErr("Vertical Pod autoscaling")
+	case rc != nil && rc.Channel == containerpb.ReleaseChannel_UNSPECIFIED:
+		return apierr.InvalidArgument("Autopilot clusters must be enrolled in a release channel.")
+	}
+	return nil
+}
+
+func autopilotErr(setting string) error {
+	return apierr.InvalidArgument("%s cannot be disabled for Autopilot clusters.", setting)
 }
 
 // autopilotCounts places the managed pool's one node in its first zone.
@@ -64,35 +95,10 @@ func autopilotCounts(np *containerpb.NodePool) []int {
 	return counts
 }
 
-func autopilotErr(setting string) error {
-	return apierr.InvalidArgument("%s cannot be disabled for Autopilot clusters.", setting)
-}
-
-// managedPools refuses a change to an Autopilot cluster's node pools.
-func managedPools(c *containerpb.Cluster) error {
+// refusePoolChange refuses a change to an Autopilot cluster's node pools.
+func refusePoolChange(c *containerpb.Cluster) error {
 	if autopilotOn(c) {
 		return apierr.FailedPrecondition("Autopilot clusters do not support mutating node pools.")
-	}
-	return nil
-}
-
-// checkAutopilotUpdate refuses a ClusterUpdate that would undo what GKE
-// sets on an Autopilot cluster, and Autopilot settings on a Standard one.
-func checkAutopilotUpdate(c *containerpb.Cluster, u *containerpb.ClusterUpdate) error {
-	if !autopilotOn(c) {
-		if u.DesiredAutopilotWorkloadPolicyConfig != nil {
-			return apierr.FailedPrecondition("Workload policies can only be set on Autopilot clusters.")
-		}
-		return nil
-	}
-	if wi := u.DesiredWorkloadIdentityConfig; wi != nil && wi.WorkloadPool == "" {
-		return autopilotErr("Workload Identity")
-	}
-	if sn := u.DesiredShieldedNodes; sn != nil && !sn.Enabled {
-		return autopilotErr("Shielded nodes")
-	}
-	if rc := u.DesiredReleaseChannel; rc != nil && rc.Channel == containerpb.ReleaseChannel_UNSPECIFIED {
-		return apierr.InvalidArgument("Autopilot clusters must be enrolled in a release channel.")
 	}
 	return nil
 }

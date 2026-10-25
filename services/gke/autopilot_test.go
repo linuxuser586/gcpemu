@@ -21,7 +21,9 @@ const apParent = "projects/ap-test/locations/us-central1"
 
 // newAPI returns the container API of a Service with an in-memory store and
 // no container runtime: clusters are stored, and their bring-up fails.
-// It is Deterministic, so store-only operations are DONE when they return.
+// It is Deterministic, so store-only operations are DONE when they return;
+// cluster create is container-backed and still runs in the background
+// (ADR 0020), which createRunning waits for.
 func newAPI(t *testing.T) *api {
 	t.Helper()
 	cfg := config.Defaults()
@@ -92,7 +94,10 @@ func wantCode(t *testing.T, what string, err error, code codes.Code) {
 // (FR-GKE-015) adds more.
 func TestAutopilotCreate(t *testing.T) {
 	a := newAPI(t)
-	c := createRunning(t, a, apParent, autopilot("ap"))
+	c := autopilot("ap")
+	// GKE owns the nodes, so a node config in the request is not theirs.
+	c.NodeConfig = &containerpb.NodeConfig{MachineType: "e2-standard-8"}
+	c = createRunning(t, a, apParent, c)
 	if !c.GetAutopilot().GetEnabled() {
 		t.Error("autopilot.enabled not reported")
 	}
@@ -120,9 +125,16 @@ func TestAutopilotCreate(t *testing.T) {
 	if got := c.NodePools[0].GetConfig().GetWorkloadMetadataConfig().GetMode(); got != containerpb.WorkloadMetadataConfig_GKE_METADATA {
 		t.Errorf("pool workloadMetadataConfig = %v", got)
 	}
+	if got := c.NodePools[0].GetConfig().GetMachineType(); got != "e2-medium" {
+		t.Errorf("pool machineType = %q, want GKE's default", got)
+	}
 	pools, err := a.ListNodePools(context.Background(), &containerpb.ListNodePoolsRequest{Parent: apParent + "/clusters/ap"})
 	if err != nil || len(pools.NodePools) != 1 {
 		t.Errorf("ListNodePools = %v, %v", pools, err)
+	}
+	list, err := a.ListClusters(context.Background(), &containerpb.ListClustersRequest{Parent: "projects/ap-test/locations/-"})
+	if err != nil || len(list.Clusters) != 1 || !list.Clusters[0].GetAutopilot().GetEnabled() || !list.Clusters[0].GetShieldedNodes().GetEnabled() {
+		t.Errorf("ListClusters = %v, %v", list, err)
 	}
 }
 
@@ -150,6 +162,9 @@ func TestAutopilotCreateRejects(t *testing.T) {
 		{"network policy", apParent, func(c *containerpb.Cluster) { c.NetworkPolicy = &containerpb.NetworkPolicy{Enabled: true} }},
 		{"node pools", apParent, func(c *containerpb.Cluster) { c.NodePools = []*containerpb.NodePool{{Name: "p", InitialNodeCount: 1}} }},
 		{"initial node count", apParent, func(c *containerpb.Cluster) { c.InitialNodeCount = 1 }},
+		{"vertical Pod autoscaling off", apParent, func(c *containerpb.Cluster) {
+			c.VerticalPodAutoscaling = &containerpb.VerticalPodAutoscaling{}
+		}},
 	}
 	for _, tt := range tests {
 		c := autopilot("ap")
@@ -223,10 +238,11 @@ func TestAutopilotUpdate(t *testing.T) {
 	}
 
 	for name, u := range map[string]*containerpb.ClusterUpdate{
-		"Workload Identity off": {DesiredWorkloadIdentityConfig: &containerpb.WorkloadIdentityConfig{}},
-		"Shielded nodes off":    {DesiredShieldedNodes: &containerpb.ShieldedNodes{}},
-		"no release channel":    {DesiredReleaseChannel: &containerpb.ReleaseChannel{}},
-		"legacy datapath":       {DesiredDatapathProvider: containerpb.DatapathProvider_LEGACY_DATAPATH},
+		"Workload Identity off":        {DesiredWorkloadIdentityConfig: &containerpb.WorkloadIdentityConfig{}},
+		"Shielded nodes off":           {DesiredShieldedNodes: &containerpb.ShieldedNodes{}},
+		"no release channel":           {DesiredReleaseChannel: &containerpb.ReleaseChannel{}},
+		"vertical Pod autoscaling off": {DesiredVerticalPodAutoscaling: &containerpb.VerticalPodAutoscaling{}},
+		"legacy datapath":              {DesiredDatapathProvider: containerpb.DatapathProvider_LEGACY_DATAPATH},
 	} {
 		_, err := a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: cl, Update: u})
 		wantCode(t, name, err, codes.InvalidArgument)
@@ -238,7 +254,7 @@ func TestAutopilotUpdate(t *testing.T) {
 	createRunning(t, a, apParent, &containerpb.Cluster{Name: "std", InitialNodeCount: 1})
 	_, err = a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: apParent + "/clusters/std", Update: &containerpb.ClusterUpdate{
 		DesiredAutopilotWorkloadPolicyConfig: &containerpb.WorkloadPolicyConfig{AllowNetAdmin: &yes}}})
-	wantCode(t, "Standard allowNetAdmin", err, codes.FailedPrecondition)
+	wantCode(t, "Standard allowNetAdmin", err, codes.InvalidArgument)
 	got, _ = a.GetCluster(ctx, &containerpb.GetClusterRequest{Name: apParent + "/clusters/std"})
 	if got.Autopilot != nil || got.ShieldedNodes != nil {
 		t.Errorf("Standard cluster got Autopilot settings: %v %v", got.Autopilot, got.ShieldedNodes)

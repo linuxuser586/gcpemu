@@ -320,7 +320,7 @@ GKE's fleet API through which clients reach a cluster's Kubernetes API as their 
 A GKE cluster whose node pools the user creates, sizes and deletes.
 
 **Autopilot cluster**:
-A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes them once empty, always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools.
+A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes them once empty, always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools: GKE's own node pools are visible but cannot be created, changed or deleted.
 _Avoid_: managed cluster, serverless cluster
 
 **Workload restrictions**:

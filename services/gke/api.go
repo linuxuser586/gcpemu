@@ -542,7 +542,7 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 		}
 	}
 	if u.DesiredNodePoolAutoscaling != nil {
-		if err := managedPools(c); err != nil {
+		if err := refusePoolChange(c); err != nil {
 			return err
 		}
 		np := findPool(c, u.DesiredNodePoolId)
@@ -749,7 +749,7 @@ func (a *api) upgradePools(ctx context.Context, r ref, pool, version string) (*c
 	}
 	r.Pool = pool
 	return a.mutate(ctx, r, containerpb.Operation_UPGRADE_NODES, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
-		if err := managedPools(c); err != nil {
+		if err := refusePoolChange(c); err != nil {
 			return err
 		}
 		v := version
