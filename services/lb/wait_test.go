@@ -61,23 +61,26 @@ func TestHealthWaitCondition(t *testing.T) {
 		t.Fatalf("regional backend service: %v %+v", err, op)
 	}
 
-	// Health checks take a moment to pass.
-	waitMet := func(target string) {
+	// Health checks take a moment to pass, and each backend service checks
+	// its groups itself: sick names up, not down, until its own check of
+	// up has passed (#690).
+	waitFor := func(target, state, reason string) {
 		t.Helper()
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			code, got := condition(t, e, "lb/health="+target)
-			if code == 200 && got.State == "met" {
+			if code == 200 && got.State == state && got.Reason == reason {
 				return
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("lb/health=%s: %d %+v, want met", target, code, got)
+				t.Errorf("lb/health=%s: %d %+v, want %s %q", target, code, got, state, reason)
+				return
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	waitMet(proj + "/global/api")
-	waitMet(proj + "/us-central1/reg")
+	waitFor(proj+"/global/api", "met", "")
+	waitFor(proj+"/us-central1/reg", "met", "")
 
 	for _, tc := range []struct{ target, state, reason string }{
 		{proj + "/global/half", "pending", "group zones/us-central1-a/networkEndpointGroups/empty has no HEALTHY endpoint"},
@@ -87,10 +90,7 @@ func TestHealthWaitCondition(t *testing.T) {
 		{proj + "/global/reg", "pending", "not found"},
 		{proj + "/us-central1/api", "pending", "not found"},
 	} {
-		code, got := condition(t, e, "lb/health="+tc.target)
-		if code != 200 || got.State != tc.state || got.Reason != tc.reason {
-			t.Errorf("lb/health=%s: %d %+v, want %s %q", tc.target, code, got, tc.state, tc.reason)
-		}
+		waitFor(tc.target, tc.state, tc.reason)
 	}
 	if code, got := condition(t, e, "lb/health="+proj+"/us-central1-a/api"); code != 400 {
 		t.Errorf("lb/health in a zone: %d %+v, want 400", code, got)
