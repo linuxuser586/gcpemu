@@ -100,6 +100,9 @@ var resourceTypes = map[string][]string{
 		"google_container_cluster", "google_container_node_pool", "google_compute_instance_group_named_port",
 		"google_compute_network", "google_compute_subnetwork", "google_service_account",
 	},
+	"autopilot": {
+		"google_container_cluster", "google_compute_network", "google_compute_subnetwork",
+	},
 	"secrets": {
 		"google_secret_manager_secret", "google_secret_manager_secret_version",
 		"google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy",
@@ -119,7 +122,7 @@ var resourceTypes = map[string][]string{
 }
 
 // needsRuntime are the modules that start containers.
-var needsRuntime = map[string]bool{"sql": true, "gke": true}
+var needsRuntime = map[string]bool{"sql": true, "gke": true, "autopilot": true}
 
 var resourceRE = regexp.MustCompile(`(?m)^resource\s+"(google_[a-z0-9_]+)"`)
 

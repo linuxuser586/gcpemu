@@ -4,10 +4,13 @@
 //
 // # Control plane
 //
-// Clusters (Standard mode) and node pools are created, read, listed,
-// updated, resized, upgraded and deleted through container Operations
-// (the container API's own Operation resource, not google.longrunning).
-// Autopilot clusters are rejected as UNIMPLEMENTED (FR-GKE-012). REST
+// Clusters and node pools are created, read, listed, updated, resized,
+// upgraded and deleted through container Operations (the container API's
+// own Operation resource, not google.longrunning). Autopilot clusters
+// (FR-GKE-012, autopilot.go) are regional, get the settings GKE sets on
+// them, and report one GKE-managed node pool that the node pools API
+// refuses to change; until node provisioning (FR-GKE-015) lands they run
+// one node. REST
 // (gcloud, OpenTofu) is served by transcoding the google.api.http rules of
 // the generated descriptors onto the gRPC implementation, including the
 // legacy projects/P/zones/Z/... paths.

@@ -128,8 +128,10 @@ func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterR
 		return nil, err
 	}
 	r.Cluster = c.Name
-	if c.GetAutopilot().GetEnabled() {
-		return nil, apierr.Unimplemented("Autopilot clusters are not supported by gcpemu (FR-GKE-012); create a Standard cluster.")
+	if autopilotOn(c) {
+		if err := applyAutopilot(r, c); err != nil {
+			return nil, err
+		}
 	}
 	rec, err := a.s.newCluster(r, c)
 	if err != nil {
@@ -251,7 +253,7 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 
 	if len(c.NodePools) == 0 {
 		n := c.InitialNodeCount
-		if n == 0 && c.NodeConfig == nil {
+		if n == 0 && c.NodeConfig == nil && !autopilotOn(c) {
 			n = defaultNodeCount
 		}
 		cfg := c.NodeConfig
@@ -273,7 +275,11 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 		if err := s.fillPool(r, c, np, ""); err != nil {
 			return nil, err
 		}
-		rec.Int.Nodes = append(rec.Int.Nodes, s.planNodes(c, np, nil, startCounts(np))...)
+		counts := startCounts(np)
+		if autopilotOn(c) {
+			counts = autopilotCounts(np)
+		}
+		rec.Int.Nodes = append(rec.Int.Nodes, s.planNodes(c, np, nil, counts)...)
 	}
 	c.NodeConfig = proto.Clone(c.NodePools[0].Config).(*containerpb.NodeConfig)
 	// initialNodeCount keeps the requested value, like GKE (the OpenTofu
@@ -518,6 +524,12 @@ func (a *api) UpdateCluster(ctx context.Context, req *containerpb.UpdateClusterR
 
 // applyClusterUpdate applies the store-only parts of a ClusterUpdate.
 func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpdate) error {
+	if err := checkAutopilotUpdate(c, u); err != nil {
+		return err
+	}
+	if u.DesiredAutopilotWorkloadPolicyConfig != nil {
+		c.Autopilot.WorkloadPolicyConfig = u.DesiredAutopilotWorkloadPolicyConfig
+	}
 	if u.DesiredWorkloadIdentityConfig != nil {
 		wp := u.DesiredWorkloadIdentityConfig.WorkloadPool
 		if wp != "" && wp != r.Project+".svc.id.goog" {
@@ -530,6 +542,9 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 		}
 	}
 	if u.DesiredNodePoolAutoscaling != nil {
+		if err := managedPools(c); err != nil {
+			return err
+		}
 		np := findPool(c, u.DesiredNodePoolId)
 		if np == nil {
 			return notFoundPool(ref{Project: r.Project, Location: r.Location, Cluster: r.Cluster, Pool: u.DesiredNodePoolId})
@@ -734,6 +749,9 @@ func (a *api) upgradePools(ctx context.Context, r ref, pool, version string) (*c
 	}
 	r.Pool = pool
 	return a.mutate(ctx, r, containerpb.Operation_UPGRADE_NODES, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := managedPools(c); err != nil {
+			return err
+		}
 		v := version
 		if v == "-" {
 			v = c.CurrentMasterVersion

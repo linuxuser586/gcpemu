@@ -1319,8 +1319,8 @@ either stay on loopback or reach the internet on purpose.
 ### OpenTofu acceptance (SRS 11.1, IF-001)
 
 `task tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
-DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE, Artifact
-Registry), plans again expecting no changes, destroys it and checks the state is empty. It does
+DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE Standard and
+Autopilot, Artifact Registry), plans again expecting no changes, destroys it and checks the state is empty. It does
 this with the `google` and `google-beta` providers, each at the latest release of the current
 and the previous minor (looked up in the OpenTofu registry), against a detached instance whose
 provider block is `gcpemu tofu-provider` output. `GCPEMU_TOFU_PROVIDERS` narrows the matrix
