@@ -105,15 +105,20 @@ func TestDelegatedKeyThroughGoogleHostname(t *testing.T) {
 	}
 	b, _ := base64.StdEncoding.DecodeString(key.PrivateKeyData)
 	var file struct {
+		keyFileURLs
 		KeyID          string `json:"private_key_id"`
-		TokenURI       string `json:"token_uri"`
 		UniverseDomain string `json:"universe_domain"`
 	}
 	if err := json.Unmarshal(b, &file); err != nil {
 		t.Fatal(err)
 	}
-	if file.TokenURI != "https://oauth2.googleapis.com/token" || file.UniverseDomain != "googleapis.com" {
-		t.Errorf("key file names %q in universe %q, want Google's", file.TokenURI, file.UniverseDomain)
+	want := keyFileURLs{
+		TokenURI:                "https://oauth2.googleapis.com/token",
+		AuthProviderX509CertURL: "https://www.googleapis.com/oauth2/v1/certs",
+		ClientX509CertURL:       "https://www.googleapis.com/robot/v1/metadata/x509/" + runner,
+	}
+	if file.keyFileURLs != want || file.UniverseDomain != "googleapis.com" {
+		t.Errorf("key file names %+v in universe %q, want Google's", file.keyFileURLs, file.UniverseDomain)
 	}
 	var keys struct{ Keys []struct{ Name string } }
 	callAdmin(t, office, http.MethodGet, "/iam/v1/projects/"+shared+"/serviceAccounts/"+runner+"/keys?keyTypes=USER_MANAGED", nil, &keys)

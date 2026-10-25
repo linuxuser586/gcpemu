@@ -241,7 +241,7 @@ func (s *Service) seedKeyFile(sa *iamv1.ServiceAccount, path string) error {
 			}
 		}
 	}
-	_, kf, err := s.createKey(sa, false)
+	_, kf, err := s.createKey(sa, s.gatewayURL(), false)
 	if err != nil {
 		return err
 	}
