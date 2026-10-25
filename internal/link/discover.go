@@ -124,7 +124,9 @@ func (m *Manager) Discover(ctx context.Context) ([]Discovered, error) {
 		berr    error
 		static  = make([]Discovered, len(m.cfg.StaticAddrs))
 	)
-	wg.Go(func() { browsed, berr = mdns.Browse(ctx, ServiceType, m.cfg.MDNS) })
+	o := m.cfg.MDNS
+	o.Log = m.cfg.Log
+	wg.Go(func() { browsed, berr = mdns.Browse(ctx, ServiceType, o) })
 	for i, addr := range m.cfg.StaticAddrs {
 		wg.Go(func() { static[i] = m.identifyStatic(ctx, addr) })
 	}

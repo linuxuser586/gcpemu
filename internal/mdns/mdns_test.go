@@ -2,9 +2,12 @@ package mdns_test
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"slices"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -34,7 +37,7 @@ func daemonStandIn(t *testing.T, port int) {
 // advertise advertises svc on port until the test ends.
 func advertise(t *testing.T, svc mdns.Service, port int) *mdns.Responder {
 	t.Helper()
-	r, err := mdns.Advertise(svc, mdns.Options{Port: port})
+	r, err := mdns.Advertise(svc, mdns.Options{Port: port, Log: testLog(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +50,7 @@ func browse(t *testing.T, port int) []mdns.Entry {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	got, err := mdns.Browse(ctx, "_gcpemu-test._tcp", mdns.Options{Port: port, Wait: time.Second})
+	got, err := mdns.Browse(ctx, "_gcpemu-test._tcp", mdns.Options{Port: port, Wait: time.Second, Log: testLog(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,4 +121,33 @@ func TestClosedIsNotBrowsed(t *testing.T) {
 			t.Fatalf("closed Responder browsed: %+v", g)
 		}
 	}
+}
+
+// testLog logs at Debug to t until the test ends, so that a failure shows
+// what the responder and the browser saw.
+func testLog(t *testing.T) *slog.Logger {
+	t.Helper()
+	w := &testWriter{t: t}
+	t.Cleanup(func() {
+		w.mu.Lock()
+		w.done = true
+		w.mu.Unlock()
+	})
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// testWriter writes to t.Log until done.
+type testWriter struct {
+	mu   sync.Mutex
+	t    *testing.T
+	done bool
+}
+
+func (w *testWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.done {
+		w.t.Log(strings.TrimSpace(string(p)))
+	}
+	return len(p), nil
 }

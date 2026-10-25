@@ -201,13 +201,16 @@ func (r *Responder) serve() {
 		if q.Unpack(b[:n]) != nil || q.Response || q.Opcode != dns.OpcodeQuery {
 			continue
 		}
+		// A query is answered with the addresses of the interface it came
+		// in on. One the OS reports on another interface, as some deliver
+		// multicast this host sent itself on lo0, is answered with all.
 		ifs := r.ifs
 		if cm != nil && cm.IfIndex != 0 {
-			ifs = slices.DeleteFunc(slices.Clone(r.ifs), func(i iface) bool { return i.Index != cm.IfIndex })
-			if len(ifs) == 0 {
-				continue
+			if on := slices.DeleteFunc(slices.Clone(r.ifs), func(i iface) bool { return i.Index != cm.IfIndex }); len(on) > 0 {
+				ifs = on
 			}
 		}
+		r.log.Debug("mDNS query", "from", src, "ifIndex", ifIndex(cm), "questions", len(q.Question))
 		r.answer(&q, src.(*net.UDPAddr), ifs)
 	}
 }
@@ -371,11 +374,14 @@ func Browse(ctx context.Context, typ string, o Options) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	log := cmpLog(o.Log)
 	sendAll := func() {
 		for _, ifi := range ifs {
-			if pc.SetMulticastInterface(&ifi.Interface) == nil {
-				_, _ = pc.WriteTo(b, nil, &net.UDPAddr{IP: Group, Port: o.port()})
+			err := pc.SetMulticastInterface(&ifi.Interface)
+			if err == nil {
+				_, err = pc.WriteTo(b, nil, &net.UDPAddr{IP: Group, Port: o.port()})
 			}
+			log.Debug("mDNS browse query", "interface", ifi.Name, "err", err)
 		}
 	}
 	wait := o.Wait
@@ -398,7 +404,7 @@ func Browse(ctx context.Context, typ string, o Options) ([]Entry, error) {
 	c := collector{typ: strings.ToLower(typ + ".local."), srv: map[string]*dns.SRV{}, txt: map[string][]string{}, addrs: map[string][]net.IP{}, inst: map[string]bool{}}
 	buf := make([]byte, 9000)
 	for {
-		n, _, err := conn.ReadFrom(buf)
+		n, from, err := conn.ReadFrom(buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				break
@@ -409,6 +415,7 @@ func Browse(ctx context.Context, typ string, o Options) ([]Entry, error) {
 		if m.Unpack(buf[:n]) != nil || !m.Response {
 			continue
 		}
+		log.Debug("mDNS browse answer", "from", from, "records", len(m.Answer)+len(m.Extra))
 		c.add(slices.Concat(m.Answer, m.Ns, m.Extra))
 	}
 	if err := ctx.Err(); err != nil && time.Now().Before(deadline) {
@@ -544,6 +551,14 @@ func unescapeLabel(s string) string {
 }
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
+
+// ifIndex is the interface cm says a datagram came in on, 0 if unknown.
+func ifIndex(cm *ipv4.ControlMessage) int {
+	if cm == nil {
+		return 0
+	}
+	return cm.IfIndex
+}
 
 // cmpLog is l, or a logger that discards.
 func cmpLog(l *slog.Logger) *slog.Logger {
