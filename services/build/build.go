@@ -49,8 +49,8 @@ type Service struct {
 	// loops runs the scheduler; Reset restarts it (#307).
 	loops inflight.Loops
 
-	// mu guards queue, live and paused, and every change of a Build's
-	// status away from QUEUED.
+	// mu guards queue, live, paused and clearing, and every change of a
+	// Build's status away from QUEUED.
 	mu sync.Mutex
 	// queue lists the QUEUED Builds this process may start, oldest
 	// first. Builds loaded from a State snapshot are never in it.
@@ -59,6 +59,9 @@ type Service struct {
 	live map[string]*liveBuild
 	// paused stops Builds starting between Reset (or Stop) and ResetDone.
 	paused bool
+	// clearing stops Builds starting while the Build daemon is cleared
+	// after the last running Build (clearDaemon).
+	clearing bool
 	// work counts running Builds, which Reset and Stop wait for.
 	work inflight.Tracker
 

@@ -466,7 +466,7 @@ The Managed container, one per Instance, whose Docker daemon every Build's steps
 _Avoid_: dind, docker host
 
 **Image cache**:
-Everything the Build daemon keeps after a Build ends: its images, layers, build cache and build history. Pruning empties it all.
+Everything the Build daemon keeps after a Build ends: its images, layers and build cache. Its containers and build history go once no Build runs, as on a fresh Cloud Build worker. Pruning empties it all.
 _Avoid_: daemon data, docker cache
 
 **Build agent**:
