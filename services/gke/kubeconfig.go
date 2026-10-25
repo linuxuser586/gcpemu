@@ -1,6 +1,7 @@
 package gke
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -122,6 +124,15 @@ func (s *Service) serveKubeconfig(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apierr.Write(w, err)
 		return
+	}
+	if !r.URL.Query().Has("lan") {
+		// A LAN caller is told the --gke-bind address its machine reaches.
+		if ip, ok := emu.LANServed(r.Context(), s.env.Config.GKEBind, s.lanIPs()); ok {
+			if lan, err = s.lanAddress(cmp.Or(ip, "true")); err != nil {
+				apierr.Write(w, err)
+				return
+			}
+		}
 	}
 	var keep func(*clusterRecord) bool
 	if name != "" {

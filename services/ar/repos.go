@@ -132,6 +132,7 @@ func (a *api) GetRepository(ctx context.Context, req *artifactregistrypb.GetRepo
 		var err error
 		if repo, err = getRepo(tx, ref); err == nil {
 			repo.SizeBytes = repoSize(tx, ref)
+			repo.RegistryUri = a.s.linkURI(ctx, repo.RegistryUri)
 		}
 		return err
 	})
@@ -160,6 +161,7 @@ func (a *api) ListRepositories(ctx context.Context, req *artifactregistrypb.List
 		for i, r := range all {
 			if match(r.GetName()) {
 				r.SizeBytes = repoSize(tx, refs[i])
+				r.RegistryUri = a.s.linkURI(ctx, r.RegistryUri)
 				repos = append(repos, r)
 			}
 		}
@@ -237,6 +239,7 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 			return err
 		}
 		repo.SizeBytes = repoSize(tx, ref)
+		repo.RegistryUri = a.s.linkURI(ctx, repo.RegistryUri)
 		out = repo
 		return nil
 	})
