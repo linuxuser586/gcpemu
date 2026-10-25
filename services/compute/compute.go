@@ -246,10 +246,9 @@ func (s *Service) AddUsageChecker(c UsageChecker) {
 type SubnetReleaser func(ctx context.Context, subnetwork string) error
 
 // AddSubnetReleaser registers the releaser of owner's addresses. Other
-// services register one for infrastructure that joins a subnetwork only
-// while workloads on it need it (the load balancer's Edge relay), so that
-// such an address alone does not keep the subnetwork from being deleted
-// (#683): compute asks the releaser to leave instead.
+// services register one for their Infrastructure addresses (the load
+// balancer's Edge relay), which then never keep a subnetwork from being
+// deleted: compute asks the releaser to leave instead (ADR 0032).
 func (s *Service) AddSubnetReleaser(owner string, r SubnetReleaser) {
 	s.chkMu.Lock()
 	if s.releasers == nil {

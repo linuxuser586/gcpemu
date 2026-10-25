@@ -104,9 +104,12 @@ func TestEdgeRelayLeavesSubnetwork(t *testing.T) {
 	})
 
 	// Deleting the subnetwork right after its pod routes are gone does not
-	// wait for the route loop.
+	// wait for the route loop, which direct dial pauses here so that only
+	// the delete can detach the Edge relay (ADR 0032).
 	onNodes.Store(true)
 	eventually(t, 30*time.Second, "edge back on the nodes subnetwork", joined)
+	svc.(*lb.Service).SetOptions(lb.Options{DirectDial: true})
+	time.Sleep(time.Second) // a pass already past the direct-dial check reads the routes before onNodes changes
 	onNodes.Store(false)
 	regionOp(c.Subnetworks.Delete(proj, "us-central1", "nodes").Do())
 	if ips := edgeIPs(); ips[keptNet.Name] == "" || ips[nodesNet.Name] != "" {
