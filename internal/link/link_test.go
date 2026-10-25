@@ -48,6 +48,12 @@ func (s *syncBuffer) String() string {
 // CA and pairings file in dir (a new temp dir when "").
 func newLinked(t *testing.T, name, dir string, opts ...func(*link.Config)) *linked {
 	t.Helper()
+	return newLinkedOn(t, name, dir, "127.0.0.1", opts...)
+}
+
+// newLinkedOn is newLinked serving on ip.
+func newLinkedOn(t *testing.T, name, dir, ip string, opts ...func(*link.Config)) *linked {
+	t.Helper()
 	if dir == "" {
 		dir = t.TempDir()
 	}
@@ -65,7 +71,7 @@ func newLinked(t *testing.T, name, dir string, opts ...func(*link.Config)) *link
 		o(&cfg)
 	}
 	n := link.New(cfg)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
 	if err != nil {
 		t.Fatal(err)
 	}

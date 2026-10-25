@@ -59,6 +59,9 @@ func (a *api) CreateNodePool(ctx context.Context, req *containerpb.CreateNodePoo
 	r.Pool = np.Name
 	others := a.s.nodesElsewhere(r.key())
 	return a.mutate(ctx, r, containerpb.Operation_CREATE_NODE_POOL, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := refusePoolChange(c); err != nil {
+			return err
+		}
 		if findPool(c, np.Name) != nil {
 			return apierr.AlreadyExists("Already exists: %s.", r.poolName())
 		}
@@ -85,6 +88,9 @@ func (a *api) DeleteNodePool(ctx context.Context, req *containerpb.DeleteNodePoo
 	}
 	var gone []nodeRecord
 	return a.mutate(ctx, r, containerpb.Operation_DELETE_NODE_POOL, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := refusePoolChange(c); err != nil {
+			return err
+		}
 		np := findPool(c, r.Pool)
 		if np == nil {
 			return notFoundPool(r)
@@ -128,6 +134,9 @@ func (a *api) SetNodePoolSize(ctx context.Context, req *containerpb.SetNodePoolS
 	var gone []nodeRecord
 	others := a.s.nodesElsewhere(r.key())
 	return a.mutate(ctx, r, containerpb.Operation_SET_NODE_POOL_SIZE, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := refusePoolChange(c); err != nil {
+			return err
+		}
 		np := findPool(c, r.Pool)
 		if np == nil {
 			return notFoundPool(r)
@@ -184,6 +193,9 @@ func (a *api) UpdateNodePool(ctx context.Context, req *containerpb.UpdateNodePoo
 	}
 	var relabel bool
 	return a.mutate(ctx, r, containerpb.Operation_UPDATE_CLUSTER, req.Etag, func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := refusePoolChange(c); err != nil {
+			return err
+		}
 		np := findPool(c, r.Pool)
 		if np == nil {
 			return notFoundPool(r)
@@ -254,6 +266,9 @@ func (a *api) SetNodePoolAutoscaling(ctx context.Context, req *containerpb.SetNo
 		return nil, err
 	}
 	return a.mutate(ctx, r, containerpb.Operation_UPDATE_CLUSTER, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := refusePoolChange(c); err != nil {
+			return err
+		}
 		np := findPool(c, r.Pool)
 		if np == nil {
 			return notFoundPool(r)
@@ -269,6 +284,9 @@ func (a *api) SetNodePoolManagement(ctx context.Context, req *containerpb.SetNod
 		return nil, err
 	}
 	return a.mutate(ctx, r, containerpb.Operation_SET_NODE_POOL_MANAGEMENT, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if err := refusePoolChange(c); err != nil {
+			return err
+		}
 		np := findPool(c, r.Pool)
 		if np == nil {
 			return notFoundPool(r)

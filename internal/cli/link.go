@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,11 +27,12 @@ func (o *rootOpts) linkCmd() *cobra.Command {
 		Short: "Pair this Instance with other Instances, as Linked Instances",
 		Long: "Pairing makes two Instances each pin the other's Instance CA, so that each accepts the other\n" +
 			"over a link. It is approved on both sides: `link pair` on one Instance, which shows the other's\n" +
-			"identity, and `link approve` on the other, which must be started with --link-bind.\n\n" +
+			"identity, and `link approve` on the other, which must be started with --link-bind.\n" +
+			"`link discover` lists the Instances that advertise on the LAN, which `link pair` takes by name.\n\n" +
 			"A Linked Instance then shares Projects (`link share`), and the front Instance delegates them\n" +
 			"(`link delegate`): it forwards every request naming a Delegated Project over the link.",
 	}
-	root.AddCommand(o.linkPairCmd(), o.linkListCmd(), o.linkUnpairCmd(), o.linkRequestsCmd(), o.linkApproveCmd(), o.linkRejectCmd(),
+	root.AddCommand(o.linkDiscoverCmd(), o.linkPairCmd(), o.linkListCmd(), o.linkUnpairCmd(), o.linkRequestsCmd(), o.linkApproveCmd(), o.linkRejectCmd(),
 		o.linkShareCmd(), o.linkUnshareCmd(), o.linkDelegateCmd(), o.linkUndelegateCmd())
 	return root
 }
@@ -40,15 +42,25 @@ func (o *rootOpts) linkPairCmd() *cobra.Command {
 	var name string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "pair ADDRESS",
-		Short: "Ask the Instance whose --link-bind is ADDRESS (host, or host:port) to pair",
+		Use:   "pair NAME|ADDRESS",
+		Short: "Ask the Discovered Instance NAME, or the Instance whose --link-bind is ADDRESS (host, or host:port), to pair",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
+			d, err := o.discoveredByName(cmd, args[0])
+			if err != nil {
+				return err
+			}
 			addr := link.Dialable(args[0])
+			if d != nil {
+				addr = d.Address
+			}
 			var id link.Identity
 			if err := o.linkCall(cmd, http.MethodPost, "/_emu/v1/links/identify", map[string]string{"address": addr}, 0, &id); err != nil {
 				return err
+			}
+			if d != nil && d.Fingerprint != id.Fingerprint {
+				return fmt.Errorf("Instance %q advertises Instance CA %s, but the Instance at %s presents Instance CA %s; not pairing", d.Name, d.Fingerprint, addr, id.Fingerprint)
 			}
 			fmt.Fprintf(out, "Instance %q at %s\n  Instance ID     %s\n  CA fingerprint  %s\n  link protocol   version %d\n", id.Name, addr, id.ID, id.Fingerprint, id.Version)
 			if own, err := o.ownFingerprint(cmd); err == nil {
@@ -72,6 +84,114 @@ func (o *rootOpts) linkPairCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "name of the link on this Instance (default the other Instance's name)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "pair without asking to confirm the other Instance's identity")
 	return cmd
+}
+
+// linkDiscoverCmd is `gcpemu link discover`.
+func (o *rootOpts) linkDiscoverCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "discover",
+		Short: "List the Instances on the LAN that advertise their --link-bind, and those at --link-discover addresses",
+		Long: "Browses the LAN over mDNS/DNS-SD for Instances started with --link-bind, and asks the Instances\n" +
+			"at the --link-discover addresses who they are. It pairs nothing: `gcpemu link pair NAME` asks one\n" +
+			"of them to pair, which its owner still approves.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ds, err := o.discover(cmd)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if asJSON {
+				return json.NewEncoder(out).Encode(map[string]any{"instances": ds})
+			}
+			if len(ds) == 0 {
+				fmt.Fprintln(out, "no Instances found; another Instance advertises only when started with --link-bind, and multicast may not reach this one (list it with --link-discover)")
+				return nil
+			}
+			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tINSTANCE ID\tADDRESS\tVERSION\tSTATUS\tCA FINGERPRINT")
+			for _, d := range ds {
+				status := "-"
+				switch {
+				case d.Problem != "":
+					status = "cannot pair"
+				case d.Link != "":
+					status = "paired as " + d.Link
+				}
+				version := "-"
+				if d.Version > 0 {
+					version = link.Versions{Min: d.MinVersion, Max: d.Version}.String()
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", d.Name, cmpDash(d.InstanceID), d.Address, version, status, cmpDash(d.Fingerprint))
+			}
+			_ = tw.Flush()
+			for _, d := range ds {
+				if d.Problem != "" {
+					fmt.Fprintf(out, "%s: %s\n", d.Name, d.Problem)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	return cmd
+}
+
+// cmpDash is s, or "-" for "".
+func cmpDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// discover returns the Discovered Instances.
+func (o *rootOpts) discover(cmd *cobra.Command) ([]link.Discovered, error) {
+	var r struct {
+		Instances []link.Discovered `json:"instances"`
+	}
+	err := o.linkCall(cmd, http.MethodGet, "/_emu/v1/links/discovered", nil, 0, &r)
+	return r.Instances, err
+}
+
+// discoveredByName returns the Discovered Instance that `link pair`'s
+// argument names: by its discovered name, or by its Instance name when only
+// one has it. It is nil for an IP address or host:port, and for a name no
+// Discovered Instance has, which is then a host name.
+func (o *rootOpts) discoveredByName(cmd *cobra.Command, arg string) (*link.Discovered, error) {
+	if _, _, err := net.SplitHostPort(arg); err == nil || net.ParseIP(arg) != nil {
+		return nil, nil
+	}
+	ds, err := o.discover(cmd)
+	if err != nil {
+		if strings.Contains(arg, "@") {
+			return nil, err
+		}
+		return nil, nil
+	}
+	var byInstance []link.Discovered
+	for _, d := range ds {
+		if strings.EqualFold(d.Name, arg) {
+			return &d, nil
+		}
+		if d.Instance == arg {
+			byInstance = append(byInstance, d)
+		}
+	}
+	switch {
+	case len(byInstance) == 1:
+		return &byInstance[0], nil
+	case len(byInstance) > 1:
+		var names []string
+		for _, d := range byInstance {
+			names = append(names, d.Name)
+		}
+		return nil, fmt.Errorf("%d Discovered Instances are named %q: name one of %s", len(names), arg, strings.Join(names, ", "))
+	case strings.Contains(arg, "@"):
+		return nil, fmt.Errorf("no Discovered Instance is named %q; `gcpemu link discover` lists them", arg)
+	}
+	return nil, nil
 }
 
 // linkListCmd is `gcpemu link list`.

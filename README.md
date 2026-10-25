@@ -425,6 +425,38 @@ name, which is needed when two links would share one). The Admin API serves the 
 - `gcpemu doctor` reports each link: its state, whether the other Instance answers, and at which
   protocol version. A link whose other side has no `--link-bind` is inbound only.
 
+#### Discovering Instances on the LAN
+
+An Instance with `--link-bind` advertises itself over mDNS/DNS-SD as `_gcpemu._tcp` on the
+interfaces holding those addresses, with its Instance name, Instance ID, link protocol version and
+CA fingerprint in TXT records. An Instance without `--link-bind` never advertises. On the laptop:
+
+```sh
+gcpemu link discover           # NAME is <Instance name>@<host>, e.g. office@desk; --json for scripts
+gcpemu link pair office@desk   # or by Instance name, when only one Discovered Instance has it
+```
+
+`link discover` lists the Discovered Instances, marking those already paired and those that cannot
+be paired as they are, such as one with no link protocol version in common. Two Instances with the
+same Instance name on one host share a name, and only one is listed; pair the other by address.
+Discovery pairs nothing: `link pair` by name still shows the other Instance's identity, refuses one
+whose CA is not the one it advertised, and waits for the other side's approval. The Admin API serves the same list
+at `GET /_emu/v1/links/discovered`.
+
+Multicast usually doesn't cross container networks' bridges or CI runners' networks. List the link
+addresses there with `--link-discover <host[:port]>` (repeatable; `linkDiscover` /
+`GCPEMU_LINK_DISCOVER`): `link discover` asks each who it is and lists it too, or says why it cannot.
+
+mDNS shares port 5353 with the `dns` Service's default port and with the OS's mDNS daemon
+(avahi-daemon, mDNSResponder, Windows' DNS Client). Advertising binds the mDNS group address with
+`SO_REUSEADDR`/`SO_REUSEPORT` (the wildcard on Windows), so it never receives the unicast queries
+Host mode's DNS forwarding sends the `dns` Service; browsing queries from an ephemeral port and binds
+nothing on 5353. If the Instance cannot advertise, it logs why and is still paired by address.
+
+On macOS, Local Network privacy refuses multicast to a process the user hasn't allowed: the first
+`link discover` or `start --link-bind` may ask, and a refusal shows as "no route to host". Allow the
+app running gcpemu, such as the terminal, under System Settings > Privacy & Security > Local Network.
+
 #### Shared and Delegated Projects
 
 Once paired, the office Instance shares Projects and the laptop delegates them. From then on the
@@ -1319,11 +1351,11 @@ either stay on loopback or reach the internet on purpose.
 ### OpenTofu acceptance (SRS 11.1, IF-001)
 
 `task tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
-DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE, Artifact
-Registry), plans again expecting no changes, destroys it and checks the state is empty. It does
-this with the `google` and `google-beta` providers, each at the latest release of the current
-and the previous minor (looked up in the OpenTofu registry), against a detached instance whose
-provider block is `gcpemu tofu-provider` output. `GCPEMU_TOFU_PROVIDERS` narrows the matrix
+DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE Standard and
+Autopilot, Artifact Registry), plans again expecting no changes, destroys it and checks the
+state is empty. It does this with the `google` and `google-beta` providers, each at the latest
+release of the current and the previous minor (looked up in the OpenTofu registry), against a
+detached instance whose provider block is `gcpemu tofu-provider` output. `GCPEMU_TOFU_PROVIDERS` narrows the matrix
 (`google-beta`, `google@8.6.0`, `google@8.6.0,google-beta@8.5.0`) and `GCPEMU_TOFU_MODULES`
 the modules (`lb,dns`). The resource types each module must declare are listed in
 `compat/tofu_test.go`; that list is the supported surface. It needs `tofu` on `PATH` and, for

@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
+	"github.com/linuxuser586/gcpemu/internal/mdns"
 )
 
 // DefaultPort is the --link-bind listeners' port unless `--port link=N`
@@ -102,6 +103,11 @@ type Config struct {
 	// Buckets returns this Instance's Cloud Storage buckets and their
 	// Projects, which paired Instances watch (see Manager.BucketOwner).
 	Buckets func() map[string]string
+	// StaticAddrs lists link addresses that Discover asks besides browsing
+	// mDNS, for networks multicast doesn't cross.
+	StaticAddrs []string
+	// MDNS configures Advertise and Discover's mDNS; zero is port 5353.
+	MDNS mdns.Options
 }
 
 // Manager manages an Instance's links: its --link-bind listeners, the
@@ -133,6 +139,8 @@ type Manager struct {
 	// pinned connects again. It is unverified, so it is never stored and
 	// never makes the link broken.
 	warnings map[string]string
+	// responders advertise the link listeners (see Advertise).
+	responders []*mdns.Responder
 }
 
 // New returns cfg's Manager; Serve makes it reachable.
@@ -236,8 +244,8 @@ func (m *Manager) Addresses() []string {
 // Close stops serving and refuses every waiting Pairing request.
 func (m *Manager) Close() error {
 	m.mu.Lock()
-	servers := m.servers
-	m.servers, m.closed = nil, true
+	servers, responders := m.servers, m.responders
+	m.servers, m.responders, m.closed = nil, nil, true
 	for _, stop := range m.watchers {
 		stop()
 	}
@@ -251,6 +259,9 @@ func (m *Manager) Close() error {
 	}
 	m.mu.Unlock()
 	var errs []error
+	for _, r := range responders {
+		errs = append(errs, r.Close())
+	}
 	for _, s := range servers {
 		errs = append(errs, s.Close())
 	}

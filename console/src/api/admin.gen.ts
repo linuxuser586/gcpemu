@@ -672,6 +672,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/links/discovered": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the Discovered Instances (`gcpemu link discover`).
+         * @description Browses the LAN over mDNS/DNS-SD for Instances started with `--link-bind`, which advertise `_gcpemu._tcp`, and asks the Instances at the `--link-discover` addresses who they are. It takes about a second and pairs nothing: Pairing is still approved on both sides (ADR 0027). This Instance is not listed.
+         */
+        get: operations["discoverLinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/links/identify": {
         parameters: {
             query?: never;
@@ -1164,6 +1184,29 @@ export interface components {
             project: string;
             /** @description The link the Project is delegated to. */
             link: string;
+        };
+        DiscoveredInstance: {
+            /** @description "<Instance name>@<host>", which `gcpemu link pair` takes. */
+            name: string;
+            /** @description Its Instance name. */
+            instance?: string;
+            instanceId?: string;
+            /** @description Its --link-bind listener, host:port. */
+            address: string;
+            /** @description The Instance CA fingerprint it advertises, or presented at a static address; Pairing checks it again. */
+            fingerprint?: string;
+            /** @description The newest link protocol version it speaks. */
+            version?: number;
+            minVersion?: number;
+            /**
+             * @description Browsed over mDNS, or asked at a --link-discover address.
+             * @enum {string}
+             */
+            source: "mdns" | "static";
+            /** @description This Instance's link to it, when they are paired. */
+            link?: string;
+            /** @description Why it cannot be paired as it is: an incompatible link protocol version, a CA other than its link's, or a static address that cannot be reached. */
+            problem?: string;
         };
         LinkState: components["schemas"]["Link"] & {
             /** @enum {string} */
@@ -2674,6 +2717,29 @@ export interface operations {
         responses: {
             200: components["responses"]["Status"];
             404: components["responses"]["Error"];
+        };
+    };
+    discoverLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Discovered Instances. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        instances?: components["schemas"]["DiscoveredInstance"][];
+                    };
+                };
+            };
+            502: components["responses"]["Error"];
         };
     };
     identifyLink: {
