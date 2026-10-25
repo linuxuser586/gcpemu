@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { expect, it } from 'vitest'
 
-import { fake } from '@/test/handlers'
+import { fake, linkedFake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
@@ -80,4 +80,36 @@ it('says why Projects cannot be listed without the iam Service', async () => {
   renderApp('/')
   await user.click(await screen.findByRole('button', { name: 'Project' }))
   expect(await screen.findByText(/Resource Manager is part of the iam Service/)).toBeInTheDocument()
+})
+
+it('lists the Delegated Projects apart, each naming its Linked Instance', async () => {
+  linkedFake()
+  const user = userEvent.setup()
+  const { router } = renderApp('/')
+  await user.click(await screen.findByRole('button', { name: 'Project' }))
+  const local = await screen.findByRole('list', { name: 'Projects' })
+  expect(within(local).queryByRole('button', { name: /team-shared/ })).not.toBeInTheDocument()
+  const delegated = await screen.findByRole('list', { name: 'Delegated Projects' })
+  const item = within(delegated).getByRole('button', { name: /team-shared/ })
+  expect(item).toHaveTextContent('office')
+  await user.click(item)
+  expect(router.state.location.search).toBe('?project=team-shared')
+  // A Delegated Project exists on its Linked Instance, never "not yet created" here.
+  expect(await screen.findByText('via office')).toBeInTheDocument()
+  expect(screen.queryByText('not yet created')).not.toBeInTheDocument()
+})
+
+it('shows the Projects of an unreachable Linked Instance as unavailable, never empty', async () => {
+  linkedFake(false)
+  const user = userEvent.setup()
+  renderApp('/?project=team-shared')
+  const badge = await screen.findByText('unavailable')
+  expect(badge).toHaveAttribute('title', expect.stringContaining('connection refused'))
+  await user.click(screen.getByRole('button', { name: 'Project' }))
+  const delegated = await screen.findByRole('list', { name: 'Delegated Projects' })
+  expect(within(delegated).getByRole('button', { name: /team-shared/ })).toHaveTextContent(
+    'unavailable',
+  )
+  // The Merged list fails as a whole; the picker says why rather than listing nothing.
+  expect(await screen.findByRole('alert')).toHaveTextContent('link "office" is unreachable')
 })

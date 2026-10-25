@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { linkStatusQuery, linksQuery, unavailable } from '@/features/links/api'
 import { PROJECT_ID } from '@/lib/services'
 import { useViewState } from '@/lib/viewState'
 import { cn } from '@/lib/utils'
@@ -33,7 +34,9 @@ export function strictMessage(id: string) {
 /**
  * ProjectSwitcher scopes the views to a Project through ?project=.
  * Choosing a Project only changes the URL: it never creates one (a Project
- * exists once a Service request references it, CONTEXT.md).
+ * exists once a Service request references it, CONTEXT.md). Delegated
+ * Projects are listed apart, naming their Linked Instance, whose
+ * resources the views then read through this Instance (ADR 0027).
  */
 export function ProjectSwitcher() {
   const [view, setView] = useViewState()
@@ -42,8 +45,12 @@ export function ProjectSwitcher() {
   const listable = info?.services.includes('iam') ?? false
   const strict = info?.strictProjects ?? false
   const projects = useQuery({ ...projectsQuery(), enabled: listable })
+  const delegations = useQuery(linksQuery()).data?.delegated ?? []
+  const delegatedTo = new Map(delegations.map((d) => [d.project, d.link]))
+  // Only dialled while something is delegated: it says which links are down.
+  const status = useQuery({ ...linkStatusQuery(), enabled: delegations.length > 0 }).data
   const known = new Set(projects.data?.map((p) => p.projectId))
-  const isKnown = (id: string) => !projects.isSuccess || known.has(id)
+  const isKnown = (id: string) => !projects.isSuccess || known.has(id) || delegatedTo.has(id)
 
   const form = useForm<Form>({
     resolver: zodResolver(schema),
@@ -67,8 +74,13 @@ export function ProjectSwitcher() {
   })
 
   const current = view.project
-  const filtered = (projects.data ?? []).filter((p) => p.projectId.includes(typed))
-  const typedUnknown = PROJECT_ID.test(typed) && projects.isSuccess && !known.has(typed)
+  const currentLink = current ? delegatedTo.get(current) : undefined
+  const currentDown = currentLink ? unavailable(status, currentLink) : ''
+  const filtered = (projects.data ?? []).filter(
+    (p) => p.projectId.includes(typed) && !delegatedTo.has(p.projectId),
+  )
+  const delegated = delegations.filter((d) => d.project.includes(typed))
+  const typedUnknown = PROJECT_ID.test(typed) && projects.isSuccess && !isKnown(typed)
   const fieldError = form.formState.errors.projectId?.message
 
   return (
@@ -168,6 +180,44 @@ export function ProjectSwitcher() {
                 ))}
               </ul>
             )}
+            {delegated.length > 0 && (
+              <>
+                <h3 className="mt-3 mb-1 text-xs font-medium text-muted-foreground">
+                  Delegated Projects
+                </h3>
+                <ul
+                  className="flex max-h-48 flex-col overflow-y-auto"
+                  aria-label="Delegated Projects"
+                >
+                  {delegated.map((d) => {
+                    const down = unavailable(status, d.link)
+                    return (
+                      <li key={d.project}>
+                        <button
+                          type="button"
+                          onClick={() => choose(d.project)}
+                          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+                        >
+                          <Check
+                            className={cn('size-4', d.project !== current && 'invisible')}
+                            aria-hidden
+                          />
+                          <span className="font-mono">{d.project}</span>
+                          <Badge variant="outline" className="ml-auto">
+                            {d.link}
+                          </Badge>
+                          {down && (
+                            <Badge variant="destructive" title={down}>
+                              unavailable
+                            </Badge>
+                          )}
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )}
             {current && (
               <Button
                 variant="link"
@@ -184,7 +234,17 @@ export function ProjectSwitcher() {
           </div>
         </PopoverContent>
       </Popover>
-      {current && projects.isSuccess && !known.has(current) && (
+      {currentLink && (
+        <Badge variant="outline" title={`Delegated to the Linked Instance ${currentLink}`}>
+          via {currentLink}
+        </Badge>
+      )}
+      {currentDown && (
+        <Badge variant="destructive" title={currentDown}>
+          unavailable
+        </Badge>
+      )}
+      {current && !currentLink && projects.isSuccess && !known.has(current) && (
         <Badge
           variant={strict ? 'destructive' : 'warning'}
           title={strict ? strictMessage(current) : undefined}

@@ -883,6 +883,7 @@ paths:
                         version: { type: integer }
                         error: { type: string, description: Why it is not reachable or broken, naming the link. }
                         warning: { type: string, description: "The latest refused connection that claimed to be the other Instance with another CA; unverified, so it leaves the state alone." }
+                        shared: { type: array, items: { type: string }, description: "The Projects the other Instance shares with this one, which this one can delegate, by Project; absent unless reachable, or when asking failed." }
   /_emu/v1/links/{name}:
     delete:
       summary: Unpair a link (`gcpemu link unpair`); this Instance stops accepting the other at once.

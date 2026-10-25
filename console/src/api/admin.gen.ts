@@ -2806,6 +2806,8 @@ export interface operations {
                             error?: string;
                             /** @description The latest refused connection that claimed to be the other Instance with another CA; unverified, so it leaves the state alone. */
                             warning?: string;
+                            /** @description The Projects the other Instance shares with this one, which this one can delegate, by Project; absent unless reachable, or when asking failed. */
+                            shared?: string[];
                         }[];
                     };
                 };

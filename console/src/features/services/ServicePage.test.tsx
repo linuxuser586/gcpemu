@@ -25,6 +25,7 @@ it('lists only enabled Services in the sidebar, carrying the view state', async 
     'Request log',
     'Fault rules',
     'State',
+    'Links',
     'IAM & Resource Manager',
     'Pub/Sub',
     'Cloud Storage',

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -569,6 +570,31 @@ func TestDelegateNeedsAShare(t *testing.T) {
 	}
 	if _, ok := laptop.DelegatedTo("team-shared"); ok {
 		t.Error("still delegated after Undelegate")
+	}
+}
+
+// Check reports the Projects a reachable link shares with this Instance,
+// so that the Web console can show them before they are delegated (#622).
+func TestCheckReportsWhatTheLinkShares(t *testing.T) {
+	laptop, office, other := newLinked(t, "laptop", ""), newLinked(t, "office", ""), newLinked(t, "other", "")
+	pair(t, laptop, office)
+	pair(t, other, office)
+	if st := laptop.Check(ctxT(t), "office"); !st.Reachable || st.Shared == nil || len(st.Shared) != 0 {
+		t.Errorf("Check before any Share = %+v, want reachable with no Projects shared", st)
+	}
+	for _, sh := range []link.Share{{Project: "team-shared"}, {Project: "for-laptop", With: "laptop"}, {Project: "for-other", With: "other"}} {
+		if err := office.Share(sh.Project, sh.With); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st := laptop.Check(ctxT(t), "office"); !slices.Equal(st.Shared, []string{"for-laptop", "team-shared"}) {
+		t.Errorf("Check's Shared = %v, want [for-laptop team-shared], by Project", st.Shared)
+	}
+	if err := office.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if st := laptop.Check(ctxT(t), "office"); st.Reachable || st.Shared != nil {
+		t.Errorf("Check of an unreachable link = %+v, want no Shared", st)
 	}
 }
 

@@ -626,6 +626,10 @@ type Status struct {
 	Error     string `json:"error,omitempty"`
 	// Warning is an unverified sign of trouble, as LinkState's.
 	Warning string `json:"warning,omitempty"`
+	// Shared is the Projects the other Instance shares with this one, which
+	// it can delegate; nil unless Reachable, or when asking failed, which
+	// leaves it reachable all the same.
+	Shared []string `json:"shared,omitempty"`
 }
 
 // LinkState is a Link and its State, as `gcpemu link list` shows it.
@@ -757,6 +761,12 @@ func (m *Manager) Check(ctx context.Context, name string) Status {
 			return st
 		}
 		st.Reachable, st.Version = true, reply.Version
+		var shared struct{ Projects []string }
+		if _, err := m.callPaired(ctx, *p, http.MethodGet, "/link/v1/shared", &shared); err != nil {
+			m.cfg.Log.Warn("could not ask the link which Projects it shares", "link", name, "err", err)
+			return st
+		}
+		st.Shared = append([]string{}, shared.Projects...)
 	}
 	return st
 }
