@@ -247,6 +247,10 @@ _Avoid_: node, peer, remote, upstream
 Another Instance, usually on another machine, that an Instance delegates one or more Projects to. The front Instance authenticates each caller and asserts their Principal to the Linked Instance, which checks IAM itself. Two Instances become linked only by Pairing.
 _Avoid_: peer (collides with VPC network peering), remote Instance, node
 
+**Front Instance**:
+The Instance a caller reached, which forwards the caller's request for a Delegated Project over a link to the Linked Instance that shares it. It is a role in one request, not a kind of Instance: an Instance can be the front Instance for some Projects and a Linked Instance for others.
+_Avoid_: local Instance, client Instance, proxy
+
 **Pairing**:
 The explicit act, approved on both sides, by which two Instances each come to trust the other's Instance CA, so that each accepts the other's asserted Principals. It leaves each side with a Link to the other. Discovery never pairs Instances.
 _Avoid_: joining, trusting (unqualified)
