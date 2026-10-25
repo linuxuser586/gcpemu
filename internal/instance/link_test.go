@@ -11,6 +11,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/link"
 )
 
@@ -28,6 +29,8 @@ func startLinked(t *testing.T, name, dir string) *Instance {
 	cfg.Ports["gateway"] = 0
 	cfg.Ports[link.Endpoint] = 0
 	cfg.LinkBind = []string{"127.0.0.1"}
+	// Off 5353, so that the test's Instances meet no others over mDNS.
+	cfg.LinkMDNSPort = hosttest.FreeUDPPort(t)
 	in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, io.Discard)
 	if err != nil {
 		t.Fatal(err)

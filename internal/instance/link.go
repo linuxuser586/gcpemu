@@ -16,6 +16,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/link"
+	"github.com/linuxuser586/gcpemu/internal/mdns"
 )
 
 // newLink returns the Instance's link Manager (ADR 0027). A Persistent
@@ -33,7 +34,8 @@ func (in *Instance) newLink() (*link.Manager, error) {
 	}
 	return link.New(link.Config{
 		CA: in.Env.CA, Instance: in.Config.Instance, ID: in.ID, Store: st,
-		Log: in.Env.Log.With("component", "link"),
+		Log:         in.Env.Log.With("component", "link"),
+		StaticAddrs: in.Config.LinkDiscover, MDNS: mdns.Options{Port: in.Config.LinkMDNSPort},
 		HasProject: func(id string) bool {
 			return slices.Contains(in.Config.Projects, id) || slices.Contains(in.Env.Projects(), id)
 		},
@@ -81,6 +83,11 @@ func (in *Instance) startLink() {
 	if len(addrs) > 0 {
 		sort.Strings(addrs)
 		in.Env.Endpoints.Set(link.Endpoint, strings.Join(addrs, ","))
+		// Only an Instance with --link-bind advertises. Without mDNS it is
+		// still paired by address.
+		if err := in.link.Advertise(addrs); err != nil {
+			in.Env.Log.Warn("cannot advertise the link protocol over mDNS; pair with this Instance by address", "err", err)
+		}
 	}
 	in.link.StartWatching()
 }
@@ -140,6 +147,14 @@ func (in *Instance) linkRoutes(mux *http.ServeMux) {
 		}
 		wg.Wait()
 		writeJSON(w, http.StatusOK, map[string]any{"links": out})
+	})
+	mux.HandleFunc("GET /_emu/v1/links/discovered", func(w http.ResponseWriter, r *http.Request) {
+		ds, err := in.link.Discover(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"instances": ds})
 	})
 	mux.HandleFunc("POST /_emu/v1/links/identify", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Address string }

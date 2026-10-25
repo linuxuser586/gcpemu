@@ -5,6 +5,7 @@
 package hosttest
 
 import (
+	"net"
 	"os/exec"
 	"strings"
 	"testing"
@@ -119,4 +120,36 @@ func EnvValue(t testing.TB, gcpemuEnv func() string, key string) string {
 		return ok
 	}, gcpemuEnv)
 	return v
+}
+
+// LANIP returns an IPv4 address of an up, multicast-capable interface
+// other than loopback, or skips the test: mDNS needs one.
+func LANIP(t testing.TB) string {
+	t.Helper()
+	ifs, _ := net.Interfaces()
+	for _, ifi := range ifs {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagMulticast == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := ifi.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && !n.IP.IsLinkLocalUnicast() {
+				return n.IP.String()
+			}
+		}
+	}
+	t.Skip("no multicast-capable LAN interface")
+	return ""
+}
+
+// FreeUDPPort returns a UDP port free on the wildcard address, such as a
+// test's own mDNS port, so that its Instances meet no others.
+func FreeUDPPort(t testing.TB) int {
+	t.Helper()
+	pc, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	return pc.LocalAddr().(*net.UDPAddr).Port
 }
