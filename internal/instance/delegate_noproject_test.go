@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -43,25 +45,91 @@ func bearerGet(t *testing.T, in *Instance, path, tok string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// A key for a service account in the Delegated Project, created through
-// the laptop under projects/-, gets a token from the laptop's token
-// endpoint, and the laptop accepts that token for the Delegated Project's
-// resources, asserting the service account to the office.
-func TestDelegatedServiceAccountToken(t *testing.T) {
-	laptop, office := delegated(t, func(c *config.Config) { c.IAMMode = config.IAMEnforce }, nil)
-	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/"+shared+"/serviceAccounts", map[string]string{"accountId": "runner"}, nil)
-	var key struct{ PrivateKeyData string }
-	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/-/serviceAccounts/"+runner+"/keys", map[string]string{}, &key)
+// keyFileThrough creates a key for email through in's API gateway, with
+// the request's headers set from header, and returns the key's ID and the
+// decoded key file.
+func keyFileThrough(t *testing.T, in *Instance, email string, header http.Header) (string, []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, "http://"+in.Env.Endpoints.Get("gateway")+"/iam/v1/projects/-/serviceAccounts/"+email+"/keys", strings.NewReader("{}"))
+	for k, v := range header {
+		req.Header[k] = v
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var key struct{ Name, PrivateKeyData string }
+	if b, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusOK || json.Unmarshal(b, &key) != nil {
+		t.Fatalf("creating a key for %s: %d %s", email, resp.StatusCode, b)
+	}
 	file, err := base64.StdEncoding.DecodeString(key.PrivateKeyData)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return key.Name[strings.LastIndex(key.Name, "/")+1:], file
+}
+
+// keyFileURLs are the URLs of a key file that name an Instance.
+type keyFileURLs struct {
+	TokenURI                string `json:"token_uri"`
+	AuthProviderX509CertURL string `json:"auth_provider_x509_cert_url"`
+	ClientX509CertURL       string `json:"client_x509_cert_url"`
+}
+
+// urlsOf returns the URLs of the key file.
+func urlsOf(t *testing.T, file []byte) keyFileURLs {
+	t.Helper()
+	var u keyFileURLs
+	if err := json.Unmarshal(file, &u); err != nil {
+		t.Fatalf("key file %s: %v", file, err)
+	}
+	return u
+}
+
+// urlsUnder returns the key file URLs of a key for email under base.
+func urlsUnder(base, email string) keyFileURLs {
+	return keyFileURLs{
+		TokenURI:                base + "/oauth2/token",
+		AuthProviderX509CertURL: base + "/oauth2/v1/certs",
+		ClientX509CertURL:       base + "/service_accounts/v1/metadata/x509/" + email,
+	}
+}
+
+// A key for a service account in the Delegated Project, created through
+// the laptop under projects/-, names the laptop's token and certificate
+// URLs (ADR 0027), in the scheme the caller used. It gets a token from the
+// laptop unmodified, the laptop serves its certificate from the office,
+// and the laptop accepts the token for the Delegated Project's resources,
+// asserting the service account to the office. A key created on the
+// office names the office's URLs.
+func TestDelegatedServiceAccountToken(t *testing.T) {
+	laptop, office := delegated(t, func(c *config.Config) { c.IAMMode = config.IAMEnforce }, nil)
+	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/"+shared+"/serviceAccounts", map[string]string{"accountId": "runner"}, nil)
+	keyID, file := keyFileThrough(t, laptop, runner, nil)
+	gw := laptop.Env.Endpoints.Get("gateway")
+	urls := urlsOf(t, file)
+	if want := urlsUnder("http://"+gw, runner); urls != want {
+		t.Errorf("key file through the laptop names %+v, want %+v", urls, want)
+	}
+	_, secure := keyFileThrough(t, laptop, runner, http.Header{"X-Forwarded-Proto": {"https"}})
+	if got, want := urlsOf(t, secure), urlsUnder("https://"+gw, runner); got != want {
+		t.Errorf("key file through the laptop with X-Forwarded-Proto https names %+v, want %+v", got, want)
+	}
+
+	certs, _ := url.Parse(urls.ClientX509CertURL)
+	if code, body := restGet(t, laptop, http.MethodGet, certs.EscapedPath()); code != http.StatusOK || !strings.Contains(body, `"`+keyID+`"`) {
+		t.Errorf("the key's certificates through the laptop = %d %s, want key %s", code, body, keyID)
+	}
+	_, direct := keyFileThrough(t, office, runner, nil)
+	if got, want := urlsOf(t, direct), urlsUnder("http://"+office.Env.Endpoints.Get("gateway"), runner); got != want {
+		t.Errorf("key file created on the office names %+v, want %+v", got, want)
+	}
+
 	cfg, err := google.JWTConfigFromJSON(file, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The key file names the office's token endpoint until #657.
-	cfg.TokenURL = "http://" + laptop.Env.Endpoints.Get("gateway") + "/oauth2/token"
 	tok, err := cfg.TokenSource(context.Background()).Token()
 	if err != nil {
 		t.Fatalf("token from the laptop's token endpoint: %v", err)

@@ -184,12 +184,27 @@ func (s *Service) tokenURI() string { return s.gatewayURL() + "/oauth2/token" }
 // LAN (--gfe-bind).
 func googleHosted(r *http.Request) bool { return emu.IsGoogleHost(r.Host) }
 
+// keyBase is the base URL of the token and certificate URLs in a key file
+// created by r: the front Instance's, by the Host and scheme the caller
+// used, when r came over a link (ADR 0027), or else the gateway's.
+func (s *Service) keyBase(r *http.Request) string {
+	if _, _, ok := emu.AssertedBy(r.Context()); !ok {
+		return s.gatewayURL()
+	}
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		scheme = "http"
+	}
+	return scheme + "://" + r.Host
+}
+
 // createKey creates a user-managed key and returns it with the JSON key
 // file (FR-IAM-001). A key created through a real Google hostname
-// (googleHosted) names Google's token and certificate URLs and universe, which that caller reaches by the same
-// names, so it works unmodified on another machine (#462); any other names
-// the gateway and the Invalid universe.
-func (s *Service) createKey(sa *iamv1.ServiceAccount, google bool) (*keyRecord, []byte, error) {
+// (googleHosted) names Google's token and certificate URLs and universe,
+// which that caller reaches by the same names, so it works unmodified on
+// another machine (#462); any other names the token and certificate URLs
+// under base, and the Invalid universe.
+func (s *Service) createKey(sa *iamv1.ServiceAccount, base string, google bool) (*keyRecord, []byte, error) {
 	now := s.env.Clock.Now().UTC().Truncate(time.Second)
 	priv, certPEM, err := newKeyPair(sa.Email, now, maxValidBefore)
 	if err != nil {
@@ -204,9 +219,9 @@ func (s *Service) createKey(sa *iamv1.ServiceAccount, google bool) (*keyRecord, 
 		Type: "service_account", ProjectID: sa.ProjectId, PrivateKeyID: rec.KeyID,
 		PrivateKey: privatePEM(priv), ClientEmail: sa.Email, ClientID: sa.UniqueId,
 		AuthURI:                 "https://accounts.google.com/o/oauth2/auth",
-		TokenURI:                s.tokenURI(),
-		AuthProviderX509CertURL: s.gatewayURL() + "/oauth2/v1/certs",
-		ClientX509CertURL:       s.gatewayURL() + "/service_accounts/v1/metadata/x509/" + url.PathEscape(sa.Email),
+		TokenURI:                base + "/oauth2/token",
+		AuthProviderX509CertURL: base + "/oauth2/v1/certs",
+		ClientX509CertURL:       base + "/service_accounts/v1/metadata/x509/" + url.PathEscape(sa.Email),
 		// The Invalid universe, matching GOOGLE_CLOUD_UNIVERSE_DOMAIN from
 		// `gcpemu env`: Go clients and gcloud reject a key whose universe
 		// differs from the one they are configured for (#215).
@@ -394,6 +409,6 @@ func (s *Service) ADCKey(current []byte) ([]byte, error) {
 	if sa == nil {
 		return nil, fmt.Errorf("metadata service account %s does not exist", email)
 	}
-	_, b, err := s.createKey(sa, false)
+	_, b, err := s.createKey(sa, s.gatewayURL(), false)
 	return b, err
 }

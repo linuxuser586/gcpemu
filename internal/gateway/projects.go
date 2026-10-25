@@ -27,6 +27,10 @@ var projectSegment = regexp.MustCompile(`(?:^|/)projects/([^/:?]+)`)
 // Project is in its email.
 var accountSegment = regexp.MustCompile(`(?:^|/)projects/-/serviceAccounts/([^/:?]+)`)
 
+// accountCerts matches a service account's public certificates (a key
+// file's client_x509_cert_url), whose Project is in its email.
+var accountCerts = regexp.MustCompile(`^/service_accounts/v1/metadata/(?:x509|jwk)/([^/]+)$`)
+
 // bucketCollection matches Cloud Storage's bucket collection, whose
 // project parameter names the Project of the buckets it lists or creates.
 var bucketCollection = regexp.MustCompile(`^(/storage)?/storage/v1/b/?$`)
@@ -37,13 +41,13 @@ var bucketCollection = regexp.MustCompile(`^(/storage)?/storage/v1/b/?$`)
 // checks that they are shared with the link it came over (ADR 0027).
 //
 // A REST request names the Projects of the projects/P in its path, that
-// of a service account's email under projects/-, the bucket collection's
-// project parameter, an XML API bucket's x-goog-project-id, or the service
-// account whose key signed a token endpoint's JWT-bearer assertion. A
-// gRPC call names those its request message's string fields, and those of
-// the messages nested in it, start with projects/P, read by the message's
-// registered descriptor, so that fields it does not have, bytes and maps
-// name none. The Admin API, the Web console and in-container agents'
+// of a service account's email under projects/- or in its certificates'
+// path, the bucket collection's project parameter, an XML API bucket's
+// x-goog-project-id, or the service account whose key signed a token
+// endpoint's JWT-bearer assertion. A gRPC call names those its request
+// message's string fields, and those of the messages nested in it, start
+// with projects/P, read by the message's registered descriptor, so that
+// fields it does not have, bytes and maps name none. The Admin API, the Web console and in-container agents'
 // callbacks name none, nor do other projects/-, a bucket, or a gRPC method
 // this binary does not know.
 func requestProjects(r *http.Request) []string {
@@ -58,8 +62,10 @@ func requestProjects(r *http.Request) []string {
 		out = addProject(out, m[1])
 	}
 	for _, m := range accountSegment.FindAllStringSubmatch(r.URL.EscapedPath(), -1) {
-		email, _ := url.PathUnescape(m[1])
-		out = addProject(out, project.OfServiceAccount(email))
+		out = addAccountProject(out, m[1])
+	}
+	if m := accountCerts.FindStringSubmatch(r.URL.EscapedPath()); m != nil {
+		out = addAccountProject(out, m[1])
 	}
 	switch {
 	case len(out) > 0:
@@ -71,6 +77,13 @@ func requestProjects(r *http.Request) []string {
 		out = addProject(out, r.Header.Get("X-Goog-Project-Id"))
 	}
 	return out
+}
+
+// addAccountProject adds to ids the Project in the path-escaped email of
+// a service account.
+func addAccountProject(ids []string, escaped string) []string {
+	email, _ := url.PathUnescape(escaped)
+	return addProject(ids, project.OfServiceAccount(email))
 }
 
 // xmlBucket reports whether path is an XML API request on a bucket, or

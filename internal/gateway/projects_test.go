@@ -51,6 +51,11 @@ func TestRequestProjects(t *testing.T) {
 		{"/v1/projects/-/serviceAccounts/123456789012-compute@developer.gserviceaccount.com:signBlob", []string{"123456789012"}},
 		{"/v1/projects/-/serviceAccounts/someone@example.com", nil},
 		{"/v1/projects/-/serviceAccounts", nil},
+		// A service account's certificates name the Project in its email.
+		{"/service_accounts/v1/metadata/x509/sa@team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/service_accounts/v1/metadata/jwk/sa%40team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/service_accounts/v1/metadata/x509/someone@example.com", nil},
+		{"/service_accounts/v1/metadata/x509", nil},
 		{"/storage/v1/b/projects/o", nil},
 		// The Admin API, the Web console and agent callbacks name none,
 		// however they are escaped.
