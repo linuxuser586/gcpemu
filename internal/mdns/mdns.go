@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -147,6 +148,12 @@ func Advertise(svc Service, o Options) (*Responder, error) {
 	_ = pc.SetMulticastLoopback(true)
 	_ = pc.SetMulticastTTL(255)
 	r := &Responder{svc: svc, port: o.port(), ifs: joined, pc: pc, conn: conn, log: cmpLog(o.Log), done: make(chan struct{})}
+	// The first announcement shows whether the OS lets this process send
+	// multicast at all.
+	if err := r.announceOnce(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("mDNS: cannot announce on any interface holding %v: %w", svc.Addrs, explain(err))
+	}
 	go r.serve()
 	go r.announce()
 	return r, nil
@@ -160,28 +167,37 @@ func (r *Responder) Close() error {
 		for _, ifi := range r.ifs {
 			// The service type's own PTR is shared with every other
 			// Instance on the host, so it is left to expire.
-			r.sendMulticast(ifi, unsolicited(r.records(ifi.addrs, 0)[1:]))
+			_ = r.sendMulticast(ifi, unsolicited(r.records(ifi.addrs, 0)[1:]))
 		}
 		err = r.conn.Close()
 	})
 	return err
 }
 
-// announce sends unsolicited responses twice, a second apart (RFC 6762
-// §8.3), so that caches pick up the service without asking.
+// announce sends the second unsolicited response, a second after
+// Advertise sent the first (RFC 6762 §8.3), so that caches pick up the
+// service without asking.
 func (r *Responder) announce() {
-	for i := range 2 {
-		if i > 0 {
-			select {
-			case <-r.done:
-				return
-			case <-time.After(time.Second):
-			}
-		}
-		for _, ifi := range r.ifs {
-			r.sendMulticast(ifi, unsolicited(r.records(ifi.addrs, -1)))
+	select {
+	case <-r.done:
+	case <-time.After(time.Second):
+		_ = r.announceOnce()
+	}
+}
+
+// announceOnce sends an unsolicited response on every interface, failing
+// only when it can send on none.
+func (r *Responder) announceOnce() error {
+	var errs []error
+	for _, ifi := range r.ifs {
+		if err := r.sendMulticast(ifi, unsolicited(r.records(ifi.addrs, -1))); err != nil {
+			errs = append(errs, err)
 		}
 	}
+	if len(errs) == len(r.ifs) {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // serve answers queries until the socket is closed.
@@ -201,16 +217,14 @@ func (r *Responder) serve() {
 		if q.Unpack(b[:n]) != nil || q.Response || q.Opcode != dns.OpcodeQuery {
 			continue
 		}
-		// A query is answered with the addresses of the interface it came
-		// in on. One the OS reports on another interface, as some deliver
-		// multicast this host sent itself on lo0, is answered with all.
+		r.log.Debug("mDNS query", "from", src, "ifIndex", ifIndex(cm), "questions", len(q.Question))
 		ifs := r.ifs
 		if cm != nil && cm.IfIndex != 0 {
-			if on := slices.DeleteFunc(slices.Clone(r.ifs), func(i iface) bool { return i.Index != cm.IfIndex }); len(on) > 0 {
-				ifs = on
+			ifs = slices.DeleteFunc(slices.Clone(r.ifs), func(i iface) bool { return i.Index != cm.IfIndex })
+			if len(ifs) == 0 {
+				continue
 			}
 		}
-		r.log.Debug("mDNS query", "from", src, "ifIndex", ifIndex(cm), "questions", len(q.Question))
 		r.answer(&q, src.(*net.UDPAddr), ifs)
 	}
 }
@@ -256,7 +270,7 @@ func (r *Responder) answer(q *dns.Msg, src *net.UDPAddr, ifs []iface) {
 		if unicast {
 			r.send(resp, src)
 		} else {
-			r.sendMulticast(ifi, resp)
+			_ = r.sendMulticast(ifi, resp)
 		}
 	}
 }
@@ -322,21 +336,23 @@ func unsolicited(rrs []dns.RR) *dns.Msg {
 }
 
 // sendMulticast sends m to the group on ifi.
-func (r *Responder) sendMulticast(ifi iface, m *dns.Msg) {
+func (r *Responder) sendMulticast(ifi iface, m *dns.Msg) error {
 	b, err := m.Pack()
 	if err != nil {
 		r.log.Warn("mDNS: cannot pack a response", "err", err)
-		return
+		return err
 	}
 	r.wmu.Lock()
 	defer r.wmu.Unlock()
 	if err := r.pc.SetMulticastInterface(&ifi.Interface); err != nil {
 		r.log.Debug("mDNS: cannot pick the interface", "interface", ifi.Name, "err", err)
-		return
+		return err
 	}
 	if _, err := r.pc.WriteTo(b, nil, &net.UDPAddr{IP: Group, Port: r.port}); err != nil {
 		r.log.Debug("mDNS: cannot send", "interface", ifi.Name, "err", err)
+		return err
 	}
+	return nil
 }
 
 // send sends m by unicast to dst.
@@ -375,14 +391,22 @@ func Browse(ctx context.Context, typ string, o Options) ([]Entry, error) {
 		return nil, err
 	}
 	log := cmpLog(o.Log)
-	sendAll := func() {
+	sendAll := func() error {
+		var errs []error
 		for _, ifi := range ifs {
 			err := pc.SetMulticastInterface(&ifi.Interface)
 			if err == nil {
 				_, err = pc.WriteTo(b, nil, &net.UDPAddr{IP: Group, Port: o.port()})
 			}
 			log.Debug("mDNS browse query", "interface", ifi.Name, "err", err)
+			if err != nil {
+				errs = append(errs, err)
+			}
 		}
+		if len(errs) == len(ifs) {
+			return errors.Join(errs...)
+		}
+		return nil
 	}
 	wait := o.Wait
 	if wait == 0 {
@@ -396,9 +420,12 @@ func Browse(ctx context.Context, typ string, o Options) ([]Entry, error) {
 	defer stop()
 	_ = conn.SetReadDeadline(deadline)
 
-	// A query is sent again shortly after, in case the first was lost.
-	sendAll()
-	resend := time.AfterFunc(wait/4, sendAll)
+	// A query is sent again shortly after, in case the first was lost. A
+	// query sent nowhere is an error, rather than an empty list.
+	if err := sendAll(); err != nil {
+		return nil, fmt.Errorf("mDNS: cannot query on any interface: %w", explain(err))
+	}
+	resend := time.AfterFunc(wait/4, func() { _ = sendAll() })
 	defer resend.Stop()
 
 	c := collector{typ: strings.ToLower(typ + ".local."), srv: map[string]*dns.SRV{}, txt: map[string][]string{}, addrs: map[string][]net.IP{}, inst: map[string]bool{}}
@@ -551,6 +578,16 @@ func unescapeLabel(s string) string {
 }
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
+
+// explain adds to err, from sending multicast, what to do about it where
+// the cause is known: macOS's Local Network privacy refuses LAN traffic
+// with "no route to host" until the user allows it.
+func explain(err error) error {
+	if runtime.GOOS == "darwin" && errors.Is(err, syscall.EHOSTUNREACH) {
+		return fmt.Errorf("%w; macOS's Local Network privacy may be blocking it: allow the app running gcpemu (e.g. the terminal) under System Settings > Privacy & Security > Local Network", err)
+	}
+	return err
+}
 
 // ifIndex is the interface cm says a datagram came in on, 0 if unknown.
 func ifIndex(cm *ipv4.ControlMessage) int {

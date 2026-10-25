@@ -453,6 +453,10 @@ mDNS shares port 5353 with the `dns` Service's default port and with the OS's mD
 Host mode's DNS forwarding sends the `dns` Service; browsing queries from an ephemeral port and binds
 nothing on 5353. If the Instance cannot advertise, it logs why and is still paired by address.
 
+On macOS, Local Network privacy refuses multicast to a process the user hasn't allowed: the first
+`link discover` or `start --link-bind` may ask, and a refusal shows as "no route to host". Allow the
+app running gcpemu, such as the terminal, under System Settings > Privacy & Security > Local Network.
+
 #### Shared and Delegated Projects
 
 Once paired, the office Instance shares Projects and the laptop delegates them. From then on the
