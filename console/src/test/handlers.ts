@@ -3,6 +3,14 @@ import { http, HttpResponse } from 'msw'
 import type { Container, External, Info, Operation, Readiness, ResourceCounts } from '@/api/admin'
 import type { Project } from '@/api/queries'
 import type { FaultRule } from '@/features/faults/api'
+import type {
+  Delegation,
+  Discovered,
+  LinkState,
+  LinkStatus,
+  PairingRequest,
+  Share,
+} from '@/features/links/api'
 import type { Snapshot } from '@/features/state/api'
 
 // A fake Instance for component tests: tests mutate `fake` to shape what
@@ -23,6 +31,15 @@ export interface Fake {
   /** seeds are the seed files applied, in order. */
   seeds: string[]
   resets: number
+  /** links, linkStatus, shared and delegated shape /_emu/v1/links (ADR 0027). */
+  links: LinkState[]
+  linkStatus: LinkStatus[]
+  shared: Share[]
+  delegated: Delegation[]
+  pairingRequests: PairingRequest[]
+  discovered: Discovered[]
+  /** pairs are the Pairing requests sent, in order. */
+  pairs: { address: string; fingerprint: string; name?: string }[]
 }
 
 export function defaultFake(): Fake {
@@ -132,7 +149,53 @@ export function defaultFake(): Fake {
     ],
     seeds: [],
     resets: 0,
+    links: [],
+    linkStatus: [],
+    shared: [],
+    delegated: [],
+    pairingRequests: [],
+    discovered: [],
+    pairs: [],
   }
+}
+
+/**
+ * linkedFake shapes the fake as a laptop paired with an office that
+ * shares team-shared and for-laptop, the laptop delegating team-shared,
+ * and the laptop sharing laptop-own with every link.
+ */
+export function linkedFake(reachable = true) {
+  fake.links = [
+    {
+      name: 'office',
+      instance: 'office',
+      instanceId: 'f0f1f2f3f4f5',
+      address: '192.168.1.20:4511',
+      fingerprint: 'sha256:OFFICE',
+      localFingerprint: 'sha256:LAPTOP',
+      version: 1,
+      pairedAt: '2026-10-08T11:00:00Z',
+      state: 'paired',
+    },
+  ]
+  fake.linkStatus = [
+    reachable
+      ? {
+          name: 'office',
+          state: 'paired',
+          reachable: true,
+          version: 1,
+          shared: ['for-laptop', 'team-shared'],
+        }
+      : {
+          name: 'office',
+          state: 'paired',
+          reachable: false,
+          error: 'link "office": dial tcp 192.168.1.20:4511: connect: connection refused',
+        },
+  ]
+  fake.shared = [{ project: 'laptop-own' }]
+  fake.delegated = [{ project: 'team-shared', link: 'office' }]
 }
 
 export const fake: Fake = defaultFake()
@@ -240,9 +303,126 @@ export const handlers = [
         headers: { 'Content-Type': 'application/yaml' },
       }),
   ),
-  http.get('*/cloudresourcemanager/v3/projects\\:search', () =>
-    HttpResponse.json({ projects: fake.projects }),
+  http.get('*/_emu/v1/links', () =>
+    HttpResponse.json({
+      links: fake.links,
+      fingerprint: 'sha256:LAPTOP',
+      shared: fake.shared,
+      delegated: fake.delegated,
+    }),
   ),
+  http.post('*/_emu/v1/links', async ({ request }) => {
+    const body = (await request.json()) as Fake['pairs'][number]
+    fake.pairs = [...fake.pairs, body]
+    if (body.address.startsWith('refusing')) {
+      return HttpResponse.json(
+        { error: 'Instance "office" rejected the Pairing request', reason: 'rejected' },
+        { status: 409 },
+      )
+    }
+    const d = fake.discovered.find((x) => x.address === body.address)
+    const added: LinkState = {
+      name: body.name || d?.instance || 'office',
+      instance: d?.instance ?? 'office',
+      address: body.address,
+      fingerprint: body.fingerprint,
+      version: 1,
+      state: 'paired',
+    }
+    fake.links = [...fake.links, added]
+    return HttpResponse.json(added)
+  }),
+  http.delete('*/_emu/v1/links/:name', ({ params }) => {
+    fake.links = fake.links.filter((l) => l.name !== params.name)
+    fake.delegated = fake.delegated.filter((d) => d.link !== params.name)
+    return HttpResponse.json({ status: 'unpaired' })
+  }),
+  http.get('*/_emu/v1/links/status', () => HttpResponse.json({ links: fake.linkStatus })),
+  http.get('*/_emu/v1/links/discovered', () => HttpResponse.json({ instances: fake.discovered })),
+  http.post('*/_emu/v1/links/identify', async ({ request }) => {
+    const { address } = (await request.json()) as { address: string }
+    const d = fake.discovered.find((x) => x.address === address)
+    return d
+      ? HttpResponse.json({
+          name: d.instance,
+          id: d.instanceId,
+          fingerprint: d.fingerprint,
+          version: 1,
+          minVersion: 1,
+        })
+      : HttpResponse.json({ error: `dial tcp ${address}: connection refused` }, { status: 502 })
+  }),
+  http.get('*/_emu/v1/links/requests', () => HttpResponse.json({ requests: fake.pairingRequests })),
+  http.post('*/_emu/v1/links/requests/:id/approve', async ({ params, request }) => {
+    const text = await request.text()
+    const { name } = (text ? JSON.parse(text) : {}) as { name?: string }
+    const r = fake.pairingRequests.find((x) => x.id === params.id)
+    if (!r) return HttpResponse.json({ error: 'no such Pairing request' }, { status: 400 })
+    fake.pairingRequests = fake.pairingRequests.filter((x) => x.id !== params.id)
+    const added: LinkState = {
+      name: name || r.name || '',
+      instance: r.name,
+      fingerprint: r.fingerprint,
+      version: r.version,
+      state: 'paired',
+    }
+    fake.links = [...fake.links, added]
+    return HttpResponse.json(added)
+  }),
+  http.post('*/_emu/v1/links/requests/:id/reject', ({ params }) => {
+    fake.pairingRequests = fake.pairingRequests.filter((x) => x.id !== params.id)
+    return HttpResponse.json({ status: 'rejected' })
+  }),
+  http.post('*/_emu/v1/links/shares', async ({ request }) => {
+    const sh = (await request.json()) as Share
+    if (fake.delegated.some((d) => d.project === sh.project)) {
+      return HttpResponse.json(
+        { error: `Project "${sh.project}" is delegated, so this Instance cannot share it` },
+        { status: 400 },
+      )
+    }
+    fake.shared = [...fake.shared, sh].sort((a, b) => a.project.localeCompare(b.project))
+    return HttpResponse.json(sh)
+  }),
+  http.delete('*/_emu/v1/links/shares/:project', ({ params, request }) => {
+    const w = new URL(request.url).searchParams.get('with') ?? ''
+    fake.shared = fake.shared.filter((s) => !(s.project === params.project && (!w || s.with === w)))
+    return HttpResponse.json({ status: 'unshared' })
+  }),
+  http.post('*/_emu/v1/links/delegations', async ({ request }) => {
+    const d = (await request.json()) as Delegation
+    fake.delegated = [...fake.delegated, d].sort((a, b) => a.project.localeCompare(b.project))
+    return HttpResponse.json(d)
+  }),
+  http.delete('*/_emu/v1/links/delegations/:project', ({ params }) => {
+    fake.delegated = fake.delegated.filter((d) => d.project !== params.project)
+    return HttpResponse.json({ status: 'undelegated' })
+  }),
+  // A Merged list: the Delegated Projects follow the local ones, and it
+  // fails as a whole while a link they are delegated to is unreachable.
+  http.get('*/cloudresourcemanager/v3/projects\\:search', () => {
+    const down = fake.linkStatus.find(
+      (s) => !s.reachable && fake.delegated.some((d) => d.link === s.name),
+    )
+    if (down) {
+      return HttpResponse.json(
+        {
+          error: {
+            code: 503,
+            status: 'UNAVAILABLE',
+            message: `link "${down.name}" is unreachable`,
+          },
+        },
+        { status: 503 },
+      )
+    }
+    return HttpResponse.json({
+      projects: [
+        ...fake.projects,
+        ...fake.delegated.map((d) => ({ projectId: d.project, name: `projects/${d.project}` })),
+      ],
+    })
+  }),
   // The OAuth2 token endpoint names the token after the Principal.
   http.post('*/oauth2/token', async ({ request }) => {
     const form = new URLSearchParams(await request.text())

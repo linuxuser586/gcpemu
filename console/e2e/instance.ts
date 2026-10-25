@@ -2,7 +2,7 @@
 // by `task build`): the shared one Playwright's webServer runs
 // (emulator.ts), and private ones for tests that change all of an
 // Instance's state (state.spec.ts) or need their Request log entries kept
-// (requests.spec.ts).
+// (requests.spec.ts), or link with each other (links.spec.ts).
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
@@ -16,6 +16,8 @@ export interface Instance {
   url: string
   /** dir is the instance dir. */
   dir: string
+  /** link is its --link-bind listener's address, when it has one. */
+  link?: string
   stop: () => Promise<void>
 }
 
@@ -69,10 +71,13 @@ export async function startInstance(
     await new Promise((r) => setTimeout(r, 100))
     if (child.exitCode !== null) break
     if (!existsSync(endpoints)) continue
-    const { gateway } = JSON.parse(readFileSync(endpoints, 'utf8')) as { gateway?: string }
+    const { gateway, link } = JSON.parse(readFileSync(endpoints, 'utf8')) as {
+      gateway?: string
+      link?: string
+    }
     if (!gateway) continue
     const ready = await fetch(`http://${gateway}/_emu/v1/ready`).catch(() => undefined)
-    if (ready?.ok) return { url: `http://${gateway}`, dir, stop }
+    if (ready?.ok) return { url: `http://${gateway}`, dir, link, stop }
   }
   await stop()
   throw new Error('gcpemu did not become ready within 60 s')

@@ -135,6 +135,8 @@ import {
 } from '@/features/iam/ServiceAccountPage'
 import { ServiceAccounts } from '@/features/iam/ServiceAccounts'
 import { Simulator } from '@/features/iam/Simulator'
+import { linksQuery } from '@/features/links/api'
+import { Links } from '@/features/links/Links'
 import {
   mappingsQuery,
   routerQuery,
@@ -272,6 +274,14 @@ export function routes(queryClient: QueryClient): RouteObject[] {
           },
         },
         { path: 'faults/create', element: <CreateFault /> },
+        {
+          path: 'links',
+          element: <Links />,
+          loader: async () => {
+            await Promise.allSettled([queryClient.ensureQueryData(linksQuery())])
+            return null
+          },
+        },
         {
           path: 'state',
           element: <State />,
