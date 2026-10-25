@@ -74,9 +74,12 @@ type Service struct {
 	pubVia string
 	pubIPs []string
 
+	// chkMu guards the extensions other services register: checkers,
+	// igResolvers and releasers.
 	chkMu       sync.RWMutex
 	checkers    []UsageChecker
 	igResolvers []InstanceGroupResolver
+	releasers   map[string]SubnetReleaser
 
 	sink *sinkServer
 	// sinkOn: NAT-allowed egress goes to the offline sink (FR-NAT-005).
@@ -236,6 +239,56 @@ func (s *Service) AddUsageChecker(c UsageChecker) {
 	s.chkMu.Lock()
 	s.checkers = append(s.checkers, c)
 	s.chkMu.Unlock()
+}
+
+// SubnetReleaser detaches its service's containers from subnetwork's
+// container network and frees the addresses they hold there.
+type SubnetReleaser func(ctx context.Context, subnetwork string) error
+
+// AddSubnetReleaser registers the releaser of owner's addresses. Other
+// services register one for their Infrastructure addresses (the load
+// balancer's Edge relay), which then never keep a subnetwork from being
+// deleted: compute asks the releaser to leave instead (ADR 0032).
+func (s *Service) AddSubnetReleaser(owner string, r SubnetReleaser) {
+	s.chkMu.Lock()
+	if s.releasers == nil {
+		s.releasers = map[string]SubnetReleaser{}
+	}
+	s.releasers[owner] = r
+	s.chkMu.Unlock()
+}
+
+// releaser returns the releaser of owner's addresses, or nil.
+func (s *Service) releaser(owner string) SubnetReleaser {
+	s.chkMu.RLock()
+	defer s.chkMu.RUnlock()
+	return s.releasers[owner]
+}
+
+// releaseSubnet asks the releasers of the addresses on subnetwork path's
+// container network to leave it; the subnetwork stays in use by an owner
+// that cannot.
+func (s *Service) releaseSubnet(ctx context.Context, path string) error {
+	var owners []string
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		if st, ok := get[vpcNet](tx, nsVPCNets, path); ok {
+			for _, o := range ownersOf(tx, st.Name) {
+				owners = append(owners, o.owner)
+			}
+		}
+		return nil
+	})
+	for _, o := range owners {
+		r := s.releaser(o)
+		if r == nil {
+			continue
+		}
+		if err := r(ctx, path); err != nil {
+			s.env.Log.Warn("compute: releasing a subnetwork address", "subnetwork", path, "owner", o, "err", err)
+			return errInUse("subnetwork", path, o)
+		}
+	}
+	return nil
 }
 
 // HandleFunc adds a route to the compute v1 mux (patterns are rooted at

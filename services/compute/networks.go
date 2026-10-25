@@ -331,9 +331,11 @@ func (s *Service) deleteNetwork(w http.ResponseWriter, r *http.Request) {
 // networkInUse enforces FR-CORE-026 for networks: subnetworks of custom
 // networks (and used auto subnetworks), firewalls, user routes, routers,
 // addresses, NEGs and private services access connections block deletion.
+// When nothing does, the releasers leave its auto subnetworks.
 func (s *Service) networkInUse(ctx context.Context, path string, n *computev1.Network) error {
 	p, _, _ := pathParts(path)
 	var user string
+	var auto []string
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		same := func(ref string) bool { return ref != "" && relPath(ref) == path }
 		for _, sn := range list[computev1.Subnetwork](tx, nsSubnets, "projects/"+p+"/regions/") {
@@ -349,6 +351,7 @@ func (s *Service) networkInUse(ctx context.Context, path string, n *computev1.Ne
 				user = u
 				return nil
 			}
+			auto = append(auto, sp)
 		}
 		for _, f := range list[computev1.Firewall](tx, nsFirewalls, "projects/"+p+"/global/firewalls/") {
 			if same(f.Network) {
@@ -397,6 +400,11 @@ func (s *Service) networkInUse(ctx context.Context, path string, n *computev1.Ne
 	}
 	if user != "" {
 		return errInUse("network", path, user)
+	}
+	for _, sp := range auto {
+		if err := s.releaseSubnet(ctx, sp); err != nil {
+			return err
+		}
 	}
 	return nil
 }

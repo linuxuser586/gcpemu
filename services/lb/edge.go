@@ -55,7 +55,11 @@ var Images = map[string]string{
 type edge struct {
 	d *dataplane
 
-	mu sync.Mutex
+	// syncMu serialises route passes with leaveSubnetwork, so that a pass
+	// holding pod routes read before a subnetwork's last ones went does not
+	// join it again after compute asked the Edge relay to leave it.
+	syncMu sync.Mutex
+	mu     sync.Mutex
 	// rt is what the runtime check found; after a transient failure it
 	// stays rtUnknown and is not tried again before rtRetry.
 	rt      rtState
@@ -73,9 +77,10 @@ type edge struct {
 	routes  []edgeagent.Route
 	pods    []*net.IPNet
 	nets    map[string]bool
-	// vpcs holds the subnetwork networks on which the edge holds an
-	// address compute allocated for it, by network name.
-	vpcs map[string]emu.SubnetNet
+	// subnets holds the subnetwork networks the edge joined, by network
+	// name; on those not Translated it holds an address compute allocated
+	// for it.
+	subnets map[string]emu.SubnetNet
 	// public are the external forwarding rule addresses and ports the
 	// edge serves on the external network, where it holds extIP; routed
 	// is the last route set the PublicRouters accepted ("" for none).
@@ -97,7 +102,7 @@ type edge struct {
 const edgeIdleGrace = 5 * time.Second
 
 func newEdge(d *dataplane) *edge {
-	return &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}, vpcs: map[string]emu.SubnetNet{}}
+	return &edge{d: d, alias: map[string]string{}, byAlias: map[string]string{}, ports: map[string]int{}, nets: map[string]bool{}, subnets: map[string]emu.SubnetNet{}}
 }
 
 func (e *edge) env() *emu.Env { return e.d.s.env }
@@ -510,6 +515,8 @@ func (e *edge) routeLoop(ctx context.Context) {
 }
 
 func (e *edge) syncRoutes(ctx context.Context) {
+	e.syncMu.Lock()
+	defer e.syncMu.Unlock()
 	e.retireIdle(ctx, time.Now())
 	if e.d.s.options().DirectDial {
 		return
@@ -555,7 +562,9 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	}
 	var routes []edgeagent.Route
 	var pods []*net.IPNet
+	used := map[string]bool{}
 	for _, pr := range prs {
+		used[pr.Subnetwork] = true
 		sn, err := vpc.SubnetNetwork(cctx, pr.Subnetwork)
 		if err != nil {
 			continue
@@ -567,6 +576,13 @@ func (e *edge) syncRoutes(ctx context.Context) {
 		if _, n, err := net.ParseCIDR(pr.CIDR); err == nil && pr.Via != "" {
 			routes = append(routes, edgeagent.Route{CIDR: pr.CIDR, Via: pr.Via})
 			pods = append(pods, n)
+		}
+	}
+	for _, sn := range e.subnets {
+		if !used[sn.SubnetworkName] {
+			if err := e.leaveLocked(cctx, rt, vpc, sn); err != nil {
+				e.env().Log.Warn("lb: detaching edge from subnetwork", "network", sn.Name, "err", err)
+			}
 		}
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].CIDR < routes[j].CIDR })
@@ -688,34 +704,86 @@ func (e *edge) joinLocked(ctx context.Context, rt *runtime.Manager, vpc emu.VPC,
 		if ip, err = vpc.AllocateIP(ctx, sn, edgeIPOwner); err != nil {
 			return err
 		}
-		e.vpcs[sn.Name] = sn
+		e.subnets[sn.Name] = sn
 	}
 	if err := rt.Connect(ctx, sn.Name, e.id, ip); err != nil && !strings.Contains(err.Error(), "already exists") {
 		if ip != "" {
 			// Another container may hold it: allocate afresh next time,
 			// skipping the addresses held on the network.
 			_ = vpc.ReleaseIP(ctx, sn, edgeIPOwner)
-			delete(e.vpcs, sn.Name)
+			delete(e.subnets, sn.Name)
 		}
 		return err
 	}
 	e.nets[sn.Name] = true
+	e.subnets[sn.Name] = sn
+	return nil
+}
+
+// leaveLocked detaches the Edge relay from subnetwork network sn and frees its
+// address there, once no pod route needs it: the subnetwork can then be
+// deleted while load balancers remain (#683).
+func (e *edge) leaveLocked(ctx context.Context, rt *runtime.Manager, vpc emu.VPC, sn emu.SubnetNet) error {
+	if e.nets[sn.Name] && e.id != "" {
+		if err := rt.Disconnect(ctx, sn.Name, e.id); err != nil && !errors.Is(err, runtime.ErrNotFound) && !strings.Contains(err.Error(), "not connected") {
+			return err
+		}
+	}
+	delete(e.nets, sn.Name)
+	if !sn.Translated {
+		if err := vpc.ReleaseIP(ctx, sn, edgeIPOwner); err != nil {
+			return err
+		}
+	}
+	delete(e.subnets, sn.Name)
+	return nil
+}
+
+// leaveSubnetwork is compute's SubnetReleaser for the Edge relay's addresses:
+// compute calls it when they are all that keeps subnetwork from being
+// deleted, which may be before the next route pass sees its pod routes
+// gone.
+func (e *edge) leaveSubnetwork(ctx context.Context, subnetwork string) error {
+	e.syncMu.Lock()
+	defer e.syncMu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, sn := range e.subnets {
+		if sn.SubnetworkName != subnetwork {
+			continue
+		}
+		vpcSvc, _ := e.env().Lookup("compute")
+		vpc, ok := vpcSvc.(emu.VPC)
+		if !ok {
+			return errors.New("no compute service")
+		}
+		var rt *runtime.Manager
+		if e.nets[sn.Name] && e.id != "" {
+			var err error
+			if rt, err = e.env().Containers.Runtime(ctx); err != nil {
+				return err
+			}
+		}
+		return e.leaveLocked(ctx, rt, vpc, sn)
+	}
 	return nil
 }
 
 // releaseLocked frees the edge's addresses in compute's allocations.
 func (e *edge) releaseLocked(ctx context.Context) {
-	if len(e.vpcs) == 0 {
+	if len(e.subnets) == 0 {
 		return
 	}
 	vpcSvc, _ := e.env().Lookup("compute")
 	if vpc, ok := vpcSvc.(emu.VPC); ok {
-		for name, sn := range e.vpcs {
-			if err := vpc.ReleaseIP(ctx, sn, edgeIPOwner); err != nil {
-				e.env().Log.Warn("lb: releasing edge address", "network", name, "err", err)
-				continue
+		for name, sn := range e.subnets {
+			if !sn.Translated {
+				if err := vpc.ReleaseIP(ctx, sn, edgeIPOwner); err != nil {
+					e.env().Log.Warn("lb: releasing edge address", "network", name, "err", err)
+					continue
+				}
 			}
-			delete(e.vpcs, name)
+			delete(e.subnets, name)
 		}
 	}
 }

@@ -105,6 +105,13 @@ func (s *Service) Register(r emu.Router) error {
 		s.local.HandleFunc(pattern, h)
 	})
 	cmp.AddUsageChecker(s.usedBy)
+	cmp.AddSubnetReleaser(edgeIPOwner, func(ctx context.Context, subnetwork string) error {
+		// The data plane starts a new Edge relay on each Start.
+		if e := s.dp.edge; e != nil {
+			return e.leaveSubnetwork(ctx, subnetwork)
+		}
+		return nil
+	})
 	r.Handle("GET /_emu/v1/lb/listeners", http.HandlerFunc(s.serveListeners))
 	r.Handle("POST /_emu/v1/lb/route", http.HandlerFunc(s.serveRoute))
 	return nil
