@@ -427,12 +427,12 @@ func (s *Service) subnetInUse(ctx context.Context, path string, sn *computev1.Su
 	if user != "" {
 		return errInUse("subnetwork", path, user)
 	}
-	return nil
+	return s.releaseSubnet(ctx, path)
 }
 
 // subnetUserTx finds a resource using a subnetwork: an internal address,
 // a NEG, a router NAT listing it, or a workload holding an IP on its
-// container network.
+// container network (but not an address a releaser frees on delete).
 func (s *Service) subnetUserTx(tx store.Tx, path string) string {
 	p, _, _ := pathParts(path)
 	for _, a := range list[computev1.Address](tx, nsAddresses, "projects/"+p+"/") {
@@ -455,8 +455,10 @@ func (s *Service) subnetUserTx(tx store.Tx, path string) string {
 		}
 	}
 	if st, ok := get[vpcNet](tx, nsVPCNets, path); ok {
-		if owner := firstOwner(tx, st.Name); owner != "" {
-			return owner
+		for _, o := range ownersOf(tx, st.Name) {
+			if s.releaser(o.owner) == nil {
+				return o.owner
+			}
 		}
 	}
 	return ""
