@@ -186,14 +186,16 @@ func googleHosted(r *http.Request) bool { return emu.IsGoogleHost(r.Host) }
 
 // keyBase is the base URL of the token and certificate URLs in a key file
 // created by r: the front Instance's, by the Host and scheme the caller
-// used, when r came over a link (ADR 0027), or else the gateway's.
+// used, when r came over a link (ADR 0027), or else the gateway's. The
+// scheme is https only for an X-Forwarded-Proto of https, and http for
+// any other.
 func (s *Service) keyBase(r *http.Request) string {
 	if _, _, ok := emu.AssertedBy(r.Context()); !ok {
 		return s.gatewayURL()
 	}
-	scheme := r.Header.Get("X-Forwarded-Proto")
-	if scheme == "" {
-		scheme = "http"
+	scheme := "http"
+	if r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
 	}
 	return scheme + "://" + r.Host
 }

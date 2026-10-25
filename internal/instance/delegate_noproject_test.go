@@ -98,13 +98,11 @@ func urlsUnder(base, email string) keyFileURLs {
 
 // A key for a service account in the Delegated Project, created through
 // the laptop under projects/-, names the laptop's token and certificate
-// URLs (ADR 0027), in the scheme the caller used. It gets a token from the
-// laptop unmodified, the laptop serves its certificate from the office,
-// and the laptop accepts the token for the Delegated Project's resources,
-// asserting the service account to the office. A key created on the
-// office names the office's URLs.
-func TestDelegatedServiceAccountToken(t *testing.T) {
-	laptop, office := delegated(t, func(c *config.Config) { c.IAMMode = config.IAMEnforce }, nil)
+// URLs (ADR 0027), in the scheme the caller used, and the laptop serves
+// its certificate from the office. A key created on the office names the
+// office's URLs.
+func TestDelegatedKeyFileNamesFrontInstance(t *testing.T) {
+	laptop, office := delegated(t, nil, nil)
 	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/"+shared+"/serviceAccounts", map[string]string{"accountId": "runner"}, nil)
 	keyID, file := keyFileThrough(t, laptop, runner, nil)
 	gw := laptop.Env.Endpoints.Get("gateway")
@@ -112,9 +110,11 @@ func TestDelegatedServiceAccountToken(t *testing.T) {
 	if want := urlsUnder("http://"+gw, runner); urls != want {
 		t.Errorf("key file through the laptop names %+v, want %+v", urls, want)
 	}
-	_, secure := keyFileThrough(t, laptop, runner, http.Header{"X-Forwarded-Proto": {"https"}})
-	if got, want := urlsOf(t, secure), urlsUnder("https://"+gw, runner); got != want {
-		t.Errorf("key file through the laptop with X-Forwarded-Proto https names %+v, want %+v", got, want)
+	for proto, scheme := range map[string]string{"https": "https", "http": "http", "https, http": "http", "ftp": "http"} {
+		_, f := keyFileThrough(t, laptop, runner, http.Header{"X-Forwarded-Proto": {proto}})
+		if got, want := urlsOf(t, f), urlsUnder(scheme+"://"+gw, runner); got != want {
+			t.Errorf("key file through the laptop with X-Forwarded-Proto %q names %+v, want %+v", proto, got, want)
+		}
 	}
 
 	certs, _ := url.Parse(urls.ClientX509CertURL)
@@ -125,7 +125,16 @@ func TestDelegatedServiceAccountToken(t *testing.T) {
 	if got, want := urlsOf(t, direct), urlsUnder("http://"+office.Env.Endpoints.Get("gateway"), runner); got != want {
 		t.Errorf("key file created on the office names %+v, want %+v", got, want)
 	}
+}
 
+// A key for a service account in the Delegated Project, created through
+// the laptop under projects/-, gets a token from the laptop's token
+// endpoint unmodified, and the laptop accepts that token for the Delegated
+// Project's resources, asserting the service account to the office.
+func TestDelegatedServiceAccountToken(t *testing.T) {
+	laptop, office := delegated(t, func(c *config.Config) { c.IAMMode = config.IAMEnforce }, nil)
+	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/"+shared+"/serviceAccounts", map[string]string{"accountId": "runner"}, nil)
+	_, file := keyFileThrough(t, laptop, runner, nil)
 	cfg, err := google.JWTConfigFromJSON(file, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		t.Fatal(err)
