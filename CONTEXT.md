@@ -388,6 +388,10 @@ _Avoid_: using it for a single resource
 A Cloud SQL database server resource. Always write it in full so it is not confused with an Instance.
 _Avoid_: instance (unqualified)
 
+**Public IP**:
+The address at which a Cloud SQL instance serves clients, as Cloud SQL's `PRIMARY` IP address reports it. A Cloud SQL instance keeps it across starts of its Instance: the emulator claims it back before any other Service takes addresses on that network. Unlike a GKE cluster's Public endpoint, it never moves because something else took the address first.
+_Avoid_: external IP, endpoint (unqualified)
+
 **On-demand backup**:
 A backup of a Cloud SQL instance taken at someone's request while the Cloud SQL instance exists. It never expires: it lasts until it is deleted, or until its Cloud SQL instance is deleted unless it becomes a Retained backup. Always qualify it, so it is not confused with a Final backup.
 _Avoid_: manual backup
