@@ -120,7 +120,7 @@ func (s *Service) schedule(ctx context.Context) {
 			s.end(ref, outcome{status: cloudbuildpb.Build_EXPIRED, detail: "Build expired before it could start: queueTtl passed."})
 			continue
 		}
-		if len(s.live) < s.env.Config.Build.Concurrency {
+		if !s.clearing && len(s.live) < s.env.Config.Build.Concurrency {
 			s.begin(ref)
 			continue
 		}
@@ -208,16 +208,22 @@ func (s *Service) execute(r *liveBuild, b *cloudbuildpb.Build) {
 		}
 		s.end(r.ref, o)
 	}
-	// No Build starts while mu is held, so the daemon is cleared only
-	// of the containers this, the last running Build, left.
+	// No Build starts while clearing is set, so the daemon is cleared
+	// only of what this, the last running Build, left. Clearing waits up
+	// to 3s for BuildKit's traces, so it goes outside mu.
 	s.mu.Lock()
-	if len(s.live) == 1 {
+	last := len(s.live) == 1
+	delete(s.live, r.ref.key())
+	s.clearing = last
+	s.mu.Unlock()
+	if last {
 		if rt, err := s.env.Containers.Runtime(context.WithoutCancel(r.ctx)); err == nil {
 			s.clearDaemon(rt)
 		}
+		s.mu.Lock()
+		s.clearing = false
+		s.mu.Unlock()
 	}
-	delete(s.live, r.ref.key())
-	s.mu.Unlock()
 	r.stop(nil)
 	s.kick()
 }
