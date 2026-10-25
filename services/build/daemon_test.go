@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
 
@@ -163,7 +164,9 @@ func (e *env) cachedRun() bool {
 
 // A second identical Build reuses the layers the first built, also after
 // a Reset; pruning through the Admin API empties the cache, its size
-// drops, and the next Build builds the layer again.
+// drops, and the next Build builds the layer again. The size stays what
+// the prune answered, also once BuildKit's trace of the last Build would
+// have landed.
 func TestBuildDaemonCache(t *testing.T) {
 	e := start(t)
 	if e.daemon().Running {
@@ -194,6 +197,12 @@ func TestBuildDaemonCache(t *testing.T) {
 	}
 	if pruned.CacheBytes >= before.CacheBytes || pruned.ReclaimedBytes <= 0 || e.daemon().CacheBytes != pruned.CacheBytes {
 		t.Errorf("prune = %+v, from %d bytes", pruned, before.CacheBytes)
+	}
+	// BuildKit writes a build's trace up to 3s after the build ends; wait
+	// that out with a margin.
+	time.Sleep(4 * time.Second)
+	if after := e.daemon(); after.CacheBytes != pruned.CacheBytes {
+		t.Errorf("after prune, daemon = %+v, prune = %+v", after, pruned)
 	}
 	if e.cachedRun() {
 		t.Error("after prune, the Build found its layer cached")

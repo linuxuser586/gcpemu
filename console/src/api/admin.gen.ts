@@ -994,7 +994,7 @@ export interface paths {
         put?: never;
         /**
          * Prune the Build daemon's image cache (build service; Web console).
-         * @description Removes the daemon's stopped containers, unused images and volumes, and build cache, starting the daemon first if it is not running. Builds share the cache, so the next Build of each image builds and pulls its layers again.
+         * @description Removes the daemon's build history, stopped containers, unused images and volumes, and build cache, starting the daemon first if it is not running. Builds share the cache, so the next Build of each image builds and pulls its layers again.
          */
         post: operations["pruneBuildDaemon"];
         delete?: never;

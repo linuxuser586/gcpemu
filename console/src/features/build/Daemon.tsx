@@ -48,7 +48,7 @@ export function Daemon() {
               </Button>
             }
             title="Prune the Build daemon’s cache?"
-            description="Its stopped containers, unused images and volumes, and build cache are removed. The next Build of each image pulls and builds its layers again."
+            description="Its build history, stopped containers, unused images and volumes, and build cache are removed. The next Build of each image pulls and builds its layers again."
             confirmLabel="Prune cache"
             onConfirm={() => prune.mutateAsync()}
           />
