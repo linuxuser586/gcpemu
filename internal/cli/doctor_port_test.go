@@ -13,7 +13,8 @@ import (
 // checkPort reports a named port free on both families, fails one held on
 // either, and warns when another process answers on it even though the
 // binds succeed: it holds the port on all interfaces, as AirPlay Receiver
-// does for 5000 and 7000 on macOS (#641).
+// does for 5000 and 7000 on macOS (#641). A port in LocalStack's range is
+// named as such (#645).
 func TestCheckPort(t *testing.T) {
 	inUse := errors.New("bind: address already in use")
 	for _, tc := range []struct {
@@ -38,6 +39,18 @@ func TestCheckPort(t *testing.T) {
 			want: []string{"[WARN] port 7000 (ar)", "AirPlay Receiver"}},
 		{name: "wildcard on macOS elsewhere", goos: "darwin", port: 4561, probe: portProbe{addr: "127.0.0.1:4561", v6: true, answered: true},
 			want: []string{"[WARN] port 4561 (ar)"}, not: []string{"AirPlay"}},
+		{name: "IPv4 held in LocalStack's range", goos: "darwin", port: 4510, probe: portProbe{addr: "127.0.0.1:4510", err: inUse}, fail: true,
+			want: []string{"[FAIL] port 127.0.0.1:4510 (ar) free", "LocalStack", "--port ar="}},
+		{name: "IPv6 held on LocalStack's edge port", goos: "linux", port: 4566, probe: portProbe{addr: "127.0.0.1:4566", v6: true, v6Err: inUse}, fail: true,
+			want: []string{"[FAIL] port [::1]:4566 (ar) free on IPv6", "LocalStack", "--port ar="}},
+		{name: "wildcard in LocalStack's range", goos: "linux", port: 4559, probe: portProbe{addr: "127.0.0.1:4559", v6: true, answered: true},
+			want: []string{"[WARN] port 4559 (ar)", "LocalStack", "--port ar="}, not: []string{"AirPlay"}},
+		{name: "just past LocalStack's range", goos: "darwin", port: 4560, probe: portProbe{addr: "127.0.0.1:4560", err: inUse}, fail: true,
+			want: []string{"[FAIL] port 127.0.0.1:4560 (ar) free"}, not: []string{"LocalStack"}},
+		{name: "held outside LocalStack's range", goos: "darwin", port: 4443, probe: portProbe{addr: "127.0.0.1:4443", err: inUse}, fail: true,
+			want: []string{"[FAIL] port 127.0.0.1:4443 (ar) free"}, not: []string{"LocalStack"}},
+		{name: "wildcard outside LocalStack's range", goos: "darwin", port: 4443, probe: portProbe{addr: "127.0.0.1:4443", v6: true, answered: true},
+			want: []string{"[WARN] port 4443 (ar)"}, not: []string{"LocalStack"}},
 		{name: "wildcard on Windows 5000", goos: "windows", port: 5000, probe: portProbe{addr: "127.0.0.1:5000", v6: true, answered: true},
 			want: []string{"[WARN] port 5000 (ar)"}, not: []string{"AirPlay"}},
 	} {

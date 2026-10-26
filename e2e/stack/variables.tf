@@ -1,5 +1,5 @@
 variable "emulator_gateway" {
-  description = "gcpemu gateway URL (e.g. http://127.0.0.1:4510); empty = real GCP"
+  description = "gcpemu gateway URL (e.g. http://127.0.0.1:4562); empty = real GCP"
   type        = string
   default     = ""
 }

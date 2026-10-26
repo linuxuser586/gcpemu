@@ -353,6 +353,28 @@ func (s *Service) cancelOp(name string) {
 	}
 }
 
+// relinkLogs points each stored Build's logUrl at the API gateway's
+// current address: a Persistent Instance may restart on another port (#645).
+func (s *Service) relinkLogs() error {
+	return s.env.Store.Update(func(tx store.Tx) error {
+		var stale []*stored
+		if err := scan(tx, "", func(st *stored) {
+			if u := s.logURL(refOf(st.build)); u != "" && st.build.LogUrl != "" && st.build.LogUrl != u {
+				st.build.LogUrl = u
+				stale = append(stale, st)
+			}
+		}); err != nil {
+			return err
+		}
+		for _, st := range stale {
+			if err := put(tx, st); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // interrupt ends INTERNAL_ERROR every Build this process is not running
 // that is still QUEUED or WORKING in the store: one a previous process
 // left, or one restored from a State snapshot.

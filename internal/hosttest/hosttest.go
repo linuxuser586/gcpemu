@@ -7,11 +7,14 @@ package hosttest
 import (
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/net/ipv4"
+
+	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
 // Eventually polls cond until it holds or timeout passes; diag explains a
@@ -59,6 +62,9 @@ func SocketArgs(t testing.TB) []string {
 	return append(mount, "--group-add", strings.TrimSpace(string(out)))
 }
 
+// containerGateway is the API gateway's port inside the container.
+var containerGateway = strconv.Itoa(config.DefaultPorts["gateway"])
+
 // RunEmulator runs the image as an Ephemeral Instance in container name,
 // with its API gateway published at 127.0.0.1:gatewayPort (a port docker
 // picks when it is ""), extra docker run args and start args. It waits
@@ -68,7 +74,7 @@ func SocketArgs(t testing.TB) []string {
 // removes it.
 func RunEmulator(t testing.TB, name, image, gatewayPort string, args []string, start ...string) string {
 	t.Helper()
-	run := append([]string{"run", "-d", "--name", name, "-p", "127.0.0.1:" + gatewayPort + ":4510"}, args...)
+	run := append([]string{"run", "-d", "--name", name, "-p", "127.0.0.1:" + gatewayPort + ":" + containerGateway}, args...)
 	// Before the run: a container that fails to start is still created.
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -83,7 +89,7 @@ func RunEmulator(t testing.TB, name, image, gatewayPort string, args []string, s
 	Eventually(t, 3*time.Minute, "emulator healthy", func() bool {
 		return Docker(t, "inspect", "-f", "{{.State.Health.Status}}", name) == "healthy"
 	}, nil)
-	return strings.TrimSpace(strings.Split(Docker(t, "port", name, "4510/tcp"), "\n")[0])
+	return strings.TrimSpace(strings.Split(Docker(t, "port", name, containerGateway+"/tcp"), "\n")[0])
 }
 
 // ParseEnv returns the variables in `gcpemu env` output for a POSIX shell

@@ -160,6 +160,16 @@ func (a *api) RetryBuild(ctx context.Context, req *cloudbuildpb.RetryBuildReques
 	return a.s.submit(r.Project, r.Location, st.request, st.provided)
 }
 
+// logURL is where the Web console shows the Build r, empty without an
+// API gateway.
+func (s *Service) logURL(r buildRef) string {
+	gw := s.env.Endpoints.Get("gateway")
+	if gw == "" {
+		return ""
+	}
+	return "http://" + gw + "/console/build/" + r.name()
+}
+
 // load returns a stored Build.
 func (s *Service) load(r buildRef) (*cloudbuildpb.Build, error) {
 	st, err := s.loadStored(r)
@@ -221,9 +231,7 @@ func (s *Service) submit(project, location string, in *cloudbuildpb.Build, provi
 	if err := s.logsBucket(b); err != nil {
 		return nil, err
 	}
-	if gw := s.env.Endpoints.Get("gateway"); gw != "" {
-		b.LogUrl = "http://" + gw + "/console/build/" + r.name()
-	}
+	b.LogUrl = s.logURL(r)
 	op, err := s.ops.Begin(r.parent(), &cloudbuildpb.BuildOperationMetadata{Build: b})
 	if err != nil {
 		return nil, err

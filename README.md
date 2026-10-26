@@ -188,7 +188,7 @@ and the public GCP APIs are governed by IAM as usual.
 
 ### Web console
 
-The API gateway serves the Web console at `http://127.0.0.1:4510/console/`; `gcpemu console`
+The API gateway serves the Web console at `http://127.0.0.1:4562/console/`; `gcpemu console`
 opens it. It calls only the public APIs and the admin API, and works offline. It acts as
 the default principal until you pick another user or service account in the header's
 principal switcher, so the views show what IAM allows that principal (try it with
@@ -261,18 +261,19 @@ messages) are left out.
 
 ### Service endpoints
 
-All Control plane APIs are served by the API gateway (default `127.0.0.1:4510`), under
+All Control plane APIs are served by the API gateway (default `127.0.0.1:4562`), under
 `/<api>/` (for example `/pubsub/v1/…`, `/iam/v1/…`) and at their native root paths where
 unambiguous (`/storage/v1/`, `/dns/v1/`, `/compute/v1/`, `/sql/v1beta4/`). Per-Service ports:
 GCS 4443, Pub/Sub 8085, registry 4561, DNS 5353 (UDP+TCP), metadata 8988, Cloud SQL host ports
 54320+. With `--bind 127.0.0.1` or `localhost` (the default), each of these TCP listeners, the API
 gateway's and the Google front end's also listen on `[::1]` at the same port, so a client that
 resolves `localhost` to `::1` reaches the Instance and not another process holding the port on all
-interfaces (macOS's AirPlay Receiver holds 5000 and 7000). `gcpemu env` also exports `KUBECONFIG`
-for GKE clusters. `--port name=0` picks a free port for one listener and a bare `--port 0` for
-all of them (LB and Cloud SQL host ports included); `--port-range 20000-20999` draws those free
-ports from a range. The choices are written to
-`<data-dir>/endpoints.json` and printed by `gcpemu env`.
+interfaces (macOS's AirPlay Receiver holds 5000 and 7000). The default ports stay clear of
+LocalStack's (4510–4559 and 4566), and `gcpemu doctor` names LocalStack when a port moved into that
+range is held. `gcpemu env` also exports `KUBECONFIG` for GKE clusters. `--port name=0` picks a
+free port for one listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports
+included); `--port-range 20000-20999` draws those free ports from a range. The choices are written
+to `<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
 Each load balancer forwarding rule's host listener is printed as
 `GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>` (for example `GCPEMU_LB_MY_PROJ_GLOBAL_WEB`), and
@@ -1091,7 +1092,7 @@ user, at `docker.io/linuxuser586/gcpemu` and `ghcr.io/linuxuser586/gcpemu`. It i
 `X.Y.Z`, `X.Y`, `X` and `latest`; a prerelease gets only its exact version.
 
 ```sh
-docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 \
+docker run -d --name gcpemu -p 4562:4562 -p 4443:4443 -p 8085:8085 \
   -v gcpemu:/data linuxuser586/gcpemu:0
 docker exec gcpemu /gcpemu status
 ```
@@ -1100,7 +1101,7 @@ The image runs on Linux, macOS and Windows hosts. In PowerShell, continue lines 
 instead of `\`:
 
 ```powershell
-docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 `
+docker run -d --name gcpemu -p 4562:4562 -p 4443:4443 -p 8085:8085 `
   -v gcpemu:/data linuxuser586/gcpemu:0
 docker exec gcpemu /gcpemu status
 ```
@@ -1172,14 +1173,14 @@ logs which it skipped. With it, the emulator stays unprivileged and non-root; it
 socket's group:
 
 ```sh
-docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 \
+docker run -d --name gcpemu -p 4562:4562 -p 4443:4443 -p 8085:8085 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
   linuxuser586/gcpemu:0 start --ephemeral
 ```
 
 ```powershell
-docker run -d --name gcpemu -p 4510:4510 -p 4443:4443 -p 8085:8085 `
+docker run -d --name gcpemu -p 4562:4562 -p 4443:4443 -p 8085:8085 `
   -v /var/run/docker.sock:/var/run/docker.sock `
   --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" `
   linuxuser586/gcpemu:0 start --ephemeral
@@ -1224,14 +1225,14 @@ forwarding rules on any runtime. Start it with `--port-range` and publish that r
 container and host ports:
 
 ```sh
-docker run -d --name gcpemu -p 127.0.0.1:4510:4510 -p 127.0.0.1:20000-20019:20000-20019 \
+docker run -d --name gcpemu -p 127.0.0.1:4562:4562 -p 127.0.0.1:20000-20019:20000-20019 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
   linuxuser586/gcpemu:0 start --ephemeral --port-range 20000-20019
 ```
 
 ```powershell
-docker run -d --name gcpemu -p 127.0.0.1:4510:4510 -p 127.0.0.1:20000-20019:20000-20019 `
+docker run -d --name gcpemu -p 127.0.0.1:4562:4562 -p 127.0.0.1:20000-20019:20000-20019 `
   -v /var/run/docker.sock:/var/run/docker.sock `
   --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" `
   linuxuser586/gcpemu:0 start --ephemeral --port-range 20000-20019
@@ -1304,7 +1305,7 @@ As a GitHub Actions service container (the job waits for the health check):
 services:
   gcpemu:
     image: linuxuser586/gcpemu:0
-    ports: ["4510:4510", "4443:4443", "8085:8085"]
+    ports: ["4562:4562", "4443:4443", "8085:8085"]
 env:
   STORAGE_EMULATOR_HOST: http://localhost:4443
   PUBSUB_EMULATOR_HOST: localhost:8085
@@ -1529,7 +1530,7 @@ The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` em
 ```sh
 bin/gcpemu start                       # in one terminal
 cd console && pnpm install && pnpm dev # /console/ with hot reload; other paths go to the API gateway
-                                       # (GCPEMU_GATEWAY, default 127.0.0.1:4510)
+                                       # (GCPEMU_GATEWAY, default 127.0.0.1:4562)
 pnpm lint && pnpm typecheck && pnpm test
 pnpm gen:api                           # after editing internal/admin/openapi.yaml
 task console-e2e                       # Playwright on Chromium, Firefox and WebKit

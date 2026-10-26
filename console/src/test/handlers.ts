@@ -55,7 +55,7 @@ export function defaultFake(): Fake {
       strictProjects: false,
       console: true,
       services: ['iam', 'gcs', 'pubsub'],
-      endpoints: { gateway: '127.0.0.1:4510' },
+      endpoints: { gateway: '127.0.0.1:4562' },
       runtime: { kind: 'docker', version: '27.3.1', reachable: true },
     },
     ready: {
@@ -66,7 +66,7 @@ export function defaultFake(): Fake {
         pubsub: { ready: false, reason: 'loading persisted messages' },
       },
     },
-    endpoints: { gateway: '127.0.0.1:4510', gcs: '127.0.0.1:4443', pubsub: '127.0.0.1:8085' },
+    endpoints: { gateway: '127.0.0.1:4562', gcs: '127.0.0.1:4443', pubsub: '127.0.0.1:8085' },
     containers: [],
     external: [],
     counts: {

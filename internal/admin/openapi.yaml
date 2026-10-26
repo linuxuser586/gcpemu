@@ -17,7 +17,7 @@ info:
     Errors are `{"error": "message"}` unless noted; endpoints provided by a
     service module (cdn, ca) return Google's JSON error envelope.
 servers:
-  - url: http://127.0.0.1:4510
+  - url: http://127.0.0.1:4562
 security:
   - {}
   - adminTokenHeader: []

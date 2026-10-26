@@ -30,7 +30,7 @@ const req = {
   method: 'GET' as const,
   expiresSeconds: 600,
   serviceAccount: 'signer@p.iam.gserviceaccount.com',
-  host: 'localhost:4510',
+  host: 'localhost:4562',
   now: new Date('2026-10-08T12:00:00Z'),
 }
 
@@ -46,7 +46,7 @@ it('writes the canonical request gcloud writes', async () => {
     'GET',
     '/bkt/dir/a%20b.txt',
     query,
-    'host:localhost:4510\n',
+    'host:localhost:4562\n',
     'host',
     'UNSIGNED-PAYLOAD',
   ].join('\n')
@@ -65,5 +65,5 @@ it('signs with signBlob and appends the hex signature', async () => {
   const url = await signedUrl(req)
   const { toSign, query } = await stringToSign(req)
   expect(atob(payload)).toBe(toSign)
-  expect(url).toBe(`http://localhost:4510/bkt/dir/a%20b.txt?${query}&X-Goog-Signature=01abff`)
+  expect(url).toBe(`http://localhost:4562/bkt/dir/a%20b.txt?${query}&X-Goog-Signature=01abff`)
 })

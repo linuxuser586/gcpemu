@@ -162,7 +162,7 @@ func (c *Config) ConsoleEnabled() bool {
 
 // Default service ports (Section 3.2).
 var DefaultPorts = map[string]int{
-	"gateway":  4510,
+	"gateway":  4562,
 	"gcs":      4443,
 	"pubsub":   8085,
 	"ar":       4561,

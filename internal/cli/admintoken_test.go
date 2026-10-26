@@ -81,10 +81,10 @@ func TestAdminTokenCLI(t *testing.T) {
 
 func TestConsoleURL(t *testing.T) {
 	for _, tc := range []struct{ addr, token, want string }{
-		{"127.0.0.1:4510", "", "http://127.0.0.1:4510/console/"},
-		{"0.0.0.0:4510", "a+b", "http://127.0.0.1:4510/console/?token=a%2Bb"},
-		{"[::]:4510", "t", "http://127.0.0.1:4510/console/?token=t"},
-		{"192.0.2.1:4510", "t", "http://192.0.2.1:4510/console/?token=t"},
+		{"127.0.0.1:4562", "", "http://127.0.0.1:4562/console/"},
+		{"0.0.0.0:4562", "a+b", "http://127.0.0.1:4562/console/?token=a%2Bb"},
+		{"[::]:4562", "t", "http://127.0.0.1:4562/console/?token=t"},
+		{"192.0.2.1:4562", "t", "http://192.0.2.1:4562/console/?token=t"},
 	} {
 		if got := consoleURL(tc.addr, tc.token); got != tc.want {
 			t.Errorf("consoleURL(%q, %q) = %q, want %q", tc.addr, tc.token, got, tc.want)
@@ -95,22 +95,22 @@ func TestConsoleURL(t *testing.T) {
 func TestPrintAdminToken(t *testing.T) {
 	tok := strings.Repeat("p", config.MinAdminTokenLen)
 	var out bytes.Buffer
-	printAdminToken(&out, &config.Config{}, "0.0.0.0:4510", tok, true)
-	if !strings.Contains(out.String(), "http://127.0.0.1:4510/console/?token="+tok) {
+	printAdminToken(&out, &config.Config{}, "0.0.0.0:4562", tok, true)
+	if !strings.Contains(out.String(), "http://127.0.0.1:4562/console/?token="+tok) {
 		t.Errorf("generated token, console:\n%s", out.String())
 	}
 	out.Reset()
-	printAdminToken(&out, &config.Config{}, "0.0.0.0:4510", tok, false)
+	printAdminToken(&out, &config.Config{}, "0.0.0.0:4562", tok, false)
 	if !strings.Contains(out.String(), "Admin token: "+tok) || strings.Contains(out.String(), "/console/") {
 		t.Errorf("generated token, no console:\n%s", out.String())
 	}
 	out.Reset()
-	printAdminToken(&out, &config.Config{AdminToken: tok}, "0.0.0.0:4510", tok, true)
+	printAdminToken(&out, &config.Config{AdminToken: tok}, "0.0.0.0:4562", tok, true)
 	if strings.Contains(out.String(), tok) || !strings.Contains(out.String(), "GCPEMU_ADMIN_TOKEN") {
 		t.Errorf("configured token must not be printed:\n%s", out.String())
 	}
 	out.Reset()
-	printAdminToken(&out, &config.Config{}, "127.0.0.1:4510", "", true)
+	printAdminToken(&out, &config.Config{}, "127.0.0.1:4562", "", true)
 	if out.Len() != 0 {
 		t.Errorf("loopback printed:\n%s", out.String())
 	}

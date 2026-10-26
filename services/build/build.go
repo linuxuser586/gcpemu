@@ -141,6 +141,9 @@ func (s *Service) Start(ctx context.Context) error {
 	if sub := s.subscriber(); sub != nil {
 		sub.ServePushHost(apiHost, http.HandlerFunc(s.serveTriggerPush))
 	}
+	if err := s.relinkLogs(); err != nil {
+		return fmt.Errorf("build: relinking logUrls: %w", err)
+	}
 	s.interrupt("The Build was interrupted by an emulator restart.")
 	s.loops.Start(func(ctx context.Context) { s.loop(ctx) })
 	s.kick()

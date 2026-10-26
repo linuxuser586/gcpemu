@@ -12,7 +12,7 @@
 #
 #   docker run -v /var/run/docker.sock:/var/run/docker.sock \
 #     --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
-#     -p 4510:4510 ... IMAGE
+#     -p 4562:4562 ... IMAGE
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
 
 ARG TARGETARCH
@@ -27,7 +27,7 @@ ENV GCPEMU_BIND=0.0.0.0 \
 WORKDIR /data
 
 # API gateway, gcs, pubsub, ar, dns, metadata.
-EXPOSE 4510 4443 8085 4561 5353/tcp 5353/udp 8988
+EXPOSE 4562 4443 8085 4561 5353/tcp 5353/udp 8988
 
 HEALTHCHECK --interval=5s --timeout=5s --start-period=60s CMD ["/gcpemu", "status", "--ready"]
 
