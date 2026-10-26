@@ -250,6 +250,10 @@ _Avoid_: workload identity, external identity, federated token (say: an access t
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.
 
+**Copy as**:
+The Web console's offer, on a resource's page, of the gcloud command, the REST request and the OpenTofu resource that would create that resource as it is now.
+_Avoid_: export (that is `gcpemu export`, a Seed file)
+
 **Admin API**:
 The emulator-specific API under `/_emu/` for inspecting and operating an Instance (health, reset, fault injection, the request log and the like). It is the only interface not modelled on GCP, and the Web console is one of its clients.
 
