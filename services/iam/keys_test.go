@@ -355,7 +355,7 @@ func TestKeyFileByCaller(t *testing.T) {
 
 	// Its client_x509_cert_url, at www.googleapis.com, serves its
 	// certificate (#692).
-	if certs := getCerts[map[string]string](t, hc, f["client_x509_cert_url"], http.StatusOK); certs[f["private_key_id"]] == "" {
+	if certs := getJSON[map[string]string](t, hc, f["client_x509_cert_url"], http.StatusOK); certs[f["private_key_id"]] == "" {
 		t.Errorf("certificates at %s = %v, want key %s", f["client_x509_cert_url"], certs, f["private_key_id"])
 	}
 
@@ -369,29 +369,9 @@ func TestKeyFileByCaller(t *testing.T) {
 	}
 }
 
-// getCerts GETs u with hc, wants status, and decodes a 200's body.
-func getCerts[T any](t *testing.T, hc *http.Client, u string, status int) T {
-	t.Helper()
-	var v T
-	resp, err := hc.Get(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != status {
-		t.Fatalf("GET %s: %s, want %d", u, resp.Status, status)
-	}
-	if status == http.StatusOK {
-		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return v
-}
-
 // TestCertsAtGooglePath covers #692: Google's /robot/v1/metadata/ path
 // serves what gcpemu's /service_accounts/v1/metadata/ path does, through
-// the Google front end and at the gateway's own address, disabled keys
+// the Google front end and at the API gateway's own address, disabled keys
 // left out of both.
 func TestCertsAtGooglePath(t *testing.T) {
 	inst := startIAM(t)
@@ -410,17 +390,17 @@ func TestCertsAtGooglePath(t *testing.T) {
 		hc   *http.Client
 		url  string
 	}{
-		{"front end", front, "https://www.googleapis.com"},
-		{"gateway", http.DefaultClient, inst.GatewayURL()},
+		{"Google front end", front, "https://www.googleapis.com"},
+		{"API gateway", http.DefaultClient, inst.GatewayURL()},
 	} {
 		t.Run(base.name, func(t *testing.T) {
-			x509 := getCerts[map[string]string](t, base.hc, base.url+"/robot/v1/metadata/x509/"+email, http.StatusOK)
-			if want := getCerts[map[string]string](t, base.hc, base.url+"/service_accounts/v1/metadata/x509/"+email, http.StatusOK); len(x509) != 1 || x509[keyID] == "" || x509[keyID] != want[keyID] {
+			x509 := getJSON[map[string]string](t, base.hc, base.url+"/robot/v1/metadata/x509/"+email, http.StatusOK)
+			if want := getJSON[map[string]string](t, base.hc, base.url+"/service_accounts/v1/metadata/x509/"+email, http.StatusOK); len(x509) != 1 || x509[keyID] == "" || x509[keyID] != want[keyID] {
 				t.Errorf("x509 at Google's path = %v, want %v with only key %s", x509, want, keyID)
 			}
 			type jwks struct{ Keys []map[string]string }
-			jwk := getCerts[jwks](t, base.hc, base.url+"/robot/v1/metadata/jwk/"+email, http.StatusOK)
-			want := getCerts[jwks](t, base.hc, base.url+"/service_accounts/v1/metadata/jwk/"+email, http.StatusOK)
+			jwk := getJSON[jwks](t, base.hc, base.url+"/robot/v1/metadata/jwk/"+email, http.StatusOK)
+			want := getJSON[jwks](t, base.hc, base.url+"/service_accounts/v1/metadata/jwk/"+email, http.StatusOK)
 			if len(jwk.Keys) != 1 || jwk.Keys[0]["kid"] != keyID || len(want.Keys) != 1 || jwk.Keys[0]["n"] != want.Keys[0]["n"] {
 				t.Errorf("jwk at Google's path = %v, want %v with only key %s", jwk, want, keyID)
 			}
@@ -430,7 +410,7 @@ func TestCertsAtGooglePath(t *testing.T) {
 				"/robot/v1/metadata/x509",
 				"/robot/v1/metadata/x509/nobody%40" + "test-project.iam.gserviceaccount.com",
 			} {
-				getCerts[any](t, base.hc, base.url+p, http.StatusNotFound)
+				getJSON[any](t, base.hc, base.url+p, http.StatusNotFound)
 			}
 		})
 	}

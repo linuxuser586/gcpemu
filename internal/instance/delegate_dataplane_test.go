@@ -129,7 +129,10 @@ func TestDelegatedKeyThroughGoogleHostname(t *testing.T) {
 
 	// Its client_x509_cert_url, through the front Instance, serves its
 	// certificate from the office (#692).
-	u, _ := url.Parse(file.ClientX509CertURL)
+	u, err := url.Parse(file.ClientX509CertURL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req, _ = http.NewRequest(http.MethodGet, "http://"+laptop.Env.Endpoints.Get("gateway")+u.EscapedPath(), nil)
 	req.Host = u.Host
 	resp, err = http.DefaultClient.Do(req)
