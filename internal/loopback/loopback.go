@@ -1,7 +1,8 @@
 // Package loopback reports whether the host has loopback addresses beyond
-// 127.0.0.1 (ADR 0005), and on macOS whether each is a /32. Linux routes all of 127.0.0.0/8 to loopback; a
-// macOS host has only 127.0.0.1 on lo0 until `gcpemu loopback install`
-// adds aliases for 127.0.0.2 to 127.0.0.254.
+// 127.0.0.1 (ADR 0005), and on macOS whether each is a /32. Linux routes
+// all of 127.0.0.0/8 to loopback; a macOS host has only 127.0.0.1 on lo0
+// until `gcpemu loopback install` adds aliases for 127.0.0.2 to
+// 127.0.0.254.
 package loopback
 
 import (

@@ -146,7 +146,7 @@ The host's side of a container runtime's bridge network: the address the host wo
 _Avoid_: gateway (unqualified)
 
 **Loopback alias**:
-An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist, and so does each Kubernetes Service a host client reaches through the Host attachment.
+An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each is one address of its own, not a range. Each Cloud SQL instance and each forwarding rule gets its own when they exist, and so does each Kubernetes Service a host client reaches through the Host attachment.
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
 **Host attachment**:
