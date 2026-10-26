@@ -119,11 +119,11 @@ The Managed container that listens on `--gfe-bind` addresses at port 443 when th
 _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 
 **LAN listener**:
-A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane, the Google front end or the link protocol, and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule, and otherwise only credentials the Instance issued, whatever the IAM enforcement level. The link protocol's admits only paired Instances and Pairing requests.
+A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane, the Google front end or the link protocol, and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule or a LoadBalancer Service, and otherwise only credentials the Instance issued, whatever the IAM enforcement level. The link protocol's admits only paired Instances and Pairing requests.
 _Avoid_: LAN binding, bind address (unqualified), exposed port
 
 **LAN caller**:
-A caller whose request arrived through a LAN listener, at a `--bind` address beyond loopback, or over a link from a Linked Instance, whichever machine it runs on. The Instance tells it the Data plane addresses that machine can reach, its LAN listeners', and no address for a Data plane with none.
+A caller whose request arrived through a LAN listener, at a `--bind` address beyond loopback, or over a link from a Linked Instance, whichever machine it runs on. The Instance tells it the Data plane addresses that machine can reach, its LAN listeners', and no address for a Data plane with none. Load balancing is the exception: a forwarding rule's address is the Declared address for every caller, and a LAN caller finds its `--lb-bind` address in `gcpemu env`.
 _Avoid_: remote caller, external client
 
 **Host client**:
