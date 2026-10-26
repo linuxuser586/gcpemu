@@ -145,12 +145,12 @@ export function ResizeDialog({ clusterRef, pool }: { clusterRef: ClusterRef; poo
   )
 }
 
-/** GkeOwned says why an Autopilot cluster's node pools offer no actions. */
-function GkeOwned() {
+/** GkePoolsNote says why an Autopilot cluster's node pools offer no actions. */
+function GkePoolsNote() {
   return (
     <p className="text-sm text-muted-foreground">
-      GKE manages an Autopilot cluster’s node pools: it adds nodes for pods that do not fit and
-      removes them once empty.
+      These are GKE’s own node pools: GKE adds nodes when pods cannot be scheduled and removes them
+      once they run only system pods.
     </p>
   )
 }
@@ -164,11 +164,11 @@ export function NodePools() {
   const ref = useClusterRef()
   const base = clusterPath(ref.location, ref.cluster)
   const pools = c.nodePools ?? []
-  const owned = isAutopilot(c)
+  const gkeOwned = isAutopilot(c)
   return (
     <Card>
-      {owned ? (
-        <GkeOwned />
+      {gkeOwned ? (
+        <GkePoolsNote />
       ) : (
         <div className="flex justify-end">
           <Button asChild size="sm">
@@ -190,7 +190,7 @@ export function NodePools() {
               <TableHead>Zones</TableHead>
               <TableHead>Machine type</TableHead>
               <TableHead>Version</TableHead>
-              {!owned && (
+              {!gkeOwned && (
                 <TableHead>
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -217,7 +217,7 @@ export function NodePools() {
                 <TableCell className="font-mono">{zonesOf(np, c.locations).join(', ')}</TableCell>
                 <TableCell className="font-mono">{np.config?.machineType ?? '—'}</TableCell>
                 <TableCell className="font-mono">{np.version ?? '—'}</TableCell>
-                {!owned && (
+                {!gkeOwned && (
                   <TableCell>
                     <ResizeDialog clusterRef={ref} pool={np} />
                   </TableCell>
@@ -261,6 +261,7 @@ export function NodePoolPage() {
     )
   }
   const labels = Object.entries(np.config?.labels ?? {})
+  const gkeOwned = isAutopilot(c)
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -268,7 +269,7 @@ export function NodePoolPage() {
           Node pool <span className="font-mono">{np.name}</span>
           <PoolStatus np={np} />
         </h2>
-        {!isAutopilot(c) && (
+        {!gkeOwned && (
           <div className="flex flex-wrap gap-2">
             <ResizeDialog clusterRef={ref} pool={np} />
             <CopyAs what="node pool" recipe={() => nodePoolRecipe(ref, np, c.locations)} />
@@ -293,7 +294,7 @@ export function NodePoolPage() {
           </div>
         )}
       </div>
-      {isAutopilot(c) && <GkeOwned />}
+      {gkeOwned && <GkePoolsNote />}
       {np.statusMessage && (
         <p role="alert" className="text-sm text-destructive">
           {np.statusMessage}

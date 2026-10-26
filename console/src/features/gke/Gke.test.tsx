@@ -66,6 +66,10 @@ function autopilot(over: Partial<Cluster> = {}): Cluster {
 
 const autoBase = `/gke/locations/us-central1/clusters/auto`
 const autoGw = `*/connectgateway/v1/projects/${P}/locations/us-central1/gkeMemberships/auto`
+const getAutopilot = http.get(
+  `*/container/v1/projects/${P}/locations/us-central1/clusters/auto`,
+  () => HttpResponse.json(autopilot()),
+)
 
 const op = (type: string) => ({
   name: `operation-${type}`,
@@ -154,13 +158,10 @@ it('lists clusters, filtering by location and name in the URL', async () => {
   expect(screen.getByRole('link', { name: 'batch' })).toBeInTheDocument()
 })
 
-it('shows each cluster’s mode, Standard or Autopilot, in the list and detail', async () => {
+it('shows each cluster’s mode, Standard or Autopilot, in the list', async () => {
   server.use(
     http.get(`*/container/v1/projects/${P}/locations/-/clusters`, () =>
       HttpResponse.json({ clusters: [cluster(), autopilot()] }),
-    ),
-    http.get(`*/container/v1/projects/${P}/locations/us-central1/clusters/auto`, () =>
-      HttpResponse.json(autopilot()),
     ),
   )
   renderApp(`/gke?project=${P}`)
@@ -171,11 +172,7 @@ it('shows each cluster’s mode, Standard or Autopilot, in the list and detail',
 })
 
 it('shows an Autopilot cluster’s mode in its details', async () => {
-  server.use(
-    http.get(`*/container/v1/projects/${P}/locations/us-central1/clusters/auto`, () =>
-      HttpResponse.json(autopilot()),
-    ),
-  )
+  server.use(getAutopilot)
   renderApp(`${autoBase}?project=${P}`)
   const details = await screen.findByLabelText('Cluster details')
   expect(details).toHaveTextContent('ModeAutopilot')
@@ -379,15 +376,13 @@ it('resizes a node pool, with the API’s message for a bad size', async () => {
 
 it('offers no action that changes an Autopilot cluster’s node pools', async () => {
   server.use(
-    http.get(`*/container/v1/projects/${P}/locations/us-central1/clusters/auto`, () =>
-      HttpResponse.json(autopilot()),
-    ),
+    getAutopilot,
     http.get(`${autoGw}/api/v1/nodes`, () => HttpResponse.json({ items: [] })),
   )
   renderApp(`${autoBase}/nodePools?project=${P}`)
   const table = await screen.findByRole('table', { name: 'Node pools' })
   expect(within(table).getByRole('link', { name: 'default-pool' })).toBeInTheDocument()
-  expect(screen.getByText(/GKE manages an Autopilot cluster’s node pools/)).toBeInTheDocument()
+  expect(screen.getByText(/These are GKE’s own node pools/)).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /Resize/ })).not.toBeInTheDocument()
   expect(screen.queryByRole('link', { name: 'Add node pool' })).not.toBeInTheDocument()
 
@@ -414,9 +409,7 @@ it('lists nodes Autopilot adds, read-only, without a reload', async () => {
   })
   const nodes = [node('gk3-auto-default-pool-1')]
   server.use(
-    http.get(`*/container/v1/projects/${P}/locations/us-central1/clusters/auto`, () =>
-      HttpResponse.json(autopilot()),
-    ),
+    getAutopilot,
     http.get(`${autoGw}/api/v1/nodes`, () => HttpResponse.json({ items: nodes })),
   )
   vi.useFakeTimers({ shouldAdvanceTime: true })
