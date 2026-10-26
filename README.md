@@ -690,6 +690,16 @@ advertises the allocatable CPU, memory and 32 pods of the GKE shape its first po
 kubelet (ADR 0031); a host smaller than the shape advertises less. Pods selecting
 `cloud.google.com/compute-class` or `cloud.google.com/gke-spot` get a node with those labels. At
 the node limit, pods stay Pending with a `FailedScaleUp` event.
+An Autopilot cluster applies GKE's Workload restrictions (FR-GKE-016) through admission webhooks
+the emulator serves: privileged containers, `hostPath` (except read-only under `/var/log/`),
+`hostNetwork`, `hostPID`, `hostIPC`, `hostPort` and capabilities beyond Autopilot's defaults
+are refused with GKE Warden's message, `NET_ADMIN` only once `workloadPolicyConfig.allowNetAdmin`
+is set. Google identities and service accounts of other namespaces cannot create or update
+objects in `kube-system`; the admin kubeconfig, as the cluster's own `system:admin`, still can.
+Pod requests are set as on clusters with bursting: 0.5 vCPU, 2 GiB memory and 1 GiB ephemeral
+storage for each container or sidecar that sets none, at least 50m CPU and 52 MiB memory per
+Pod, and memory or CPU raised to keep 1 to 6.5 GiB per vCPU. The response carries GKE's
+`autopilot-default-resources-mutator` warning. These webhooks fail closed, as GKE's do.
 A cluster whose `monitoring_config` enables `SYSTEM_COMPONENTS` exports its node, pod and
 container CPU and memory usage, requests, limits, allocatable and restarts (with the last
 termination reason, e.g. `OOMKilled`) over OTLP when the Instance's environment sets

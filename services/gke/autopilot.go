@@ -11,7 +11,8 @@ import (
 // Pod autoscaling, refuses requests that contradict them, and reports the
 // node pools it manages while refusing to let the user change them. The
 // managed pool starts with one node; autoscale.go adds and removes nodes
-// for the cluster's pods (FR-GKE-015).
+// for the cluster's pods (FR-GKE-015), and restrictions.go applies Workload
+// restrictions to them (FR-GKE-016).
 //
 // No Recording of an Autopilot cluster exists yet (ADR 0023), so the
 // error messages below are GKE's as best known, not checked against one.

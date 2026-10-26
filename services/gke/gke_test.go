@@ -395,6 +395,14 @@ func TestGKE(t *testing.T) {
 		}
 	})
 
+	// A Standard cluster has no Workload restrictions (FR-GKE-016).
+	t.Run("NoWorkloadRestrictions", func(t *testing.T) {
+		for kind, p := range restrictedPods {
+			if code, b, warnings := e.kubeWarned("POST", "/api/v1/namespaces/default/pods?dryRun=All", podObject("r", p.spec)); code != http.StatusCreated || len(warnings) != 0 {
+				t.Errorf("%s pod on Standard: %d %s %q", kind, code, b, warnings)
+			}
+		}
+	})
 	t.Run("WorkloadIdentity", func(t *testing.T) { testWorkloadIdentity(t, e) })
 	t.Run("PrivateDNS", func(t *testing.T) { testPrivateDNS(t, e) })
 	t.Run("RealGoogleAPIs", func(t *testing.T) { testRealGoogleAPIs(t, e) })
