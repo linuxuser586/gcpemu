@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
+	"github.com/linuxuser586/gcpemu/internal/lbenv"
 )
 
 // ApplySeed applies a seed file (FR-CORE-011). Top-level keys are service
@@ -61,8 +63,16 @@ func (in *Instance) ApplySeedData(ctx context.Context, b []byte, base string) er
 	return nil
 }
 
-// EnvVars collects client environment variables from all services.
+// EnvVars collects client environment variables from all services, and
+// the Load balancing frontends of the Linked Instances it delegates to.
 func (in *Instance) EnvVars() map[string]string {
+	vars, _ := in.envVars(context.Background())
+	return vars
+}
+
+// envVars is EnvVars, with notes on the Linked Instances' load balancing
+// endpoints that got no variable, which `gcpemu env` prints on stderr.
+func (in *Instance) envVars(ctx context.Context) (map[string]string, []string) {
 	eps := in.Env.Endpoints.All()
 	gw := eps["gateway"]
 	out := map[string]string{
@@ -85,12 +95,22 @@ func (in *Instance) EnvVars() map[string]string {
 			}
 		}
 	}
+	// Variables are derived over the Linked Instances' endpoints too, so
+	// that uniqueness and withholding span Instances.
+	linked, notes, unreachable := in.linkedFrontends(ctx)
+	maps.Copy(linked, eps)
+	lbVars, withheld := lbenv.Vars(linked)
+	if unreachable {
+		withoutShort(lbVars, linked)
+	}
+	maps.Copy(out, lbVars)
+	notes = append(notes, withheldNotes(withheld)...)
 	in.hostNameEnvVars(out)
 	in.externalEnvVars(out, gw)
 	if in.adminToken != "" {
 		out["GCPEMU_ADMIN_TOKEN"] = in.adminToken
 	}
-	return out
+	return out, notes
 }
 
 var coreSeedKeys = map[string]bool{"projects": true, "faults": true}

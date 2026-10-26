@@ -114,6 +114,16 @@ type Config struct {
 	// paired Instances list (see Manager.LinkedSigningKeys); ok false
 	// when it has none.
 	SigningKey func() (SigningKey, bool)
+	// LBFrontends returns this Instance's Load balancing frontends, as
+	// told to a LAN caller that arrived at the address lanIP, which paired
+	// Instances list for the Projects shared with them (see
+	// Manager.LinkedLBFrontends).
+	LBFrontends func(lanIP string) []LBFrontend
+	// LBBind reports whether this Instance serves --lb-bind; without it,
+	// paired Instances learn that none of its Load balancing frontends,
+	// the LoadBalancer Services it does not list among them included, have
+	// an address. nil reports false.
+	LBBind func() bool
 	// StaticAddrs lists link addresses that Discover asks besides browsing
 	// mDNS, for networks multicast doesn't cross.
 	StaticAddrs []string
@@ -297,6 +307,7 @@ func (m *Manager) handler() http.Handler {
 	mux.HandleFunc("POST "+idTokensRoute, m.serveIDToken)
 	mux.HandleFunc("GET /link/v1/buckets", m.serveBuckets)
 	mux.HandleFunc("GET /link/v1/signing-key", m.serveSigningKey)
+	mux.HandleFunc("GET /link/v1/lb-frontends", m.serveLBFrontends)
 	mux.HandleFunc("GET /link/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		p, v, ok := m.admit(w, r)
 		if !ok {

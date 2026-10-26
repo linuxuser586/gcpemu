@@ -299,21 +299,23 @@ func TestRotatedCABreaksPairings(t *testing.T) {
 // Instances with no protocol version in common are refused at Pairing and
 // on connect, naming both versions.
 func TestIncompatibleVersionIsRefused(t *testing.T) {
-	v2 := func(c *link.Config) { c.Versions = link.Versions{Min: 2, Max: 2} }
-	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "future", "", v2)
+	next := link.Current.Max + 1
+	ours, theirs := "version "+link.Current.String(), fmt.Sprintf("version %d", next)
+	future := func(c *link.Config) { c.Versions = link.Versions{Min: next, Max: next} }
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "future", "", future)
 	id, err := laptop.Identify(ctxT(t), office.addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = laptop.Pair(ctxT(t), office.addr, id.Fingerprint, "")
-	if err == nil || !strings.Contains(err.Error(), "version 1") || !strings.Contains(err.Error(), "version 2") {
+	if err == nil || !strings.Contains(err.Error(), ours) || !strings.Contains(err.Error(), theirs) {
 		t.Errorf("Pair across versions: %v", err)
 	}
 
-	// Paired at version 1, then the office is upgraded past it.
+	// Paired at the current version, then the office is upgraded past it.
 	office = newLinked(t, "office", "")
 	pair(t, laptop, office)
-	upgraded := newLinked(t, "office", office.dir, v2)
+	upgraded := newLinked(t, "office", office.dir, future)
 	_ = office.Close()
 	if err := laptop.store.Update(func(ps []link.Link) ([]link.Link, error) {
 		ps[0].Address = upgraded.addr
@@ -322,7 +324,7 @@ func TestIncompatibleVersionIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := laptop.Check(ctxT(t), "office")
-	if st.Reachable || !strings.Contains(st.Error, "version 1") || !strings.Contains(st.Error, "version 2") {
+	if st.Reachable || !strings.Contains(st.Error, ours) || !strings.Contains(st.Error, theirs) {
 		t.Errorf("Check across versions = %+v", st)
 	}
 }

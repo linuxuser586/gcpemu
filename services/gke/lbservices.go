@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/lbenv"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/published"
@@ -63,7 +64,8 @@ import (
 // claim (seen on the controller's next sync). A cluster that runs servicelb (lbServicelb) gets the ports served
 // too, but servicelb owns its ingress, which so lists only its nodes.
 
-const lbEndpointPrefix = "gke:"
+// lbEndpointPrefix starts the endpoints that print GCPEMU_GKE_* variables.
+const lbEndpointPrefix = lbenv.ServicePrefix
 
 // lbMode is how the host reaches a cluster's LoadBalancer Services.
 type lbMode int
@@ -398,9 +400,11 @@ func (s *Service) syncLBBind(np *netplane.Plane, key string, lbs map[string]*lbS
 	for _, id := range slices.Sorted(maps.Keys(lbs)) {
 		l := lbs[id]
 		name := lbBindName(key, id)
+		project, _, _ := strings.Cut(key, "/")
 		for _, p := range l.ports {
 			own := l.own[p.port]
 			fes = append(fes, emu.LANFrontend{Key: lbBindKey(key, id, p.port), Name: name, What: "LoadBalancer Service " + key + "/" + id,
+				Project: project, Endpoint: lbEndpoint(key, id, p.port),
 				Port: p.port, Addr: own.addr, Wildcard: own.wildcard, Sig: strconv.Itoa(p.nodePort),
 				Serve: func(ln net.Listener) { np.Serve(ln, s.nodePorts(key, p.nodePort)) }})
 		}
@@ -594,33 +598,4 @@ func (s *Service) LoopbackAddrs() []string {
 	}
 	s.loopMu.Unlock()
 	return slices.Sorted(maps.Keys(held))
-}
-
-// lbEnvVars returns GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT> for
-// each LoadBalancer Service port served on the host.
-func lbEnvVars(endpoints map[string]string) map[string]string {
-	out := map[string]string{}
-	for k, v := range endpoints {
-		if name, ok := strings.CutPrefix(k, lbEndpointPrefix); ok {
-			out["GCPEMU_GKE_"+envName(name)] = v
-		}
-	}
-	return out
-}
-
-// envName upper-cases a name for an env var, replacing other characters
-// with '_'.
-func envName(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z':
-			b.WriteRune(c - 32)
-		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			b.WriteRune(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
 }

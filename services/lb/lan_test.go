@@ -246,3 +246,65 @@ func TestLBBindOtherFrontend(t *testing.T) {
 		t.Fatalf("%s still served after unregistering", addr)
 	}
 }
+
+// lanFrontendAddrs returns the lb Service's --lb-bind endpoints, by name.
+func (e *env) lanFrontendAddrs() map[string]emu.LANFrontendAddrs {
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
+	out := map[string]emu.LANFrontendAddrs{}
+	for _, ep := range svc.(emu.LANFrontendLister).LANFrontendAddrs() {
+		out[ep.Name] = ep
+	}
+	return out
+}
+
+// TestLBBindLANFrontendAddrs: the lb Service lists each forwarding rule and
+// other Service's frontend with the --lb-bind addresses it claimed, and
+// why it claimed none, for a front Instance's `gcpemu env` (#715).
+func TestLBBindLANFrontendAddrs(t *testing.T) {
+	e := startLBBind(t)
+	for _, a := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
+		if c, err := net.DialTimeout("tcp", a, time.Second); err == nil {
+			c.Close()
+			t.Skip(a + " is in use")
+		}
+	}
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
+	svc.(emu.LANFrontends).SetLANFrontends("c", []emu.LANFrontend{{Key: "gke:c/default/web/8081", Name: "gke:c/default/web",
+		What: "LoadBalancer Service c/default/web", Port: 8081, Project: "gke-proj", Endpoint: "gke:c/default/web/8081",
+		Serve: func(ln net.Listener) { _ = http.Serve(ln, http.NotFoundHandler()) }}})
+	e.lanLB(newBackend(t))
+	e.forwardingRule("a", 8080)
+	e.forwardingRule("b", 8080)
+
+	got := e.lanFrontendAddrs()
+	a, b := got["lb:"+proj+"/global/a"], got["lb:"+proj+"/global/b"]
+	if a.Project != proj || b.Project != proj || !strings.Contains(a.What, "forwardingRules/a") {
+		t.Fatalf("rules = %+v, %+v", a, b)
+	}
+	won, lost := a, b
+	if len(a.Addrs) == 0 {
+		won, lost = b, a
+	}
+	if !slices.Equal(won.Addrs, []string{"127.0.0.1:8080"}) || won.Error != "" {
+		t.Errorf("the rule holding the address = %+v, want 127.0.0.1:8080", won)
+	}
+	if len(lost.Addrs) != 0 || !strings.Contains(lost.Error, "already serves") {
+		t.Errorf("the rule without the address = %+v, want why", lost)
+	}
+	web := got["gke:c/default/web/8081"]
+	if web.Project != "gke-proj" || !slices.Equal(web.Addrs, []string{"127.0.0.1:8081"}) || !strings.Contains(web.What, "c/default/web") {
+		t.Errorf("the Service port = %+v, want gke-proj at 127.0.0.1:8081", web)
+	}
+}
+
+// TestLANFrontendAddrsWithoutLBBind: without --lb-bind, each forwarding rule is
+// listed with no address, naming the flag (#715).
+func TestLANFrontendAddrsWithoutLBBind(t *testing.T) {
+	e := start(t)
+	e.lanLB(newBackend(t))
+	e.forwardingRule("a", 8080)
+	a, ok := e.lanFrontendAddrs()["lb:"+proj+"/global/a"]
+	if !ok || len(a.Addrs) != 0 || !strings.Contains(a.Error, "--lb-bind") {
+		t.Errorf("rule a = %+v (listed %v), want no address, naming --lb-bind", a, ok)
+	}
+}

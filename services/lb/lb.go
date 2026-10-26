@@ -187,13 +187,6 @@ func (s *Service) Restore(ctx context.Context, dir string) error {
 	return nil
 }
 
-// EnvVars implements emu.EnvVarer: the GCPEMU_LB_* variables of the
-// forwarding rule listeners (FR-LB-002, ADR 0013; envvars.go).
-func (s *Service) EnvVars(gateway string, endpoints map[string]string) map[string]string {
-	out, _ := lbEnv(endpoints)
-	return out
-}
-
 // changed re-reads the configuration and reconciles the data plane. It is
 // called after every committed mutation.
 func (s *Service) changed() {

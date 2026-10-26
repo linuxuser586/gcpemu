@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -37,6 +38,13 @@ const shared = "team-shared"
 // listener on loopback.
 func startWithProjects(t *testing.T, name string, change func(*config.Config)) *Instance {
 	t.Helper()
+	return startWith(t, name, change, nil)
+}
+
+// startWith is startWithProjects with extra Service factories, which
+// change may enable.
+func startWith(t *testing.T, name string, change func(*config.Config), extra map[string]Factory) *Instance {
+	t.Helper()
 	cfg := config.Defaults()
 	cfg.Instance = name
 	cfg.DataDir = t.TempDir()
@@ -47,7 +55,9 @@ func startWithProjects(t *testing.T, name string, change func(*config.Config)) *
 	if change != nil {
 		change(&cfg)
 	}
-	in, err := New(&cfg, map[string]Factory{"iam": iam.New, "pubsub": ps.New, "gcs": gcs.New, "ar": ar.New}, io.Discard)
+	factories := map[string]Factory{"iam": iam.New, "pubsub": ps.New, "gcs": gcs.New, "ar": ar.New}
+	maps.Copy(factories, extra)
+	in, err := New(&cfg, factories, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
