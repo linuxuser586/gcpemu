@@ -401,11 +401,12 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	})
 }
 
-// publicIPTaken reports whether err, from starting an instance's container,
-// says its address on the external network is taken. The runtime says
-// "Address already in use" for a taken host port too, which names the
-// binding (hostIP:hostPort): a taken host port picks another port and keeps
-// the Public IP, so a restart never moves it for that (#673).
+// publicIPTaken reports whether err, from starting a Cloud SQL instance's
+// container, says its address on the external network is taken. The
+// runtime says "Address already in use" for a taken host port too, which
+// names the binding (hostIP:hostPort): a taken host port picks another port
+// and keeps the Public IP, so a start of its Instance never moves it for
+// that (#673).
 func publicIPTaken(err error, hostIP string, hostPort int) bool {
 	return runtime.IsAddressInUse(err) && !mentions(strings.ToLower(err.Error()), hostIP, hostPort)
 }

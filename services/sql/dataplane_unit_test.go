@@ -6,8 +6,8 @@ import (
 )
 
 // The runtime says "Address already in use" both for a taken container
-// address and for a taken host port. Only the first moves an instance's
-// Public IP; a taken host port picks another port and keeps the address
+// address and for a taken host port. Only the first moves a Cloud SQL
+// instance's Public IP; a taken host port picks another port and keeps the address
 // (#673).
 func TestPublicIPTaken(t *testing.T) {
 	for _, c := range []struct {
