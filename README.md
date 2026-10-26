@@ -326,9 +326,11 @@ To reach Cloud SQL from another machine, pass `--sql-bind <address>` (repeatable
   that is free on the address, kept across restarts. `gcpemu status` lists it as
   `sql-lan:<connection name>`, so `psql "host=<address> port=<port> user=postgres"`. Postgres's
   own password authentication applies to built-in users, and IAM database users need an access
-  token the Instance issued, whatever the IAM enforcement level. The connection reaches the
-  instance as a host client's does, so authorized networks must admit `127.0.0.1/32` for it, as
-  for psql on the emulator's machine (#639).
+  token the Instance issued, whatever the IAM enforcement level. Authorized networks match the
+  LAN client's own address, as on GCP: `192.168.1.0/24` admits a client at `192.168.1.7`, and
+  `127.0.0.1/32` admits none. That holds for a client on the emulator's machine that dials the
+  address too; only the instance's loopback host port and public IP match `127.0.0.1/32`
+  (`docs/adr/0030-sql-bind-relay-tells-the-sidecar-agent-the-lan-callers-address.md`).
 - Port 3307 on the address serves the Cloud SQL Auth Proxy and the connectors for every
   instance. They all dial `<address>:3307`, so it routes each connection by the TLS server name
   they send, the instance's `dnsName` (`<id>.<region>.sql.goog.`, which its server certificate

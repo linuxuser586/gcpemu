@@ -3,6 +3,7 @@ package sql_test
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -155,4 +156,77 @@ func TestSQLBind(t *testing.T) {
 			t.Errorf("connector to %s reached another instance (%v)", in.Name, err)
 		}
 	}
+}
+
+// TestSQLBindAuthorizesLANCaller is #639's acceptance: through the
+// --sql-bind address, authorized networks match the LAN caller's own
+// address, here 127.0.0.2 dialling 127.0.0.1, and not 127.0.0.1/32 as
+// for a host client (ADR 0030).
+func TestSQLBindAuthorizesLANCaller(t *testing.T) {
+	emutest.RequireRuntime(t)
+	from := &net.TCPAddr{IP: net.ParseIP("127.0.0.2")}
+	if !routable(from) {
+		t.Skip("127.0.0.2 is not routable on this host")
+	}
+	inst := emutest.Start(t, []string{"sql"}, emutest.WithSQLHostClients(), emutest.WithConfig(func(c *config.Config) {
+		c.SQLBind = []string{"127.0.0.1"}
+	}))
+	svc := adminClient(t, inst)
+	ctx := context.Background()
+	in := createInstance(t, svc, &sqladmin.DatabaseInstance{
+		Name:            "lan-caller",
+		DatabaseVersion: "POSTGRES_17",
+		RootPassword:    "pw",
+		Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{
+			Ipv4Enabled:        true,
+			AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "127.0.0.2/32"}},
+		}},
+	})
+	host, port := lanAddr(t, inst, in)
+	dial := func() error {
+		cfg, err := pgx.ParseConfig(fmt.Sprintf("host=%s port=%d user=postgres dbname=postgres sslmode=disable connect_timeout=5", host, port))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Password = "pw"
+		cfg.DialFunc = (&net.Dialer{LocalAddr: from}).DialContext
+		c, err := pgx.ConnectConfig(ctx, cfg)
+		if err == nil {
+			c.Close(ctx)
+		}
+		return err
+	}
+	if err := dial(); err != nil {
+		t.Fatalf("127.0.0.2/32 refused the LAN caller 127.0.0.2: %v", err)
+	}
+
+	waitOp(t, svc, must(svc.Instances.Patch(testProject, in.Name, &sqladmin.DatabaseInstance{Settings: &sqladmin.Settings{
+		IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true, AuthorizedNetworks: []*sqladmin.AclEntry{{Value: "127.0.0.1/32"}}},
+	}}).Do()))
+	err := dial()
+	if err == nil || !strings.Contains(err.Error(), "connection from 127.0.0.2 is not authorized") {
+		t.Fatalf("127.0.0.1/32 alone, LAN caller 127.0.0.2: %v", err)
+	}
+	var logged bool
+	for _, e := range inst.Internal().Env.RequestLog.Entries("sql") {
+		logged = logged || (e.Method == "CONNECT direct 127.0.0.2" && e.Status != 0)
+	}
+	if !logged {
+		t.Error("no refused CONNECT direct 127.0.0.2 in the request log")
+	}
+}
+
+// routable reports whether a connection from local reaches 127.0.0.1.
+func routable(local *net.TCPAddr) bool {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return false
+	}
+	defer l.Close()
+	c, err := (&net.Dialer{LocalAddr: local, Timeout: time.Second}).Dial("tcp", l.Addr().String())
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
 }
