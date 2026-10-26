@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -32,9 +33,16 @@ import (
 //	          machineType: e2-standard-4
 //	          labels: {team: web}
 //	          serviceAccount: nodes@my-project.iam.gserviceaccount.com
+//	    - project: my-project
+//	      location: us-central1       # Autopilot clusters are regional
+//	      name: auto
+//	      autopilot: true             # default: a Standard cluster
+//	      allowNetAdmin: true         # Autopilot only
 //
-// Existing clusters are left untouched. Seeding waits until new clusters
-// are RUNNING (or fails with their error).
+// An Autopilot cluster (FR-GKE-012) takes no nodePools, as GKE owns its
+// node pools, and always has Workload Identity, so workloadIdentity
+// changes nothing on one. Existing clusters are left untouched.
+// Seeding waits until new clusters are RUNNING (or fails with their error).
 type seedFile struct {
 	Clusters []seedCluster `yaml:"clusters"`
 }
@@ -48,6 +56,8 @@ type seedCluster struct {
 	Subnetwork       string     `yaml:"subnetwork,omitempty"`
 	PrivateNodes     bool       `yaml:"privateNodes,omitempty"`
 	WorkloadIdentity bool       `yaml:"workloadIdentity,omitempty"`
+	Autopilot        bool       `yaml:"autopilot,omitempty"`
+	AllowNetAdmin    bool       `yaml:"allowNetAdmin,omitempty"`
 	NodePools        []seedPool `yaml:"nodePools,omitempty"`
 }
 
@@ -65,9 +75,11 @@ var _ emu.SeedExporter = (*Service)(nil)
 // ordered by project, location and name, with the fields that differ from
 // what the seed defaults to: the current master version, network, private
 // nodes, Workload Identity and each node pool's size, machine type, labels
-// and service account. Kubernetes objects are data plane and are not
-// exported, nor is anything else the seed file cannot declare (release
-// channel, node pool versions, autoscaling, taints...). A pool resized to
+// and service account. An Autopilot cluster exports its Cluster mode and
+// NET_ADMIN setting in place of Workload Identity and node pools, which
+// GKE sets. Kubernetes objects are data plane and are not exported, nor
+// is anything else the seed file cannot declare (release channel, node
+// pool versions, autoscaling, taints...). A pool resized to
 // zero nodes comes back with one, as the seed creates every pool with at
 // least one node, and a cluster without node pools gets the default pool.
 func (s *Service) ExportSeed(ctx context.Context) (any, error) {
@@ -91,8 +103,7 @@ func (s *Service) ExportSeed(ctx context.Context) (any, error) {
 		c := rec.cluster()
 		sc := seedCluster{
 			Project: rec.Int.Project, Location: rec.Int.Location, Name: rec.Int.Name,
-			PrivateNodes:     c.GetPrivateClusterConfig().GetEnablePrivateNodes(),
-			WorkloadIdentity: c.GetWorkloadIdentityConfig().GetWorkloadPool() != "",
+			PrivateNodes: c.GetPrivateClusterConfig().GetEnablePrivateNodes(),
 		}
 		if v := c.GetCurrentMasterVersion(); v != defaultVersion {
 			sc.Version = v
@@ -103,6 +114,15 @@ func (s *Service) ExportSeed(ctx context.Context) (any, error) {
 		if c.GetSubnetwork() != "default" {
 			sc.Subnetwork = c.GetSubnetwork()
 		}
+		// GKE sets an Autopilot cluster's Workload Identity and owns its
+		// node pools (FR-GKE-012).
+		if autopilotOn(c) {
+			sc.Autopilot = true
+			sc.AllowNetAdmin = c.GetAutopilot().GetWorkloadPolicyConfig().GetAllowNetAdmin()
+			f.Clusters = append(f.Clusters, sc)
+			continue
+		}
+		sc.WorkloadIdentity = c.GetWorkloadIdentityConfig().GetWorkloadPool() != ""
 		for _, np := range c.GetNodePools() {
 			sp := seedPool{Name: np.GetName(), Labels: np.GetConfig().GetLabels()}
 			if n := np.GetInitialNodeCount(); n > 1 {
@@ -131,6 +151,19 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 	if err := section.Decode(&f); err != nil {
 		return err
 	}
+	// Refuse, before creating anything, the Autopilot entries the API
+	// would let through (FR-GKE-012): it takes the one default-pool gcloud
+	// sends with an Autopilot cluster, and a workload policy on a cluster
+	// that is not one.
+	for i, sc := range f.Clusters {
+		r := ref{Project: sc.Project, Location: sc.Location, Cluster: sc.Name}
+		switch {
+		case sc.Autopilot && len(sc.NodePools) > 0:
+			return fmt.Errorf("clusters[%d] (%s): Autopilot clusters do not support node pools; GKE manages them.", i, r.clusterName())
+		case sc.AllowNetAdmin && !sc.Autopilot:
+			return fmt.Errorf("clusters[%d] (%s): Workload policies can only be set on Autopilot clusters.", i, r.clusterName())
+		}
+	}
 	type pending struct{ project, op, name string }
 	var ops []pending
 	for i, sc := range f.Clusters {
@@ -150,8 +183,14 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 		if sc.WorkloadIdentity {
 			c.WorkloadIdentityConfig = &containerpb.WorkloadIdentityConfig{WorkloadPool: sc.Project + ".svc.id.goog"}
 		}
+		if sc.Autopilot {
+			c.Autopilot = &containerpb.Autopilot{Enabled: true}
+			if sc.AllowNetAdmin {
+				c.Autopilot.WorkloadPolicyConfig = &containerpb.WorkloadPolicyConfig{AllowNetAdmin: proto.Bool(true)}
+			}
+		}
 		pools := sc.NodePools
-		if len(pools) == 0 {
+		if len(pools) == 0 && !sc.Autopilot {
 			pools = []seedPool{{Name: defaultPoolName, NodeCount: 1}}
 		}
 		for _, p := range pools {
