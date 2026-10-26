@@ -58,20 +58,18 @@ func (m *Manager) AgentBinary(ctx context.Context) (string, error) {
 	return m.Agent.Binary(ctx)
 }
 
+// pickAttempts bounds how many addresses CreateContainer and Connect pick
+// for an attachment the runtime refuses at the address picked.
+const pickAttempts = 3
+
 // CreateContainer creates a container like Client.CreateContainer, except
 // that an attachment without a fixed address, on a network whose subnet
 // holds a Reserved address, gets the lowest free address outside the
 // reserved set. The runtime would otherwise hand out a reserved address
-// whose container is not running yet, e.g. after a restart.
+// whose container is not running yet, e.g. after a restart. An address the
+// runtime refuses is replaced by the next pick (#673).
 func (m *Manager) CreateContainer(ctx context.Context, s ContainerSpec) (string, error) {
-	var reserved []netip.Addr
-	if m.Reserved != nil {
-		for _, a := range m.Reserved() {
-			if ip, err := netip.ParseAddr(a); err == nil && ip.Is4() {
-				reserved = append(reserved, ip)
-			}
-		}
-	}
+	reserved := m.reserved()
 	dynamic := slices.ContainsFunc(s.Networks, func(a Attachment) bool { return a.IP == "" })
 	if len(reserved) == 0 || !dynamic {
 		return m.Client.CreateContainer(ctx, s)
@@ -79,30 +77,76 @@ func (m *Manager) CreateContainer(ctx context.Context, s ContainerSpec) (string,
 	// Serialized so that the next pick sees this container's address.
 	m.addrMu.Lock()
 	defer m.addrMu.Unlock()
-	picked := s
-	picked.Networks = slices.Clone(s.Networks)
-	changed := false
-	for i, a := range picked.Networks {
-		if a.IP != "" {
-			continue
+	var err error
+	for range pickAttempts {
+		picked := s
+		picked.Networks = slices.Clone(s.Networks)
+		var tried []netip.Addr
+		for i, a := range picked.Networks {
+			if a.IP != "" {
+				continue
+			}
+			ip, perr := m.freeAddr(ctx, a.Network, reserved)
+			if perr != nil {
+				return "", fmt.Errorf("create container %s: %w", s.Name, perr)
+			}
+			picked.Networks[i].IP = ip
+			if a, perr := netip.ParseAddr(ip); perr == nil {
+				tried = append(tried, a)
+			}
 		}
-		ip, err := m.freeAddr(ctx, a.Network, reserved)
-		if err != nil {
-			return "", fmt.Errorf("create container %s: %w", s.Name, err)
+		var id string
+		if id, err = m.Client.CreateContainer(ctx, picked); err == nil || len(tried) == 0 {
+			return id, err
 		}
-		picked.Networks[i].IP = ip
-		changed = changed || ip != ""
+		reserved = append(reserved, tried...)
 	}
-	id, err := m.Client.CreateContainer(ctx, picked)
-	if err != nil && changed {
-		// Runtimes that allow fixed addresses only on networks created
-		// with a subnet refuse the pick; let them choose instead.
-		if m.Log != nil {
-			m.Log.Warn("fixed address refused; the runtime picks one", "container", s.Name, "err", err)
-		}
-		return m.Client.CreateContainer(ctx, s)
+	// Runtimes that allow fixed addresses only on networks created with a
+	// subnet refuse every pick; let them choose instead.
+	if m.Log != nil {
+		m.Log.Warn("fixed address refused; the runtime picks one", "container", s.Name, "err", err)
 	}
-	return id, err
+	return m.Client.CreateContainer(ctx, s)
+}
+
+// Connect connects container to network like Client.Connect, except that
+// without a fixed address, on a network whose subnet holds a Reserved
+// address, it takes an address as CreateContainer picks one.
+func (m *Manager) Connect(ctx context.Context, network, container, ip string, aliases ...string) error {
+	reserved := m.reserved()
+	if ip != "" || len(reserved) == 0 {
+		return m.Client.Connect(ctx, network, container, ip, aliases...)
+	}
+	m.addrMu.Lock()
+	defer m.addrMu.Unlock()
+	var err error
+	for range pickAttempts {
+		pick, perr := m.freeAddr(ctx, network, reserved)
+		if perr != nil {
+			return fmt.Errorf("connect %s to %s: %w", container, network, perr)
+		}
+		if err = m.Client.Connect(ctx, network, container, pick, aliases...); err == nil || pick == "" || IsAlreadyExists(err) {
+			return err
+		}
+		reserved = append(reserved, netip.MustParseAddr(pick))
+	}
+	if m.Log != nil {
+		m.Log.Warn("fixed address refused; the runtime picks one", "container", container, "network", network, "err", err)
+	}
+	return m.Client.Connect(ctx, network, container, "", aliases...)
+}
+
+// reserved parses the Reserved addresses.
+func (m *Manager) reserved() []netip.Addr {
+	var out []netip.Addr
+	if m.Reserved != nil {
+		for _, a := range m.Reserved() {
+			if ip, err := netip.ParseAddr(a); err == nil && ip.Is4() {
+				out = append(out, ip)
+			}
+		}
+	}
+	return out
 }
 
 // freeAddr returns the lowest address of network that is not reserved,

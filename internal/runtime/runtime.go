@@ -606,6 +606,40 @@ func (c *Client) NetworkAddrs(ctx context.Context, network string) (map[string]b
 	return out, nil
 }
 
+// AddrHolder returns the container holding ip on network, attached with it
+// or created with it as its fixed address (the runtime does not hold that
+// until the container starts), and whether there is one. Only ID, Name and
+// Labels are set.
+func (c *Client) AddrHolder(ctx context.Context, network, ip string) (Container, bool, error) {
+	var cv []struct {
+		ID              string `json:"Id"`
+		Names           []string
+		Labels          map[string]string
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAMConfig *struct{ IPv4Address string }
+				IPAddress  string
+			}
+		}
+	}
+	q := url.Values{"all": {"true"}, "filters": {`{"network":[` + strconv.Quote(network) + `]}`}}
+	if err := c.do(ctx, http.MethodGet, "/containers/json", q, nil, &cv); err != nil {
+		return Container{}, false, err
+	}
+	for _, ct := range cv {
+		ep, ok := ct.NetworkSettings.Networks[network]
+		if !ok || ep.IPAddress != ip && (ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address != ip) {
+			continue
+		}
+		name := ""
+		if len(ct.Names) > 0 {
+			name = strings.TrimPrefix(ct.Names[0], "/")
+		}
+		return Container{ID: ct.ID, Name: name, Labels: ct.Labels}, true, nil
+	}
+	return Container{}, false, nil
+}
+
 // ListNetworks returns networks carrying all the given labels.
 func (c *Client) ListNetworks(ctx context.Context, labels map[string]string) ([]Network, error) {
 	var v []struct {
