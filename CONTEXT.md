@@ -123,8 +123,12 @@ A listener an Instance serves on an address beyond loopback, given by a `--*-bin
 _Avoid_: LAN binding, bind address (unqualified), exposed port
 
 **LAN caller**:
-A caller whose request reached the Instance from another machine: through a LAN listener, at a `--bind` address beyond loopback, or over a link from a Linked Instance. The Instance tells it the Data plane addresses that machine can reach, its LAN listeners', and no address for a Data plane with none.
+A caller whose request arrived through a LAN listener, at a `--bind` address beyond loopback, or over a link from a Linked Instance, whichever machine it runs on. The Instance tells it the Data plane addresses that machine can reach, its LAN listeners', and no address for a Data plane with none.
 _Avoid_: remote caller, external client
+
+**Host client**:
+A client on the host that reaches an Instance's Data plane at a loopback address or a container address the host can route to, not through a LAN listener. Cloud SQL's authorized networks match it as `127.0.0.1`.
+_Avoid_: local client
 
 **VM runtime**:
 A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, Docker Desktop or Podman machine on Windows, and Docker Desktop on Linux.
