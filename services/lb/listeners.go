@@ -75,6 +75,9 @@ type listener struct {
 	pub              net.Listener
 	pubPort          int
 	pubHost, pubHint string
+	// ext is set on the frontend of another Service, which --lb-bind
+	// serves (lan.go); it has no listener of its own here.
+	ext *emu.LANFrontend
 }
 
 func (l *listener) close() {

@@ -283,16 +283,22 @@ Two rules whose qualified variables come out the same (`-` and `/` both become `
 The emulator logs a warning when a variable is withheld, and `gcpemu doctor` lists it.
 
 To reach a load balancer from another device (say, a phone on the LAN), pass
-`--lb-bind <address>` (repeatable; `lbBind` / `GCPEMU_LB_BIND`). Every forwarding rule is then
-also served on `<address>:<its port>`, while the admin API, the API gateway and every other Data
+`--lb-bind <address>` (repeatable; `lbBind` / `GCPEMU_LB_BIND`). Every forwarding rule, and
+every port of a GKE LoadBalancer Service, is then also served on `<address>:<its port>`, while the admin API, the API gateway and every other Data
 plane stay on `--bind`. Nothing else is exposed, so `--lb-bind` doesn't need
 `--i-understand-this-is-insecure`. The emulator binds the port itself when it can. When the port is
 privileged (`net.ipv4.ip_unprivileged_port_start` above it), a labelled `gcpemu-<id>-lb-lan`
 container on the host network listens there and relays to the emulator. That fails on a VM
-runtime, whose host network is the VM's. On macOS no container is used: a forwarding rule on a
-port below 1024 listens on the wildcard address, which serves only loopback and `--lb-bind`
-addresses. If two forwarding rules share a port, only one gets the address. `gcpemu status` lists each rule's addresses as
-`lb-lan:<name>`, and `gcpemu doctor` checks the addresses before start and lists them while running.
+runtime, whose host network is the VM's. On macOS no container is used: a forwarding rule or
+Service on a port below 1024 listens on the wildcard address, which serves only loopback and
+`--lb-bind` addresses. If two of them share a port, only one gets the address: the one whose own
+listener is on the wildcard address there, else a forwarding rule before a Service, and otherwise
+the first by name. The other gets it once the first goes, and
+`gcpemu doctor` lists it meanwhile. A Service's `status.loadBalancer.ingress` lists each `--lb-bind`
+address it serves after its own address, for every client, except in a cluster that runs k3s's
+servicelb (Docker on Linux), which keeps its nodes' addresses there. `gcpemu status` lists each
+rule's addresses as `lb-lan:<name>`, and each Service's as `lb-lan:gke:<project>/<location>/<cluster>/<namespace>/<name>`,
+and `gcpemu doctor` checks the addresses before start and lists them while running.
 
 To manage GKE clusters and push images from another machine (say, Argo CD and BuildKit in
 another cluster on the LAN), pass `--gke-bind <address>` and `--ar-bind <address>` (both
@@ -517,8 +523,9 @@ gcpemu link delegate team-shared --to office
   as is; without `--ar-bind`, they keep the pkg.dev name. Cloud SQL reports the `--sql-bind`
   address, or no address without it, and then refuses the connectors' settings with a message
   naming `--sql-bind`. A key created through a real Google hostname names
-  Google's endpoints (ADR 0021). Forwarding rules and LoadBalancer Services still report the
-  office's own addresses (#669). A client reaching the office through `--gfe-bind`, or at a
+  Google's endpoints (ADR 0021). A forwarding rule keeps its Declared address for every
+  caller (ADR 0027), and a LoadBalancer Service's ingress lists the office's `--lb-bind`
+  addresses it serves after its own. A client reaching the office through `--gfe-bind`, or at a
   `--bind` address beyond loopback, is told the same `--gke-bind` and `--sql-bind` addresses.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,
   and under `--strict-projects` it counts as existing, since its requests are forwarded. Anything

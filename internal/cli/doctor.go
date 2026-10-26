@@ -468,8 +468,9 @@ func checkVMRuntime(ctx context.Context, out io.Writer, cl *emuruntime.Client, c
 
 // checkUnpublished lists the forwarding rules of the running Instance that
 // have no published port (ADR 0012), which only a Containerized Instance
-// has, and the GCPEMU_LB_* variables withheld as ambiguous (ADR 0013); an
-// Instance without the lb service reports neither. It also lists
+// has, the GCPEMU_LB_* variables withheld as ambiguous (ADR 0013), and the
+// --lb-bind addresses frontends cannot serve; an Instance without the lb
+// service reports none of them. It also lists
 // what keeps host clients from Kubernetes Services (ADR 0014), which an
 // Instance without the gke service does not report.
 func checkUnpublished(out io.Writer, cfg *config.Config) {
@@ -598,9 +599,10 @@ func reportSQLHosts(out io.Writer, body []byte) {
 }
 
 // reportUnpublished prints each forwarding rule of an lb listeners report
-// that has no published port, with what to publish, and each GCPEMU_LB_*
+// that has no published port, with what to publish, each GCPEMU_LB_*
 // variable withheld because more than one rule would print it (ADR 0013),
-// with the qualified variables to use instead.
+// with the qualified variables to use instead, and each --lb-bind address
+// a forwarding rule or LoadBalancer Service cannot serve, and why.
 func reportUnpublished(out io.Writer, body []byte) {
 	var v struct {
 		Listeners []struct {
@@ -613,6 +615,11 @@ func reportUnpublished(out io.Writer, body []byte) {
 			ForwardingRules []string `json:"forwardingRules"`
 			Qualified       []string `json:"qualified"`
 		} `json:"withheld"`
+		LANUnavailable []struct {
+			Frontend string `json:"frontend"`
+			Address  string `json:"address"`
+			Error    string `json:"error"`
+		} `json:"lanUnavailable"`
 	}
 	if json.Unmarshal(body, &v) != nil {
 		return
@@ -631,6 +638,9 @@ func reportUnpublished(out io.Writer, body []byte) {
 			fix = "rename one of the forwarding rules"
 		}
 		fmt.Fprintf(out, "       fix: %s\n", fix)
+	}
+	for _, f := range v.LANUnavailable {
+		fmt.Fprintf(out, "[WARN] %s is not served on --lb-bind address %s: %s\n", f.Frontend, f.Address, f.Error)
 	}
 }
 
@@ -968,26 +978,7 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 		}
 		var i struct{ Endpoints map[string]string }
 		_ = json.Unmarshal(b, &i)
-		for _, n := range sortedKeys(i.Endpoints) {
-			if name, ok := strings.CutPrefix(n, "lb-lan:"); ok {
-				fmt.Fprintf(out, "[ok  ] forwarding rule %s exposed beyond loopback on %s\n", name, i.Endpoints[n])
-			}
-			if name, ok := strings.CutPrefix(n, "gke-lan:"); ok {
-				fmt.Fprintf(out, "[ok  ] Kubernetes API of %s exposed beyond loopback on %s\n", name, i.Endpoints[n])
-			}
-			if name, ok := strings.CutPrefix(n, "sql-lan:"); ok {
-				fmt.Fprintf(out, "[ok  ] Cloud SQL instance %s exposed beyond loopback on %s (credentials required)\n", name, i.Endpoints[n])
-			}
-			if n == "ar-lan" {
-				fmt.Fprintf(out, "[ok  ] Artifact Registry registry exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
-			}
-			if n == frontend.LANEndpoint {
-				fmt.Fprintf(out, "[ok  ] Google front end exposed beyond loopback on %s (TLS, credentials required)\n", i.Endpoints[n])
-			}
-			if n == link.Endpoint {
-				fmt.Fprintf(out, "[ok  ] link protocol exposed beyond loopback on %s (mutual TLS, paired Instances and Pairing requests only)\n", i.Endpoints[n])
-			}
-		}
+		reportLANEndpoints(out, i.Endpoints)
 		return
 	}
 	if !slices.ContainsFunc(cfg.LANBinds(), func(b config.LANBind) bool { return len(b.Addrs) > 0 }) {
@@ -1040,6 +1031,35 @@ func checkLANBind(out io.Writer, report func(bool, string, string), cfg *config.
 	}
 	if len(cfg.LBBind) > 0 {
 		checkLBPort(report, start, hasRuntime, ctr)
+	}
+}
+
+// reportLANEndpoints prints what a running Instance serves on its LAN
+// listeners, from its endpoints.
+func reportLANEndpoints(out io.Writer, endpoints map[string]string) {
+	for _, n := range sortedKeys(endpoints) {
+		if name, ok := strings.CutPrefix(n, "lb-lan:"); ok {
+			what := "forwarding rule " + name
+			if svc, ok := strings.CutPrefix(name, "gke:"); ok {
+				what = "LoadBalancer Service " + svc
+			}
+			fmt.Fprintf(out, "[ok  ] %s exposed beyond loopback on %s\n", what, endpoints[n])
+		}
+		if name, ok := strings.CutPrefix(n, "gke-lan:"); ok {
+			fmt.Fprintf(out, "[ok  ] Kubernetes API of %s exposed beyond loopback on %s\n", name, endpoints[n])
+		}
+		if name, ok := strings.CutPrefix(n, "sql-lan:"); ok {
+			fmt.Fprintf(out, "[ok  ] Cloud SQL instance %s exposed beyond loopback on %s (credentials required)\n", name, endpoints[n])
+		}
+		if n == "ar-lan" {
+			fmt.Fprintf(out, "[ok  ] Artifact Registry registry exposed beyond loopback on %s (TLS, credentials required)\n", endpoints[n])
+		}
+		if n == frontend.LANEndpoint {
+			fmt.Fprintf(out, "[ok  ] Google front end exposed beyond loopback on %s (TLS, credentials required)\n", endpoints[n])
+		}
+		if n == link.Endpoint {
+			fmt.Fprintf(out, "[ok  ] link protocol exposed beyond loopback on %s (mutual TLS, paired Instances and Pairing requests only)\n", endpoints[n])
+		}
 	}
 }
 

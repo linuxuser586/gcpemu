@@ -14,8 +14,9 @@ import (
 // The Web console's Load Balancer view reads two things GCP has no API
 // for (SRS 4.8.3), on the admin API:
 //
-//	GET  /_emu/v1/lb/listeners[?project=P]  each forwarding rule's local listener (FR-LB-002), and the
-//	                                        GCPEMU_LB_* variables withheld as ambiguous (ADR 0013)
+//	GET  /_emu/v1/lb/listeners[?project=P]  each forwarding rule's local listener (FR-LB-002), the
+//	                                        GCPEMU_LB_* variables withheld as ambiguous (ADR 0013),
+//	                                        and the --lb-bind addresses frontends cannot serve (lan.go)
 //	POST /_emu/v1/lb/route                  which route and backend of a URL map serve a request
 
 // listenerInfo is one forwarding rule's mapped listener.
@@ -38,6 +39,14 @@ type unavailableInfo struct {
 	IPAddress      string `json:"ipAddress"`
 	Port           int    `json:"port"`
 	Error          string `json:"error"`
+}
+
+// lanUnavailableInfo is an --lb-bind address a frontend (a forwarding
+// rule or a GKE LoadBalancer Service) cannot serve, and why.
+type lanUnavailableInfo struct {
+	Frontend string `json:"frontend"`
+	Address  string `json:"address"`
+	Error    string `json:"error"`
 }
 
 // withheldInfo is a GCPEMU_LB_* variable that `gcpemu env` does not print
@@ -71,6 +80,13 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 		}
 		failed = append(failed, unavailableInfo{ForwardingRule: fe.frPath, IPAddress: fe.ip, Port: fe.port, Error: why})
 	}
+	// Not scoped by project: other Services' frontends have none here.
+	lanFailed := []lanUnavailableInfo{}
+	if project == "" {
+		for _, f := range s.dp.lanDown {
+			lanFailed = append(lanFailed, lanUnavailableInfo{Frontend: f.what, Address: f.addr, Error: f.err})
+		}
+	}
 	s.dp.mu.Unlock()
 	_, vars := lbEnv(s.env.Endpoints.All())
 	withheld := []withheldInfo{}
@@ -86,7 +102,11 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ForwardingRule < out[j].ForwardingRule })
 	sort.Slice(failed, func(i, j int) bool { return failed[i].ForwardingRule < failed[j].ForwardingRule })
-	writeJSON(w, http.StatusOK, map[string]any{"listeners": out, "unavailable": failed, "withheld": withheld})
+	sort.Slice(lanFailed, func(i, j int) bool {
+		a, b := lanFailed[i], lanFailed[j]
+		return a.Frontend < b.Frontend || a.Frontend == b.Frontend && a.Address < b.Address
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"listeners": out, "unavailable": failed, "withheld": withheld, "lanUnavailable": lanFailed})
 }
 
 // routeRequest is the body of POST /_emu/v1/lb/route.

@@ -118,7 +118,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 			"bind", cfg.Bind, "iamMode", cfg.IAMMode)
 	}
 	if len(cfg.LBBind) > 0 {
-		logger.Info("load balancer forwarding rules are also served beyond loopback; nothing else is", "lbBind", cfg.LBBind)
+		logger.Info("forwarding rules and GKE LoadBalancer Services are also served beyond loopback; nothing else is", "lbBind", cfg.LBBind)
 	}
 	if len(cfg.GKEBind) > 0 {
 		logger.Info("GKE clusters' Kubernetes APIs are also served beyond loopback, to real credentials only", "gkeBind", cfg.GKEBind)
