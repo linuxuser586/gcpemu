@@ -379,6 +379,10 @@ _Avoid_: host node limit, quota
 What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates; refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
 _Avoid_: Warden (GKE's internal name), Autopilot policy
 
+**Autopilot compatibility check**:
+A report, for a Standard cluster, of the running workloads that the Workload restrictions would refuse or change if the cluster were an Autopilot cluster. It reads what is running now and changes nothing.
+_Avoid_: migration check, Autopilot readiness
+
 **Admin kubeconfig**:
 The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0035).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
