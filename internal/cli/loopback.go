@@ -52,16 +52,20 @@ func loopbackCmd(goos string) *cobra.Command {
 
 // loopbackPlan returns the script that adds (install) or removes the
 // aliases and the LaunchDaemon in dir that adds them again at boot. Both
-// can run again: an alias that exists is updated in place, and the daemon
-// is loaded only when it isn't and unloaded only when it is.
+// can run again. Install removes each alias and adds it again, and unloads
+// the daemon before loading it, so it also brings an earlier install up to
+// date; uninstall unloads the daemon only when it is loaded.
 func loopbackPlan(root bool, dir string, install bool) []trustStep {
 	plist := dir + "/" + loopbackLabel + ".plist"
 	var b strings.Builder
 	if install {
-		b.WriteString("set -e\n" + loopbackAliasLoop("ifconfig lo0 alias 127.0.0.$i up") + "\n")
+		b.WriteString("set -e\n" + loopbackAliasLoop("ifconfig lo0 -alias 127.0.0.$i 2>/dev/null || true; ifconfig lo0 "+loopbackAlias) + "\n")
 		b.WriteString("mkdir -p " + dir + "\ncat > " + plist + " <<'GCPEMU_PLIST'\n" + loopbackPlist() + "GCPEMU_PLIST\n")
 		b.WriteString("chown root:wheel " + plist + "\nchmod 644 " + plist + "\n")
-		b.WriteString("launchctl print system/" + loopbackLabel + " >/dev/null 2>&1 || launchctl bootstrap system " + plist + "\n")
+		// launchd may still be tearing the old daemon down, so a bootstrap
+		// right after bootout gets one retry.
+		bootstrap := "launchctl bootstrap system " + plist
+		b.WriteString("launchctl bootout system/" + loopbackLabel + " 2>/dev/null || true\n" + bootstrap + " || { sleep 1; " + bootstrap + "; }\n")
 	} else {
 		b.WriteString("launchctl bootout system/" + loopbackLabel + " 2>/dev/null || true\n")
 		b.WriteString("rm -f " + plist + "\n")
@@ -69,6 +73,11 @@ func loopbackPlan(root bool, dir string, install bool) []trustStep {
 	}
 	return []trustStep{{args: sudoUnless(root, "sh", "-s"), stdin: []byte(b.String()), script: true}}
 }
+
+// loopbackAlias adds 127.0.0.$i as a /32. Without a netmask ifconfig gives
+// each alias the classful /8, and 253 overlapping 127.0.0.0/8s keep
+// mDNSResponder at 100% CPU on macOS 27 (#677).
+const loopbackAlias = "alias 127.0.0.$i netmask 255.255.255.255 up"
 
 // loopbackAliasLoop runs cmd for each i of the aliases.
 func loopbackAliasLoop(cmd string) string {
@@ -87,7 +96,7 @@ func loopbackPlist() string {
 	<array>
 		<string>/bin/sh</string>
 		<string>-c</string>
-		<string>` + loopbackAliasLoop("/sbin/ifconfig lo0 alias 127.0.0.$i up") + `</string>
+		<string>` + loopbackAliasLoop("/sbin/ifconfig lo0 "+loopbackAlias) + `</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
