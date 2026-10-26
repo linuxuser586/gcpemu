@@ -17,6 +17,12 @@ func (m *Manager) AskIDToken(ctx context.Context, name, token string) (string, e
 	return m.askIDToken(ctx, name, token)
 }
 
+// AskLBEndpoints asks the link name for its load balancing endpoints, as
+// LinkedLBEndpoints does, unfiltered.
+func (m *Manager) AskLBEndpoints(ctx context.Context, name string) ([]LBEndpoint, error) {
+	return m.askLBEndpoints(ctx, name)
+}
+
 // AskIDTokensAt has Instances ask about ID tokens at path, which one that
 // predates the route does not serve, until the test ends. Set it once the
 // listeners serve.

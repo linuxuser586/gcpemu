@@ -76,7 +76,7 @@ func TestDiscoverOverMDNS(t *testing.T) {
 	}
 	want := link.Discovered{
 		Name: "office@" + hostLabel(t), Instance: "office", InstanceID: "office-id", Address: b.addr,
-		Fingerprint: link.Fingerprint(b.ca.Certificate()), Version: 1, MinVersion: 1, Source: link.SourceMDNS,
+		Fingerprint: link.Fingerprint(b.ca.Certificate()), Version: link.Current.Max, MinVersion: link.Current.Min, Source: link.SourceMDNS,
 	}
 	if d != want {
 		t.Fatalf("discovered\n %+v\nwant\n %+v", d, want)
@@ -99,7 +99,7 @@ func TestDiscoverMarksIncompatible(t *testing.T) {
 	onLAN(t, "future", ip, port, true, func(c *link.Config) { c.Versions = link.Versions{Min: 7, Max: 8} })
 
 	d := discovered(t, a)["future"]
-	if !strings.Contains(d.Problem, "version 1") || !strings.Contains(d.Problem, "version 7-8") {
+	if !strings.Contains(d.Problem, "version "+link.Current.String()) || !strings.Contains(d.Problem, "version 7-8") {
 		t.Fatalf("incompatible Instance's problem %q", d.Problem)
 	}
 }

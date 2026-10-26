@@ -35,7 +35,8 @@ func (in *Instance) newLink() (*link.Manager, error) {
 		CA: in.Env.CA, Instance: in.Config.Instance, ID: in.ID, Store: st,
 		Log:         in.Env.Log.With("component", "link"),
 		StaticAddrs: in.Config.LinkDiscover, MDNS: mdns.Options{Port: in.Config.LinkMDNSPort},
-		HasProject: in.Env.HasProject,
+		HasProject:  in.Env.HasProject,
+		LBEndpoints: in.lanEndpoints,
 		Serve: func(w http.ResponseWriter, r *http.Request, from, principal string) {
 			in.gw.ServeLinked(w, r, from, principal)
 		},
@@ -168,6 +169,7 @@ func (in *Instance) linkRoutes(mux *http.ServeMux) {
 		wg.Wait()
 		writeJSON(w, http.StatusOK, map[string]any{"links": out})
 	})
+	mux.HandleFunc("GET /_emu/v1/links/lb-endpoints", in.serveLinkedLB)
 	mux.HandleFunc("GET /_emu/v1/links/discovered", func(w http.ResponseWriter, r *http.Request) {
 		ds, err := in.link.Discover(r.Context())
 		if err != nil {

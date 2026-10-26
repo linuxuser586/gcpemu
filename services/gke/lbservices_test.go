@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/lbenv"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/porttest"
 	"github.com/linuxuser586/gcpemu/internal/published"
@@ -74,14 +76,18 @@ func TestLBLoopCandidates(t *testing.T) {
 	}
 }
 
+// A LoadBalancer Service port's endpoint prints
+// GCPEMU_GKE_<CLUSTER>_<NAMESPACE>_<SERVICE>_<PORT>, and EnvVars leaves it to
+// the Instance.
 func TestLBEnvVars(t *testing.T) {
+	ep := lbEndpoint("p/us-central1/c-1", "default/web", 80)
+	vars, _ := lbenv.Vars(map[string]string{ep: "127.0.0.7:80"})
+	if want := map[string]string{"GCPEMU_GKE_C_1_DEFAULT_WEB_80": "127.0.0.7:80"}; !maps.Equal(vars, want) {
+		t.Errorf("variables of %s = %v, want %v", ep, vars, want)
+	}
 	s := newUnitService(t)
-	got := s.EnvVars("127.0.0.1:4000", map[string]string{
-		"gke:c-1/default/web/80": "127.0.0.7:80",
-		"lb:fr":                  "127.0.0.8:80",
-	})
-	if got["GCPEMU_GKE_C_1_DEFAULT_WEB_80"] != "127.0.0.7:80" || len(got) != 3 {
-		t.Errorf("EnvVars = %v", got)
+	if got := s.EnvVars("127.0.0.1:4000", map[string]string{ep: "127.0.0.7:80"}); len(got) != 2 {
+		t.Errorf("EnvVars = %v, want the container override and KUBECONFIG only", got)
 	}
 }
 

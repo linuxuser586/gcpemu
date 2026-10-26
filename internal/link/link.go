@@ -114,6 +114,11 @@ type Config struct {
 	// paired Instances list (see Manager.LinkedSigningKeys); ok false
 	// when it has none.
 	SigningKey func() (SigningKey, bool)
+	// LBEndpoints returns this Instance's load balancing endpoints, as
+	// told to a LAN caller that arrived at the address lanIP, which paired
+	// Instances list for the Projects shared with them (see
+	// Manager.LinkedLBEndpoints).
+	LBEndpoints func(lanIP string) []LBEndpoint
 	// StaticAddrs lists link addresses that Discover asks besides browsing
 	// mDNS, for networks multicast doesn't cross.
 	StaticAddrs []string
@@ -297,6 +302,7 @@ func (m *Manager) handler() http.Handler {
 	mux.HandleFunc("POST "+idTokensRoute, m.serveIDToken)
 	mux.HandleFunc("GET /link/v1/buckets", m.serveBuckets)
 	mux.HandleFunc("GET /link/v1/signing-key", m.serveSigningKey)
+	mux.HandleFunc("GET /link/v1/lb-endpoints", m.serveLBEndpoints)
 	mux.HandleFunc("GET /link/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		p, v, ok := m.admit(w, r)
 		if !ok {

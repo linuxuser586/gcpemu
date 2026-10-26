@@ -1,8 +1,9 @@
 package lb
 
 import (
-	"sort"
 	"strings"
+
+	"github.com/linuxuser586/gcpemu/internal/lbenv"
 )
 
 // Forwarding rule env vars (ADR 0013, #314). Each rule's Service endpoint
@@ -12,7 +13,9 @@ import (
 // and as GCPEMU_LB_<NAME> while the name is unique across all projects
 // and scopes. A variable more than one rule would print (a shared name,
 // or two qualified keys that flatten alike) is withheld, never pointed at
-// either rule. The short variable is derived here, never stored.
+// either rule. The variables are derived by package lbenv, never stored;
+// the Instance derives the ones `gcpemu env` prints, and this Service
+// reports the ones withheld.
 
 // endpointKey is the name of a frontend's rule's Service endpoint.
 func endpointKey(fe *frontend) string {
@@ -30,34 +33,22 @@ type withheldVar struct {
 	keys []string
 }
 
-// lbEnv derives the GCPEMU_LB_* variables from the lb: entries of
-// endpoints, and the ones withheld as ambiguous, sorted by variable.
-func lbEnv(endpoints map[string]string) (map[string]string, []withheldVar) {
-	keysOf := map[string][]string{} // variable → the keys that print it
-	for k := range endpoints {
-		if !strings.HasPrefix(k, "lb:") {
-			continue
-		}
-		vars := []string{qualifiedVar(k)}
-		if i := strings.LastIndex(k, "/"); i >= 0 {
-			vars = append(vars, "GCPEMU_LB_"+envName(k[i+1:]))
-		}
-		for _, v := range vars {
-			keysOf[v] = append(keysOf[v], k)
+// lbWithheld returns the GCPEMU_LB_* variables of the rules among the lb:
+// entries of endpoints withheld as ambiguous (package lbenv), sorted by
+// variable.
+func lbWithheld(endpoints map[string]string) []withheldVar {
+	rules := map[string]string{}
+	for k, v := range endpoints {
+		if strings.HasPrefix(k, lbenv.RulePrefix) {
+			rules[k] = v
 		}
 	}
-	out := map[string]string{}
-	var withheld []withheldVar
-	for v, keys := range keysOf {
-		if len(keys) == 1 {
-			out[v] = endpoints[keys[0]]
-			continue
-		}
-		sort.Strings(keys)
-		withheld = append(withheld, withheldVar{name: v, keys: keys})
+	_, ws := lbenv.Vars(rules)
+	withheld := make([]withheldVar, len(ws))
+	for i, w := range ws {
+		withheld[i] = withheldVar{name: w.Name, keys: w.Keys}
 	}
-	sort.Slice(withheld, func(i, j int) bool { return withheld[i].name < withheld[j].name })
-	return out, withheld
+	return withheld
 }
 
 // info describes w with its rules and their qualified variables.
@@ -65,14 +56,10 @@ func (w withheldVar) info() withheldInfo {
 	out := withheldInfo{Variable: w.name}
 	for _, k := range w.keys {
 		out.ForwardingRules = append(out.ForwardingRules, rulePath(k))
-		out.Qualified = append(out.Qualified, qualifiedVar(k))
+		out.Qualified = append(out.Qualified, lbenv.Qualified(k))
 	}
 	return out
 }
-
-// qualifiedVar is GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME> for a Service
-// endpoint name.
-func qualifiedVar(key string) string { return "GCPEMU_LB_" + envName(strings.TrimPrefix(key, "lb:")) }
 
 // rulePath is the forwarding rule resource path of a Service endpoint
 // name.
@@ -85,27 +72,10 @@ func rulePath(key string) string {
 	return scope{project: project, region: region}.coll("forwardingRules") + "/" + name
 }
 
-// envName upper-cases a forwarding rule name or Service endpoint name
-// for an env var.
-func envName(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z':
-			b.WriteRune(c - 32)
-		case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-			b.WriteRune(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
-}
-
 // warnWithheld logs each variable newly withheld since the last call.
 // Callers hold d.mu.
 func (d *dataplane) warnWithheld() {
-	_, withheld := lbEnv(d.s.env.Endpoints.All())
+	withheld := lbWithheld(d.s.env.Endpoints.All())
 	now := map[string]bool{}
 	for _, w := range withheld {
 		now[w.name] = true

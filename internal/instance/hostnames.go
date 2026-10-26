@@ -77,11 +77,13 @@ func (in *Instance) hostNameEnvVars(out map[string]string) {
 	}
 }
 
-// serveEnv is GET /_emu/v1/env[?trust=true][&universe=false]: with trust,
-// SSL_CERT_FILE points at a freshly written combined bundle; universe=false
-// leaves gcloud in Google's universe.
+// serveEnv is GET /_emu/v1/env[?trust=true][&universe=false][&notes=true]:
+// with trust, SSL_CERT_FILE points at a freshly written combined bundle;
+// universe=false leaves gcloud in Google's universe; notes=true answers
+// {"vars": ..., "notes": [...]}, the notes saying which Linked Instances'
+// load balancing endpoints got no variable, for stderr.
 func (in *Instance) serveEnv(w http.ResponseWriter, r *http.Request) {
-	vars := in.EnvVars()
+	vars, notes := in.envVars(r.Context())
 	if u := r.URL.Query().Get("universe"); u == "0" || u == "false" {
 		delete(vars, "CLOUDSDK_CORE_UNIVERSE_DOMAIN")
 	}
@@ -94,6 +96,13 @@ func (in *Instance) serveEnv(w http.ResponseWriter, r *http.Request) {
 		if p != "" {
 			vars["SSL_CERT_FILE"] = p
 		}
+	}
+	if n := r.URL.Query().Get("notes"); n == "1" || n == "true" {
+		if notes == nil {
+			notes = []string{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"vars": vars, "notes": notes})
+		return
 	}
 	writeJSON(w, http.StatusOK, vars)
 }

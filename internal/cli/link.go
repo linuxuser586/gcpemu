@@ -512,3 +512,28 @@ func confirm(cmd *cobra.Command, question string) error {
 	}
 	return nil
 }
+
+// printLinkedLB lists the load balancing endpoints of the Linked Instances
+// a front Instance delegates to, from GET /_emu/v1/links/lb-endpoints, at
+// the --lb-bind addresses `gcpemu env` names (#715), and each link it
+// could not ask.
+func printLinkedLB(out io.Writer, b []byte) {
+	var r struct{ Links []link.LinkedLB }
+	if json.Unmarshal(b, &r) != nil || len(r.Links) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "linked load balancing endpoints:")
+	for _, l := range r.Links {
+		if l.Error != "" {
+			fmt.Fprintf(out, "  %-8s unreachable: %s\n", l.Link, l.Error)
+			continue
+		}
+		for _, e := range l.Endpoints {
+			addr := e.Address
+			if addr == "" {
+				addr = "(none: " + e.Error + ")"
+			}
+			fmt.Fprintf(out, "  %-8s %s %s\n", l.Link, e.Name, addr)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,7 +53,7 @@ type lanBinding struct {
 // lanFailure is a frontend that cannot serve an --lb-bind address, and
 // why.
 type lanFailure struct {
-	what, addr, err string
+	key, what, addr, err string
 }
 
 // lanFronts returns every frontend --lb-bind serves, by key: forwarding
@@ -191,6 +192,71 @@ func (d *dataplane) syncLAN() {
 	}
 }
 
+// LANEndpoints implements emu.LANEndpointer: each forwarding rule, under
+// its Service endpoint, and each other Service's frontend that names one,
+// with the --lb-bind addresses its frontends claimed, or why they claimed
+// none.
+func (s *Service) LANEndpoints() []emu.LANEndpoint {
+	d := s.dp
+	cfg := d.cfg.Load()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	claimed := map[string][]string{} // frontend key → addresses
+	for addr, b := range d.lan {
+		claimed[b.key] = append(claimed[b.key], addr)
+	}
+	failed := map[string][]string{} // frontend key → why not
+	for _, f := range d.lanDown {
+		failed[f.key] = append(failed[f.key], f.addr+": "+f.err)
+	}
+	byName := map[string]*emu.LANEndpoint{}
+	why := map[string][]string{}
+	add := func(name, project, what, key string, reasons ...string) {
+		e := byName[name]
+		if e == nil {
+			e = &emu.LANEndpoint{Name: name, Project: project, What: what}
+			byName[name] = e
+		}
+		e.Addrs = append(e.Addrs, claimed[key]...)
+		why[name] = append(why[name], append(failed[key], reasons...)...)
+	}
+	if cfg != nil {
+		for key, fe := range cfg.fronts {
+			var reasons []string
+			if r, ok := d.unavailable[key]; ok {
+				reasons = append(reasons, "no listener: "+r)
+			}
+			add(endpointKey(fe), fe.project, "forwarding rule "+fe.frPath, key, reasons...)
+		}
+	}
+	for _, fes := range d.ext {
+		for key, l := range fes {
+			if l.ext.Endpoint != "" {
+				add(l.ext.Endpoint, l.ext.Project, l.ext.What+" port "+l.lanPort(), key)
+			}
+		}
+	}
+	out := make([]emu.LANEndpoint, 0, len(byName))
+	for name, e := range byName {
+		sort.Strings(e.Addrs)
+		e.Addrs = slices.Compact(e.Addrs)
+		if len(e.Addrs) == 0 {
+			reasons := slices.Compact(slices.Sorted(slices.Values(why[name])))
+			switch {
+			case len(s.env.Config.LBBind) == 0:
+				e.Error = "its Instance has no --lb-bind"
+			case len(reasons) > 0:
+				e.Error = strings.Join(reasons, "; ")
+			default:
+				e.Error = "not served on any --lb-bind address"
+			}
+		}
+		out = append(out, *e)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // releaseLAN stops serving the --lb-bind address addr on b. Callers hold
 // d.mu.
 func (d *dataplane) releaseLAN(addr string, b *lanBinding) {
@@ -315,7 +381,7 @@ func (d *dataplane) vmRuntime() bool {
 // logs it once.
 func (d *dataplane) lanFailed(addr string, l *listener, err error) {
 	k := addr + " " + l.key
-	d.lanDown[k] = lanFailure{what: l.lanWhat(), addr: addr, err: err.Error()}
+	d.lanDown[k] = lanFailure{key: l.key, what: l.lanWhat(), addr: addr, err: err.Error()}
 	if d.lanErr[k] == err.Error() {
 		return
 	}

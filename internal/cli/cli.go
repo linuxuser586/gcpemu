@@ -528,6 +528,11 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			if err != nil {
 				hostSvcs = []byte(`{"services":[],"collisions":[],"unserved":[],"poolExhausted":false}`)
 			}
+			// Absent on an Instance that predates it.
+			linkedLB, err := c.get("/_emu/v1/links/lb-endpoints")
+			if err != nil {
+				linkedLB = []byte(`{"links":[]}`)
+			}
 			var routes resolverRecord
 			if recs, err := readResolverRecords(); err == nil {
 				routes = recs[cfg.Instance]
@@ -537,7 +542,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 					routes.Suffixes = []string{}
 				}
 				rr, _ := json.Marshal(routes)
-				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s,\"hostServices\":%s,\"resolverRoutes\":%s}\n", info, ready, cts, offers, hostSvcs, rr)
+				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s,\"hostServices\":%s,\"linkedLoadBalancing\":%s,\"resolverRoutes\":%s}\n", info, ready, cts, offers, hostSvcs, linkedLB, rr)
 				return notReady()
 			}
 			var i struct {
@@ -583,6 +588,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				}
 			}
 			printHostServices(out, hostSvcs)
+			printLinkedLB(out, linkedLB)
 			printResolverRoutes(out, routes)
 			return notReady()
 		},

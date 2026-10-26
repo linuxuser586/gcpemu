@@ -94,7 +94,7 @@ func TestLinkPairing(t *testing.T) {
 		}
 	}
 	doc, _ := gcpemu(t, nil, "doctor", "--data-dir", laptop)
-	if !strings.Contains(doc, `link "office"`) || !strings.Contains(doc, "reachable") || !strings.Contains(doc, "protocol version 1") {
+	if !strings.Contains(doc, `link "office"`) || !strings.Contains(doc, "reachable") || !strings.Contains(doc, "protocol version 2") {
 		t.Errorf("doctor does not report the link:\n%s", doc)
 	}
 
