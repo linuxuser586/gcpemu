@@ -80,7 +80,7 @@ func TestReportVMRuntime(t *testing.T) {
 	aliases := emuruntime.AliasDecision{Reason: "disabled by GCPEMU_LOOPBACK_ALIASES"}
 	on := emuruntime.VMDecision{On: true, Reason: "runtime OS Docker Desktop"}
 	off := emuruntime.VMDecision{Reason: "runtime OS Ubuntu"}
-	ranged := map[int]string{4510: "127.0.0.1:4510", 20000: "127.0.0.1:20000", 20001: "127.0.0.1:20001"}
+	ranged := map[int]string{4562: "127.0.0.1:4562", 20000: "127.0.0.1:20000", 20001: "127.0.0.1:20001"}
 	for _, tc := range []struct {
 		name      string
 		d         emuruntime.VMDecision

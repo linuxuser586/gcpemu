@@ -171,8 +171,8 @@ func TestNodeConfigHelpers(t *testing.T) {
 	if a, l := saLeaf("/computeMetadata/v1/instance/service-accounts/default/token"); a != "default" || l != "token" {
 		t.Errorf("saLeaf = %q %q", a, l)
 	}
-	k := webhookKubeconfig("http://10.0.0.1:4510/x")
-	if !strings.Contains(string(k), "server: http://10.0.0.1:4510/x") {
+	k := webhookKubeconfig("http://10.0.0.1:4562/x")
+	if !strings.Contains(string(k), "server: http://10.0.0.1:4562/x") {
 		t.Error("webhook kubeconfig")
 	}
 }

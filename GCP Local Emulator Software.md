@@ -118,7 +118,7 @@ Services create and manage the GKE and Cloud SQL containers; the data planes car
 
 | Port | Use |
 | --- | --- |
-| 4510 | API gateway (all APIs, REST and gRPC) |
+| 4562 | API gateway (all APIs, REST and gRPC) |
 | 4443 | Cloud Storage (for `STORAGE_EMULATOR_HOST`) |
 | 8085 | Pub/Sub gRPC (for `PUBSUB_EMULATOR_HOST`) |
 | 4561 | Artifact Registry (OCI) |
@@ -183,7 +183,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| FR-CORE-040 | One API gateway port (default 4510) serves every control-plane API over HTTP/1.1 REST and gRPC (HTTP/2, h2c and TLS), routing by path and `:authority`/`Host`. | M |
+| FR-CORE-040 | One API gateway port (default 4562) serves every control-plane API over HTTP/1.1 REST and gRPC (HTTP/2, h2c and TLS), routing by path and `:authority`/`Host`. | M |
 | FR-CORE-041 | Per-service ports are also available for clients that cannot set a path prefix (e.g. `PUBSUB_EMULATOR_HOST=localhost:8085`, GCS on 4443). | M |
 | FR-CORE-042 | `--port 0` and `--port-range` allocate free ports; chosen ports are written to `<data-dir>/endpoints.json` and printed by `gcpemu env`. | M |
 | FR-CORE-043 | Host mode (`--host-mode`) serves real hostnames (`storage.googleapis.com`, `REGION-docker.pkg.dev`, …) via the emulator's DNS and a local CA, so unmodified clients work once the CA is trusted. | S |
@@ -209,7 +209,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 
 ### 4.8 Web console
 
-The web console is a React single-page app compiled into the binary and served at `http://localhost:4510/console`. It talks only to the same public GCP APIs and `/_emu/v1` admin API that every other client uses, so anything done in the console can also be done, and tested, from code.
+The web console is a React single-page app compiled into the binary and served at `http://localhost:4562/console`. It talks only to the same public GCP APIs and `/_emu/v1` admin API that every other client uses, so anything done in the console can also be done, and tested, from code.
 
 #### 4.8.1 Platform and shell
 

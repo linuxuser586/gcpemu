@@ -32,7 +32,7 @@ func TestPrecedence(t *testing.T) {
 	if c.LogFormat != "text" {
 		t.Errorf("env should beat file: LogFormat = %q", c.LogFormat)
 	}
-	if c.Port("gcs") != 9000 || c.Port("pubsub") != 9001 || c.Port("gateway") != 4510 {
+	if c.Port("gcs") != 9000 || c.Port("pubsub") != 9001 || c.Port("gateway") != 4562 {
 		t.Errorf("ports = %v", c.Ports)
 	}
 	if c.WaitTimeout != 5*time.Second {
@@ -236,8 +236,9 @@ func TestPorts(t *testing.T) {
 		t.Error("ParsePorts accepted a non-numeric port")
 	}
 	c := Defaults()
-	if c.Port("gateway") != 4510 {
-		t.Fatalf("default gateway port = %d", c.Port("gateway"))
+	// Not 4510, inside LocalStack's external-service range (#645).
+	if c.Port("gateway") != 4562 {
+		t.Fatalf("default gateway port = %d, want 4562", c.Port("gateway"))
 	}
 	// Not 5000, which macOS's AirPlay Receiver holds on all interfaces (#641).
 	if c.Port("ar") != 4561 {

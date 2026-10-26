@@ -124,7 +124,7 @@ with Docker Desktop for Linux. Check 6 changes the host's resolver there only wi
 Needs `go`, `task`, `docker`, `gcloud`, `kubectl` and `cloud-sql-proxy`, with or without
 `IMAGE=<ref>`: `task prerelease` always builds `bin/gcpemu.exe` for the checks that run on the host.
 To build the image it also needs Node and pnpm: it runs `task release` and builds `gcpemu:rc` from
-`dist/`. `IMAGE=<ref>` uses an image already built instead. The container publishes `127.0.0.1:4510` and
+`dist/`. `IMAGE=<ref>` uses an image already built instead. The container publishes `127.0.0.1:4562` and
 `127.0.0.1:20000-20019`, so those ports must be free. With Podman machine, the container also
 gets `GCPEMU_VM_RUNTIME=true`.
 

@@ -235,9 +235,13 @@ func probeBind(addr string) error {
 
 // checkPort reports a named port from its probe, warning when another
 // process answers on it on all interfaces. On macOS, 5000 and 7000 are
-// AirPlay Receiver's.
+// AirPlay Receiver's; a port in LocalStack's range is named as such (#645).
 func checkPort(out io.Writer, report func(bool, string, string), goos, name string, port int, pr portProbe) {
 	fix := fmt.Sprintf("stop whatever holds it or use --port %s=0", name)
+	localStack := localStackPort(port)
+	if localStack {
+		fix = fmt.Sprintf("it is in LocalStack's range (4510-4559, 4566): stop LocalStack or use --port %s=0", name)
+	}
 	if pr.err != nil {
 		report(false, fmt.Sprintf("port %s (%s) free", pr.addr, name), fix)
 		return
@@ -260,6 +264,15 @@ func checkPort(out io.Writer, report func(bool, string, string), goos, name stri
 	if goos == "darwin" && (port == 5000 || port == 7000) {
 		fmt.Fprintln(out, "       it is likely AirPlay Receiver: turn it off in System Settings → General → AirDrop & Handoff")
 	}
+	if localStack {
+		fmt.Fprintln(out, "       "+fix)
+	}
+}
+
+// localStackPort reports whether port is LocalStack's edge port or in the
+// range it publishes for external services.
+func localStackPort(port int) bool {
+	return port >= 4510 && port <= 4559 || port == 4566
 }
 
 // checkResolver reports the Instance's Resolver routes and, on Windows,

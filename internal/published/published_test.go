@@ -17,7 +17,7 @@ import (
 func TestCandidates(t *testing.T) {
 	const name = "p/us-central1-a/c1/default/web/8081"
 	published := map[int]string{
-		8081: "127.0.0.1:8081", 9090: "127.0.0.1:19090", 4510: "127.0.0.1:4510",
+		8081: "127.0.0.1:8081", 9090: "127.0.0.1:19090", 4562: "127.0.0.1:4562",
 		20000: "127.0.0.1:20000", 20001: "127.0.0.1:20001", 20002: "127.0.0.1:20002", 20003: "127.0.0.1:30003",
 	}
 	ports := NewPorts(published, &config.Config{PortRange: "20000-20004"})

@@ -12,7 +12,7 @@ const exe = process.platform === 'win32' ? '.exe' : ''
 const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, `../../bin/gcpemu${exe}`)
 
 export interface Instance {
-  /** url is the gateway's, e.g. http://127.0.0.1:4510. */
+  /** url is the gateway's, e.g. http://127.0.0.1:4562. */
   url: string
   /** dir is the instance dir. */
   dir: string

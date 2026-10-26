@@ -34,7 +34,7 @@ func TestSelfPorts(t *testing.T) {
 			return
 		}
 		_, _ = io.WriteString(w, `{"Id":"self1","NetworkSettings":{"Ports":{
-			"4510/tcp":[{"HostIp":"0.0.0.0","HostPort":"4510"},{"HostIp":"::","HostPort":"4510"}],
+			"4562/tcp":[{"HostIp":"0.0.0.0","HostPort":"4562"},{"HostIp":"::","HostPort":"4562"}],
 			"20000/tcp":[{"HostIp":"127.0.0.1","HostPort":"30000"}],
 			"20001/tcp":[{"HostIp":"192.168.1.20","HostPort":"20001"}],
 			"20002/tcp":null,
@@ -53,7 +53,7 @@ func TestSelfPorts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[int]string{4510: "127.0.0.1:4510", 20000: "127.0.0.1:30000", 20001: "192.168.1.20:20001"}
+	want := map[int]string{4562: "127.0.0.1:4562", 20000: "127.0.0.1:30000", 20001: "192.168.1.20:20001"}
 	if !maps.Equal(got, want) {
 		t.Errorf("SelfPorts = %v, want %v", got, want)
 	}

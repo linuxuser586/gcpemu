@@ -62,7 +62,7 @@ func containerizedChecks(t *testing.T, rt string) {
 	if strings.Contains(rt, "podman") {
 		args = append(args, "-e", "GCPEMU_VM_RUNTIME=true")
 	}
-	gw := hosttest.RunEmulator(t, container, image, "4510", args, "--port-range", portRange)
+	gw := hosttest.RunEmulator(t, container, image, "4562", args, "--port-range", portRange)
 	t.Logf("API gateway at %s", gw)
 	done()
 

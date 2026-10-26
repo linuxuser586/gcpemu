@@ -42,7 +42,7 @@ const docker = (image: string, digest: string, over: Partial<DockerImage> = {}):
 beforeEach(() => {
   requests = []
   fake.info.services = ['iam', 'ar']
-  fake.endpoints = { gateway: '127.0.0.1:4510', ar: '127.0.0.1:4561' }
+  fake.endpoints = { gateway: '127.0.0.1:4562', ar: '127.0.0.1:4561' }
   repos = [
     {
       name: REPO,

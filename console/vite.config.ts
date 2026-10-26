@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config'
 
 // `pnpm dev` serves the console at /console/ and sends every other path
 // (the admin API and the public APIs) to a running Instance's API gateway.
-const gateway = process.env.GCPEMU_GATEWAY ?? '127.0.0.1:4510'
+const gateway = process.env.GCPEMU_GATEWAY ?? '127.0.0.1:4562'
 
 export default defineConfig({
   base: '/console/',
