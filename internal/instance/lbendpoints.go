@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/lbenv"
@@ -55,6 +56,9 @@ func (in *Instance) linkedLB(ctx context.Context) (eps map[string]string, notes 
 			notes = append(notes, fmt.Sprintf("link %q is unreachable, so its load balancing endpoints get no variable: %s", l.Link, l.Error))
 			continue
 		}
+		if !l.LBBind {
+			notes = append(notes, fmt.Sprintf("link %q has no --lb-bind, so none of its load balancing endpoints get a variable, its LoadBalancer Services included", l.Link))
+		}
 		for _, e := range l.Endpoints {
 			if e.Address == "" {
 				notes = append(notes, fmt.Sprintf("%s on link %q gets no variable: %s", e.What, l.Link, e.Error))
@@ -64,6 +68,29 @@ func (in *Instance) linkedLB(ctx context.Context) (eps map[string]string, notes 
 		}
 	}
 	return eps, notes
+}
+
+// withheldNotes says which variables lbenv withheld because endpoints of
+// more than one Instance would print them; a collision among this
+// Instance's own is reported by `gcpemu doctor` instead.
+func withheldNotes(ws []lbenv.Withheld) []string {
+	var notes []string
+	for _, w := range ws {
+		across := false
+		names := make([]string, len(w.Keys))
+		for i, k := range w.Keys {
+			name, l := lbenv.Unlinked(k)
+			names[i] = name
+			if l != "" {
+				across = true
+				names[i] += fmt.Sprintf(" on link %q", l)
+			}
+		}
+		if across {
+			notes = append(notes, fmt.Sprintf("%s is withheld: more than one endpoint would print it (%s)", w.Name, strings.Join(names, ", ")))
+		}
+	}
+	return notes
 }
 
 // serveLinkedLB is GET /_emu/v1/links/lb-endpoints: the load balancing

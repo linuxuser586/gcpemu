@@ -528,6 +528,9 @@ func printLinkedLB(out io.Writer, b []byte) {
 			fmt.Fprintf(out, "  %-8s unreachable: %s\n", l.Link, l.Error)
 			continue
 		}
+		if !l.LBBind {
+			fmt.Fprintf(out, "  %-8s has no --lb-bind, so its endpoints have no address\n", l.Link)
+		}
 		for _, e := range l.Endpoints {
 			addr := e.Address
 			if addr == "" {

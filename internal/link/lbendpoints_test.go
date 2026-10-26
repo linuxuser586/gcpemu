@@ -40,7 +40,7 @@ func endpointNames(got []link.LinkedLB) map[string][]string {
 // address it arrived at, and never those of other Projects (#715).
 func TestLinkedLBEndpoints(t *testing.T) {
 	laptop := newLinked(t, "laptop", "")
-	office := newLinked(t, "office", "", serving("team-shared", "shared-only", "private"))
+	office := newLinked(t, "office", "", serving("team-shared", "shared-only", "private"), func(c *link.Config) { c.LBBind = true })
 	pair(t, laptop, office)
 	for _, id := range []string{"team-shared", "shared-only"} {
 		if err := office.Share(id, ""); err != nil {
@@ -54,8 +54,8 @@ func TestLinkedLBEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := laptop.LinkedLBEndpoints(ctxT(t))
-	if len(got) != 1 || got[0].Link != "office" || got[0].Error != "" || len(got[0].Endpoints) != 1 {
-		t.Fatalf("LinkedLBEndpoints = %+v, want the office's team-shared endpoint only", got)
+	if len(got) != 1 || got[0].Link != "office" || got[0].Error != "" || !got[0].LBBind || len(got[0].Endpoints) != 1 {
+		t.Fatalf("LinkedLBEndpoints = %+v, want the office's team-shared endpoint only, and its --lb-bind", got)
 	}
 	if e := got[0].Endpoints[0]; e.Name != "lb:team-shared/us-central1/web" || e.Address != "127.0.0.1:8080" {
 		t.Errorf("endpoint = %+v, want lb:team-shared/us-central1/web at the --link-bind address 127.0.0.1:8080", e)

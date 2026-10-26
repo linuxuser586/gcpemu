@@ -54,12 +54,17 @@ type envWithNotes struct {
 }
 
 // lbDelegated pairs a laptop running lb with local endpoints with an
-// office whose lb tells it lan, sharing team-shared, which the laptop
-// delegates, and other-own, which it does not.
-func lbDelegated(t *testing.T, local map[string]string, lan ...emu.LANEndpoint) (laptop, office *Instance) {
+// office, configured with --lb-bind when lbBind, whose lb tells it lan,
+// sharing team-shared, which the laptop delegates, and other-own, which it
+// does not.
+func lbDelegated(t *testing.T, lbBind bool, local map[string]string, lan ...emu.LANEndpoint) (laptop, office *Instance) {
 	t.Helper()
 	laptop = startWith(t, "laptop", enableLB(nil), withFakeLB(local))
-	office = startWith(t, "office", enableLB(nil), withFakeLB(nil, lan...))
+	office = startWith(t, "office", enableLB(func(c *config.Config) {
+		if lbBind {
+			c.LBBind = []string{"127.0.0.1"}
+		}
+	}), withFakeLB(nil, lan...))
 	pairInstances(t, laptop, office)
 	for _, p := range []string{shared, "other-own"} {
 		callAdmin(t, office, http.MethodPost, "/_emu/v1/links/shares", map[string]string{"project": p}, nil)
@@ -74,7 +79,7 @@ func lbDelegated(t *testing.T, local map[string]string, lan ...emu.LANEndpoint) 
 // over every Instance's endpoints together, and says on stderr why one
 // gets none (#715).
 func TestFrontEnvNamesLinkedLBBind(t *testing.T) {
-	laptop, _ := lbDelegated(t,
+	laptop, _ := lbDelegated(t, true,
 		map[string]string{"lb:laptop-own/global/web": "127.0.0.5:8080", "gke:dev/default/web/80": "127.0.0.6:80"},
 		emu.LANEndpoint{Name: "lb:" + shared + "/global/web", Project: shared, What: "forwarding rule projects/" + shared + "/global/forwardingRules/web",
 			Addrs: []string{"192.0.2.1:8080", "127.0.0.1:8080"}},
@@ -114,6 +119,14 @@ func TestFrontEnvNamesLinkedLBBind(t *testing.T) {
 	}) {
 		t.Errorf("notes = %q, want one naming api, the link and why", env.Notes)
 	}
+	if !slices.ContainsFunc(env.Notes, func(n string) bool {
+		return strings.Contains(n, "GCPEMU_LB_WEB") && strings.Contains(n, "lb:laptop-own/global/web") && strings.Contains(n, `link "office"`)
+	}) {
+		t.Errorf("notes = %q, want GCPEMU_LB_WEB named withheld, with both rules", env.Notes)
+	}
+	if slices.ContainsFunc(env.Notes, func(n string) bool { return strings.Contains(n, "no --lb-bind") }) {
+		t.Errorf("notes = %q, want none saying the office has no --lb-bind", env.Notes)
+	}
 	if got := laptop.EnvVars()["GCPEMU_LB_TEAM_SHARED_GLOBAL_WEB"]; got != "127.0.0.1:8080" {
 		t.Errorf("EnvVars() names the Delegated Project's rule %q", got)
 	}
@@ -138,7 +151,7 @@ func TestFrontEnvNamesLinkedLBBind(t *testing.T) {
 // An unreachable Linked Instance leaves its variables out and is named on
 // stderr; `gcpemu env` still answers (#715).
 func TestFrontEnvWithLinkedInstanceDown(t *testing.T) {
-	laptop, office := lbDelegated(t, map[string]string{"lb:laptop-own/global/web": "127.0.0.5:8080"},
+	laptop, office := lbDelegated(t, false, map[string]string{"lb:laptop-own/global/web": "127.0.0.5:8080"},
 		emu.LANEndpoint{Name: "lb:" + shared + "/global/api", Project: shared, What: "forwarding rule api", Addrs: []string{"127.0.0.1:8081"}})
 	if err := office.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -158,5 +171,19 @@ func TestFrontEnvWithLinkedInstanceDown(t *testing.T) {
 	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/links/lb-endpoints", nil, &st)
 	if len(st.Links) != 1 || st.Links[0].Error == "" {
 		t.Errorf("linked endpoints = %+v, want the office unreachable", st.Links)
+	}
+}
+
+// A Linked Instance without --lb-bind is named on stderr, so that its
+// LoadBalancer Services, which it does not list without --lb-bind, are
+// accounted for too (#715).
+func TestFrontEnvWithoutLinkedLBBind(t *testing.T) {
+	laptop, _ := lbDelegated(t, false, nil)
+	var env envWithNotes
+	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/env?notes=true", nil, &env)
+	if !slices.ContainsFunc(env.Notes, func(n string) bool {
+		return strings.Contains(n, `link "office" has no --lb-bind`) && strings.Contains(n, "LoadBalancer Services")
+	}) {
+		t.Errorf("notes = %q, want the office named, without --lb-bind", env.Notes)
 	}
 }

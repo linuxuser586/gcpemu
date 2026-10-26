@@ -192,12 +192,14 @@ func (d *dataplane) syncLAN() {
 	}
 }
 
-// LANEndpoints implements emu.LANEndpointer: each forwarding rule, under
-// its Service endpoint, and each other Service's frontend that names one,
-// with the --lb-bind addresses its frontends claimed, or why they claimed
-// none.
-func (s *Service) LANEndpoints() []emu.LANEndpoint {
-	d := s.dp
+// LANEndpoints implements emu.LANEndpointer.
+func (s *Service) LANEndpoints() []emu.LANEndpoint { return s.dp.lanEndpoints() }
+
+// lanEndpoints lists each forwarding rule, under its Service endpoint,
+// and each other Service's Load balancing frontend that names one, with
+// the --lb-bind addresses its Load balancing frontends claimed, or why
+// they claimed none.
+func (d *dataplane) lanEndpoints() []emu.LANEndpoint {
 	cfg := d.cfg.Load()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -243,7 +245,7 @@ func (s *Service) LANEndpoints() []emu.LANEndpoint {
 		if len(e.Addrs) == 0 {
 			reasons := slices.Compact(slices.Sorted(slices.Values(why[name])))
 			switch {
-			case len(s.env.Config.LBBind) == 0:
+			case len(d.s.env.Config.LBBind) == 0:
 				e.Error = "its Instance has no --lb-bind"
 			case len(reasons) > 0:
 				e.Error = strings.Join(reasons, "; ")

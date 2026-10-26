@@ -414,8 +414,9 @@ type LANFrontend struct {
 }
 
 // LANEndpointer is implemented by the lb Service: the load balancing
-// endpoints --lb-bind serves, forwarding rules' and other Services'
-// frontends (LANFrontends), with the addresses each claimed, which a
+// endpoints --lb-bind serves, forwarding rules' and the Load balancing
+// frontends of other Services (LANFrontends), with the addresses each
+// claimed, which a
 // Linked Instance tells a front Instance for its `gcpemu env` (ADR 0027,
 // #715).
 type LANEndpointer interface {

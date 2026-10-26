@@ -41,6 +41,8 @@ type LBEndpoint struct {
 type LinkedLB struct {
 	Link      string       `json:"link"`
 	Endpoints []LBEndpoint `json:"endpoints"`
+	// LBBind is set when the Linked Instance has --lb-bind.
+	LBBind bool `json:"lbBind"`
 	// Error says why the link could not be asked, which leaves out its
 	// endpoints.
 	Error string `json:"error,omitempty"`
@@ -62,7 +64,7 @@ func (m *Manager) serveLBEndpoints(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"endpoints": out})
+	writeJSON(w, http.StatusOK, map[string]any{"endpoints": out, "lbBind": m.cfg.LBBind})
 }
 
 // arrivedAt returns the IP address r arrived at.
@@ -77,17 +79,21 @@ func arrivedAt(r *http.Request) string {
 	return a.IP.String()
 }
 
+// lbReply is a Linked Instance's answer to askLBEndpoints.
+type lbReply struct {
+	Endpoints []LBEndpoint
+	LBBind    bool
+}
+
 // askLBEndpoints asks the link name for its load balancing endpoints.
-func (m *Manager) askLBEndpoints(ctx context.Context, name string) ([]LBEndpoint, error) {
+func (m *Manager) askLBEndpoints(ctx context.Context, name string) (lbReply, error) {
+	var reply lbReply
 	l, err := m.usable(name)
 	if err != nil {
-		return nil, err
+		return reply, err
 	}
-	var reply struct{ Endpoints []LBEndpoint }
-	if _, err := m.callPaired(ctx, l, http.MethodGet, "/link/v1/lb-endpoints", &reply); err != nil {
-		return nil, err
-	}
-	return reply.Endpoints, nil
+	_, err = m.callPaired(ctx, l, http.MethodGet, "/link/v1/lb-endpoints", &reply)
+	return reply, err
 }
 
 // LinkedLBEndpoints asks each link this Instance delegates a Project to,
@@ -104,15 +110,16 @@ func (m *Manager) LinkedLBEndpoints(ctx context.Context) []LinkedLB {
 		go func() {
 			defer wg.Done()
 			out[i] = LinkedLB{Link: name, Endpoints: []LBEndpoint{}}
-			es, err := m.askLBEndpoints(ctx, name)
+			reply, err := m.askLBEndpoints(ctx, name)
 			if err != nil {
 				m.cfg.Log.Debug("could not ask a Linked Instance for its load balancing endpoints", "link", name, "err", err)
 				out[i].Error = err.Error()
 				return
 			}
+			out[i].LBBind = reply.LBBind
 			// A Linked Instance speaks only for the Projects delegated to
 			// it.
-			for _, e := range es {
+			for _, e := range reply.Endpoints {
 				if to, ok := m.DelegatedTo(e.Project); ok && to == name {
 					out[i].Endpoints = append(out[i].Endpoints, e)
 				}

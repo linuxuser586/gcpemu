@@ -99,8 +99,9 @@ func (in *Instance) envVars(ctx context.Context) (map[string]string, []string) {
 	// that uniqueness and withholding span Instances.
 	linked, notes := in.linkedLB(ctx)
 	maps.Copy(linked, eps)
-	lbVars, _ := lbenv.Vars(linked)
+	lbVars, withheld := lbenv.Vars(linked)
 	maps.Copy(out, lbVars)
+	notes = append(notes, withheldNotes(withheld)...)
 	in.hostNameEnvVars(out)
 	in.externalEnvVars(out, gw)
 	if in.adminToken != "" {

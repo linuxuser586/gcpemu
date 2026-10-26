@@ -119,6 +119,11 @@ type Config struct {
 	// Instances list for the Projects shared with them (see
 	// Manager.LinkedLBEndpoints).
 	LBEndpoints func(lanIP string) []LBEndpoint
+	// LBBind reports that this Instance has --lb-bind; without it, paired
+	// Instances learn that none of its load balancing endpoints, the
+	// LoadBalancer Services it does not list among them included, have an
+	// address.
+	LBBind bool
 	// StaticAddrs lists link addresses that Discover asks besides browsing
 	// mDNS, for networks multicast doesn't cross.
 	StaticAddrs []string

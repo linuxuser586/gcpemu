@@ -31,7 +31,8 @@ func frontAdmin(t *testing.T) string {
 				`"notes":["forwarding rule api on link \"office\" gets no variable: its Instance has no --lb-bind"]}`)
 		case "/_emu/v1/links/lb-endpoints":
 			_, _ = io.WriteString(w, `{"links":[`+
-				`{"link":"office","endpoints":[{"name":"lb:p/global/web","project":"p","what":"forwarding rule web","address":"192.168.1.5:8080"},`+
+				`{"link":"attic","endpoints":[],"lbBind":false},`+
+				`{"link":"office","lbBind":true,"endpoints":[{"name":"lb:p/global/web","project":"p","what":"forwarding rule web","address":"192.168.1.5:8080"},`+
 				`{"name":"lb:p/global/api","project":"p","what":"forwarding rule api","error":"its Instance has no --lb-bind"}]},`+
 				`{"link":"lab","endpoints":[],"error":"connection refused"}]}`)
 		default:
@@ -83,6 +84,7 @@ func TestStatusListsLinkedLBEndpoints(t *testing.T) {
 		"office   lb:p/global/web 192.168.1.5:8080",
 		"office   lb:p/global/api (none: its Instance has no --lb-bind)",
 		"lab      unreachable: connection refused",
+		"attic    has no --lb-bind",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)

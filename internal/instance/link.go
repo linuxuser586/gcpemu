@@ -37,6 +37,7 @@ func (in *Instance) newLink() (*link.Manager, error) {
 		StaticAddrs: in.Config.LinkDiscover, MDNS: mdns.Options{Port: in.Config.LinkMDNSPort},
 		HasProject:  in.Env.HasProject,
 		LBEndpoints: in.lanEndpoints,
+		LBBind:      len(in.Config.LBBind) > 0,
 		Serve: func(w http.ResponseWriter, r *http.Request, from, principal string) {
 			in.gw.ServeLinked(w, r, from, principal)
 		},
