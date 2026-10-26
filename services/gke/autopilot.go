@@ -22,6 +22,13 @@ import (
 
 func autopilotOn(c *containerpb.Cluster) bool { return c.GetAutopilot().GetEnabled() }
 
+// The messages for node pools in an Autopilot create request and a
+// workload policy on a Standard cluster, which Seeding gives too.
+const (
+	autopilotNodePoolsMessage = "Autopilot clusters do not support node pools; GKE manages them."
+	workloadPolicyMessage     = "Workload policies can only be set on Autopilot clusters."
+)
+
 // applyAutopilot validates an Autopilot create request and sets what GKE
 // sets on one. It runs before newCluster fills in the Standard defaults.
 func applyAutopilot(r ref, c *containerpb.Cluster) error {
@@ -29,7 +36,7 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 		return apierr.InvalidArgument("Autopilot clusters must be regional clusters.")
 	}
 	if !onlyGcloudPlaceholder(c.NodePools) || c.InitialNodeCount != 0 {
-		return apierr.InvalidArgument("Autopilot clusters do not support node pools; GKE manages them.")
+		return apierr.InvalidArgument(autopilotNodePoolsMessage)
 	}
 	c.NodePools = nil
 	if err := checkKept(c.WorkloadIdentityConfig, c.ShieldedNodes, c.ReleaseChannel, c.VerticalPodAutoscaling); err != nil {
@@ -95,7 +102,7 @@ func onlyGcloudPlaceholder(pools []*containerpb.NodePool) bool {
 func checkAutopilotUpdate(c *containerpb.Cluster, u *containerpb.ClusterUpdate) error {
 	if !autopilotOn(c) {
 		if wp := u.DesiredAutopilotWorkloadPolicyConfig; wp != nil && !auditingOnly(wp) {
-			return apierr.InvalidArgument("Workload policies can only be set on Autopilot clusters.")
+			return apierr.InvalidArgument(workloadPolicyMessage)
 		}
 		return nil
 	}

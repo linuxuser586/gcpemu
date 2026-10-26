@@ -41,7 +41,9 @@ import (
 //
 // An Autopilot cluster (FR-GKE-012) takes no nodePools, as GKE owns its
 // node pools, and always has Workload Identity, so workloadIdentity
-// changes nothing on one. Existing clusters are left untouched.
+// changes nothing on one. Existing clusters are left untouched, whatever
+// their Cluster mode, but an entry the API would refuse fails Seeding even
+// when its cluster exists.
 // Seeding waits until new clusters are RUNNING (or fails with their error).
 type seedFile struct {
 	Clusters []seedCluster `yaml:"clusters"`
@@ -159,9 +161,9 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 		r := ref{Project: sc.Project, Location: sc.Location, Cluster: sc.Name}
 		switch {
 		case sc.Autopilot && len(sc.NodePools) > 0:
-			return fmt.Errorf("clusters[%d] (%s): Autopilot clusters do not support node pools; GKE manages them.", i, r.clusterName())
+			return fmt.Errorf("clusters[%d] (%s): %s", i, r.clusterName(), autopilotNodePoolsMessage)
 		case sc.AllowNetAdmin && !sc.Autopilot:
-			return fmt.Errorf("clusters[%d] (%s): Workload policies can only be set on Autopilot clusters.", i, r.clusterName())
+			return fmt.Errorf("clusters[%d] (%s): %s", i, r.clusterName(), workloadPolicyMessage)
 		}
 	}
 	type pending struct{ project, op, name string }

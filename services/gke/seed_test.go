@@ -258,3 +258,30 @@ clusters:
 		})
 	}
 }
+
+// TestApplySeedAutopilotNetAdmin checks that a seeded Autopilot cluster's
+// Workload restrictions follow its allowNetAdmin: a pod that adds
+// NET_ADMIN is admitted with it and refused without it.
+func TestApplySeedAutopilotNetAdmin(t *testing.T) {
+	a := newAPI(t)
+	// Without a container runtime the clusters' bring-up fails; they stay.
+	_ = a.s.ApplySeed(context.Background(), seedNode(t, `
+clusters:
+  - project: ap-test
+    location: us-central1
+    name: netadmin
+    autopilot: true
+    allowNetAdmin: true
+  - project: ap-test
+    location: us-central1
+    name: plain
+    autopilot: true
+`), "")
+	netAdmin := `{"metadata":{"name":"p"},"spec":{"containers":[{"name":"c","securityContext":{"capabilities":{"add":["NET_ADMIN"]}}}]}}`
+	for name, want := range map[string]bool{"netadmin": true, "plain": false} {
+		r := admit(t, a.s, clusterKey("ap-test", "us-central1", name), hookRestrict, podReview("dev@example.com", "default", netAdmin))
+		if r.Allowed != want {
+			t.Errorf("NET_ADMIN pod on %s: allowed %v; want %v (%+v)", name, r.Allowed, want, r.Status)
+		}
+	}
+}

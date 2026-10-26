@@ -154,7 +154,7 @@ Each instance creates one container network (`gcpemu-<instance>`). VPC subnetwor
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-CORE-010 | Config precedence: flags > env (`GCPEMU_*`) > `gcpemu.yaml` > defaults. | M |
-| FR-CORE-011 | A seed file (YAML) declares projects and resources (buckets + objects from local paths, topics, subscriptions, DNS zones and records, service accounts, IAM bindings, AR repositories, SQL instances with init SQL, Build triggers). `start --seed file` applies it idempotently before reporting ready. | M |
+| FR-CORE-011 | A seed file (YAML) declares projects and resources (buckets + objects from local paths, topics, subscriptions, DNS zones and records, service accounts, IAM bindings, AR repositories, SQL instances with init SQL, Build triggers, GKE clusters (Standard with node pools, or Autopilot)). `start --seed file` applies it idempotently before reporting ready. | M |
 | FR-CORE-012 | State snapshots: `gcpemu snapshot save NAME` / `restore NAME` capture and restore all of an Instance's state, including GCS objects and Postgres data, for fast test fixtures. | S |
 | FR-CORE-013 | `gcpemu export` writes current resources as seed YAML. | C |
 
