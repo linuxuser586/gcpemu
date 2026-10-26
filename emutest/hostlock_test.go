@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -46,11 +47,19 @@ func TestHostLockExcludes(t *testing.T) {
 // it is killed.
 func TestHostLockHolderDies(t *testing.T) {
 	if p := os.Getenv("GCPEMU_TEST_HOSTLOCK_HOLD"); p != "" {
-		if _, err := acquireHostLock(p, time.Time{}); err != nil {
+		release, err := acquireHostLock(p, time.Time{})
+		if err != nil {
 			os.Exit(2)
 		}
+		// The collector closes a lock file nothing references, dropping the
+		// lock (#685): the holder keeps release reachable. Forcing a
+		// collection here queues a dropped file's finalizer, which closes it
+		// while the parent polls for .held, so a dropped release fails
+		// without load.
+		runtime.GC()
 		_ = os.WriteFile(p+".held", nil, 0o600)
 		time.Sleep(time.Minute)
+		release()
 		os.Exit(0)
 	}
 	path := filepath.Join(t.TempDir(), "lock")
@@ -59,16 +68,35 @@ func TestHostLockHolderDies(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); <-exited })
+	// holderDied is how the holder process exited, waiting a second for it
+	// to be reaped, or "" while it still runs.
+	holderDied := func() string {
+		select {
+		case err := <-exited:
+			exited <- err
+			return cmd.ProcessState.String()
+		case <-time.After(time.Second):
+			return ""
+		}
+	}
 	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 		if _, err := os.Stat(path + ".held"); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
+			if how := holderDied(); how != "" {
+				t.Fatalf("holder process exited before taking the lock: %s", how)
+			}
 			t.Fatal("holder process did not take the lock")
 		}
 	}
 	if _, err := acquireHostLock(path, time.Now().Add(300*time.Millisecond)); err == nil {
+		if how := holderDied(); how != "" {
+			t.Fatalf("holder process died while holding the lock: %s", how)
+		}
 		t.Fatal("acquired a lock another process holds")
 	}
 	_ = cmd.Process.Kill()
