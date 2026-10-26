@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -27,7 +28,10 @@ import (
 // Delegated APIs (ADR 0027): an API that no Service serves, such as
 // Firestore's, which the API gateway forwards as it comes to the External
 // emulator configured for it by address, or to the Managed emulator the
-// Instance runs for it (ADR 0029). The gateway checks no IAM for it.
+// Instance runs for it (ADR 0029). The gateway checks no IAM for it. It
+// records the project and database of each request it forwards to a
+// Managed emulator for Firestore or Datastore, which the Instance exports
+// when it stops (ADR 0036).
 
 // knownAPI is what the API gateway knows of an API Google ships an
 // emulator for, beyond the google.API.* gRPC package and API.googleapis.com
@@ -45,6 +49,9 @@ type knownAPI struct {
 	// envVar is the variable its client libraries read for the emulator's
 	// address.
 	envVar string
+	// database returns the project and database a request names, or false;
+	// nil for an API whose Managed emulator keeps no data.
+	database func(r *http.Request, grpc bool) (project, database string, ok bool)
 }
 
 var knownAPIs = map[string]knownAPI{
@@ -52,11 +59,13 @@ var knownAPIs = map[string]knownAPI{
 		operations: regexp.MustCompile(`^projects/[^/]+/databases/`),
 		rest:       regexp.MustCompile(`^/(v1(beta\d)?/projects/[^/]+/databases/|emulator/v1/projects/)`),
 		envVar:     "FIRESTORE_EMULATOR_HOST",
+		database:   firestoreDatabase,
 	},
 	"datastore": {
 		operations: regexp.MustCompile(`^projects/[^/]+/operations(/|$)`),
 		rest:       regexp.MustCompile(`^/v1(beta\d)?/projects/[^/:]+:[A-Za-z]+$`),
 		envVar:     "DATASTORE_EMULATOR_HOST",
+		database:   datastoreDatabase,
 	},
 	"spanner": {
 		operations: regexp.MustCompile(`^projects/[^/]+/instances/`),
@@ -88,7 +97,9 @@ type delegatedAPI struct {
 	known knownAPI
 	// rest forwards over HTTP/1.1, grpc over prior-knowledge h2c, as the
 	// External emulator's gRPC server expects.
-	rest, grpc *httputil.ReverseProxy
+	rest, grpc http.Handler
+	// record, if set, is told the project and database of each request.
+	record func(project, database string)
 }
 
 // DelegatedAPI is a Delegated API and its External emulator.
@@ -121,9 +132,14 @@ func (g *Gateway) Delegate(api, addr string) error {
 }
 
 // DelegateManaged forwards the API named api, as Delegate does, to the
-// Managed emulator that dial connects to (ADR 0029).
-func (g *Gateway) DelegateManaged(api string, dial ManagedDialer) error {
+// Managed emulator that dial connects to (ADR 0029). For Firestore and
+// Datastore, record is told the project and database of each request it
+// forwards (ADR 0036); it may be nil.
+func (g *Gateway) DelegateManaged(api string, dial ManagedDialer, record func(project, database string)) error {
 	d := &delegatedAPI{DelegatedAPI: DelegatedAPI{API: api, Managed: true, Hosts: APIHosts(api)}, known: knownAPIs[api]}
+	if d.known.database != nil {
+		d.record = record
+	}
 	rest := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, false) }}
 	h2c := &http.Transport{Protocols: new(http.Protocols), DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, true) }}
 	h2c.Protocols.SetUnencryptedHTTP2(true)
@@ -139,12 +155,12 @@ func (g *Gateway) delegate(d *delegatedAPI, target string, rest, grpc http.Round
 		pr.SetURL(u)
 		pr.Out.Host = pr.In.Host
 	}
-	d.rest = &httputil.ReverseProxy{Rewrite: rewrite, Transport: rest, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+	d.rest = d.recording(false, &httputil.ReverseProxy{Rewrite: rewrite, Transport: rest, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 		apierr.Write(w, d.unavailable(err))
-	}}
-	d.grpc = &httputil.ReverseProxy{Rewrite: rewrite, Transport: grpc, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+	}})
+	d.grpc = d.recording(true, &httputil.ReverseProxy{Rewrite: rewrite, Transport: grpc, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 		writeGRPCError(w, d.unavailable(err))
-	}}
+	}})
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -265,6 +281,130 @@ func hostOnly(host string) string {
 	return host
 }
 
+// recording returns h, telling d.record the project and database of each
+// request first when d has a record.
+func (d *delegatedAPI) recording(grpc bool, h http.Handler) http.Handler {
+	if d.record == nil {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if project, database, ok := d.known.database(r, grpc); ok {
+			d.record(project, database)
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// maxRecordPeek bounds the request message or body read for its database:
+// larger than the 10 MiB Firestore and Datastore accept.
+const maxRecordPeek = 16 << 20
+
+// firestoreDatabaseRE matches a Firestore database's resource name, or a
+// REST path or resource name beneath one.
+var firestoreDatabaseRE = regexp.MustCompile(`(?:^|/)projects/([^/]+)/databases/([^/:]+)(?:[/:]|$)`)
+
+// firestoreDatabase returns the database a Firestore request names: in a
+// REST request's path, or in its gRPC call's google-cloud-resource-prefix
+// header or first message, where every Firestore request names it.
+func firestoreDatabase(r *http.Request, grpc bool) (string, string, bool) {
+	name := r.URL.Path
+	if grpc {
+		name = r.Header.Get("Google-Cloud-Resource-Prefix")
+		if !firestoreDatabaseRE.MatchString(name) {
+			name = firestoreResourceName(firstMessage(r, maxRecordPeek), 2)
+		}
+	}
+	m := firestoreDatabaseRE.FindStringSubmatch(name)
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
+}
+
+// firestoreResourceName returns the first string in protobuf message b, or in the
+// messages nested in it to depth levels, that names a Firestore database.
+func firestoreResourceName(b []byte, depth int) string {
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return ""
+		}
+		b = b[n:]
+		if typ == protowire.BytesType {
+			v, n := protowire.ConsumeBytes(b)
+			if n < 0 {
+				return ""
+			}
+			if strings.HasPrefix(string(v), "projects/") && firestoreDatabaseRE.Match(v) {
+				return string(v)
+			}
+			if depth > 0 {
+				if s := firestoreResourceName(v, depth-1); s != "" {
+					return s
+				}
+			}
+			b = b[n:]
+			continue
+		}
+		if n = protowire.ConsumeFieldValue(num, typ, b); n < 0 {
+			return ""
+		}
+		b = b[n:]
+	}
+	return ""
+}
+
+// datastoreRESTRE matches a Datastore REST method's path, naming its project.
+var datastoreRESTRE = regexp.MustCompile(`^/v1(?:beta\d)?/projects/([^/:]+):[A-Za-z]+$`)
+
+// datastoreDatabase returns the database a Datastore request names: its
+// project_id (8) and database_id (9), which every Datastore gRPC request
+// has, or its REST path and body's databaseId; "" is the default database.
+func datastoreDatabase(r *http.Request, grpc bool) (string, string, bool) {
+	if !grpc {
+		m := datastoreRESTRE.FindStringSubmatch(r.URL.Path)
+		if m == nil {
+			return "", "", false
+		}
+		var body struct {
+			DatabaseID string `json:"databaseId"`
+		}
+		b, _ := io.ReadAll(io.LimitReader(r.Body, maxRecordPeek+1))
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(b), r.Body), r.Body}
+		if len(b) > maxRecordPeek || len(b) > 0 && json.Unmarshal(b, &body) != nil {
+			return "", "", false
+		}
+		return m[1], body.DatabaseID, true
+	}
+	if !strings.HasPrefix(r.URL.Path, "/google.datastore.v1.Datastore/") {
+		return "", "", false
+	}
+	var project, database string
+	for b := firstMessage(r, maxRecordPeek); len(b) > 0; {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return "", "", false
+		}
+		b = b[n:]
+		if (num == 8 || num == 9) && typ == protowire.BytesType {
+			v, _ := protowire.ConsumeBytes(b)
+			if num == 8 {
+				project = string(v)
+			} else {
+				database = string(v)
+			}
+		}
+		if n = protowire.ConsumeFieldValue(num, typ, b); n < 0 {
+			return "", "", false
+		}
+		b = b[n:]
+	}
+	return project, database, project != ""
+}
+
 // operationsService prefixes the google.longrunning.Operations methods,
 // which a Delegated API's clients call for its Operations and the
 // Services' clients for theirs.
@@ -281,7 +421,7 @@ func operationName(r *http.Request, method string) string {
 	if method == "ListOperations" {
 		field = 4
 	}
-	for b := firstMessage(r); len(b) > 0; {
+	for b := firstMessage(r, maxPeek); len(b) > 0; {
 		num, typ, n := protowire.ConsumeTag(b)
 		if n < 0 {
 			return ""
@@ -301,8 +441,8 @@ func operationName(r *http.Request, method string) string {
 
 // firstMessage returns a gRPC call's first request message, reading it and
 // putting it back, decompressed when it is gzip-compressed; nil when it is
-// otherwise compressed, larger than maxPeek or malformed.
-func firstMessage(r *http.Request) []byte {
+// otherwise compressed, larger than limit or malformed.
+func firstMessage(r *http.Request, limit int) []byte {
 	var head [5]byte
 	n, _ := io.ReadFull(r.Body, head[:])
 	read := head[:n]
@@ -314,7 +454,7 @@ func firstMessage(r *http.Request) []byte {
 	}()
 	size := binary.BigEndian.Uint32(head[1:])
 	gzipped := head[0] == 1 && r.Header.Get("Grpc-Encoding") == "gzip"
-	if n < len(head) || head[0] != 0 && !gzipped || size > maxPeek {
+	if n < len(head) || head[0] != 0 && !gzipped || int64(size) > int64(limit) {
 		return nil
 	}
 	msg := make([]byte, size)
@@ -328,7 +468,7 @@ func firstMessage(r *http.Request) []byte {
 		if err != nil {
 			return nil
 		}
-		if msg, err = io.ReadAll(io.LimitReader(zr, maxPeek+1)); err != nil || len(msg) > maxPeek {
+		if msg, err = io.ReadAll(io.LimitReader(zr, int64(limit)+1)); err != nil || len(msg) > limit {
 			return nil
 		}
 	}

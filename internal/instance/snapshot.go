@@ -20,7 +20,8 @@ import (
 
 // State snapshots (FR-CORE-012) live under <instance dir>/snapshots/NAME:
 // snapshot.json describes the snapshot, store.json holds the Store's
-// contents, and services/<service> what each emu.Snapshotter saved. They
+// contents, services/<service> what each emu.Snapshotter saved, and
+// managed-emulators the data of Managed emulators that keep it. They
 // sit beside the data directory, so an Ephemeral Instance's snapshots
 // outlive it and a later Instance of the same name can restore them.
 
@@ -31,6 +32,7 @@ const (
 	snapshotManifest = "snapshot.json"
 	snapshotStore    = "store.json"
 	snapshotServices = "services"
+	snapshotManaged  = "managed-emulators"
 	snapshotFormat   = 1
 	// snapshotAttempts bounds how often SaveSnapshot retries when the
 	// Store changed while services saved their state.
@@ -150,13 +152,16 @@ func (in *Instance) quiescent() error {
 // differ a client changed something meanwhile, and the save starts again.
 // Entries an emu.StoreCacher declares cache may change meanwhile.
 func (in *Instance) saveInto(ctx context.Context, dir string) error {
-	svcDir := filepath.Join(dir, snapshotServices)
+	svcDir, managedDir := filepath.Join(dir, snapshotServices), filepath.Join(dir, snapshotManaged)
 	for range snapshotAttempts {
 		before, err := in.Env.Store.Dump()
 		if err != nil {
 			return err
 		}
 		if err := os.RemoveAll(svcDir); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(managedDir); err != nil {
 			return err
 		}
 		for _, s := range in.services {
@@ -171,6 +176,9 @@ func (in *Instance) saveInto(ctx context.Context, dir string) error {
 			if err := sn.Snapshot(ctx, d); err != nil {
 				return fmt.Errorf("%s: %w", s.Name(), err)
 			}
+		}
+		if err := in.snapshotManaged(ctx, managedDir); err != nil {
+			return err
 		}
 		after, err := in.Env.Store.Dump()
 		if err != nil {
@@ -254,6 +262,7 @@ func (in *Instance) RestoreSnapshot(ctx context.Context, name string) error {
 				}
 			}
 		}
+		errs = append(errs, in.restoreManaged(ctx, filepath.Join(dir, snapshotManaged)))
 		return errors.Join(errs...)
 	})
 }

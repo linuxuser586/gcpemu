@@ -297,14 +297,14 @@ func emulatorContainers(t *testing.T, id string) []runtime.Container {
 }
 
 // TestManagedStop: stopping the Instance removes its Managed emulator,
-// and a Persistent Instance started again has none of the earlier data
-// (#624).
+// and a Persistent Instance started again has none of the earlier data of
+// one that keeps its data in memory only, such as Bigtable's (#624, #649).
 func TestManagedStop(t *testing.T) {
 	emutest.RequireRuntime(t)
 	dir := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	inst, err := emutest.New(ctx, []string{"iam"}, emutest.WithDataDir(dir), emutest.WithExternal("firestore", "managed"))
+	inst, err := emutest.New(ctx, []string{"iam"}, emutest.WithDataDir(dir), emutest.WithExternal("bigtable", "managed"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestManagedStop(t *testing.T) {
 		t.Fatalf("%d Managed emulator containers, want 1", n)
 	}
 	inst.Setenv(t)
-	firestoreRoundTrip(ctx, t)
+	bigtableRoundTrip(ctx, t)
 	if err := inst.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -321,19 +321,19 @@ func TestManagedStop(t *testing.T) {
 		t.Fatalf("after stop, Managed emulator containers %v remain", cts)
 	}
 
-	inst, err = emutest.New(ctx, []string{"iam"}, emutest.WithDataDir(dir), emutest.WithExternal("firestore", "managed"))
+	inst, err = emutest.New(ctx, []string{"iam"}, emutest.WithDataDir(dir), emutest.WithExternal("bigtable", "managed"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer inst.Close(context.Background())
 	inst.Setenv(t)
-	c, err := firestore.NewClient(ctx, project)
+	c, err := bigtable.NewClient(ctx, project, "i")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if _, err := c.Collection("c").Doc("d").Get(ctx); status.Code(err) != codes.NotFound {
-		t.Errorf("Firestore document after a restart: %v, want NotFound", err)
+	if _, err := c.Open("t").ReadRow(ctx, "r"); status.Code(err) != codes.NotFound {
+		t.Errorf("Bigtable row after a restart: %v, want NotFound (the table is gone)", err)
 	}
 }
 
