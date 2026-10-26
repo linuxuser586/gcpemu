@@ -96,3 +96,10 @@ func PutCluster(svc emu.Service, project, location, name string, st containerpb.
 	rec.setCluster(&containerpb.Cluster{Name: name, Location: location, Status: st, StatusMessage: msg})
 	return svc.(*Service).env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) })
 }
+
+// DefaultVersionImages returns the k3s image and the preloaded system
+// images of the default version (exported to the external tests).
+func DefaultVersionImages() []string {
+	v, _ := lookupVersion(defaultVersion)
+	return append([]string{v.Image}, v.Preload...)
+}

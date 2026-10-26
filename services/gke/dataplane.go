@@ -463,7 +463,6 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 	args := []string{
 		"server", "--disable-agent", "--https-listen-port", "443",
 		"--egress-selector-mode", "cluster",
-		"--disable", "traefik", "--disable", "metrics-server",
 		"--cluster-cidr", rec.Int.PodCIDR, "--service-cidr", rec.Int.ServiceCIDR,
 		"--kube-apiserver-arg=authentication-token-webhook-config-file=" + webhookDir + "/authn.yaml",
 		"--kube-apiserver-arg=authentication-token-webhook-version=v1",
@@ -509,9 +508,7 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 	if d.rt.Self() != "" {
 		ports = []runtime.Port{{HostIP: loopback.Host, HostPort: rec.Int.APIHostPort, ContainerPort: 443}}
 	}
-	if hostLB {
-		args = append(args, "--disable", "servicelb")
-	}
+	args = append(args, serverDisables(hostLB)...)
 	files := []runtime.File{
 		{Name: strings.TrimPrefix(webhookDir, "/") + "/authn.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authn")},
 		{Name: strings.TrimPrefix(webhookDir, "/") + "/authz.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authz")},
@@ -1589,4 +1586,16 @@ func waitFor(ctx context.Context, timeout time.Duration, cond func() (bool, erro
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// serverDisables lists the k3s components the server does not deploy:
+// traefik always, and servicelb when the emulator serves LoadBalancer
+// Services itself (hostLB). k3s's bundled metrics-server stays, so every
+// cluster serves metrics.k8s.io as GKE's does (#637).
+func serverDisables(hostLB bool) []string {
+	out := []string{"--disable", "traefik"}
+	if hostLB {
+		out = append(out, "--disable", "servicelb")
+	}
+	return out
 }
