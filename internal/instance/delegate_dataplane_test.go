@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -124,5 +125,20 @@ func TestDelegatedKeyThroughGoogleHostname(t *testing.T) {
 	callAdmin(t, office, http.MethodGet, "/iam/v1/projects/"+shared+"/serviceAccounts/"+runner+"/keys?keyTypes=USER_MANAGED", nil, &keys)
 	if len(keys.Keys) != 1 || !strings.HasSuffix(keys.Keys[0].Name, "/"+file.KeyID) {
 		t.Errorf("the office's keys = %+v, want the one created over the link", keys.Keys)
+	}
+
+	// Its client_x509_cert_url, through the front Instance, serves its
+	// certificate from the office (#692).
+	u, _ := url.Parse(file.ClientX509CertURL)
+	req, _ = http.NewRequest(http.MethodGet, "http://"+laptop.Env.Endpoints.Get("gateway")+u.EscapedPath(), nil)
+	req.Host = u.Host
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var certs map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&certs); err != nil || resp.StatusCode != http.StatusOK || certs[file.KeyID] == "" {
+		t.Errorf("GET %s through the front Instance = %d %v %v, want key %s", file.ClientX509CertURL, resp.StatusCode, certs, err, file.KeyID)
 	}
 }
