@@ -149,3 +149,14 @@ func TestManagedPrometheusUpdate(t *testing.T) {
 		t.Error("enabling managed Prometheus did not stick")
 	}
 }
+
+// TestNoVersionBelowOTelFloor guards FR-GKE-018's skipped check: GKE
+// rejects a Managed OpenTelemetry scope other than NONE below 1.34, and no
+// offered version is that old. Offering one means implementing the check.
+func TestNoVersionBelowOTelFloor(t *testing.T) {
+	for _, v := range versions {
+		if compareVersions(v.GKE, "1.34") < 0 {
+			t.Errorf("%s is below 1.34: reject a Managed OpenTelemetry scope on it (FR-GKE-018)", v.GKE)
+		}
+	}
+}

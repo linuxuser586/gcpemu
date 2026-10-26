@@ -395,6 +395,10 @@ _Avoid_: collector endpoint, metrics endpoint
 The OTLP receiver a cluster serves at GKE's in-cluster collector address, for workloads' logs, metrics and traces. It forwards them to the OTLP endpoint.
 _Avoid_: OTel sidecar, collector (unqualified)
 
+**Managed OpenTelemetry scope**:
+How much of GKE's managed OpenTelemetry a cluster asks for: none, or collection together with instrumentation. A cluster serves a Managed collector only when its scope asks for collection.
+_Avoid_: OTel mode, telemetry level, scope (unqualified)
+
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
 _Avoid_: secret (unqualified)
