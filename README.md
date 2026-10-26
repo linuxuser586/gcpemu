@@ -753,8 +753,10 @@ serves GKE's managed collector: pods send OTLP logs, metrics and traces to
 protobuf or JSON), as on GKE. No collector pods run: the Service is an `ExternalName` for the
 node's own `metadata.google.internal`, where the node relays OTLP to the Instance (ADR 0034).
 The Instance adds the cluster, namespace, pod, container (for a single-container pod), node and
-owning workload that the sender didn't set, then forwards each signal to the same OTLP endpoint
-as the system metrics. A signal's own `OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_*` variables win
+owning workload that the sender didn't set, of the pod named by the resource's `k8s.pod.uid`
+(in any phase), or else of the pod at the sender's address, so a `hostNetwork` pod is attributed
+only by its `k8s.pod.uid`. It then forwards each signal to the same OTLP endpoint as the system
+metrics. A signal's own `OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_*` variables win
 over the general ones. The variables are read on each export. With no endpoint set, or a
 protocol other than `grpc` or `http/protobuf` (logged once), exports succeed and the data is
 dropped. A failed forward fails the pod's export, which the sender
