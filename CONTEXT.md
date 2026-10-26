@@ -45,7 +45,7 @@ A named address at which an Instance serves clients, such as a Service's own por
 _Avoid_: endpoint (unqualified)
 
 **Public endpoint**:
-The address at which a GKE cluster that is not private serves its Kubernetes API outside its VPC, as GKE's `publicEndpoint` reports it. The cluster's certificate always covers it. A cluster keeps it across starts, a State snapshot restore included, while the address is still free on the Instance's network, and otherwise gets a new one.
+The address at which a GKE cluster that is not private serves its Kubernetes API outside its VPC, as GKE's `publicEndpoint` reports it. The cluster's certificate always covers it. A cluster keeps it across starts, a State snapshot restore included, while the address is still free on the External network, and otherwise gets a new one.
 _Avoid_: endpoint (unqualified), external IP
 
 **Endpoint override**:
@@ -449,7 +449,7 @@ A Cloud SQL database server resource. Always write it in full so it is not confu
 _Avoid_: instance (unqualified)
 
 **Public IP**:
-The address at which a Cloud SQL instance serves clients, as Cloud SQL's `PRIMARY` IP address reports it. A Cloud SQL instance keeps it across starts of its Instance: the emulator claims it back before any other Service takes addresses on that network. Unlike a GKE cluster's Public endpoint, it never moves because something else took the address first.
+The address at which a Cloud SQL instance serves clients, as Cloud SQL's `PRIMARY` IP address reports it, on the External network. A Cloud SQL instance keeps it across starts of its Instance: the emulator claims it back before any other Service takes addresses on the External network. Unlike a GKE cluster's Public endpoint, it never moves because another Service of its Instance took the address first, nor because a start failed for another reason: such a start leaves the Cloud SQL instance FAILED, to be tried again at the same address. It moves only when something outside the emulator holds the address, or when the address is no longer within the External network's range (ADR 0035).
 _Avoid_: external IP, endpoint (unqualified)
 
 **On-demand backup**:
@@ -485,6 +485,10 @@ The CIDR that a subnetwork or a private services access allocation has in GCP's 
 **Gateway address**:
 The address GCP reports as a subnetwork's gateway: the second address of its Declared range, after the network address, whatever range its VPC container network uses.
 _Avoid_: gateway (unqualified), Host address
+
+**External network**:
+The one container network of an Instance on which its resources take their public addresses: Cloud SQL instances' Public IPs, GKE clusters' Public endpoints and the load balancer's Edge relay.
+_Avoid_: the Instance's network, external IP network
 
 **VPC container network**:
 The container network that backs one subnetwork or one private services access allocation of a VPC network. A VPC network has as many as it has subnetworks and allocations, and the Managed containers attached to a subnetwork hold their addresses on it.

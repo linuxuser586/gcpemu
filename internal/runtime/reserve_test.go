@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -76,5 +77,181 @@ func TestReservedAddrs(t *testing.T) {
 	}
 	if got := ip(created[1]["ext"]); got != "172.24.0.2" {
 		t.Errorf("fixed address = %q; want 172.24.0.2", got)
+	}
+}
+
+// fakeReserving serves network ext (172.24.0.0/16; .3 held by a running
+// container, .4 by a created one), with reserved as the Manager's and the
+// Client's reserved addresses, and records the address each create and
+// connect asks for on it. It refuses the addresses in refuse as taken, as
+// the runtime does for one held outside its view.
+func fakeReserving(t *testing.T, reserved []string, refuse ...string) (*Manager, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var body struct {
+			NetworkingConfig struct {
+				EndpointsConfig map[string]struct{ IPAMConfig struct{ IPv4Address string } }
+			}
+			EndpointConfig struct{ IPAMConfig struct{ IPv4Address string } }
+		}
+		ask := func(ip string) bool {
+			asked = append(asked, ip)
+			for _, a := range refuse {
+				if ip == a {
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = io.WriteString(w, `{"message":"Address already in use"}`)
+					return false
+				}
+			}
+			return true
+		}
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/networks/ext"):
+			_, _ = io.WriteString(w, `{"Id":"e","Name":"ext","IPAM":{"Config":[{"Subnet":"172.24.0.0/16","Gateway":"172.24.0.1"}]},
+				"Containers":{"a":{"IPv4Address":"172.24.0.3/16"}}}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/containers/json"):
+			_, _ = io.WriteString(w, `[{"NetworkSettings":{"Networks":{"ext":{"IPAMConfig":{"IPv4Address":"172.24.0.4"}}}}}]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/containers/create"):
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			if ask(body.NetworkingConfig.EndpointsConfig["ext"].IPAMConfig.IPv4Address) {
+				_, _ = io.WriteString(w, `{"Id":"c1"}`)
+			}
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/networks/ext/connect"):
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			ask(body.EndpointConfig.IPAMConfig.IPv4Address)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl.SetReserved(func() []string { return reserved })
+	m := &Manager{Client: cl, Reserved: func() []string { return reserved }}
+	return m, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(asked)
+	}
+}
+
+// A container connected without a fixed address to a network whose subnet
+// holds a reserved address gets the lowest free address outside the
+// reserved set, as one created on it does (#673); a fixed address is kept.
+func TestReservedAddrsConnect(t *testing.T) {
+	m, asked := fakeReserving(t, []string{"172.24.0.2", "172.24.0.5"})
+	if err := m.Connect(context.Background(), "ext", "edge", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Connect(context.Background(), "ext", "edge2", "172.24.0.9"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := asked(), []string{"172.24.0.6", "172.24.0.9"}; !slices.Equal(got, want) {
+		t.Errorf("connects asked for %q; want %q", got, want)
+	}
+}
+
+// An address the runtime refuses as taken is replaced by the next free
+// one outside the reserved set, never by the runtime's own choice, which
+// could be a reserved address whose container has not started (#673).
+func TestReservedAddrsRefused(t *testing.T) {
+	m, asked := fakeReserving(t, []string{"172.24.0.2", "172.24.0.5"}, "172.24.0.6")
+	if _, err := m.CreateContainer(context.Background(), ContainerSpec{Name: "node", Networks: []Attachment{{Network: "ext"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Connect(context.Background(), "ext", "edge", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := asked(), []string{"172.24.0.6", "172.24.0.7", "172.24.0.6", "172.24.0.7"}; !slices.Equal(got, want) {
+		t.Errorf("addresses asked for %q; want %q", got, want)
+	}
+}
+
+// AddrHolder names the container holding an address on a network, whether
+// it is attached with it or only created with it as its fixed address, and
+// only on that network (ADR 0035).
+func TestAddrHolder(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/containers/json") {
+			_, _ = io.WriteString(w, `[
+				{"Id":"run","Names":["/gke-node"],"Labels":{"gcpemu.instance":"i1"},
+				 "NetworkSettings":{"Networks":{"ext":{"IPAddress":"172.24.0.3"},"svc":{"IPAddress":"10.9.0.5"}}}},
+				{"Id":"made","Names":["/by-hand"],"Labels":{},
+				 "NetworkSettings":{"Networks":{"ext":{"IPAMConfig":{"IPv4Address":"172.24.0.7"},"IPAddress":""}}}}]`)
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+	cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		network, ip, id, name string
+	}{
+		{"ext", "172.24.0.3", "run", "gke-node"},
+		{"ext", "172.24.0.7", "made", "by-hand"},
+		{"ext", "10.9.0.5", "", ""}, // held on svc, not ext
+		{"ext", "172.24.0.9", "", ""},
+	} {
+		h, ok, err := cl.AddrHolder(context.Background(), c.network, c.ip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok != (c.id != "") || h.ID != c.id || h.Name != c.name {
+			t.Errorf("AddrHolder(%s, %s) = %+v, %v; want %q (%s)", c.network, c.ip, h, ok, c.id, c.name)
+		}
+	}
+	if h, _, _ := cl.AddrHolder(context.Background(), "ext", "172.24.0.3"); h.Labels[LabelInstance] != "i1" {
+		t.Errorf("holder labels = %v; want %s=i1", h.Labels, LabelInstance)
+	}
+}
+
+// When the runtime refuses every pick, the container is not created or
+// connected: the runtime's own choice could be a reserved address
+// (ADR 0035).
+func TestReservedAddrsAllRefused(t *testing.T) {
+	refused := []string{"172.24.0.6", "172.24.0.7", "172.24.0.8"}
+	m, asked := fakeReserving(t, []string{"172.24.0.2", "172.24.0.5"}, refused...)
+	if _, err := m.CreateContainer(context.Background(), ContainerSpec{Name: "node", Networks: []Attachment{{Network: "ext"}}}); err == nil {
+		t.Error("create succeeded; want the runtime's refusal")
+	}
+	if err := m.Connect(context.Background(), "ext", "edge", ""); err == nil {
+		t.Error("connect succeeded; want the runtime's refusal")
+	}
+	if got, want := asked(), append(slices.Clone(refused), refused...); !slices.Equal(got, want) {
+		t.Errorf("addresses asked for %q; want %q", got, want)
+	}
+}
+
+// The member container (the VM relay) skips reserved addresses too when it
+// takes the highest free address of a network it joins, and does not leave
+// the choice to the runtime when that is refused (ADR 0035).
+func TestReservedAddrsMember(t *testing.T) {
+	m, asked := fakeReserving(t, []string{"172.24.255.253"})
+	m.SetMember("relay", func(Network, bool) {})
+	if err := m.AttachMember(context.Background(), "ext", false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := asked(), []string{"172.24.255.252"}; !slices.Equal(got, want) {
+		t.Errorf("member asked for %q; want %q (.254 is the subnet's reserved address, .253 a Public IP)", got, want)
+	}
+
+	m, asked = fakeReserving(t, []string{"172.24.255.253"}, "172.24.255.252")
+	m.SetMember("relay", func(Network, bool) {})
+	if err := m.AttachMember(context.Background(), "ext", false); err == nil {
+		t.Error("member attach succeeded; want the runtime's refusal")
+	}
+	if got, want := asked(), []string{"172.24.255.252"}; !slices.Equal(got, want) {
+		t.Errorf("member asked for %q; want %q", got, want)
 	}
 }

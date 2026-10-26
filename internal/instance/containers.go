@@ -71,6 +71,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 		},
 	}
 	cl.SetMemberAddr(c.relayAddr)
+	cl.SetReserved(c.reservedAddrs)
 	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
 	m.LoopbackAliases = runtime.DecideLoopbackAliases(c.in.Config.LoopbackAliases, info)
 	if err := m.Reclaim(ctx); err != nil {
