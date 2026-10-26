@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"slices"
@@ -158,6 +159,13 @@ func (g *Gateway) serveDelegated(w http.ResponseWriter, r *http.Request, name st
 	case g.bucketTaken(sw, r, links, name):
 	default:
 		links.Forward(sw, r, name, string(p), func(w http.ResponseWriter, err error) {
+			if stsExchange(r) {
+				// STS answers in OAuth's error shape, as its clients expect.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporarily_unavailable", "error_description": err.Error()})
+				return
+			}
 			writeErrorFor(w, r, apierr.New(codes.Unavailable, "%v", err))
 		}, answered)
 	}
