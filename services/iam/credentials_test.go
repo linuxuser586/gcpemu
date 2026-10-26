@@ -203,17 +203,25 @@ func grant(t *testing.T, c *iamv1.Service, sa *iamv1.ServiceAccount, role, membe
 
 func fetchJSON[T any](t *testing.T, u string) T {
 	t.Helper()
+	return getJSON[T](t, http.DefaultClient, u, http.StatusOK)
+}
+
+// getJSON GETs u with hc, wants status, and decodes a 200's body.
+func getJSON[T any](t *testing.T, hc *http.Client, u string, status int) T {
+	t.Helper()
 	var v T
-	resp, err := http.Get(u)
+	resp, err := hc.Get(u)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("GET %s: %s", u, resp.Status)
+	if resp.StatusCode != status {
+		t.Fatalf("GET %s: %s, want %d", u, resp.Status, status)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		t.Fatal(err)
+	if status == http.StatusOK {
+		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return v
 }

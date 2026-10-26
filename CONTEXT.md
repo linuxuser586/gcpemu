@@ -73,7 +73,7 @@ _Avoid_: gateway (unqualified)
 
 **Host mode**:
 A way of running an Instance so that it answers on real Google hostnames, using local DNS and a locally trusted CA. Clients then need no Endpoint override.
-_Avoid_: "mode" for anything else
+_Avoid_: "mode" unqualified for anything else (say Cluster mode for Standard or Autopilot)
 
 **Instance CA**:
 The root certificate authority an Instance creates the first time it starts. It signs Google-managed certificates and Host mode serving certificates, and clients trust it once. It is made of a certificate and a private key, which always belong together: an Instance never uses one without the other. An Instance keeps its CA until the user rotates it, and never replaces either part on its own. Rotating it replaces the certificate and key together: Google-managed certificates are re-issued from the new CA, and self-managed certificates are the user's and are left as they are.
@@ -126,6 +126,10 @@ _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane, the Google front end or the link protocol, and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule or a LoadBalancer Service, and otherwise only credentials the Instance issued, whatever the IAM enforcement level. The link protocol's admits only paired Instances and Pairing requests.
 _Avoid_: LAN binding, bind address (unqualified), exposed port
 
+**Load balancing frontend**:
+A forwarding rule, or one port of a GKE `LoadBalancer` Service, as the load balancing Data plane serves it. An `--lb-bind` address on a port serves one of them: the one whose own listener already holds every address on that port, else a forwarding rule before a Service, else the first by name. One that comes along later takes the address over from a holder that ranks lower, and one that loses gets the address once the holder goes.
+_Avoid_: frontend (unqualified), LB target
+
 **LAN caller**:
 A caller whose request arrived through a LAN listener, at a `--bind` address beyond loopback, or over a link from a Linked Instance, whichever machine it runs on. The Instance tells it the Data plane addresses that machine can reach, its LAN listeners', and no address for a Data plane with none. Load balancing is the exception: a forwarding rule's address is the Declared address for every caller, and a LAN caller finds its `--lb-bind` address in `gcpemu env`.
 _Avoid_: remote caller, external client
@@ -146,7 +150,7 @@ The host's side of a container runtime's bridge network: the address the host wo
 _Avoid_: gateway (unqualified)
 
 **Loopback alias**:
-An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist, and so does each Kubernetes Service a host client reaches through the Host attachment.
+An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each is one address of its own, not a range. Each Cloud SQL instance and each forwarding rule gets its own when they exist, and so does each Kubernetes Service a host client reaches through the Host attachment.
 _Avoid_: loopback IP (unqualified), alias (unqualified)
 
 **Host attachment**:
@@ -237,7 +241,7 @@ The Principal assumed for requests that carry no credentials.
 
 **Federated principal**:
 The Principal an Instance's STS exchange gives a workload, `principal://…/workloadIdentityPools/P/subject/S`, for a subject token a Workload Identity Pool provider trusts. It belongs to the pool's Project.
-_Avoid_: workload identity, external identity
+_Avoid_: workload identity, external identity, federated token (say: an access token for a Federated principal)
 
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.
@@ -348,12 +352,20 @@ A GCP project that exists in an Instance. It is created implicitly the first tim
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
+**Cluster mode**:
+Whether a GKE cluster is a Standard cluster or an Autopilot cluster, fixed when it is created.
+_Avoid_: "mode" unqualified, cluster type
+
 **Standard cluster**:
 A GKE cluster whose node pools the user creates, sizes and deletes.
 
 **Autopilot cluster**:
-A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes them once they run only system pods (DaemonSet and `kube-system` pods, which move to other nodes), always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools: GKE's own node pools are visible but cannot be created, changed or deleted.
+A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes Empty nodes, always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools: GKE's own node pools are visible but cannot be created, changed or deleted.
 _Avoid_: managed cluster, serverless cluster, managed pool (say GKE's own node pool)
+
+**Empty node**:
+An Autopilot cluster's node that runs only system pods (DaemonSet and `kube-system` pods), which move to other nodes when it is removed.
+_Avoid_: idle node, unused node
 
 **Machine shape**:
 The machine type GKE would give an Autopilot cluster's node. The node advertises that type's allocatable CPU, memory and pods whatever the host has, so a cluster fills up where it would on GCP (ADR 0031). A Standard cluster's machine type is only Recorded, not a Machine shape.

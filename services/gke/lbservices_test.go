@@ -232,8 +232,9 @@ func TestLBServicesPublished(t *testing.T) {
 		defer logMu.Unlock()
 		return logs.Write(b)
 	}), nil))
-	publishedHost = "127.0.0.1"
-	t.Cleanup(func() { publishedHost = "" })
+	s.loopMu.Lock()
+	s.publishedHost = "127.0.0.1"
+	s.loopMu.Unlock()
 	own, ranged := freePort(t), freePort(t)
 	s.env.Config.PortRange = fmt.Sprintf("%d-%d", ranged, ranged)
 	published := map[int]string{own: net.JoinHostPort("127.0.0.1", strconv.Itoa(own)), ranged: "127.0.0.1:40001"}
@@ -351,4 +352,193 @@ func freePort(t *testing.T) int {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
+}
+
+// fakeLAN is the lb Service's emu.LANFrontends: it records the frontends
+// registered, and grants the claims set.
+type fakeLAN struct {
+	emu.Service
+	mu     sync.Mutex
+	fes    map[string][]emu.LANFrontend
+	calls  int
+	claims map[string][]string
+}
+
+func (f *fakeLAN) SetLANFrontends(owner string, fes []emu.LANFrontend) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.fes == nil {
+		f.fes = map[string][]emu.LANFrontend{}
+	}
+	f.fes[owner] = fes
+}
+
+func (f *fakeLAN) LANClaims(string) map[string][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.claims
+}
+
+func (f *fakeLAN) LoopbackAddrs() []string { return nil }
+
+// lbBindKube is a Kubernetes API with one LoadBalancer Service,
+// default/web, on two ports while present, and one Ready node. It keeps
+// the ingress patched, and counts patches.
+type lbBindKube struct {
+	mu      sync.Mutex
+	present bool
+	ingress []string
+	patches int
+}
+
+func (k *lbBindKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/services":
+		items := []any{}
+		if k.present {
+			ingress := []map[string]string{}
+			for _, ip := range k.ingress {
+				ingress = append(ingress, map[string]string{"ip": ip})
+			}
+			items = append(items, map[string]any{
+				"metadata": map[string]string{"namespace": "default", "name": "web"},
+				"spec": map[string]any{"type": "LoadBalancer", "ports": []map[string]any{
+					{"port": 18276, "protocol": "TCP", "nodePort": 30080}, {"port": 18277, "protocol": "TCP", "nodePort": 30081}}},
+				"status": map[string]any{"loadBalancer": map[string]any{"ingress": ingress}},
+			})
+		}
+		list := map[string]any{"items": items}
+		_ = json.NewEncoder(w).Encode(list)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+		_, _ = io.WriteString(w, `{"items":[{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`)
+	case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/namespaces/default/services/web/status":
+		var p struct {
+			Status struct {
+				LoadBalancer struct {
+					Ingress []struct{ IP string } `json:"ingress"`
+				} `json:"loadBalancer"`
+			} `json:"status"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		k.patches++
+		k.ingress = k.ingress[:0]
+		for _, i := range p.Status.LoadBalancer.Ingress {
+			k.ingress = append(k.ingress, i.IP)
+		}
+		_, _ = io.WriteString(w, `{}`)
+	default:
+		http.Error(w, "unexpected", http.StatusNotFound)
+	}
+}
+
+// lbBindCluster stores cluster c0 on one node, with servicelb unless
+// hostLB, and serves its Kubernetes API from k.
+func lbBindCluster(t *testing.T, s *Service, hostLB bool, k *lbBindKube) string {
+	t.Helper()
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0", HostLB: hostLB,
+		Nodes: []nodeRecord{{Name: "n1", IP: "10.128.0.4", ContainerIP: "172.29.0.4"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: "c0"})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(k)
+	t.Cleanup(srv.Close)
+	s.rtFor(rec.key()).kube = &kubeClient{base: srv.URL, hc: srv.Client()}
+	return rec.key()
+}
+
+// With --lb-bind, each LoadBalancer Service port is registered with the
+// lb Service, and the Service's ingress lists the --lb-bind addresses it
+// claimed after its own, one per IP in --lb-bind order, until it loses
+// them. A cluster running servicelb, which owns the ingress, only
+// registers its ports.
+func TestLBServicesLBBind(t *testing.T) {
+	for _, mode := range []lbMode{lbLoopback, lbNodes, lbServicelb} {
+		t.Run(map[lbMode]string{lbLoopback: "host", lbNodes: "containerized", lbServicelb: "servicelb"}[mode], func(t *testing.T) {
+			s := newUnitService(t)
+			s.env.Config.LBBind = []string{"192.0.2.7", "192.0.2.8"}
+			lan := &fakeLAN{}
+			s.env.SetServices(map[string]emu.Service{"lb": lan})
+			k := &lbBindKube{present: true}
+			key := lbBindCluster(t, s, mode != lbServicelb, k)
+			np := netplane.New(nil, nil, "127.0.0.1", s.env.Log)
+			lbs := map[string]*lbService{}
+			defer func() {
+				for id, l := range lbs {
+					s.closeLB(key, id, l)
+				}
+			}()
+			sync := func() []string {
+				t.Helper()
+				if err := s.syncLBServices(context.Background(), np, key, mode, nil, lbs); err != nil {
+					t.Fatal(err)
+				}
+				k.mu.Lock()
+				defer k.mu.Unlock()
+				return slices.Clone(k.ingress)
+			}
+			const k1, k2 = "gke:p/us-central1-a/c0/default/web/18276", "gke:p/us-central1-a/c0/default/web/18277"
+			lan.claims = map[string][]string{k1: {"192.0.2.7:18276", "192.0.2.8:18276"}, k2: {"192.0.2.7:18277"}}
+			got := sync()
+			fes := lan.fes[key]
+			if len(fes) != 2 || fes[0].Key != k1 || fes[0].Port != 18276 || fes[1].Key != k2 || fes[1].Port != 18277 ||
+				fes[0].Name != "gke:p/us-central1-a/c0/default/web" || fes[0].Serve == nil {
+				t.Fatalf("frontends = %+v, want one per port", fes)
+			}
+			if mode == lbServicelb {
+				if k.patches != 0 {
+					t.Fatalf("servicelb cluster patched the ingress to %v", got)
+				}
+				return
+			}
+			if len(got) != 3 || got[0] == "192.0.2.7" || got[1] != "192.0.2.7" || got[2] != "192.0.2.8" {
+				t.Fatalf("ingress = %v, want its own address, then 192.0.2.7 and 192.0.2.8", got)
+			}
+			own := got[0]
+			if sync(); k.patches != 1 {
+				t.Fatalf("%d patches, want 1: nothing changed", k.patches)
+			}
+			lan.claims = map[string][]string{k2: {"192.0.2.8:18277"}}
+			if got := sync(); !slices.Equal(got, []string{own, "192.0.2.8"}) {
+				t.Fatalf("ingress = %v, want [%s 192.0.2.8]", got, own)
+			}
+			lan.claims = nil
+			if got := sync(); !slices.Equal(got, []string{own}) {
+				t.Fatalf("ingress = %v after losing every claim, want [%s]", got, own)
+			}
+
+			k.mu.Lock()
+			k.present = false
+			k.mu.Unlock()
+			sync()
+			if fes := lan.fes[key]; len(fes) != 0 {
+				t.Fatalf("frontends after the Service went = %+v", fes)
+			}
+		})
+	}
+}
+
+// Without --lb-bind, no frontend is registered with the lb Service, and
+// the ingress is the Service's own address.
+func TestLBServicesNoLBBind(t *testing.T) {
+	s := newUnitService(t)
+	lan := &fakeLAN{claims: map[string][]string{"gke:p/us-central1-a/c0/default/web/18276": {"192.0.2.7:18276"}}}
+	s.env.SetServices(map[string]emu.Service{"lb": lan})
+	k := &lbBindKube{present: true}
+	key := lbBindCluster(t, s, true, k)
+	lbs := map[string]*lbService{}
+	defer func() {
+		for id, l := range lbs {
+			s.closeLB(key, id, l)
+		}
+	}()
+	if err := s.syncLBServices(context.Background(), netplane.New(nil, nil, "127.0.0.1", s.env.Log), key, lbNodes, nil, lbs); err != nil {
+		t.Fatal(err)
+	}
+	if lan.calls != 0 || !slices.Equal(k.ingress, []string{"172.29.0.4"}) {
+		t.Fatalf("%d registrations, ingress %v; want none, [172.29.0.4]", lan.calls, k.ingress)
+	}
 }

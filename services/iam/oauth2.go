@@ -308,11 +308,15 @@ func (s *Service) serveTokenInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveX509 serves a service account's public certificates (the
-// client_x509_cert_url of key files) as x509 PEM or JWK sets.
+// client_x509_cert_url of key files) as x509 PEM or JWK sets, at gcpemu's
+// /service_accounts/v1/metadata/ path or Google's /robot/v1/metadata/.
 func (s *Service) serveX509(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/service_accounts/v1/metadata/")
-	kind, email, ok := strings.Cut(rest, "/")
-	if !ok || (kind != "x509" && kind != "jwk") {
+	rest, ok := strings.CutPrefix(r.URL.Path, "/service_accounts/v1/metadata/")
+	if !ok {
+		rest, ok = strings.CutPrefix(r.URL.Path, "/robot/v1/metadata/")
+	}
+	kind, email, cut := strings.Cut(rest, "/")
+	if !ok || !cut || (kind != "x509" && kind != "jwk") {
 		notFoundRoute(w, r)
 		return
 	}

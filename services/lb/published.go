@@ -51,10 +51,6 @@ import (
 // let two rules share a published port, so the data plane keeps track of
 // the ports its rules hold. An Instance on the host is unchanged.
 
-// publishedHost is the address published ports are served on in the
-// container; "" is the wildcard. Tests change it.
-var publishedHost = ""
-
 // publishing is how a forwarding rule reaches the Instance's host.
 type publishing struct {
 	// on: a Containerized Instance, which serves rules on Published ports.
@@ -237,7 +233,7 @@ func (d *dataplane) publish(l *listener, fe *frontend, warn bool) {
 		l.pubHint = ports.Hint(fe.port, "the forwarding rule")
 	}
 	listen := func(port int) (net.Listener, error) {
-		return published.ListenShared(net.JoinHostPort(publishedHost, strconv.Itoa(port)))
+		return published.ListenShared(net.JoinHostPort(d.pubBind, strconv.Itoa(port)))
 	}
 	if b := ports.Bind(cands, listen, func(port int) bool { return held[port] }); b != nil {
 		l.pub, l.pubPort, l.pubHost, l.pubHint = b.Listener, b.Port, b.Host, ""

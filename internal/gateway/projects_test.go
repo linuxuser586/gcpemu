@@ -56,6 +56,10 @@ func TestRequestProjects(t *testing.T) {
 		{"/service_accounts/v1/metadata/jwk/sa%40team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
 		{"/service_accounts/v1/metadata/x509/someone@example.com", nil},
 		{"/service_accounts/v1/metadata/x509", nil},
+		{"/robot/v1/metadata/x509/sa@team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/robot/v1/metadata/jwk/sa%40team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/robot/v1/metadata/x509/someone@example.com", nil},
+		{"/robot/v1/metadata/raw/sa@team-shared.iam.gserviceaccount.com", nil},
 		{"/storage/v1/b/projects/o", nil},
 		// The Admin API, the Web console and agent callbacks name none,
 		// however they are escaped.
@@ -86,6 +90,16 @@ func TestRequestProjects(t *testing.T) {
 		{"JWT-bearer grant of no service account", http.MethodPost, "", "/oauth2/token", "application/x-www-form-urlencoded", "",
 			"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=" + assertion(jwt.MapClaims{"iss": "someone@example.com"}), nil},
 		{"refresh grant", http.MethodPost, "", "/oauth2/token", "application/x-www-form-urlencoded", "", "grant_type=refresh_token&refresh_token=x", nil},
+		// An STS exchange names the Project of its audience's provider.
+		{"STS exchange", http.MethodPost, "", "/sts/v1/token", "application/x-www-form-urlencoded", "",
+			"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=%2F%2Fiam.googleapis.com%2Fprojects%2F123456789012%2Flocations%2Fglobal%2FworkloadIdentityPools%2Fp%2Fproviders%2Fx", []string{"123456789012"}},
+		{"STS exchange by Project ID as JSON", http.MethodPost, "", "/sts/v1beta/token", "application/json", "",
+			`{"audience":"//iam.googleapis.com/projects/team-shared/locations/global/workloadIdentityPools/p/providers/x"}`, []string{"team-shared"}},
+		{"STS exchange in host mode", http.MethodPost, "sts.googleapis.com", "/v1/token", "application/json", "",
+			`{"audience":"//iam.googleapis.com/projects/team-shared/locations/global/workloadIdentityPools/p/providers/x"}`, []string{"team-shared"}},
+		{"STS exchange of no provider", http.MethodPost, "", "/sts/v1/token", "application/x-www-form-urlencoded", "", "audience=team-shared", nil},
+		{"audience off the STS endpoint", http.MethodPost, "", "/oauth2/token", "application/x-www-form-urlencoded", "",
+			"audience=%2F%2Fiam.googleapis.com%2Fprojects%2Fteam-shared%2Flocations%2Fglobal%2FworkloadIdentityPools%2Fp%2Fproviders%2Fx", nil},
 		{"XML API bucket", http.MethodPut, "storage.googleapis.com", "/new-bucket", "", "team-shared", "", []string{"team-shared"}},
 	}
 	for _, c := range bodies {

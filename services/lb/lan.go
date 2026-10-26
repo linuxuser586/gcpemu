@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 )
 
@@ -14,6 +16,8 @@ import (
 // <address>:<the rule's real port> for each configured address, so that
 // another device (a phone on the LAN) can reach the load balancer while
 // the admin API, the gateway and every other data plane stay on --bind.
+// So does every frontend another Service registers (SetLANFrontends): a
+// GKE LoadBalancer Service port (#713).
 //
 // The emulator listens there itself when it may bind the port. When the
 // port is privileged (ip_unprivileged_port_start above it), the lb-lan
@@ -21,17 +25,21 @@ import (
 // connection to the edge ingress with a PROXY v2 header, exactly like
 // lb-edge (the edgeagent package runs in both, and manages lb-lan as a
 // LANRelay). It does not on macOS, where the
-// forwarding rule's wildcard listener on a privileged port serves the
+// frontend's wildcard listener on a privileged port serves the
 // --lb-bind addresses too, nor on a VM runtime, whose host network is the
 // VM's.
 //
-// An address a rule's listener covers itself (its own address, such as
+// An address a frontend's listener covers itself (its own address, such as
 // 127.0.0.1 in single-loopback mode, or any address on its port for a
 // wildcard listener) is served by that listener, and claimed first.
 //
-// Two forwarding rules on one port cannot share an address: the one with
-// the lowest "ip:port" key gets it. Each frontend's addresses are recorded
-// as endpoint "lb-lan:<name>", which `gcpemu status` and `doctor` print.
+// Two frontends on one port cannot share an address: the one with the
+// lowest key ("ip:port" for a forwarding rule, so that rules sort before
+// other Services' frontends) gets it, taking it over from a higher one
+// that holds it. The others' failures are listed on the admin API
+// (admin.go), which `doctor` prints, and retried on each change. Each
+// frontend's addresses are recorded as endpoint "lb-lan:<name>", which
+// `gcpemu status` and `doctor` print.
 
 // lanBinding is one claimed --lb-bind address:port.
 type lanBinding struct {
@@ -41,7 +49,47 @@ type lanBinding struct {
 	relay bool // served by the lb-lan container
 }
 
-// syncLAN binds the --lb-bind addresses of every listener. Callers hold d.mu.
+// lanFailure is a frontend that cannot serve an --lb-bind address, and
+// why.
+type lanFailure struct {
+	what, addr, err string
+}
+
+// lanFronts returns every frontend --lb-bind serves, by key: forwarding
+// rules' listeners and other Services' frontends. Callers hold d.mu.
+func (d *dataplane) lanFronts() map[string]*listener {
+	out := make(map[string]*listener, len(d.listeners))
+	for k, l := range d.listeners {
+		out[k] = l
+	}
+	for _, fes := range d.ext {
+		for k, l := range fes {
+			out[k] = l
+		}
+	}
+	return out
+}
+
+// lanPort is the port l serves on the --lb-bind addresses: its forwarding
+// rule's real port, or the other Service's.
+func (l *listener) lanPort() string {
+	if l.ext != nil {
+		return strconv.Itoa(l.ext.Port)
+	}
+	_, port, _ := net.SplitHostPort(l.key)
+	return port
+}
+
+// lanWhat names what l serves, for messages.
+func (l *listener) lanWhat() string {
+	if l.ext != nil {
+		return l.ext.What
+	}
+	return "forwarding rule " + l.name
+}
+
+// syncLAN binds the --lb-bind addresses of every frontend. Callers hold
+// d.mu.
 func (d *dataplane) syncLAN() {
 	binds := d.s.env.Config.LBBind
 	if len(binds) == 0 {
@@ -51,25 +99,23 @@ func (d *dataplane) syncLAN() {
 		d.lan = map[string]*lanBinding{}
 		d.lanErr = map[string]string{}
 	}
+	d.lanDown = map[string]lanFailure{}
+	fronts := d.lanFronts()
 	for addr, b := range d.lan {
-		if d.listeners[b.key] != b.l {
-			if b.ln != nil {
-				b.ln.Close()
-			}
-			delete(d.lan, addr)
+		if fronts[b.key] != b.l {
+			d.releaseLAN(addr, b)
 		}
 	}
-	keys := make([]string, 0, len(d.listeners))
-	for k := range d.listeners {
+	keys := make([]string, 0, len(fronts))
+	for k := range fronts {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	var fresh []string
 	for _, key := range keys {
-		l := d.listeners[key]
-		_, port, _ := net.SplitHostPort(key)
+		l := fronts[key]
 		for _, ip := range binds {
-			addr := net.JoinHostPort(ip, port)
+			addr := net.JoinHostPort(ip, l.lanPort())
 			if d.lan[addr] == nil && l.covers(addr) {
 				d.lan[addr] = &lanBinding{key: key, l: l}
 				fresh = append(fresh, addr)
@@ -77,19 +123,23 @@ func (d *dataplane) syncLAN() {
 		}
 	}
 	for _, key := range keys {
-		l := d.listeners[key]
-		_, port, _ := net.SplitHostPort(key)
+		l := fronts[key]
 		for _, ip := range binds {
-			addr := net.JoinHostPort(ip, port)
+			addr := net.JoinHostPort(ip, l.lanPort())
 			if b := d.lan[addr]; b != nil {
-				if b.key != key {
-					d.lanFailed(addr, key, fmt.Errorf("already serves forwarding rule %s", b.l.name))
+				if b.key == key {
+					continue
 				}
-				continue
+				// A listener covering it holds it; a lower key wins it.
+				if b.ln == nil && !b.relay || b.key < key {
+					d.lanFailed(addr, l, fmt.Errorf("already serves %s", b.l.lanWhat()))
+					continue
+				}
+				d.releaseLAN(addr, b)
 			}
 			b, err := d.bindLAN(l, addr)
 			if err != nil {
-				d.lanFailed(addr, key, err)
+				d.lanFailed(addr, l, err)
 				continue
 			}
 			d.lan[addr] = b
@@ -105,13 +155,17 @@ func (d *dataplane) syncLAN() {
 	if err := d.setRelay(relayed); err != nil {
 		// Not exposed after all: retried on the next change.
 		for _, addr := range relayed {
-			d.lanFailed(addr, d.lan[addr].key, fmt.Errorf("lb-lan relay: %w", err))
+			d.lanFailed(addr, d.lan[addr].l, fmt.Errorf("lb-lan relay: %w", err))
 			delete(d.lan, addr)
+		}
+	}
+	for k := range d.lanErr {
+		if _, ok := d.lanDown[k]; !ok {
+			delete(d.lanErr, k)
 		}
 	}
 	for _, addr := range fresh {
 		if b := d.lan[addr]; b != nil {
-			delete(d.lanErr, addr+" "+b.key)
 			mode := "direct"
 			switch {
 			case b.relay:
@@ -119,7 +173,7 @@ func (d *dataplane) syncLAN() {
 			case b.ln == nil:
 				mode = "listener"
 			}
-			d.s.env.Log.Info("lb: forwarding rule exposed", "forwardingRule", b.l.name, "address", addr, "mode", mode)
+			d.s.env.Log.Info("lb: exposed on --lb-bind address", "frontend", b.l.lanWhat(), "address", addr, "mode", mode)
 		}
 	}
 	byName := map[string][]string{}
@@ -134,6 +188,84 @@ func (d *dataplane) syncLAN() {
 	for name, addrs := range byName {
 		sort.Strings(addrs)
 		d.s.env.Endpoints.Set("lb-lan:"+name, strings.Join(addrs, ","))
+	}
+}
+
+// releaseLAN stops serving the --lb-bind address addr on b. Callers hold
+// d.mu.
+func (d *dataplane) releaseLAN(addr string, b *lanBinding) {
+	if b.ln != nil {
+		b.ln.Close()
+	}
+	delete(d.lan, addr)
+}
+
+// SetLANFrontends implements emu.LANFrontends. A frontend registered
+// again unchanged keeps the addresses it holds.
+func (s *Service) SetLANFrontends(owner string, fes []emu.LANFrontend) {
+	d := s.dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	old := d.ext[owner]
+	cur := map[string]*listener{}
+	for _, fe := range fes {
+		if l := old[fe.Key]; l != nil && sameFrontend(*l.ext, fe) {
+			cur[fe.Key] = l
+			continue
+		}
+		l := &listener{name: fe.Name, key: fe.Key, addr: fe.Addr, ext: &fe, serve: fe.Serve}
+		if fe.Wildcard {
+			l.mode = "wildcard"
+		}
+		cur[fe.Key] = l
+	}
+	for k, l := range old {
+		if cur[k] != l {
+			l.closeRelayed()
+		}
+	}
+	if d.ext == nil {
+		d.ext = map[string]map[string]*listener{}
+	}
+	if len(cur) == 0 {
+		delete(d.ext, owner)
+	} else {
+		d.ext[owner] = cur
+	}
+	if !d.closed && d.ctx != nil {
+		d.syncLAN()
+	}
+}
+
+// sameFrontend reports whether a and b serve alike.
+func sameFrontend(a, b emu.LANFrontend) bool {
+	return a.Key == b.Key && a.Name == b.Name && a.What == b.What && a.Port == b.Port &&
+		a.Addr == b.Addr && a.Wildcard == b.Wildcard && a.Sig == b.Sig
+}
+
+// LANClaims implements emu.LANFrontends.
+func (s *Service) LANClaims(owner string) map[string][]string {
+	d := s.dp
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := map[string][]string{}
+	for addr, b := range d.lan {
+		if l := d.ext[owner][b.key]; l != nil && l == b.l {
+			out[b.key] = append(out[b.key], addr)
+		}
+	}
+	for _, addrs := range out {
+		sort.Strings(addrs)
+	}
+	return out
+}
+
+// closeRelayed stops serving the connections relayed to another
+// Service's frontend; relayed opens them again on next use.
+func (l *listener) closeRelayed() {
+	if l.virt != nil {
+		l.virt.Close()
+		l.virt = nil
 	}
 }
 
@@ -152,7 +284,7 @@ func (d *dataplane) bindLAN(l *listener, addr string) (*lanBinding, error) {
 	case loopback.Excluded:
 		return nil, loopback.ExcludedError(err, "tcp")
 	case loopback.PrivilegedWildcard:
-		return nil, fmt.Errorf("%w (privileged port: only the first forwarding rule on it is served on --lb-bind addresses)", err)
+		return nil, fmt.Errorf("%w (privileged port: only the frontend with the wildcard listener on it is served on --lb-bind addresses)", err)
 	}
 	if !d.edge.available(d.ctx) {
 		return nil, fmt.Errorf("%w (privileged port and no container runtime to relay it; lower net.ipv4.ip_unprivileged_port_start)", err)
@@ -179,18 +311,16 @@ func (d *dataplane) vmRuntime() bool {
 	return ok && dec.VM
 }
 
-// lanFailed logs a --lb-bind failure once per address and frontend.
-func (d *dataplane) lanFailed(addr, key string, err error) {
-	k := addr + " " + key
+// lanFailed records that l cannot serve the --lb-bind address addr, and
+// logs it once.
+func (d *dataplane) lanFailed(addr string, l *listener, err error) {
+	k := addr + " " + l.key
+	d.lanDown[k] = lanFailure{what: l.lanWhat(), addr: addr, err: err.Error()}
 	if d.lanErr[k] == err.Error() {
 		return
 	}
 	d.lanErr[k] = err.Error()
-	name := key
-	if l := d.listeners[key]; l != nil {
-		name = l.name
-	}
-	d.s.env.Log.Warn("lb: cannot expose forwarding rule on --lb-bind address", "forwardingRule", name, "address", addr, "err", err)
+	d.s.env.Log.Warn("lb: cannot expose on --lb-bind address", "frontend", l.lanWhat(), "address", addr, "err", err)
 }
 
 // setRelay makes the lb-lan relay listen on exactly addrs. Callers hold
@@ -209,10 +339,12 @@ func (d *dataplane) setRelay(addrs []string) error {
 // closeLAN closes every --lb-bind listener and the relay. Callers hold d.mu.
 func (d *dataplane) closeLAN(ctx context.Context) {
 	for addr, b := range d.lan {
-		if b.ln != nil {
-			b.ln.Close()
+		d.releaseLAN(addr, b)
+	}
+	for _, fes := range d.ext {
+		for _, l := range fes {
+			l.closeRelayed()
 		}
-		delete(d.lan, addr)
 	}
 	d.relay.Close(ctx)
 }

@@ -28,8 +28,9 @@ var projectSegment = regexp.MustCompile(`(?:^|/)projects/([^/:?]+)`)
 var accountSegment = regexp.MustCompile(`(?:^|/)projects/-/serviceAccounts/([^/:?]+)`)
 
 // accountCerts matches a service account's public certificates (a key
-// file's client_x509_cert_url), whose Project is in its email.
-var accountCerts = regexp.MustCompile(`^/service_accounts/v1/metadata/(?:x509|jwk)/([^/]+)$`)
+// file's client_x509_cert_url), at gcpemu's path or Google's, whose
+// Project is in its email.
+var accountCerts = regexp.MustCompile(`^/(?:service_accounts|robot)/v1/metadata/(?:x509|jwk)/([^/]+)$`)
 
 // bucketCollection matches Cloud Storage's bucket collection, whose
 // project parameter names the Project of the buckets it lists or creates.
@@ -44,7 +45,8 @@ var bucketCollection = regexp.MustCompile(`^(/storage)?/storage/v1/b/?$`)
 // of a service account's email under projects/- or in its certificates'
 // path, the bucket collection's project parameter, an XML API bucket's
 // x-goog-project-id, or the service account whose key signed a token
-// endpoint's JWT-bearer assertion. A gRPC call names those its request
+// endpoint's JWT-bearer assertion, or the provider an STS token
+// exchange's audience names. A gRPC call names those its request
 // message's string fields, and those of the messages nested in it, start
 // with projects/P, read by the message's registered descriptor, so that
 // fields it does not have, bytes and maps name none. The Admin API, the Web console and in-container agents'
@@ -73,6 +75,8 @@ func requestProjects(r *http.Request) []string {
 		out = addProject(out, r.URL.Query().Get("project"))
 	case tokenEndpoint(r):
 		out = addProject(out, project.OfServiceAccount(assertionIssuer(r)))
+	case stsExchange(r):
+		out = addProject(out, audienceProject(r))
 	case xmlBucket(r.URL.Path):
 		out = addProject(out, r.Header.Get("X-Goog-Project-Id"))
 	}
@@ -140,6 +144,51 @@ func assertionIssuer(r *http.Request) string {
 }
 
 const jwtBearer = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+// stsExchange reports whether r is a call to STS's token exchange.
+func stsExchange(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	p := strings.TrimSuffix(r.URL.Path, "/")
+	if hostOnly(r.Host) != "sts.googleapis.com" {
+		var ok bool
+		if p, ok = strings.CutPrefix(p, "/sts"); !ok {
+			return false
+		}
+	}
+	return p == "/v1/token" || p == "/v1beta/token"
+}
+
+// providerAudience matches the Project of a workload identity pool
+// provider an STS exchange's audience names.
+var providerAudience = regexp.MustCompile(`^(?:https:)?//iam\.googleapis\.com/projects/([^/]+)/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+$`)
+
+// audienceProject returns the Project of the provider that the STS
+// exchange r's audience names, as a form or JSON; "" when it names none.
+func audienceProject(r *http.Request) string {
+	b := peekBody(r)
+	var audience string
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		var m struct {
+			Audience string `json:"audience"`
+		}
+		if json.Unmarshal(b, &m) != nil {
+			return ""
+		}
+		audience = m.Audience
+	} else {
+		q, err := url.ParseQuery(string(b))
+		if err != nil {
+			return ""
+		}
+		audience = q.Get("audience")
+	}
+	if m := providerAudience.FindStringSubmatch(audience); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 // peekBody returns r's body, reading it and putting it back; nil when it
 // is larger than maxPeek.

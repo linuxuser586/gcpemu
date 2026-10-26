@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 )
 
 // loopbackStubs are ifconfig, launchctl and chown for the loopback
@@ -77,9 +79,12 @@ func TestLoopbackPlan(t *testing.T) {
 	count := func() int { m, _ := filepath.Glob(filepath.Join(state, "alias-*")); return len(m) }
 	loaded := func() bool { _, err := os.Stat(filepath.Join(state, "loaded")); return err == nil }
 
-	install := aliases("ifconfig lo0 alias 127.0.0.%d up") + "chown root:wheel " + plist + "\nlaunchctl print system/" + loopbackLabel + "\n"
-	if got, want := run(true), install+"launchctl bootstrap system "+plist+"\n"; got != want {
-		t.Fatalf("install ran:\n%s\nwant:\n%s", got, want)
+	// Each alias is removed and added again as a /32, and the daemon is
+	// reloaded, so a second run updates an install made before #677.
+	install := aliases("ifconfig lo0 -alias 127.0.0.%[1]d\nifconfig lo0 alias 127.0.0.%[1]d netmask 255.255.255.255 up") +
+		"chown root:wheel " + plist + "\nlaunchctl bootout system/" + loopbackLabel + "\nlaunchctl bootstrap system " + plist + "\n"
+	if got := run(true); got != install {
+		t.Fatalf("install ran:\n%s\nwant:\n%s", got, install)
 	}
 	if got := run(true); got != install {
 		t.Fatalf("second install ran:\n%s\nwant:\n%s", got, install)
@@ -113,7 +118,7 @@ func TestLoopbackPlist(t *testing.T) {
 	p := loopbackPlist()
 	for _, want := range []string{
 		"<key>Label</key>\n\t<string>io.github.linuxuser586.gcpemu.loopback</string>",
-		"<string>/bin/sh</string>\n\t\t<string>-c</string>\n\t\t<string>i=2; while [ $i -le 254 ]; do /sbin/ifconfig lo0 alias 127.0.0.$i up; i=$((i+1)); done</string>",
+		"<string>/bin/sh</string>\n\t\t<string>-c</string>\n\t\t<string>i=2; while [ $i -le 254 ]; do /sbin/ifconfig lo0 alias 127.0.0.$i netmask 255.255.255.255 up; i=$((i+1)); done</string>",
 		"<key>RunAtLoad</key>\n\t<true/>",
 	} {
 		if !strings.Contains(p, want) {
@@ -142,14 +147,22 @@ func TestLoopbackElsewhere(t *testing.T) {
 	}
 }
 
+// TestCheckLoopback: /32 aliases are ok, any other netmask a warning
+// with its fix (#677), and none a note.
 func TestCheckLoopback(t *testing.T) {
 	var b bytes.Buffer
-	checkLoopback(&b, true)
+	checkLoopback(&b, loopback.AliasesNarrow)
 	if b.String() != "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present\n" {
-		t.Errorf("present: %q", b.String())
+		t.Errorf("/32: %q", b.String())
 	}
 	b.Reset()
-	checkLoopback(&b, false)
+	checkLoopback(&b, loopback.AliasesWide)
+	if want := "[WARN] loopback aliases 127.0.0.2-127.0.0.254 are not all /32; a /8 loopback alias keeps mDNSResponder at 100% CPU on macOS 27 and slows every DNS lookup\n" +
+		"       fix: `sudo gcpemu loopback install` adds them again as /32\n"; b.String() != want {
+		t.Errorf("wide: %q, want %q", b.String(), want)
+	}
+	b.Reset()
+	checkLoopback(&b, loopback.AliasesMissing)
 	if !strings.HasPrefix(b.String(), "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `sudo gcpemu loopback install` lets more than one Cloud SQL instance run") ||
 		!strings.Contains(b.String(), "Kubernetes Services") {
 		t.Errorf("missing: %q", b.String())

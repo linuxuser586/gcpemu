@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/table'
 import { useViewState } from '@/lib/viewState'
 
-import { clustersQuery, type Cluster } from './api'
+import { clusterMode, clustersQuery, type Cluster } from './api'
 import { ClusterStatusBadge } from './format'
 import { clusterPath } from './GkeLayout'
 
@@ -103,6 +103,7 @@ export function Clusters() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Mode</TableHead>
                 <TableHead>Location</TableHead>
                 <TableHead>Version</TableHead>
                 <TableHead className="text-right">Nodes</TableHead>
@@ -123,6 +124,7 @@ export function Clusters() {
                   <TableCell>
                     <ClusterStatusBadge status={c.status} />
                   </TableCell>
+                  <TableCell>{clusterMode(c)}</TableCell>
                   <TableCell className="font-mono">{c.location}</TableCell>
                   <TableCell className="font-mono">{c.currentMasterVersion ?? '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">

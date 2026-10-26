@@ -34,6 +34,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/link"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -118,7 +119,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 			"bind", cfg.Bind, "iamMode", cfg.IAMMode)
 	}
 	if len(cfg.LBBind) > 0 {
-		logger.Info("load balancer forwarding rules are also served beyond loopback; nothing else is", "lbBind", cfg.LBBind)
+		logger.Info("forwarding rules and GKE LoadBalancer Services are also served beyond loopback; nothing else is", "lbBind", cfg.LBBind)
 	}
 	if len(cfg.GKEBind) > 0 {
 		logger.Info("GKE clusters' Kubernetes APIs are also served beyond loopback, to real credentials only", "gkeBind", cfg.GKEBind)
@@ -393,6 +394,7 @@ func (in *Instance) Start(ctx context.Context) error {
 	in.startGFELAN()
 	in.startLink()
 	in.warnContainerBind(ctx)
+	warnLoopbackNetmask(in.Env.Log, goruntime.GOOS, loopback.Lo0Aliases)
 	in.warnContainerized(ctx)
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
@@ -414,6 +416,15 @@ func (in *Instance) warnContainerBind(ctx context.Context) {
 	}
 	if len(flags) > 0 && in.Env.LANBind(ctx) == lanbind.Bridge {
 		in.Env.Log.Warn(lanbind.Warning(flags))
+	}
+}
+
+// warnLoopbackNetmask warns, on macOS, when aliases finds a loopback
+// alias that is not a /32, as earlier versions of `gcpemu loopback
+// install` added (#677). It never fails the start.
+func warnLoopbackNetmask(log *slog.Logger, goos string, aliases func() loopback.AliasState) {
+	if goos == "darwin" && aliases() == loopback.AliasesWide {
+		log.Warn("loopback aliases are not all /32; "+loopback.WideHint, "fix", loopback.InstallHint)
 	}
 }
 

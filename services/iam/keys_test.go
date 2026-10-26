@@ -355,6 +355,12 @@ func TestKeyFileByCaller(t *testing.T) {
 		t.Fatalf("token from the key: %v, %v", tok, err)
 	}
 
+	// Its client_x509_cert_url, at www.googleapis.com, serves its
+	// certificate (#692).
+	if certs := getJSON[map[string]string](t, hc, f["client_x509_cert_url"], http.StatusOK); certs[f["private_key_id"]] == "" {
+		t.Errorf("certificates at %s = %v, want key %s", f["client_x509_cert_url"], certs, f["private_key_id"])
+	}
+
 	_, kf = createKeyFile(t, iamClient(t, inst), sa)
 	f = nil
 	if err := json.Unmarshal(kf, &f); err != nil {
@@ -436,5 +442,52 @@ func TestKeyFileNamesCallerHost(t *testing.T) {
 	}
 	if tok, err := cfg.TokenSource(context.Background()).Token(); err != nil || tok.AccessToken == "" {
 		t.Fatalf("token from the key created at %s: %v, %v", host, tok, err)
+	}
+}
+
+// TestCertsAtGooglePath covers #692: Google's /robot/v1/metadata/ path
+// serves what gcpemu's /service_accounts/v1/metadata/ path does, through
+// the Google front end and at the API gateway's own address, disabled keys
+// left out of both.
+func TestCertsAtGooglePath(t *testing.T) {
+	inst := startIAM(t)
+	c := iamClient(t, inst)
+	sa := createSA(t, c, "ci-runner")
+	kept, _ := createKeyFile(t, c, sa)
+	disabled, _ := createKeyFile(t, c, sa)
+	if _, err := c.Projects.ServiceAccounts.Keys.Disable(disabled.Name, &iamv1.DisableServiceAccountKeyRequest{}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	keyID := kept.Name[strings.LastIndex(kept.Name, "/")+1:]
+	email := url.PathEscape(sa.Email)
+	front := &http.Client{Transport: viaFrontEnd{gateway: strings.TrimPrefix(inst.GatewayURL(), "http://")}}
+	for _, base := range []struct {
+		name string
+		hc   *http.Client
+		url  string
+	}{
+		{"Google front end", front, "https://www.googleapis.com"},
+		{"API gateway", http.DefaultClient, inst.GatewayURL()},
+	} {
+		t.Run(base.name, func(t *testing.T) {
+			x509 := getJSON[map[string]string](t, base.hc, base.url+"/robot/v1/metadata/x509/"+email, http.StatusOK)
+			if want := getJSON[map[string]string](t, base.hc, base.url+"/service_accounts/v1/metadata/x509/"+email, http.StatusOK); len(x509) != 1 || x509[keyID] == "" || x509[keyID] != want[keyID] {
+				t.Errorf("x509 at Google's path = %v, want %v with only key %s", x509, want, keyID)
+			}
+			type jwks struct{ Keys []map[string]string }
+			jwk := getJSON[jwks](t, base.hc, base.url+"/robot/v1/metadata/jwk/"+email, http.StatusOK)
+			want := getJSON[jwks](t, base.hc, base.url+"/service_accounts/v1/metadata/jwk/"+email, http.StatusOK)
+			if len(jwk.Keys) != 1 || jwk.Keys[0]["kid"] != keyID || len(want.Keys) != 1 || jwk.Keys[0]["n"] != want.Keys[0]["n"] {
+				t.Errorf("jwk at Google's path = %v, want %v with only key %s", jwk, want, keyID)
+			}
+			for _, p := range []string{
+				"/robot/v1/metadata/raw/" + email,
+				"/robot/v1/metadata/x509/",
+				"/robot/v1/metadata/x509",
+				"/robot/v1/metadata/x509/nobody%40" + "test-project.iam.gserviceaccount.com",
+			} {
+				getJSON[any](t, base.hc, base.url+p, http.StatusNotFound)
+			}
+		})
 	}
 }

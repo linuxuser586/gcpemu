@@ -481,16 +481,17 @@ func (e *edge) serveIngress(ln net.Listener) {
 			key := e.byAlias[dst]
 			e.mu.Unlock()
 			e.d.mu.Lock()
-			if b := e.d.lan[dst]; key == "" && b != nil && b.relay {
-				key = b.key
-			}
-			if key == "" {
-				// An external forwarding rule's own address (#187).
-				key = dst
-			}
 			var virt *chanListener
-			if l := e.d.listeners[key]; l != nil {
-				virt = l.relayed()
+			if b := e.d.lan[dst]; key == "" && b != nil && b.relay {
+				virt = b.l.relayed()
+			} else {
+				if key == "" {
+					// An external forwarding rule's own address (#187).
+					key = dst
+				}
+				if l := e.d.listeners[key]; l != nil {
+					virt = l.relayed()
+				}
 			}
 			e.d.mu.Unlock()
 			if virt == nil || !virt.deliver(pc) {
