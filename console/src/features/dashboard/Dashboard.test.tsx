@@ -79,6 +79,33 @@ it('lists Delegated APIs and whether their External emulators answer', async () 
   expect(within(spanner).getByText('connection refused')).toBeInTheDocument()
 })
 
+it('marks Managed emulators, with their address once they run', async () => {
+  fake.external = [
+    {
+      api: 'bigtable',
+      address: '172.18.0.3:8086',
+      managed: true,
+      hosts: ['bigtable.googleapis.com', 'bigtableadmin.googleapis.com'],
+      reachable: true,
+    },
+    {
+      api: 'firestore',
+      address: '',
+      managed: true,
+      hosts: ['firestore.googleapis.com'],
+      reachable: false,
+      error: 'it needs a container runtime, and none is usable',
+    },
+  ]
+  renderApp('/')
+  const table = await screen.findByRole('table', { name: 'Delegated APIs' })
+  const bigtable = within(table).getByText('bigtable').closest('tr')!
+  expect(within(bigtable).getByText('Managed (172.18.0.3:8086)')).toBeInTheDocument()
+  const firestore = within(table).getByText('firestore').closest('tr')!
+  expect(within(firestore).getByText('Managed')).toBeInTheDocument()
+  expect(within(firestore).getByText('Unreachable')).toBeInTheDocument()
+})
+
 it('shows no Delegated APIs card without --external', async () => {
   renderApp('/')
   await screen.findByRole('table', { name: 'Service endpoints' })

@@ -807,3 +807,25 @@ func TestReportExternal(t *testing.T) {
 		t.Errorf("spanner: %v %q fix %q", oks[1], whats[1], fixes[1])
 	}
 }
+
+// TestReportManagedExternal: doctor reports a Managed emulator, and one
+// unavailable for want of a container runtime says so (#624).
+func TestReportManagedExternal(t *testing.T) {
+	var oks []bool
+	var whats, fixes []string
+	reportExternal(func(ok bool, what, fix string) {
+		oks, whats, fixes = append(oks, ok), append(whats, what), append(fixes, fix)
+	}, []byte(`{"external":[
+		{"api":"bigtable","address":"172.18.0.3:8086","managed":true,"reachable":true},
+		{"api":"firestore","address":"","managed":true,"reachable":false,"error":"it needs a container runtime, and none is usable: no container runtime found"}]}`))
+	if len(oks) != 2 {
+		t.Fatalf("reported %v %q, want bigtable and firestore", oks, whats)
+	}
+	if !oks[0] || whats[0] != "Managed emulator for bigtable accepts connections" {
+		t.Errorf("bigtable: %v %q", oks[0], whats[0])
+	}
+	if oks[1] || !strings.Contains(whats[1], "Managed emulator for firestore") || !strings.Contains(whats[1], "container runtime") ||
+		!strings.Contains(fixes[1], "container runtime") {
+		t.Errorf("firestore: %v %q fix %q", oks[1], whats[1], fixes[1])
+	}
+}

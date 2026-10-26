@@ -512,13 +512,15 @@ func checkExternal(report func(bool, string, string), cfg *config.Config) {
 }
 
 // reportExternal reports whether each Delegated API's External emulator
-// accepts connections (ADR 0027). The Instance stays ready without one,
-// but its API answers UNAVAILABLE.
+// accepts connections (ADR 0027). The Instance stays ready without one
+// configured by address, or without a Managed emulator for want of a
+// container runtime (ADR 0029), but its API answers UNAVAILABLE.
 func reportExternal(report func(bool, string, string), body []byte) {
 	var v struct {
 		External []struct {
 			API       string `json:"api"`
 			Address   string `json:"address"`
+			Managed   bool   `json:"managed"`
 			Reachable bool   `json:"reachable"`
 			Error     string `json:"error"`
 		} `json:"external"`
@@ -527,6 +529,15 @@ func reportExternal(report func(bool, string, string), body []byte) {
 		return
 	}
 	for _, e := range v.External {
+		if e.Managed && e.Reachable {
+			report(true, fmt.Sprintf("Managed emulator for %s accepts connections", e.API), "")
+			continue
+		}
+		if e.Managed {
+			report(false, fmt.Sprintf("Managed emulator for %s does not accept connections, so %s requests fail with UNAVAILABLE: %s", e.API, e.API, e.Error),
+				"a Managed emulator needs a container runtime (Docker or Podman); with one running, stop and start the Instance, and see its log for why the emulator did not start")
+			continue
+		}
 		if e.Reachable {
 			report(true, fmt.Sprintf("External emulator for %s at %s accepts connections", e.API, e.Address), "")
 			continue

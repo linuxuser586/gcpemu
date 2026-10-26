@@ -108,7 +108,8 @@ type Config struct {
 	LinkMDNSPort int `yaml:"linkMdnsPort" env:"LINK_MDNS_PORT"`
 	// External maps the API name of each Delegated API, one no Service
 	// serves (e.g. "firestore"), to the host:port of the External emulator
-	// the API gateway forwards it to (ADR 0027).
+	// the API gateway forwards it to (ADR 0027), or to Managed, for an API
+	// in ManagedAPIs, to have the Instance run it (ADR 0029).
 	External map[string]string `yaml:"external" env:"EXTERNAL"`
 	// AdminToken is the Admin token used when the API gateway is bound
 	// beyond loopback (FR-UI-009); empty means a random one per start.
@@ -557,13 +558,27 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// Managed is the --external value that has the Instance run the External
+// emulator itself, as a Managed emulator (ADR 0029).
+const Managed = "managed"
+
+// ManagedAPIs are the APIs whose External emulator can be Managed: those
+// Google ships an emulator for, less Pub/Sub, which has its own Service.
+var ManagedAPIs = []string{"bigtable", "datastore", "firestore", "spanner"}
+
 // validateExternal checks that each --external key is an API name and
-// each value a host:port.
+// each value a host:port, or Managed for one of ManagedAPIs.
 func (c *Config) validateExternal() error {
 	for _, api := range slices.Sorted(maps.Keys(c.External)) {
 		addr := c.External[api]
 		if !IsAPIName(api) {
 			return fmt.Errorf("invalid --external %s=%s: %q is not an API name (want lower-case letters and digits, e.g. firestore)", api, addr, api)
+		}
+		if addr == Managed {
+			if !slices.Contains(ManagedAPIs, api) {
+				return fmt.Errorf("invalid --external %s=%s: only the External emulators of %s can be managed", api, addr, strings.Join(ManagedAPIs, ", "))
+			}
+			continue
 		}
 		host, port, err := net.SplitHostPort(addr)
 		if _, perr := strconv.Atoi(port); err != nil || perr != nil || host == "" || strings.Contains(host, "/") {

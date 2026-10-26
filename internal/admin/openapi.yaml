@@ -187,7 +187,8 @@ paths:
         The Delegated APIs, which the API gateway forwards to the External
         emulators configured with --external (ADR 0027), and whether each
         External emulator accepts connections now. The Instance's readiness
-        never depends on them.
+        never depends on one configured by address, only on the Managed
+        emulators it runs (--external API=managed, ADR 0029).
       operationId: external
       responses:
         "200":
@@ -1615,13 +1616,14 @@ components:
       required: [api, address, hosts, reachable]
       properties:
         api: { type: string, description: "The API name, e.g. firestore." }
-        address: { type: string, description: "The External emulator's host:port." }
+        address: { type: string, description: "The External emulator's host:port; a Managed emulator's on the Instance's services network, empty until it runs." }
+        managed: { type: boolean, description: "Whether the Instance runs it as a Managed emulator (ADR 0029)." }
         hosts:
           type: array
           description: The real hostnames the Google front end serves for the API.
           items: { type: string }
         reachable: { type: boolean, description: Whether the External emulator accepted a TCP connection. }
-        error: { type: string, description: Why it did not. }
+        error: { type: string, description: "Why it did not, such as a Managed emulator still starting or having no container runtime." }
     RuntimeStatus:
       type: object
       description: >-

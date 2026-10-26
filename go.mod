@@ -5,17 +5,21 @@ go 1.27.1
 require (
 	cel.dev/cel-go v0.32.0
 	cloud.google.com/go/artifactregistry v1.27.0
+	cloud.google.com/go/bigtable v1.58.0
 	cloud.google.com/go/certificatemanager v1.16.0
 	cloud.google.com/go/cloudbuild v1.35.0
 	cloud.google.com/go/cloudsqlconn v1.25.3
 	cloud.google.com/go/compute/metadata v0.10.0
 	cloud.google.com/go/container v1.55.0
+	cloud.google.com/go/datastore v1.28.0
+	cloud.google.com/go/firestore v1.29.0
 	cloud.google.com/go/iam v1.13.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/monitoring v1.30.0
 	cloud.google.com/go/networksecurity v0.20.0
 	cloud.google.com/go/pubsub/v2 v2.7.0
 	cloud.google.com/go/secretmanager v1.22.0
+	cloud.google.com/go/spanner v1.96.1
 	cloud.google.com/go/storage v1.69.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Microsoft/go-winio v0.6.2
@@ -55,6 +59,7 @@ require (
 	cloud.google.com/go/auth v0.24.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.0 // indirect
 	cloud.google.com/go/sql v0.2.0 // indirect
+	github.com/GoogleCloudPlatform/grpc-gcp-go/grpcgcp v1.6.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.35.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.57.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.57.0 // indirect
