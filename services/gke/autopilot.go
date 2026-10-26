@@ -28,9 +28,10 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 	if isZone(r.Location) {
 		return apierr.InvalidArgument("Autopilot clusters must be regional clusters.")
 	}
-	if len(c.NodePools) > 0 || c.InitialNodeCount != 0 {
+	if !onlyGcloudPlaceholder(c.NodePools) || c.InitialNodeCount != 0 {
 		return apierr.InvalidArgument("Autopilot clusters do not support node pools; GKE manages them.")
 	}
+	c.NodePools = nil
 	if err := checkKept(c.WorkloadIdentityConfig, c.ShieldedNodes, c.ReleaseChannel, c.VerticalPodAutoscaling); err != nil {
 		return err
 	}
@@ -65,6 +66,27 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 	// The managed pool gets GKE's node config, not the request's.
 	c.NodeConfig = nil
 	return nil
+}
+
+// onlyGcloudPlaceholder reports whether pools is empty or the one
+// default-pool that gcloud container clusters create-auto sends, which
+// sets nothing but its node count, OAuth scopes and the cluster's labels.
+func onlyGcloudPlaceholder(pools []*containerpb.NodePool) bool {
+	if len(pools) == 0 {
+		return true
+	}
+	if len(pools) > 1 || pools[0].Name != "default-pool" {
+		return false
+	}
+	rest := proto.Clone(pools[0]).(*containerpb.NodePool)
+	rest.Name, rest.InitialNodeCount = "", 0
+	if rest.Config != nil {
+		rest.Config.OauthScopes, rest.Config.ResourceLabels = nil, nil
+		if proto.Size(rest.Config) == 0 {
+			rest.Config = nil
+		}
+	}
+	return proto.Size(rest) == 0
 }
 
 // checkAutopilotUpdate refuses a ClusterUpdate that would undo what GKE

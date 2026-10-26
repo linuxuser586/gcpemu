@@ -41,7 +41,10 @@ import (
 //     Managed collector runs in the emulator (collector.go) while the
 //     Managed OpenTelemetry scope is
 //     COLLECTION_AND_INSTRUMENTATION_COMPONENTS. Scope NONE removes the
-//     Service only.
+//     Service only;
+//   - monitoringConfig.managedPrometheusConfig: GMP's PodMonitoring and
+//     ClusterPodMonitoring CRDs; the scraper runs in the emulator
+//     (prometheus.go) while the setting is enabled.
 
 //go:embed addons
 var addonFS embed.FS
@@ -58,6 +61,9 @@ const (
 	// safeUpgrades names the Gateway API's admission policy and its
 	// binding, which the add-on does not install.
 	safeUpgrades = "safe-upgrades.gateway.networking.k8s.io"
+	// managedPrometheusManifest holds GMP's PodMonitoring and
+	// ClusterPodMonitoring CRDs.
+	managedPrometheusManifest = "managed-prometheus-v0.17.0.yaml.gz"
 )
 
 // safeUpgradesGrace bounds the retries of a CRD apply that a deleted
@@ -292,6 +298,7 @@ func (s *Service) reconcileAddons(ctx context.Context, key string) error {
 		s.reconcileSecretManager(ctx, kc, c),
 		s.reconcileSecretSync(ctx, kc, c),
 		s.reconcileManagedOTel(ctx, kc, c),
+		reconcileManagedPrometheus(ctx, kc, c),
 	)
 }
 
@@ -502,6 +509,17 @@ func (s *Service) reconcileManagedOTel(ctx context.Context, kc *kubeClient, c *c
 		return applyAddon(ctx, kc, "managed-otel", objs)
 	}
 	return s.removeIfInstalled(ctx, kc, "managed-otel", objs, "CustomResourceDefinition", "Namespace")
+}
+
+func reconcileManagedPrometheus(ctx context.Context, kc *kubeClient, c *containerpb.Cluster) error {
+	if !managedPrometheusOn(c) {
+		return nil // the scraper stops by itself; the CRDs and user objects stay
+	}
+	objs, err := manifest(managedPrometheusManifest)
+	if err != nil {
+		return err
+	}
+	return applyAddon(ctx, kc, "managed-prometheus", objs)
 }
 
 // removeIfInstalled deletes objs when the add-on was installed, i.e. its

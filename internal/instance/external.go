@@ -28,8 +28,8 @@ func (in *Instance) delegate() error {
 			}
 			continue
 		}
-		m := newManagedEmulator(api, in.containers)
-		if err := in.gw.DelegateManaged(api, m.dial); err != nil {
+		m := newManagedEmulator(api, in.containers, in.Env)
+		if err := in.gw.DelegateManaged(api, m.dial, m.record); err != nil {
 			return err
 		}
 		in.managed[api] = m

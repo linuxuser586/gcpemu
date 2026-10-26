@@ -144,6 +144,32 @@ func TestAutopilotCreate(t *testing.T) {
 	}
 }
 
+// TestAutopilotCreateGcloud is FR-GKE-012: gcloud container clusters
+// create-auto sends a default-pool with gcloud's node scopes and the
+// cluster's labels, which GKE accepts and replaces with its own node pool.
+func TestAutopilotCreateGcloud(t *testing.T) {
+	a := newAPI(t)
+	c := autopilot("ap")
+	c.NodePools = []*containerpb.NodePool{{
+		Name:             "default-pool",
+		InitialNodeCount: 1,
+		Config: &containerpb.NodeConfig{
+			OauthScopes:    []string{"https://www.googleapis.com/auth/devstorage.read_only"},
+			ResourceLabels: map[string]string{"team": "web"},
+		},
+	}}
+	c = createRunning(t, a, apParent, c)
+	if len(c.NodePools) != 1 {
+		t.Fatalf("pools = %v, want GKE's own node pool", c.NodePools)
+	}
+	if cfg := c.NodePools[0].GetConfig(); cfg.GetMachineType() != "e2-medium" || len(cfg.GetOauthScopes()) == 0 {
+		t.Errorf("pool config = %v, want GKE's own node pool's", cfg)
+	}
+	if c.CurrentNodeCount != 1 {
+		t.Errorf("nodes = %d", c.CurrentNodeCount)
+	}
+}
+
 // TestAutopilotCreateRejects is FR-GKE-012: an Autopilot cluster is
 // regional, and a request that contradicts what GKE sets is refused.
 func TestAutopilotCreateRejects(t *testing.T) {
@@ -167,6 +193,9 @@ func TestAutopilotCreateRejects(t *testing.T) {
 		}},
 		{"network policy", apParent, func(c *containerpb.Cluster) { c.NetworkPolicy = &containerpb.NetworkPolicy{Enabled: true} }},
 		{"node pools", apParent, func(c *containerpb.Cluster) { c.NodePools = []*containerpb.NodePool{{Name: "p", InitialNodeCount: 1}} }},
+		{"default-pool with a machine type", apParent, func(c *containerpb.Cluster) {
+			c.NodePools = []*containerpb.NodePool{{Name: "default-pool", InitialNodeCount: 1, Config: &containerpb.NodeConfig{MachineType: "e2-small"}}}
+		}},
 		{"initial node count", apParent, func(c *containerpb.Cluster) { c.InitialNodeCount = 1 }},
 		{"vertical Pod autoscaling off", apParent, func(c *containerpb.Cluster) {
 			c.VerticalPodAutoscaling = &containerpb.VerticalPodAutoscaling{}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // Managed emulators (ADR 0029): the External emulators that --external
@@ -19,8 +21,10 @@ import (
 // Delegated API, from Google's own emulator images. Each starts with the
 // Instance, which is not ready until it accepts connections, and is
 // removed when the Instance stops. It sits on the services network, so
-// clients reach it only through the API gateway. Its data is in memory
-// only: Reset replaces its container, and no State snapshot holds it.
+// clients reach it only through the API gateway. Reset replaces its
+// container. Firestore's and Datastore's keep their data across a clean
+// stop of a Persistent Instance, and State snapshots hold it (ADR 0036,
+// managed_data.go); Spanner's and Bigtable's keep it in memory only.
 
 const (
 	// cliEmulatorsImage is Google's Cloud CLI with its emulators, over 1 GB.
@@ -49,15 +53,17 @@ type managedSpec struct {
 	cmd []string
 	// grpcPort and restPort are where it serves gRPC and REST.
 	grpcPort, restPort int
+	// keepsData is whether it exports and imports its data (ADR 0036).
+	keepsData bool
 }
 
 // managedSpecs has an entry for each of config.ManagedAPIs. Datastore runs
 // the Firestore emulator in Datastore mode, as Google deprecated the
 // Datastore emulator.
 var managedSpecs = map[string]managedSpec{
-	"firestore": {image: cliEmulatorsImage, grpcPort: 8080, restPort: 8080,
+	"firestore": {image: cliEmulatorsImage, grpcPort: 8080, restPort: 8080, keepsData: true,
 		cmd: []string{"gcloud", "emulators", "firestore", "start", "--host-port=0.0.0.0:8080"}},
-	"datastore": {image: cliEmulatorsImage, grpcPort: 8080, restPort: 8080,
+	"datastore": {image: cliEmulatorsImage, grpcPort: 8080, restPort: 8080, keepsData: true,
 		cmd: []string{"gcloud", "emulators", "firestore", "start", "--host-port=0.0.0.0:8080", "--database-mode=datastore-mode"}},
 	"bigtable": {image: cliEmulatorsImage, grpcPort: 8086, restPort: 8086,
 		cmd: []string{"gcloud", "beta", "emulators", "bigtable", "start", "--host-port=0.0.0.0:8086"}},
@@ -70,6 +76,10 @@ type managedEmulator struct {
 	api  string
 	spec managedSpec
 	c    *containers
+	// st keeps the record of databases, and dataDir its saved data.
+	st      store.Store
+	dataDir string
+	log     *slog.Logger
 
 	// runMu is held by a start, the Instance's or Reset's, until it ends.
 	runMu sync.Mutex
@@ -88,11 +98,17 @@ type managedEmulator struct {
 	noRuntime bool
 	// conns are the connections dialed to it, closed when it is replaced.
 	conns map[net.Conn]struct{}
+	// recorded are the databases record has put in the Store.
+	recorded map[string]bool
+	// stale is whether Reset came while a start was under way, which may
+	// have imported saved data Reset deleted.
+	stale bool
 }
 
 // newManagedEmulator returns the Managed emulator for api, not started.
-func newManagedEmulator(api string, c *containers) *managedEmulator {
-	return &managedEmulator{api: api, spec: managedSpecs[api], c: c, why: errStarting, conns: map[net.Conn]struct{}{}}
+func newManagedEmulator(api string, c *containers, env *emu.Env) *managedEmulator {
+	return &managedEmulator{api: api, spec: managedSpecs[api], c: c, st: env.Store, dataDir: env.DataDir, log: env.Log,
+		why: errStarting, conns: map[net.Conn]struct{}{}, recorded: map[string]bool{}}
 }
 
 // start (re)creates its container, replacing any it has, and waits until
@@ -104,9 +120,15 @@ func (m *managedEmulator) start(ctx context.Context) error {
 }
 
 // replace starts it again, clearing its data, unless a start is under way:
-// that one's container is new, and no client has reached it yet.
+// that one's container is new, and no client has reached it yet. One that
+// keeps data starts again once it is done, as it may have imported data.
 func (m *managedEmulator) replace(ctx context.Context) error {
 	if !m.runMu.TryLock() {
+		if m.spec.keepsData {
+			m.mu.Lock()
+			m.stale = true
+			m.mu.Unlock()
+		}
 		return nil
 	}
 	defer m.runMu.Unlock()
@@ -116,7 +138,7 @@ func (m *managedEmulator) replace(ctx context.Context) error {
 // startLocked is start, with runMu held.
 func (m *managedEmulator) startLocked(ctx context.Context) error {
 	m.mu.Lock()
-	m.ip, m.why, m.noRuntime = "", errStarting, false
+	m.ip, m.why, m.noRuntime, m.stale = "", errStarting, false, false
 	m.gen++
 	conns := m.conns
 	m.conns = map[net.Conn]struct{}{}
@@ -126,6 +148,10 @@ func (m *managedEmulator) startLocked(ctx context.Context) error {
 	}
 	ip, err := m.run(ctx)
 	m.mu.Lock()
+	if m.stale && err == nil {
+		m.mu.Unlock()
+		return m.startLocked(ctx)
+	}
 	defer m.mu.Unlock()
 	m.ip, m.why = ip, err
 	if errors.Is(err, emu.ErrNoRuntime) {
@@ -186,6 +212,10 @@ func (m *managedEmulator) run(ctx context.Context) (string, error) {
 		return "", err
 	}
 	ip, err := m.startAndWait(ctx, rt, id, svc.Name)
+	if err == nil && m.spec.keepsData {
+		m.starting("it is importing its saved data")
+		err = m.importSaved(ctx, rt, id, ip)
+	}
 	if err != nil {
 		_ = rt.RemoveContainer(context.WithoutCancel(ctx), id, true)
 		return "", err
@@ -291,6 +321,7 @@ func (t *trackedConn) Close() error {
 // startManaged starts every Managed emulator in the background; Shutdown
 // stops them.
 func (in *Instance) startManaged() {
+	in.warnNotKept()
 	for _, m := range in.managed {
 		in.managedWG.Go(func() {
 			if err := m.start(in.managedCtx); err != nil && in.managedCtx.Err() == nil {
@@ -300,10 +331,14 @@ func (in *Instance) startManaged() {
 	}
 }
 
-// resetManaged replaces every Managed emulator's container, clearing its
-// data (Reset). One still on its first start is left to finish it.
+// resetManaged deletes every API's saved data and replaces every Managed
+// emulator's container, clearing its data (Reset). One still on its first
+// start is left to finish it.
 func (in *Instance) resetManaged() error {
-	errs := make([]error, 0, len(in.managed))
+	errs := make([]error, 0, len(in.managed)+1)
+	if err := in.clearManagedData(); err != nil {
+		errs = append(errs, fmt.Errorf("the Managed emulators' saved data: %w", err))
+	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, m := range in.managed {
@@ -321,12 +356,18 @@ func (in *Instance) resetManaged() error {
 
 // stopManaged stops starting Managed emulators, the Instance's starts and
 // Reset's, and waits until they end, so that none creates a container once
-// the Instance's others are removed, which theirs go with.
-func (in *Instance) stopManaged() {
+// the Instance's others are removed, which theirs go with. On a Persistent
+// Instance it then saves the data of those that keep it.
+func (in *Instance) stopManaged(ctx context.Context) {
 	in.managedCancel()
 	in.managedWG.Wait()
 	for _, m := range in.managed {
 		m.runMu.Lock()
-		m.runMu.Unlock() //nolint:staticcheck // waits for a start to end
 	}
+	defer func() {
+		for _, m := range in.managed {
+			m.runMu.Unlock()
+		}
+	}()
+	in.saveManaged(ctx)
 }

@@ -603,9 +603,16 @@ eval "$(gcpemu env)"
 - A Managed emulator has no address on the host or the LAN: clients reach it only through the API
   gateway, exactly as an External emulator configured by address, with no IAM check. Spanner's
   REST requests go to its emulator's REST port.
-- **A Managed emulator's data never survives a stop.** It is in memory only: Reset replaces each
-  Managed emulator's container, which clears its data, State snapshots don't hold it, and a
-  Persistent Instance loses it on every stop.
+- **Firestore's and Datastore's data survives a clean stop; Spanner's and Bigtable's does not.**
+  When a Persistent Instance stops cleanly, it exports each Firestore and Datastore database its
+  clients used into its data directory, and imports them when it starts again, before it is
+  ready; State snapshots hold that data too
+  (`docs/adr/0036-firestores-and-datastores-managed-emulators-keep-their-data.md`). If the
+  export fails, for example because the container was stopped behind the Instance's back, the
+  data saved at the stop before is kept and anything written since is lost. Spanner's and
+  Bigtable's emulators are in memory only: a Persistent Instance loses their data on every stop
+  and logs which ones at start, and State snapshots don't hold it. Reset clears every Managed
+  emulator's data, saved data included.
 - It needs a container runtime. With none, the Instance still starts and is ready, and the API
   answers UNAVAILABLE saying the runtime is missing, as `gcpemu doctor` does. One that the runtime
   stops or restarts behind the Instance's back is a Disrupted container. In Go tests,
@@ -746,9 +753,20 @@ dropped. A failed forward fails the pod's export, which the sender
 retries. The scope also installs the `instrumentations.telemetry.googleapis.com` CRD. Setting
 the scope to `NONE` removes the Service and keeps the CRD, the namespace and your objects
 (FR-GKE-019).
-While the scope is on, an `Instrumentation` object (`telemetry.googleapis.com/v1alpha1`) with
-`autoInstrumentationConfig.configInjection.enabled: true` sets GKE's OTel SDK variables in
-the containers and native sidecars of new pods its `selector` picks in its namespace:
+With Managed Prometheus enabled (the default on Autopilot), a cluster has GMP's `PodMonitoring`
+and `ClusterPodMonitoring` CRDs. With the same OTLP endpoint set, the Instance scrapes the pod
+endpoints they select through the API server, at each endpoint's `interval` and `timeout`
+(ADR 0036). It applies `metricRelabeling`, seeing a histogram or summary as one series under its
+family's name, and exports metrics named as the OTel Collector's `prometheus` receiver names them
+by default, with the attributes above, `service.name` (the PodMonitoring's or
+ClusterPodMonitoring's name) and `service.instance.id` (`<pod>:<port>`) (FR-GKE-020). Endpoints'
+`authorization`, `basicAuth`, `oauth2`, `tls` and `proxyUrl`, and `limits`, are not applied; the
+object's `ConfigurationCreateSuccess` condition names any that are set. Disabling Managed
+Prometheus stops the scraping and keeps the CRDs and your objects.
+While the Managed OpenTelemetry scope is on, an `Instrumentation` object
+(`telemetry.googleapis.com/v1alpha1`) with `autoInstrumentationConfig.configInjection.enabled:
+true` sets GKE's OTel SDK variables in the containers and native sidecars of new pods its
+`selector` picks in its namespace:
 `OTEL_EXPORTER_OTLP_ENDPOINT` (the managed collector's port 4318), `OTEL_TRACES_SAMPLER` and
 `_ARG`, `OTEL_METRIC_EXPORT_INTERVAL`, and `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` (`none` for a
 provider set to `null` in `otelSDKConfig`). It also sets the generative AI upload variables

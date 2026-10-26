@@ -76,6 +76,8 @@ export interface Cluster {
   releaseChannel?: { channel?: string }
   workloadIdentityConfig?: { workloadPool?: string }
   privateClusterConfig?: { enablePrivateNodes?: boolean; enablePrivateEndpoint?: boolean }
+  networkConfig?: { defaultEnablePrivateNodes?: boolean }
+  controlPlaneEndpointsConfig?: { ipEndpointsConfig?: { enablePublicEndpoint?: boolean } }
   autopilot?: { enabled?: boolean; workloadPolicyConfig?: WorkloadPolicyConfig }
   network?: string
   subnetwork?: string

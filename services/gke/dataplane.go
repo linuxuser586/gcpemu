@@ -367,6 +367,13 @@ func privateNodes(c *containerpb.Cluster, np *containerpb.NodePool) bool {
 	if nc := np.GetNetworkConfig(); nc != nil && nc.EnablePrivateNodes != nil {
 		return *nc.EnablePrivateNodes
 	}
+	return clusterPrivateNodes(c)
+}
+
+// clusterPrivateNodes reports whether a cluster's nodes lack external IPs
+// by default: privateClusterConfig.enablePrivateNodes first, then
+// networkConfig.defaultEnablePrivateNodes.
+func clusterPrivateNodes(c *containerpb.Cluster) bool {
 	if c.GetPrivateClusterConfig().GetEnablePrivateNodes() {
 		return true
 	}

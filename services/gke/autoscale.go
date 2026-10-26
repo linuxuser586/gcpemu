@@ -22,12 +22,12 @@ import (
 // cluster runs a controller that, like GKE's cluster autoscaler, adds a
 // node when a pod is Pending for lack of capacity and removes a node once
 // it has been empty for scaleDownDelay, never the cluster's last. A new
-// node takes the smallest shape (autopilotShapes) its first pod fits, and
-// the compute class and Spot its pods select, through a node selector or
-// required node affinity, as labels. Nodes of every cluster share the
-// Instance's node limit (FR-GKE-003); a pod that needs a node beyond it
-// stays Pending with FailedScaleUp, as on GKE when a scale-up fails for
-// quota. A node that is not Ready within nodeReadyWait is removed, so
+// node takes the smallest shape (autopilotShapes) its first pod fits, the
+// compute class and Spot its pods select, through a node selector or
+// required node affinity, as labels, and a zone those pods accept. Nodes
+// of every cluster share the Instance's node limit (FR-GKE-003); a pod
+// that needs a node beyond it stays Pending with FailedScaleUp, as on GKE
+// when a scale-up fails for quota. A node that is not Ready within nodeReadyWait is removed, so
 // that a later round can add another.
 
 const (
@@ -223,11 +223,6 @@ func (t nodeSelectorTerm) matches(labels map[string]string) bool {
 		}
 	}
 	return true
-}
-
-// selectedZone is the zone the pod's node selector names, or "".
-func (p *scalePod) selectedZone() string {
-	return p.Spec.NodeSelector["topology.kubernetes.io/zone"]
 }
 
 // provisionLabels are the label sets a node provisioned for the pod may
@@ -446,7 +441,12 @@ func (a *autoscaler) scaleUp(ctx context.Context, kc *kubeClient, rec *clusterRe
 		taken[n.Name] = true
 	}
 	waiting := false
-	var failed, unfit []*scalePod
+	var unfit []*scalePod
+	type failure struct {
+		p     *scalePod
+		zones []string
+	}
+	var failed []failure
 	var added []*bin
 pods:
 	for _, p := range pending {
@@ -459,13 +459,13 @@ pods:
 				continue pods
 			}
 		}
-		n, ok := a.newNode(c, np, p, r, perZone, capOf, labelsOf)
-		if !ok {
+		n, zones := a.newNode(c, np, p, r, perZone, capOf, labelsOf)
+		if len(zones) == 0 {
 			unfit = append(unfit, p)
 			continue
 		}
 		if room <= 0 {
-			failed = append(failed, p)
+			failed = append(failed, failure{p, zones})
 			continue
 		}
 		for n.Name == "" || taken[n.Name] {
@@ -482,14 +482,10 @@ pods:
 	for _, p := range unfit {
 		a.recordEvent(ctx, kc, p, "Normal", "NotTriggerScaleUp", "pod didn't trigger scale-up: it wouldn't fit on any node Autopilot can add")
 	}
-	for _, p := range failed {
-		zones := strings.Join(np.Locations, ",")
-		if z := p.selectedZone(); z != "" {
-			zones = z
-		}
-		a.recordEvent(ctx, kc, p, "Warning", "FailedScaleUp", fmt.Sprintf(
+	for _, f := range failed {
+		a.recordEvent(ctx, kc, f.p, "Warning", "FailedScaleUp", fmt.Sprintf(
 			"Node scale up in zones %s associated with this pod failed: gcpemu node limit exceeded (%d nodes; set %s to raise it). Pod is at risk of not being scheduled.",
-			zones, limit, maxNodesEnv))
+			strings.Join(f.zones, ","), limit, maxNodesEnv))
 	}
 	if len(added) == 0 {
 		return waiting, nil
@@ -509,24 +505,32 @@ pods:
 	return true, nil
 }
 
-// newNode plans a node for pod p, which requests r: in the zone it
-// selects or the one with fewest nodes, with the first compute class and
-// Spot labels it would schedule onto, of the smallest shape it fits. ok
-// is false when no such node would take the pod.
+// newNode plans a node for pod p, which requests r, and returns the
+// zones such a node could be in, in the pool's order: those the pod's
+// node selector and required node affinity accept. The node is in the one
+// of them with fewest nodes, with the first compute class and Spot labels
+// the pod would schedule onto, of the smallest shape it fits. zones is
+// empty when no node would take the pod.
 func (a *autoscaler) newNode(c *containerpb.Cluster, np *containerpb.NodePool, p *scalePod, r res, perZone map[string]int,
-	capOf func(nodeRecord) res, labelsOf func(nodeRecord) map[string]string) (nodeRecord, bool) {
-	zone := p.selectedZone()
-	if zone == "" {
-		for _, z := range np.Locations {
-			if zone == "" || perZone[z] < perZone[zone] {
-				zone = z
+	capOf func(nodeRecord) res, labelsOf func(nodeRecord) map[string]string) (nodeRecord, []string) {
+	password := a.s.env.IDs.Hex(16)
+	var node nodeRecord
+	var zones []string
+	for _, z := range np.Locations {
+		if n, ok := planNode(np, p, r, z, password, capOf, labelsOf); ok {
+			if len(zones) == 0 || perZone[z] < perZone[node.Zone] {
+				node = n
 			}
+			zones = append(zones, z)
 		}
 	}
-	password := a.s.env.IDs.Hex(16)
-	if !slices.Contains(np.Locations, zone) {
-		return nodeRecord{}, false
-	}
+	return node, zones
+}
+
+// planNode plans a node in zone for pod p, which requests r. ok is false
+// when no such node would take the pod.
+func planNode(np *containerpb.NodePool, p *scalePod, r res, zone, password string,
+	capOf func(nodeRecord) res, labelsOf func(nodeRecord) map[string]string) (nodeRecord, bool) {
 	for _, l := range p.provisionLabels() {
 		n := nodeRecord{Pool: np.Name, Zone: zone, Password: password, Labels: l}
 		if len(n.Labels) == 0 {

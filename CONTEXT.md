@@ -190,7 +190,7 @@ A range of ports that Windows reserves for Hyper-V, WSL and others, which no pro
 _Avoid_: reserved port, privileged port (on Windows)
 
 **State snapshot**:
-A named, saved copy of all of an Instance's state that can be restored later, except its Managed emulators' data.
+A named, saved copy of all of an Instance's state that can be restored later. It holds the data of Firestore's and Datastore's Managed emulators, but not Spanner's or Bigtable's.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
 
 **Datastore**:
@@ -217,7 +217,7 @@ _Avoid_: condition (on its own), readiness check
 An Instance whose state disappears when it stops.
 
 **Persistent Instance**:
-An Instance that keeps its state in a data directory across restarts, except its Managed emulators' data.
+An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
 
 **Containerized Instance**:
 An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host. It still sees only its own container's files, such as its trust store, not the host's.
@@ -249,6 +249,10 @@ _Avoid_: workload identity, external identity, federated token (say: an access t
 
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.
+
+**Copy as**:
+The Web console's offer, on a resource's page, of the gcloud command, the REST request and the OpenTofu resource that would create that resource as it is now.
+_Avoid_: export (that is `gcpemu export`, a Seed file)
 
 **Admin API**:
 The emulator-specific API under `/_emu/` for inspecting and operating an Instance (health, reset, fault injection, the request log and the like). It is the only interface not modelled on GCP, and the Web console is one of its clients.
@@ -308,7 +312,7 @@ A Delegate that is not an Instance but speaks a GCP API's wire format, such as G
 _Avoid_: third-party emulator, compatible node
 
 **Managed emulator**:
-An External emulator that the Instance runs itself as a Managed container, from Google's own emulator, for Firestore, Datastore, Spanner or Bigtable. Its data never survives a stop, even in a Persistent Instance: Reset clears it, and State snapshots do not hold it.
+An External emulator that the Instance runs itself as a Managed container, from Google's own emulator, for Firestore, Datastore, Spanner or Bigtable. Reset clears its data. Firestore's and Datastore's keep their data across a clean stop of a Persistent Instance, and State snapshots hold it (ADR 0036). Spanner's and Bigtable's data is in memory only: it never survives a stop, and State snapshots do not hold it.
 _Avoid_: built-in emulator, bundled emulator
 
 **Discovered Instance**:
@@ -414,6 +418,18 @@ _Avoid_: OTel mode, telemetry level, scope (unqualified)
 **Instrumentation**:
 A namespaced object in a cluster that tells GKE which of the namespace's new pods to configure, and how, so that their OTel SDK sends to the Managed collector. It configures pods only; it never changes their code.
 _Avoid_: auto-instrumentation, OTel Operator Instrumentation (a different type, `opentelemetry.io`), config injection (unqualified)
+
+**Managed Prometheus**:
+GKE's managed collection of Prometheus metrics, which a cluster asks for in its monitoring settings and an Autopilot cluster has unless it turns it off. Its PodMonitorings and ClusterPodMonitorings choose the Scrape targets, and the results go to the OTLP endpoint. The Instance does the scraping, not pods in the cluster (ADR 0036).
+_Avoid_: GMP, Prometheus add-on, Prometheus collector
+
+**Scrape target**:
+One endpoint of one pod that a PodMonitoring or ClusterPodMonitoring selects, scraped at that endpoint's interval. On the OTLP endpoint it is one instance of a job named after its PodMonitoring or ClusterPodMonitoring.
+_Avoid_: target (unqualified), monitoring (for the PodMonitoring or ClusterPodMonitoring itself: name the kind)
+
+**System metrics**:
+The metrics GKE reports about a cluster's own nodes, pods and containers, which a cluster asks for in its monitoring settings. The Instance reads them from the kubelets and the API server and sends them to the OTLP endpoint; nothing runs in the cluster.
+_Avoid_: GKE metrics, component metrics
 
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.

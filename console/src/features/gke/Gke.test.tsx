@@ -1066,3 +1066,106 @@ it('copies a private cluster with several node pools', () => {
     ].join('\n'),
   )
 })
+
+it('copies an Autopilot cluster without node pools', () => {
+  const c = {
+    ...cluster({
+      location: 'us-central1',
+      locations: ['us-central1-a', 'us-central1-b', 'us-central1-c'],
+      initialClusterVersion: '1.36.5-gke.100',
+      network: 'vpc',
+      subnetwork: 'nodes',
+      workloadIdentityConfig: { workloadPool: `${P}.svc.id.goog` },
+      privateClusterConfig: { enablePrivateNodes: true },
+      autopilot: { enabled: true, workloadPolicyConfig: { allowNetAdmin: true } },
+      loggingService: undefined,
+      monitoringService: undefined,
+      nodePools: [
+        {
+          name: 'default-pool',
+          status: 'RUNNING',
+          initialNodeCount: 1,
+          locations: ['us-central1-a', 'us-central1-b', 'us-central1-c'],
+          config: { machineType: 'ek-standard-2' },
+        },
+      ],
+    }),
+    // The node config of GKE's own node pool, which the API refuses on create.
+    nodeConfig: { machineType: 'ek-standard-2' },
+  } as Cluster
+  const r = clusterRecipe(P, c)
+  expect(r.gcloud).toEqual([
+    [
+      'gcloud container clusters create-auto web \\',
+      `    --project=${P} \\`,
+      '    --location=us-central1 \\',
+      '    --cluster-version=1.36.5-gke.100 \\',
+      '    --release-channel=regular \\',
+      '    --network=vpc \\',
+      '    --subnetwork=nodes \\',
+      '    --labels=team=web \\',
+      '    --enable-private-nodes \\',
+      '    --workload-policies=allow-net-admin',
+    ].join('\n'),
+  ])
+  expect(r.rest).toEqual({
+    method: 'POST',
+    path: `/container/v1/projects/${P}/locations/us-central1/clusters`,
+    body: {
+      cluster: {
+        name: 'web',
+        locations: ['us-central1-a', 'us-central1-b', 'us-central1-c'],
+        initialClusterVersion: '1.36.5-gke.100',
+        network: 'vpc',
+        subnetwork: 'nodes',
+        releaseChannel: { channel: 'REGULAR' },
+        resourceLabels: { team: 'web' },
+        workloadIdentityConfig: { workloadPool: `${P}.svc.id.goog` },
+        privateClusterConfig: { enablePrivateNodes: true },
+        autopilot: { enabled: true, workloadPolicyConfig: { allowNetAdmin: true } },
+      },
+    },
+  })
+  expect(r.tofu).toBe(
+    [
+      'resource "google_container_cluster" "web" {',
+      `  project            = "${P}"`,
+      '  name               = "web"',
+      '  location           = "us-central1"',
+      '  min_master_version = "1.36.5-gke.100"',
+      '  network            = "vpc"',
+      '  subnetwork         = "nodes"',
+      '  resource_labels    = { team = "web" }',
+      '  enable_autopilot   = true',
+      '  allow_net_admin    = true',
+      '  release_channel {',
+      '    channel = "REGULAR"',
+      '  }',
+      '  private_cluster_config {',
+      '    enable_private_nodes    = true',
+      '    enable_private_endpoint = false',
+      '  }',
+      '}',
+    ].join('\n'),
+  )
+})
+
+it('copies a private Autopilot cluster that gcloud created', () => {
+  // gcloud container clusters create-auto --enable-private-nodes
+  // --enable-private-endpoint sets these instead of privateClusterConfig.
+  const r = clusterRecipe(P, {
+    ...cluster({ location: 'us-central1', nodePools: [] }),
+    autopilot: { enabled: true },
+    networkConfig: { defaultEnablePrivateNodes: true },
+    controlPlaneEndpointsConfig: { ipEndpointsConfig: { enablePublicEndpoint: false } },
+  })
+  expect(r.gcloud?.[0]).toContain('    --enable-private-nodes \\\n    --enable-private-endpoint')
+  expect(r.tofu).toContain(
+    [
+      '  private_cluster_config {',
+      '    enable_private_nodes    = true',
+      '    enable_private_endpoint = true',
+      '  }',
+    ].join('\n'),
+  )
+})

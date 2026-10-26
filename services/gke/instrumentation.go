@@ -209,7 +209,7 @@ type instrumentedPod struct {
 func instrumentationPatch(pod *instrumentedPod, insts []instrumentationObject) []patchOp {
 	var chosen *instrumentationObject
 	for i := range insts {
-		if insts[i].Spec.Selector.selects(pod.Metadata.Labels) && (chosen == nil || newer(&insts[i], chosen)) {
+		if insts[i].Spec.Selector.matches(pod.Metadata.Labels) && (chosen == nil || newer(&insts[i], chosen)) {
 			chosen = &insts[i]
 		}
 	}
@@ -280,42 +280,4 @@ func newer(a, b *instrumentationObject) bool {
 	ra, _ := strconv.ParseUint(a.Metadata.ResourceVersion, 10, 64)
 	rb, _ := strconv.ParseUint(b.Metadata.ResourceVersion, 10, 64)
 	return ra > rb
-}
-
-// labelSelector is a Kubernetes label selector; an empty one selects
-// everything.
-type labelSelector struct {
-	MatchLabels      map[string]string `json:"matchLabels"`
-	MatchExpressions []struct {
-		Key      string   `json:"key"`
-		Operator string   `json:"operator"`
-		Values   []string `json:"values"`
-	} `json:"matchExpressions"`
-}
-
-// selects reports whether the selector selects labels.
-func (s *labelSelector) selects(labels map[string]string) bool {
-	for k, v := range s.MatchLabels {
-		if got, ok := labels[k]; !ok || got != v {
-			return false
-		}
-	}
-	for _, e := range s.MatchExpressions {
-		v, ok := labels[e.Key]
-		var match bool
-		switch e.Operator {
-		case "In":
-			match = ok && slices.Contains(e.Values, v)
-		case "NotIn":
-			match = !ok || !slices.Contains(e.Values, v)
-		case "Exists":
-			match = ok
-		case "DoesNotExist":
-			match = !ok
-		}
-		if !match {
-			return false
-		}
-	}
-	return true
 }

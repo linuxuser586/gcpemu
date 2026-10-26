@@ -17,7 +17,7 @@ import (
 )
 
 // otlpSink is an OTLP/HTTP metrics receiver that keeps, per resource
-// (as its attributes), the metric names last received.
+// (as its attributes), the gauges and sums last received.
 type otlpSink struct {
 	mu       sync.Mutex
 	requests int
@@ -46,6 +46,9 @@ func (k *otlpSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, sm := range rm.ScopeMetrics {
 			for _, m := range sm.Metrics {
 				for _, dp := range m.GetGauge().GetDataPoints() {
+					res.metrics[m.Name] = dp.GetAsDouble() + float64(dp.GetAsInt())
+				}
+				for _, dp := range m.GetSum().GetDataPoints() {
 					res.metrics[m.Name] = dp.GetAsDouble() + float64(dp.GetAsInt())
 				}
 			}

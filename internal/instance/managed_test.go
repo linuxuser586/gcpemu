@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -90,6 +91,44 @@ func TestManagedSpecs(t *testing.T) {
 		}
 		if gateway.EmulatorHostVar(api) == "" {
 			t.Errorf("%s: the API gateway knows no *_EMULATOR_HOST for it", api)
+		}
+	}
+}
+
+// TestManagedNotKeptLogged: a Persistent Instance with Managed emulators
+// that keep their data in memory only logs one line naming them when it
+// starts; an Ephemeral one does not (#649, ADR 0036).
+func TestManagedNotKeptLogged(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "unix://"+t.TempDir()+"/no-docker.sock")
+	for _, ephemeral := range []bool{false, true} {
+		cfg := config.Defaults()
+		cfg.Ephemeral = ephemeral
+		cfg.DataDir = t.TempDir()
+		cfg.Services = []string{"dns"}
+		cfg.Ports["gateway"] = 0
+		cfg.External = map[string]string{"firestore": config.Managed, "spanner": config.Managed, "bigtable": config.Managed}
+		var logs bytes.Buffer
+		in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &logs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := in.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		in.Shutdown(ctx)
+		cancel()
+		var lines []string
+		for l := range strings.Lines(logs.String()) {
+			if strings.Contains(l, "in memory only") {
+				lines = append(lines, l)
+			}
+		}
+		switch {
+		case ephemeral && len(lines) != 0:
+			t.Errorf("Ephemeral Instance logged %q, want nothing", lines)
+		case !ephemeral && (len(lines) != 1 || !strings.Contains(lines[0], "apis=bigtable,spanner")):
+			t.Errorf("Persistent Instance logged %q, want one line naming bigtable,spanner", lines)
 		}
 	}
 }
