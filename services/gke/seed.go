@@ -43,8 +43,8 @@ import (
 // node pools, and always has Workload Identity, so workloadIdentity
 // changes nothing on one. Existing clusters are left untouched, whatever
 // their Cluster mode, but an entry the API would refuse fails Seeding even
-// when its cluster exists.
-// Seeding waits until new clusters are RUNNING (or fails with their error).
+// when its cluster exists. Seeding waits until new clusters are RUNNING
+// (or fails with their error).
 type seedFile struct {
 	Clusters []seedCluster `yaml:"clusters"`
 }
@@ -81,9 +81,10 @@ var _ emu.SeedExporter = (*Service)(nil)
 // NET_ADMIN setting in place of Workload Identity and node pools, which
 // GKE sets. Kubernetes objects are data plane and are not exported, nor
 // is anything else the seed file cannot declare (release channel, node
-// pool versions, autoscaling, taints...). A pool resized to
-// zero nodes comes back with one, as the seed creates every pool with at
-// least one node, and a cluster without node pools gets the default pool.
+// pool versions, autoscaling, taints, per-pool private nodes...). A pool
+// resized to zero nodes comes back with one, as the seed creates every
+// pool with at least one node, and a cluster without node pools gets the
+// default pool.
 func (s *Service) ExportSeed(ctx context.Context) (any, error) {
 	var recs []*clusterRecord
 	_ = s.env.Store.View(func(tx store.Tx) error { recs = listClusters(tx, ""); return nil })
@@ -105,7 +106,7 @@ func (s *Service) ExportSeed(ctx context.Context) (any, error) {
 		c := rec.cluster()
 		sc := seedCluster{
 			Project: rec.Int.Project, Location: rec.Int.Location, Name: rec.Int.Name,
-			PrivateNodes: c.GetPrivateClusterConfig().GetEnablePrivateNodes(),
+			PrivateNodes: clusterPrivateNodes(c),
 		}
 		if v := c.GetCurrentMasterVersion(); v != defaultVersion {
 			sc.Version = v
@@ -175,36 +176,7 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 		if exists {
 			continue
 		}
-		c := &containerpb.Cluster{
-			Name: sc.Name, InitialClusterVersion: sc.Version,
-			Network: sc.Network, Subnetwork: sc.Subnetwork,
-		}
-		if sc.PrivateNodes {
-			c.PrivateClusterConfig = &containerpb.PrivateClusterConfig{EnablePrivateNodes: true}
-		}
-		if sc.WorkloadIdentity {
-			c.WorkloadIdentityConfig = &containerpb.WorkloadIdentityConfig{WorkloadPool: sc.Project + ".svc.id.goog"}
-		}
-		if sc.Autopilot {
-			c.Autopilot = &containerpb.Autopilot{Enabled: true}
-			if sc.AllowNetAdmin {
-				c.Autopilot.WorkloadPolicyConfig = &containerpb.WorkloadPolicyConfig{AllowNetAdmin: proto.Bool(true)}
-			}
-		}
-		pools := sc.NodePools
-		if len(pools) == 0 && !sc.Autopilot {
-			pools = []seedPool{{Name: defaultPoolName, NodeCount: 1}}
-		}
-		for _, p := range pools {
-			if p.Name == "" {
-				p.Name = defaultPoolName
-			}
-			c.NodePools = append(c.NodePools, &containerpb.NodePool{
-				Name: p.Name, InitialNodeCount: max(p.NodeCount, 1),
-				Config: &containerpb.NodeConfig{MachineType: p.MachineType, Labels: p.Labels, ServiceAccount: p.ServiceAccount},
-			})
-		}
-		op, err := s.api.CreateCluster(ctx, &containerpb.CreateClusterRequest{Parent: r.parent(), Cluster: c})
+		op, err := s.api.CreateCluster(ctx, &containerpb.CreateClusterRequest{Parent: r.parent(), Cluster: sc.cluster()})
 		if err != nil {
 			return fmt.Errorf("clusters[%d] (%s): %w", i, r.clusterName(), err)
 		}
@@ -230,4 +202,41 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 		}
 	}
 	return nil
+}
+
+// cluster is the cluster ApplySeed asks CreateCluster for, with no node
+// pools for an Autopilot cluster, as GKE adds its own. Private nodes go
+// in privateClusterConfig, which clusterPrivateNodes reads first, so
+// export reads them back however the cluster first made them private.
+func (sc seedCluster) cluster() *containerpb.Cluster {
+	c := &containerpb.Cluster{
+		Name: sc.Name, InitialClusterVersion: sc.Version,
+		Network: sc.Network, Subnetwork: sc.Subnetwork,
+	}
+	if sc.PrivateNodes {
+		c.PrivateClusterConfig = &containerpb.PrivateClusterConfig{EnablePrivateNodes: true}
+	}
+	if sc.WorkloadIdentity {
+		c.WorkloadIdentityConfig = &containerpb.WorkloadIdentityConfig{WorkloadPool: sc.Project + ".svc.id.goog"}
+	}
+	if sc.Autopilot {
+		c.Autopilot = &containerpb.Autopilot{Enabled: true}
+		if sc.AllowNetAdmin {
+			c.Autopilot.WorkloadPolicyConfig = &containerpb.WorkloadPolicyConfig{AllowNetAdmin: proto.Bool(true)}
+		}
+	}
+	pools := sc.NodePools
+	if len(pools) == 0 && !sc.Autopilot {
+		pools = []seedPool{{Name: defaultPoolName, NodeCount: 1}}
+	}
+	for _, p := range pools {
+		if p.Name == "" {
+			p.Name = defaultPoolName
+		}
+		c.NodePools = append(c.NodePools, &containerpb.NodePool{
+			Name: p.Name, InitialNodeCount: max(p.NodeCount, 1),
+			Config: &containerpb.NodeConfig{MachineType: p.MachineType, Labels: p.Labels, ServiceAccount: p.ServiceAccount},
+		})
+	}
+	return c
 }

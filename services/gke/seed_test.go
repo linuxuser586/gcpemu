@@ -57,6 +57,25 @@ func TestExportSeedUnit(t *testing.T) {
 		Name: "dev", CurrentMasterVersion: defaultVersion, Network: "default", Subnetwork: "default",
 		NodePools: []*containerpb.NodePool{pool("default-pool", 2, &containerpb.NodeConfig{})},
 	})
+	// Private nodes come from the same rule as the data plane's: what
+	// gcloud create-auto --enable-private-nodes sends, an explicit no, and
+	// privateClusterConfig winning over a conflicting network default.
+	put("my-project", "us-west1", &containerpb.Cluster{
+		Name: "auto", CurrentMasterVersion: defaultVersion, Network: "default", Subnetwork: "default",
+		NetworkConfig: &containerpb.NetworkConfig{DefaultEnablePrivateNodes: proto.Bool(true)},
+		NodePools:     []*containerpb.NodePool{pool("default-pool", 1, &containerpb.NodeConfig{})},
+	})
+	put("my-project", "us-west1", &containerpb.Cluster{
+		Name: "conflict", CurrentMasterVersion: defaultVersion, Network: "default", Subnetwork: "default",
+		PrivateClusterConfig: &containerpb.PrivateClusterConfig{EnablePrivateNodes: true},
+		NetworkConfig:        &containerpb.NetworkConfig{DefaultEnablePrivateNodes: proto.Bool(false)},
+		NodePools:            []*containerpb.NodePool{pool("default-pool", 1, &containerpb.NodeConfig{})},
+	})
+	put("my-project", "us-west1", &containerpb.Cluster{
+		Name: "public", CurrentMasterVersion: defaultVersion, Network: "default", Subnetwork: "default",
+		NetworkConfig: &containerpb.NetworkConfig{DefaultEnablePrivateNodes: proto.Bool(false)},
+		NodePools:     []*containerpb.NodePool{pool("default-pool", 1, &containerpb.NodeConfig{})},
+	})
 
 	sec, err := s.ExportSeed(context.Background())
 	if err != nil {
@@ -92,14 +111,39 @@ func TestExportSeedUnit(t *testing.T) {
           labels:
             team: web
           serviceAccount: nodes@my-project.iam.gserviceaccount.com
+    - project: my-project
+      location: us-west1
+      name: auto
+      privateNodes: true
+    - project: my-project
+      location: us-west1
+      name: conflict
+      privateNodes: true
+    - project: my-project
+      location: us-west1
+      name: public
 `
 	if string(b) != want {
 		t.Fatalf("export =\n%s\nwant\n%s", b, want)
 	}
 	// The section decodes as the seed reads it.
 	var f seedFile
-	if err := yaml.Unmarshal(b, &f); err != nil || len(f.Clusters) != 3 || f.Clusters[2].NodePools[1].NodeCount != 3 {
+	if err := yaml.Unmarshal(b, &f); err != nil || len(f.Clusters) != 6 || f.Clusters[2].NodePools[1].NodeCount != 3 {
 		t.Fatalf("decode = %+v, %v", f, err)
+	}
+}
+
+// TestSeedClusterPrivateNodes checks without a container runtime that the
+// cluster ApplySeed creates from privateNodes: true is private by the same
+// rule export reads, so the round trip keeps the nodes private.
+func TestSeedClusterPrivateNodes(t *testing.T) {
+	sc := seedCluster{Project: "my-project", Location: "us-central1-a", Name: "dev", PrivateNodes: true}
+	if c := sc.cluster(); !clusterPrivateNodes(c) || !privateNodes(c, c.NodePools[0]) {
+		t.Fatalf("privateNodes: true seeds %v", c)
+	}
+	sc.PrivateNodes = false
+	if c := sc.cluster(); clusterPrivateNodes(c) {
+		t.Fatalf("privateNodes: false seeds %v", c)
 	}
 }
 

@@ -423,6 +423,10 @@ _Avoid_: GMP, Prometheus add-on, Prometheus collector
 One endpoint of one pod that a PodMonitoring or ClusterPodMonitoring selects, scraped at that endpoint's interval. On the OTLP endpoint it is one instance of a job named after its PodMonitoring or ClusterPodMonitoring.
 _Avoid_: target (unqualified), monitoring (for the PodMonitoring or ClusterPodMonitoring itself: name the kind)
 
+**System metrics**:
+The metrics GKE reports about a cluster's own nodes, pods and containers, which a cluster asks for in its monitoring settings. The Instance reads them from the kubelets and the API server and sends them to the OTLP endpoint; nothing runs in the cluster.
+_Avoid_: GKE metrics, component metrics
+
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
 _Avoid_: secret (unqualified)
