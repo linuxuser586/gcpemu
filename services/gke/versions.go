@@ -16,15 +16,16 @@ type k8sVersion struct {
 	GKE   string // "1.36.5-gke.100"
 	Image string // "rancher/k3s:v1.36.5-k3s1"
 	// Preload lists the system images (pause, CoreDNS, local-path
-	// provisioner, servicelb) this k3s release runs. They are exported from
-	// the host image cache into every node so that nodes without egress
-	// (private clusters) still start, and so new clusters need no pulls.
+	// provisioner, servicelb, metrics-server) this k3s release runs. They
+	// are exported from the host image cache into every node so that nodes
+	// without egress (private clusters) still start, and so new clusters
+	// need no pulls.
 	Preload []string
 }
 
 // versions is ordered newest first. Preload lists come from each k3s
-// release's k3s-images.txt, minus the components the emulator disables
-// (traefik, metrics-server and the helm controller that installs them).
+// release's k3s-images.txt, minus traefik, which the emulator disables.
+// When adding a version, check its k3s-images.txt for each tag here.
 var versions = []k8sVersion{
 	{GKE: "1.37.1-gke.100", Image: "rancher/k3s:v1.37.1-k3s1", Preload: systemImages("1.14.7")},
 	{GKE: "1.37.0-gke.100", Image: "rancher/k3s:v1.37.0-k3s1", Preload: systemImages("1.14.7")},
@@ -35,7 +36,8 @@ var versions = []k8sVersion{
 }
 
 // systemImages lists the system images of a k3s release: pause, CoreDNS,
-// the local-path provisioner and its helper (busybox), and servicelb.
+// the local-path provisioner and its helper (busybox), servicelb and
+// metrics-server.
 func systemImages(coredns string) []string {
 	return []string{
 		"rancher/mirrored-pause:3.10.2",
@@ -43,6 +45,7 @@ func systemImages(coredns string) []string {
 		"rancher/local-path-provisioner:v0.0.37",
 		"rancher/mirrored-library-busybox:1.37.0",
 		"rancher/klipper-lb:v0.4.17",
+		"rancher/mirrored-metrics-server:v0.9.0",
 	}
 }
 

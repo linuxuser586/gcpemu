@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -240,6 +241,29 @@ func TestPreloadLists(t *testing.T) {
 			if !ok {
 				t.Errorf("%s preloads no %s image: %v", v.GKE, p, v.Preload)
 			}
+		}
+	}
+}
+
+// TestMetricsServerEnabled is #637: k3s's bundled metrics-server serves
+// metrics.k8s.io in every cluster, private ones included, so the server
+// does not disable it and every version preloads its image.
+func TestMetricsServerEnabled(t *testing.T) {
+	for _, hostLB := range []bool{false, true} {
+		args := strings.Join(serverDisables(hostLB), " ")
+		if strings.Contains(args, "metrics-server") {
+			t.Errorf("hostLB=%v: server disables metrics-server: %s", hostLB, args)
+		}
+		if !strings.Contains(args, "--disable traefik") {
+			t.Errorf("hostLB=%v: server keeps traefik: %s", hostLB, args)
+		}
+		if got := strings.Contains(args, "--disable servicelb"); got != hostLB {
+			t.Errorf("hostLB=%v: servicelb disabled = %v: %s", hostLB, got, args)
+		}
+	}
+	for _, v := range versions {
+		if !slices.Contains(v.Preload, "rancher/mirrored-metrics-server:v0.9.0") {
+			t.Errorf("%s preloads no metrics-server image: %v", v.GKE, v.Preload)
 		}
 	}
 }

@@ -122,6 +122,11 @@ func containerizedLBIngress(t *testing.T, name, image string, socket []string, v
 	}{{"plain", false}, {"trans", true}} {
 		t.Run(tc.cluster, func(t *testing.T) {
 			k := clusterKube(t, gateway, project, tc.cluster)
+			if tc.translated {
+				// metrics-server scrapes each kubelet at its aliased node
+				// address, verifying its serving cert (#637).
+				nodeMetrics(t, k, 2)
+			}
 			lbWeb(t, k)
 			envKey := "GCPEMU_GKE_" + strings.ToUpper(tc.cluster) + "_DEFAULT_WEB_8081"
 			if vm {
@@ -213,6 +218,31 @@ func clusterKube(t *testing.T, gateway, project, name string) *kube {
 		return getJSON(gateway, "/container/v1/"+cluster, &c) && c.Status == "RUNNING"
 	}, nil)
 	return newKube(t, gateway, cluster)
+}
+
+// nodeMetrics waits for nodes.metrics.k8s.io to report CPU and memory
+// usage for n nodes, which is what `kubectl top nodes` reads.
+func nodeMetrics(t *testing.T, k *kube, n int) {
+	t.Helper()
+	var got []string
+	hosttest.Eventually(t, 4*time.Minute, fmt.Sprintf("metrics for %d nodes", n), func() bool {
+		var list struct {
+			Items []struct {
+				Metadata struct{ Name string }
+				Usage    struct{ CPU, Memory string }
+			}
+		}
+		got = got[:0]
+		if !k.get("/apis/metrics.k8s.io/v1beta1/nodes", &list) {
+			return false
+		}
+		for _, m := range list.Items {
+			if m.Usage.CPU != "" && m.Usage.Memory != "" {
+				got = append(got, m.Metadata.Name)
+			}
+		}
+		return len(got) == n
+	}, func() string { return fmt.Sprintf("nodes with metrics: %v", got) })
 }
 
 // lbIngress returns the ingress IPs of LoadBalancer Service default/name
