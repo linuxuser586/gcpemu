@@ -723,8 +723,9 @@ node's own `metadata.google.internal`, where the node relays OTLP to the Instanc
 The Instance adds the cluster, namespace, pod, container (for a single-container pod), node and
 owning workload that the sender didn't set, then forwards each signal to the same OTLP endpoint
 as the system metrics. A signal's own `OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_*` variables win
-over the general ones. The variables are read on each export. With no endpoint set, exports
-succeed and the data is dropped. A failed forward fails the pod's export, which the sender
+over the general ones. The variables are read on each export. With no endpoint set, or a
+protocol other than `grpc` or `http/protobuf` (logged once), exports succeed and the data is
+dropped. A failed forward fails the pod's export, which the sender
 retries. The scope also installs the `instrumentations.telemetry.googleapis.com` CRD. Setting
 the scope to `NONE` removes the Service and keeps the CRD, the namespace and your objects
 (FR-GKE-019).

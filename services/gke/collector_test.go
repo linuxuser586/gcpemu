@@ -590,3 +590,31 @@ func TestCollectorUnknownPodWaitsOnce(t *testing.T) {
 		t.Errorf("resource = %v, want the cluster only", a)
 	}
 }
+
+// A signal whose protocol the Instance does not speak is dropped as if it
+// had no OTLP endpoint; the other signals still go through.
+func TestCollectorUnusableProtocolDropsThatSignal(t *testing.T) {
+	sink, url := newOTLPHTTPSink(t)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", url)
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/json")
+	h, base := collectorFixture(t, containerpb.ManagedOpenTelemetryConfig_COLLECTION_AND_INSTRUMENTATION_COMPONENTS)
+
+	logs, _ := proto.Marshal(&collogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{}}})
+	for range 2 {
+		if w := postOTLP(t, h, base+"/v1/logs", "application/x-protobuf", logs); w.Code != http.StatusOK {
+			t.Fatalf("logs export = %d: %s", w.Code, w.Body)
+		}
+	}
+	traces, _ := proto.Marshal(traceRequest())
+	if w := postOTLP(t, h, base+"/v1/traces", "application/x-protobuf", traces); w.Code != http.StatusOK {
+		t.Fatalf("traces export = %d: %s", w.Code, w.Body)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if n := len(sink.bodies["/v1/logs"]); n != 0 {
+		t.Errorf("%d logs requests forwarded, want none", n)
+	}
+	if n := len(sink.bodies["/v1/traces"]); n != 1 {
+		t.Errorf("%d traces requests forwarded, want 1", n)
+	}
+}

@@ -241,7 +241,17 @@ func (s *Service) serveOTLP(w http.ResponseWriter, r *http.Request, key, ip, sig
 	for _, res := range sig.resources(req) {
 		addMissingAttrs(res, attrs)
 	}
-	if t, ok := otlpTargetFromEnv(os.Getenv, signal); ok {
+	t, ok := otlpTargetFromEnv(os.Getenv, signal)
+	if ok && t.protocol != "grpc" && t.protocol != "http/protobuf" {
+		// Dropped, as with no OTLP endpoint; said once per cluster and
+		// signal.
+		if _, warned := s.rtFor(key).otlpWarned.LoadOrStore(signal+"|"+t.protocol, true); !warned {
+			s.env.Log.Warn("gke: managed collector dropping telemetry: unsupported OTLP protocol (want grpc or http/protobuf)",
+				"cluster", key, "signal", signal, "protocol", t.protocol)
+		}
+		ok = false
+	}
+	if ok {
 		if err := forwardOTLP(r.Context(), t, sig, req); err != nil {
 			s.env.Log.Debug("gke: managed collector", "cluster", key, "signal", signal, "err", err)
 			http.Error(w, "forwarding to the Instance's OTLP endpoint: "+err.Error(), http.StatusBadGateway)

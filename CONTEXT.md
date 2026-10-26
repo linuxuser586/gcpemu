@@ -388,11 +388,11 @@ The kubeconfig an Instance keeps for its running clusters, which acts as each cl
 _Avoid_: emulator kubeconfig, convenience kubeconfig
 
 **OTLP endpoint**:
-Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, the telemetry is dropped.
+Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, or one whose protocol the Instance does not speak, the telemetry is dropped; one that is set but unreachable fails the exports instead.
 _Avoid_: collector endpoint, metrics endpoint
 
 **Managed collector**:
-The OTLP receiver a cluster serves at GKE's in-cluster collector address, for workloads' logs, metrics and traces. It forwards them to the OTLP endpoint.
+The OTLP receiver the Instance serves for a cluster at GKE's in-cluster collector address, for workloads' logs, metrics and traces. It forwards them to the OTLP endpoint. No collector runs in the cluster.
 _Avoid_: OTel sidecar, collector (unqualified)
 
 **Managed OpenTelemetry scope**:

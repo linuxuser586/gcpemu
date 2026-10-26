@@ -61,10 +61,13 @@ type clusterRT struct {
 	// controllers are cancelled, so no node outlives the cluster.
 	scaleMu sync.Mutex
 	// l7Mu serialises load balancer syncs with their removal (l7.go).
-	l7Mu  sync.Mutex
-	wi    sync.Map // pod IP → wiEntry
-	otlp  sync.Map // pod IP → otlpPodEntry
-	syncs sync.Map // SecretSync UID → syncState
+	l7Mu sync.Mutex
+	wi   sync.Map // pod IP → wiEntry
+	otlp sync.Map // pod IP → otlpPodEntry
+	// otlpWarned holds the signal|protocol pairs the Managed collector
+	// has logged dropping.
+	otlpWarned sync.Map
+	syncs      sync.Map // SecretSync UID → syncState
 	// api serves the API server on the host's 127.0.0.1 on a VM runtime.
 	api *netplane.Exposed
 	// lan serves it on the --gke-bind addresses (lan.go), at lanAddrs,

@@ -59,7 +59,7 @@ func TestRealHostnames(t *testing.T) {
 	}
 
 	// While the cluster comes up: image, repository, IAM and resources.
-	image := buildWIApp(t, inst, proj)
+	image := buildTestApp(t, inst, proj, "wiapp")
 	gsa := "wiapp-gsa@" + proj + ".iam.gserviceaccount.com"
 	mustGW(t, inst, "POST", "/iam/v1/projects/"+proj+"/serviceAccounts", map[string]any{"accountId": "wiapp-gsa"}, nil)
 	var p struct {
@@ -230,15 +230,15 @@ func mustGW(t *testing.T, inst *emutest.Instance, method, path string, body, out
 	}
 }
 
-// buildWIApp compiles testdata/wiapp statically, wraps it as the only
+// buildTestApp compiles testdata/APP statically, wraps it as the only
 // layer of an image without a base (no CA certificates), pushes it to
 // emulated Artifact Registry and returns its LOCATION-docker.pkg.dev
 // reference.
-func buildWIApp(t *testing.T, inst *emutest.Instance, proj string) string {
+func buildTestApp(t *testing.T, inst *emutest.Instance, proj, app string) string {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "app")
-	cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", bin, "./testdata/wiapp")
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", bin, "./testdata/"+app)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+goruntime.GOARCH)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build wiapp: %v\n%s", err, out)
@@ -278,7 +278,7 @@ func buildWIApp(t *testing.T, inst *emutest.Instance, proj string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image := "us-central1-docker.pkg.dev/" + proj + "/apps/wiapp:v1"
+	image := "us-central1-docker.pkg.dev/" + proj + "/apps/" + app + ":v1"
 	ref, err := name.ParseReference(inst.Endpoint("ar")+"/"+image, name.Insecure)
 	if err != nil {
 		t.Fatal(err)
