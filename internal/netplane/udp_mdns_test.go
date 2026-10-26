@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // mdnsHolder binds 0.0.0.0:port and, where the host has IPv6, [::]:port,
@@ -52,14 +54,8 @@ func mdnsHolder(t *testing.T, port string) net.PacketConn {
 func freeUDPPort(t *testing.T) string {
 	t.Helper()
 	for range 100 {
-		l, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
-		pc, err := net.ListenPacket("udp4", "127.0.0.1:"+port)
-		l.Close()
-		if err == nil {
+		port := strconv.Itoa(porttest.Free(t))
+		if pc, err := net.ListenPacket("udp4", "127.0.0.1:"+port); err == nil {
 			pc.Close()
 			return port
 		}
