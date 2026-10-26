@@ -341,36 +341,52 @@ func TestDecide(t *testing.T) {
 	}
 }
 
-// freePort returns a loopback address with a port that was free a moment
-// ago.
-func freePort(t *testing.T, network string) string {
-	t.Helper()
-	if network == "udp" {
-		pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer pc.Close()
-		return pc.LocalAddr().String()
-	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().String()
-}
-
 // TestOfferThroughRelay is the relay side of an Offered port (ADR 0014):
 // the relay listens on exactly the address asked for, over TCP or UDP,
 // refuses a taken port rather than moving, and stops listening when the
 // offer is withdrawn.
 func TestOfferThroughRelay(t *testing.T) {
 	host, hostUDP := echoTCP(t), echoUDP(t)
-	r := startInProcess(t, map[string]string{"offer-tcp": host, "offer-udp": hostUDP})
+	// The test holds its TCP port and its UDP port until the relay binds
+	// them, so no other process can take them in between.
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { held.Close() })
+	heldUDP, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { heldUDP.Close() })
+	addr, uaddr := held.Addr().String(), heldUDP.LocalAddr().String()
+
+	// Each held socket is handed over once: binding the address again,
+	// after the withdraw, binds it anew. offer holds the agent's lock, so
+	// the hooks run one at a time.
+	a := newRelayAgent()
+	var handed, handedUDP bool
+	a.listenTCP = func(network, bind string) (net.Listener, error) {
+		if bind == addr && !handed {
+			handed = true
+			return held, nil
+		}
+		return net.Listen(network, bind)
+	}
+	a.listenPacket = func(network, bind string) (net.PacketConn, error) {
+		if bind == uaddr && !handedUDP {
+			handedUDP = true
+			return heldUDP, nil
+		}
+		return net.ListenPacket(network, bind)
+	}
+	ctl, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startOn(t, ctl, a, map[string]string{"offer-tcp": host, "offer-udp": hostUDP})
 	ctx := context.Background()
 
-	addr := freePort(t, "tcp")
 	if err := r.Offer(ctx, "offer-tcp", addr, false); err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +406,6 @@ func TestOfferThroughRelay(t *testing.T) {
 		t.Fatalf("offering the taken %s succeeded", taken)
 	}
 
-	uaddr := freePort(t, "udp")
 	if err := r.Offer(ctx, "offer-udp", uaddr, true); err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +433,9 @@ func TestOfferThroughRelay(t *testing.T) {
 	if err := r.Withdraw(ctx, "offer-tcp"); err != nil {
 		t.Fatalf("withdrawing again: %v", err)
 	}
-	// The port is free to offer again.
+	// The port is free to offer again. The withdraw closed the held
+	// socket, so this bind is fresh, and another process could take the
+	// port first: the step checks that the withdraw released it.
 	if err := r.Offer(ctx, "offer-tcp", addr, false); err != nil {
 		t.Fatalf("offering after the withdraw: %v", err)
 	}
@@ -672,8 +689,8 @@ func TestInwardWithoutSession(t *testing.T) {
 // the emulator says so and the agent closes the connection at once,
 // without waiting for another session.
 func TestInwardEndpointDown(t *testing.T) {
-	// Not a port freePort found: the agent's listeners below may be given
-	// that one, and the endpoint would relay to itself.
+	// Not a port the kernel picks: the agent's listeners below may be
+	// given that one, and the endpoint would relay to itself.
 	const refused = "127.0.0.1:1"
 	r := startInProcess(t, map[string]string{"refused": refused})
 	ctx := context.Background()
