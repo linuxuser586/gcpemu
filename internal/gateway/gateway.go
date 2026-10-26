@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -270,10 +272,16 @@ func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, e
 	}
 	// A token for a service account of a Delegated Project was issued by
 	// its Linked Instance (ADR 0027). Only a token an Instance could have
-	// issued is sent over a link, never Foreign credentials.
+	// issued is sent over a link, never Foreign credentials. While a Linked
+	// Instance that may have issued it cannot be asked, no IAM mode answers
+	// for it (#733).
 	if l := g.linker(); l != nil && l.Delegating() && strings.HasPrefix(tok, emulatorToken) {
-		if p, ok := l.Authenticate(ctx, tok); ok {
+		p, unreachable := l.Authenticate(ctx, tok)
+		if p != "" {
 			return emu.Principal(p), nil
+		}
+		if len(unreachable) > 0 {
+			return "", unreachableLinks(unreachable)
 		}
 	}
 	if g.env.Auth.Mode() == config.IAMEnforce {
@@ -281,6 +289,17 @@ func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, e
 			WithReason("googleapis.com", "ACCESS_TOKEN_TYPE_UNSUPPORTED")
 	}
 	return def, nil
+}
+
+// unreachableLinks is the UNAVAILABLE error for an access token this
+// Instance did not issue while the links unreachable, whose Linked
+// Instances may have issued it, cannot be asked about it.
+func unreachableLinks(unreachable map[string]error) error {
+	why := make([]string, 0, len(unreachable))
+	for _, name := range slices.Sorted(maps.Keys(unreachable)) {
+		why = append(why, fmt.Sprintf("link %q: %v", name, unreachable[name]))
+	}
+	return apierr.New(codes.Unavailable, "Cannot authenticate the access token: this Instance did not issue it, and the Linked Instance that may have cannot be reached (%s).", strings.Join(why, "; "))
 }
 
 // Router returns the registration surface for one service.

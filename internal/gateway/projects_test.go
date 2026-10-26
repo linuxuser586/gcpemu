@@ -195,6 +195,9 @@ func grpcRequest(method string, b []byte, encoding string) *http.Request {
 type fakeLinks struct {
 	shared    []string
 	delegated map[string]string
+	// principal and unreachable answer every access token.
+	principal   string
+	unreachable map[string]error
 }
 
 func (f fakeLinks) Delegating() bool         { return len(f.delegated) > 0 }
@@ -203,10 +206,12 @@ func (f fakeLinks) DelegatedTo(ref string) (string, bool) {
 	l, ok := f.delegated[ref]
 	return l, ok
 }
-func (f fakeLinks) Authenticate(context.Context, string) (string, bool) { return "", false }
-func (f fakeLinks) Shared(_, ref string) bool                           { return slices.Contains(f.shared, ref) }
-func (f fakeLinks) BucketOwner(string) (string, string, bool)           { return "", "", false }
-func (f fakeLinks) RefreshBuckets(context.Context, string)              {}
+func (f fakeLinks) Authenticate(context.Context, string) (string, map[string]error) {
+	return f.principal, f.unreachable
+}
+func (f fakeLinks) Shared(_, ref string) bool                 { return slices.Contains(f.shared, ref) }
+func (f fakeLinks) BucketOwner(string) (string, string, bool) { return "", "", false }
+func (f fakeLinks) RefreshBuckets(context.Context, string)    {}
 func (f fakeLinks) Forward(w http.ResponseWriter, _ *http.Request, name, _ string, _ func(http.ResponseWriter, error), _ func(*http.Response)) {
 	w.Header().Set("Forwarded-To", name)
 }
