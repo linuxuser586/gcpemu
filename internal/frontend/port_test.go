@@ -11,6 +11,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // A Containerized Instance keeps the frontend's dynamic port out of
@@ -19,12 +20,7 @@ import (
 // Instance on the host, or in a container on the host's network, takes
 // one from the range (#502).
 func TestStartPortRange(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	free := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	free := porttest.Free(t)
 	noRT := emu.NoRuntime(errors.New("no runtime found"))
 	for _, tc := range []struct {
 		name    string

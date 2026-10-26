@@ -24,6 +24,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -271,16 +272,6 @@ func plainGet(t *testing.T, u string) (int, []byte) {
 		t.Fatalf("GET %s: %v", u, err)
 	}
 	return resp.StatusCode, b
-}
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
 }
 
 // gcloudCanaryOverride is the variable the gcloud escape-guard subtest
@@ -640,7 +631,10 @@ func TestClients(t *testing.T) {
 		conn := project + ":us-central1:compat-pg"
 		withProxy := func(env, auth []string, fn func(port int)) {
 			t.Helper()
-			p := freePort(t)
+			// The proxy is another process and binds --port itself, so
+			// the test cannot hold the port for it: another process's
+			// explicit bind can still take it first (#743).
+			p := porttest.Free(t)
 			args := append([]string{"--sqladmin-api-endpoint", "http://" + e.vars["GCPEMU_GATEWAY"] + "/", "--port", strconv.Itoa(p)}, auth...)
 			cmd := exec.Command(proxy, append(args, conn)...)
 			cmd.Env = env

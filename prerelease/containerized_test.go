@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // The Containerized Instance's container, the ports it publishes and the
@@ -137,7 +138,10 @@ func containerizedSQL(t *testing.T, ctx context.Context) {
 	}
 
 	t.Run("auth-proxy", func(t *testing.T) {
-		port := freePort(t)
+		// The proxy is another process and binds --port itself, so the
+		// test cannot hold the port for it: another process's explicit
+		// bind can still take it first (#743).
+		port := porttest.Free(t)
 		// The proxy's static --token is in Google's universe.
 		cmd := exec.CommandContext(ctx, "cloud-sql-proxy", "--sqladmin-api-endpoint", "http://"+c.vars["GCPEMU_GATEWAY"]+"/",
 			"--token", "owner", "--port", strconv.Itoa(port), in.ConnectionName)
@@ -217,17 +221,6 @@ func forwardingRule(t *testing.T, ctx context.Context) {
 	if body := getBody(t, "http://"+addr+"/index.html", "lb ok"); strings.TrimSpace(body) != "lb ok" {
 		t.Fatalf("index.html is %q, want lb ok", body)
 	}
-}
-
-// freePort returns a port free on the host's loopback now.
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
 }
 
 // syncBuffer is a strings.Builder a process writes while the test reads.

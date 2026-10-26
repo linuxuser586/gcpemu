@@ -22,6 +22,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 	"github.com/linuxuser586/gcpemu/internal/published"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -235,7 +236,8 @@ func TestLBServicesPublished(t *testing.T) {
 	s.loopMu.Lock()
 	s.publishedHost = "127.0.0.1"
 	s.loopMu.Unlock()
-	own, ranged := freePort(t), freePort(t)
+	own := porttest.Window(t, 2)
+	ranged := own + 1
 	s.env.Config.PortRange = fmt.Sprintf("%d-%d", ranged, ranged)
 	published := map[int]string{own: net.JoinHostPort("127.0.0.1", strconv.Itoa(own)), ranged: "127.0.0.1:40001"}
 
@@ -342,17 +344,6 @@ func TestLBServicesPublished(t *testing.T) {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
-
-// freePort returns a TCP port free on 127.0.0.1.
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
 
 // fakeLAN is the lb Service's emu.LANFrontends: it records the frontends
 // registered, and grants the claims set.
