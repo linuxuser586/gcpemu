@@ -50,6 +50,11 @@ export interface NodePool {
   selfLink?: string
 }
 
+export interface WorkloadPolicyConfig {
+  allowNetAdmin?: boolean
+  autopilotCompatibilityAuditingEnabled?: boolean
+}
+
 export interface Cluster {
   name: string
   id?: string
@@ -71,7 +76,7 @@ export interface Cluster {
   releaseChannel?: { channel?: string }
   workloadIdentityConfig?: { workloadPool?: string }
   privateClusterConfig?: { enablePrivateNodes?: boolean; enablePrivateEndpoint?: boolean }
-  autopilot?: { enabled?: boolean }
+  autopilot?: { enabled?: boolean; workloadPolicyConfig?: WorkloadPolicyConfig }
   network?: string
   subnetwork?: string
   clusterIpv4Cidr?: string
@@ -109,6 +114,10 @@ export interface ClusterRef {
 }
 
 export const RELEASE_CHANNELS = ['RAPID', 'REGULAR', 'STABLE', 'EXTENDED', 'UNSPECIFIED'] as const
+
+/** releaseChannels are the channels a cluster may take: Autopilot needs one. */
+export const releaseChannels = (autopilot: boolean) =>
+  autopilot ? RELEASE_CHANNELS.filter((c) => c !== 'UNSPECIFIED') : RELEASE_CHANNELS
 
 /** NAME is GKE's cluster and node pool name rule, with its own message. */
 export const NAME = /^[a-z](?:[-a-z0-9]{0,38}[a-z0-9])?$/
