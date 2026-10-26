@@ -3,6 +3,7 @@ package gke_test
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -154,17 +155,19 @@ func TestManagedCollector(t *testing.T) {
 		t.Fatalf("GET collector Service = %d: %s", code, body)
 	}
 
-	// run runs otlpapp as pod, labelled with labels, with env, and fails
-	// unless it succeeds.
-	run := func(pod string, labels map[string]string, env ...map[string]string) {
+	// runSpec runs otlpapp as pod, labelled with labels, with env and the
+	// spec fields of spec, and fails unless it succeeds.
+	runSpec := func(pod string, labels map[string]string, spec map[string]any, env ...map[string]string) {
 		t.Helper()
+		ps := map[string]any{
+			"restartPolicy": "Never",
+			"containers":    []map[string]any{{"name": "app", "image": image, "env": env}},
+		}
+		maps.Copy(ps, spec)
 		e.mustKube("POST", "/api/v1/namespaces/default/pods", map[string]any{
 			"apiVersion": "v1", "kind": "Pod",
 			"metadata": map[string]any{"name": pod, "namespace": "default", "labels": labels},
-			"spec": map[string]any{
-				"restartPolicy": "Never",
-				"containers":    []map[string]any{{"name": "app", "image": image, "env": env}},
-			},
+			"spec":     ps,
 		}, nil)
 		var phase string
 		deadline := time.Now().Add(3 * time.Minute)
@@ -180,6 +183,11 @@ func TestManagedCollector(t *testing.T) {
 			e.kube("GET", "/api/v1/namespaces/default/pods/"+pod, "", nil, &p)
 			t.Fatalf("pod %s: phase %q\nlogs:\n%s\nstatus: %v", pod, phase, logs, p["status"])
 		}
+	}
+	// run runs otlpapp as pod, labelled with labels, with env.
+	run := func(pod string, labels map[string]string, env ...map[string]string) {
+		t.Helper()
+		runSpec(pod, labels, nil, env...)
 	}
 	// send runs otlpapp as pod over protocol.
 	send := func(pod, protocol string) {
@@ -263,6 +271,28 @@ func TestManagedCollector(t *testing.T) {
 		for _, signal := range []string{"traces", "metrics"} {
 			want := map[string]string{"service.name": "otlpapp-sdk", "k8s.cluster.name": "otel",
 				"k8s.namespace.name": "default", "k8s.pod.name": "otlp-sdk"}
+			if !sink.has(signal, want) {
+				sink.mu.Lock()
+				t.Errorf("%s: no resource with %v; got %v", signal, want, sink.got[signal])
+				sink.mu.Unlock()
+			}
+		}
+
+		// A hostNetwork pod shares its node's address; the k8s.pod.uid
+		// the Instrumentation gives it attributes it (#775).
+		runSpec("otlp-hostnet", map[string]string{"app": "sdk"},
+			map[string]any{"hostNetwork": true, "dnsPolicy": "ClusterFirstWithHostNet"},
+			map[string]string{"name": "PROTOCOL", "value": "sdk"},
+			map[string]string{"name": "OTEL_SERVICE_NAME", "value": "otlpapp-hostnet"})
+		var hp struct {
+			Metadata struct{ UID string }
+			Spec     struct{ NodeName string }
+		}
+		e.mustKube("GET", "/api/v1/namespaces/default/pods/otlp-hostnet", nil, &hp)
+		for _, signal := range []string{"traces", "metrics"} {
+			want := map[string]string{"service.name": "otlpapp-hostnet", "k8s.cluster.name": "otel",
+				"k8s.namespace.name": "default", "k8s.pod.name": "otlp-hostnet", "k8s.pod.uid": hp.Metadata.UID,
+				"k8s.node.name": hp.Spec.NodeName}
 			if !sink.has(signal, want) {
 				sink.mu.Lock()
 				t.Errorf("%s: no resource with %v; got %v", signal, want, sink.got[signal])

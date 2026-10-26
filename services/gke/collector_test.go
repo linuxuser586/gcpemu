@@ -147,6 +147,13 @@ func (k *otlpHTTPSink) count() int {
 // the URL base of the receiver for that pod.
 func collectorFixture(t *testing.T, scope containerpb.ManagedOpenTelemetryConfig_Scope) (http.Handler, string) {
 	t.Helper()
+	h, base, _ := collectorFixtureKube(t, scope)
+	return h, base
+}
+
+// collectorFixtureKube is collectorFixture with the cluster's API server.
+func collectorFixtureKube(t *testing.T, scope containerpb.ManagedOpenTelemetryConfig_Scope) (http.Handler, string, *fakeKube) {
+	t.Helper()
 	s := newUnitService(t)
 	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0", Secret: "s3cret", PodCIDR: "10.4.0.0/14"}}
 	rec.setCluster(&containerpb.Cluster{Name: "c0", Id: "cid", ManagedOpentelemetryConfig: &containerpb.ManagedOpenTelemetryConfig{Scope: &scope}})
@@ -165,7 +172,7 @@ func collectorFixture(t *testing.T, scope containerpb.ManagedOpenTelemetryConfig
 	k.put(`{"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{"name":"web-7d9f","namespace":"shop",
 		"ownerReferences":[{"kind":"Deployment","name":"web"}]}}`)
 	s.rtFor(rec.key()).kube = kc
-	return s.internalHandler(), "/_emu/node/cid/s3cret/n1/otlp/10.4.0.7"
+	return s.internalHandler(), "/_emu/node/cid/s3cret/n1/otlp/10.4.0.7", k
 }
 
 func strAttr(k, v string) *commonpb.KeyValue {
@@ -616,5 +623,132 @@ func TestCollectorUnusableProtocolDropsThatSignal(t *testing.T) {
 	}
 	if n := len(sink.bodies["/v1/traces"]); n != 1 {
 		t.Errorf("%d traces requests forwarded, want 1", n)
+	}
+}
+
+// exportTraces posts one request of a resource for each of resources to
+// the receiver at path and returns the resources forwarded.
+func exportTraces(t *testing.T, h http.Handler, sink *otlpHTTPSink, path string, resources ...[]*commonpb.KeyValue) []map[string]string {
+	t.Helper()
+	req := &coltracepb.ExportTraceServiceRequest{}
+	for _, attrs := range resources {
+		req.ResourceSpans = append(req.ResourceSpans, traceRequest(attrs...).ResourceSpans...)
+	}
+	body, _ := proto.Marshal(req)
+	if w := postOTLP(t, h, path, "application/x-protobuf", body); w.Code != http.StatusOK {
+		t.Fatalf("export = %d: %s", w.Code, w.Body)
+	}
+	var got coltracepb.ExportTraceServiceRequest
+	if !sink.last(t, "/v1/traces", &got) {
+		t.Fatal("nothing forwarded")
+	}
+	var out []map[string]string
+	for _, rs := range got.ResourceSpans {
+		out = append(out, attrMap(t, rs.Resource))
+	}
+	return out
+}
+
+// A hostNetwork pod, which shares its node's address, is attributed by
+// the k8s.pod.uid its Instrumentation sets.
+func TestCollectorAttributesHostNetworkPodByUID(t *testing.T) {
+	sink, url := newOTLPHTTPSink(t)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", url)
+	h, _, k := collectorFixtureKube(t, containerpb.ManagedOpenTelemetryConfig_COLLECTION_AND_INSTRUMENTATION_COMPONENTS)
+	k.put(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"agent-x1","namespace":"ops","uid":"u-host"},
+		"spec":{"nodeName":"n1","hostNetwork":true,"containers":[{"name":"agent"}]},"status":{"phase":"Running","podIP":"10.128.0.2"}}`)
+
+	got := exportTraces(t, h, sink, "/_emu/node/cid/s3cret/n1/otlp/10.128.0.2/v1/traces",
+		[]*commonpb.KeyValue{strAttr("service.name", "agent"), strAttr("k8s.pod.uid", "u-host")})
+	want := map[string]string{
+		"service.name":   "agent",
+		"cloud.provider": "gcp", "cloud.platform": "gcp_kubernetes_engine", "cloud.account.id": "p",
+		"cloud.availability_zone": "us-central1-a", "k8s.cluster.name": "c0",
+		"k8s.namespace.name": "ops", "k8s.pod.name": "agent-x1", "k8s.pod.uid": "u-host", "k8s.node.name": "n1",
+		"k8s.container.name": "agent",
+	}
+	if !reflect.DeepEqual(got[0], want) {
+		t.Errorf("resource = %v\nwant       %v", got[0], want)
+	}
+}
+
+// A k8s.pod.uid naming a pod of the cluster attributes its resource to
+// that pod, in any phase and ahead of the sender's address; one naming no
+// pod falls back to the address.
+func TestCollectorAttributesByPodUID(t *testing.T) {
+	const (
+		web   = "/_emu/node/cid/s3cret/n1/otlp/10.4.0.7/v1/traces"
+		node  = "/_emu/node/cid/s3cret/n1/otlp/10.128.0.2/v1/traces"
+		other = "other"
+	)
+	uid := func(u string) []*commonpb.KeyValue { return []*commonpb.KeyValue{strAttr("k8s.pod.uid", u)} }
+	for _, tc := range []struct {
+		name      string
+		path      string
+		resources [][]*commonpb.KeyValue
+		want      []map[string]string // pod attributes of each resource
+	}{
+		{name: "UID wins over the address", path: web, resources: [][]*commonpb.KeyValue{uid("u0")},
+			want: []map[string]string{{"k8s.pod.name": other, "k8s.pod.uid": "u0", "k8s.container.name": "x"}}},
+		{name: "each resource its own pod", path: web,
+			resources: [][]*commonpb.KeyValue{uid("u0"), uid("u-done"), nil},
+			want: []map[string]string{
+				{"k8s.pod.name": other, "k8s.pod.uid": "u0", "k8s.container.name": "x"},
+				{"k8s.pod.name": "batch-1", "k8s.pod.uid": "u-done", "k8s.container.name": "job"},
+				{"k8s.pod.name": "web-7d9f-abc", "k8s.pod.uid": "u1", "k8s.container.name": "app"},
+			}},
+		{name: "Succeeded pod", path: node, resources: [][]*commonpb.KeyValue{uid("u-done")},
+			want: []map[string]string{{"k8s.pod.name": "batch-1", "k8s.pod.uid": "u-done", "k8s.container.name": "job"}}},
+		{name: "Failed pod", path: node, resources: [][]*commonpb.KeyValue{uid("u-failed")},
+			want: []map[string]string{{"k8s.pod.name": "batch-2", "k8s.pod.uid": "u-failed", "k8s.container.name": "job"}}},
+		{name: "unknown UID falls back to the address", path: web, resources: [][]*commonpb.KeyValue{uid("u-gone")},
+			want: []map[string]string{{"k8s.pod.name": "web-7d9f-abc", "k8s.pod.uid": "u-gone", "k8s.container.name": "app"}}},
+		{name: "unknown UID from a node address", path: node, resources: [][]*commonpb.KeyValue{uid("u-gone")},
+			want: []map[string]string{{"k8s.pod.name": "", "k8s.pod.uid": "u-gone", "k8s.container.name": ""}}},
+		{name: "the sender's attributes are kept", path: node,
+			resources: [][]*commonpb.KeyValue{{strAttr("k8s.pod.uid", "u0"), strAttr("k8s.pod.name", "mine"), strAttr("k8s.container.name", "c")}},
+			want:      []map[string]string{{"k8s.pod.name": "mine", "k8s.pod.uid": "u0", "k8s.container.name": "c"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink, url := newOTLPHTTPSink(t)
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", url)
+			h, _, k := collectorFixtureKube(t, containerpb.ManagedOpenTelemetryConfig_COLLECTION_AND_INSTRUMENTATION_COMPONENTS)
+			k.put(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"batch-1","namespace":"shop","uid":"u-done"},
+				"spec":{"nodeName":"n2","containers":[{"name":"job"}]},"status":{"phase":"Succeeded","podIP":"10.4.0.12"}}`)
+			k.put(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"batch-2","namespace":"shop","uid":"u-failed"},
+				"spec":{"nodeName":"n2","containers":[{"name":"job"}]},"status":{"phase":"Failed"}}`)
+			got := exportTraces(t, h, sink, tc.path, tc.resources...)
+			if len(got) != len(tc.want) {
+				t.Fatalf("%d resources forwarded, want %d", len(got), len(tc.want))
+			}
+			for i, w := range tc.want {
+				for key, v := range w {
+					if got[i][key] != v {
+						t.Errorf("resource %d %s = %q, want %q (%v)", i, key, got[i][key], v, got[i])
+					}
+				}
+				if got[i]["k8s.cluster.name"] != "c0" {
+					t.Errorf("resource %d has no cluster attributes: %v", i, got[i])
+				}
+			}
+		})
+	}
+}
+
+// A k8s.pod.uid that named no pod is not looked up again on every export:
+// a pod created with it soon after is not yet found.
+func TestCollectorRemembersUnknownPodUID(t *testing.T) {
+	sink, url := newOTLPHTTPSink(t)
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", url)
+	h, _, k := collectorFixtureKube(t, containerpb.ManagedOpenTelemetryConfig_COLLECTION_AND_INSTRUMENTATION_COMPONENTS)
+	const path = "/_emu/node/cid/s3cret/n1/otlp/10.128.0.2/v1/traces"
+	res := []*commonpb.KeyValue{strAttr("k8s.pod.uid", "u-late")}
+	if got := exportTraces(t, h, sink, path, res); got[0]["k8s.pod.name"] != "" {
+		t.Fatalf("resource = %v, want no pod", got[0])
+	}
+	k.put(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"late","namespace":"ops","uid":"u-late"},
+		"spec":{"nodeName":"n1","hostNetwork":true,"containers":[{"name":"a"}]},"status":{"phase":"Running"}}`)
+	if got := exportTraces(t, h, sink, path, res); got[0]["k8s.pod.name"] != "" {
+		t.Errorf("resource = %v, want no pod until the miss expires", got[0])
 	}
 }

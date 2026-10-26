@@ -52,9 +52,12 @@ import (
 // which the node agent relays its OTLP ports to, tagged with the sender's
 // address. Each resource gets the cluster, namespace, pod, container
 // (when the pod has one), node and owning workload that the sender did
-// not set, as FR-GKE-014's system metrics have them, and the request goes
-// on to the Instance's OTLP endpoint for its signal, named by the standard
-// OTel env vars (read per request). With no OTLP endpoint the request succeeds
+// not set, as FR-GKE-014's system metrics have them. They are those of
+// the pod the resource's k8s.pod.uid names, which GKE's k8sattributes
+// matches first, or else of the pod at the sender's address; a
+// hostNetwork pod shares its node's, so has none. The request goes on to
+// the Instance's OTLP endpoint for its signal, named by the standard OTel
+// env vars (read per request). With no OTLP endpoint the request succeeds
 // and the data is dropped. Nothing is batched, queued or retried: a
 // failed forward fails the sender's export, which retries as OTLP says.
 
@@ -237,9 +240,19 @@ func (s *Service) serveOTLP(w http.ResponseWriter, r *http.Request, key, ip, sig
 		http.Error(w, "invalid OTLP request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	attrs := protoAttrs(append(clusterResourceAttrs(rec), s.podResourceAttrs(r.Context(), key, rec, ip)...))
+	cluster := protoAttrs(clusterResourceAttrs(rec))
+	var byIP []*commonpb.KeyValue // the sender's address's pod, looked up once
+	ipDone := false
 	for _, res := range sig.resources(req) {
-		addMissingAttrs(res, attrs)
+		if pod := s.podUIDResourceAttrs(r.Context(), key, resourceAttr(res, "k8s.pod.uid")); pod != nil {
+			addMissingAttrs(res, protoAttrs(pod))
+		} else {
+			if !ipDone {
+				byIP, ipDone = protoAttrs(s.podResourceAttrs(r.Context(), key, rec, ip)), true
+			}
+			addMissingAttrs(res, byIP)
+		}
+		addMissingAttrs(res, cluster)
 	}
 	t, ok := otlpTargetFromEnv(os.Getenv, signal)
 	if ok && t.protocol != "grpc" && t.protocol != "http/protobuf" {
@@ -342,6 +355,17 @@ func protoAttrs(attrs []attribute.KeyValue) []*commonpb.KeyValue {
 	return out
 }
 
+// resourceAttr returns the string value of res's attribute key, "" if it
+// has none.
+func resourceAttr(res *resourcepb.Resource, key string) string {
+	for _, kv := range res.Attributes {
+		if kv.Key == key {
+			return kv.Value.GetStringValue()
+		}
+	}
+	return ""
+}
+
 // addMissingAttrs adds to res those of attrs whose keys it does not have.
 func addMissingAttrs(res *resourcepb.Resource, attrs []*commonpb.KeyValue) {
 	has := map[string]bool{}
@@ -371,14 +395,15 @@ type otlpPod struct {
 	} `json:"status"`
 }
 
-// otlpPodEntry is a pod IP's cached attributes, none when no pod had it.
+// otlpPodEntry is a pod IP's or UID's cached attributes, none when no pod
+// had it.
 type otlpPodEntry struct {
 	attrs []attribute.KeyValue
 	exp   time.Time
 }
 
-// otlpPodTTL and otlpNoPodTTL are how long a pod IP's attributes, or the
-// finding that no pod has it, are reused.
+// otlpPodTTL and otlpNoPodTTL are how long a pod IP's or UID's attributes,
+// or the finding that no pod has it, are reused.
 const (
 	otlpPodTTL   = 5 * time.Second
 	otlpNoPodTTL = 30 * time.Second
@@ -422,6 +447,40 @@ func (s *Service) podResourceAttrs(ctx context.Context, key string, rec *cluster
 	}
 }
 
+// podUIDResourceAttrs returns the attributes of the pod with uid, in any
+// phase, as podResourceAttrs has them: none when uid is "" or names no pod
+// of the cluster. A sender knows its UID only once its pod exists, so
+// there is no wait; a result is remembered.
+func (s *Service) podUIDResourceAttrs(ctx context.Context, key, uid string) []attribute.KeyValue {
+	if uid == "" {
+		return nil
+	}
+	rt := s.rtFor(key)
+	if v, ok := rt.otlpUID.Load(uid); ok {
+		if e := v.(otlpPodEntry); time.Now().Before(e.exp) {
+			return e.attrs
+		}
+	}
+	kc, err := s.kube(key)
+	if err != nil {
+		return nil
+	}
+	// Pods have no field selector on metadata.uid.
+	var pods kubeList[otlpPod]
+	if err := kc.get(ctx, "/api/v1/pods", &pods); err != nil {
+		return nil
+	}
+	for _, p := range pods.Items {
+		if p.Metadata.UID == uid {
+			attrs := otlpPodAttrs(ctx, kc, p)
+			rt.otlpUID.Store(uid, otlpPodEntry{attrs: attrs, exp: time.Now().Add(otlpPodTTL)})
+			return attrs
+		}
+	}
+	rt.otlpUID.Store(uid, otlpPodEntry{exp: time.Now().Add(otlpNoPodTTL)})
+	return nil
+}
+
 // lookupOTLPPod returns the attributes of the running pod with ip, found
 // false when there is none or the API server cannot tell.
 func lookupOTLPPod(ctx context.Context, kc *kubeClient, ip string) ([]attribute.KeyValue, bool) {
@@ -433,38 +492,44 @@ func lookupOTLPPod(ctx context.Context, kc *kubeClient, ip string) ([]attribute.
 		if p.Status.PodIP != ip || p.Spec.HostNetwork || p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" {
 			continue
 		}
-		m := p.Metadata
-		attrs := []attribute.KeyValue{
-			attribute.String("k8s.namespace.name", m.Namespace),
-			attribute.String("k8s.pod.name", m.Name),
-			attribute.String("k8s.pod.uid", m.UID),
-		}
-		if p.Spec.NodeName != "" {
-			attrs = append(attrs, attribute.String("k8s.node.name", p.Spec.NodeName))
-		}
-		if len(p.Spec.Containers) == 1 {
-			attrs = append(attrs, attribute.String("k8s.container.name", p.Spec.Containers[0].Name))
-		}
-		// The owners' owners: a ReplicaSet's Deployment, a Job's CronJob.
-		owners := map[string]objectMeta{}
-		for _, o := range m.OwnerReferences {
-			var path string
-			switch o.Kind {
-			case "ReplicaSet":
-				path = "/apis/apps/v1/namespaces/" + m.Namespace + "/replicasets/" + o.Name
-			case "Job":
-				path = "/apis/batch/v1/namespaces/" + m.Namespace + "/jobs/" + o.Name
-			default:
-				continue
-			}
-			var owned metricsOwned
-			if err := kc.get(ctx, path, &owned); err == nil {
-				owners[o.Kind+"/"+m.Namespace+"/"+o.Name] = owned.Metadata
-			}
-		}
-		return append(attrs, workloadAttrs(m, owners)...), true
+		return otlpPodAttrs(ctx, kc, p), true
 	}
 	return nil, false
+}
+
+// otlpPodAttrs returns p's namespace, pod, its container if it has only
+// one, node and owning workload.
+func otlpPodAttrs(ctx context.Context, kc *kubeClient, p otlpPod) []attribute.KeyValue {
+	m := p.Metadata
+	attrs := []attribute.KeyValue{
+		attribute.String("k8s.namespace.name", m.Namespace),
+		attribute.String("k8s.pod.name", m.Name),
+		attribute.String("k8s.pod.uid", m.UID),
+	}
+	if p.Spec.NodeName != "" {
+		attrs = append(attrs, attribute.String("k8s.node.name", p.Spec.NodeName))
+	}
+	if len(p.Spec.Containers) == 1 {
+		attrs = append(attrs, attribute.String("k8s.container.name", p.Spec.Containers[0].Name))
+	}
+	// The owners' owners: a ReplicaSet's Deployment, a Job's CronJob.
+	owners := map[string]objectMeta{}
+	for _, o := range m.OwnerReferences {
+		var path string
+		switch o.Kind {
+		case "ReplicaSet":
+			path = "/apis/apps/v1/namespaces/" + m.Namespace + "/replicasets/" + o.Name
+		case "Job":
+			path = "/apis/batch/v1/namespaces/" + m.Namespace + "/jobs/" + o.Name
+		default:
+			continue
+		}
+		var owned metricsOwned
+		if err := kc.get(ctx, path, &owned); err == nil {
+			owners[o.Kind+"/"+m.Namespace+"/"+o.Name] = owned.Metadata
+		}
+	}
+	return append(attrs, workloadAttrs(m, owners)...)
 }
 
 // forwardOTLP sends req, a request of sig, to t.

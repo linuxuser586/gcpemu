@@ -62,9 +62,10 @@ type clusterRT struct {
 	// controllers are cancelled, so no node outlives the cluster.
 	scaleMu sync.Mutex
 	// l7Mu serialises load balancer syncs with their removal (l7.go).
-	l7Mu sync.Mutex
-	wi   sync.Map // pod IP → wiEntry
-	otlp sync.Map // pod IP → otlpPodEntry
+	l7Mu    sync.Mutex
+	wi      sync.Map // pod IP → wiEntry
+	otlp    sync.Map // pod IP → otlpPodEntry
+	otlpUID sync.Map // pod UID → otlpPodEntry
 	// otlpWarned holds the signal|protocol pairs the Managed collector
 	// has logged dropping.
 	otlpWarned sync.Map
