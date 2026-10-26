@@ -264,11 +264,18 @@ it('creates an Autopilot cluster, with no node pool fields and the API’s messa
   expect(
     within(screen.getByLabelText('Release channel')).queryByRole('option', { name: 'UNSPECIFIED' }),
   ).not.toBeInTheDocument()
+  // GKE keeps Workload Identity on.
+  expect(screen.getByLabelText(/Workload Identity/)).toBeChecked()
+  expect(screen.getByLabelText(/Workload Identity/)).toBeDisabled()
+  // The default zone becomes its region; a zone typed afterwards is the API's to refuse.
+  const location = screen.getByLabelText('Location')
+  expect(location).toHaveValue('us-central1')
+  await user.clear(location)
+  await user.type(location, 'us-central1-a')
 
   await user.click(screen.getByRole('button', { name: 'Create' }))
   expect(await screen.findByText('Autopilot clusters must be regional clusters.')).toBeVisible()
 
-  const location = screen.getByLabelText('Location')
   await user.clear(location)
   await user.type(location, 'us-central1')
   await user.click(screen.getByLabelText(/Allow NET_ADMIN/))
@@ -286,6 +293,38 @@ it('creates an Autopilot cluster, with no node pool fields and the API’s messa
         workloadIdentityConfig: { workloadPool: `${P}.svc.id.goog` },
       },
     },
+  })
+})
+
+it('sends node pools typed as JSON for an Autopilot cluster, for the API to refuse', async () => {
+  const user = userEvent.setup()
+  server.use(
+    http.post(`*/container/v1/projects/${P}/locations/:loc/clusters`, async ({ request }) => {
+      await record(request)
+      return HttpResponse.json(op('CREATE_CLUSTER'))
+    }),
+  )
+  renderApp(`/gke/create?project=${P}`)
+  await user.type(await screen.findByLabelText('Name'), 'auto')
+  // A Standard body's own pool fields go when the mode changes.
+  await user.click(screen.getByRole('tab', { name: 'JSON' }))
+  await user.click(screen.getByRole('tab', { name: 'Form' }))
+  await user.click(screen.getByLabelText('Autopilot'))
+  await user.click(screen.getByRole('tab', { name: 'JSON' }))
+  const editor = screen.getByLabelText('Request body')
+  const body = JSON.parse((editor as HTMLTextAreaElement).value) as { cluster: Cluster }
+  expect(body.cluster).not.toHaveProperty('initialNodeCount')
+  expect(body.cluster).not.toHaveProperty('nodeConfig')
+
+  body.cluster.nodePools = [{ name: 'mine', initialNodeCount: 1 }]
+  await user.clear(editor)
+  await user.click(editor)
+  await user.paste(JSON.stringify(body))
+  await user.click(screen.getByRole('tab', { name: 'Form' }))
+  await user.click(screen.getByRole('button', { name: 'Create' }))
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0]!.body).toMatchObject({
+    cluster: { autopilot: { enabled: true }, nodePools: [{ name: 'mine', initialNodeCount: 1 }] },
   })
 })
 
@@ -435,6 +474,7 @@ it('edits an Autopilot cluster’s NET_ADMIN policy, keeping the rest of it', as
   const channel = await screen.findByLabelText('Release channel')
   expect(channel).toHaveValue('REGULAR')
   expect(within(channel).queryByRole('option', { name: 'UNSPECIFIED' })).not.toBeInTheDocument()
+  expect(screen.getByLabelText(/Workload Identity/)).toBeDisabled()
   const netAdmin = screen.getByLabelText(/Allow NET_ADMIN/)
   expect(netAdmin).not.toBeChecked()
   await user.click(netAdmin)
@@ -454,6 +494,45 @@ it('edits an Autopilot cluster’s NET_ADMIN policy, keeping the rest of it', as
       },
     },
   ])
+})
+
+it('keeps an Autopilot workload policy typed as JSON when NET_ADMIN changes', async () => {
+  const user = userEvent.setup()
+  server.use(
+    getAutopilot,
+    http.put(
+      `*/container/v1/projects/${P}/locations/us-central1/clusters/auto`,
+      async ({ request }) => {
+        await record(request)
+        return HttpResponse.json(op('UPDATE_CLUSTER'))
+      },
+    ),
+  )
+  renderApp(`${autoBase}/edit?project=${P}`)
+  await screen.findByLabelText(/Allow NET_ADMIN/)
+  await user.click(screen.getByRole('tab', { name: 'JSON' }))
+  const editor = screen.getByLabelText('Request body')
+  await user.clear(editor)
+  await user.click(editor)
+  await user.paste(
+    JSON.stringify({
+      update: {
+        desiredAutopilotWorkloadPolicyConfig: { autopilotCompatibilityAuditingEnabled: true },
+      },
+    }),
+  )
+  await user.click(screen.getByRole('tab', { name: 'Form' }))
+  await user.click(screen.getByLabelText(/Allow NET_ADMIN/))
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0]!.body).toEqual({
+    update: {
+      desiredAutopilotWorkloadPolicyConfig: {
+        autopilotCompatibilityAuditingEnabled: true,
+        allowNetAdmin: true,
+      },
+    },
+  })
 })
 
 it('resizes a node pool, with the API’s message for a bad size', async () => {

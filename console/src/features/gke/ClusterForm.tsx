@@ -27,13 +27,14 @@ import {
   updateCluster,
   waitOperation,
   type Cluster,
+  type ClusterMode,
   type ClusterRef,
 } from './api'
 import { clusterPath, useClusterRef } from './GkeLayout'
 
-// Create and edit forms for clusters (FR-GKE-001, FR-UI-011). Create sends
-// clusters.create's {cluster}; edit sends clusters.update's {update}
-// (ClusterUpdate), with labels set through setResourceLabels first.
+// Create and edit forms for clusters (FR-GKE-001, FR-GKE-012, FR-UI-011).
+// Create sends clusters.create's {cluster}; edit sends clusters.update's
+// {update} (ClusterUpdate), with labels set through setResourceLabels first.
 
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj =>
@@ -54,6 +55,9 @@ const labelsField = z.string().superRefine((v, ctx) => {
 
 const DEFAULT_LOCATION = 'us-central1-a'
 
+/** regionOf is a zone's region, or location itself when it is not a zone. */
+const regionOf = (location: string) => /^([a-z]+-[a-z]+\d+)-[a-z]$/.exec(location)?.[1] ?? location
+
 // ---- create ----
 
 const createSchema = z.object({
@@ -61,7 +65,7 @@ const createSchema = z.object({
     if (!NAME.test(v)) ctx.addIssue({ code: 'custom', message: nameMessage('cluster', v) })
   }),
   location: z.string().trim().min(1, 'A cluster needs a location: a zone or a region.'),
-  mode: z.enum(['standard', 'autopilot']),
+  mode: z.enum(['Standard', 'Autopilot'] satisfies ClusterMode[]),
   nodeCount: z
     .number({ error: 'The number of nodes must be a whole number.' })
     .int('The number of nodes must be a whole number.')
@@ -80,40 +84,43 @@ type CreateValues = z.infer<typeof createSchema>
  * createBody writes the create form onto a clusters.create body. The
  * node count and machine type belong to the first node pool when the
  * body lists node pools, and to the default pool's fields otherwise. An
- * Autopilot cluster has neither: GKE manages its node pools.
+ * Autopilot cluster has no default pool fields, as GKE manages its node
+ * pools; node pools typed as JSON are left for the API to refuse.
  */
 export function createBody(project: string, v: CreateValues, base: Body): Body {
   const c = { ...obj(base.cluster) }
   c.name = v.name
   const pools = Array.isArray(c.nodePools) ? (c.nodePools as Obj[]) : undefined
-  if (v.mode === 'autopilot') {
+  const autopilot = v.mode === 'Autopilot'
+  if (autopilot) {
     const ap: Obj = { ...obj(c.autopilot), enabled: true }
     const wp = { ...obj(ap.workloadPolicyConfig) }
     put(wp, 'allowNetAdmin', v.allowNetAdmin || undefined)
     put(ap, 'workloadPolicyConfig', Object.keys(wp).length ? wp : undefined)
     c.autopilot = ap
-    delete c.nodePools
     delete c.initialNodeCount
     delete c.nodeConfig
-  } else if (pools?.length) {
-    const first = { ...pools[0] }
-    first.initialNodeCount = v.nodeCount
-    first.config = { ...obj(first.config) }
-    put(first.config as Obj, 'machineType', v.machineType || undefined)
-    c.nodePools = [first, ...pools.slice(1)]
   } else {
-    c.initialNodeCount = v.nodeCount
-    c.nodeConfig = { ...obj(c.nodeConfig) }
-    put(c.nodeConfig as Obj, 'machineType', v.machineType || undefined)
-    if (Object.keys(c.nodeConfig as Obj).length === 0) delete c.nodeConfig
+    delete c.autopilot
+    if (pools?.length) {
+      const first = { ...pools[0] }
+      first.initialNodeCount = v.nodeCount
+      first.config = { ...obj(first.config) }
+      put(first.config as Obj, 'machineType', v.machineType || undefined)
+      c.nodePools = [first, ...pools.slice(1)]
+    } else {
+      c.initialNodeCount = v.nodeCount
+      c.nodeConfig = { ...obj(c.nodeConfig) }
+      put(c.nodeConfig as Obj, 'machineType', v.machineType || undefined)
+      if (Object.keys(c.nodeConfig as Obj).length === 0) delete c.nodeConfig
+    }
   }
-  if (v.mode === 'standard') delete c.autopilot
   put(c, 'releaseChannel', v.releaseChannel ? { channel: v.releaseChannel } : undefined)
   put(c, 'initialClusterVersion', v.version || undefined)
   put(
     c,
     'workloadIdentityConfig',
-    v.workloadIdentity ? { workloadPool: `${project}.svc.id.goog` } : undefined,
+    v.workloadIdentity || autopilot ? { workloadPool: `${project}.svc.id.goog` } : undefined,
   )
   const pcc = { ...obj(c.privateClusterConfig) }
   put(pcc, 'enablePrivateNodes', v.privateNodes || undefined)
@@ -134,14 +141,10 @@ export function createValues(body: Body, prev: CreateValues): CreateValues {
   return {
     name: typeof c.name === 'string' ? c.name : '',
     location: prev.location,
-    mode: autopilot ? 'autopilot' : 'standard',
-    // An Autopilot body has no pool fields; the form keeps its own.
+    mode: autopilot ? 'Autopilot' : 'Standard',
+    // An Autopilot body has no default pool fields; the form keeps its own.
     nodeCount: autopilot ? prev.nodeCount : typeof nodeCount === 'number' ? nodeCount : 0,
-    machineType: autopilot
-      ? prev.machineType
-      : typeof cfg.machineType === 'string'
-        ? cfg.machineType
-        : '',
+    machineType: autopilot ? prev.machineType : str(cfg.machineType),
     releaseChannel: str(obj(c.releaseChannel).channel),
     version: typeof c.initialClusterVersion === 'string' ? c.initialClusterVersion : '',
     workloadIdentity: !!obj(c.workloadIdentityConfig).workloadPool,
@@ -168,6 +171,34 @@ function VersionOptions({ project, location }: { project: string; location: stri
   )
 }
 
+/**
+ * WorkloadIdentity is the Workload Identity choice; GKE keeps it on for an
+ * Autopilot cluster, so there it is shown on and cannot be changed.
+ */
+function WorkloadIdentity({
+  project,
+  register,
+  gkeOwned,
+}: {
+  project: string
+  register: UseFormRegisterReturn
+  gkeOwned: boolean
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      {gkeOwned ? (
+        <input type="checkbox" className="size-4" checked disabled readOnly />
+      ) : (
+        <input type="checkbox" className="size-4" {...register} />
+      )}
+      <span>
+        Workload Identity (<span className="font-mono">{project}.svc.id.goog</span>)
+        {gkeOwned && ': GKE keeps it on'}
+      </span>
+    </label>
+  )
+}
+
 /** AllowNetAdmin is an Autopilot cluster's workloadPolicyConfig.allowNetAdmin. */
 function AllowNetAdmin({ register }: { register: UseFormRegisterReturn }) {
   return (
@@ -186,7 +217,7 @@ export function CreateCluster() {
   const defaults: CreateValues = {
     name: '',
     location: view.location || DEFAULT_LOCATION,
-    mode: 'standard',
+    mode: 'Standard',
     nodeCount: 1,
     machineType: 'e2-medium',
     releaseChannel: '',
@@ -202,13 +233,14 @@ export function CreateCluster() {
   })
   const errors = form.formState.errors
   const location = useWatch({ control: form.control, name: 'location' })
-  const autopilot = useWatch({ control: form.control, name: 'mode' }) === 'autopilot'
-  // Autopilot offers no UNSPECIFIED channel, so a choice of it falls back to the default.
-  const noUnspecified = () => {
-    if (
-      form.getValues('mode') === 'autopilot' &&
-      form.getValues('releaseChannel') === 'UNSPECIFIED'
-    ) {
+  const autopilot = useWatch({ control: form.control, name: 'mode' }) === 'Autopilot'
+  // An Autopilot cluster is regional and needs a release channel: a zone
+  // becomes its region, and a channel it cannot take, the default.
+  const onModeChange = () => {
+    if (form.getValues('mode') !== 'Autopilot') return
+    form.setValue('location', regionOf(form.getValues('location').trim()))
+    const channel = form.getValues('releaseChannel')
+    if (channel && !releaseChannels(true).some((c) => c === channel)) {
       form.setValue('releaseChannel', '')
     }
   }
@@ -262,18 +294,18 @@ export function CreateCluster() {
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="radio"
-                value="standard"
+                value="Standard"
                 className="size-4"
-                {...form.register('mode', { onChange: noUnspecified })}
+                {...form.register('mode', { onChange: onModeChange })}
               />
               Standard
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="radio"
-                value="autopilot"
+                value="Autopilot"
                 className="size-4"
-                {...form.register('mode', { onChange: noUnspecified })}
+                {...form.register('mode', { onChange: onModeChange })}
               />
               Autopilot
             </label>
@@ -339,10 +371,11 @@ export function CreateCluster() {
               </NativeSelect>
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="size-4" {...form.register('workloadIdentity')} />
-            Workload Identity (<span className="font-mono">{project}.svc.id.goog</span>)
-          </label>
+          <WorkloadIdentity
+            project={project}
+            register={form.register('workloadIdentity')}
+            gkeOwned={autopilot}
+          />
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" className="size-4" {...form.register('privateNodes')} />
             Private nodes (egress only through Cloud NAT)
@@ -396,7 +429,8 @@ function editDefaults(c: Cluster): EditValues {
 /**
  * updateBody writes what the edit form changed onto a clusters.update
  * body. An Autopilot cluster's workload policy is replaced whole, so a
- * change to NET_ADMIN keeps the rest of it; a Standard cluster has none.
+ * change to NET_ADMIN keeps the rest of it: the policy typed as JSON, or
+ * else the cluster's. A Standard cluster has none.
  */
 export function updateBody(project: string, c: Cluster, v: EditValues, base: Body): Body {
   const u = { ...obj(base.update) }
@@ -421,11 +455,12 @@ export function updateBody(project: string, c: Cluster, v: EditValues, base: Bod
     v.monitoringService !== was.monitoringService ? v.monitoringService : undefined,
   )
   if (isAutopilot(c) && v.allowNetAdmin !== was.allowNetAdmin) {
+    const typed = u.desiredAutopilotWorkloadPolicyConfig
     u.desiredAutopilotWorkloadPolicyConfig = {
-      ...c.autopilot?.workloadPolicyConfig,
+      ...(typed ? obj(typed) : c.autopilot?.workloadPolicyConfig),
       allowNetAdmin: v.allowNetAdmin,
     }
-  } else if (isAutopilot(c)) delete u.desiredAutopilotWorkloadPolicyConfig
+  }
   return { ...base, update: u }
 }
 
@@ -553,10 +588,11 @@ function EditClusterForm({ cluster, clusterRef }: { cluster: Cluster; clusterRef
             </NativeSelect>
           </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" className="size-4" {...form.register('workloadIdentity')} />
-          Workload Identity (<span className="font-mono">{clusterRef.project}.svc.id.goog</span>)
-        </label>
+        <WorkloadIdentity
+          project={clusterRef.project}
+          register={form.register('workloadIdentity')}
+          gkeOwned={isAutopilot(cluster)}
+        />
         {isAutopilot(cluster) && <AllowNetAdmin register={form.register('allowNetAdmin')} />}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field id="edit-logging" label="Logging service" error={errors.loggingService?.message}>

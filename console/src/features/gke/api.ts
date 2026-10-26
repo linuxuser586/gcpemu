@@ -141,8 +141,11 @@ export const isRunning = (c?: Cluster) => c?.status === 'RUNNING' || c?.status =
  */
 export const isAutopilot = (c?: Cluster) => !!c?.autopilot?.enabled
 
+/** ClusterMode is whether a cluster is Standard or Autopilot, fixed at create. */
+export type ClusterMode = 'Standard' | 'Autopilot'
+
 /** clusterMode is a cluster's mode as GKE shows it. */
-export const clusterMode = (c: Cluster) => (isAutopilot(c) ? 'Autopilot' : 'Standard')
+export const clusterMode = (c: Cluster): ClusterMode => (isAutopilot(c) ? 'Autopilot' : 'Standard')
 
 // ---- container v1 ----
 

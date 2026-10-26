@@ -30,10 +30,11 @@ import { clusterPath, useClusterRef } from './GkeLayout'
 import { GkePoolsNote } from './NodePools'
 import { formatTaints, parseTaints, taintsError } from './taints'
 
-// Create and edit forms for node pools (FR-GKE-003, FR-UI-011): create
-// sends nodePools.create's {nodePool}; edit sends nodePools.update's
-// request (labels, taints, machine type), then a node version upgrade.
-// An Autopilot cluster's node pools are GKE's own: neither form is shown.
+// Create and edit forms for node pools (FR-GKE-003, FR-GKE-012,
+// FR-UI-011): create sends nodePools.create's {nodePool}; edit sends
+// nodePools.update's request (labels, taints, machine type), then a node
+// version upgrade. An Autopilot cluster's node pools are GKE's own:
+// neither form is shown.
 
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj =>
@@ -137,8 +138,8 @@ export function nodePoolValues(body: Body): CreateValues {
   }
 }
 
-/** GkePools stands in for a node pool form on an Autopilot cluster. */
-function GkePools() {
+/** GkeOwnedPoolsNotice stands in for a node pool form on an Autopilot cluster. */
+function GkeOwnedPoolsNotice() {
   return (
     <Card role="status">
       <GkePoolsNote />
@@ -147,7 +148,7 @@ function GkePools() {
 }
 
 export function CreateNodePool() {
-  return isAutopilot(useCluster()) ? <GkePools /> : <CreateNodePoolForm />
+  return isAutopilot(useCluster()) ? <GkeOwnedPoolsNotice /> : <CreateNodePoolForm />
 }
 
 function CreateNodePoolForm() {
@@ -307,7 +308,7 @@ export function EditNodePool() {
   const ref = useClusterRef()
   const { pool = '' } = useParams()
   const np = c.nodePools?.find((p) => p.name === pool)
-  if (isAutopilot(c)) return <GkePools />
+  if (isAutopilot(c)) return <GkeOwnedPoolsNotice />
   if (!np) {
     return (
       <Card role="status">
