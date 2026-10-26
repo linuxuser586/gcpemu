@@ -157,20 +157,20 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 	return nil
 }
 
-// awaitControl waits for the agent in container id to report the control
+// awaitControl waits for the Sidecar agent in container id to report the control
 // address it listens on, on the host's loopback (writeControl).
 func (r *LANRelay) awaitControl(ctx context.Context, rt *runtime.Manager, id string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
-		logs, err := rt.Logs(ctx, id, 100)
+		// Inspect first: logs read after an exit hold all the Sidecar agent wrote.
+		c, err := rt.InspectContainer(ctx, id)
+		logs, _ := rt.Logs(ctx, id, 100)
 		if addr, ok := readControl(logs); ok {
 			return addr, nil
 		}
-		if err == nil {
-			if c, ierr := rt.InspectContainer(ctx, id); ierr == nil && (c.Status == "exited" || c.Status == "dead") {
-				return "", fmt.Errorf("container exited with code %d before reporting its control port", c.ExitCode)
-			}
+		if err == nil && (c.Status == "exited" || c.Status == "dead") {
+			return "", fmt.Errorf("container exited with code %d before reporting its control port", c.ExitCode)
 		}
 		select {
 		case <-ctx.Done():
@@ -204,7 +204,7 @@ func (r *LANRelay) Close(ctx context.Context) {
 	r.removeLocked(ctx)
 }
 
-// runLANAgent is a LANRelay container's agent: edgeAgent listeners on host
+// runLANAgent is a LANRelay container's Sidecar agent: edgeAgent listeners on host
 // addresses, configured on a control port it reports on stdout.
 func runLANAgent(ctx context.Context, _ []string) error {
 	return serveLAN(ctx, os.Stdout, os.Getenv("GCPEMU_LB_TOKEN"))
@@ -230,11 +230,12 @@ func serveLAN(ctx context.Context, out io.Writer, token string) error {
 	return nil
 }
 
-// controlPrefix starts the line a LAN agent writes its control address on.
-const controlPrefix = "gcpemu agent lan: control "
+// controlPrefix starts the line the Sidecar agent in LAN mode writes its
+// control address on.
+const controlPrefix = "gcpemu agent " + LANAgentName + ": control "
 
 // writeControl writes the line that tells the emulator addr, the control
-// address the LAN agent listens on.
+// address the Sidecar agent in LAN mode listens on.
 func writeControl(w io.Writer, addr string) {
 	fmt.Fprintf(w, "%s%s\n", controlPrefix, addr)
 }
