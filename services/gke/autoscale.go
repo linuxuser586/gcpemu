@@ -93,13 +93,6 @@ func units(q string) int64 {
 	return int64(math.Ceil(v))
 }
 
-type podContainer struct {
-	Resources struct {
-		Requests map[string]string `json:"requests"`
-	} `json:"resources"`
-	RestartPolicy string `json:"restartPolicy"`
-}
-
 type nodeSelectorTerm struct {
 	MatchExpressions []struct {
 		Key      string   `json:"key"`
@@ -112,12 +105,11 @@ type nodeSelectorTerm struct {
 type scalePod struct {
 	Metadata objectMeta `json:"metadata"`
 	Spec     struct {
-		NodeName       string            `json:"nodeName"`
-		NodeSelector   map[string]string `json:"nodeSelector"`
-		Containers     []podContainer    `json:"containers"`
-		InitContainers []podContainer    `json:"initContainers"`
-		Overhead       map[string]string `json:"overhead"`
-		Affinity       struct {
+		podContainers
+		NodeName     string            `json:"nodeName"`
+		NodeSelector map[string]string `json:"nodeSelector"`
+		Overhead     map[string]string `json:"overhead"`
+		Affinity     struct {
 			NodeAffinity struct {
 				Required struct {
 					Terms []nodeSelectorTerm `json:"nodeSelectorTerms"`
@@ -135,26 +127,15 @@ type scalePod struct {
 	} `json:"status"`
 }
 
-// requests is what the scheduler counts for the pod: its containers and
-// sidecars, or its largest init container if more, plus its overhead.
+// requests is what the scheduler counts for the pod: its CPU and memory
+// as podContainers.request counts them for the Workload restrictions too,
+// plus its overhead.
 func (p *scalePod) requests() res {
-	req := func(c podContainer) res {
-		return res{cpu: milli(c.Resources.Requests["cpu"]), mem: units(c.Resources.Requests["memory"])}
+	return res{
+		cpu:  p.Spec.request("cpu") + milli(p.Spec.Overhead["cpu"]),
+		mem:  p.Spec.request("memory") + units(p.Spec.Overhead["memory"]),
+		pods: 1,
 	}
-	var run, init res
-	for _, c := range p.Spec.Containers {
-		run = run.plus(req(c))
-	}
-	for _, c := range p.Spec.InitContainers {
-		r := req(c)
-		if c.RestartPolicy == "Always" {
-			run = run.plus(r)
-			continue
-		}
-		init.cpu, init.mem = max(init.cpu, r.cpu), max(init.mem, r.mem)
-	}
-	out := res{cpu: max(run.cpu, init.cpu), mem: max(run.mem, init.mem), pods: 1}
-	return out.plus(res{cpu: milli(p.Spec.Overhead["cpu"]), mem: units(p.Spec.Overhead["memory"])})
 }
 
 // unschedulable reports whether the scheduler found no node for the pod.
