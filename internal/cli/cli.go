@@ -177,7 +177,7 @@ func (o *rootOpts) instanceFlags(f *pflag.FlagSet) {
 	f.StringVar(&o.flags.DefaultPrincipal, "default-principal", "user:dev@example.com", "principal for unauthenticated requests")
 	f.StringVar(&o.flags.LogFormat, "log-format", "text", "log format: text or json")
 	f.StringVar(&o.flags.LogLevel, "log-level", "info", "log level")
-	f.StringToStringVar(&o.external, "external", nil, "delegate an API no Service serves to the External emulator at host:port, keyed by API name, e.g. firestore=localhost:8080, or with =managed run Google's emulator for firestore, datastore, spanner or bigtable as a container, its data in memory only; the first start pulls an image of over 1 GB (repeatable)")
+	f.StringToStringVar(&o.external, "external", nil, "delegate an API no Service serves to the External emulator at host:port, keyed by API name, e.g. firestore=localhost:8080, or with =managed run Google's emulator for firestore, datastore, spanner or bigtable as a container, keeping firestore's and datastore's data across a clean stop and the others' in memory only; the first start pulls an image of over 1 GB (repeatable)")
 	f.StringToStringVar(&o.lro, "lro-latency", nil, "Operation latency per Service ID, e.g. gke=20s or *=1s (default instant)")
 	f.BoolVar(&o.flags.Deterministic, "deterministic", false, "run a Deterministic Instance: reproducible IDs and a fake clock")
 	f.BoolVar(&o.flags.StrictProjects, "strict-projects", false, "require projects to be declared")

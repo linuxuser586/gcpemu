@@ -4,13 +4,17 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/datastore/apiv1/datastorepb"
+	"cloud.google.com/go/firestore/apiv1/firestorepb"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -387,5 +391,76 @@ func TestDelegateHostTaken(t *testing.T) {
 	}
 	if err := g.Delegate("bigtableadmin", "localhost:8087"); err == nil || !strings.Contains(err.Error(), "bigtable") {
 		t.Errorf("Delegate(bigtableadmin) = %v, want a refusal naming bigtable", err)
+	}
+}
+
+// TestManagedRecordsDatabases: the API gateway records the project and
+// database of each request it forwards to a Managed emulator for Firestore
+// or Datastore, over gRPC and REST alike, Datastore's default database
+// counting as one (#649, ADR 0036).
+func TestManagedRecordsDatabases(t *testing.T) {
+	g, addr := serveGateway(t)
+	rest, grpcAddr := fakeREST(t), fakeGRPC(t)
+	dial := func(ctx context.Context, grpc bool) (net.Conn, error) {
+		target := rest
+		if grpc {
+			target = grpcAddr
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", target)
+	}
+	var mu sync.Mutex
+	got := map[string]bool{}
+	for _, api := range []string{"firestore", "datastore"} {
+		if err := g.DelegateManaged(api, dial, func(project, database string) {
+			mu.Lock()
+			got[api+" "+project+" "+database] = true
+			mu.Unlock()
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn := dialGRPC(t, addr)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, c := range []struct {
+		method string
+		msg    proto.Message
+	}{
+		{"/google.firestore.v1.Firestore/GetDocument", &firestorepb.GetDocumentRequest{Name: "projects/fs-a/databases/(default)/documents/c/d"}},
+		{"/google.firestore.v1.Firestore/Commit", &firestorepb.CommitRequest{Database: "projects/fs-b/databases/named"}},
+		{"/google.datastore.v1.Datastore/Lookup", &datastorepb.LookupRequest{ProjectId: "ds-a"}},
+		{"/google.datastore.v1.Datastore/RunQuery", &datastorepb.RunQueryRequest{ProjectId: "ds-b", DatabaseId: "named"}},
+	} {
+		in, _ := proto.Marshal(c.msg)
+		var out []byte
+		if err := conn.Invoke(ctx, c.method, &in, &out); err != nil {
+			t.Fatalf("%s: %v", c.method, err)
+		}
+	}
+	for _, r := range []struct{ path, body string }{
+		{"/firestore/v1/projects/fs-c/databases/(default)/documents/c/d", ""},
+		{"/v1/projects/fs-d/databases/rest-db/documents:commit", "{}"},
+		{"/v1/projects/ds-c:commit", `{"databaseId":"rest-db","mode":"NON_TRANSACTIONAL"}`},
+		{"/v1/projects/ds-d:lookup", `{"keys":[]}`},
+	} {
+		resp, err := http.Post("http://"+addr+r.path, "application/json", strings.NewReader(r.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.HasSuffix(string(b), " "+r.body) {
+			t.Errorf("%s: the emulator got %q, want the body %q unchanged", r.path, b, r.body)
+		}
+	}
+	want := []string{
+		"datastore ds-a ", "datastore ds-b named", "datastore ds-c rest-db", "datastore ds-d ",
+		"firestore fs-a (default)", "firestore fs-b named", "firestore fs-c (default)", "firestore fs-d rest-db",
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if keys := slices.Sorted(maps.Keys(got)); !slices.Equal(keys, want) {
+		t.Errorf("recorded %q, want %q", keys, want)
 	}
 }

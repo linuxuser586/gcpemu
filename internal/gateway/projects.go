@@ -245,7 +245,7 @@ func messageProjects(r *http.Request) []string {
 	if md == nil {
 		return nil
 	}
-	b := firstMessage(r)
+	b := firstMessage(r, maxPeek)
 	if b == nil {
 		return nil
 	}

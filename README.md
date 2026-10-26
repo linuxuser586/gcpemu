@@ -603,9 +603,16 @@ eval "$(gcpemu env)"
 - A Managed emulator has no address on the host or the LAN: clients reach it only through the API
   gateway, exactly as an External emulator configured by address, with no IAM check. Spanner's
   REST requests go to its emulator's REST port.
-- **A Managed emulator's data never survives a stop.** It is in memory only: Reset replaces each
-  Managed emulator's container, which clears its data, State snapshots don't hold it, and a
-  Persistent Instance loses it on every stop.
+- **Firestore's and Datastore's data survives a clean stop; Spanner's and Bigtable's does not.**
+  When a Persistent Instance stops cleanly, it exports each Firestore and Datastore database its
+  clients used into its data directory, and imports them when it starts again, before it is
+  ready; State snapshots hold that data too
+  (`docs/adr/0036-firestores-and-datastores-managed-emulators-keep-their-data.md`). If the
+  export fails, for example because the container was stopped behind the Instance's back, the
+  data saved at the stop before is kept and anything written since is lost. Spanner's and
+  Bigtable's emulators are in memory only: a Persistent Instance loses their data on every stop
+  and logs which ones at start, and State snapshots don't hold it. Reset clears every Managed
+  emulator's data, saved data included.
 - It needs a container runtime. With none, the Instance still starts and is ready, and the API
   answers UNAVAILABLE saying the runtime is missing, as `gcpemu doctor` does. One that the runtime
   stops or restarts behind the Instance's back is a Disrupted container. In Go tests,

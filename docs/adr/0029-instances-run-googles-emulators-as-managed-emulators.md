@@ -1,6 +1,6 @@
 # Instances run Google's emulators as Managed emulators, in memory only
 
-Amends ADR 0027.
+Amends ADR 0027. Amended by ADR 0036, which has Firestore's and Datastore's keep their data.
 
 ADR 0027 has an Instance forward a Delegated API to an External emulator that the user runs and configures by address. Users want Firestore, Datastore, Spanner and Bigtable with no setup, like the rest of the emulator. We decided that `--external API=managed` has the Instance run Google's own emulator for that API as a Managed emulator: a Managed container that the Instance starts with itself, owns and removes when it stops.
 
