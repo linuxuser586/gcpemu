@@ -65,7 +65,7 @@ _Avoid_: fake universe, emulator universe
 
 **Foreign credentials**:
 Credentials a client picks up that no Instance issued, such as a service-account key or gcloud's application-default login from real Google. Their token requests go to real Google, so they become Escaped requests even where every API has an Endpoint override.
-_Avoid_: real keys, external credentials (GCP's `external_account` is one kind of Foreign credentials)
+_Avoid_: real keys, external credentials (an `external_account` config is Foreign credentials when it exchanges at real Google's STS, and not when it names an Instance's)
 
 **API gateway**:
 The single listener that receives Control plane requests and routes each one to the right Service.
@@ -234,6 +234,10 @@ The identity a request is attributed to for IAM checks.
 
 **Default principal**:
 The Principal assumed for requests that carry no credentials.
+
+**Federated principal**:
+The Principal an Instance's STS exchange gives a workload, `principal://…/workloadIdentityPools/P/subject/S`, for a subject token a Workload Identity Pool provider trusts. It belongs to the pool's Project.
+_Avoid_: workload identity, external identity
 
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.
