@@ -18,6 +18,8 @@ import (
 //	POST /_emu/hooks/{clusterId}/{secret}/authn   TokenReview webhook
 //	POST /_emu/hooks/{clusterId}/{secret}/authz   SubjectAccessReview webhook
 //	POST /_emu/hooks/{clusterId}/{secret}/admit   CA injection admission webhook (via the frontend, HTTPS)
+//	POST /_emu/hooks/{clusterId}/{secret}/restrict  Autopilot's refusals (restrictions.go, via the frontend)
+//	POST /_emu/hooks/{clusterId}/{secret}/resources  Autopilot's request changes (restrictions.go, via the frontend)
 //	GET  /_emu/node/{clusterId}/{secret}/{node}/token        node SA token
 //	*    /_emu/node/{clusterId}/{secret}/{node}/md/{ip}/...  metadata server
 //	GET  /_emu/kubeconfig[?cluster=projects/P/locations/L/clusters/C][&lan=true|ADDRESS]
@@ -44,6 +46,8 @@ func (s *Service) internalHandler() http.Handler {
 				s.serveSubjectAccessReview(w, r, key)
 			case "admit":
 				s.servePodAdmission(w, r, key)
+			case hookRestrict, hookResources:
+				s.serveAutopilotAdmission(w, r, key, segs[3])
 			default:
 				http.NotFound(w, r)
 			}

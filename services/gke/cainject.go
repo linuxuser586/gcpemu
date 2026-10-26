@@ -77,28 +77,38 @@ const metadataHostEnv = workload.MetadataHostEnv
 // installCAInjector registers (or updates) the CA-injecting webhook in a
 // running cluster. Errors are logged: injection is best effort.
 func (s *Service) installCAInjector(ctx context.Context, d *deps, key string) {
-	if s.env.CA == nil {
+	hooks, kc, ok := s.hookBase(ctx, d, key, "pods will not trust the emulator CA")
+	if !ok {
 		return
+	}
+	if err := applyObject(ctx, kc, "/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations", caInjectorName,
+		caInjectorConfig(hooks+"admit", s.env.CA.PEM())); err != nil {
+		s.env.Log.Warn("gke: registering the CA injection webhook failed", "cluster", key, "err", err)
+	}
+}
+
+// hookBase returns the URL under which the frontend serves the cluster's
+// admission webhooks, ending in "/", and a client of the cluster, or false
+// when there is no frontend (logged at debug with lacking, what pods then
+// lack) or no cluster.
+func (s *Service) hookBase(ctx context.Context, d *deps, key, lacking string) (string, *kubeClient, bool) {
+	if s.env.CA == nil {
+		return "", nil, false
 	}
 	fe, err := d.np.Addr(ctx, frontend.Endpoint)
 	if err != nil {
-		s.env.Log.Debug("gke: no Google front end; pods will not trust the emulator CA", "err", err)
-		return
+		s.env.Log.Debug("gke: no Google front end; "+lacking, "err", err)
+		return "", nil, false
 	}
 	rec, err := s.loadKey(key)
 	if err != nil {
-		return
+		return "", nil, false
 	}
 	kc, err := s.kube(key)
 	if err != nil {
-		return
+		return "", nil, false
 	}
-	c := rec.cluster()
-	url := "https://" + fe + "/container/_emu/hooks/" + c.Id + "/" + rec.Int.Secret + "/admit"
-	if err := applyObject(ctx, kc, "/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations", caInjectorName,
-		caInjectorConfig(url, s.env.CA.PEM())); err != nil {
-		s.env.Log.Warn("gke: registering the CA injection webhook failed", "cluster", key, "err", err)
-	}
+	return "https://" + fe + "/container/_emu/hooks/" + rec.cluster().Id + "/" + rec.Int.Secret + "/", kc, true
 }
 
 // caInjectorConfig is the MutatingWebhookConfiguration.
@@ -162,18 +172,35 @@ type admissionReview struct {
 }
 
 type admissionRequest struct {
-	UID       string          `json:"uid"`
-	Namespace string          `json:"namespace"`
-	Operation string          `json:"operation"`
-	DryRun    *bool           `json:"dryRun,omitempty"`
-	Object    json.RawMessage `json:"object"`
+	UID      string `json:"uid"`
+	Resource struct {
+		Group    string `json:"group"`
+		Resource string `json:"resource"`
+	} `json:"resource"`
+	Namespace string `json:"namespace"`
+	Operation string `json:"operation"`
+	UserInfo  struct {
+		Username string   `json:"username"`
+		Groups   []string `json:"groups"`
+	} `json:"userInfo"`
+	DryRun *bool           `json:"dryRun,omitempty"`
+	Object json.RawMessage `json:"object"`
 }
 
 type admissionResponse struct {
-	UID       string `json:"uid"`
-	Allowed   bool   `json:"allowed"`
-	PatchType string `json:"patchType,omitempty"`
-	Patch     string `json:"patch,omitempty"`
+	UID       string           `json:"uid"`
+	Allowed   bool             `json:"allowed"`
+	Status    *admissionStatus `json:"status,omitempty"`
+	PatchType string           `json:"patchType,omitempty"`
+	Patch     string           `json:"patch,omitempty"`
+	Warnings  []string         `json:"warnings,omitempty"`
+}
+
+// admissionStatus is the Status a refusing webhook returns.
+type admissionStatus struct {
+	Code    int    `json:"code"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message"`
 }
 
 // admitPod is the subset of a Pod the injector reads.
