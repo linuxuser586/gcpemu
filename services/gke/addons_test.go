@@ -13,7 +13,7 @@ import (
 // The embedded add-on manifests decode, and every object has a known
 // path; the Secret Manager add-on registers GKE's driver name.
 func TestAddonManifests(t *testing.T) {
-	for _, name := range []string{"gateway-api-" + gatewayAPIVer + "-standard.yaml.gz", "gateway-api-" + gatewayAPIVer + "-experimental.yaml.gz", "secret-manager.yaml", "secret-sync.yaml"} {
+	for _, name := range []string{"gateway-api-" + gatewayAPIVer + "-standard.yaml.gz", "gateway-api-" + gatewayAPIVer + "-experimental.yaml.gz", "secret-manager.yaml", "secret-sync.yaml", "managed-otel.yaml"} {
 		objs, err := manifest(name)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
