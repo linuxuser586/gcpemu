@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,8 +13,9 @@ import (
 
 // Tokens (ADR 0027): a service account in a Delegated Project gets its
 // access tokens from the Linked Instance, through the front Instance's
-// token endpoint or generateAccessToken. When a caller presents one, the
-// front Instance, which did not issue it, asks the Linked Instances it
+// token endpoint or generateAccessToken, and a Federated principal of a
+// pool in one through the Linked Instance's STS. When a caller presents one, the front
+// Instance, which did not issue it, asks the Linked Instances it
 // delegates to which Principal it is, and asserts that Principal.
 
 // tokenTTL is how long the front Instance keeps what a Linked Instance
@@ -30,8 +32,8 @@ type tokenAnswer struct {
 }
 
 // serveToken answers a paired Instance with the Principal of a token this
-// Instance issued, for a service account in a Project shared with it
-// only, and "" for any other.
+// Instance issued, for a service account or a Federated principal of a
+// Project shared with it only, and "" for any other.
 func (m *Manager) serveToken(w http.ResponseWriter, r *http.Request) {
 	p, _, ok := m.admit(w, r)
 	if !ok {
@@ -45,8 +47,7 @@ func (m *Manager) serveToken(w http.ResponseWriter, r *http.Request) {
 	principal := ""
 	if m.cfg.Authenticate != nil && body.Token != "" {
 		if got, ok := m.cfg.Authenticate(r.Context(), body.Token); ok {
-			email, isAccount := strings.CutPrefix(got, "serviceAccount:")
-			if id := project.OfServiceAccount(email); isAccount && id != "" && m.Shared(p.Name, id) {
+			if id := principalProject(got); id != "" && m.Shared(p.Name, id) {
 				principal = got
 			}
 		}
@@ -76,10 +77,10 @@ func (m *Manager) Authenticate(ctx context.Context, token string) (string, bool)
 			reached = false
 			continue
 		}
-		// A Linked Instance speaks only for the service accounts of the
-		// Projects delegated to it, never for this Instance's own.
-		email, _ := strings.CutPrefix(reply.Principal, "serviceAccount:")
-		if to, ok := m.DelegatedTo(project.OfServiceAccount(email)); ok && to == name && strings.HasPrefix(reply.Principal, "serviceAccount:") {
+		// A Linked Instance speaks only for the service accounts and
+		// Federated principals of the Projects delegated to it, never for
+		// this Instance's own.
+		if to, ok := m.DelegatedTo(principalProject(reply.Principal)); ok && to == name {
 			principal = reply.Principal
 			break
 		}
@@ -95,4 +96,20 @@ func (m *Manager) Authenticate(ctx context.Context, token string) (string, bool)
 		m.mu.Unlock()
 	}
 	return principal, principal != ""
+}
+
+// federatedPrincipal matches the Project of a Federated principal: a
+// subject of a workload identity pool.
+var federatedPrincipal = regexp.MustCompile(`^principal://iam\.googleapis\.com/projects/([^/]+)/locations/global/workloadIdentityPools/[^/]+/subject/.+$`)
+
+// principalProject returns the Project, an ID or number, of a service
+// account or a Federated principal, or "" for any other Principal.
+func principalProject(p string) string {
+	if email, ok := strings.CutPrefix(p, "serviceAccount:"); ok {
+		return project.OfServiceAccount(email)
+	}
+	if m := federatedPrincipal.FindStringSubmatch(p); m != nil {
+		return m[1]
+	}
+	return ""
 }

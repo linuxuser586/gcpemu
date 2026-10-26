@@ -431,6 +431,13 @@ func (s *Service) tokenExchange(w http.ResponseWriter, form url.Values) {
 // and returns the federated principal and its attributes.
 func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[string]string, string, error) {
 	provName := strings.TrimPrefix(strings.TrimPrefix(audience, "https:"), "//iam.googleapis.com/")
+	// Pools are kept under their Project's number; the audience may name
+	// it by ID.
+	if after, ok := strings.CutPrefix(provName, "projects/"); ok {
+		if ref, rest, ok := strings.Cut(after, "/"); ok && project.ValidID(ref) {
+			provName = "projects/" + project.NumberString(ref) + "/" + rest
+		}
+	}
 	poolName, _, ok := strings.Cut(provName, "/providers/")
 	if !ok {
 		return "", nil, "", fmt.Errorf("invalid audience %q", audience)
