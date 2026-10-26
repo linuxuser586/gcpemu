@@ -144,9 +144,15 @@ type resourcePod struct {
 		GenerateName string `json:"generateName"`
 	} `json:"metadata"`
 	Spec struct {
-		InitContainers []resourceContainer `json:"initContainers"`
-		Containers     []resourceContainer `json:"containers"`
+		podContainers
 	} `json:"spec"`
+}
+
+// podContainers are a Pod's init containers and containers, whose
+// requests node provisioning and the request mutation count alike.
+type podContainers struct {
+	InitContainers []resourceContainer `json:"initContainers"`
+	Containers     []resourceContainer `json:"containers"`
 }
 
 type resourceContainer struct {
@@ -177,7 +183,7 @@ func autopilotResources(pod *resourcePod, ns string) ([]patchOp, string) {
 	var parts []string
 	for _, d := range autopilotDefaults {
 		var names []string
-		eachContainer(pod, func(key string, c *resourceContainer, sidecarOrApp bool) {
+		pod.Spec.eachContainer(func(key string, c *resourceContainer, sidecarOrApp bool) {
 			if !sidecarOrApp {
 				return
 			}
@@ -209,7 +215,7 @@ func autopilotResources(pod *resourcePod, ns string) ([]patchOp, string) {
 		return nil, ""
 	}
 	var ops []patchOp
-	eachContainer(pod, func(key string, c *resourceContainer, _ bool) {
+	pod.Spec.eachContainer(func(key string, c *resourceContainer, _ bool) {
 		if changed[key] {
 			ops = append(ops, patchOp{Op: "add", Path: "/spec/" + key + "/resources", Value: c.Resources})
 		}
@@ -233,21 +239,21 @@ const (
 
 // adjustRequests raises the Pod's CPU and memory requests to Autopilot's
 // minimums and memory-per-vCPU range, counting them as the scheduler does
-// (podRequest), and reports whether it did. Raising a resource adds the
-// shortfall to the first container, and its limit with it if the limit
-// would be lower.
+// (podContainers.request), and reports whether it did. Raising a resource
+// adds the shortfall to the first container, and its limit with it if the
+// limit would be lower.
 func adjustRequests(pod *resourcePod) bool {
 	if len(pod.Spec.Containers) == 0 {
 		return false
 	}
 	adjusted := false
 	raise := func(resource string, to int64) {
-		if podRequest(pod, resource) >= to {
+		if pod.Spec.request(resource) >= to {
 			return
 		}
 		// An init container may need more than the containers and
 		// sidecars; they must reach to on their own.
-		short := to - runningRequest(pod, resource)
+		short := to - pod.Spec.runningRequest(resource)
 		c := &pod.Spec.Containers[0]
 		v := quantityOf(resource, c.Resources.Requests[resource]) + short
 		c.Resources.Requests[resource] = formatQuantity(resource, v)
@@ -261,19 +267,19 @@ func adjustRequests(pod *resourcePod) bool {
 	}
 	raise("cpu", autopilotMinCPUMilli)
 	raise("memory", autopilotMinMem)
-	cpu, mem := podRequest(pod, "cpu"), podRequest(pod, "memory")
+	cpu, mem := pod.Spec.request("cpu"), pod.Spec.request("memory")
 	raise("memory", ceilDiv(cpu*autopilotMinMemPerCPU, 1000))
 	raise("cpu", ceilDiv(mem*1000, autopilotMaxMemPerCPU))
 	return adjusted
 }
 
-// podRequest is the Pod's request for resource (CPU in millicores, memory
+// request is the Pod's request for resource (CPU in millicores, memory
 // in bytes) as the scheduler counts it: its containers and sidecars, or
 // more if an init container, with the sidecars started before it, needs
 // more.
-func podRequest(pod *resourcePod, resource string) int64 {
+func (pc *podContainers) request(resource string) int64 {
 	var sidecars, init int64
-	for _, c := range pod.Spec.InitContainers {
+	for _, c := range pc.InitContainers {
 		r := quantityOf(resource, c.Resources.Requests[resource])
 		if c.RestartPolicy == "Always" {
 			sidecars += r
@@ -282,14 +288,14 @@ func podRequest(pod *resourcePod, resource string) int64 {
 		}
 		init = max(init, sidecars+r)
 	}
-	return max(init, runningRequest(pod, resource))
+	return max(init, pc.runningRequest(resource))
 }
 
 // runningRequest is the Pod's request for resource while its containers
 // run: theirs and its sidecars'.
-func runningRequest(pod *resourcePod, resource string) int64 {
+func (pc *podContainers) runningRequest(resource string) int64 {
 	var r int64
-	eachContainer(pod, func(_ string, c *resourceContainer, sidecarOrApp bool) {
+	pc.eachContainer(func(_ string, c *resourceContainer, sidecarOrApp bool) {
 		if sidecarOrApp {
 			r += quantityOf(resource, c.Resources.Requests[resource])
 		}
@@ -330,13 +336,13 @@ func ceilDiv(a, b int64) int64 { return (a + b - 1) / b }
 // eachContainer calls f with each init container and then each container,
 // its patch path under /spec/ ("initContainers/0") and whether it runs
 // alongside the app (a container or a sidecar) rather than before it.
-func eachContainer(pod *resourcePod, f func(key string, c *resourceContainer, sidecarOrApp bool)) {
-	for i := range pod.Spec.InitContainers {
-		c := &pod.Spec.InitContainers[i]
+func (pc *podContainers) eachContainer(f func(key string, c *resourceContainer, sidecarOrApp bool)) {
+	for i := range pc.InitContainers {
+		c := &pc.InitContainers[i]
 		f("initContainers/"+strconv.Itoa(i), c, c.RestartPolicy == "Always")
 	}
-	for i := range pod.Spec.Containers {
-		f("containers/"+strconv.Itoa(i), &pod.Spec.Containers[i], true)
+	for i := range pc.Containers {
+		f("containers/"+strconv.Itoa(i), &pc.Containers[i], true)
 	}
 }
 
