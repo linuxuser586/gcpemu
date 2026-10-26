@@ -168,6 +168,32 @@ func (s *Service) idTokenKey(t *jwt.Token) (any, error) {
 	return nil, fmt.Errorf("no signing key %q", kid)
 }
 
+// VerifyIDToken implements emu.IDTokenVerifier.
+func (s *Service) VerifyIDToken(token string) (string, bool) {
+	claims := jwt.MapClaims{}
+	_, err := jwt.ParseWithClaims(token, claims, func(*jwt.Token) (any, error) { return &s.signer.priv.PublicKey, nil },
+		jwt.WithValidMethods([]string{"RS256"}), jwt.WithTimeFunc(s.env.Clock.Now), jwt.WithIssuer(oidcIssuer), jwt.WithExpirationRequired())
+	if err != nil {
+		return "", false
+	}
+	var sa *iamv1.ServiceAccount
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		for _, c := range []string{"sub", "email"} {
+			if v, _ := claims[c].(string); v != "" {
+				if a, ok := s.getAccount(tx, v); ok {
+					sa = a
+					return nil
+				}
+			}
+		}
+		return nil
+	})
+	if sa == nil || sa.Disabled {
+		return "", false
+	}
+	return sa.Email, true
+}
+
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 // bigEndian encodes an RSA public exponent.

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -380,12 +381,12 @@ func (s *Service) serveSTS(w http.ResponseWriter, r *http.Request) {
 			form.Set(snake, v)
 		}
 	}
-	s.tokenExchange(w, form)
+	s.tokenExchange(r.Context(), w, form)
 }
 
 // tokenExchange implements RFC 8693 exchange of an OIDC token for a
 // federated access token.
-func (s *Service) tokenExchange(w http.ResponseWriter, form url.Values) {
+func (s *Service) tokenExchange(ctx context.Context, w http.ResponseWriter, form url.Values) {
 	if form.Get("grant_type") != tokenExchangeGrant {
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be "+tokenExchangeGrant)
 		return
@@ -403,8 +404,13 @@ func (s *Service) tokenExchange(w http.ResponseWriter, form url.Values) {
 		oauthError(w, http.StatusBadRequest, "invalid_request", "Unsupported requested_token_type: "+rt)
 		return
 	}
-	principal, attrs, pool, err := s.federate(form.Get("audience"), form.Get("subject_token"))
-	if err != nil {
+	principal, attrs, pool, err := s.federate(ctx, form.Get("audience"), form.Get("subject_token"))
+	var unavailable unavailableError
+	switch {
+	case errors.As(err, &unavailable):
+		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", err.Error())
+		return
+	case err != nil:
 		oauthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
 	}
@@ -429,7 +435,7 @@ func (s *Service) tokenExchange(w http.ResponseWriter, form url.Values) {
 // federate verifies subjectToken for the provider named by audience
 // ("//iam.googleapis.com/projects/N/locations/global/workloadIdentityPools/P/providers/X")
 // and returns the federated principal and its attributes.
-func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[string]string, string, error) {
+func (s *Service) federate(ctx context.Context, audience, subjectToken string) (emu.Principal, map[string]string, string, error) {
 	provName := strings.TrimPrefix(strings.TrimPrefix(audience, "https:"), "//iam.googleapis.com/")
 	poolName, _, ok := strings.Cut(provName, "/providers/")
 	if !ok {
@@ -454,13 +460,21 @@ func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[st
 		return "", nil, "", errors.New("the provider is not an OIDC provider; exchanging AWS or SAML credentials is not emulated")
 	}
 	claims := jwt.MapClaims{}
-	_, err = jwt.ParseWithClaims(subjectToken, claims, func(t *jwt.Token) (any, error) {
-		kid, _ := t.Header["kid"].(string)
-		return s.issuerKey(prov.Oidc, kid)
-	}, jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}), jwt.WithTimeFunc(s.env.Clock.Now),
-		jwt.WithIssuer(prov.Oidc.IssuerUri), jwt.WithExpirationRequired())
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}), jwt.WithTimeFunc(s.env.Clock.Now),
+		jwt.WithIssuer(prov.Oidc.IssuerUri), jwt.WithExpirationRequired()}
+	if s.linkedSubject(prov.Oidc, subjectToken) {
+		err = s.verifyLinked(ctx, subjectToken, claims, opts)
+	} else {
+		_, err = jwt.ParseWithClaims(subjectToken, claims, func(t *jwt.Token) (any, error) {
+			kid, _ := t.Header["kid"].(string)
+			return s.issuerKey(prov.Oidc, kid)
+		}, opts...)
+		if err != nil {
+			err = fmt.Errorf("invalid subject token: %v", err)
+		}
+	}
 	if err != nil {
-		return "", nil, "", fmt.Errorf("invalid subject token: %v", err)
+		return "", nil, "", err
 	}
 	auds, _ := claims.GetAudience()
 	allowed := prov.Oidc.AllowedAudiences
@@ -502,6 +516,51 @@ func (s *Service) federate(audience, subjectToken string) (emu.Principal, map[st
 		}
 	}
 	return emu.Principal("principal://iam.googleapis.com/" + poolName + "/subject/" + sub), attrs, poolName, nil
+}
+
+// unavailableError is a subject token that only a Linked Instance that
+// could not be reached might have signed.
+type unavailableError struct{ error }
+
+// linkedSubject reports whether subjectToken, for a provider that trusts
+// the Instance's own issuer with no jwksJson, is not signed with this
+// Instance's key, so that a Linked Instance it delegates to may have
+// signed it, for a service account of a Delegated Project (ADR 0027).
+func (s *Service) linkedSubject(oidc *iamv1.Oidc, subjectToken string) bool {
+	if oidc.JwksJson != "" || oidc.IssuerUri != oidcIssuer || s.env.LinkedIDToken == nil {
+		return false
+	}
+	t, _, err := jwt.NewParser().ParseUnverified(subjectToken, jwt.MapClaims{})
+	if err != nil {
+		return false
+	}
+	kid, _ := t.Header["kid"].(string)
+	return kid != s.signer.kid
+}
+
+// verifyLinked has the Linked Instances this Instance delegates to say
+// whether one of them signed subjectToken, for a service account of a
+// Project delegated to it, having checked its claims by opts. Answers
+// are not kept: each exchange asks again.
+func (s *Service) verifyLinked(ctx context.Context, subjectToken string, claims jwt.MapClaims, opts []jwt.ParserOption) error {
+	if _, _, err := jwt.NewParser(opts...).ParseUnverified(subjectToken, claims); err != nil {
+		return fmt.Errorf("invalid subject token: %v", err)
+	}
+	if err := jwt.NewValidator(opts...).Validate(claims); err != nil {
+		return fmt.Errorf("invalid subject token: %v", err)
+	}
+	principal, unreachable := s.env.LinkedIDToken(ctx, subjectToken)
+	switch {
+	case principal != "":
+		return nil
+	case len(unreachable) > 0:
+		names := make([]string, len(unreachable))
+		for i, n := range unreachable {
+			names[i] = strconv.Quote(n)
+		}
+		return unavailableError{fmt.Errorf("cannot verify the subject token: it is not signed by this Instance, and the Linked Instance of link %s, which may have signed it, cannot be reached", strings.Join(names, ", "))}
+	}
+	return errors.New("invalid subject token: token signature is invalid: no Instance signed it for a service account it may speak for")
 }
 
 func intersects(a, b []string) bool {

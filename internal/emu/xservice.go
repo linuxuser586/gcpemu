@@ -59,6 +59,16 @@ type SigningKeyer interface {
 	SigningKey() SigningKey
 }
 
+// IDTokenVerifier is implemented by the iam Service: the service account
+// an ID token it signed is for, which the Instances it is paired with ask
+// about (ADR 0027).
+type IDTokenVerifier interface {
+	// VerifyIDToken verifies the signature, issuer and expiry of token,
+	// not its audience, and returns the email of the service account,
+	// not disabled, its sub or email names.
+	VerifyIDToken(token string) (email string, ok bool)
+}
+
 // Buckets is implemented by the gcs Service: the Project each bucket is
 // in, by which requests naming a bucket, and no Project, are routed
 // across links (ADR 0027).

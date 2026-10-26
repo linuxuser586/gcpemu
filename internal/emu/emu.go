@@ -153,6 +153,12 @@ type Env struct {
 	// Instances Projects are delegated to, as last heard (ADR 0027); nil
 	// lists none.
 	LinkedSigningKeys func() []SigningKey
+	// LinkedIDToken asks the Linked Instances Projects are delegated to
+	// which of them signed the ID token, for a service account of a
+	// Project delegated to it (ADR 0027). It returns that account's
+	// Principal, "" when none claims it, and the links it could not ask;
+	// nil asks none.
+	LinkedIDToken func(ctx context.Context, token string) (principal string, unreachable []string)
 	// Middleware wraps HTTP handlers on per-service ports with the same
 	// auth/logging the gateway applies.
 	Middleware func(service string, h http.Handler) http.Handler

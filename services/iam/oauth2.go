@@ -103,7 +103,7 @@ func (s *Service) serveToken(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		s.refreshGrant(w, form)
 	case "urn:ietf:params:oauth:grant-type:token-exchange":
-		s.tokenExchange(w, form)
+		s.tokenExchange(r.Context(), w, form)
 	case "":
 		oauthError(w, http.StatusBadRequest, "invalid_request", "Missing required parameter: grant_type")
 	default:

@@ -100,6 +100,10 @@ type Config struct {
 	// Authenticate returns the Principal of an access token this Instance
 	// issued, which paired Instances ask about (see Manager.Authenticate).
 	Authenticate func(ctx context.Context, token string) (principal string, ok bool)
+	// VerifyIDToken returns the service account of an ID token this
+	// Instance signed, which paired Instances ask about (see
+	// Manager.LinkedIDToken).
+	VerifyIDToken func(token string) (email string, ok bool)
 	// Buckets returns this Instance's Cloud Storage buckets and their
 	// Projects, which paired Instances watch (see Manager.BucketOwner).
 	Buckets func() map[string]string
@@ -287,6 +291,7 @@ func (m *Manager) handler() http.Handler {
 	mux.HandleFunc("POST /link/v1/pairings", m.servePair)
 	mux.HandleFunc("GET /link/v1/shared", m.serveShared)
 	mux.HandleFunc("POST /link/v1/tokens", m.serveToken)
+	mux.HandleFunc("POST "+idTokensRoute, m.serveIDToken)
 	mux.HandleFunc("GET /link/v1/buckets", m.serveBuckets)
 	mux.HandleFunc("GET /link/v1/signing-key", m.serveSigningKey)
 	mux.HandleFunc("GET /link/v1/status", func(w http.ResponseWriter, r *http.Request) {

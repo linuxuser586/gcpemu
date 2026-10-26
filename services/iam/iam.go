@@ -54,6 +54,7 @@ var (
 	_ emu.ADCKeyer            = (*Service)(nil)
 	_ emu.Resetter            = (*Service)(nil)
 	_ emu.SigningKeyer        = (*Service)(nil)
+	_ emu.IDTokenVerifier     = (*Service)(nil)
 )
 
 // New returns the service.
