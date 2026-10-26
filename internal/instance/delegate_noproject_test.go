@@ -16,6 +16,7 @@ import (
 
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	"cloud.google.com/go/storage"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	crmv1 "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
@@ -156,6 +157,32 @@ func TestDelegatedServiceAccountToken(t *testing.T) {
 	}
 	if code, body := bearerGet(t, laptop, "/pubsub/v1/projects/"+shared+"/topics", "ya29.gcpemu.not-a-token"); code != http.StatusUnauthorized {
 		t.Errorf("listing topics through the laptop with a token no Instance issued = %d %s, want 401", code, body)
+	}
+}
+
+// A key created through the laptop for a service account in the Delegated
+// Project, exchanged at the laptop's token endpoint once the Project is no
+// longer delegated, is refused, 400 invalid_grant, saying the Project is
+// neither on the laptop nor delegated by it (#695).
+func TestUndelegatedServiceAccountToken(t *testing.T) {
+	laptop, _ := delegated(t, nil, nil)
+	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/"+shared+"/serviceAccounts", map[string]string{"accountId": "runner"}, nil)
+	_, file := keyFileThrough(t, laptop, runner, nil)
+	cfg, err := google.JWTConfigFromJSON(file, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callAdmin(t, laptop, http.MethodDelete, "/_emu/v1/links/delegations/"+shared, nil, nil)
+
+	_, err = cfg.TokenSource(context.Background()).Token()
+	var rerr *oauth2.RetrieveError
+	var body struct {
+		Error            string
+		ErrorDescription string `json:"error_description"`
+	}
+	if !errors.As(err, &rerr) || rerr.Response.StatusCode != http.StatusBadRequest || json.Unmarshal(rerr.Body, &body) != nil ||
+		body.Error != "invalid_grant" || !strings.Contains(body.ErrorDescription, `Project "`+shared+`" is not on this Instance and is not delegated by it`) {
+		t.Errorf("token from the laptop after undelegating: %v, want 400 invalid_grant saying %s is neither on the laptop nor delegated by it", err, shared)
 	}
 }
 

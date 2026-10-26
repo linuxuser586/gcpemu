@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
@@ -232,6 +233,12 @@ func (e *Env) Projects() []string {
 		return nil
 	})
 	return ids
+}
+
+// HasProject reports whether the Instance holds the Project id: declared
+// in config or known.
+func (e *Env) HasProject(id string) bool {
+	return slices.Contains(e.Config.Projects, id) || slices.Contains(e.Projects(), id)
 }
 
 // DeclareProject records a project explicitly (seed files, config).

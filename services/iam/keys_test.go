@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	iamv1 "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -366,6 +368,80 @@ func TestKeyFileByCaller(t *testing.T) {
 	}
 	if f["token_uri"] != inst.GatewayURL()+"/oauth2/token" || f["universe_domain"] != emu.InvalidUniverse {
 		t.Errorf("key created at the gateway: token_uri %q, universe_domain %q", f["token_uri"], f["universe_domain"])
+	}
+}
+
+// lanIP returns a non-loopback IPv4 address of this host.
+func lanIP(t *testing.T) string {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range addrs {
+		if ip, ok := a.(*net.IPNet); ok && ip.IP.To4() != nil && ip.IP.IsGlobalUnicast() {
+			return ip.IP.String()
+		}
+	}
+	t.Skip("no non-loopback IPv4 address")
+	return ""
+}
+
+// withProto sets X-Forwarded-Proto on every request.
+type withProto string
+
+func (p withProto) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	if p != "" {
+		r.Header.Set("X-Forwarded-Proto", string(p))
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestKeyFileNamesCallerHost covers #695: a key file names the token and
+// certificate URLs under the Host the caller used, whoever the caller is,
+// so a LAN caller of an Instance on a wildcard --bind gets a key that
+// works unmodified on its own machine. The scheme is https only for an
+// X-Forwarded-Proto of https.
+func TestKeyFileNamesCallerHost(t *testing.T) {
+	inst := startIAM(t, func(c *config.Config) { c.Bind = "0.0.0.0" })
+	sa := createSA(t, iamClient(t, inst), "lan-runner")
+	_, port, _ := net.SplitHostPort(inst.Endpoint("gateway"))
+	host := net.JoinHostPort(lanIP(t), port)
+	keyAt := func(proto string) []byte {
+		t.Helper()
+		c, err := iamv1.NewService(context.Background(), option.WithHTTPClient(&http.Client{Transport: withProto(proto)}),
+			option.WithEndpoint("http://"+host+"/iam/"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, kf := createKeyFile(t, c, sa)
+		return kf
+	}
+	for proto, scheme := range map[string]string{"": "http", "http": "http", "https": "https", "ftp": "http"} {
+		var f map[string]string
+		if err := json.Unmarshal(keyAt(proto), &f); err != nil {
+			t.Fatal(err)
+		}
+		base := scheme + "://" + host
+		for k, want := range map[string]string{
+			"token_uri":                   base + "/oauth2/token",
+			"auth_provider_x509_cert_url": base + "/oauth2/v1/certs",
+			"client_x509_cert_url":        base + "/service_accounts/v1/metadata/x509/" + url.PathEscape(sa.Email),
+			"universe_domain":             emu.InvalidUniverse,
+		} {
+			if f[k] != want {
+				t.Errorf("X-Forwarded-Proto %q: key %s = %q, want %q", proto, k, f[k], want)
+			}
+		}
+	}
+
+	cfg, err := google.JWTConfigFromJSON(keyAt(""), "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := cfg.TokenSource(context.Background()).Token(); err != nil || tok.AccessToken == "" {
+		t.Fatalf("token from the key created at %s: %v, %v", host, tok, err)
 	}
 }
 
