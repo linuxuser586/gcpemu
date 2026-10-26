@@ -59,32 +59,48 @@ type testRun struct{ ended, log string }
 // root, against the runtime the environment selects, and returns how each
 // ended and go test's whole output.
 func goTests(ctx context.Context, names []string, pkgs ...string) (map[string]testRun, string) {
-	args := append([]string{"test", "-json", "-count=1", "-timeout", "25m", "-run", "^(" + strings.Join(names, "|") + ")$"}, pkgs...)
-	cmd := exec.CommandContext(ctx, "go", args...)
+	out := goTest(ctx, append([]string{"-run", "^(" + strings.Join(names, "|") + ")$"}, pkgs...)...)
+	return testRuns(out), out
+}
+
+// goTest runs go test -json with args from the repository's root and
+// returns its output, whatever it exits with.
+func goTest(ctx context.Context, args ...string) string {
+	cmd := exec.CommandContext(ctx, "go", append([]string{"test", "-json", "-count=1", "-timeout", "25m"}, args...)...)
 	cmd.Dir = repo
 	out, _ := cmd.Output()
+	return string(out)
+}
+
+// testRuns reads go test -json's output: how each top-level test ended,
+// and its output and its subtests'. Under "" is how the package's run
+// ended, with its own output.
+func testRuns(out string) map[string]testRun {
 	ended := map[string]string{}
 	logs := map[string]*strings.Builder{}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	sc := bufio.NewScanner(strings.NewReader(out))
 	sc.Buffer(make([]byte, 1<<20), 1<<24)
 	for sc.Scan() {
 		var ev struct{ Action, Test, Output string }
-		if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Test == "" || strings.Contains(ev.Test, "/") {
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
-		if logs[ev.Test] == nil {
-			logs[ev.Test] = &strings.Builder{}
+		top, _, sub := strings.Cut(ev.Test, "/")
+		if logs[top] == nil {
+			logs[top] = &strings.Builder{}
 		}
 		switch ev.Action {
 		case "output":
-			logs[ev.Test].WriteString(ev.Output)
+			logs[top].WriteString(ev.Output)
 		case "pass", "fail", "skip":
-			ended[ev.Test] = ev.Action
+			if !sub {
+				ended[top] = ev.Action
+			}
 		}
 	}
 	runs := map[string]testRun{}
 	for name, log := range logs {
 		runs[name] = testRun{ended[name], log.String()}
 	}
-	return runs, string(out)
+	return runs
 }

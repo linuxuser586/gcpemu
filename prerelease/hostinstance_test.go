@@ -59,6 +59,7 @@ func hostInstanceChecks(t *testing.T, rt string) {
 	step(t, rt, "4-vlan", 30*time.Minute, func(t *testing.T, ctx context.Context) { vlan(t, ctx, rt) })
 	step(t, rt, "5-host-attachment", 30*time.Minute, hostAttachment)
 	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
+	step(t, rt, "7-vm-relay", 15*time.Minute, vmRelay)
 }
 
 // doctor returns `gcpemu doctor`'s output.
