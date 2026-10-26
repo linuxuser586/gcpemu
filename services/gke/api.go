@@ -588,7 +588,16 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 		c.LoggingConfig = u.DesiredLoggingConfig
 	}
 	if u.DesiredMonitoringConfig != nil {
-		c.MonitoringConfig = u.DesiredMonitoringConfig
+		// Managed Prometheus stays as it is unless the update names it, so
+		// an Autopilot cluster keeps GKE's default (FR-GKE-018).
+		prom := c.GetMonitoringConfig().GetManagedPrometheusConfig()
+		c.MonitoringConfig = proto.Clone(u.DesiredMonitoringConfig).(*containerpb.MonitoringConfig)
+		if c.MonitoringConfig.ManagedPrometheusConfig == nil {
+			c.MonitoringConfig.ManagedPrometheusConfig = prom
+		}
+	}
+	if u.DesiredManagedOpentelemetryConfig != nil {
+		c.ManagedOpentelemetryConfig = u.DesiredManagedOpentelemetryConfig
 	}
 	if u.DesiredNotificationConfig != nil {
 		c.NotificationConfig = u.DesiredNotificationConfig
