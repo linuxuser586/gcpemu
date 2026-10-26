@@ -1,5 +1,5 @@
 // Package loopback reports whether the host has loopback addresses beyond
-// 127.0.0.1 (ADR 0005). Linux routes all of 127.0.0.0/8 to loopback; a
+// 127.0.0.1 (ADR 0005), and on macOS whether each is a /32. Linux routes all of 127.0.0.0/8 to loopback; a
 // macOS host has only 127.0.0.1 on lo0 until `gcpemu loopback install`
 // adds aliases for 127.0.0.2 to 127.0.0.254.
 package loopback
@@ -29,9 +29,9 @@ type AliasState int
 const (
 	// AliasesMissing: lo0 has no 127.0.0.x address other than 127.0.0.1.
 	AliasesMissing AliasState = iota
-	// AliasesHost: every alias is a /32, a host address of its own.
-	AliasesHost
-	// AliasesWide: some alias has another netmask. `ifconfig lo0 alias`
+	// AliasesNarrow: every loopback alias is a /32.
+	AliasesNarrow
+	// AliasesWide: some loopback alias has another netmask. `ifconfig lo0 alias`
 	// without one gives the classful /8, and 253 overlapping
 	// 127.0.0.0/8s keep mDNSResponder at 100% CPU on macOS 27 (#677).
 	AliasesWide
@@ -41,8 +41,8 @@ func (s AliasState) String() string {
 	switch s {
 	case AliasesMissing:
 		return "missing"
-	case AliasesHost:
-		return "host"
+	case AliasesNarrow:
+		return "narrow"
 	case AliasesWide:
 		return "wide"
 	}
@@ -50,7 +50,7 @@ func (s AliasState) String() string {
 }
 
 // WideHint names the harm of AliasesWide.
-const WideHint = "a /8 alias keeps mDNSResponder at 100% CPU on macOS 27 and slows every DNS lookup"
+const WideHint = "a /8 loopback alias keeps mDNSResponder at 100% CPU on macOS 27 and slows every DNS lookup"
 
 // CheckAliases reads the aliases from addrs, lo0's addresses.
 func CheckAliases(addrs []net.Addr) AliasState {
@@ -61,27 +61,27 @@ func CheckAliases(addrs []net.Addr) AliasState {
 			continue
 		}
 		ip := n.IP.To4()
-		if ip == nil || ip[0] != 127 || ip.Equal(net.IPv4(127, 0, 0, 1)) {
+		if ip == nil || ip[0] != 127 || ip[1] != 0 || ip[2] != 0 || ip[3] == 1 {
 			continue
 		}
 		if ones, bits := n.Mask.Size(); bits == 0 || ones != bits {
 			return AliasesWide
 		}
-		s = AliasesHost
+		s = AliasesNarrow
 	}
 	return s
 }
 
-// Lo0Aliases is CheckAliases of the host's lo0. When lo0 can't be read it
-// falls back to Aliases, which can't tell a netmask.
+// Lo0Aliases is CheckAliases of the host's lo0, AliasesMissing when lo0
+// can't be read.
 func Lo0Aliases() AliasState {
-	if ifc, err := net.InterfaceByName("lo0"); err == nil {
-		if addrs, err := ifc.Addrs(); err == nil {
-			return CheckAliases(addrs)
-		}
+	ifc, err := net.InterfaceByName("lo0")
+	if err != nil {
+		return AliasesMissing
 	}
-	if Aliases() {
-		return AliasesHost
+	addrs, err := ifc.Addrs()
+	if err != nil {
+		return AliasesMissing
 	}
-	return AliasesMissing
+	return CheckAliases(addrs)
 }

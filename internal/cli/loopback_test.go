@@ -151,15 +151,15 @@ func TestLoopbackElsewhere(t *testing.T) {
 // with its fix (#677), and none a note.
 func TestCheckLoopback(t *testing.T) {
 	var b bytes.Buffer
-	checkLoopback(&b, loopback.AliasesHost)
+	checkLoopback(&b, loopback.AliasesNarrow)
 	if b.String() != "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present\n" {
 		t.Errorf("/32: %q", b.String())
 	}
 	b.Reset()
 	checkLoopback(&b, loopback.AliasesWide)
-	if want := "[WARN] loopback aliases 127.0.0.2-127.0.0.254 are not all /32; a /8 alias keeps mDNSResponder at 100% CPU on macOS 27 and slows every DNS lookup\n" +
+	if want := "[WARN] loopback aliases 127.0.0.2-127.0.0.254 are not all /32; a /8 loopback alias keeps mDNSResponder at 100% CPU on macOS 27 and slows every DNS lookup\n" +
 		"       fix: `sudo gcpemu loopback install` adds them again as /32\n"; b.String() != want {
-		t.Errorf("/8: %q, want %q", b.String(), want)
+		t.Errorf("wide: %q, want %q", b.String(), want)
 	}
 	b.Reset()
 	checkLoopback(&b, loopback.AliasesMissing)

@@ -419,8 +419,8 @@ func (in *Instance) warnContainerBind(ctx context.Context) {
 	}
 }
 
-// warnLoopbackNetmask warns, on macOS, when a loopback alias aliases
-// reports is not a /32, which earlier versions of `gcpemu loopback
+// warnLoopbackNetmask warns, on macOS, when aliases finds a loopback
+// alias that is not a /32, as earlier versions of `gcpemu loopback
 // install` added (#677). It never fails the start.
 func warnLoopbackNetmask(log *slog.Logger, goos string, aliases func() loopback.AliasState) {
 	if goos == "darwin" && aliases() == loopback.AliasesWide {

@@ -709,12 +709,12 @@ func reportServiceLB(out io.Writer, vm bool, servers []emuruntime.Container) {
 }
 
 // checkLoopback reports whether the host has the 127.0.0.x loopback
-// aliases (ADR 0005), and warns when any is not a /32 (#677). Missing ones
+// aliases (ADR 0005), and warns when one is not a /32 (#677). Missing ones
 // are a note, not a failure: one Cloud SQL instance and the forwarding
 // rules still work on 127.0.0.1.
 func checkLoopback(out io.Writer, aliases loopback.AliasState) {
 	switch aliases {
-	case loopback.AliasesHost:
+	case loopback.AliasesNarrow:
 		fmt.Fprintln(out, "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present")
 		return
 	case loopback.AliasesWide:

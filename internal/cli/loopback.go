@@ -62,7 +62,10 @@ func loopbackPlan(root bool, dir string, install bool) []trustStep {
 		b.WriteString("set -e\n" + loopbackAliasLoop("ifconfig lo0 -alias 127.0.0.$i 2>/dev/null || true; ifconfig lo0 "+loopbackAlias) + "\n")
 		b.WriteString("mkdir -p " + dir + "\ncat > " + plist + " <<'GCPEMU_PLIST'\n" + loopbackPlist() + "GCPEMU_PLIST\n")
 		b.WriteString("chown root:wheel " + plist + "\nchmod 644 " + plist + "\n")
-		b.WriteString("launchctl bootout system/" + loopbackLabel + " 2>/dev/null || true\nlaunchctl bootstrap system " + plist + "\n")
+		// launchd may still be tearing the old daemon down, so a bootstrap
+		// right after bootout gets one retry.
+		bootstrap := "launchctl bootstrap system " + plist
+		b.WriteString("launchctl bootout system/" + loopbackLabel + " 2>/dev/null || true\n" + bootstrap + " || { sleep 1; " + bootstrap + "; }\n")
 	} else {
 		b.WriteString("launchctl bootout system/" + loopbackLabel + " 2>/dev/null || true\n")
 		b.WriteString("rm -f " + plist + "\n")

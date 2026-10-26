@@ -19,7 +19,7 @@ func TestWarnLoopbackNetmask(t *testing.T) {
 		warn    bool
 	}{
 		{"darwin", loopback.AliasesWide, true},
-		{"darwin", loopback.AliasesHost, false},
+		{"darwin", loopback.AliasesNarrow, false},
 		{"darwin", loopback.AliasesMissing, false},
 		{"linux", loopback.AliasesWide, false},
 		{"windows", loopback.AliasesWide, false},
