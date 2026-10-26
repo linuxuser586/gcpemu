@@ -279,7 +279,13 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 		if autopilotOn(c) {
 			counts = autopilotCounts(np)
 		}
-		rec.Int.Nodes = append(rec.Int.Nodes, s.planNodes(c, np, nil, counts)...)
+		nodes := s.planNodes(c, np, nil, counts)
+		if autopilotOn(c) {
+			for i := range nodes {
+				nodes[i].MachineType = autopilotShapes[0].Name
+			}
+		}
+		rec.Int.Nodes = append(rec.Int.Nodes, nodes...)
 	}
 	c.NodeConfig = proto.Clone(c.NodePools[0].Config).(*containerpb.NodeConfig)
 	// initialNodeCount keeps the requested value, like GKE (the OpenTofu
@@ -436,11 +442,16 @@ func (s *Service) planNodes(c *containerpb.Cluster, np *containerpb.NodePool, ex
 				out = append(out, cur[i])
 				continue
 			}
-			name := "gke-" + trunc(c.Name, 15) + "-" + trunc(np.Name, 15) + "-" + h + "-" + s.env.IDs.Hex(2)
-			out = append(out, nodeRecord{Name: name, Pool: np.Name, Zone: z, Password: s.env.IDs.Hex(16)})
+			out = append(out, nodeRecord{Name: nodeName(c, np, h, s.env.IDs.Hex(2)), Pool: np.Name, Zone: z, Password: s.env.IDs.Hex(16)})
 		}
 	}
 	return out
+}
+
+// nodeName names a node of pool np, as GKE names its instances; h is
+// the pool's hash and suffix the node's own.
+func nodeName(c *containerpb.Cluster, np *containerpb.NodePool, h, suffix string) string {
+	return "gke-" + trunc(c.Name, 15) + "-" + trunc(np.Name, 15) + "-" + h + "-" + suffix
 }
 
 // checkNodeLimit enforces the per-instance node limit (FR-GKE-003):

@@ -874,6 +874,10 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	if err != nil {
 		return err
 	}
+	if autopilotOn(c) {
+		a := shapeOf(node).allocatable()
+		cfg.Allocatable = &a
+	}
 	private := privateNodes(c, np)
 	var ext netplane.Net
 	if !private {
@@ -1101,6 +1105,14 @@ func nodeLabels(c *containerpb.Cluster, np *containerpb.NodePool, n nodeRecord) 
 		"cloud.google.com/gke-ephemeral-storage-ssd": "",
 	}
 	for k, v := range cfg.Labels {
+		m[k] = v
+	}
+	if autopilotOn(c) {
+		sh := shapeOf(n).Name
+		m["node.kubernetes.io/instance-type"] = sh
+		m["cloud.google.com/machine-family"] = strings.SplitN(sh, "-", 2)[0]
+	}
+	for k, v := range n.Labels {
 		m[k] = v
 	}
 	if cfg.Spot {

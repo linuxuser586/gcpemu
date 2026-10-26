@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -108,6 +109,10 @@ type nodeConfig struct {
 	// googleapis resolver finds the cluster's DNS in ServiceCIDR too.
 	Secret      string `json:"secret,omitempty"`
 	ServiceCIDR string `json:"serviceCidr,omitempty"`
+	// Allocatable is what an Autopilot node advertises, whatever the host
+	// has: the agent reserves the rest of the host for the kubelet (ADR
+	// 0031).
+	Allocatable *nodeAllocatable `json:"allocatable,omitempty"`
 }
 
 func init() { agent.Register(nodeAgentName, runNodeAgent) }
@@ -167,6 +172,13 @@ func runNodeAgent(ctx context.Context, args []string) error {
 	}
 	defer stopDNS()
 
+	if cfg.Allocatable != nil {
+		reserve, err := reserveArgs(*cfg.Allocatable)
+		if err != nil {
+			return err
+		}
+		args = append(args, reserve...)
+	}
 	cmd := exec.Command("/bin/k3s", args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	cmd.Env = os.Environ()
@@ -418,4 +430,68 @@ func googleAPIsDNS(cloud, cluster, network string) mdns.Handler {
 		}
 		rest.ServeDNS(w, req)
 	})
+}
+
+// reserveArgs returns the k3s agent arguments that leave alloc allocatable
+// on this host: the kubelet reserves the rest of the CPU and memory the
+// kubelet sees, and evicts at 100 MiB of memory left as on GKE (k3s sets
+// no memory threshold). A host smaller than alloc reserves nothing, so
+// its node advertises less (ADR 0031).
+func reserveArgs(alloc nodeAllocatable) ([]string, error) {
+	cpus, err := onlineCPUs()
+	if err != nil {
+		return nil, err
+	}
+	memKi, err := memTotalKi()
+	if err != nil {
+		return nil, err
+	}
+	cpu := max(cpus*1000-alloc.CPUMilli, 0)
+	mem := max(memKi-alloc.MemoryKi-evictionKi, 0)
+	if cpu == 0 || mem == 0 {
+		fmt.Fprintf(os.Stderr, "gke-node: the host (%d CPUs, %d KiB) is smaller than the node's machine shape; the node advertises less\n", cpus, memKi)
+	}
+	return []string{
+		fmt.Sprintf("--kubelet-arg=kube-reserved=cpu=%dm,memory=%dKi", cpu, mem),
+		"--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<5%,imagefs.available<5%",
+	}, nil
+}
+
+// onlineCPUs counts the host's online CPUs, as the kubelet does.
+func onlineCPUs() (int64, error) {
+	b, err := os.ReadFile("/sys/devices/system/cpu/online")
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, r := range strings.Split(strings.TrimSpace(string(b)), ",") {
+		lo, hi, found := strings.Cut(r, "-")
+		a, err := strconv.ParseInt(lo, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("online CPUs %q: %w", b, err)
+		}
+		z := a
+		if found {
+			if z, err = strconv.ParseInt(hi, 10, 64); err != nil {
+				return 0, fmt.Errorf("online CPUs %q: %w", b, err)
+			}
+		}
+		n += z - a + 1
+	}
+	return n, nil
+}
+
+// memTotalKi is the host's memory in KiB, from /proc/meminfo as the
+// kubelet reads it.
+func memTotalKi() (int64, error) {
+	b, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(l, "MemTotal:"); ok {
+			return strconv.ParseInt(strings.TrimSuffix(strings.TrimSpace(v), " kB"), 10, 64)
+		}
+	}
+	return 0, errors.New("no MemTotal in /proc/meminfo")
 }

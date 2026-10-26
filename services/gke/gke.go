@@ -9,10 +9,11 @@
 // own Operation resource, not google.longrunning). Autopilot clusters
 // (FR-GKE-012, autopilot.go) are regional, get the settings GKE sets on
 // them, and report one GKE-managed node pool that the node pools API
-// refuses to change; until node provisioning (FR-GKE-015) lands they run
-// one node. REST (gcloud, OpenTofu) is served by transcoding the
-// google.api.http rules of the generated descriptors onto the gRPC
-// implementation, including the legacy projects/P/zones/Z/... paths.
+// refuses to change; its nodes are added and removed for the cluster's
+// pods (FR-GKE-015, autoscale.go). REST (gcloud, OpenTofu) is served by
+// transcoding the google.api.http rules of the generated descriptors onto
+// the gRPC implementation, including the legacy projects/P/zones/Z/...
+// paths.
 //
 // # Data plane
 //
