@@ -439,15 +439,33 @@ type Exposed struct {
 // port that appears while the Instance runs, which the runtime cannot
 // publish then.
 func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
+	l, err := listenFallback(addr, fallback)
+	if err != nil {
+		return nil, err
+	}
+	return p.Serve(l, func() []string { return []string{target} }), nil
+}
+
+// ExposeConn binds addr as Expose does and pipes each connection c it
+// accepts to the connection dial opens for it, which may write to it
+// first; dial sets its own timeouts.
+func (p *Plane) ExposeConn(addr string, fallback bool, dial func(ctx context.Context, c net.Conn) (net.Conn, error)) (*Exposed, error) {
+	l, err := listenFallback(addr, fallback)
+	if err != nil {
+		return nil, err
+	}
+	return p.serveConn(l, dial), nil
+}
+
+// listenFallback listens on addr, or with fallback on a free port of the
+// same IP when addr is taken.
+func listenFallback(addr string, fallback bool) (net.Listener, error) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil && fallback {
 		host, _, _ := net.SplitHostPort(addr)
 		l, err = net.Listen("tcp", net.JoinHostPort(host, "0"))
 	}
-	if err != nil {
-		return nil, err
-	}
-	return p.Serve(l, func() []string { return []string{target} }), nil
+	return l, err
 }
 
 // Serve pipes each connection l accepts to the first of targets, container
@@ -472,6 +490,11 @@ func (p *Plane) Serve(l net.Listener, targets func() []string) *Exposed {
 // ServeDial pipes each connection l accepts to the connection dial opens
 // for it; dial sets its own timeouts. It owns l.
 func (p *Plane) ServeDial(l net.Listener, dial func(ctx context.Context) (net.Conn, error)) *Exposed {
+	return p.serveConn(l, func(ctx context.Context, _ net.Conn) (net.Conn, error) { return dial(ctx) })
+}
+
+// serveConn is ServeDial with dial given the connection accepted.
+func (p *Plane) serveConn(l net.Listener, dial func(ctx context.Context, c net.Conn) (net.Conn, error)) *Exposed {
 	e := &Exposed{l: l}
 	e.wg.Add(1)
 	go func() {
@@ -483,7 +506,7 @@ func (p *Plane) ServeDial(l net.Listener, dial func(ctx context.Context) (net.Co
 			}
 			go func() {
 				defer c.Close()
-				u, err := dial(context.Background())
+				u, err := dial(context.Background(), c)
 				if err != nil {
 					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "err", err)
 					return

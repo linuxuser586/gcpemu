@@ -1,13 +1,17 @@
 package sql
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -17,6 +21,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/reqlog"
 	"github.com/linuxuser586/gcpemu/internal/store"
 	"github.com/linuxuser586/gcpemu/services/sql/proxy"
 )
@@ -405,5 +410,57 @@ func TestOperationsSummary(t *testing.T) {
 		got.Target != "projects/p1/instances/main" || !got.Done || got.EndTime.Sub(got.StartTime).Milliseconds() != 2500 ||
 		got.Error == nil || got.Error.Code != "INTERNAL_ERROR" || got.Error.Message != "boom" {
 		t.Fatalf("summary = %+v %+v", got, got.Error)
+	}
+}
+
+// TestLANCallerLogin: a login through the --sql-bind relay is matched by
+// the LAN caller's address alone, never 127.0.0.1 or the TCP peer, and
+// its refusal and request log name that address (ADR 0030).
+func TestLANCallerLogin(t *testing.T) {
+	s := testService(t, config.IAMOff)
+	s.env.RequestLog = reqlog.New(10, slog.New(slog.DiscardHandler))
+	rec := &instanceRecord{PublicIP: "172.30.0.5", AgentKey: "k", Instance: &sqladmin.DatabaseInstance{
+		Project: "p", Name: "i", ConnectionName: "p:r:i",
+		Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true}},
+	}}
+	_ = s.env.Store.Update(func(tx store.Tx) error { return store.PutJSON(tx, nsInstances, "p/i", rec) })
+	ctx := context.Background()
+	ipc := rec.Instance.Settings.IpConfiguration
+	lan := func(client, remote string) *proxy.LoginResponse {
+		return s.decideLogin(ctx, rec, &proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "172.30.0.5", Remote: remote, LANCaller: client, User: "postgres"})
+	}
+	for _, c := range []struct {
+		networks       []string
+		client, remote string
+		admit          bool
+	}{
+		{[]string{"192.168.1.0/24"}, "192.168.1.7", "172.30.0.1", true},
+		{[]string{"127.0.0.1/32"}, "192.168.1.7", "127.0.0.1", false},
+		{[]string{"172.30.0.1/32"}, "192.168.1.7", "172.30.0.1", false},
+		{[]string{"192.168.1.0/24"}, "::ffff:192.168.1.7", "172.30.0.1", true},
+		{[]string{"127.0.0.1/32", "0.0.0.0/0"}, "2001:db8::7", "127.0.0.1", false},
+	} {
+		ipc.AuthorizedNetworks = nil
+		for _, n := range c.networks {
+			ipc.AuthorizedNetworks = append(ipc.AuthorizedNetworks, &sqladmin.AclEntry{Value: n})
+		}
+		if r := lan(c.client, c.remote); (r.Action != proxy.ActionDeny) != c.admit {
+			t.Errorf("LAN caller %s via %s with %v: %+v", c.client, c.remote, c.networks, r)
+		}
+	}
+
+	// The refusal and the request log name the LAN caller.
+	ipc.AuthorizedNetworks = []*sqladmin.AclEntry{{Value: "127.0.0.1/32"}}
+	if r := lan("192.168.1.7", "172.30.0.1"); !strings.Contains(r.Message, "connection from 192.168.1.7 is not authorized") {
+		t.Errorf("refusal %q", r.Message)
+	}
+	body, _ := json.Marshal(proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "172.30.0.5", Remote: "172.30.0.1", LANCaller: "192.168.1.7", User: "postgres"})
+	hr := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
+	hr.SetPathValue("project", "p")
+	hr.SetPathValue("instance", "i")
+	hr.Header.Set(proxy.KeyHeader, "k")
+	s.agentLogin(httptest.NewRecorder(), hr)
+	if es := s.env.RequestLog.Entries("sql"); len(es) != 1 || es[0].Method != "CONNECT direct 192.168.1.7" {
+		t.Errorf("request log %+v", es)
 	}
 }

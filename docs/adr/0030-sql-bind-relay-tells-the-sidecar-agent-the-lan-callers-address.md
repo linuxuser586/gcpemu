@@ -18,5 +18,6 @@ A psql client on another machine reaches a Cloud SQL instance through its `--sql
 ## Consequences
 
 - A LAN caller, including a client on the emulator's machine that dials the `--sql-bind` address, is matched by its own source address only. Only the loopback host port and the public IP keep host-client matching.
+- A LAN caller to an instance with no public IP (`ipv4Enabled=false`) is refused, while a host client is still admitted: a LAN listener serves only what the instance serves on GCP.
 - Refusals and the request log name the LAN caller's address, not the gateway's.
 - Authorized networks are IPv4, so an IPv6 LAN caller is admitted by no entry. An IPv4-mapped address is matched as IPv4.

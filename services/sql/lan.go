@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"slices"
@@ -168,9 +169,11 @@ func lanIPAddresses(lanIP string) []*sqladmin.IpMapping {
 // Both relay TCP to the instance's agent, so its checks apply as on any
 // other path: Postgres's password authentication for BUILT_IN users and
 // IAM database authentication for IAM users, which needs a token the
-// Instance issued, whatever the IAM enforcement level. The agent sees the
-// connection come from the host, so authorized networks treat it as a
-// host client's.
+// Instance issued, whatever the IAM enforcement level. The Postgres relay
+// names the caller in a PROXY header signed with the instance's agent key
+// (lanDial), so authorized networks match the caller's own address alone,
+// as on GCP, and not a host client's 127.0.0.1 (ADR 0030). Port 3307 sends
+// none: authorized networks don't apply to connectors.
 //
 // A caller that arrived through the LAN is told the --sql-bind address as
 // the instance's PRIMARY address (lanCaller), and no address for an
@@ -206,7 +209,7 @@ func (s *Service) serveLAN(ctx context.Context, plane *netplane.Plane, rec *inst
 	l := &instanceLAN{dnsName: in.DnsName, connect: net.JoinHostPort(publicIP, strconv.Itoa(proxy.ConnectPort))}
 	var addrs []string
 	for _, ip := range binds {
-		ex, err := plane.Expose(net.JoinHostPort(ip, strconv.Itoa(port)), net.JoinHostPort(publicIP, strconv.Itoa(proxy.PublicPort)), true)
+		ex, err := plane.ExposeConn(net.JoinHostPort(ip, strconv.Itoa(port)), true, lanDial(plane, net.JoinHostPort(publicIP, strconv.Itoa(proxy.PublicPort)), rec.AgentKey))
 		if err != nil {
 			s.env.Log.Warn("sql: cannot serve the instance on --sql-bind address", "instance", in.ConnectionName, "address", ip, "err", s.env.ExplainBind(ctx, err))
 			continue
@@ -226,6 +229,30 @@ func (s *Service) serveLAN(ctx context.Context, plane *netplane.Plane, rec *inst
 	}
 	s.lan[key] = l
 	return port
+}
+
+// lanDial opens the agent's Postgres port, target, for a LAN caller c and
+// writes the signed PROXY header naming c's address ahead of its bytes
+// (ADR 0030).
+func lanDial(plane *netplane.Plane, target, key string) func(ctx context.Context, c net.Conn) (net.Conn, error) {
+	return func(ctx context.Context, c net.Conn) (net.Conn, error) {
+		src, _ := c.RemoteAddr().(*net.TCPAddr)
+		dst, _ := c.LocalAddr().(*net.TCPAddr)
+		if src == nil || dst == nil {
+			return nil, fmt.Errorf("LAN caller %s is not on TCP", c.RemoteAddr())
+		}
+		dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		u, err := plane.DialContext(dctx, "tcp", target)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		if err := proxy.WriteLANHeader(u, key, src, dst); err != nil {
+			u.Close()
+			return nil, err
+		}
+		return u, nil
+	}
 }
 
 // routeLocked serves port 3307 of the --sql-bind address ip, unless it

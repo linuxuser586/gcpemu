@@ -72,11 +72,11 @@ func (s *Service) agentLogin(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	timer := clock.StartStopwatch()
 	resp := s.decideLogin(r.Context(), rec, &req)
-	e := reqlog.Entry{Time: start, Service: "sql", Protocol: "postgres", Method: "CONNECT " + req.Listener + " " + req.Remote,
+	e := reqlog.Entry{Time: start, Service: "sql", Protocol: "postgres", Method: "CONNECT " + req.Listener + " " + req.Client(),
 		Resource: "projects/" + project + "/instances/" + name, Principal: req.User, Code: "OK",
 		LatencyMS: float64(timer.Elapsed().Microseconds()) / 1000}
 	if resp.Action == proxy.ActionDeny {
-		s.env.Log.Info("sql: connection refused", "instance", project+":"+name, "user", req.User, "remote", req.Remote, "listener", req.Listener, "reason", resp.Message)
+		s.env.Log.Info("sql: connection refused", "instance", project+":"+name, "user", req.User, "remote", req.Client(), "listener", req.Listener, "reason", resp.Message)
 		e.Status, e.Code = 1, resp.Code
 	}
 	s.env.RequestLog.Add(e)
@@ -116,13 +116,13 @@ func (s *Service) decideLogin(ctx context.Context, rec *instanceRecord, req *pro
 		if st.ConnectorEnforcement == "REQUIRED" {
 			return deny("28000", "connections to instance %s must use the Cloud SQL connectors (connectorEnforcement is REQUIRED)", in.ConnectionName)
 		}
-		if msg := s.networkPolicy(ctx, rec, req.Local, req.Remote); msg != "" {
+		if msg := s.networkPolicy(ctx, rec, req.Local, req.Remote, req.LANCaller); msg != "" {
 			return deny("28000", "%s", msg)
 		}
 		switch sslMode(ipc) {
 		case "ENCRYPTED_ONLY":
 			if !req.TLS {
-				return deny("28000", "pg_hba.conf rejects connection for host %q, user %q, database %q, no encryption", req.Remote, req.User, req.Database)
+				return deny("28000", "pg_hba.conf rejects connection for host %q, user %q, database %q, no encryption", req.Client(), req.User, req.Database)
 			}
 		case "TRUSTED_CLIENT_CERTIFICATE_REQUIRED":
 			if !req.TLS || cert == nil {
@@ -194,8 +194,17 @@ func sslMode(ipc *sqladmin.IpConfiguration) string {
 // port, or the host dialling the public IP), are checked against
 // authorizedNetworks; host connections match 127.0.0.1/32 as well as the
 // gateway address. With ipv4Enabled=false only the host may use the
-// published port.
-func (s *Service) networkPolicy(ctx context.Context, rec *instanceRecord, local, remote string) string {
+// published port. A LAN caller, lan from the --sql-bind relay's signed
+// header (ADR 0030), is matched by its own address alone.
+func (s *Service) networkPolicy(ctx context.Context, rec *instanceRecord, local, remote, lan string) string {
+	ipc := rec.Instance.Settings.IpConfiguration
+	public := ipc != nil && ipc.Ipv4Enabled
+	if lan != "" {
+		if !public {
+			return fmt.Sprintf("instance %s has no public IP", rec.Instance.ConnectionName)
+		}
+		return s.authorizedNetworks(rec, ipc, lan)
+	}
 	if rec.PrivateIP != "" && local == rec.PrivateIP {
 		return ""
 	}
@@ -229,18 +238,23 @@ func (s *Service) networkPolicy(ctx context.Context, rec *instanceRecord, local,
 			fromHost = true
 		}
 	}
-	ipc := rec.Instance.Settings.IpConfiguration
-	public := ipc != nil && ipc.Ipv4Enabled
 	if !public {
 		if fromHost {
 			return ""
 		}
 		return fmt.Sprintf("instance %s has no public IP", rec.Instance.ConnectionName)
 	}
-	sources := []string{remote}
 	if fromHost {
-		sources = append(sources, "127.0.0.1")
+		return s.authorizedNetworks(rec, ipc, remote, "127.0.0.1")
 	}
+	return s.authorizedNetworks(rec, ipc, remote)
+}
+
+// authorizedNetworks returns a refusal message naming client unless one
+// of the instance's unexpired authorized networks covers client or one of
+// also.
+func (s *Service) authorizedNetworks(rec *instanceRecord, ipc *sqladmin.IpConfiguration, client string, also ...string) string {
+	sources := append([]string{client}, also...)
 	now := s.env.Clock.Now()
 	for _, acl := range ipc.AuthorizedNetworks {
 		if acl == nil {
@@ -257,7 +271,7 @@ func (s *Service) networkPolicy(ctx context.Context, rec *instanceRecord, local,
 			}
 		}
 	}
-	return fmt.Sprintf("connection from %s is not authorized: the address is not in the authorized networks of instance %s", remote, rec.Instance.ConnectionName)
+	return fmt.Sprintf("connection from %s is not authorized: the address is not in the authorized networks of instance %s", client, rec.Instance.ConnectionName)
 }
 
 // aclMatches reports whether ip is covered by an authorized network value

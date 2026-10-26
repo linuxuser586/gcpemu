@@ -73,13 +73,24 @@ type LoginRequest struct {
 	Listener string `json:"listener"`
 	Local    string `json:"local"`  // local IP the client connected to
 	Remote   string `json:"remote"` // client source IP
-	TLS      bool   `json:"tls"`
+	// LANCaller is the LAN caller's address from the --sql-bind relay's
+	// signed PROXY header, "" without one (ADR 0030).
+	LANCaller string `json:"lanCaller,omitempty"`
+	TLS       bool   `json:"tls"`
 	// ClientCert is the verified client certificate (DER), if any.
 	ClientCert []byte `json:"clientCert,omitempty"`
 	User       string `json:"user"`
 	Database   string `json:"database"`
 	// Password is set on the second call, after a cleartext password request.
 	Password *string `json:"password,omitempty"`
+}
+
+// Client is the client's address: the LAN caller's, else the TCP peer's.
+func (r *LoginRequest) Client() string {
+	if r.LANCaller != "" {
+		return r.LANCaller
+	}
+	return r.Remote
 }
 
 // Actions returned by the emulator.
@@ -245,6 +256,16 @@ func (a *agent) handle(raw net.Conn, listener string) {
 	req := LoginRequest{Listener: listener, Local: hostOf(raw.LocalAddr()), Remote: hostOf(raw.RemoteAddr())}
 	var conn net.Conn = raw
 	_ = raw.SetDeadline(time.Now().Add(60 * time.Second))
+	if listener == ListenerDirect {
+		c, lan, err := readLANHeader(raw, a.key)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				fmt.Fprintf(os.Stderr, "gcpemu sql-proxy: connection closed: %v\n", err)
+			}
+			return
+		}
+		conn, req.LANCaller = c, lan
+	}
 	if listener == ListenerConnector {
 		tc := tls.Server(raw, a.connectorTLS)
 		if err := tc.Handshake(); err != nil {
