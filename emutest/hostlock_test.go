@@ -52,10 +52,10 @@ func TestHostLockHolderDies(t *testing.T) {
 			os.Exit(2)
 		}
 		// The collector closes a lock file nothing references, dropping the
-		// lock (#685): the holder keeps release reachable. Forcing the
-		// collection here, twice so that the first queues the file's cleanup
-		// for the second to see run, catches a dropped release without load.
-		runtime.GC()
+		// lock (#685): the holder keeps release reachable. Forcing a
+		// collection here queues a dropped file's finalizer, which closes it
+		// while the parent polls for .held, so a dropped release fails
+		// without load.
 		runtime.GC()
 		_ = os.WriteFile(p+".held", nil, 0o600)
 		time.Sleep(time.Minute)
