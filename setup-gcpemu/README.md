@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      actions: read # lets the post step tell whether the job failed
+      actions: read # lets the post step read the job's result if the runner gives none
     steps:
       - uses: actions/checkout@v7
       - uses: linuxuser586/gcpemu/setup-gcpemu@v0
@@ -43,11 +43,13 @@ The post step always runs. It does three things:
 - **Diagnostics.** When the job failed, it uploads a workflow artifact with `gcpemu.log`, the
   request log (`requests.json`), the resource dump (`resources.json`), `containers.json` with
   each container's log, `status.txt` and the GKE `kubeconfig`. To tell whether the job failed it
-  reads the job's steps through the API, which needs `actions: read`. It retries 5xx, 429,
-  network errors and timeouts (3 attempts). When the result stays unknown it uploads the artifact
-  anyway, with a notice that says why: the token lacks `actions: read` (HTTP 401, 403 or 404), the
-  API kept failing (for example `HTTP 502 after 3 attempts`), or the job could not be found among
-  the run's jobs.
+  reads the runner's `job.status` (`failure` and `cancelled` count as failed). Only when the
+  runner gives no status does it read the job's steps through the API, which needs
+  `actions: read`; the API's job list can lag a running job, so it is not the first source. It
+  retries 5xx, 429, network errors and timeouts (3 attempts). When the result stays unknown it
+  uploads the artifact anyway, with a notice that says why: the token lacks `actions: read`
+  (HTTP 401, 403 or 404), the API kept failing (for example `HTTP 502 after 3 attempts`), or the
+  job could not be found among the run's jobs.
 - **Image cache.** After a successful job, it saves the images it pulled.
 - **Stop.** It stops the instance.
 
@@ -69,7 +71,8 @@ The post step always runs. It does three things:
 | `diagnostics` | `failure` | When to upload the diagnostics artifact: `failure`, `always` or `never` |
 | `artifact-name` | `gcpemu-<job>-<instance>-<os>-<arch>-<random>` | Name of the diagnostics artifact |
 | `retention-days` | `7` | Retention of the diagnostics artifact |
-| `token` | `github.token` | Used to resolve `latest` and to read the job's result |
+| `token` | `github.token` | Used to resolve `latest` and, as a fallback, to read the job's result |
+| `job-status` | `job.status` | Leave unset: the runner evaluates it when the post step runs |
 
 Outputs: `version`, `gateway` (host:port), `data-dir`, `bin`.
 

@@ -49,8 +49,11 @@ inputs:
     description: Retention of the diagnostics artifact.
     default: "7"
   token:
-    description: Token for resolving "latest" and for reading the job's step results in the post step.
+    description: Token for resolving "latest" and, when job-status gives no result, for reading the job's step results in the post step.
     default: ${{ github.token }}
+  job-status:
+    description: The job's status for the post step to decide on diagnostics and caching. Leave it unset; the runner evaluates the default when the post step runs.
+    default: ${{ job.status }}
 
 outputs:
   version:

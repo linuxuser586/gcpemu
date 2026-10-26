@@ -13,7 +13,7 @@ import path from 'node:path'
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { cacheableImages, jobFailed, jobMismatch, listJobsReason, retryDelay, shouldUpload, unknownNotice } from './lib.js'
+import { cacheableImages, jobFailed, jobMismatch, listJobsReason, retryDelay, shouldUpload, statusFailed, unknownNotice } from './lib.js'
 
 async function run() {
   const bin = core.getState('bin')
@@ -36,10 +36,18 @@ async function run() {
   await exec.exec(bin, ['stop', '--instance', instance, '--data-dir', dataDir], { ignoreReturnCode: true })
 }
 
-// currentJobFailed asks the API whether a step of this job failed:
-// { failed } with true or false, or { failed: null, reason } when the
-// result is unknown (see unknownNotice).
+// currentJobFailed reports whether this job failed: { failed } with true
+// or false, or { failed: null, reason } when the result is unknown (see
+// unknownNotice). The runner's job.status comes first; the API is the
+// fallback, since its job listing can lag the run (#671).
 async function currentJobFailed() {
+  const failed = statusFailed(core.getInput('job-status'))
+  if (failed !== null) return { failed }
+  return apiJobFailed()
+}
+
+// apiJobFailed asks the API whether a step of this job failed.
+async function apiJobFailed() {
   const { GITHUB_API_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, RUNNER_NAME } = process.env
   if (!GITHUB_REPOSITORY || !GITHUB_RUN_ID || !RUNNER_NAME) {
     return { failed: null, reason: { cause: 'job', detail: 'GITHUB_REPOSITORY, GITHUB_RUN_ID or RUNNER_NAME is not set' } }
