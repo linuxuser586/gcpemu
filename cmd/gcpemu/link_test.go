@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // startLinked starts a Persistent Instance named name in dir with a link
@@ -122,7 +123,7 @@ func TestLinkDiscover(t *testing.T) {
 		t.Skip("builds and runs the binary")
 	}
 	ip := hosttest.LANIP(t)
-	env := []string{"GCPEMU_LINK_MDNS_PORT=" + strconv.Itoa(hosttest.FreeUDPPort(t))}
+	env := []string{"GCPEMU_LINK_MDNS_PORT=" + strconv.Itoa(porttest.FreeUDP(t))}
 	laptop, office := t.TempDir(), t.TempDir()
 	startLinkedOn(t, "laptop", laptop, ip, env)
 	addr := startLinkedOn(t, "office", office, ip, env)

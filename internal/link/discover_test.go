@@ -9,6 +9,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/link"
 	"github.com/linuxuser586/gcpemu/internal/mdns"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // onLAN serves a linked Instance's link protocol on ip instead of
@@ -57,7 +58,7 @@ func hostLabel(t *testing.T) string {
 // listed, nor is the Instance itself. Pairing marks the other Instance
 // with its link.
 func TestDiscoverOverMDNS(t *testing.T) {
-	ip, port := hosttest.LANIP(t), hosttest.FreeUDPPort(t)
+	ip, port := hosttest.LANIP(t), porttest.FreeUDP(t)
 	a := onLAN(t, "laptop", ip, port, true)
 	b := onLAN(t, "office", ip, port, true)
 	onLAN(t, "quiet", ip, port, false)
@@ -93,7 +94,7 @@ func TestDiscoverOverMDNS(t *testing.T) {
 // A Discovered Instance speaking an incompatible link protocol version is
 // listed with a problem naming both versions.
 func TestDiscoverMarksIncompatible(t *testing.T) {
-	ip, port := hosttest.LANIP(t), hosttest.FreeUDPPort(t)
+	ip, port := hosttest.LANIP(t), porttest.FreeUDP(t)
 	a := onLAN(t, "laptop", ip, port, true)
 	onLAN(t, "future", ip, port, true, func(c *link.Config) { c.Versions = link.Versions{Min: 7, Max: 8} })
 
@@ -107,7 +108,7 @@ func TestDiscoverMarksIncompatible(t *testing.T) {
 // who they are and listed as found there; one that cannot be reached is
 // listed with the problem.
 func TestDiscoverStaticAddresses(t *testing.T) {
-	port := hosttest.FreeUDPPort(t)
+	port := porttest.FreeUDP(t)
 	b := newLinked(t, "ci", "")
 	a := newLinked(t, "runner", "", func(c *link.Config) {
 		c.MDNS = mdns.Options{Port: port}

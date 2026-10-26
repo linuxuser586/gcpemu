@@ -17,6 +17,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 	"github.com/linuxuser586/gcpemu/services"
 )
 
@@ -71,12 +72,7 @@ func startBesideMDNS(t *testing.T) (*instance.Instance, int) {
 // with SO_REUSEADDR, as an mDNS daemon does.
 func mdnsStandIn(t *testing.T) (int, net.PacketConn) {
 	t.Helper()
-	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := tcp.Addr().(*net.TCPAddr).Port
-	tcp.Close()
+	port := porttest.Free(t)
 	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
 		var serr error
 		_ = c.Control(func(fd uintptr) { serr = setReuseAddr(fd) })

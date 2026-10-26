@@ -173,15 +173,3 @@ func sendMulticast(ifi net.Interface) error {
 	_, err = pc.WriteTo([]byte("gcpemu"), nil, &net.UDPAddr{IP: net.IPv4(224, 0, 0, 251), Port: 9})
 	return err
 }
-
-// FreeUDPPort returns a UDP port free on the wildcard address, such as a
-// test's own mDNS port, so that its Instances meet no others.
-func FreeUDPPort(t testing.TB) int {
-	t.Helper()
-	pc, err := net.ListenPacket("udp4", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pc.Close()
-	return pc.LocalAddr().(*net.UDPAddr).Port
-}

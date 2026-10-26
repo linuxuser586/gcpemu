@@ -15,6 +15,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/mdns"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // daemonStandIn holds 0.0.0.0:port with SO_REUSEADDR (and SO_REUSEPORT
@@ -63,7 +64,7 @@ func browse(t *testing.T, port int) []mdns.Entry {
 // 5353; the DNS service still gets its unicast queries.
 func TestAdvertiseAndBrowseBesideDNS(t *testing.T) {
 	ip := net.ParseIP(hosttest.LANIP(t)).To4()
-	port := hosttest.FreeUDPPort(t)
+	port := porttest.FreeUDP(t)
 	daemonStandIn(t, port)
 	dnsSock, err := netplane.ListenUDP(context.Background(), "127.0.0.1", strconv.Itoa(port))
 	if err != nil {
@@ -113,7 +114,7 @@ func TestAdvertiseAndBrowseBesideDNS(t *testing.T) {
 // is.
 func TestClosedIsNotBrowsed(t *testing.T) {
 	ip := net.ParseIP(hosttest.LANIP(t)).To4()
-	port := hosttest.FreeUDPPort(t)
+	port := porttest.FreeUDP(t)
 	r := advertise(t, mdns.Service{Instance: "gone@desk", Type: "_gcpemu-test._tcp", Host: "gcpemu-gone", Port: 1, Addrs: []net.IP{ip}}, port)
 	r.Close()
 	for _, g := range browse(t, port) {

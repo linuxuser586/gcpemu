@@ -39,7 +39,7 @@ func TestScanSkipsHeld(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer held.Close()
-			if lo := scan(t, 2, p); lo <= p+1 && p+1 <= lo+1 {
+			if lo := scan(t, 2, p, tcpProbe); lo <= p+1 && p+1 <= lo+1 {
 				t.Fatalf("window %d-%d contains %d, held on %s", lo, lo+1, p+1, host)
 			}
 		})
@@ -49,7 +49,7 @@ func TestScanSkipsHeld(t *testing.T) {
 // TestScanWraps: a scan that starts too near the top of the range for
 // the window wraps to its bottom.
 func TestScanWraps(t *testing.T) {
-	if lo := scan(t, 2, limit-1); lo < base || lo+2 > limit {
+	if lo := scan(t, 2, limit-1, tcpProbe); lo < base || lo+2 > limit {
 		t.Fatalf("window %d-%d, want within %d-%d", lo, lo+1, base, limit-1)
 	}
 }
@@ -64,4 +64,32 @@ func TestWindowSpreads(t *testing.T) {
 		}
 	}
 	t.Fatalf("11 calls all returned %d", first)
+}
+
+// TestFreeUDP: the port is below every CI OS's ephemeral range, and a
+// plain udp4 bind on the wildcard address takes it.
+func TestFreeUDP(t *testing.T) {
+	p := FreeUDP(t)
+	if p < base || p >= limit {
+		t.Fatalf("port %d, want within %d-%d", p, base, limit-1)
+	}
+	pc, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", p))
+	if err != nil {
+		t.Fatalf("port %d: %v", p, err)
+	}
+	pc.Close()
+}
+
+// TestScanUDPSkipsHeld: a port a plain udp4 socket holds on the wildcard
+// address is not free.
+func TestScanUDPSkipsHeld(t *testing.T) {
+	p := FreeUDP(t)
+	held, err := net.ListenPacket("udp4", fmt.Sprintf("0.0.0.0:%d", p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if got := scan(t, 1, p, udpProbe); got == p {
+		t.Fatalf("scan returned %d, held by a udp4 socket", p)
+	}
 }
