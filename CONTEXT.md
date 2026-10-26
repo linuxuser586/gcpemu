@@ -237,7 +237,7 @@ The Principal assumed for requests that carry no credentials.
 
 **Federated principal**:
 The Principal an Instance's STS exchange gives a workload, `principal://…/workloadIdentityPools/P/subject/S`, for a subject token a Workload Identity Pool provider trusts. It belongs to the pool's Project.
-_Avoid_: workload identity, external identity
+_Avoid_: workload identity, external identity, federated token (say: an access token for a Federated principal)
 
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.

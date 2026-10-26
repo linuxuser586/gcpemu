@@ -106,27 +106,39 @@ func federatedToken(t *testing.T, in *Instance, key *rsa.PrivateKey, audience, s
 }
 
 // An STS exchange through the laptop for a provider in the Delegated
-// Project, by its number or ID, as a form or JSON, is answered by the
-// office, whose token the office knows; one for a provider in the
-// laptop's own Project is answered by the laptop, as before (#711).
+// Project, as a form or JSON, is answered by the office, whose token the
+// office knows. One naming the Project by ID is forwarded too, and the
+// office refuses it, as STS wants the Project number. One for a provider
+// in the laptop's own Project is answered by the laptop, as before (#711).
 func TestDelegatedSTSExchange(t *testing.T) {
 	laptop, office := delegated(t, nil, nil)
 	key, audience := oidcPool(t, laptop, shared)
-	byID := strings.Replace(audience, "/projects/"+project.NumberString(shared)+"/", "/projects/"+shared+"/", 1)
-	for _, aud := range []string{audience, byID} {
-		for _, asJSON := range []bool{false, true} {
-			code, body := exchange(t, laptop, aud, subjectToken(key, "build-1", "red"), asJSON)
-			var reply struct {
-				AccessToken string `json:"access_token"`
-			}
-			if code != http.StatusOK || json.Unmarshal([]byte(body), &reply) != nil {
-				t.Errorf("exchange for %s (JSON %v) through the laptop = %d %s", aud, asJSON, code, body)
-				continue
-			}
-			if p, ok := office.Env.Auth.Authenticate(t.Context(), reply.AccessToken); !ok || !strings.HasSuffix(string(p), "/workloadIdentityPools/ci-pool/subject/build-1") {
-				t.Errorf("the office knows the token for %s (JSON %v) as %q %v, want the pool's subject build-1", aud, asJSON, p, ok)
-			}
+	for _, asJSON := range []bool{false, true} {
+		code, body := exchange(t, laptop, audience, subjectToken(key, "build-1", "red"), asJSON)
+		var reply struct {
+			AccessToken string `json:"access_token"`
 		}
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &reply) != nil {
+			t.Errorf("exchange (JSON %v) through the laptop = %d %s", asJSON, code, body)
+			continue
+		}
+		if p, ok := office.Env.Auth.Authenticate(t.Context(), reply.AccessToken); !ok || !strings.HasSuffix(string(p), "/workloadIdentityPools/ci-pool/subject/build-1") {
+			t.Errorf("the office knows the token (JSON %v) as %q %v, want the pool's subject build-1", asJSON, p, ok)
+		}
+	}
+
+	byID := strings.Replace(audience, "/projects/"+project.NumberString(shared)+"/", "/projects/"+shared+"/", 1)
+	if code, body := exchange(t, laptop, byID, subjectToken(key, "build-1", "red"), false); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
+		t.Errorf("exchange naming the Project by ID through the laptop = %d %s, want 400 invalid_grant", code, body)
+	}
+	forwarded := 0
+	for _, e := range laptop.Log.Entries("") {
+		if e.Delegated == "office" && e.Method == "POST /sts/v1/token" {
+			forwarded++
+		}
+	}
+	if forwarded != 3 {
+		t.Errorf("the laptop forwarded %d exchanges to the office, want 3, the one naming the Project by ID included", forwarded)
 	}
 
 	ownKey, ownAudience := oidcPool(t, laptop, "laptop-own")
