@@ -10,6 +10,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // A Persistent Instance restarted on another gateway port, as on the move
@@ -44,10 +45,5 @@ func otherPort(t *testing.T, addr string) int {
 	if err == nil {
 		defer l.Close()
 	}
-	p, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer p.Close()
-	return p.Addr().(*net.TCPAddr).Port
+	return porttest.Free(t)
 }

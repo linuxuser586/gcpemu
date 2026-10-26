@@ -27,6 +27,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // TestContainerizedSQLHostClients (#290): on a VM runtime a Containerized
@@ -239,12 +240,10 @@ func viaConnector(t *testing.T, d *cloudsqlconn.Dialer, icn string) {
 // viaAuthProxy runs a query on instance icn through the Auth Proxy v2.
 func viaAuthProxy(t *testing.T, bin, gw, icn string) {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	// The proxy is another process and binds --port itself, so the test
+	// cannot hold the port for it: another process's explicit bind can
+	// still take it first (#743).
+	port := porttest.Free(t)
 	cmd := exec.Command(bin, "--sqladmin-api-endpoint", "http://"+gw+"/", "--token", "owner", "--port", strconv.Itoa(port), icn)
 	// A static --token is in Google's universe, so the proxy refuses it
 	// under another universe domain.
