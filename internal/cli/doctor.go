@@ -320,7 +320,7 @@ func checkHostOnly(out io.Writer, cfg *config.Config, goos string, inContainer, 
 		fmt.Fprintf(out, "[--  ] host checks not run in a container; on the host: on a macOS host, `%s` with the native binary adds the loopback aliases; "+
 			"on a Windows host, check the published ports and --port-range against `netsh int ipv4 show excludedportrange protocol=tcp`\n", loopback.InstallHint)
 	case goos == "darwin":
-		checkLoopback(out, loopback.Aliases())
+		checkLoopback(out, loopback.Lo0Aliases())
 	case goos == "windows":
 		checkExcludedPorts(out, cfg, running)
 	}
@@ -709,11 +709,17 @@ func reportServiceLB(out io.Writer, vm bool, servers []emuruntime.Container) {
 }
 
 // checkLoopback reports whether the host has the 127.0.0.x loopback
-// aliases (ADR 0005). Missing ones are a note, not a failure: one Cloud SQL
-// instance and the forwarding rules still work on 127.0.0.1.
-func checkLoopback(out io.Writer, aliases bool) {
-	if aliases {
+// aliases (ADR 0005), and warns when any is not a /32 (#677). Missing ones
+// are a note, not a failure: one Cloud SQL instance and the forwarding
+// rules still work on 127.0.0.1.
+func checkLoopback(out io.Writer, aliases loopback.AliasState) {
+	switch aliases {
+	case loopback.AliasesHost:
 		fmt.Fprintln(out, "[ok  ] loopback aliases 127.0.0.2-127.0.0.254 present")
+		return
+	case loopback.AliasesWide:
+		fmt.Fprintln(out, "[WARN] loopback aliases 127.0.0.2-127.0.0.254 are not all /32; "+loopback.WideHint)
+		fmt.Fprintf(out, "       fix: `%s` adds them again as /32\n", loopback.InstallHint)
 		return
 	}
 	fmt.Fprintf(out, "[--  ] loopback aliases 127.0.0.2-127.0.0.254 missing: `%s` lets more than one Cloud SQL instance run, gives each load balancer forwarding rule its own address and lets host clients reach Kubernetes Services by name\n", loopback.InstallHint)

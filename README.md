@@ -636,7 +636,9 @@ instance is reachable and forwarding rules and `LoadBalancer` Services share `12
 its own port, or a free one when an earlier one holds it, as `gcpemu env` shows.
 That needs no container runtime. `sudo gcpemu loopback install` adds `127.0.0.2`–`127.0.0.254` to `lo0` and installs
 a LaunchDaemon that adds them again at boot; `sudo gcpemu loopback uninstall` removes both.
-`gcpemu doctor` reports whether they are present. A Cloud SQL instance needs port 3307 free on its
+`gcpemu doctor` reports whether they are present. Aliases installed by earlier versions have a `/8`
+netmask, which keeps mDNSResponder at 100% CPU on macOS 27; running `sudo gcpemu loopback install`
+again fixes them, and `gcpemu doctor` flags them. A Cloud SQL instance needs port 3307 free on its
 address; 5432 is served there too while it is free, so a local PostgreSQL on `127.0.0.1:5432`
 doesn't keep connectors out.
 
