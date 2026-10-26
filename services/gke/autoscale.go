@@ -23,11 +23,12 @@ import (
 // node when a pod is Pending for lack of capacity and removes a node once
 // it has been empty for scaleDownDelay, never the cluster's last. A new
 // node takes the smallest shape (autopilotShapes) its first pod fits, and
-// the compute class and Spot its pods select as labels. Nodes of every
-// cluster share the Instance's node limit (FR-GKE-003); a pod that needs a
-// node beyond it stays Pending with FailedScaleUp, as on GKE when a
-// scale-up fails for quota. A node that is not Ready within nodeReadyWait
-// is removed, so that a later round can add another.
+// the compute class and Spot its pods select, through a node selector or
+// required node affinity, as labels. Nodes of every cluster share the
+// Instance's node limit (FR-GKE-003); a pod that needs a node beyond it
+// stays Pending with FailedScaleUp, as on GKE when a scale-up fails for
+// quota. A node that is not Ready within nodeReadyWait is removed, so
+// that a later round can add another.
 
 const (
 	autoscaleInterval = 2 * time.Second
@@ -185,7 +186,13 @@ func (p *scalePod) matches(labels map[string]string) bool {
 	return false
 }
 
+// matches reports whether a node with labels satisfies the term. As in
+// Kubernetes, a term with no expressions matches no node; one with only
+// matchFields, which the autoscaler does not read, matches none either.
 func (t nodeSelectorTerm) matches(labels map[string]string) bool {
+	if len(t.MatchExpressions) == 0 {
+		return false
+	}
 	for _, e := range t.MatchExpressions {
 		v, ok := labels[e.Key]
 		in := false
@@ -223,16 +230,44 @@ func (p *scalePod) selectedZone() string {
 	return p.Spec.NodeSelector["topology.kubernetes.io/zone"]
 }
 
-// provisionLabels are the labels a node provisioned for the pod gets: the
-// compute class and Spot its node selector asks for.
-func (p *scalePod) provisionLabels() map[string]string {
-	out := map[string]string{}
-	if v := p.Spec.NodeSelector[computeClassLabel]; v != "" {
-		out[computeClassLabel] = v
+// provisionLabels are the label sets a node provisioned for the pod may
+// get, in order of preference. Each term of its required node affinity
+// gives one set per compute class the term requires with In, and Spot if
+// the term requires it with In; the pod's node selector wins over the
+// term. A set may still not satisfy the pod, which newNode checks.
+func (p *scalePod) provisionLabels() []map[string]string {
+	terms := p.Spec.Affinity.NodeAffinity.Required.Terms
+	if len(terms) == 0 {
+		terms = []nodeSelectorTerm{{}}
 	}
-	if p.Spec.NodeSelector[spotLabel] == "true" {
-		out[spotLabel] = "true"
-		out["cloud.google.com/gke-provisioning"] = "spot"
+	var out []map[string]string
+	for _, t := range terms {
+		classes := []string{p.Spec.NodeSelector[computeClassLabel]}
+		spot := p.Spec.NodeSelector[spotLabel] == "true"
+		for _, e := range t.MatchExpressions {
+			if e.Operator != "In" {
+				continue
+			}
+			switch e.Key {
+			case computeClassLabel:
+				if classes[0] == "" {
+					classes = e.Values
+				}
+			case spotLabel:
+				spot = spot || slices.Contains(e.Values, "true")
+			}
+		}
+		for _, cc := range classes {
+			m := map[string]string{}
+			if cc != "" {
+				m[computeClassLabel] = cc
+			}
+			if spot {
+				m[spotLabel] = "true"
+				m["cloud.google.com/gke-provisioning"] = "spot"
+			}
+			out = append(out, m)
+		}
 	}
 	return out
 }
@@ -475,9 +510,9 @@ pods:
 }
 
 // newNode plans a node for pod p, which requests r: in the zone it
-// selects or the one with fewest nodes, of the smallest shape it fits,
-// with its compute class and Spot labels. ok is false when no such node
-// would take the pod.
+// selects or the one with fewest nodes, with the first compute class and
+// Spot labels it would schedule onto, of the smallest shape it fits. ok
+// is false when no such node would take the pod.
 func (a *autoscaler) newNode(c *containerpb.Cluster, np *containerpb.NodePool, p *scalePod, r res, perZone map[string]int,
 	capOf func(nodeRecord) res, labelsOf func(nodeRecord) map[string]string) (nodeRecord, bool) {
 	zone := p.selectedZone()
@@ -488,14 +523,20 @@ func (a *autoscaler) newNode(c *containerpb.Cluster, np *containerpb.NodePool, p
 			}
 		}
 	}
-	n := nodeRecord{Pool: np.Name, Zone: zone, Password: a.s.env.IDs.Hex(16), Labels: p.provisionLabels()}
-	if len(n.Labels) == 0 {
-		n.Labels = nil
+	password := a.s.env.IDs.Hex(16)
+	if !slices.Contains(np.Locations, zone) {
+		return nodeRecord{}, false
 	}
-	for _, sh := range autopilotShapes {
-		n.MachineType = sh.Name
-		if r.fits(capOf(n)) && slices.Contains(np.Locations, zone) && p.matches(labelsOf(n)) {
-			return n, true
+	for _, l := range p.provisionLabels() {
+		n := nodeRecord{Pool: np.Name, Zone: zone, Password: password, Labels: l}
+		if len(n.Labels) == 0 {
+			n.Labels = nil
+		}
+		for _, sh := range autopilotShapes {
+			n.MachineType = sh.Name
+			if r.fits(capOf(n)) && p.matches(labelsOf(n)) {
+				return n, true
+			}
 		}
 	}
 	return nodeRecord{}, false
