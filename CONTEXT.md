@@ -133,6 +133,10 @@ A container runtime whose networks live inside a virtual machine the host cannot
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
 _Avoid_: bridge container, tunnel
 
+**Bridge gateway**:
+The host's side of a container runtime's bridge network: the address the host would hold on that network. When the host cannot bind it, the network lives in a VM, so the runtime is a VM runtime and an Instance on the host uses the VM relay.
+_Avoid_: gateway (unqualified)
+
 **Loopback alias**:
 An extra `127.0.0.x` address on the host's loopback interface. Linux and Windows have every one of them; macOS has only `127.0.0.1` until `gcpemu loopback install` adds the rest. Each Cloud SQL instance and each forwarding rule gets its own when they exist, and so does each Kubernetes Service a host client reaches through the Host attachment.
 _Avoid_: loopback IP (unqualified), alias (unqualified)

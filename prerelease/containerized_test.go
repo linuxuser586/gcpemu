@@ -78,6 +78,7 @@ func containerizedChecks(t *testing.T, rt string) {
 	// An Instance on the host, gcpemu.exe, with dns on port 53,
 	// since NRPT can't name a port (ADR 0015, ADR 0026).
 	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
+	step(t, rt, "7-vm-relay", 15*time.Minute, vmRelay)
 }
 
 // containerEnv returns what `gcpemu env --shell powershell` prints in the

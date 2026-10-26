@@ -113,6 +113,7 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
 5. **Host attachment:** see below.
 6. **Resolver routes:** see below. The names resolve through `dscacheutil -q host -a name`, and
    after `uninstall` the `/etc/resolver` files gcpemu wrote are gone.
+7. **VM relay:** see below.
 
 The suite also runs on Linux, but only for the runtimes `RUNTIMES` names, so it can be worked on
 with Docker Desktop for Linux. Check 6 changes the host's resolver there only with
@@ -147,6 +148,7 @@ gets `GCPEMU_VM_RUNTIME=true`.
    gcpemu wrote is left. `install` and `uninstall` each show a UAC dialog: accept both. When port
    53 is in use on the host (ICS, Hyper-V or WSL's DNS proxy may hold it), the check is skipped and
    says so.
+7. **VM relay:** see below. Like checks 5 and 6, it runs on the host, not in the container.
 
 ### Host attachment (macOS and Windows)
 
@@ -161,7 +163,7 @@ address.
 
 ### Resolver routes (macOS and Windows)
 
-The last check on each runtime starts an Ephemeral Instance of its own, `prerelease-dns`, with
+Check 6 on each runtime starts an Ephemeral Instance of its own, `prerelease-dns`, with
 Cloud DNS and GKE. It creates a public zone `prerelease.test.` with an A record, and a GKE
 ClusterIP Service `web`. Then `gcpemu dns install --yes --suffix prerelease.test` adds the Resolver
 routes (#608), and the host's resolver answers `www.prerelease.test` with the record's address and
@@ -175,6 +177,14 @@ never removes routes it didn't add.
 CI runs the same check on Linux (`TestResolverRoutes`, in the `compat` job), through
 systemd-resolved and without the GKE Service: after `uninstall`, the `gcpemu-dnsN` link and its
 routing domains are gone.
+
+### VM relay (macOS and Windows)
+
+CI runs the VM relay's own tests (`internal/vmrelay`) only on Linux, where `GCPEMU_VM_RELAY=1`
+forces the relay on. Check 7 runs them on each runtime, where the relay is really used (#653).
+With `GCPEMU_VM_RELAY` cleared, `gcpemu doctor` on the host must report the VM relay as on because
+the bridge gateway isn't bindable: off, undetermined or forced fails the check. Then every test in the
+package runs with `go test` against the runtime, and any failure or skip fails the check.
 
 ### What stays manual
 
