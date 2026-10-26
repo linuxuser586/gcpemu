@@ -49,9 +49,10 @@ type relayAgent struct {
 	// wait bounds how long a connection or datagram waits for a session
 	// to carry it to the emulator.
 	wait time.Duration
-	// listenTCP and listenPacket bind listen's TCP listeners and UDP
-	// sockets: net.Listen and net.ListenPacket, which tests replace to
-	// refuse binds as Windows does, or to hand over sockets they hold.
+	// listenTCP and listenPacket bind listen's and offer's TCP listeners
+	// and UDP sockets: net.Listen and net.ListenPacket, which tests
+	// replace to refuse binds as Windows does, or to hand over sockets
+	// they hold.
 	listenTCP    func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
 }
@@ -246,7 +247,7 @@ func (a *relayAgent) offer(name, addr string, udp bool) error {
 		return nil
 	}
 	if udp {
-		pc, err := net.ListenPacket("udp", addr)
+		pc, err := a.listenPacket("udp", addr)
 		if err != nil {
 			return err
 		}
@@ -254,7 +255,7 @@ func (a *relayAgent) offer(name, addr string, udp bool) error {
 		go a.serveUDP(name, pc)
 		return nil
 	}
-	l, err := net.Listen("tcp", addr)
+	l, err := a.listenTCP("tcp", addr)
 	if err != nil {
 		return err
 	}
