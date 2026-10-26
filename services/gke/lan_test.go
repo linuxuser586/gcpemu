@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/grpc/codes"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -19,9 +21,16 @@ import (
 
 type tokenAuthn map[string]emu.Principal
 
-func (a tokenAuthn) Authenticate(_ context.Context, tok string) (emu.Principal, bool) {
-	p, ok := a[tok]
-	return p, ok
+// Authenticate knows the tokens in a, and "down" as a token only the
+// unreachable link "office" might have issued.
+func (a tokenAuthn) Authenticate(_ context.Context, tok string) (emu.Principal, error) {
+	if p, ok := a[tok]; ok {
+		return p, nil
+	}
+	if tok == "down" {
+		return "", apierr.New(codes.Unavailable, `link "office" cannot be reached`)
+	}
+	return "", emu.ErrUnknownToken
 }
 
 func lanTestService(mode string, gkeBind ...string) *Service {
@@ -37,6 +46,13 @@ func lanTestService(mode string, gkeBind ...string) *Service {
 
 func reviewToken(t *testing.T, s *Service, tok string) (bool, string) {
 	t.Helper()
+	ok, user, _ := review(t, s, tok)
+	return ok, user
+}
+
+// review is reviewToken that also returns the review's error.
+func review(t *testing.T, s *Service, tok string) (ok bool, user, reviewErr string) {
+	t.Helper()
 	body := `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview","spec":{"token":"` + tok + `"}}`
 	w := httptest.NewRecorder()
 	s.serveTokenReview(w, httptest.NewRequest("POST", "/", strings.NewReader(body)), "k")
@@ -45,9 +61,21 @@ func reviewToken(t *testing.T, s *Service, tok string) (bool, string) {
 		t.Fatal(err)
 	}
 	if tr.Status.User == nil {
-		return tr.Status.Authenticated, ""
+		return tr.Status.Authenticated, "", tr.Status.Error
 	}
-	return tr.Status.Authenticated, tr.Status.User.Username
+	return tr.Status.Authenticated, tr.Status.User.Username, tr.Status.Error
+}
+
+// A token only an unreachable Linked Instance might have issued is never
+// reviewed as the default Principal: the review fails, naming the link,
+// in every IAM mode (#736).
+func TestTokenReviewWithUnreachableLink(t *testing.T) {
+	for _, mode := range []string{config.IAMOff, config.IAMAudit, config.IAMEnforce} {
+		ok, user, msg := review(t, lanTestService(mode), "down")
+		if ok || user != "" || !strings.Contains(msg, `"office"`) {
+			t.Errorf("%s mode: review = %v %q %q, want unauthenticated naming the office", mode, ok, user, msg)
+		}
+	}
 }
 
 // With --gke-bind the API server is reachable from the LAN, so only real

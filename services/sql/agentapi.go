@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -144,8 +145,13 @@ func (s *Service) decideLogin(ctx context.Context, rec *instanceRecord, req *pro
 	case cert != nil && cert.Principal != "":
 		principal = emu.Principal(cert.Principal)
 	case req.Password != nil:
-		p, ok := s.env.Auth.Authenticate(ctx, strings.TrimSpace(*req.Password))
-		if !ok {
+		p, err := s.env.Auth.Authenticate(ctx, strings.TrimSpace(*req.Password))
+		if err != nil && !errors.Is(err, emu.ErrUnknownToken) {
+			// Not bad credentials: the Linked Instance that may have
+			// issued the token cannot be asked (ADR 0027).
+			return deny("57P03", "Cloud SQL IAM user authentication for user %q cannot be completed now: %s", req.User, apierr.From(err).Message)
+		}
+		if err != nil {
 			return deny("28P01", "Cloud SQL IAM user authentication failed for user %q", req.User)
 		}
 		principal = p

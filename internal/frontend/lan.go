@@ -272,8 +272,15 @@ func (h *lanHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tok, ok := strings.CutPrefix(authz, "Bearer "); ok {
-		if _, ok := h.f.env.Auth.Authenticate(r.Context(), strings.TrimSpace(tok)); ok {
+		// A token only a Linked Instance that cannot be reached might have
+		// issued fails as the gateway would fail it, naming the link.
+		_, err := h.f.env.Auth.Authenticate(r.Context(), strings.TrimSpace(tok))
+		if err == nil {
 			h.lan.Gateway.ServeHTTP(w, r)
+			return
+		}
+		if !errors.Is(err, emu.ErrUnknownToken) {
+			apierr.Write(w, err)
 			return
 		}
 	}

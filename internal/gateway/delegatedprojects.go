@@ -36,10 +36,6 @@ type Links interface {
 	DelegatedTo(ref string) (string, bool)
 	// Shared reports whether the Project ref is shared with the link name.
 	Shared(name, ref string) bool
-	// Authenticate returns the Principal of an access token this Instance
-	// did not issue, as a Linked Instance it delegates to issued it, and
-	// the links it could not ask, each with why, naming the link.
-	Authenticate(ctx context.Context, token string) (principal string, unreachable map[string]error)
 	// BucketOwner returns the link whose Linked Instance has the bucket,
 	// and its Project there.
 	BucketOwner(bucket string) (link, project string, ok bool)

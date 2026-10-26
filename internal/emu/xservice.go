@@ -70,6 +70,15 @@ type IDTokenVerifier interface {
 	VerifyIDToken(token string) (email string, ok bool)
 }
 
+// LocalAuthenticator is implemented by the iam Service: the Principal of
+// an access token this Instance issued, which the Instances it is paired
+// with ask about (ADR 0027). Unlike Authenticate, it never asks this
+// Instance's own links, so Instances that delegate to each other do not
+// ask each other in circles.
+type LocalAuthenticator interface {
+	AuthenticateLocal(ctx context.Context, token string) (Principal, error)
+}
+
 // Buckets is implemented by the gcs Service: the Project each bucket is
 // in, by which requests naming a bucket, and no Project, are routed
 // across links (ADR 0027).

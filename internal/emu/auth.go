@@ -2,6 +2,7 @@ package emu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -96,11 +97,20 @@ func (ci *CallInfo) Resource() string {
 	return ci.resource
 }
 
+// ErrUnknownToken is Authenticate's error for a token no Instance it can
+// ask recognises. The fallbacks for a caller without credentials (the
+// default Principal outside enforce mode, anonymous access) apply to it
+// only.
+var ErrUnknownToken = errors.New("unknown access token")
+
 // Authenticator maps a bearer token to a principal (FR-CORE-051). It is
 // provided by the IAM service.
 type Authenticator interface {
-	// Authenticate returns the principal for token, or ok=false if unknown.
-	Authenticate(ctx context.Context, token string) (p Principal, ok bool)
+	// Authenticate returns the principal for token: ErrUnknownToken if
+	// unknown, and an UNAVAILABLE error naming the links it could not ask
+	// when only a Linked Instance that could not be reached might have
+	// issued it (ADR 0027).
+	Authenticate(ctx context.Context, token string) (Principal, error)
 }
 
 // Authorizer checks permissions (FR-IAM-004, FR-INT-012).
@@ -160,9 +170,9 @@ func (a *PolicyAuthorizer) Mode() string { return a.mode.Load().(string) }
 // SetMode switches the enforcement mode; later checks apply it.
 func (a *PolicyAuthorizer) SetMode(mode string) { a.mode.Store(mode) }
 
-func (a *PolicyAuthorizer) Authenticate(ctx context.Context, token string) (Principal, bool) {
+func (a *PolicyAuthorizer) Authenticate(ctx context.Context, token string) (Principal, error) {
 	if a.authn == nil {
-		return "", false
+		return "", ErrUnknownToken
 	}
 	return a.authn.Authenticate(ctx, token)
 }

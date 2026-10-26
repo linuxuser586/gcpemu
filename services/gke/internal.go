@@ -3,6 +3,7 @@ package gke
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -117,27 +118,33 @@ type tokenReview struct {
 // email, which is the Kubernetes user name on GKE. Outside enforce mode an
 // unknown token maps to the default principal, as on the gateway
 // (FR-CORE-050/051), unless the API servers are served beyond loopback
-// (--gke-bind, lan.go).
+// (--gke-bind, lan.go). One only an unreachable Linked Instance might
+// have issued never does: the review names the link.
 func (s *Service) serveTokenReview(w http.ResponseWriter, r *http.Request, key string) {
 	var tr tokenReview
 	if err := json.NewDecoder(r.Body).Decode(&tr); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	p, ok := s.env.Auth.Authenticate(r.Context(), tr.Spec.Token)
-	if !ok && s.env.Auth.Mode() != config.IAMEnforce && !s.lanStrict() && tr.Spec.Token != "" {
-		p, ok = emu.Principal(s.env.Config.DefaultPrincipal), true
+	p, err := s.env.Auth.Authenticate(r.Context(), tr.Spec.Token)
+	if errors.Is(err, emu.ErrUnknownToken) && s.env.Auth.Mode() != config.IAMEnforce && !s.lanStrict() && tr.Spec.Token != "" {
+		p, err = emu.Principal(s.env.Config.DefaultPrincipal), nil
 	}
 	tr.Status.Audiences = tr.Spec.Audiences
 	tr.Spec.Token = ""
-	if ok && p != "" {
+	switch {
+	case err == nil && p != "":
 		tr.Status.Authenticated = true
 		tr.Status.User = &struct {
 			Username string   `json:"username"`
 			UID      string   `json:"uid,omitempty"`
 			Groups   []string `json:"groups,omitempty"`
 		}{Username: p.Email(), UID: string(p), Groups: []string{"system:authenticated"}}
-	} else {
+	case err != nil && !errors.Is(err, emu.ErrUnknownToken):
+		// Only a Linked Instance that cannot be reached might have issued
+		// the token (ADR 0027).
+		tr.Status.Error = apierr.From(err).Message
+	default:
 		tr.Status.Error = "invalid or expired emulator access token"
 	}
 	writeJSON(w, tr)

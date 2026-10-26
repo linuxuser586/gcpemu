@@ -134,8 +134,8 @@ func TestDelegatedSTSExchange(t *testing.T) {
 			t.Errorf("exchange (JSON %v) through the laptop = %d %s", asJSON, code, body)
 			continue
 		}
-		if p, ok := office.Env.Auth.Authenticate(t.Context(), reply.AccessToken); !ok || !strings.HasSuffix(string(p), "/workloadIdentityPools/ci-pool/subject/build-1") {
-			t.Errorf("the office knows the token (JSON %v) as %q %v, want the pool's subject build-1", asJSON, p, ok)
+		if p, err := office.Env.Auth.Authenticate(t.Context(), reply.AccessToken); err != nil || !strings.HasSuffix(string(p), "/workloadIdentityPools/ci-pool/subject/build-1") {
+			t.Errorf("the office knows the token (JSON %v) as %q %v, want the pool's subject build-1", asJSON, p, err)
 		}
 	}
 
@@ -155,7 +155,7 @@ func TestDelegatedSTSExchange(t *testing.T) {
 
 	ownKey, ownAudience := oidcPool(t, laptop, "laptop-own")
 	tok := federatedToken(t, laptop, ownKey, ownAudience, "build-2", "red")
-	if _, ok := laptop.Env.Auth.Authenticate(t.Context(), tok); !ok {
+	if _, err := laptop.Env.Auth.Authenticate(t.Context(), tok); err != nil {
 		t.Error("the laptop does not know the token it exchanged for its own Project's provider")
 	}
 }
