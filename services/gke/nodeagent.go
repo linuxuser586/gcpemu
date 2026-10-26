@@ -470,13 +470,13 @@ func onlineCPUs() (int64, error) {
 		if err != nil {
 			return 0, fmt.Errorf("online CPUs %q: %w", b, err)
 		}
-		z := a
+		last := a
 		if found {
-			if z, err = strconv.ParseInt(hi, 10, 64); err != nil {
+			if last, err = strconv.ParseInt(hi, 10, 64); err != nil {
 				return 0, fmt.Errorf("online CPUs %q: %w", b, err)
 			}
 		}
-		n += z - a + 1
+		n += last - a + 1
 	}
 	return n, nil
 }

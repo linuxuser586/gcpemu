@@ -275,15 +275,14 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 		if err := s.fillPool(r, c, np, ""); err != nil {
 			return nil, err
 		}
-		counts := startCounts(np)
+		var nodes []nodeRecord
 		if autopilotOn(c) {
-			counts = autopilotCounts(np)
-		}
-		nodes := s.planNodes(c, np, nil, counts)
-		if autopilotOn(c) {
+			nodes = s.planNodes(c, np, nil, autopilotCounts(np))
 			for i := range nodes {
 				nodes[i].MachineType = autopilotShapes[0].Name
 			}
+		} else {
+			nodes = s.planNodes(c, np, nil, startCounts(np))
 		}
 		rec.Int.Nodes = append(rec.Int.Nodes, nodes...)
 	}

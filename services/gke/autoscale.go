@@ -24,9 +24,10 @@ import (
 // it has been empty for scaleDownDelay, never the cluster's last. A new
 // node takes the smallest shape (autopilotShapes) its first pod fits, and
 // the compute class and Spot its pods select as labels. Nodes of every
-// cluster share the host node limit (FR-GKE-003); a pod that needs a node
-// beyond it stays Pending with FailedScaleUp, as on GKE when a scale-up
-// fails for quota.
+// cluster share the Instance's node limit (FR-GKE-003); a pod that needs a
+// node beyond it stays Pending with FailedScaleUp, as on GKE when a
+// scale-up fails for quota. A node that is not Ready within nodeReadyWait
+// is removed, so that a later round can add another.
 
 const (
 	autoscaleInterval = 2 * time.Second
@@ -42,7 +43,7 @@ func (s *Service) autoscaleLoop(ctx context.Context, key string) {
 	if rec, err := s.loadKey(key); err != nil || !autopilotOn(rec.cluster()) {
 		return
 	}
-	a := &autoscaler{s: s, key: key, empty: map[string]time.Time{}, told: map[string]string{}}
+	a := &autoscaler{s: s, key: key, empty: map[string]time.Time{}, notReady: map[string]time.Time{}, lastReason: map[string]string{}}
 	t := time.NewTicker(autoscaleInterval)
 	defer t.Stop()
 	for {
@@ -61,10 +62,12 @@ func (s *Service) autoscaleLoop(ctx context.Context, key string) {
 type autoscaler struct {
 	s   *Service
 	key string
-	// empty is when each node was first seen empty.
-	empty map[string]time.Time
-	// told is the last scale-up event reason given each Pending pod, by UID.
-	told map[string]string
+	// empty and notReady are when each node was first seen empty, and
+	// not Ready.
+	empty, notReady map[string]time.Time
+	// lastReason is the last scale-up event reason recorded on each
+	// Pending pod, by UID.
+	lastReason map[string]string
 }
 
 // res is an amount of node resources: CPU in millicores, memory in bytes,
@@ -234,6 +237,11 @@ func (t nodeSelectorTerm) matches(labels map[string]string) bool {
 	return true
 }
 
+// selectedZone is the zone the pod's node selector names, or "".
+func (p *scalePod) selectedZone() string {
+	return p.Spec.NodeSelector["topology.kubernetes.io/zone"]
+}
+
 // provisionLabels are the labels a node provisioned for the pod gets: the
 // compute class and Spot its node selector asks for.
 func (p *scalePod) provisionLabels() map[string]string {
@@ -347,23 +355,47 @@ func (a *autoscaler) step(ctx context.Context) error {
 		}
 		return m
 	}
+	now := s.env.Clock.Now()
 	var bins []*bin
+	var stuck []nodeRecord
 	starting := false
 	for _, n := range rec.Int.Nodes {
 		kn := byName[n.Name]
 		switch {
 		case kn == nil || !kn.ready():
+			since, ok := a.notReady[n.Name]
+			if !ok {
+				a.notReady[n.Name], since = now, now
+			}
+			if now.Sub(since) > nodeReadyWait {
+				stuck = append(stuck, n)
+				continue
+			}
 			starting = true
 			bins = append(bins, &bin{node: n, labels: labelsOf(n), free: capOf(n), starting: true})
 		case !kn.Spec.Unschedulable:
+			delete(a.notReady, n.Name)
 			bins = append(bins, &bin{node: n, labels: kn.Metadata.Labels, free: resOf(kn.Status.Allocatable).minus(used[n.Name])})
 		}
+	}
+	if len(stuck) > 0 && len(stuck) < len(rec.Int.Nodes) {
+		s.env.Log.Warn("gke: removing Autopilot nodes that did not become Ready", "cluster", a.key, "nodes", len(stuck))
+		for _, n := range stuck {
+			delete(a.notReady, n.Name)
+		}
+		return a.remove(ctx, stuck)
 	}
 	a.forget(pending)
 	if len(pending) > 0 {
 		waiting, err := a.scaleUp(ctx, kc, rec, c, np, pending, bins, capOf, labelsOf)
 		if err != nil || waiting {
 			return err
+		}
+		// Nodes pods were just placed on are about to run them.
+		for _, b := range bins {
+			if len(b.pods) > 0 {
+				busy[b.node.Name] = true
+			}
 		}
 	}
 	if starting {
@@ -373,8 +405,9 @@ func (a *autoscaler) step(ctx context.Context) error {
 }
 
 // scaleUp places the unschedulable pods on nodes, adding the nodes they
-// need within the host node limit, and reports whether any pod waits for
-// a node to start.
+// need within the Instance's node limit, and reports whether any pod
+// waits for a node to start. A pod beyond the limit does not wait: an
+// empty node may still be removed to make room for it.
 func (a *autoscaler) scaleUp(ctx context.Context, kc *kubeClient, rec *clusterRecord, c *containerpb.Cluster, np *containerpb.NodePool,
 	pending []*scalePod, bins []*bin, capOf func(nodeRecord) res, labelsOf func(nodeRecord) map[string]string) (bool, error) {
 	s := a.s
@@ -417,7 +450,6 @@ pods:
 		}
 		if room <= 0 {
 			failed = append(failed, p)
-			waiting = true
 			continue
 		}
 		for n.Name == "" || taken[n.Name] {
@@ -432,21 +464,21 @@ pods:
 		waiting = true
 	}
 	for _, p := range unfit {
-		a.tell(ctx, kc, p, "Normal", "NotTriggerScaleUp", "pod didn't trigger scale-up: it wouldn't fit on any node Autopilot can add")
+		a.recordEvent(ctx, kc, p, "Normal", "NotTriggerScaleUp", "pod didn't trigger scale-up: it wouldn't fit on any node Autopilot can add")
 	}
 	for _, p := range failed {
 		zones := strings.Join(np.Locations, ",")
-		if z := p.Spec.NodeSelector["topology.kubernetes.io/zone"]; z != "" {
+		if z := p.selectedZone(); z != "" {
 			zones = z
 		}
-		a.tell(ctx, kc, p, "Warning", "FailedScaleUp", fmt.Sprintf(
+		a.recordEvent(ctx, kc, p, "Warning", "FailedScaleUp", fmt.Sprintf(
 			"Node scale up in zones %s associated with this pod failed: gcpemu node limit exceeded (%d nodes; set %s to raise it). Pod is at risk of not being scheduled.",
 			zones, limit, maxNodesEnv))
 	}
 	if len(added) == 0 {
 		return waiting, nil
 	}
-	if err := a.addNodes(added); err != nil {
+	if err := a.addNodes(ctx, added); err != nil {
 		return true, err
 	}
 	before := len(rec.Int.Nodes)
@@ -454,7 +486,7 @@ pods:
 		ig := strings.Replace(igURL(np, b.node.Zone), "/instanceGroupManagers/", "/instanceGroups/", 1)
 		msg := fmt.Sprintf("pod triggered scale-up: [{%s %d->%d (max: %d)}]", ig, before, before+len(added), limit)
 		for _, p := range b.pods {
-			a.tell(ctx, kc, p, "Normal", "TriggeredScaleUp", msg)
+			a.recordEvent(ctx, kc, p, "Normal", "TriggeredScaleUp", msg)
 		}
 	}
 	a.startNodes(ctx, added)
@@ -467,10 +499,8 @@ pods:
 // would take the pod.
 func (a *autoscaler) newNode(c *containerpb.Cluster, np *containerpb.NodePool, p *scalePod, r res, perZone map[string]int,
 	capOf func(nodeRecord) res, labelsOf func(nodeRecord) map[string]string) (nodeRecord, bool) {
-	zone := ""
-	if z := p.Spec.NodeSelector["topology.kubernetes.io/zone"]; z != "" {
-		zone = z
-	} else {
+	zone := p.selectedZone()
+	if zone == "" {
 		for _, z := range np.Locations {
 			if zone == "" || perZone[z] < perZone[zone] {
 				zone = z
@@ -501,8 +531,13 @@ func igURL(np *containerpb.NodePool, zone string) string {
 }
 
 // addNodes records the planned nodes, unless the cluster has left
-// RUNNING or the host node limit would be exceeded.
-func (a *autoscaler) addNodes(added []*bin) error {
+// RUNNING or the Instance's node limit would be exceeded.
+func (a *autoscaler) addNodes(ctx context.Context, added []*bin) error {
+	unlock, err := a.lockScaling(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return a.s.env.Store.Update(func(tx store.Tx) error {
 		rec, err := getCluster(tx, a.key)
 		if err != nil {
@@ -527,51 +562,80 @@ func (a *autoscaler) addNodes(added []*bin) error {
 // startNodes starts the added nodes' containers; a node that fails to
 // start is removed, so that a later round can try again.
 func (a *autoscaler) startNodes(ctx context.Context, added []*bin) {
-	s := a.s
-	var gone []nodeRecord
-	d, err := s.deps(ctx)
-	if err == nil {
-		var rec *clusterRecord
-		if rec, err = s.loadKey(a.key); err == nil {
-			sn, err2 := d.vpc.SubnetNetwork(ctx, rec.Int.Subnetwork)
-			if err2 == nil {
-				var mu sync.Mutex
-				var wg sync.WaitGroup
-				for _, b := range added {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						if err := s.startNode(ctx, d, a.key, sn, b.node, false); err != nil {
-							s.env.Log.Warn("gke: starting an Autopilot node failed", "cluster", a.key, "node", b.node.Name, "err", err)
-							mu.Lock()
-							gone = append(gone, b.node)
-							mu.Unlock()
-						}
-					}()
-				}
-				wg.Wait()
-			}
-			err = err2
-		}
-	}
+	unlock, err := a.lockScaling(ctx)
 	if err != nil {
-		s.env.Log.Warn("gke: starting Autopilot nodes failed", "cluster", a.key, "err", err)
+		return
+	}
+	gone, err := a.start(ctx, added)
+	unlock()
+	if err != nil {
+		a.s.env.Log.Warn("gke: starting Autopilot nodes failed", "cluster", a.key, "err", err)
+		gone = gone[:0]
 		for _, b := range added {
 			gone = append(gone, b.node)
 		}
 	}
 	if len(gone) > 0 && ctx.Err() == nil {
-		a.remove(ctx, gone)
+		_ = a.remove(ctx, gone)
 	}
 }
 
-// scaleDown removes one node that has stayed empty for scaleDownDelay,
-// unless it is the cluster's last. busy names the nodes running pods
-// other than DaemonSet, mirror and kube-system ones.
+// start starts the added nodes' containers and returns the nodes that
+// failed to start.
+func (a *autoscaler) start(ctx context.Context, added []*bin) ([]nodeRecord, error) {
+	s := a.s
+	d, err := s.deps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := s.loadKey(a.key)
+	if err != nil {
+		return nil, err
+	}
+	sn, err := d.vpc.SubnetNetwork(ctx, rec.Int.Subnetwork)
+	if err != nil {
+		return nil, err
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var gone []nodeRecord
+	for _, b := range added {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.startNode(ctx, d, a.key, sn, b.node, false); err != nil {
+				s.env.Log.Warn("gke: starting an Autopilot node failed", "cluster", a.key, "node", b.node.Name, "err", err)
+				mu.Lock()
+				gone = append(gone, b.node)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	return gone, nil
+}
+
+// lockScaling holds off the cluster's teardown while nodes are added or
+// removed (destroyDataPlane), unless it has begun.
+func (a *autoscaler) lockScaling(ctx context.Context) (func(), error) {
+	rt := a.s.rtFor(a.key)
+	rt.scaleMu.Lock()
+	if err := ctx.Err(); err != nil {
+		rt.scaleMu.Unlock()
+		return nil, err
+	}
+	return rt.scaleMu.Unlock, nil
+}
+
+// scaleDown removes the newest node that has stayed empty for
+// scaleDownDelay, unless it is the cluster's last. busy names the nodes
+// running, or about to run, pods other than DaemonSet, mirror and
+// kube-system ones.
 func (a *autoscaler) scaleDown(ctx context.Context, rec *clusterRecord, nodes map[string]*kubeNode, busy map[string]bool) error {
 	now := a.s.env.Clock.Now()
 	var victim *nodeRecord
-	for i, n := range rec.Int.Nodes {
+	for i := len(rec.Int.Nodes) - 1; i >= 0; i-- {
+		n := rec.Int.Nodes[i]
 		if kn := nodes[n.Name]; kn == nil || !kn.ready() || busy[n.Name] {
 			delete(a.empty, n.Name)
 			continue
@@ -589,13 +653,17 @@ func (a *autoscaler) scaleDown(ctx context.Context, rec *clusterRecord, nodes ma
 		return nil
 	}
 	delete(a.empty, victim.Name)
-	a.remove(ctx, []nodeRecord{*victim})
-	return nil
+	return a.remove(ctx, []nodeRecord{*victim})
 }
 
 // remove deletes nodes and their records.
-func (a *autoscaler) remove(ctx context.Context, gone []nodeRecord) {
+func (a *autoscaler) remove(ctx context.Context, gone []nodeRecord) error {
 	s := a.s
+	unlock, err := a.lockScaling(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := s.removeNodes(ctx, a.key, gone); err != nil {
 		s.env.Log.Warn("gke: removing Autopilot nodes", "cluster", a.key, "err", err)
 	}
@@ -603,7 +671,7 @@ func (a *autoscaler) remove(ctx context.Context, gone []nodeRecord) {
 	for _, n := range gone {
 		drop[n.Name] = true
 	}
-	_ = s.updateCluster(a.key, func(rec *clusterRecord, c *containerpb.Cluster) error {
+	return s.updateCluster(a.key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		var keep []nodeRecord
 		for _, n := range rec.Int.Nodes {
 			if !drop[n.Name] {
@@ -616,9 +684,10 @@ func (a *autoscaler) remove(ctx context.Context, gone []nodeRecord) {
 	})
 }
 
-// tell records a scale-up event on a pod, once per reason while it waits.
-func (a *autoscaler) tell(ctx context.Context, kc *kubeClient, p *scalePod, typ, reason, msg string) {
-	if a.told[p.Metadata.UID] == reason {
+// recordEvent records a scale-up event on a pod, once per reason while it
+// waits.
+func (a *autoscaler) recordEvent(ctx context.Context, kc *kubeClient, p *scalePod, typ, reason, msg string) {
+	if a.lastReason[p.Metadata.UID] == reason {
 		return
 	}
 	now := a.s.env.Clock.Now().UTC().Format(time.RFC3339)
@@ -637,7 +706,7 @@ func (a *autoscaler) tell(ctx context.Context, kc *kubeClient, p *scalePod, typ,
 		a.s.env.Log.Debug("gke: recording a scale-up event", "pod", p.Metadata.Namespace+"/"+p.Metadata.Name, "err", err)
 		return
 	}
-	a.told[p.Metadata.UID] = reason
+	a.lastReason[p.Metadata.UID] = reason
 }
 
 // forget drops the event state of pods no longer Pending.
@@ -646,9 +715,9 @@ func (a *autoscaler) forget(pending []*scalePod) {
 	for _, p := range pending {
 		keep[p.Metadata.UID] = true
 	}
-	for uid := range a.told {
+	for uid := range a.lastReason {
 		if !keep[uid] {
-			delete(a.told, uid)
+			delete(a.lastReason, uid)
 		}
 	}
 }

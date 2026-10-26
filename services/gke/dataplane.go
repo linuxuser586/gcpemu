@@ -56,6 +56,10 @@ type clusterRT struct {
 	kube   *kubeClient
 	creds  adminCreds
 	cancel context.CancelFunc // controllers (NEG sync)
+	// scaleMu is held while Autopilot node provisioning adds or removes
+	// nodes (autoscale.go), and taken by destroyDataPlane once the
+	// controllers are cancelled, so no node outlives the cluster.
+	scaleMu sync.Mutex
 	// l7Mu serialises load balancer syncs with their removal (l7.go).
 	l7Mu  sync.Mutex
 	wi    sync.Map // pod IP → wiEntry
@@ -1067,6 +1071,9 @@ func (s *Service) nodeAgentConfig(ctx context.Context, d *deps, rec *clusterReco
 }
 
 func maxPods(c *containerpb.Cluster, np *containerpb.NodePool) int64 {
+	if autopilotOn(c) {
+		return autopilotMaxPods // also for clusters stored before it was set
+	}
 	if n := np.GetMaxPodsConstraint().GetMaxPodsPerNode(); n > 0 {
 		return n
 	}
@@ -1101,7 +1108,7 @@ func nodeLabels(c *containerpb.Cluster, np *containerpb.NodePool, n nodeRecord) 
 		"cloud.google.com/gke-netd-ready":            "true",
 		"addon.gke.io/node-local-dns-ds-ready":       "true",
 		"cloud.google.com/gke-preemptible":           "",
-		"cloud.google.com/gke-spot":                  "",
+		spotLabel:                                    "",
 		"cloud.google.com/gke-ephemeral-storage-ssd": "",
 	}
 	for k, v := range cfg.Labels {
@@ -1116,7 +1123,7 @@ func nodeLabels(c *containerpb.Cluster, np *containerpb.NodePool, n nodeRecord) 
 		m[k] = v
 	}
 	if cfg.Spot {
-		m["cloud.google.com/gke-spot"] = "true"
+		m[spotLabel] = "true"
 	}
 	if cfg.Preemptible {
 		m["cloud.google.com/gke-preemptible"] = "true"
@@ -1458,7 +1465,10 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 
 // destroyDataPlane removes everything a cluster runs.
 func (s *Service) destroyDataPlane(ctx context.Context, key string) error {
-	s.stopRT(s.rtFor(key))
+	rt := s.rtFor(key)
+	s.stopRT(rt)
+	rt.scaleMu.Lock()
+	defer rt.scaleMu.Unlock()
 	rec, err := s.loadKey(key)
 	if err != nil {
 		return nil
@@ -1509,12 +1519,7 @@ func (s *Service) destroyDataPlane(ctx context.Context, key string) error {
 
 // waitIdle waits until no operation holds the cluster.
 func (s *Service) waitIdle(ctx context.Context, key string) error {
-	return waitFor(ctx, 2*time.Minute, func() (bool, error) {
-		s.mu.Lock()
-		_, busy := s.busy[key]
-		s.mu.Unlock()
-		return !busy, nil
-	})
+	return waitFor(ctx, 2*time.Minute, func() (bool, error) { return !s.opBusy(key), nil })
 }
 
 // ---- image preload ----
