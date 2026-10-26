@@ -375,6 +375,14 @@ _Avoid_: idle node, unused node
 The machine type GKE would give an Autopilot cluster's node. The node advertises that type's allocatable CPU, memory and pods whatever the host has, so a cluster fills up where it would on GCP (ADR 0031). A Standard cluster's machine type is only Recorded, not a Machine shape.
 _Avoid_: node size, instance type
 
+**Compute class**:
+The kind of node an Autopilot cluster's pod asks for, through a node selector or required node affinity. The emulator records it only as a label on the node it adds for the pod; the node's Machine shape does not change with it.
+_Avoid_: node class, machine class
+
+**Spot node**:
+A node an Autopilot cluster's pod asks for as Spot. It is labelled as GKE labels Spot nodes but is never preempted.
+_Avoid_: preemptible node (GKE's older, separate kind)
+
 **Node limit**:
 The most GKE nodes one Instance runs, across all its clusters, Standard and Autopilot alike. A request that would exceed it fails, and an Autopilot cluster's pods that need a node beyond it stay Pending.
 _Avoid_: host node limit, quota

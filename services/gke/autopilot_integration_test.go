@@ -66,11 +66,11 @@ func (e *env) scaleFill(replicas int) {
 // TestAutopilotNodeProvisioning is FR-GKE-015 (ADR 0031): an Autopilot
 // cluster starts with one node advertising the allocatable of GKE's
 // ek-standard-2, whatever the host has; a pod Pending for lack of
-// capacity gets a new node within 30 s (NFR-PERF-010); compute-class and
-// Spot selectors are labels on the node provisioned for them; at the host
-// node limit pods stay Pending with FailedScaleUp; and emptied nodes are
-// removed, never the last. Not parallel: it sets the node limit in the
-// process environment.
+// capacity gets a new node within 30 s (NFR-PERF-010); a compute class
+// and Spot required through node affinity are labels on the node
+// provisioned for them; at the host node limit pods stay Pending with
+// FailedScaleUp; and emptied nodes are removed, never the last. Not
+// parallel: it sets the node limit in the process environment.
 func TestAutopilotNodeProvisioning(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Setenv("GCPEMU_GKE_MAX_NODES", "3")
@@ -136,12 +136,20 @@ func TestAutopilotNodeProvisioning(t *testing.T) {
 		t.Errorf("%d nodes after scale-up; want 2", n)
 	}
 
-	// A pod selecting a compute class and Spot gets a node labelled so.
+	// A pod requiring a compute class and Spot through node affinity gets
+	// a node labelled so (selectors are covered by TestNewNodeLabels).
+	in := func(key, value string) map[string]any {
+		return map[string]any{"key": key, "operator": "In", "values": []string{value}}
+	}
 	e.mustKube("POST", "/api/v1/namespaces/default/pods", map[string]any{
 		"apiVersion": "v1", "kind": "Pod",
 		"metadata": map[string]any{"name": "scale-out", "labels": map[string]string{"app": "scale-out"}},
 		"spec": map[string]any{
-			"nodeSelector": map[string]string{"cloud.google.com/compute-class": "Scale-Out", "cloud.google.com/gke-spot": "true"},
+			"affinity": map[string]any{"nodeAffinity": map[string]any{"requiredDuringSchedulingIgnoredDuringExecution": map[string]any{
+				"nodeSelectorTerms": []map[string]any{{"matchExpressions": []map[string]any{
+					in("cloud.google.com/compute-class", "Scale-Out"), in("cloud.google.com/gke-spot", "true"),
+				}}},
+			}}},
 			"containers": []map[string]any{{
 				"name": "c", "image": testImage, "imagePullPolicy": "IfNotPresent", "command": []string{"sleep", "3600"},
 				"resources": map[string]any{"requests": map[string]string{"cpu": "50m", "memory": "52Mi"}},
