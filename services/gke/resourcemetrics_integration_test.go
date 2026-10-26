@@ -15,13 +15,14 @@ import (
 )
 
 // TestResourceMetrics is #637: every cluster serves metrics.k8s.io from
-// k3s's bundled metrics-server, as GKE's does. The cluster is private and
-// the emulator offline, so its nodes can pull neither from upstream nor
-// through the registry mirror, whose cache is new: metrics-server starts
-// only from the preloaded images. `kubectl top nodes` and `kubectl top
-// pods -A` read what the test checks, and a CPU HPA scales on it. Removing
-// metrics-server, as a cluster created before #637 never had it, brings it
-// back when the Instance next starts and recreates the server container.
+// k3s's bundled metrics-server, as GKE's does. The cluster is private and,
+// until the restart, the emulator offline, so its nodes can pull neither
+// from upstream nor through the registry mirror, whose cache is new:
+// metrics-server starts only from the preloaded images. `kubectl top
+// nodes` and `kubectl top pods -A` read what the test checks, and a CPU
+// HPA scales on it. Removing metrics-server, as a cluster created before
+// #637 never had it, brings it back when the Instance next starts and
+// recreates the server container.
 func TestResourceMetrics(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
