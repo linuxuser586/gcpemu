@@ -116,7 +116,7 @@ func (s *Service) decideLogin(ctx context.Context, rec *instanceRecord, req *pro
 		if st.ConnectorEnforcement == "REQUIRED" {
 			return deny("28000", "connections to instance %s must use the Cloud SQL connectors (connectorEnforcement is REQUIRED)", in.ConnectionName)
 		}
-		if msg := s.networkPolicy(ctx, rec, req.Local, req.Remote, req.LANClient); msg != "" {
+		if msg := s.networkPolicy(ctx, rec, req.Local, req.Remote, req.LANCaller); msg != "" {
 			return deny("28000", "%s", msg)
 		}
 		switch sslMode(ipc) {

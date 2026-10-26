@@ -427,7 +427,7 @@ func TestLANCallerLogin(t *testing.T) {
 	ctx := context.Background()
 	ipc := rec.Instance.Settings.IpConfiguration
 	lan := func(client, remote string) *proxy.LoginResponse {
-		return s.decideLogin(ctx, rec, &proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "172.30.0.5", Remote: remote, LANClient: client, User: "postgres"})
+		return s.decideLogin(ctx, rec, &proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "172.30.0.5", Remote: remote, LANCaller: client, User: "postgres"})
 	}
 	for _, c := range []struct {
 		networks       []string
@@ -454,7 +454,7 @@ func TestLANCallerLogin(t *testing.T) {
 	if r := lan("192.168.1.7", "172.30.0.1"); !strings.Contains(r.Message, "connection from 192.168.1.7 is not authorized") {
 		t.Errorf("refusal %q", r.Message)
 	}
-	body, _ := json.Marshal(proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "172.30.0.5", Remote: "172.30.0.1", LANClient: "192.168.1.7", User: "postgres"})
+	body, _ := json.Marshal(proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "172.30.0.5", Remote: "172.30.0.1", LANCaller: "192.168.1.7", User: "postgres"})
 	hr := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
 	hr.SetPathValue("project", "p")
 	hr.SetPathValue("instance", "i")

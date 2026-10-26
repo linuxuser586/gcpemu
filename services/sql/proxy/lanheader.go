@@ -5,7 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
+	"fmt"
 	"io"
 	"net"
 
@@ -16,7 +16,7 @@ import (
 // caller's bytes, naming the caller's address and the address it dialled,
 // with an HMAC-SHA256 of both keyed by the instance's agent key (EnvKey)
 // in a TLV of type lanMACType. The direct listener reports a verified
-// header's source as LoginRequest.LANClient and closes a connection whose
+// header's source as LoginRequest.LANCaller and closes a connection whose
 // header fails verification (ADR 0030).
 
 // lanMACType is the TLV type of the header's HMAC, in the range PROXY v2
@@ -60,12 +60,14 @@ func readLANHeader(c net.Conn, key string) (net.Conn, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	for _, t := range tlvs {
-		if t.Type == lanMACType && key != "" && hmac.Equal(t.Value, lanMAC(key, src, dst)) {
-			return bc, hostOf(src), nil
+	if key != "" {
+		for _, t := range tlvs {
+			if t.Type == lanMACType && hmac.Equal(t.Value, lanMAC(key, src, dst)) {
+				return bc, hostOf(src), nil
+			}
 		}
 	}
-	return nil, "", errors.New("PROXY header from " + hostOf(c.RemoteAddr()) + " fails verification")
+	return nil, "", fmt.Errorf("PROXY header from %s fails verification", hostOf(c.RemoteAddr()))
 }
 
 // bufferedConn is c read through r, which may hold bytes already read.

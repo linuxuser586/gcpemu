@@ -73,9 +73,9 @@ type LoginRequest struct {
 	Listener string `json:"listener"`
 	Local    string `json:"local"`  // local IP the client connected to
 	Remote   string `json:"remote"` // client source IP
-	// LANClient is the LAN caller's address from the --sql-bind relay's
+	// LANCaller is the LAN caller's address from the --sql-bind relay's
 	// signed PROXY header, "" without one (ADR 0030).
-	LANClient string `json:"lanClient,omitempty"`
+	LANCaller string `json:"lanCaller,omitempty"`
 	TLS       bool   `json:"tls"`
 	// ClientCert is the verified client certificate (DER), if any.
 	ClientCert []byte `json:"clientCert,omitempty"`
@@ -87,8 +87,8 @@ type LoginRequest struct {
 
 // Client is the client's address: the LAN caller's, else the TCP peer's.
 func (r *LoginRequest) Client() string {
-	if r.LANClient != "" {
-		return r.LANClient
+	if r.LANCaller != "" {
+		return r.LANCaller
 	}
 	return r.Remote
 }
@@ -264,7 +264,7 @@ func (a *agent) handle(raw net.Conn, listener string) {
 			}
 			return
 		}
-		conn, req.LANClient = c, lan
+		conn, req.LANCaller = c, lan
 	}
 	if listener == ListenerConnector {
 		tc := tls.Server(raw, a.connectorTLS)

@@ -66,8 +66,8 @@ func TestDirectListenerLANHeader(t *testing.T) {
 	if b, err := dialDirect(t, addr, func(w io.Writer) error { return WriteLANHeader(w, "agent-key", src, dst) }); err != nil || b != 'E' {
 		t.Fatalf("signed header: reply %q, %v", b, err)
 	}
-	if req := <-logins; req.LANClient != "192.168.1.7" || req.Remote != "127.0.0.1" {
-		t.Errorf("signed header: login from LAN client %q, remote %q", req.LANClient, req.Remote)
+	if req := <-logins; req.LANCaller != "192.168.1.7" || req.Remote != "127.0.0.1" {
+		t.Errorf("signed header: login from LAN client %q, remote %q", req.LANCaller, req.Remote)
 	}
 
 	// A wrong or missing signature closes the connection unasked.
@@ -84,8 +84,8 @@ func TestDirectListenerLANHeader(t *testing.T) {
 	if b, err := dialDirect(t, addr, nil); err != nil || b != 'E' {
 		t.Fatalf("no header: reply %q, %v", b, err)
 	}
-	if req := <-logins; req.LANClient != "" || req.Remote != "127.0.0.1" {
-		t.Errorf("no header: login from LAN client %q, remote %q", req.LANClient, req.Remote)
+	if req := <-logins; req.LANCaller != "" || req.Remote != "127.0.0.1" {
+		t.Errorf("no header: login from LAN client %q, remote %q", req.LANCaller, req.Remote)
 	}
 	select {
 	case req := <-logins:
