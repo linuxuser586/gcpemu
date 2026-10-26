@@ -570,6 +570,10 @@ _Avoid_: "conformance" on its own
 An end-to-end deployment of a representative application across all Products, used as the final acceptance test.
 _Avoid_: "acceptance" on its own, e2e
 
+**Autopilot acceptance**:
+The v1.0 test that accepts Autopilot clusters on their own, apart from the Reference stack, which stays on a Standard cluster.
+_Avoid_: Autopilot e2e, Autopilot stack
+
 **Containerized Instance tests**:
 Tests that build the OCI image and drive a Containerized Instance from the host.
 _Avoid_: image tests

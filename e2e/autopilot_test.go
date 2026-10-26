@@ -54,7 +54,8 @@ func TestAutopilot(t *testing.T) {
 	gw := inst.Endpoint("gateway")
 
 	var sc struct {
-		DefaultClusterVersion string `json:"defaultClusterVersion"`
+		DefaultClusterVersion string   `json:"defaultClusterVersion"`
+		ValidMasterVersions   []string `json:"validMasterVersions"`
 		Channels              []struct {
 			Channel       string   `json:"channel"`
 			ValidVersions []string `json:"validVersions"`
@@ -63,20 +64,27 @@ func TestAutopilot(t *testing.T) {
 	if !getJSON(gw, "/container/v1/projects/autopilot/locations/us-central1/serverConfig", &sc) {
 		t.Fatal("getServerConfig failed")
 	}
-	// The newest version of each minor; valid versions are newest first.
-	var newest []string
-	for _, ch := range sc.Channels {
-		if ch.Channel != "RAPID" {
-			continue
-		}
-		for _, v := range ch.ValidVersions {
-			if !slices.ContainsFunc(newest, func(n string) bool { return minorOf(n) == minorOf(v) }) {
-				newest = append(newest, v)
-			}
+	// The supported minors are the server's (FR-GKE-002); the newest
+	// version of each, as valid versions are newest first, must be on the
+	// Rapid channel the module creates clusters on.
+	var newest, rapid []string
+	for _, v := range sc.ValidMasterVersions {
+		if !slices.ContainsFunc(newest, func(n string) bool { return minorOf(n) == minorOf(v) }) {
+			newest = append(newest, v)
 		}
 	}
-	if len(newest) < 3 {
-		t.Fatalf("Rapid channel minors: %v, want the three most recent", newest)
+	for _, ch := range sc.Channels {
+		if ch.Channel == "RAPID" {
+			rapid = ch.ValidVersions
+		}
+	}
+	if len(newest) != 3 {
+		t.Fatalf("supported versions %v: want three minors", sc.ValidMasterVersions)
+	}
+	for _, v := range newest {
+		if !slices.Contains(rapid, v) {
+			t.Fatalf("%s is not on the Rapid channel (%v)", v, rapid)
+		}
 	}
 	for _, v := range newest {
 		t.Run(minorOf(v), func(t *testing.T) {
