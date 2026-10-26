@@ -376,8 +376,12 @@ The most GKE nodes one Instance runs, across all its clusters, Standard and Auto
 _Avoid_: host node limit, quota
 
 **Workload restrictions**:
-What an Autopilot cluster refuses or changes in a pod before it is admitted: it rejects privileged pods, host namespaces, most host paths and disallowed capabilities, refuses user writes to `kube-system`, and sets resource requests to Autopilot's minimums and ratios.
+What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates; refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
 _Avoid_: Warden (GKE's internal name), Autopilot policy
+
+**Admin kubeconfig**:
+The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0035).
+_Avoid_: emulator kubeconfig, convenience kubeconfig
 
 **OTLP endpoint**:
 Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, the telemetry is dropped.
