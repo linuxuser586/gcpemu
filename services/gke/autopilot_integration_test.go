@@ -68,9 +68,10 @@ func (e *env) scaleFill(replicas int) {
 // ek-standard-2, whatever the host has; a pod Pending for lack of
 // capacity gets a new node within 30 s (NFR-PERF-010); a compute class
 // and Spot required through node affinity are labels on the node
-// provisioned for them; at the host node limit pods stay Pending with
-// FailedScaleUp; and emptied nodes are removed, never the last. Not
-// parallel: it sets the node limit in the process environment.
+// provisioned for them, in the zone the affinity requires; at the host
+// node limit pods stay Pending with FailedScaleUp; and emptied nodes are
+// removed, never the last. Not parallel: it sets the node limit in the
+// process environment.
 func TestAutopilotNodeProvisioning(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Setenv("GCPEMU_GKE_MAX_NODES", "3")
@@ -111,6 +112,7 @@ func TestAutopilotNodeProvisioning(t *testing.T) {
 	if it := nodes[0].Metadata.Labels["node.kubernetes.io/instance-type"]; it != "ek-standard-2" {
 		t.Errorf("instance type %q; want ek-standard-2", it)
 	}
+	firstZone := nodes[0].Metadata.Labels["topology.kubernetes.io/zone"]
 
 	// Four 600m pods need more than one node's 1930m.
 	start := time.Now()
@@ -135,9 +137,14 @@ func TestAutopilotNodeProvisioning(t *testing.T) {
 	if n := len(e.apNodes()); n != 2 {
 		t.Errorf("%d nodes after scale-up; want 2", n)
 	}
+	if len(c.Locations) < 3 {
+		t.Fatalf("cluster in zones %v; want 3, so that one has no node", c.Locations)
+	}
 
 	// A pod requiring a compute class and Spot through node affinity gets
-	// a node labelled so (selectors are covered by TestNewNodeLabels).
+	// a node labelled so (selectors are covered by TestNewNodeLabels), in
+	// the zone it requires: the first node's, though another zone has
+	// none.
 	in := func(key, value string) map[string]any {
 		return map[string]any{"key": key, "operator": "In", "values": []string{value}}
 	}
@@ -148,6 +155,7 @@ func TestAutopilotNodeProvisioning(t *testing.T) {
 			"affinity": map[string]any{"nodeAffinity": map[string]any{"requiredDuringSchedulingIgnoredDuringExecution": map[string]any{
 				"nodeSelectorTerms": []map[string]any{{"matchExpressions": []map[string]any{
 					in("cloud.google.com/compute-class", "Scale-Out"), in("cloud.google.com/gke-spot", "true"),
+					in("topology.kubernetes.io/zone", firstZone),
 				}}},
 			}}},
 			"containers": []map[string]any{{
@@ -159,7 +167,8 @@ func TestAutopilotNodeProvisioning(t *testing.T) {
 	eventually(t, time.Minute, "the Scale-Out pod running", func() bool { return running(e.apPods("app%3Dscale-out"), 1) })
 	var so apNode
 	e.mustKube("GET", "/api/v1/nodes/"+e.apPods("app%3Dscale-out")[0].Spec.NodeName, nil, &so)
-	if l := so.Metadata.Labels; l["cloud.google.com/compute-class"] != "Scale-Out" || l["cloud.google.com/gke-spot"] != "true" {
+	if l := so.Metadata.Labels; l["cloud.google.com/compute-class"] != "Scale-Out" || l["cloud.google.com/gke-spot"] != "true" ||
+		l["topology.kubernetes.io/zone"] != firstZone {
 		t.Errorf("Scale-Out pod's node labels: %v", l)
 	}
 
