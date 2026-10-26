@@ -411,6 +411,10 @@ _Avoid_: OTel sidecar, collector (unqualified)
 How much of GKE's managed OpenTelemetry a cluster asks for: none, or collection together with instrumentation. A cluster serves a Managed collector only when its scope asks for collection.
 _Avoid_: OTel mode, telemetry level, scope (unqualified)
 
+**Instrumentation**:
+A namespaced object in a cluster that tells GKE which of the namespace's new pods to configure, and how, so that their OTel SDK sends to the Managed collector. It configures pods only; it never changes their code.
+_Avoid_: auto-instrumentation, OTel Operator Instrumentation (a different type, `opentelemetry.io`), config injection (unqualified)
+
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
 _Avoid_: secret (unqualified)
