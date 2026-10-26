@@ -146,7 +146,7 @@ export function ResizeDialog({ clusterRef, pool }: { clusterRef: ClusterRef; poo
 }
 
 /** GkePoolsNote says why an Autopilot cluster's node pools offer no actions. */
-function GkePoolsNote() {
+export function GkePoolsNote() {
   return (
     <p className="text-sm text-muted-foreground">
       These are GKE’s own node pools: GKE adds nodes when pods cannot be scheduled and removes them
