@@ -1,0 +1,54 @@
+# The Managed collector (FR-GKE-019, ADR 0034). No collector pods run in the
+# cluster: the Service names the node-local address (metadata.google.internal,
+# 169.254.169.254) where the node agent relays OTLP to the Instance.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gke-managed-otel
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: instrumentations.telemetry.googleapis.com
+spec:
+  group: telemetry.googleapis.com
+  names:
+    kind: Instrumentation
+    listKind: InstrumentationList
+    plural: instrumentations
+    singular: instrumentation
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentelemetry-collector
+  namespace: gke-managed-otel
+spec:
+  type: ExternalName
+  externalName: metadata.google.internal
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      protocol: TCP
+      appProtocol: http

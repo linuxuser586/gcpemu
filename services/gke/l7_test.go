@@ -84,6 +84,7 @@ func (k *fakeKube) put(obj string) {
 
 func (k *fakeKube) pathOf(m map[string]any) string {
 	res := map[string]string{"Service": "services", "Ingress": "ingresses", "Gateway": "gateways", "HTTPRoute": "httproutes",
+		"Pod": "pods", "ReplicaSet": "replicasets", "Namespace": "namespaces",
 		"GatewayClass": "gatewayclasses", "Secret": "secrets", "CustomResourceDefinition": "customresourcedefinitions",
 		"ValidatingAdmissionPolicy": "validatingadmissionpolicies", "ValidatingAdmissionPolicyBinding": "validatingadmissionpolicybindings"}[m["kind"].(string)]
 	av, _ := m["apiVersion"].(string)

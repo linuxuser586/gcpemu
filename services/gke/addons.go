@@ -35,7 +35,13 @@ import (
 //     secrets-store-gke.csi.k8s.io; its `gke` provider is the node agent
 //     (provider.go);
 //   - secretSyncConfig: the SecretSync CRD; the controller runs in the
-//     emulator (secretsync.go) while the setting is enabled.
+//     emulator (secretsync.go) while the setting is enabled;
+//   - managedOpentelemetryConfig: the gke-managed-otel namespace, the
+//     opentelemetry-collector Service and the Instrumentation CRD; the
+//     Managed collector runs in the emulator (collector.go) while the
+//     Managed OpenTelemetry scope is
+//     COLLECTION_AND_INSTRUMENTATION_COMPONENTS. Scope NONE removes the
+//     Service only.
 
 //go:embed addons
 var addonFS embed.FS
@@ -108,6 +114,8 @@ var kindPaths = map[string]struct {
 	"ClusterRoleBinding":               {"apis/rbac.authorization.k8s.io/v1", "clusterrolebindings", false},
 	"CSIDriver":                        {"apis/storage.k8s.io/v1", "csidrivers", false},
 	"DaemonSet":                        {"apis/apps/v1", "daemonsets", true},
+	"Namespace":                        {"api/v1", "namespaces", false},
+	"Service":                          {"api/v1", "services", true},
 }
 
 // objectPath returns the collection path of obj and its name.
@@ -283,6 +291,7 @@ func (s *Service) reconcileAddons(ctx context.Context, key string) error {
 		s.reconcileGatewayAPI(ctx, kc, c.GetNetworkConfig().GetGatewayApiConfig().GetChannel()),
 		s.reconcileSecretManager(ctx, kc, c),
 		s.reconcileSecretSync(ctx, kc, c),
+		s.reconcileManagedOTel(ctx, kc, c),
 	)
 }
 
@@ -478,6 +487,21 @@ func (s *Service) reconcileSecretSync(ctx context.Context, kc *kubeClient, c *co
 		return err
 	}
 	return applyAddon(ctx, kc, "secret-sync", objs)
+}
+
+// reconcileManagedOTel installs the Managed collector's namespace, Service
+// and Instrumentation CRD while the Managed OpenTelemetry scope asks for
+// collection, and otherwise removes the Service it installed, keeping the
+// CRD, the namespace and what users put there.
+func (s *Service) reconcileManagedOTel(ctx context.Context, kc *kubeClient, c *containerpb.Cluster) error {
+	objs, err := manifest("managed-otel.yaml")
+	if err != nil {
+		return err
+	}
+	if managedOTelOn(c) {
+		return applyAddon(ctx, kc, "managed-otel", objs)
+	}
+	return s.removeIfInstalled(ctx, kc, "managed-otel", objs, "CustomResourceDefinition", "Namespace")
 }
 
 // removeIfInstalled deletes objs when the add-on was installed, i.e. its
