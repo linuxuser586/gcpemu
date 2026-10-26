@@ -415,6 +415,10 @@ _Avoid_: OTel sidecar, collector (unqualified)
 How much of GKE's managed OpenTelemetry a cluster asks for: none, or collection together with instrumentation. A cluster serves a Managed collector only when its scope asks for collection.
 _Avoid_: OTel mode, telemetry level, scope (unqualified)
 
+**Instrumentation**:
+A namespaced object in a cluster that tells GKE which of the namespace's new pods to configure, and how, so that their OTel SDK sends to the Managed collector. It configures pods only; it never changes their code.
+_Avoid_: auto-instrumentation, OTel Operator Instrumentation (a different type, `opentelemetry.io`), config injection (unqualified)
+
 **Managed Prometheus**:
 GKE's managed collection of Prometheus metrics, which a cluster asks for in its monitoring settings and an Autopilot cluster has unless it turns it off. Its PodMonitorings and ClusterPodMonitorings choose the Scrape targets, and the results go to the OTLP endpoint. The Instance does the scraping, not pods in the cluster (ADR 0036).
 _Avoid_: GMP, Prometheus add-on, Prometheus collector
