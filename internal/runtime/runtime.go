@@ -100,6 +100,11 @@ type Info struct {
 	// "windows" for Docker Engine in Windows containers mode; "" if /info
 	// did not answer.
 	OSType string
+	// NoCPUSet reports the runtime's /info said containers lack the cpuset
+	// cgroup controller ("CPUSet": false), as on a rootless Podman machine,
+	// whose systemd delegates only cpu, io, memory and pids (#632). k3s,
+	// and so every GKE node, needs it. False when /info did not say.
+	NoCPUSet bool
 }
 
 // String names the runtime for messages, e.g. "docker 27.3.1 (Docker
@@ -250,9 +255,11 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 		OperatingSystem string
 		KernelVersion   string
 		OSType          string
+		CPUSet          *bool
 	}
 	if err := c.do(ctx, http.MethodGet, "/info", nil, nil, &info); err == nil {
 		in.OS, in.Kernel, in.OSType = info.OperatingSystem, info.KernelVersion, info.OSType
+		in.NoCPUSet = info.CPUSet != nil && !*info.CPUSet
 		for _, o := range info.SecurityOptions {
 			if strings.Contains(o, "rootless") {
 				in.Rootless = true

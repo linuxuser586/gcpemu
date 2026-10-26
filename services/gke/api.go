@@ -143,6 +143,9 @@ func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterR
 	if err := checkNetworkPolicy(rec.cluster()); err != nil {
 		return nil, err
 	}
+	if err := a.s.checkCPUSet(ctx); err != nil {
+		return nil, err
+	}
 	err = a.s.env.Store.Update(func(tx store.Tx) error {
 		if store.Exists(tx, nsClusters, r.key()) {
 			return apierr.AlreadyExists("Already exists: %s.", r.clusterName())

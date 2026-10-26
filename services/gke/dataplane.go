@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -143,6 +144,23 @@ func (s *Service) deps(ctx context.Context) (*deps, error) {
 		return nil, err
 	}
 	return &deps{rt: np.Runtime(), np: np, vpc: s.vpc(), svc: svc}, nil
+}
+
+// checkCPUSet refuses a create that would start nodes on a runtime whose
+// containers lack the cpuset cgroup controller, where k3s exits at once
+// (#632). A runtime not yet reachable is left to the bring-up to report.
+func (s *Service) checkCPUSet(ctx context.Context) error {
+	if s.env.Containers == nil {
+		return nil
+	}
+	m, err := s.env.Containers.Runtime(ctx)
+	if err != nil {
+		return nil
+	}
+	if problem, fix := runtime.CPUSetProblem(m.Info, goruntime.GOOS); problem != "" {
+		return apierr.FailedPrecondition("The %s. Fix: %s.", problem, fix)
+	}
+	return nil
 }
 
 // relay reports whether the Instance uses the VM relay (ADR 0005), which

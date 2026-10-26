@@ -41,3 +41,40 @@ func TestInfo(t *testing.T) {
 		t.Errorf("without /info: %q", got)
 	}
 }
+
+// TestInfoCPUSet: Info reports a runtime whose /info says containers lack
+// the cpuset cgroup controller, as a rootless Podman machine's does (#632),
+// and only then.
+func TestInfoCPUSet(t *testing.T) {
+	for _, tc := range []struct {
+		info string
+		want bool
+	}{
+		{`{"CPUSet":false,"CgroupVersion":"2"}`, true},
+		{`{"CPUSet":true,"CgroupVersion":"2"}`, false},
+		{`{}`, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/version"):
+				_, _ = io.WriteString(w, `{"Version":"6.1.4","Arch":"arm64","Components":[{"Name":"Podman Engine"}]}`)
+			case strings.HasSuffix(r.URL.Path, "/info"):
+				_, _ = io.WriteString(w, tc.info)
+			default:
+				w.WriteHeader(404)
+			}
+		}))
+		cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		in, err := cl.Info(context.Background())
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.NoCPUSet != tc.want {
+			t.Errorf("/info %s: NoCPUSet = %v; want %v", tc.info, in.NoCPUSet, tc.want)
+		}
+	}
+}

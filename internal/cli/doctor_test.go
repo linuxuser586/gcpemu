@@ -865,3 +865,39 @@ func TestReportLANEndpoints(t *testing.T) {
 		t.Errorf("a Service is named as a forwarding rule:\n%s", got)
 	}
 }
+
+// A runtime whose info says containers lack the cpuset cgroup controller is
+// a problem, since GKE nodes (k3s) cannot start, with the fix for a Podman
+// machine or for rootless Linux (#632); one that has it is not reported.
+func TestCheckCPUSet(t *testing.T) {
+	podman := emuruntime.Info{Name: "podman", Version: "6.1.4", NoCPUSet: true}
+	for _, tc := range []struct {
+		goos      string
+		in        emuruntime.Info
+		want, not []string
+	}{
+		{goos: "darwin", in: podman, want: []string{"cpuset cgroup", "GKE nodes (k3s)", "podman machine stop && podman machine set --rootful && podman machine start"}, not: []string{"Delegate="}},
+		{goos: "windows", in: podman, want: []string{"podman machine set --rootful"}, not: []string{"Delegate="}},
+		{goos: "linux", in: podman, want: []string{"podman machine set --rootful", "Delegate=cpu cpuset io memory pids", "user@.service.d"}},
+		{goos: "linux", in: emuruntime.Info{Name: "docker", NoCPUSet: true}, want: []string{"Delegate=cpu cpuset io memory pids"}, not: []string{"podman machine"}},
+		{goos: "darwin", in: emuruntime.Info{Name: "podman", Version: "6.1.4"}},
+	} {
+		failed := false
+		var got string
+		report := func(ok bool, what, fix string) { failed = failed || !ok; got += what + "\n" + fix }
+		checkCPUSet(report, tc.goos, tc.in)
+		if failed != (len(tc.want) > 0) || (len(tc.want) == 0 && got != "") {
+			t.Errorf("%s %+v: failed=%v %q", tc.goos, tc.in, failed, got)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s %s: %q lacks %q", tc.goos, tc.in.Name, got, w)
+			}
+		}
+		for _, n := range tc.not {
+			if strings.Contains(got, n) {
+				t.Errorf("%s %s: %q has %q", tc.goos, tc.in.Name, got, n)
+			}
+		}
+	}
+}
