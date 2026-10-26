@@ -34,7 +34,7 @@ import {
 } from '@/components/ui/table'
 import { toast } from '@/lib/toast'
 
-import { deleteNodePool, setNodePoolSize, type ClusterRef, type NodePool } from './api'
+import { deleteNodePool, isAutopilot, setNodePoolSize, type ClusterRef, type NodePool } from './api'
 import { useCluster } from './ClusterPage'
 import { nodePoolRecipe } from './copy'
 import { StatusBadge } from './format'
@@ -145,22 +145,40 @@ export function ResizeDialog({ clusterRef, pool }: { clusterRef: ClusterRef; poo
   )
 }
 
-/** NodePools lists the cluster's node pools. */
+/** GkeOwned says why an Autopilot cluster's node pools offer no actions. */
+function GkeOwned() {
+  return (
+    <p className="text-sm text-muted-foreground">
+      GKE manages an Autopilot cluster’s node pools: it adds nodes for pods that do not fit and
+      removes them once empty.
+    </p>
+  )
+}
+
+/**
+ * NodePools lists the cluster's node pools. An Autopilot cluster's are
+ * GKE's own, listed without actions.
+ */
 export function NodePools() {
   const c = useCluster()
   const ref = useClusterRef()
   const base = clusterPath(ref.location, ref.cluster)
   const pools = c.nodePools ?? []
+  const owned = isAutopilot(c)
   return (
     <Card>
-      <div className="flex justify-end">
-        <Button asChild size="sm">
-          <Link to={`${base}/nodePools/create`}>
-            <Plus aria-hidden />
-            Add node pool
-          </Link>
-        </Button>
-      </div>
+      {owned ? (
+        <GkeOwned />
+      ) : (
+        <div className="flex justify-end">
+          <Button asChild size="sm">
+            <Link to={`${base}/nodePools/create`}>
+              <Plus aria-hidden />
+              Add node pool
+            </Link>
+          </Button>
+        </div>
+      )}
       {pools.length === 0 && <p className="text-sm text-muted-foreground">No node pools.</p>}
       {pools.length > 0 && (
         <Table aria-label="Node pools">
@@ -172,9 +190,11 @@ export function NodePools() {
               <TableHead>Zones</TableHead>
               <TableHead>Machine type</TableHead>
               <TableHead>Version</TableHead>
-              <TableHead>
-                <span className="sr-only">Actions</span>
-              </TableHead>
+              {!owned && (
+                <TableHead>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -197,9 +217,11 @@ export function NodePools() {
                 <TableCell className="font-mono">{zonesOf(np, c.locations).join(', ')}</TableCell>
                 <TableCell className="font-mono">{np.config?.machineType ?? '—'}</TableCell>
                 <TableCell className="font-mono">{np.version ?? '—'}</TableCell>
-                <TableCell>
-                  <ResizeDialog clusterRef={ref} pool={np} />
-                </TableCell>
+                {!owned && (
+                  <TableCell>
+                    <ResizeDialog clusterRef={ref} pool={np} />
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -209,7 +231,10 @@ export function NodePools() {
   )
 }
 
-/** NodePoolPage is one node pool: its fields, actions and nodes. */
+/**
+ * NodePoolPage is one node pool: its fields, actions and nodes. GKE's own
+ * pools on an Autopilot cluster have no actions.
+ */
 export function NodePoolPage() {
   const c = useCluster()
   const ref = useClusterRef()
@@ -243,29 +268,32 @@ export function NodePoolPage() {
           Node pool <span className="font-mono">{np.name}</span>
           <PoolStatus np={np} />
         </h2>
-        <div className="flex flex-wrap gap-2">
-          <ResizeDialog clusterRef={ref} pool={np} />
-          <CopyAs what="node pool" recipe={() => nodePoolRecipe(ref, np, c.locations)} />
-          <Button variant="outline" size="sm" asChild>
-            <Link to={`${base}/nodePools/${np.name}/edit`}>
-              <Pencil aria-hidden />
-              Edit
-            </Link>
-          </Button>
-          <ConfirmDialog
-            trigger={
-              <Button variant="outline" size="sm">
-                <Trash2 aria-hidden />
-                Delete
-              </Button>
-            }
-            title={`Delete node pool ${np.name}?`}
-            description="Its nodes are drained and their containers removed."
-            confirmLabel="Delete node pool"
-            onConfirm={() => del.mutateAsync()}
-          />
-        </div>
+        {!isAutopilot(c) && (
+          <div className="flex flex-wrap gap-2">
+            <ResizeDialog clusterRef={ref} pool={np} />
+            <CopyAs what="node pool" recipe={() => nodePoolRecipe(ref, np, c.locations)} />
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`${base}/nodePools/${np.name}/edit`}>
+                <Pencil aria-hidden />
+                Edit
+              </Link>
+            </Button>
+            <ConfirmDialog
+              trigger={
+                <Button variant="outline" size="sm">
+                  <Trash2 aria-hidden />
+                  Delete
+                </Button>
+              }
+              title={`Delete node pool ${np.name}?`}
+              description="Its nodes are drained and their containers removed."
+              confirmLabel="Delete node pool"
+              onConfirm={() => del.mutateAsync()}
+            />
+          </div>
+        )}
       </div>
+      {isAutopilot(c) && <GkeOwned />}
       {np.statusMessage && (
         <p role="alert" className="text-sm text-destructive">
           {np.statusMessage}

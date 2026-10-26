@@ -71,6 +71,7 @@ export interface Cluster {
   releaseChannel?: { channel?: string }
   workloadIdentityConfig?: { workloadPool?: string }
   privateClusterConfig?: { enablePrivateNodes?: boolean; enablePrivateEndpoint?: boolean }
+  autopilot?: { enabled?: boolean; workloadPolicyConfig?: { allowNetAdmin?: boolean } }
   network?: string
   subnetwork?: string
   clusterIpv4Cidr?: string
@@ -124,6 +125,15 @@ export const poolName = (r: ClusterRef, pool: string) => `${clusterName(r)}/node
 
 /** isRunning reports whether a cluster's Kubernetes API can be reached. */
 export const isRunning = (c?: Cluster) => c?.status === 'RUNNING' || c?.status === 'RECONCILING'
+
+/**
+ * isAutopilot reports whether GKE owns a cluster's nodes: its node pools
+ * are GKE's own, shown but not changed.
+ */
+export const isAutopilot = (c?: Cluster) => !!c?.autopilot?.enabled
+
+/** clusterMode is a cluster's mode as GKE shows it. */
+export const clusterMode = (c: Cluster) => (isAutopilot(c) ? 'Autopilot' : 'Standard')
 
 // ---- container v1 ----
 

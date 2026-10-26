@@ -12,7 +12,7 @@ import { Card, CardTitle } from '@/components/ui/card'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
-import { clusterQuery, deleteCluster, isRunning, type Cluster } from './api'
+import { clusterMode, clusterQuery, deleteCluster, isRunning, type Cluster } from './api'
 import { clusterRecipe } from './copy'
 import { ClusterStatusBadge } from './format'
 import { clusterPath, useClusterRef } from './GkeLayout'
@@ -156,6 +156,7 @@ export function ClusterOverview() {
         <DetailList
           label="Cluster details"
           rows={[
+            ['Mode', clusterMode(c)],
             ['Location', <Mono>{c.location}</Mono>],
             ['Node zones', c.locations?.length ? <Mono>{c.locations.join(', ')}</Mono> : undefined],
             ['Endpoint', c.endpoint && <Mono>{c.endpoint}</Mono>],
