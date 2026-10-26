@@ -28,6 +28,13 @@ const tokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
 // audience, naming the Project by its number.
 func oidcPool(t *testing.T, in *Instance, ref string) (*rsa.PrivateKey, string) {
 	t.Helper()
+	return jwksPool(t, in, ref, "ci-pool", "https://ci.example", "ci-audience")
+}
+
+// jwksPool is oidcPool for the pool pool, whose provider is for issuer,
+// trusting the returned key by jwksJson, and allows audience.
+func jwksPool(t *testing.T, in *Instance, ref, pool, issuer, audience string) (*rsa.PrivateKey, string) {
+	t.Helper()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	jwks, _ := json.Marshal(map[string]any{"keys": []map[string]string{{
 		"kty": "RSA", "kid": "k1", "alg": "RS256",
@@ -35,12 +42,12 @@ func oidcPool(t *testing.T, in *Instance, ref string) (*rsa.PrivateKey, string) 
 		"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
 	}}})
 	base := "/iam/v1/projects/" + ref + "/locations/global/workloadIdentityPools"
-	callAdmin(t, in, http.MethodPost, base+"?workloadIdentityPoolId=ci-pool", map[string]any{}, nil)
-	callAdmin(t, in, http.MethodPost, base+"/ci-pool/providers?workloadIdentityPoolProviderId=ci-oidc", map[string]any{
-		"oidc":             map[string]any{"issuerUri": "https://ci.example", "jwksJson": string(jwks), "allowedAudiences": []string{"ci-audience"}},
+	callAdmin(t, in, http.MethodPost, base+"?workloadIdentityPoolId="+pool, map[string]any{}, nil)
+	callAdmin(t, in, http.MethodPost, base+"/"+pool+"/providers?workloadIdentityPoolProviderId=ci-oidc", map[string]any{
+		"oidc":             map[string]any{"issuerUri": issuer, "jwksJson": string(jwks), "allowedAudiences": []string{audience}},
 		"attributeMapping": map[string]string{"google.subject": "assertion.sub", "attribute.team": "assertion.team"},
 	}, nil)
-	return key, "//iam.googleapis.com/projects/" + project.NumberString(ref) + "/locations/global/workloadIdentityPools/ci-pool/providers/ci-oidc"
+	return key, "//iam.googleapis.com/projects/" + project.NumberString(ref) + "/locations/global/workloadIdentityPools/" + pool + "/providers/ci-oidc"
 }
 
 // poolOf returns the name of the pool of oidcPool's audience.
@@ -50,8 +57,13 @@ func poolOf(audience string) string {
 
 // subjectToken is an OIDC token for sub of team, signed by key.
 func subjectToken(key *rsa.PrivateKey, sub, team string) string {
+	return issuedToken(key, "https://ci.example", "ci-audience", sub, team)
+}
+
+// issuedToken is subjectToken from issuer for audience.
+func issuedToken(key *rsa.PrivateKey, issuer, audience, sub, team string) string {
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": "https://ci.example", "aud": "ci-audience", "sub": sub, "team": team,
+		"iss": issuer, "aud": audience, "sub": sub, "team": team,
 		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
 	})
 	tok.Header["kid"] = "k1"

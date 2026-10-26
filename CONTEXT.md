@@ -80,7 +80,7 @@ The root certificate authority an Instance creates the first time it starts. It 
 _Avoid_: local CA, root CA, emulator CA
 
 **Signing key**:
-The key an Instance signs the ID tokens it issues with. Its certificate endpoints list it first, then the Signing key of each Linked Instance it delegates a Project to, as last heard. It is not the Instance CA and belongs to no service account.
+The key an Instance signs ID tokens with, its own service accounts' and those of the Projects it shares when asked through a front Instance. Its certificate endpoints list it first, then the Signing key of each Linked Instance it delegates a Project to, as last heard. A Linked Instance's Signing key verifies any ID token it signed, but the front Instance's STS exchanges one only for a service account of a Project delegated to that Linked Instance. It is not the Instance CA and belongs to no service account.
 _Avoid_: signer, OIDC key, service account key
 
 **Host trust**:
