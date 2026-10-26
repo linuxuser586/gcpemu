@@ -20,6 +20,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 )
 
 // lanAddr is the instance's Postgres address on the --sql-bind address.
@@ -40,14 +41,20 @@ func lanAddr(t *testing.T, inst *emutest.Instance, in *sqladmin.DatabaseInstance
 // coming through the LAN (here --gfe-bind, with a token the Instance
 // issued) is told the address, and the Go connector reaches each of two
 // instances through its shared port 3307; loopback callers see what they
-// always did.
+// always did. The instances serve host clients only where the host has
+// loopback aliases: without them only one instance can, on 127.0.0.1,
+// and lan-b would be refused.
 func TestSQLBind(t *testing.T) {
 	emutest.RequireRuntime(t)
-	inst := emutest.Start(t, []string{"iam", "sql"}, emutest.WithSQLHostClients(), emutest.WithConfig(func(c *config.Config) {
+	opts := []emutest.Option{emutest.WithConfig(func(c *config.Config) {
 		c.SQLBind = []string{"127.0.0.1"}
 		c.GFEBind = []string{"127.0.0.1"}
 		c.Ports["gfe-lan"] = 0
-	}))
+	})}
+	if loopback.Aliases() {
+		opts = append(opts, emutest.WithSQLHostClients())
+	}
+	inst := emutest.Start(t, []string{"iam", "sql"}, opts...)
 	svc := adminClient(t, inst)
 	ctx := context.Background()
 
