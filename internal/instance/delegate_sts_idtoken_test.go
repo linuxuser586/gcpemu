@@ -1,17 +1,10 @@
 package instance
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"encoding/base64"
 	"encoding/json"
-	"math/big"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -115,7 +108,7 @@ func TestLinkedIDTokenWhileLinkedInstanceIsDown(t *testing.T) {
 	delegatedTok := idTokenFor(t, laptop, runner, true)
 	ownTok := idTokenFor(t, laptop, "local-runner@laptop-own.iam.gserviceaccount.com", true)
 	ciKey, ciAudience := oidcPool(t, laptop, "laptop-own")
-	jwksKey, jwksAudience := googleJWKSPool(t, laptop)
+	jwksKey, jwksAudience := jwksPool(t, laptop, "laptop-own", "jwks-pool", "https://accounts.google.com", "https://app.example")
 	if err := office.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -132,43 +125,12 @@ func TestLinkedIDTokenWhileLinkedInstanceIsDown(t *testing.T) {
 	for what, ex := range map[string][2]string{
 		"the laptop's own ID token":                         {audience, ownTok},
 		"a token of a provider with a foreign issuer":       {ciAudience, subjectToken(ciKey, "build-1", "red")},
-		"a token of a Google-issuer provider with jwksJson": {jwksAudience, googleToken(jwksKey)},
+		"a token of a Google-issuer provider with jwksJson": {jwksAudience, issuedToken(jwksKey, "https://accounts.google.com", "https://app.example", "build-1", "red")},
 	} {
 		if code, body := exchange(t, laptop, ex[0], ex[1], false); code != http.StatusOK {
 			t.Errorf("exchanging %s with the office down = %d %s", what, code, body)
 		}
 	}
-}
-
-// googleJWKSPool creates, through in, the pool "jwks-pool" in laptop-own
-// with a provider whose issuer is the Instance's own but which trusts the
-// returned key by jwksJson. It returns the key and the provider's
-// audience.
-func googleJWKSPool(t *testing.T, in *Instance) (*rsa.PrivateKey, string) {
-	t.Helper()
-	key, _ := rsa.GenerateKey(rand.Reader, 2048)
-	jwks, _ := json.Marshal(map[string]any{"keys": []map[string]string{{
-		"kty": "RSA", "kid": "k1", "alg": "RS256",
-		"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-		"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-	}}})
-	base := "/iam/v1/projects/laptop-own/locations/global/workloadIdentityPools"
-	callAdmin(t, in, http.MethodPost, base+"?workloadIdentityPoolId=jwks-pool", map[string]any{}, nil)
-	callAdmin(t, in, http.MethodPost, base+"/jwks-pool/providers?workloadIdentityPoolProviderId=google", map[string]any{
-		"oidc": map[string]any{"issuerUri": "https://accounts.google.com", "jwksJson": string(jwks), "allowedAudiences": []string{"https://app.example"}},
-	}, nil)
-	return key, "//iam.googleapis.com/projects/" + project.NumberString("laptop-own") + "/locations/global/workloadIdentityPools/jwks-pool/providers/google"
-}
-
-// googleToken is an ID token with the Instance's own issuer, signed by key.
-func googleToken(key *rsa.PrivateKey) string {
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": "https://accounts.google.com", "aud": "https://app.example", "sub": "build-1",
-		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tok.Header["kid"] = "k1"
-	s, _ := tok.SignedString(key)
-	return s
 }
 
 // An ID token the office signed is never an access token: presented as a

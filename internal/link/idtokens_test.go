@@ -82,3 +82,32 @@ func TestUnpairedInstanceIsRefusedIDTokens(t *testing.T) {
 	}
 	refused(t, "asking about an ID token unpaired", err, link.ReasonUnpaired)
 }
+
+// The laptop refuses another Linked Instance's answer for a service
+// account of a Project delegated to the office, even when that Instance
+// shares the Project too (#702).
+func TestLinkedIDTokenFromAnotherLink(t *testing.T) {
+	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "")
+	other := newLinked(t, "other", "", verifying("runner@team-shared.iam.gserviceaccount.com"))
+	pair(t, laptop, office)
+	pair(t, laptop, other)
+	for n, ids := range map[*linked][]string{office: {"team-shared"}, other: {"team-shared", "other-own"}} {
+		for _, id := range ids {
+			if err := n.Share(id, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := laptop.Delegate(ctxT(t), "team-shared", "office"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.Delegate(ctxT(t), "other-own", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := laptop.AskIDToken(ctxT(t), "other", "tok"); p == "" || err != nil {
+		t.Fatalf("other's own answer = %q %v, want it to claim the token", p, err)
+	}
+	if p, unreachable := laptop.LinkedIDToken(ctxT(t), "tok"); p != "" || len(unreachable) != 0 {
+		t.Errorf("LinkedIDToken = %q %v, want other's answer refused, all reached", p, unreachable)
+	}
+}
