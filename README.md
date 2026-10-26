@@ -1396,6 +1396,26 @@ Downloads are cached in `$GCPEMU_E2E_CACHE` (default `<user cache dir>/gcpemu-e2
 must finish within 10 minutes (`GCPEMU_E2E_BUDGET` overrides); it prints per-step timings.
 With `emulator_gateway` empty the module targets real GCP (set `project` and `domain`).
 
+### Autopilot acceptance (SRS 11.4)
+
+The Reference stack stays on a Standard cluster; `TestAutopilot` accepts Autopilot on its own.
+For each supported minor, at its newest version on the Rapid channel, `tofu apply` of
+`e2e/autopilot/` creates an Autopilot cluster (`enable_autopilot = true`, `allow_net_admin = true`),
+a plan right after must be empty, Kubernetes conformance passes (Sonobuoy quick mode, its `e2e`
+plugin only, since Autopilot refuses the privileged `systemd-logs` DaemonSet) and `tofu destroy`
+leaves no containers. The cluster at the default version's minor also scales a Deployment past
+one node, has a privileged pod refused by the Workload restrictions, and installs Istio from its Helm charts with
+the proxy's requests left unset: an injected pod runs, and its `istio-proxy` gets Autopilot's
+default requests from the resources webhook running again after Istio's injector.
+
+```sh
+task autopilot                    # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run '^TestAutopilot$' -count=1 -timeout 45m -v
+```
+
+It needs a container runtime, `tofu` on `PATH` and internet access: Sonobuoy, Helm and the Istio
+release are downloaded at pinned, checksum-verified versions into `$GCPEMU_E2E_CACHE`, and the
+nodes pull the Sonobuoy, Kubernetes conformance and Istio images. `task e2e` skips it.
+
 ### Client compatibility (SRS 7.1)
 
 `task compat` runs the real clients against a detached instance with only Endpoint

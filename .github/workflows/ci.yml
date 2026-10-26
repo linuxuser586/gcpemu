@@ -225,6 +225,34 @@ jobs:
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
 
+  # SRS 11.4: v1.0 is accepted when an Autopilot cluster from OpenTofu passes
+  # Kubernetes conformance at each supported minor, scales a Deployment past
+  # one node and refuses a privileged pod, on both architectures.
+  autopilot:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - name: Install OpenTofu
+        run: .github/install-tofu.sh
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/gcpemu-e2e
+          key: gcpemu-e2e-autopilot-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
+          restore-keys: gcpemu-e2e-autopilot-${{ runner.arch }}-
+      - name: Autopilot acceptance (SRS 11.4)
+        run: task autopilot
+
   # SRS 7.1: real clients against a detached instance.
   compat:
     needs: changes
@@ -553,7 +581,7 @@ jobs:
   # every job was skipped. perf is left out on purpose (see its comment).
   ci-ok:
     if: always()
-    needs: [changes, test, vm-relay, console, console-e2e, e2e, compat, tofu, action, action-artifacts, platforms]
+    needs: [changes, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, action, action-artifacts, platforms]
     runs-on: ubuntu-24.04
     steps:
       - env:

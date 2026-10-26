@@ -427,18 +427,21 @@ const gatewayValues = `service:
 // installIstio installs Istio's base, istiod and gateway Helm charts.
 func installIstio(t *testing.T, k *kube) {
 	t.Helper()
+	installIstioCharts(t, k,
+		[]string{"istio-base", "base"},
+		[]string{"istiod", "istio-control/istio-discovery"},
+		[]string{"istio-ingressgateway", "gateway", "-f", valuesFile(t, gatewayValues)})
+}
+
+// installIstioCharts installs Helm releases of the Istio charts in
+// istio-system, in order and each until ready; a release is its name, its
+// chart's directory under manifests/charts and extra helm arguments.
+func installIstioCharts(t *testing.T, k *kube, releases ...[]string) {
+	t.Helper()
 	bin, charts := helm(t), istioCharts(t)
-	values := filepath.Join(t.TempDir(), "gateway.yaml")
-	if err := os.WriteFile(values, []byte(gatewayValues), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	for _, rel := range [][]string{
-		{"istio-base", "base"},
-		{"istiod", "istio-control/istio-discovery"},
-		{"istio-ingressgateway", "gateway", "-f", values},
-	} {
+	for _, rel := range releases {
 		args := append([]string{"upgrade", "--install", rel[0], filepath.Join(charts, rel[1]), "-n", "istio-system", "--create-namespace",
 			"--kubeconfig", k.file, "--wait", "--timeout", "8m"}, rel[2:]...)
 		out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
@@ -446,4 +449,18 @@ func installIstio(t *testing.T, k *kube) {
 			t.Fatalf("helm install %s: %v\n%s\n%s", rel[0], err, tail(string(out), 40), k.logs("istio-system", "app=istiod"))
 		}
 	}
+}
+
+// valuesFile writes Helm values to a file and returns its path.
+func valuesFile(t *testing.T, values string) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "values-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(values); err != nil {
+		t.Fatal(err)
+	}
+	return f.Name()
 }

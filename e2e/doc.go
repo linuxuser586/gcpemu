@@ -11,6 +11,12 @@
 // and later, internet access (GCPEMU_NET_TESTS=1) to download Helm, the
 // Istio release (for its charts) and the Istio images. See README.md ("Reference stack").
 //
+// TestAutopilot is the SRS 11.4 Autopilot acceptance test: an Autopilot
+// cluster from the autopilot/ module at each supported minor passes
+// Kubernetes conformance (Sonobuoy quick mode), and at the default minor
+// scales past one node, refuses a privileged pod and runs Istio's sidecar
+// injection. It needs GCPEMU_NET_TESTS=1; `task autopilot` runs it.
+//
 // TestContainerizedLBIngress runs the emulator as its OCI image, with the
 // host's Docker socket, and checks that the host reaches GKE LoadBalancer
 // Services at their ingress (#276), on a VM runtime through the

@@ -20,7 +20,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 )
 
-// tofu runs OpenTofu on a copy of the stack module.
+// tofu runs OpenTofu on a copy of a root module of this package.
 type tofu struct {
 	t     *testing.T
 	bin   string
@@ -30,17 +30,18 @@ type tofu struct {
 	guard *escapeguard.Guard
 }
 
-// newTofu copies stack/ into a temporary working directory. Providers are
-// cached across runs in the user cache directory (TF_PLUGIN_CACHE_DIR).
-// plan, apply and destroy run behind an Escape guard.
-func newTofu(t *testing.T, bin, gateway string) *tofu {
+// newTofu copies module (stack, autopilot) into a temporary working
+// directory. Providers are cached across runs in the user cache directory
+// (TF_PLUGIN_CACHE_DIR). plan, apply and destroy run behind an Escape
+// guard.
+func newTofu(t *testing.T, bin, gateway, module string) *tofu {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "stack")
-	err := filepath.WalkDir("stack", func(p string, d fs.DirEntry, err error) error {
+	dir := filepath.Join(t.TempDir(), module)
+	err := filepath.WalkDir(module, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel("stack", p)
+		rel, _ := filepath.Rel(module, p)
 		if d.IsDir() {
 			if d.Name() == ".terraform" {
 				return filepath.SkipDir
