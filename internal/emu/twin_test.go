@@ -13,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // needIPv6Loopback skips a test on a host without [::1].
@@ -179,7 +180,7 @@ func TestListenBindNoIPv6(t *testing.T) {
 // (#641).
 func TestListenBindTwinRange(t *testing.T) {
 	needIPv6Loopback(t)
-	lo := freePortWindow(t, 2)
+	lo := porttest.Window(t, 2)
 	held, err := net.Listen("tcp", fmt.Sprintf("[::1]:%d", lo))
 	if err != nil {
 		t.Skipf("[::1]:%d not free: %v", lo, err)

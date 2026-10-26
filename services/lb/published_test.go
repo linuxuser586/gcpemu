@@ -15,6 +15,7 @@ import (
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/lb"
 )
@@ -103,7 +104,7 @@ func (e *env) unpublished(name string) string {
 // or anything else (a GKE LoadBalancer Service) held it. The loopback
 // listener keeps serving.
 func TestPublishedPorts(t *testing.T) {
-	rng := freePort(t)
+	rng := porttest.Free(t)
 	e, dial := startPublished(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), map[int]string{
 		8080: "127.0.0.1:28080", rng: "127.0.0.1:40001",
 	})
@@ -201,7 +202,7 @@ func (f *fakeRuntime) count() int {
 // reads the ports, and the waiting rule is served on its --port-range
 // port (#313).
 func TestPublishedRuntimeTransient(t *testing.T) {
-	rng := freePort(t)
+	rng := porttest.Free(t)
 	rt := &fakeRuntime{errs: []error{errors.New("runtime socket not ready")}}
 	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
 		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
@@ -287,7 +288,7 @@ func TestPublishedNoRuntimeNotContainerized(t *testing.T) {
 // bridge-network container is a Containerized Instance whatever it says
 // (#502).
 func TestPublishedRuntimeWinsOverSetting(t *testing.T) {
-	rng := freePort(t)
+	rng := porttest.Free(t)
 	rt := &fakeRuntime{}
 	e, dial := startContainerized(t, strconv.Itoa(rng)+"-"+strconv.Itoa(rng), func(svc emu.Service, bind string) {
 		lb.SetSelfRuntime(svc, rt.runtime, func(context.Context) (string, bool, map[int]string, error) {
@@ -318,15 +319,4 @@ func TestPublishedSelfNotFound(t *testing.T) {
 // containerized sets --containerized.
 func containerized(setting string) emutest.Option {
 	return emutest.WithConfig(func(c *config.Config) { c.Containerized = setting })
-}
-
-// freePort returns a TCP port free on 127.0.0.1.
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
 }

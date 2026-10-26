@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/linuxuser586/gcpemu/internal/loopback"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 )
 
 // checkPort reports a named port free on both families, fails one held on
@@ -89,7 +90,10 @@ func TestCheckPort(t *testing.T) {
 // is to be confirmed, so its outcome is only logged, but it must be one of
 // the two.
 func TestProbePortWildcard(t *testing.T) {
-	free := probePort("127.0.0.1", freePort(t))
+	// probePort binds the port itself to find it free, so the test cannot
+	// hold it: another process's explicit bind can still take it first
+	// (#743).
+	free := probePort("127.0.0.1", porttest.Free(t))
 	if free.err != nil || free.v6Err != nil || free.answered {
 		t.Fatalf("free port: %+v, want free and silent", free)
 	}
@@ -123,14 +127,4 @@ func TestProbePortWildcard(t *testing.T) {
 			t.Errorf("%s: binds succeeded but the port did not answer: %+v", runtime.GOOS, p)
 		}
 	}
-}
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
 }
