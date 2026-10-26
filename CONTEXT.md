@@ -380,7 +380,7 @@ What an Autopilot cluster refuses or changes before it admits a pod or a workloa
 _Avoid_: Warden (GKE's internal name), Autopilot policy
 
 **Autopilot compatibility check**:
-A report, for a Standard cluster, of the running workloads that the Workload restrictions would refuse or change if the cluster were an Autopilot cluster. It reads what is running now and changes nothing.
+A report, for a Standard cluster, of the workloads whose pods haven't finished that the Workload restrictions would refuse or change if the cluster were an Autopilot cluster. It reads what is running now and changes nothing.
 _Avoid_: migration check, Autopilot readiness
 
 **Admin kubeconfig**:

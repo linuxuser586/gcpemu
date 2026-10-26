@@ -538,6 +538,9 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 		return err
 	}
 	if u.DesiredAutopilotWorkloadPolicyConfig != nil {
+		if c.Autopilot == nil {
+			c.Autopilot = &containerpb.Autopilot{}
+		}
 		c.Autopilot.WorkloadPolicyConfig = u.DesiredAutopilotWorkloadPolicyConfig
 	}
 	if u.DesiredWorkloadIdentityConfig != nil {

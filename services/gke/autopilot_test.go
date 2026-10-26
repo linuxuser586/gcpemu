@@ -260,3 +260,34 @@ func TestAutopilotUpdate(t *testing.T) {
 		t.Errorf("Standard cluster got Autopilot settings: %v %v", got.Autopilot, got.ShieldedNodes)
 	}
 }
+
+// TestStandardCompatibilityAuditing is FR-GKE-017: a Standard cluster
+// stores workloadPolicyConfig.autopilotCompatibilityAuditingEnabled and
+// still refuses every other workload policy.
+func TestStandardCompatibilityAuditing(t *testing.T) {
+	a := newAPI(t)
+	ctx := context.Background()
+	createRunning(t, a, apParent, &containerpb.Cluster{Name: "std", InitialNodeCount: 1})
+	cl := apParent + "/clusters/std"
+	yes := true
+	if _, err := a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: cl, Update: &containerpb.ClusterUpdate{
+		DesiredAutopilotWorkloadPolicyConfig: &containerpb.WorkloadPolicyConfig{AutopilotCompatibilityAuditingEnabled: &yes}}}); err != nil {
+		t.Fatalf("enable auditing: %v", err)
+	}
+	got, _ := a.GetCluster(ctx, &containerpb.GetClusterRequest{Name: cl})
+	if !got.GetAutopilot().GetWorkloadPolicyConfig().GetAutopilotCompatibilityAuditingEnabled() || got.Autopilot.Enabled {
+		t.Errorf("after enabling auditing: %v", got.Autopilot)
+	}
+	_, err := a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: cl, Update: &containerpb.ClusterUpdate{
+		DesiredAutopilotWorkloadPolicyConfig: &containerpb.WorkloadPolicyConfig{AutopilotCompatibilityAuditingEnabled: &yes, AllowNetAdmin: &yes}}})
+	wantCode(t, "Standard allowNetAdmin with auditing", err, codes.InvalidArgument)
+	no := false
+	if _, err := a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: cl, Update: &containerpb.ClusterUpdate{
+		DesiredAutopilotWorkloadPolicyConfig: &containerpb.WorkloadPolicyConfig{AutopilotCompatibilityAuditingEnabled: &no}}}); err != nil {
+		t.Fatalf("disable auditing: %v", err)
+	}
+	got, _ = a.GetCluster(ctx, &containerpb.GetClusterRequest{Name: cl})
+	if wp := got.GetAutopilot().GetWorkloadPolicyConfig(); wp.AutopilotCompatibilityAuditingEnabled == nil || *wp.AutopilotCompatibilityAuditingEnabled || wp.AllowNetAdmin != nil {
+		t.Errorf("after disabling auditing: %v", got.Autopilot)
+	}
+}

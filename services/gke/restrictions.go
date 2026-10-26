@@ -363,12 +363,12 @@ func (s *Service) serveAutopilotAdmission(w http.ResponseWriter, r *http.Request
 	resp := &admissionResponse{UID: req.UID, Allowed: true}
 	rec, err := s.loadKey(key)
 	if err == nil && autopilotOn(rec.cluster()) {
-		isPod := req.Resource.Group == "" && req.Resource.Resource == "pods" && req.Operation == "CREATE" && req.Namespace != kubeSystem
+		isPod := req.Resource.Group == "" && req.Resource.Resource == "pods" && req.Operation == "CREATE" && autopilotRestricted(req.Namespace)
 		switch {
 		case hook == hookRestrict && req.Namespace == kubeSystem && !systemWriter(req):
 			resp.Allowed, resp.Status = false, refusal(req, map[string][]string{"managed-namespaces-limitation": {
 				fmt.Sprintf("the namespace %q is managed and the request's verb %q is denied", req.Namespace, strings.ToLower(req.Operation))}})
-		case hook == hookRestrict && req.Namespace != kubeSystem:
+		case hook == hookRestrict && autopilotRestricted(req.Namespace):
 			if pod, ok := podTemplate(req); ok {
 				allowNetAdmin := rec.cluster().GetAutopilot().GetWorkloadPolicyConfig().GetAllowNetAdmin()
 				if v := restrictionViolations(pod, allowNetAdmin); len(v) > 0 {
@@ -427,6 +427,11 @@ func podTemplate(req *admissionRequest) (*restrictedPod, bool) {
 }
 
 const kubeSystem = "kube-system"
+
+// autopilotRestricted reports whether the Workload restrictions apply to
+// pods in namespace ns, as they do outside kube-system. The Autopilot
+// compatibility check (compatibility.go) follows it.
+func autopilotRestricted(ns string) bool { return ns != kubeSystem }
 
 // systemWriter reports whether a write to kube-system is the cluster's
 // own, which GKE's system stands for: a system user other than a service

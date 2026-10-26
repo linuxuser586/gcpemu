@@ -704,6 +704,14 @@ func TestClients(t *testing.T) {
 		e.run(t, kubectl, "create", "namespace", "compat")
 		contains(t, "node-pools list", e.run(t, g, "container", "node-pools", "list", "--cluster=compat-cluster", "--zone=us-central1-a", "--format=value(name)"), "default-pool")
 
+		// The Autopilot compatibility check names a privileged pod (FR-GKE-017).
+		priv := filepath.Join(t.TempDir(), "priv.yaml")
+		_ = os.WriteFile(priv, []byte("apiVersion: v1\nkind: Pod\nmetadata:\n  name: priv\n  namespace: compat\nspec:\n  containers:\n  - name: c\n    image: rancher/klipper-lb:v0.4.17\n    securityContext:\n      privileged: true\n"), 0o644)
+		e.run(t, kubectl, "apply", "-f", priv)
+		e.run(t, g, "container", "clusters", "update", "compat-cluster", "--zone=us-central1-a", "--enable-autopilot-compatibility-auditing")
+		contains(t, "check-autopilot-compatibility", e.run(t, g, "container", "clusters", "check-autopilot-compatibility", "compat-cluster", "--zone=us-central1-a",
+			"--format=value(constraintType,subjects)"), "autogke-disallow-privilege\tcompat/priv")
+
 		helm := tool(t, "helm")
 		chart := t.TempDir()
 		_ = os.WriteFile(filepath.Join(chart, "Chart.yaml"), []byte("apiVersion: v2\nname: compat\nversion: 0.1.0\n"), 0o644)
