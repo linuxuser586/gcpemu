@@ -523,8 +523,9 @@ func (s *Service) federate(ctx context.Context, audience, subjectToken string) (
 type unavailableError struct{ error }
 
 // linkedSubject reports whether subjectToken, for a provider that trusts
-// the Instance's own issuer with no jwksJson, is not signed with this
-// Instance's key, so that a Linked Instance it delegates to may have
+// the Instance's own issuer with no jwksJson, names a Signing key other
+// than this Instance's (one with no key ID is this Instance's, as for
+// tokeninfo), so that a Linked Instance it delegates to may have
 // signed it, for a service account of a Delegated Project (ADR 0027).
 func (s *Service) linkedSubject(oidc *iamv1.Oidc, subjectToken string) bool {
 	if oidc.JwksJson != "" || oidc.IssuerUri != oidcIssuer || s.env.LinkedIDToken == nil {
@@ -535,7 +536,7 @@ func (s *Service) linkedSubject(oidc *iamv1.Oidc, subjectToken string) bool {
 		return false
 	}
 	kid, _ := t.Header["kid"].(string)
-	return kid != s.signer.kid
+	return kid != "" && kid != s.signer.kid
 }
 
 // verifyLinked has the Linked Instances this Instance delegates to say
@@ -543,8 +544,12 @@ func (s *Service) linkedSubject(oidc *iamv1.Oidc, subjectToken string) bool {
 // Project delegated to it, having checked its claims by opts. Answers
 // are not kept: each exchange asks again.
 func (s *Service) verifyLinked(ctx context.Context, subjectToken string, claims jwt.MapClaims, opts []jwt.ParserOption) error {
-	if _, _, err := jwt.NewParser(opts...).ParseUnverified(subjectToken, claims); err != nil {
+	t, _, err := jwt.NewParser(opts...).ParseUnverified(subjectToken, claims)
+	if err != nil {
 		return fmt.Errorf("invalid subject token: %v", err)
+	}
+	if !strings.HasPrefix(t.Method.Alg(), "RS") {
+		return fmt.Errorf("invalid subject token: signing method %s is invalid", t.Method.Alg())
 	}
 	if err := jwt.NewValidator(opts...).Validate(claims); err != nil {
 		return fmt.Errorf("invalid subject token: %v", err)

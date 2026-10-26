@@ -11,7 +11,7 @@ import (
 )
 
 // ID tokens (ADR 0027): a service account in a Delegated Project gets its
-// ID tokens from the Linked Instance, signed with its own key. When one is
+// ID tokens from the Linked Instance, signed with its Signing key. When one is
 // exchanged at the front Instance's STS, for a provider that trusts the
 // Instance's own issuer, the front Instance, which did not sign it, asks
 // the Linked Instances it delegates to whether one of them did. Unlike

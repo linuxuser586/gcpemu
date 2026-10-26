@@ -176,19 +176,20 @@ func (s *Service) VerifyIDToken(token string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	sub, _ := claims["sub"].(string)
+	email, _ := claims["email"].(string)
 	var sa *iamv1.ServiceAccount
 	_ = s.env.Store.View(func(tx store.Tx) error {
-		for _, c := range []string{"sub", "email"} {
-			if v, _ := claims[c].(string); v != "" {
-				if a, ok := s.getAccount(tx, v); ok {
-					sa = a
-					return nil
-				}
+		for _, v := range []string{sub, email} {
+			if a, ok := s.getAccount(tx, v); v != "" && ok {
+				sa = a
+				return nil
 			}
 		}
 		return nil
 	})
-	if sa == nil || sa.Disabled {
+	// A token whose email names another account than its sub is no one's.
+	if sa == nil || sa.Disabled || (email != "" && email != sa.Email) {
 		return "", false
 	}
 	return sa.Email, true

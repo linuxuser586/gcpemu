@@ -142,7 +142,8 @@ func TestLinkedIDTokenWhileLinkedInstanceIsDown(t *testing.T) {
 
 // googleJWKSPool creates, through in, the pool "jwks-pool" in laptop-own
 // with a provider whose issuer is the Instance's own but which trusts the
-// returned key by jwksJson. It returns the provider's audience.
+// returned key by jwksJson. It returns the key and the provider's
+// audience.
 func googleJWKSPool(t *testing.T, in *Instance) (*rsa.PrivateKey, string) {
 	t.Helper()
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
