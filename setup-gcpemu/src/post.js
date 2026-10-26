@@ -13,7 +13,7 @@ import path from 'node:path'
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { cacheableImages, jobFailed, jobMismatch, listJobsReason, retryDelay, shouldUpload, statusFailed, unknownNotice } from './lib.js'
+import { cacheableImages, jobFailed, jobMismatch, listJobsReason, retryDelay, shouldUpload, jobStatusFailed, unknownNotice } from './lib.js'
 
 async function run() {
   const bin = core.getState('bin')
@@ -39,9 +39,9 @@ async function run() {
 // currentJobFailed reports whether this job failed: { failed } with true
 // or false, or { failed: null, reason } when the result is unknown (see
 // unknownNotice). The runner's job.status comes first; the API is the
-// fallback, since its job listing can lag the run (#671).
+// fallback, since its job listing can lag the run.
 async function currentJobFailed() {
-  const failed = statusFailed(core.getInput('job-status'))
+  const failed = jobStatusFailed(core.getInput('job-status'))
   if (failed !== null) return { failed }
   return apiJobFailed()
 }

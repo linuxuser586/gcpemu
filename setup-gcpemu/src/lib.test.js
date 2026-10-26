@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { cacheableImages, compareTags, firstSignedRelease, imagesKey, jobFailed, jobMismatch, listJobsReason, missingBundle, normalizeTag, parseEnv, parseSums, platform, retryDelay, shouldUpload, signerIdentity, splitArgs, startArgs, statusFailed, unknownNotice } from './lib.js'
+import { cacheableImages, compareTags, firstSignedRelease, imagesKey, jobFailed, jobMismatch, listJobsReason, missingBundle, normalizeTag, parseEnv, parseSums, platform, retryDelay, shouldUpload, signerIdentity, splitArgs, startArgs, jobStatusFailed, unknownNotice } from './lib.js'
 
 test('platform', () => {
   assert.deepEqual(platform('linux', 'arm64'), { os: 'linux', arch: 'arm64', asset: 'gcpemu-linux-arm64' })
@@ -64,16 +64,16 @@ test('jobFailed', () => {
   assert.equal(jobFailed([], 'r2'), null)
 })
 
-test('statusFailed', () => {
-  // The runner's job.status as the post step sees it (#671).
-  assert.equal(statusFailed('success'), false)
-  assert.equal(statusFailed('failure'), true)
-  assert.equal(statusFailed('cancelled'), true)
-  assert.equal(statusFailed(' Failure '), true)
+test('jobStatusFailed', () => {
+  // The runner's job.status as the post step sees it.
+  assert.equal(jobStatusFailed('success'), false)
+  assert.equal(jobStatusFailed('failure'), true)
+  assert.equal(jobStatusFailed('cancelled'), true)
+  assert.equal(jobStatusFailed(' Failure '), true)
   // Unset, or an unevaluated expression on a runner without it: unknown.
-  assert.equal(statusFailed(''), null)
-  assert.equal(statusFailed(undefined), null)
-  assert.equal(statusFailed('${{ job.status }}'), null)
+  assert.equal(jobStatusFailed(''), null)
+  assert.equal(jobStatusFailed(undefined), null)
+  assert.equal(jobStatusFailed('${{ job.status }}'), null)
 })
 
 test('retryDelay', () => {

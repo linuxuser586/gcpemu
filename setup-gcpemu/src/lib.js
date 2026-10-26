@@ -69,10 +69,10 @@ export function imagesKey({ os, arch, digest, services }) {
   return { key: `gcpemu-images-${os}-${arch}-${digest.slice(0, 16)}-${h}`, prefix: `gcpemu-images-${os}-${arch}-${digest.slice(0, 16)}-` }
 }
 
-// statusFailed reads the runner's job.status, which the post step gets
+// jobStatusFailed reads the runner's job.status, which the post step gets
 // through the job-status input: true for failure or cancelled, false for
 // success, null when it is missing or unrecognized.
-export function statusFailed(status) {
+export function jobStatusFailed(status) {
   switch ((status ?? '').trim().toLowerCase()) {
     case 'success':
       return false
