@@ -23,6 +23,7 @@ import (
 //	POST /_emu/hooks/{clusterId}/{secret}/resources  Autopilot's request changes (restrictions.go, via the frontend)
 //	GET  /_emu/node/{clusterId}/{secret}/{node}/token        node SA token
 //	*    /_emu/node/{clusterId}/{secret}/{node}/md/{ip}/...  metadata server
+//	POST /_emu/node/{clusterId}/{secret}/{node}/otlp/{ip}/v1/{signal}  managed collector (collector.go)
 //	GET  /_emu/kubeconfig[?cluster=projects/P/locations/L/clusters/C][&lan=true|ADDRESS]
 //
 // Hook and node URLs carry the cluster's secret; the kubeconfig endpoint
@@ -64,6 +65,8 @@ func (s *Service) internalHandler() http.Handler {
 				s.serveNodeToken(w, r, key, node)
 			case len(segs) == 5 && segs[4] == "mount" && r.Method == http.MethodPost:
 				s.serveProviderMount(w, r, key)
+			case len(segs) == 8 && segs[4] == "otlp" && segs[6] == "v1":
+				s.serveOTLP(w, r, key, segs[5], segs[7])
 			case len(segs) >= 6 && segs[4] == "md":
 				s.serveMetadata(w, r, key, node, segs[5], "/"+strings.Join(segs[6:], "/"))
 			default:

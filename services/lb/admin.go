@@ -88,7 +88,7 @@ func (s *Service) serveListeners(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.dp.mu.Unlock()
-	_, vars := lbEnv(s.env.Endpoints.All())
+	vars := lbWithheld(s.env.Endpoints.All())
 	withheld := []withheldInfo{}
 	for _, v := range vars {
 		info := v.info()

@@ -50,6 +50,11 @@ export interface NodePool {
   selfLink?: string
 }
 
+export interface WorkloadPolicyConfig {
+  allowNetAdmin?: boolean
+  autopilotCompatibilityAuditingEnabled?: boolean
+}
+
 export interface Cluster {
   name: string
   id?: string
@@ -73,7 +78,7 @@ export interface Cluster {
   privateClusterConfig?: { enablePrivateNodes?: boolean; enablePrivateEndpoint?: boolean }
   networkConfig?: { defaultEnablePrivateNodes?: boolean }
   controlPlaneEndpointsConfig?: { ipEndpointsConfig?: { enablePublicEndpoint?: boolean } }
-  autopilot?: { enabled?: boolean; workloadPolicyConfig?: { allowNetAdmin?: boolean } }
+  autopilot?: { enabled?: boolean; workloadPolicyConfig?: WorkloadPolicyConfig }
   network?: string
   subnetwork?: string
   clusterIpv4Cidr?: string
@@ -112,6 +117,10 @@ export interface ClusterRef {
 
 export const RELEASE_CHANNELS = ['RAPID', 'REGULAR', 'STABLE', 'EXTENDED', 'UNSPECIFIED'] as const
 
+/** releaseChannels are the channels a cluster may take: Autopilot needs one. */
+export const releaseChannels = (autopilot: boolean) =>
+  autopilot ? RELEASE_CHANNELS.filter((c) => c !== 'UNSPECIFIED') : RELEASE_CHANNELS
+
 /** NAME is GKE's cluster and node pool name rule, with its own message. */
 export const NAME = /^[a-z](?:[-a-z0-9]{0,38}[a-z0-9])?$/
 export const nameMessage = (kind: 'cluster' | 'nodePool', name: string) =>
@@ -134,8 +143,11 @@ export const isRunning = (c?: Cluster) => c?.status === 'RUNNING' || c?.status =
  */
 export const isAutopilot = (c?: Cluster) => !!c?.autopilot?.enabled
 
+/** ClusterMode is whether a cluster is Standard or Autopilot, fixed at create. */
+export type ClusterMode = 'Standard' | 'Autopilot'
+
 /** clusterMode is a cluster's mode as GKE shows it. */
-export const clusterMode = (c: Cluster) => (isAutopilot(c) ? 'Autopilot' : 'Standard')
+export const clusterMode = (c: Cluster): ClusterMode => (isAutopilot(c) ? 'Autopilot' : 'Standard')
 
 // ---- container v1 ----
 

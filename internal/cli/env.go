@@ -63,29 +63,39 @@ func envFlags(f *pflag.FlagSet, trustCA, noUniverse *bool) {
 }
 
 // clientEnv returns the variables that point clients at the Instance
-// behind c, which `gcpemu env` prints. Warnings about credentials go to w.
+// behind c, which `gcpemu env` prints. Warnings about credentials, and
+// the Linked Instances' Load balancing frontends that got no variable, go
+// to w.
 func clientEnv(c *adminClient, trustCA, noUniverse bool, w io.Writer) (map[string]string, error) {
-	q := url.Values{}
+	q := url.Values{"notes": {"true"}}
 	if trustCA {
 		q.Set("trust", "true")
 	}
 	if noUniverse {
 		q.Set("universe", "false")
 	}
-	path := "/_emu/v1/env"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	b, err := c.get(path)
+	b, err := c.get("/_emu/v1/env?" + q.Encode())
 	if err != nil {
 		return nil, err
 	}
-	vars := map[string]string{}
-	if err := json.Unmarshal(b, &vars); err != nil {
+	var reply struct {
+		Vars  map[string]string
+		Notes []string
+	}
+	if err := json.Unmarshal(b, &reply); err != nil {
 		return nil, err
 	}
-	guardADC(c, vars, w)
-	return vars, nil
+	// An Instance that predates notes answers with the variables alone.
+	if reply.Vars == nil {
+		if err := json.Unmarshal(b, &reply.Vars); err != nil {
+			return nil, err
+		}
+	}
+	for _, n := range reply.Notes {
+		fmt.Fprintf(w, "# gcpemu: %s\n", n)
+	}
+	guardADC(c, reply.Vars, w)
+	return reply.Vars, nil
 }
 
 // buildLogHints says how to run `gcloud builds submit` when gcloud can't

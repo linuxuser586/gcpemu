@@ -392,8 +392,8 @@ The most GKE nodes one Instance runs, across all its clusters, Standard and Auto
 _Avoid_: host node limit, quota
 
 **Workload restrictions**:
-What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates; refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
-_Avoid_: Warden (GKE's internal name), Autopilot policy
+What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates (a cluster can be set to allow the NET_ADMIN capability); refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
+_Avoid_: Warden (GKE's internal name), Autopilot policy, workload policy
 
 **Autopilot compatibility check**:
 A report, for a Standard cluster, of the workloads whose pods haven't finished that the Workload restrictions would refuse or change if the cluster were an Autopilot cluster. It reads what is running now and changes nothing.
@@ -404,11 +404,11 @@ The kubeconfig an Instance keeps for its running clusters, which acts as each cl
 _Avoid_: emulator kubeconfig, convenience kubeconfig
 
 **OTLP endpoint**:
-Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, the telemetry is dropped.
+Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, or one whose protocol the Instance does not speak, the telemetry is dropped; one that is set but unreachable fails the exports instead.
 _Avoid_: collector endpoint, metrics endpoint
 
 **Managed collector**:
-The OTLP receiver a cluster serves at GKE's in-cluster collector address, for workloads' logs, metrics and traces. It forwards them to the OTLP endpoint.
+The OTLP receiver the Instance serves for a cluster at GKE's in-cluster collector address, for workloads' logs, metrics and traces. It forwards them to the OTLP endpoint. No collector runs in the cluster.
 _Avoid_: OTel sidecar, collector (unqualified)
 
 **Managed OpenTelemetry scope**:

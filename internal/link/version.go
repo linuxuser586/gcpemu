@@ -9,8 +9,10 @@ import (
 // Versions is the range of link protocol versions an Instance speaks.
 type Versions struct{ Min, Max int }
 
-// Current is the range this build speaks.
-var Current = Versions{Min: 1, Max: 1}
+// Current is the range this build speaks. Version 2 added the load
+// balancing endpoints (#715), without which a front Instance could not
+// name a Delegated Project's --lb-bind addresses, so version 1 is refused.
+var Current = Versions{Min: 2, Max: 2}
 
 // String is "1", or "1-2" for a range.
 func (v Versions) String() string {

@@ -397,7 +397,11 @@ type LANFrontend struct {
 	// Name groups a frontend's ports in endpoint "lb-lan:<Name>", and
 	// What names it in messages ("LoadBalancer Service c/ns/web").
 	Name, What string
-	Port       int
+	// Project is the Project it belongs to, and Endpoint the Service
+	// endpoint it is listed under, which names its `gcpemu env` variable,
+	// for LANFrontendLister.
+	Project, Endpoint string
+	Port              int
 	// Addr is the address of the frontend's own listener, if any, and
 	// Wildcard is set when that listener is on the wildcard address, so
 	// that it serves the --lb-bind addresses on its port itself.
@@ -407,6 +411,28 @@ type LANFrontend struct {
 	Sig string
 	// Serve serves the connections ln accepts until ln closes.
 	Serve func(ln net.Listener)
+}
+
+// LANFrontendLister is implemented by the lb Service: the load balancing
+// endpoints --lb-bind serves, forwarding rules' and the Load balancing
+// frontends of other Services (LANFrontends), with the addresses each
+// claimed, which a
+// Linked Instance tells a front Instance for its `gcpemu env` (ADR 0027,
+// #715).
+type LANFrontendLister interface {
+	LANFrontendAddrs() []LANFrontendAddrs
+}
+
+// LANFrontendAddrs is a Load balancing frontend and the --lb-bind addresses it
+// claimed.
+type LANFrontendAddrs struct {
+	// Name is its Service endpoint name, which names its `gcpemu env`
+	// variables, and What names it in messages.
+	Name, Project, What string
+	// Addrs are the --lb-bind address:ports it claimed; with none, Error
+	// says why.
+	Addrs []string
+	Error string
 }
 
 // ErrNoRuntime marks a permanent Containers.Runtime failure (see

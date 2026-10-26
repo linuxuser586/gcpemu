@@ -427,7 +427,9 @@ name, which is needed when two links would share one). The Admin API serves the 
   the link. Run `gcpemu link pair` again: the other side answers at once, since it is already
   paired.
 - Instances negotiate a link protocol version. One with no version in common is refused, at Pairing
-  and on connect, with an error naming both versions.
+  and on connect, with an error naming both versions. This release speaks version 2, which added
+  the Load balancing frontends of Delegated Projects, so an Instance from before it must be upgraded
+  too.
 - Links are configuration, kept in `<data-dir>/links.json`: Reset and State snapshots leave them
   alone, and a Persistent Instance keeps them across restarts. An Ephemeral Instance keeps them in
   memory.
@@ -528,6 +530,21 @@ gcpemu link delegate team-shared --to office
   caller (ADR 0027), and a LoadBalancer Service's ingress lists the office's `--lb-bind`
   addresses it serves after its own. A client reaching the office through `--gfe-bind`, or at a
   `--bind` address beyond loopback, is told the same `--gke-bind` and `--sql-bind` addresses.
+- The laptop's `gcpemu env` names the office's Load balancing frontends for its Delegated
+  Projects, forwarding rules and LoadBalancer Services, at the `--lb-bind` address the office tells
+  the laptop (the one on the `--link-bind` address it asked on, else the first) and the rule's or
+  Service's port: `GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>` and `GCPEMU_GKE_*` as usual. The
+  usual names apply across both Instances together: `GCPEMU_LB_<NAME>` is printed only while the
+  name is unique on both, and a variable both would print, such as `GCPEMU_GKE_*` for a cluster
+  name each has, is withheld. A Load balancing frontend with no `--lb-bind` address on the office
+  (no `--lb-bind`, or another Load balancing frontend holds the address) gets no variable, never a loopback or
+  Declared address, and `gcpemu env` says why on stderr, as it does when the office is
+  unreachable, so `eval "$(gcpemu env)"` keeps working. While the office is unreachable, no
+  `GCPEMU_LB_<NAME>` is printed at all, since the office's rules might share the name; the
+  qualified variables and the laptop's `GCPEMU_GKE_*` stay, and stderr warns that one of those may
+  collide with an office Service. `gcpemu status` lists them under
+  `linked load balancing frontends`, by link (Admin API: `GET /_emu/v1/links/lb-frontends`). Only
+  Projects delegated to the laptop are listed.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,
   and under `--strict-projects` it counts as existing, since its requests are forwarded. Anything
   that would still create state for it on the laptop, such as a request naming it only in its
@@ -715,6 +732,20 @@ termination reason, e.g. `OOMKilled`) over OTLP when the Instance's environment 
 `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`), using the standard
 `OTEL_EXPORTER_OTLP_*` variables and `OTEL_METRIC_EXPORT_INTERVAL` (default 60000 ms). Names follow
 the OTel Collector's `kubeletstats` and `k8s_cluster` receivers (FR-GKE-014).
+A cluster whose `managed_opentelemetry_config` scope is `COLLECTION_AND_INSTRUMENTATION_COMPONENTS`
+serves GKE's managed collector: pods send OTLP logs, metrics and traces to
+`opentelemetry-collector.gke-managed-otel.svc.cluster.local`, on 4317 (gRPC) or 4318 (HTTP,
+protobuf or JSON), as on GKE. No collector pods run: the Service is an `ExternalName` for the
+node's own `metadata.google.internal`, where the node relays OTLP to the Instance (ADR 0034).
+The Instance adds the cluster, namespace, pod, container (for a single-container pod), node and
+owning workload that the sender didn't set, then forwards each signal to the same OTLP endpoint
+as the system metrics. A signal's own `OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES}_*` variables win
+over the general ones. The variables are read on each export. With no endpoint set, or a
+protocol other than `grpc` or `http/protobuf` (logged once), exports succeed and the data is
+dropped. A failed forward fails the pod's export, which the sender
+retries. The scope also installs the `instrumentations.telemetry.googleapis.com` CRD. Setting
+the scope to `NONE` removes the Service and keeps the CRD, the namespace and your objects
+(FR-GKE-019).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
 or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,

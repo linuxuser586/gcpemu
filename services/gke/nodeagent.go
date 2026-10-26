@@ -43,6 +43,10 @@ import (
 //     services by real hostname (FR-INT-007). Names the emulator does not
 //     serve (logging.googleapis.com, ...) are relayed to the emulated
 //     Cloud DNS and resolve as usual.
+//   - :4317 (OTLP/gRPC) and :4318 (OTLP/HTTP), relayed to the emulator's
+//     managed collector tagged with the caller's (pod) IP (collector.go,
+//     FR-GKE-019); the opentelemetry-collector Service in
+//     gke-managed-otel names metadata.google.internal.
 //   - 169.254.169.253:53 the googleapis resolver (googleAPIsDNSIP) for pods
 //     labelled gcpemu.dev/googleapis=real (cainject.go, ADR 0019).
 //   - :15090 on every address, the ClusterIP relay (clusteriprelay.go), through
@@ -156,6 +160,15 @@ func runNodeAgent(ctx context.Context, args []string) error {
 		}
 		go func() { _ = frontend.Relay(feL, cfg.Frontend) }()
 	}
+	otlpHTTPL, err := net.Listen("tcp", fmt.Sprintf("%s:%d", metadataIP, otlpHTTPPort))
+	if err != nil {
+		return err
+	}
+	otlpGRPCL, err := net.Listen("tcp", fmt.Sprintf("%s:%d", metadataIP, otlpGRPCPort))
+	if err != nil {
+		return err
+	}
+	defer serveNodeOTLP(otlpHTTPL, otlpGRPCL, cfg.Emu)()
 	if _, cidr, err := net.ParseCIDR(cfg.ServiceCIDR); err == nil && cfg.Secret != "" {
 		svcL, err := net.Listen("tcp", fmt.Sprintf(":%d", clusterIPRelayPort))
 		if err != nil {

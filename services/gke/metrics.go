@@ -46,15 +46,11 @@ type otlpSettings struct {
 // otlpFromEnv returns the OTLP metrics settings, or false when no endpoint
 // is configured.
 func otlpFromEnv(getenv func(string) string) (otlpSettings, bool) {
-	if getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" && getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+	t, ok := otlpTargetFromEnv(getenv, "metrics")
+	if !ok {
 		return otlpSettings{}, false
 	}
-	set := otlpSettings{protocol: "http/protobuf", interval: defaultMetricsInterval}
-	if p := getenv("OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"); p != "" {
-		set.protocol = p
-	} else if p := getenv("OTEL_EXPORTER_OTLP_PROTOCOL"); p != "" {
-		set.protocol = p
-	}
+	set := otlpSettings{protocol: t.protocol, interval: defaultMetricsInterval}
 	if ms, err := strconv.Atoi(getenv("OTEL_METRIC_EXPORT_INTERVAL")); err == nil && ms > 0 {
 		set.interval = time.Duration(ms) * time.Millisecond
 	}
@@ -215,17 +211,7 @@ func (s *Service) exportSystemMetrics(ctx context.Context, key string, exp sdkme
 	}
 
 	now := time.Now()
-	clusterAttrs := []attribute.KeyValue{
-		attribute.String("cloud.provider", "gcp"),
-		attribute.String("cloud.platform", "gcp_kubernetes_engine"),
-		attribute.String("cloud.account.id", rec.Int.Project),
-		attribute.String("k8s.cluster.name", rec.Int.Name),
-	}
-	if isZone(rec.Int.Location) {
-		clusterAttrs = append(clusterAttrs, attribute.String("cloud.availability_zone", rec.Int.Location))
-	} else {
-		clusterAttrs = append(clusterAttrs, attribute.String("cloud.region", rec.Int.Location))
-	}
+	clusterAttrs := clusterResourceAttrs(rec)
 	var out []metricdata.ResourceMetrics
 	emit := func(attrs []attribute.KeyValue, ms []metricdata.Metrics) {
 		if len(ms) == 0 {
@@ -315,6 +301,20 @@ func (s *Service) exportSystemMetrics(ctx context.Context, key string, exp sdkme
 		}
 	}
 	return nil
+}
+
+// clusterResourceAttrs are the resource attributes naming the cluster.
+func clusterResourceAttrs(rec *clusterRecord) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		attribute.String("cloud.provider", "gcp"),
+		attribute.String("cloud.platform", "gcp_kubernetes_engine"),
+		attribute.String("cloud.account.id", rec.Int.Project),
+		attribute.String("k8s.cluster.name", rec.Int.Name),
+	}
+	if isZone(rec.Int.Location) {
+		return append(attrs, attribute.String("cloud.availability_zone", rec.Int.Location))
+	}
+	return append(attrs, attribute.String("cloud.region", rec.Int.Location))
 }
 
 // workloadAttrs names the workload that owns a pod: its ReplicaSet and

@@ -371,13 +371,14 @@ func (s *Service) Reset(ctx context.Context) error {
 }
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004): gcloud's container
-// endpoint override, the kubeconfig the emulator maintains and, on a VM
-// runtime, the host addresses of LoadBalancer Services.
+// endpoint override and the kubeconfig the emulator maintains. The
+// Instance derives the LoadBalancer Services' GCPEMU_GKE_* variables from
+// their endpoints (package lbenv).
 func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]string {
-	out := lbEnvVars(endpoints)
-	out["CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER"] = "http://" + gw + "/container/"
-	out["KUBECONFIG"] = s.kubeconfigPath()
-	return out
+	return map[string]string{
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_CONTAINER": "http://" + gw + "/container/",
+		"KUBECONFIG": s.kubeconfigPath(),
+	}
 }
 
 // maxNodes is the per-instance node limit.

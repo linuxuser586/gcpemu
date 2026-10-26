@@ -65,9 +65,11 @@ func TestManagedTelemetryUpdate(t *testing.T) {
 		cl := apParent + "/clusters/" + c.Name
 		update := func(what string, u *containerpb.ClusterUpdate, want containerpb.ManagedOpenTelemetryConfig_Scope) {
 			t.Helper()
-			if _, err := a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: cl, Update: u}); err != nil {
+			op, err := a.UpdateCluster(ctx, &containerpb.UpdateClusterRequest{Name: cl, Update: u})
+			if err != nil {
 				t.Fatalf("%s: UpdateCluster: %v", c.Name, err)
 			}
+			waitOp(t, a, "ap-test", op.Name) // the scope's add-ons are reconciled
 			got, err := a.GetCluster(ctx, &containerpb.GetClusterRequest{Name: cl})
 			if err != nil {
 				t.Fatal(err)
