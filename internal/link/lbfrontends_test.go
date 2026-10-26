@@ -12,10 +12,10 @@ import (
 // at port 8080 of the --link-bind address each request arrived on.
 func serving(projects ...string) func(*link.Config) {
 	return func(c *link.Config) {
-		c.LBEndpoints = func(lanIP string) []link.LBEndpoint {
-			var out []link.LBEndpoint
+		c.LBFrontends = func(lanIP string) []link.LBFrontend {
+			var out []link.LBFrontend
 			for _, p := range projects {
-				out = append(out, link.LBEndpoint{Name: "lb:" + p + "/us-central1/web", Project: p,
+				out = append(out, link.LBFrontend{Name: "lb:" + p + "/us-central1/web", Project: p,
 					What: "forwarding rule projects/" + p + "/regions/us-central1/forwardingRules/web", Address: lanIP + ":8080"})
 			}
 			return out
@@ -24,45 +24,45 @@ func serving(projects ...string) func(*link.Config) {
 }
 
 // endpointNames returns the names of the endpoints of each link in got.
-func endpointNames(got []link.LinkedLB) map[string][]string {
+func endpointNames(got []link.LinkFrontends) map[string][]string {
 	out := map[string][]string{}
 	for _, l := range got {
 		out[l.Link] = []string{}
-		for _, e := range l.Endpoints {
+		for _, e := range l.Frontends {
 			out[l.Link] = append(out[l.Link], e.Name)
 		}
 	}
 	return out
 }
 
-// A front Instance learns the load balancing endpoints of the Projects it
+// A front Instance learns the Load balancing frontends of the Projects it
 // delegates, as the Linked Instance tells a LAN caller on the --link-bind
 // address it arrived at, and never those of other Projects (#715).
-func TestLinkedLBEndpoints(t *testing.T) {
+func TestLinkedLBFrontends(t *testing.T) {
 	laptop := newLinked(t, "laptop", "")
-	office := newLinked(t, "office", "", serving("team-shared", "shared-only", "private"), func(c *link.Config) { c.LBBind = true })
+	office := newLinked(t, "office", "", serving("team-shared", "shared-only", "private"), func(c *link.Config) { c.LBBind = func() bool { return true } })
 	pair(t, laptop, office)
 	for _, id := range []string{"team-shared", "shared-only"} {
 		if err := office.Share(id, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := laptop.LinkedLBEndpoints(ctxT(t)); len(got) != 0 {
-		t.Errorf("LinkedLBEndpoints with nothing delegated = %+v, want none", got)
+	if got := laptop.LinkedLBFrontends(ctxT(t)); len(got) != 0 {
+		t.Errorf("LinkedLBFrontends with nothing delegated = %+v, want none", got)
 	}
 	if _, err := laptop.Delegate(ctxT(t), "team-shared", "office"); err != nil {
 		t.Fatal(err)
 	}
-	got := laptop.LinkedLBEndpoints(ctxT(t))
-	if len(got) != 1 || got[0].Link != "office" || got[0].Error != "" || !got[0].LBBind || len(got[0].Endpoints) != 1 {
-		t.Fatalf("LinkedLBEndpoints = %+v, want the office's team-shared endpoint only, and its --lb-bind", got)
+	got := laptop.LinkedLBFrontends(ctxT(t))
+	if len(got) != 1 || got[0].Link != "office" || got[0].Error != "" || !got[0].LBBind || len(got[0].Frontends) != 1 {
+		t.Fatalf("LinkedLBFrontends = %+v, want the office's team-shared endpoint only, and its --lb-bind", got)
 	}
-	if e := got[0].Endpoints[0]; e.Name != "lb:team-shared/us-central1/web" || e.Address != "127.0.0.1:8080" {
+	if e := got[0].Frontends[0]; e.Name != "lb:team-shared/us-central1/web" || e.Address != "127.0.0.1:8080" {
 		t.Errorf("endpoint = %+v, want lb:team-shared/us-central1/web at the --link-bind address 127.0.0.1:8080", e)
 	}
 
 	// The office itself answers only for the Projects it shares.
-	raw, err := laptop.AskLBEndpoints(ctxT(t), "office")
+	raw, err := laptop.AskLBFrontends(ctxT(t), "office")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestLinkedLBEndpoints(t *testing.T) {
 }
 
 // An unreachable Linked Instance is named, with no endpoints (#715).
-func TestLinkedLBEndpointsWhileLinkedInstanceIsDown(t *testing.T) {
+func TestLinkedLBFrontendsWhileLinkedInstanceIsDown(t *testing.T) {
 	laptop, office := newLinked(t, "laptop", ""), newLinked(t, "office", "", serving("team-shared"))
 	pair(t, laptop, office)
 	if err := office.Share("team-shared", ""); err != nil {
@@ -89,9 +89,9 @@ func TestLinkedLBEndpointsWhileLinkedInstanceIsDown(t *testing.T) {
 	if err := office.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got := laptop.LinkedLBEndpoints(ctxT(t))
-	if len(got) != 1 || got[0].Link != "office" || got[0].Error == "" || len(got[0].Endpoints) != 0 {
-		t.Errorf("LinkedLBEndpoints with the office down = %+v, want the office named, unreachable", got)
+	got := laptop.LinkedLBFrontends(ctxT(t))
+	if len(got) != 1 || got[0].Link != "office" || got[0].Error == "" || len(got[0].Frontends) != 0 {
+		t.Errorf("LinkedLBFrontends with the office down = %+v, want the office named, unreachable", got)
 	}
 	if names := endpointNames(got); len(names["office"]) != 0 {
 		t.Errorf("endpoints of an unreachable office: %v", names)
@@ -99,7 +99,7 @@ func TestLinkedLBEndpointsWhileLinkedInstanceIsDown(t *testing.T) {
 }
 
 // An unpaired Instance is refused the endpoints (#715).
-func TestUnpairedInstanceIsRefusedLBEndpoints(t *testing.T) {
+func TestUnpairedInstanceIsRefusedLBFrontends(t *testing.T) {
 	office := newLinked(t, "office", "", serving("team-shared"))
 	stranger := newLinked(t, "stranger", "")
 	id, err := stranger.Identify(ctxT(t), office.addr)
@@ -115,14 +115,14 @@ func TestUnpairedInstanceIsRefusedLBEndpoints(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := stranger.AskLBEndpoints(ctxT(t), "office")
+	got, err := stranger.AskLBFrontends(ctxT(t), "office")
 	if len(got) != 0 {
 		t.Errorf("the office told an unpaired Instance %+v", got)
 	}
-	refused(t, "asking for load balancing endpoints unpaired", err, link.ReasonUnpaired)
+	refused(t, "asking for Load balancing frontends unpaired", err, link.ReasonUnpaired)
 }
 
-// The load balancing endpoints came with version 2: an Instance that
+// The Load balancing frontends came with version 2: an Instance that
 // speaks only version 1 is refused, naming both (#715).
 func TestVersion1IsRefused(t *testing.T) {
 	if link.Current.Min < 2 {

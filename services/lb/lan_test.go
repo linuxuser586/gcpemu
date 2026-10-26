@@ -247,20 +247,20 @@ func TestLBBindOtherFrontend(t *testing.T) {
 	}
 }
 
-// lanEndpoints returns the lb Service's --lb-bind endpoints, by name.
-func (e *env) lanEndpoints() map[string]emu.LANEndpoint {
+// lanFrontendAddrs returns the lb Service's --lb-bind endpoints, by name.
+func (e *env) lanFrontendAddrs() map[string]emu.LANFrontendAddrs {
 	svc, _ := e.inst.Internal().Env.Lookup("lb")
-	out := map[string]emu.LANEndpoint{}
-	for _, ep := range svc.(emu.LANEndpointer).LANEndpoints() {
+	out := map[string]emu.LANFrontendAddrs{}
+	for _, ep := range svc.(emu.LANFrontendLister).LANFrontendAddrs() {
 		out[ep.Name] = ep
 	}
 	return out
 }
 
-// TestLBBindLANEndpoints: the lb Service lists each forwarding rule and
+// TestLBBindLANFrontendAddrs: the lb Service lists each forwarding rule and
 // other Service's frontend with the --lb-bind addresses it claimed, and
 // why it claimed none, for a front Instance's `gcpemu env` (#715).
-func TestLBBindLANEndpoints(t *testing.T) {
+func TestLBBindLANFrontendAddrs(t *testing.T) {
 	e := startLBBind(t)
 	for _, a := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
 		if c, err := net.DialTimeout("tcp", a, time.Second); err == nil {
@@ -276,7 +276,7 @@ func TestLBBindLANEndpoints(t *testing.T) {
 	e.forwardingRule("a", 8080)
 	e.forwardingRule("b", 8080)
 
-	got := e.lanEndpoints()
+	got := e.lanFrontendAddrs()
 	a, b := got["lb:"+proj+"/global/a"], got["lb:"+proj+"/global/b"]
 	if a.Project != proj || b.Project != proj || !strings.Contains(a.What, "forwardingRules/a") {
 		t.Fatalf("rules = %+v, %+v", a, b)
@@ -297,13 +297,13 @@ func TestLBBindLANEndpoints(t *testing.T) {
 	}
 }
 
-// TestLANEndpointsWithoutLBBind: without --lb-bind, each forwarding rule is
+// TestLANFrontendAddrsWithoutLBBind: without --lb-bind, each forwarding rule is
 // listed with no address, naming the flag (#715).
-func TestLANEndpointsWithoutLBBind(t *testing.T) {
+func TestLANFrontendAddrsWithoutLBBind(t *testing.T) {
 	e := start(t)
 	e.lanLB(newBackend(t))
 	e.forwardingRule("a", 8080)
-	a, ok := e.lanEndpoints()["lb:"+proj+"/global/a"]
+	a, ok := e.lanFrontendAddrs()["lb:"+proj+"/global/a"]
 	if !ok || len(a.Addrs) != 0 || !strings.Contains(a.Error, "--lb-bind") {
 		t.Errorf("rule a = %+v (listed %v), want no address, naming --lb-bind", a, ok)
 	}

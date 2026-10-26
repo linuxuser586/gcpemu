@@ -19,7 +19,7 @@ func frontAdmin(t *testing.T) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/_emu/v1/info":
-			_, _ = io.WriteString(w, `{"instance":"laptop","endpoints":{"gateway":"127.0.0.1:4000"}}`)
+			_, _ = io.WriteString(w, `{"instance":"laptop","frontends":{"gateway":"127.0.0.1:4000"}}`)
 		case "/_emu/v1/ready":
 			_, _ = io.WriteString(w, `{"ready":true,"services":{}}`)
 		case "/_emu/v1/env":
@@ -29,12 +29,12 @@ func frontAdmin(t *testing.T) string {
 			}
 			_, _ = io.WriteString(w, `{"vars":{"GCPEMU_GATEWAY":"127.0.0.1:4000","GCPEMU_LB_WEB":"192.168.1.5:8080"},`+
 				`"notes":["forwarding rule api on link \"office\" gets no variable: its Instance has no --lb-bind"]}`)
-		case "/_emu/v1/links/lb-endpoints":
+		case "/_emu/v1/links/lb-frontends":
 			_, _ = io.WriteString(w, `{"links":[`+
-				`{"link":"attic","endpoints":[],"lbBind":false},`+
-				`{"link":"office","lbBind":true,"endpoints":[{"name":"lb:p/global/web","project":"p","what":"forwarding rule web","address":"192.168.1.5:8080"},`+
+				`{"link":"attic","frontends":[],"lbBind":false},`+
+				`{"link":"office","lbBind":true,"frontends":[{"name":"lb:p/global/web","project":"p","what":"forwarding rule web","address":"192.168.1.5:8080"},`+
 				`{"name":"lb:p/global/api","project":"p","what":"forwarding rule api","error":"its Instance has no --lb-bind"}]},`+
-				`{"link":"lab","endpoints":[],"error":"connection refused"}]}`)
+				`{"link":"lab","frontends":[],"error":"connection refused"}]}`)
 		default:
 			_, _ = io.WriteString(w, `{}`)
 		}
@@ -75,12 +75,12 @@ func TestEnvPrintsLinkedNotesOnStderr(t *testing.T) {
 	}
 }
 
-// `gcpemu status` lists the Linked Instances' load balancing endpoints,
+// `gcpemu status` lists the Linked Instances' Load balancing frontends,
 // attributed to their link, and an unreachable link (#715).
-func TestStatusListsLinkedLBEndpoints(t *testing.T) {
+func TestStatusListsLinkedLBFrontends(t *testing.T) {
 	out, _ := runCLI(t, frontAdmin(t), "status")
 	for _, want := range []string{
-		"linked load balancing endpoints:",
+		"linked load balancing frontends:",
 		"office   lb:p/global/web 192.168.1.5:8080",
 		"office   lb:p/global/api (none: its Instance has no --lb-bind)",
 		"lab      unreachable: connection refused",

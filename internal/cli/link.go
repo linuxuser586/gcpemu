@@ -513,25 +513,25 @@ func confirm(cmd *cobra.Command, question string) error {
 	return nil
 }
 
-// printLinkedLB lists the load balancing endpoints of the Linked Instances
-// a front Instance delegates to, from GET /_emu/v1/links/lb-endpoints, at
+// printLinkedFrontends lists the Load balancing frontends of the Linked Instances
+// a front Instance delegates to, from GET /_emu/v1/links/lb-frontends, at
 // the --lb-bind addresses `gcpemu env` names (#715), and each link it
 // could not ask.
-func printLinkedLB(out io.Writer, b []byte) {
-	var r struct{ Links []link.LinkedLB }
+func printLinkedFrontends(out io.Writer, b []byte) {
+	var r struct{ Links []link.LinkFrontends }
 	if json.Unmarshal(b, &r) != nil || len(r.Links) == 0 {
 		return
 	}
-	fmt.Fprintln(out, "linked load balancing endpoints:")
+	fmt.Fprintln(out, "linked load balancing frontends:")
 	for _, l := range r.Links {
 		if l.Error != "" {
 			fmt.Fprintf(out, "  %-8s unreachable: %s\n", l.Link, l.Error)
 			continue
 		}
 		if !l.LBBind {
-			fmt.Fprintf(out, "  %-8s has no --lb-bind, so its endpoints have no address\n", l.Link)
+			fmt.Fprintf(out, "  %-8s has no --lb-bind, so its Load balancing frontends have no address\n", l.Link)
 		}
-		for _, e := range l.Endpoints {
+		for _, e := range l.Frontends {
 			addr := e.Address
 			if addr == "" {
 				addr = "(none: " + e.Error + ")"

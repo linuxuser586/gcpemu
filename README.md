@@ -428,7 +428,7 @@ name, which is needed when two links would share one). The Admin API serves the 
   paired.
 - Instances negotiate a link protocol version. One with no version in common is refused, at Pairing
   and on connect, with an error naming both versions. This release speaks version 2, which added
-  the load balancing endpoints of Delegated Projects, so an Instance from before it must be upgraded
+  the Load balancing frontends of Delegated Projects, so an Instance from before it must be upgraded
   too.
 - Links are configuration, kept in `<data-dir>/links.json`: Reset and State snapshots leave them
   alone, and a Persistent Instance keeps them across restarts. An Ephemeral Instance keeps them in
@@ -530,17 +530,20 @@ gcpemu link delegate team-shared --to office
   caller (ADR 0027), and a LoadBalancer Service's ingress lists the office's `--lb-bind`
   addresses it serves after its own. A client reaching the office through `--gfe-bind`, or at a
   `--bind` address beyond loopback, is told the same `--gke-bind` and `--sql-bind` addresses.
-- The laptop's `gcpemu env` names the office's load balancing endpoints for its Delegated
+- The laptop's `gcpemu env` names the office's Load balancing frontends for its Delegated
   Projects, forwarding rules and LoadBalancer Services, at the `--lb-bind` address the office tells
   the laptop (the one on the `--link-bind` address it asked on, else the first) and the rule's or
   Service's port: `GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>` and `GCPEMU_GKE_*` as usual. The
   usual names apply across both Instances together: `GCPEMU_LB_<NAME>` is printed only while the
   name is unique on both, and a variable both would print, such as `GCPEMU_GKE_*` for a cluster
-  name each has, is withheld. An endpoint with no `--lb-bind` address on the office (no
-  `--lb-bind`, or another frontend holds the address) gets no variable, never a loopback or
+  name each has, is withheld. A Load balancing frontend with no `--lb-bind` address on the office
+  (no `--lb-bind`, or another Load balancing frontend holds the address) gets no variable, never a loopback or
   Declared address, and `gcpemu env` says why on stderr, as it does when the office is
-  unreachable, so `eval "$(gcpemu env)"` keeps working. `gcpemu status` lists them under
-  `linked load balancing endpoints`, by link (Admin API: `GET /_emu/v1/links/lb-endpoints`). Only
+  unreachable, so `eval "$(gcpemu env)"` keeps working. While the office is unreachable, no
+  `GCPEMU_LB_<NAME>` is printed at all, since the office's rules might share the name; the
+  qualified variables and the laptop's `GCPEMU_GKE_*` stay, and stderr warns that one of those may
+  collide with an office Service. `gcpemu status` lists them under
+  `linked load balancing frontends`, by link (Admin API: `GET /_emu/v1/links/lb-frontends`). Only
   Projects delegated to the laptop are listed.
 - The laptop holds no state for a Delegated Project: a reference to it never creates it there,
   and under `--strict-projects` it counts as existing, since its requests are forwarded. Anything

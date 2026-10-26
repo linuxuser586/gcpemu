@@ -192,14 +192,14 @@ func (d *dataplane) syncLAN() {
 	}
 }
 
-// LANEndpoints implements emu.LANEndpointer.
-func (s *Service) LANEndpoints() []emu.LANEndpoint { return s.dp.lanEndpoints() }
+// LANFrontendAddrs implements emu.LANFrontendLister.
+func (s *Service) LANFrontendAddrs() []emu.LANFrontendAddrs { return s.dp.lanFrontendAddrs() }
 
-// lanEndpoints lists each forwarding rule, under its Service endpoint,
+// lanFrontendAddrs lists each forwarding rule, under its Service endpoint,
 // and each other Service's Load balancing frontend that names one, with
 // the --lb-bind addresses its Load balancing frontends claimed, or why
 // they claimed none.
-func (d *dataplane) lanEndpoints() []emu.LANEndpoint {
+func (d *dataplane) lanFrontendAddrs() []emu.LANFrontendAddrs {
 	cfg := d.cfg.Load()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -211,12 +211,12 @@ func (d *dataplane) lanEndpoints() []emu.LANEndpoint {
 	for _, f := range d.lanDown {
 		failed[f.key] = append(failed[f.key], f.addr+": "+f.err)
 	}
-	byName := map[string]*emu.LANEndpoint{}
+	byName := map[string]*emu.LANFrontendAddrs{}
 	why := map[string][]string{}
 	add := func(name, project, what, key string, reasons ...string) {
 		e := byName[name]
 		if e == nil {
-			e = &emu.LANEndpoint{Name: name, Project: project, What: what}
+			e = &emu.LANFrontendAddrs{Name: name, Project: project, What: what}
 			byName[name] = e
 		}
 		e.Addrs = append(e.Addrs, claimed[key]...)
@@ -238,7 +238,7 @@ func (d *dataplane) lanEndpoints() []emu.LANEndpoint {
 			}
 		}
 	}
-	out := make([]emu.LANEndpoint, 0, len(byName))
+	out := make([]emu.LANFrontendAddrs, 0, len(byName))
 	for name, e := range byName {
 		sort.Strings(e.Addrs)
 		e.Addrs = slices.Compact(e.Addrs)

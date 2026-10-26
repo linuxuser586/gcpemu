@@ -399,7 +399,7 @@ type LANFrontend struct {
 	Name, What string
 	// Project is the Project it belongs to, and Endpoint the Service
 	// endpoint it is listed under, which names its `gcpemu env` variable,
-	// for LANEndpointer.
+	// for LANFrontendLister.
 	Project, Endpoint string
 	Port              int
 	// Addr is the address of the frontend's own listener, if any, and
@@ -413,19 +413,19 @@ type LANFrontend struct {
 	Serve func(ln net.Listener)
 }
 
-// LANEndpointer is implemented by the lb Service: the load balancing
+// LANFrontendLister is implemented by the lb Service: the load balancing
 // endpoints --lb-bind serves, forwarding rules' and the Load balancing
 // frontends of other Services (LANFrontends), with the addresses each
 // claimed, which a
 // Linked Instance tells a front Instance for its `gcpemu env` (ADR 0027,
 // #715).
-type LANEndpointer interface {
-	LANEndpoints() []LANEndpoint
+type LANFrontendLister interface {
+	LANFrontendAddrs() []LANFrontendAddrs
 }
 
-// LANEndpoint is a load balancing endpoint and the --lb-bind addresses it
+// LANFrontendAddrs is a Load balancing frontend and the --lb-bind addresses it
 // claimed.
-type LANEndpoint struct {
+type LANFrontendAddrs struct {
 	// Name is its Service endpoint name, which names its `gcpemu env`
 	// variables, and What names it in messages.
 	Name, Project, What string

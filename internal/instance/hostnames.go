@@ -81,7 +81,7 @@ func (in *Instance) hostNameEnvVars(out map[string]string) {
 // with trust, SSL_CERT_FILE points at a freshly written combined bundle;
 // universe=false leaves gcloud in Google's universe; notes=true answers
 // {"vars": ..., "notes": [...]}, the notes saying which Linked Instances'
-// load balancing endpoints got no variable, for stderr.
+// Load balancing frontends got no variable, for stderr.
 func (in *Instance) serveEnv(w http.ResponseWriter, r *http.Request) {
 	vars, notes := in.envVars(r.Context())
 	if u := r.URL.Query().Get("universe"); u == "0" || u == "false" {

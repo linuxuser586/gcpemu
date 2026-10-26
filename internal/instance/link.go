@@ -36,8 +36,12 @@ func (in *Instance) newLink() (*link.Manager, error) {
 		Log:         in.Env.Log.With("component", "link"),
 		StaticAddrs: in.Config.LinkDiscover, MDNS: mdns.Options{Port: in.Config.LinkMDNSPort},
 		HasProject:  in.Env.HasProject,
-		LBEndpoints: in.lanEndpoints,
-		LBBind:      len(in.Config.LBBind) > 0,
+		LBFrontends: in.lanFrontendAddrs,
+		// --lb-bind is served only by the lb Service.
+		LBBind: func() bool {
+			_, ok := in.Env.Lookup("lb")
+			return ok && len(in.Config.LBBind) > 0
+		},
 		Serve: func(w http.ResponseWriter, r *http.Request, from, principal string) {
 			in.gw.ServeLinked(w, r, from, principal)
 		},
@@ -170,7 +174,7 @@ func (in *Instance) linkRoutes(mux *http.ServeMux) {
 		wg.Wait()
 		writeJSON(w, http.StatusOK, map[string]any{"links": out})
 	})
-	mux.HandleFunc("GET /_emu/v1/links/lb-endpoints", in.serveLinkedLB)
+	mux.HandleFunc("GET /_emu/v1/links/lb-frontends", in.serveLinkedFrontends)
 	mux.HandleFunc("GET /_emu/v1/links/discovered", func(w http.ResponseWriter, r *http.Request) {
 		ds, err := in.link.Discover(r.Context())
 		if err != nil {

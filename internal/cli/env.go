@@ -64,7 +64,7 @@ func envFlags(f *pflag.FlagSet, trustCA, noUniverse *bool) {
 
 // clientEnv returns the variables that point clients at the Instance
 // behind c, which `gcpemu env` prints. Warnings about credentials, and
-// the Linked Instances' load balancing endpoints that got no variable, go
+// the Linked Instances' Load balancing frontends that got no variable, go
 // to w.
 func clientEnv(c *adminClient, trustCA, noUniverse bool, w io.Writer) (map[string]string, error) {
 	q := url.Values{"notes": {"true"}}

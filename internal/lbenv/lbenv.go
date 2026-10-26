@@ -48,7 +48,7 @@ type Withheld struct {
 	Keys []string
 }
 
-// Vars returns the variables of the load balancing endpoints in
+// Vars returns the variables of the Load balancing frontends in
 // endpoints, and those withheld as ambiguous, sorted by variable. Other
 // endpoints are ignored.
 func Vars(endpoints map[string]string) (map[string]string, []Withheld) {
@@ -82,10 +82,21 @@ func varsOf(key string) []string {
 		return nil
 	}
 	vars := []string{Qualified(name)}
-	if i := strings.LastIndex(name, "/"); i >= 0 {
-		vars = append(vars, "GCPEMU_LB_"+EnvName(name[i+1:]))
+	if short, ok := Short(name); ok {
+		vars = append(vars, short)
 	}
 	return vars
+}
+
+// Short is GCPEMU_LB_<NAME> for a forwarding rule's endpoint name, and
+// false for any other endpoint.
+func Short(key string) (string, bool) {
+	name, _ := Unlinked(key)
+	i := strings.LastIndex(name, "/")
+	if !strings.HasPrefix(name, RulePrefix) || i < 0 {
+		return "", false
+	}
+	return "GCPEMU_LB_" + EnvName(name[i+1:]), true
 }
 
 // Qualified is GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME> for a forwarding

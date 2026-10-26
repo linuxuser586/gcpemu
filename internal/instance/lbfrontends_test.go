@@ -17,14 +17,14 @@ import (
 type fakeLB struct {
 	env   *emu.Env
 	local map[string]string
-	lan   []emu.LANEndpoint
+	lan   []emu.LANFrontendAddrs
 }
 
-func (f *fakeLB) Name() string                    { return "lb" }
-func (f *fakeLB) Register(emu.Router) error       { return nil }
-func (f *fakeLB) Stop(context.Context) error      { return nil }
-func (f *fakeLB) Ready() error                    { return nil }
-func (f *fakeLB) LANEndpoints() []emu.LANEndpoint { return f.lan }
+func (f *fakeLB) Name() string                             { return "lb" }
+func (f *fakeLB) Register(emu.Router) error                { return nil }
+func (f *fakeLB) Stop(context.Context) error               { return nil }
+func (f *fakeLB) Ready() error                             { return nil }
+func (f *fakeLB) LANFrontendAddrs() []emu.LANFrontendAddrs { return f.lan }
 func (f *fakeLB) Start(context.Context) error {
 	for k, v := range f.local {
 		f.env.Endpoints.Set(k, v)
@@ -33,7 +33,7 @@ func (f *fakeLB) Start(context.Context) error {
 }
 
 // withFakeLB runs a fakeLB of local and lan as the lb Service.
-func withFakeLB(local map[string]string, lan ...emu.LANEndpoint) map[string]Factory {
+func withFakeLB(local map[string]string, lan ...emu.LANFrontendAddrs) map[string]Factory {
 	return map[string]Factory{"lb": func(env *emu.Env) emu.Service { return &fakeLB{env: env, local: local, lan: lan} }}
 }
 
@@ -57,7 +57,7 @@ type envWithNotes struct {
 // office, configured with --lb-bind when lbBind, whose lb tells it lan,
 // sharing team-shared, which the laptop delegates, and other-own, which it
 // does not.
-func lbDelegated(t *testing.T, lbBind bool, local map[string]string, lan ...emu.LANEndpoint) (laptop, office *Instance) {
+func lbDelegated(t *testing.T, lbBind bool, local map[string]string, lan ...emu.LANFrontendAddrs) (laptop, office *Instance) {
 	t.Helper()
 	laptop = startWith(t, "laptop", enableLB(nil), withFakeLB(local))
 	office = startWith(t, "office", enableLB(func(c *config.Config) {
@@ -81,15 +81,15 @@ func lbDelegated(t *testing.T, lbBind bool, local map[string]string, lan ...emu.
 func TestFrontEnvNamesLinkedLBBind(t *testing.T) {
 	laptop, _ := lbDelegated(t, true,
 		map[string]string{"lb:laptop-own/global/web": "127.0.0.5:8080", "gke:dev/default/web/80": "127.0.0.6:80"},
-		emu.LANEndpoint{Name: "lb:" + shared + "/global/web", Project: shared, What: "forwarding rule projects/" + shared + "/global/forwardingRules/web",
+		emu.LANFrontendAddrs{Name: "lb:" + shared + "/global/web", Project: shared, What: "forwarding rule projects/" + shared + "/global/forwardingRules/web",
 			Addrs: []string{"192.0.2.1:8080", "127.0.0.1:8080"}},
-		emu.LANEndpoint{Name: "lb:" + shared + "/global/api", Project: shared, What: "forwarding rule projects/" + shared + "/global/forwardingRules/api",
+		emu.LANFrontendAddrs{Name: "lb:" + shared + "/global/api", Project: shared, What: "forwarding rule projects/" + shared + "/global/forwardingRules/api",
 			Error: "192.0.2.1:8081: already serves forwarding rule other"},
-		emu.LANEndpoint{Name: "lb:" + shared + "/us-central1/edge", Project: shared, What: "forwarding rule projects/" + shared + "/regions/us-central1/forwardingRules/edge",
+		emu.LANFrontendAddrs{Name: "lb:" + shared + "/us-central1/edge", Project: shared, What: "forwarding rule projects/" + shared + "/regions/us-central1/forwardingRules/edge",
 			Addrs: []string{"127.0.0.1:443"}},
-		emu.LANEndpoint{Name: "gke:dev/default/web/80", Project: shared, What: "LoadBalancer Service " + shared + "/us-central1/dev/default/web port 80",
+		emu.LANFrontendAddrs{Name: "gke:dev/default/web/80", Project: shared, What: "LoadBalancer Service " + shared + "/us-central1/dev/default/web port 80",
 			Addrs: []string{"127.0.0.1:80"}},
-		emu.LANEndpoint{Name: "lb:other-own/global/secret", Project: "other-own", What: "forwarding rule projects/other-own/global/forwardingRules/secret",
+		emu.LANFrontendAddrs{Name: "lb:other-own/global/secret", Project: "other-own", What: "forwarding rule projects/other-own/global/forwardingRules/secret",
 			Addrs: []string{"127.0.0.1:9000"}},
 	)
 	var env envWithNotes
@@ -131,13 +131,13 @@ func TestFrontEnvNamesLinkedLBBind(t *testing.T) {
 		t.Errorf("EnvVars() names the Delegated Project's rule %q", got)
 	}
 
-	var st struct{ Links []link.LinkedLB }
-	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/links/lb-endpoints", nil, &st)
+	var st struct{ Links []link.LinkFrontends }
+	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/links/lb-frontends", nil, &st)
 	if len(st.Links) != 1 || st.Links[0].Link != "office" || st.Links[0].Error != "" {
 		t.Fatalf("linked endpoints = %+v, want the office's", st.Links)
 	}
 	var names []string
-	for _, e := range st.Links[0].Endpoints {
+	for _, e := range st.Links[0].Frontends {
 		names = append(names, e.Name)
 		if e.Name == "lb:"+shared+"/global/web" && e.Address != "127.0.0.1:8080" {
 			t.Errorf("web at %q, want 127.0.0.1:8080", e.Address)
@@ -151,8 +151,8 @@ func TestFrontEnvNamesLinkedLBBind(t *testing.T) {
 // An unreachable Linked Instance leaves its variables out and is named on
 // stderr; `gcpemu env` still answers (#715).
 func TestFrontEnvWithLinkedInstanceDown(t *testing.T) {
-	laptop, office := lbDelegated(t, false, map[string]string{"lb:laptop-own/global/web": "127.0.0.5:8080"},
-		emu.LANEndpoint{Name: "lb:" + shared + "/global/api", Project: shared, What: "forwarding rule api", Addrs: []string{"127.0.0.1:8081"}})
+	laptop, office := lbDelegated(t, false, map[string]string{"lb:laptop-own/global/web": "127.0.0.5:8080", "gke:dev/default/web/80": "127.0.0.6:80"},
+		emu.LANFrontendAddrs{Name: "lb:" + shared + "/global/api", Project: shared, What: "forwarding rule api", Addrs: []string{"127.0.0.1:8081"}})
 	if err := office.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -167,8 +167,22 @@ func TestFrontEnvWithLinkedInstanceDown(t *testing.T) {
 	if !slices.ContainsFunc(env.Notes, func(n string) bool { return strings.Contains(n, `link "office"`) && strings.Contains(n, "unreachable") }) {
 		t.Errorf("notes = %q, want the office named unreachable", env.Notes)
 	}
-	var st struct{ Links []link.LinkedLB }
-	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/links/lb-endpoints", nil, &st)
+	// The office may have a rule web too, so the short variable is
+	// withheld rather than pointed at the laptop's while it cannot be
+	// asked; a Service's only variable stays, with a warning.
+	if v, ok := env.Vars["GCPEMU_LB_WEB"]; ok {
+		t.Errorf("GCPEMU_LB_WEB = %q with the office unreachable, want it withheld", v)
+	}
+	if env.Vars["GCPEMU_GKE_DEV_DEFAULT_WEB_80"] != "127.0.0.6:80" {
+		t.Errorf("GCPEMU_GKE_DEV_DEFAULT_WEB_80 = %q, want the laptop's Service", env.Vars["GCPEMU_GKE_DEV_DEFAULT_WEB_80"])
+	}
+	if !slices.ContainsFunc(env.Notes, func(n string) bool {
+		return strings.Contains(n, "GCPEMU_LB_<NAME>") && strings.Contains(n, "GCPEMU_GKE_")
+	}) {
+		t.Errorf("notes = %q, want the short variables named withheld and GCPEMU_GKE_* warned of", env.Notes)
+	}
+	var st struct{ Links []link.LinkFrontends }
+	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/links/lb-frontends", nil, &st)
 	if len(st.Links) != 1 || st.Links[0].Error == "" {
 		t.Errorf("linked endpoints = %+v, want the office unreachable", st.Links)
 	}
@@ -184,6 +198,21 @@ func TestFrontEnvWithoutLinkedLBBind(t *testing.T) {
 	if !slices.ContainsFunc(env.Notes, func(n string) bool {
 		return strings.Contains(n, `link "office" has no --lb-bind`) && strings.Contains(n, "LoadBalancer Services")
 	}) {
+		t.Errorf("notes = %q, want the office named, without --lb-bind", env.Notes)
+	}
+}
+
+// A Linked Instance with --lb-bind but no lb Service serves nothing there,
+// and is named as having no --lb-bind (#715).
+func TestFrontEnvWithoutLinkedLBService(t *testing.T) {
+	laptop := startWith(t, "laptop", enableLB(nil), withFakeLB(nil))
+	office := startWithProjects(t, "office", func(c *config.Config) { c.LBBind = []string{"127.0.0.1"} })
+	pairInstances(t, laptop, office)
+	callAdmin(t, office, http.MethodPost, "/_emu/v1/links/shares", map[string]string{"project": shared}, nil)
+	callAdmin(t, laptop, http.MethodPost, "/_emu/v1/links/delegations", map[string]string{"project": shared, "link": "office"}, nil)
+	var env envWithNotes
+	callAdmin(t, laptop, http.MethodGet, "/_emu/v1/env?notes=true", nil, &env)
+	if !slices.ContainsFunc(env.Notes, func(n string) bool { return strings.Contains(n, `link "office" has no --lb-bind`) }) {
 		t.Errorf("notes = %q, want the office named, without --lb-bind", env.Notes)
 	}
 }

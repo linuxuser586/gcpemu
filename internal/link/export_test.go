@@ -17,11 +17,11 @@ func (m *Manager) AskIDToken(ctx context.Context, name, token string) (string, e
 	return m.askIDToken(ctx, name, token)
 }
 
-// AskLBEndpoints asks the link name for its load balancing endpoints, as
-// LinkedLBEndpoints does, unfiltered.
-func (m *Manager) AskLBEndpoints(ctx context.Context, name string) ([]LBEndpoint, error) {
-	reply, err := m.askLBEndpoints(ctx, name)
-	return reply.Endpoints, err
+// AskLBFrontends asks the link name for its Load balancing frontends, as
+// LinkedLBFrontends does, unfiltered.
+func (m *Manager) AskLBFrontends(ctx context.Context, name string) ([]LBFrontend, error) {
+	reply, err := m.askLBFrontends(ctx, name)
+	return reply.Frontends, err
 }
 
 // AskIDTokensAt has Instances ask about ID tokens at path, which one that

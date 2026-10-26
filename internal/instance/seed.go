@@ -64,7 +64,7 @@ func (in *Instance) ApplySeedData(ctx context.Context, b []byte, base string) er
 }
 
 // EnvVars collects client environment variables from all services, and
-// the load balancing endpoints of the Linked Instances it delegates to.
+// the Load balancing frontends of the Linked Instances it delegates to.
 func (in *Instance) EnvVars() map[string]string {
 	vars, _ := in.envVars(context.Background())
 	return vars
@@ -97,9 +97,12 @@ func (in *Instance) envVars(ctx context.Context) (map[string]string, []string) {
 	}
 	// Variables are derived over the Linked Instances' endpoints too, so
 	// that uniqueness and withholding span Instances.
-	linked, notes := in.linkedLB(ctx)
+	linked, notes, unreachable := in.linkedFrontends(ctx)
 	maps.Copy(linked, eps)
 	lbVars, withheld := lbenv.Vars(linked)
+	if unreachable {
+		withoutShort(lbVars, linked)
+	}
 	maps.Copy(out, lbVars)
 	notes = append(notes, withheldNotes(withheld)...)
 	in.hostNameEnvVars(out)
