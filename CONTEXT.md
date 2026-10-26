@@ -73,7 +73,7 @@ _Avoid_: gateway (unqualified)
 
 **Host mode**:
 A way of running an Instance so that it answers on real Google hostnames, using local DNS and a locally trusted CA. Clients then need no Endpoint override.
-_Avoid_: "mode" for anything else
+_Avoid_: "mode" unqualified for anything else (say Cluster mode for Standard or Autopilot)
 
 **Instance CA**:
 The root certificate authority an Instance creates the first time it starts. It signs Google-managed certificates and Host mode serving certificates, and clients trust it once. It is made of a certificate and a private key, which always belong together: an Instance never uses one without the other. An Instance keeps its CA until the user rotates it, and never replaces either part on its own. Rotating it replaces the certificate and key together: Google-managed certificates are re-issued from the new CA, and self-managed certificates are the user's and are left as they are.
@@ -352,12 +352,20 @@ A GCP project that exists in an Instance. It is created implicitly the first tim
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
+**Cluster mode**:
+Whether a GKE cluster is a Standard cluster or an Autopilot cluster, fixed when it is created.
+_Avoid_: "mode" unqualified, cluster type
+
 **Standard cluster**:
 A GKE cluster whose node pools the user creates, sizes and deletes.
 
 **Autopilot cluster**:
-A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes them once they run only system pods (DaemonSet and `kube-system` pods, which move to other nodes), always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools: GKE's own node pools are visible but cannot be created, changed or deleted.
+A GKE cluster whose nodes GKE owns: it adds nodes when pods cannot be scheduled for lack of capacity and removes Empty nodes, always keeps at least one, and applies Workload restrictions to every pod. The user manages no node pools: GKE's own node pools are visible but cannot be created, changed or deleted.
 _Avoid_: managed cluster, serverless cluster, managed pool (say GKE's own node pool)
+
+**Empty node**:
+An Autopilot cluster's node that runs only system pods (DaemonSet and `kube-system` pods), which move to other nodes when it is removed.
+_Avoid_: idle node, unused node
 
 **Machine shape**:
 The machine type GKE would give an Autopilot cluster's node. The node advertises that type's allocatable CPU, memory and pods whatever the host has, so a cluster fills up where it would on GCP (ADR 0031). A Standard cluster's machine type is only Recorded, not a Machine shape.
