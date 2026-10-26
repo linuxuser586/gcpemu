@@ -91,7 +91,7 @@ func SetPublished(svc emu.Service, ports map[int]string, host string) {
 		d.pub.ports = published.NewPorts(ports, d.s.env.Config)
 	}
 	d.pubKnown = true
-	publishedHost = host
+	d.pubBind = host
 }
 
 // ListenerAddr returns the loopback listener IP of forwarding rule name.
@@ -139,7 +139,7 @@ func SetSelfRuntime(svc emu.Service, rt func(ctx context.Context) (*runtime.Mana
 	d.edge.mu.Lock()
 	d.edge.rt, d.edge.rtRetry = rtUnknown, time.Time{}
 	d.edge.mu.Unlock()
-	publishedHost = host
+	d.pubBind = host
 }
 
 // Publishing reports whether the data plane serves forwarding rules on
