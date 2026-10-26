@@ -122,6 +122,10 @@ _Avoid_: releasable address, edge address
 The Managed container that listens on `--gfe-bind` addresses at port 443 when the emulator cannot bind them itself, and relays each connection to the Google front end, which checks its credentials as on any `--gfe-bind` listener.
 _Avoid_: gfe relay, Edge relay (that is the load balancer's)
 
+**LAN load balancing relay**:
+The Managed container that listens on `--lb-bind` addresses at ports the emulator cannot bind itself, and relays each connection to the load balancer's Data plane.
+_Avoid_: LAN relay (unqualified), Edge relay (that one serves forwarding rule addresses on container networks)
+
 **LAN listener**:
 A listener an Instance serves on an address beyond loopback, given by a `--*-bind` flag, for one Data plane, the Google front end or the link protocol, and nothing else. Each admits what that Data plane admits on GCP: anyone for a forwarding rule or a LoadBalancer Service, and otherwise only credentials the Instance issued, whatever the IAM enforcement level. The link protocol's admits only paired Instances and Pairing requests.
 _Avoid_: LAN binding, bind address (unqualified), exposed port

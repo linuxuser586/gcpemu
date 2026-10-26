@@ -28,8 +28,9 @@ import (
 // NET_BIND_SERVICE, it runs the agent in LAN mode, listens on host
 // addresses on ports the emulator cannot bind (privileged ports) and
 // relays each connection, with a PROXY v2 header, to an ingress on the
-// host's loopback. It forwards plain TCP. The lb Service's lb-lan
-// (--lb-bind) and the Google front end's gfe-lan (--gfe-bind) are two.
+// host's loopback. It forwards plain TCP. The lb Service's lb-lan, the
+// LAN load balancing relay (--lb-bind), and the Google front end's
+// gfe-lan, the LAN front-end relay (--gfe-bind), are two.
 type LANRelay struct {
 	// Runtime returns the container runtime.
 	Runtime func(context.Context) (*runtime.Manager, error)
@@ -111,13 +112,6 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// The relay shares the host's loopback: pick a free control port there.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
-	r.ctrl = ln.Addr().String()
-	ln.Close()
 	var tb [16]byte
 	_, _ = rand.Read(tb[:])
 	r.token = hex.EncodeToString(tb[:])
@@ -135,7 +129,6 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 		Env: []string{
 			agent.EnvVar + "=" + LANAgentName,
 			"GCPEMU_LB_TOKEN=" + r.token,
-			"GCPEMU_LB_CONTROL=" + r.ctrl,
 		},
 		Labels:   rt.Labels(r.Service, r.Resource, r.Role),
 		CapAdd:   []string{"NET_BIND_SERVICE"},
@@ -153,25 +146,39 @@ func (r *LANRelay) ensureLocked(ctx context.Context) error {
 		_ = rt.RemoveContainer(cleanup, id, true)
 		return fmt.Errorf("%s: start: %w", r.Name, err)
 	}
-	wctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	for {
-		req, _ := http.NewRequestWithContext(wctx, http.MethodGet, "http://"+r.ctrl+"/healthz", nil)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			break
-		}
-		select {
-		case <-wctx.Done():
-			_ = rt.RemoveContainer(cleanup, id, true)
-			return fmt.Errorf("%s: control port not ready: %w", r.Name, err)
-		case <-time.After(100 * time.Millisecond):
-		}
+	ctrl, err := r.awaitControl(ctx, rt, id)
+	if err != nil {
+		logs, _ := rt.Logs(cleanup, id, 20)
+		_ = rt.RemoveContainer(cleanup, id, true)
+		return fmt.Errorf("%s: %w\n%s", r.Name, err, strings.TrimSpace(logs))
 	}
+	r.ctrl = ctrl
 	r.id = id
 	r.Log.Info(r.Name+" relay container started", "container", name)
 	return nil
+}
+
+// awaitControl waits for the Sidecar agent in container id to report the control
+// address it listens on, on the host's loopback (writeControl).
+func (r *LANRelay) awaitControl(ctx context.Context, rt *runtime.Manager, id string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		// Inspect first: logs read after an exit hold all the Sidecar agent wrote.
+		c, err := rt.InspectContainer(ctx, id)
+		logs, _ := rt.Logs(ctx, id, 100)
+		if addr, ok := readControl(logs); ok {
+			return addr, nil
+		}
+		if err == nil && (c.Status == "exited" || c.Status == "dead") {
+			return "", fmt.Errorf("container exited with code %d before reporting its control port", c.ExitCode)
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("control port not reported: %w", ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (r *LANRelay) removeLocked(ctx context.Context) {
@@ -198,18 +205,48 @@ func (r *LANRelay) Close(ctx context.Context) {
 	r.removeLocked(ctx)
 }
 
-// runLANAgent is a LANRelay container's agent: edgeAgent listeners on host
-// addresses, configured on GCPEMU_LB_CONTROL.
+// runLANAgent is a LANRelay container's Sidecar agent: edgeAgent listeners on host
+// addresses, configured on a control port it reports on stdout.
 func runLANAgent(ctx context.Context, _ []string) error {
-	a := &edgeAgent{token: os.Getenv("GCPEMU_LB_TOKEN"), lan: true, aliases: map[string]bool{},
+	return serveLAN(ctx, os.Stdout, os.Getenv("GCPEMU_LB_TOKEN"))
+}
+
+// serveLAN listens for control on a free port on the host's loopback,
+// writes its address to out (writeControl) and serves until ctx ends.
+func serveLAN(ctx context.Context, out io.Writer, token string) error {
+	a := &edgeAgent{token: token, lan: true, aliases: map[string]bool{},
 		listeners: map[string]net.Listener{}, routes: map[string]string{}}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	writeControl(out, ln.Addr().String())
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("POST /config", a.handleConfig)
-	srv := &http.Server{Addr: os.Getenv("GCPEMU_LB_CONTROL"), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); srv.Close() }()
-	if err := srv.ListenAndServe(); err != nil && ctx.Err() == nil {
+	if err := srv.Serve(ln); err != nil && ctx.Err() == nil {
 		return err
 	}
 	return nil
+}
+
+// controlPrefix starts the line the Sidecar agent in LAN mode writes its
+// control address on.
+const controlPrefix = "gcpemu agent " + LANAgentName + ": control "
+
+// writeControl writes the line that tells the emulator addr, the control
+// address the Sidecar agent in LAN mode listens on.
+func writeControl(w io.Writer, addr string) {
+	fmt.Fprintf(w, "%s%s\n", controlPrefix, addr)
+}
+
+// readControl finds the control address writeControl wrote in logs.
+func readControl(logs string) (string, bool) {
+	for line := range strings.Lines(logs) {
+		if addr, ok := strings.CutPrefix(strings.TrimSpace(line), controlPrefix); ok && addr != "" {
+			return addr, true
+		}
+	}
+	return "", false
 }
