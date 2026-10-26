@@ -6,6 +6,10 @@ kind: Namespace
 metadata:
   name: gke-managed-otel
 ---
+# Instrumentation (FR-GKE-021, instrumentation.go). GKE publishes no schema;
+# this one has the fields "Deploy Managed OpenTelemetry for GKE" documents.
+# The providers are nullable because null turns a signal off, and other
+# OTel SDK configuration is kept as written.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -30,7 +34,93 @@ spec:
           properties:
             spec:
               type: object
-              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                selector:
+                  type: object
+                  x-kubernetes-map-type: atomic
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    matchExpressions:
+                      type: array
+                      items:
+                        type: object
+                        required: [key, operator]
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [In, NotIn, Exists, DoesNotExist]
+                          values:
+                            type: array
+                            items:
+                              type: string
+                autoInstrumentationConfig:
+                  type: object
+                  properties:
+                    configInjection:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                otelSDKConfig:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    tracer_provider:
+                      type: object
+                      nullable: true
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        sampler:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          properties:
+                            parent_based:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                              properties:
+                                root:
+                                  type: object
+                                  x-kubernetes-preserve-unknown-fields: true
+                                  properties:
+                                    trace_id_ratio_based:
+                                      type: object
+                                      properties:
+                                        ratio:
+                                          type: string
+                    meter_provider:
+                      type: object
+                      nullable: true
+                      x-kubernetes-preserve-unknown-fields: true
+                      properties:
+                        readers:
+                          type: array
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                            properties:
+                              periodic:
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                                properties:
+                                  interval:
+                                    type: integer
+                                    minimum: 5000
+                                    maximum: 300000
+                                    multipleOf: 5000
+                    logger_provider:
+                      type: object
+                      nullable: true
+                      x-kubernetes-preserve-unknown-fields: true
+                promptsResponses:
+                  type: object
+                  properties:
+                    uploadBasePath:
+                      type: string
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

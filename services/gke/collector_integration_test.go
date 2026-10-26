@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	// Required by testdata/otlpapp, which go mod tidy does not see.
+	_ "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -104,9 +106,11 @@ func (k *signalSink) count() int {
 // FR-GKE-019: on a cluster with the Managed OpenTelemetry scope, a pod
 // sends a trace, a metric and a log to GKE's in-cluster collector address
 // over OTLP/HTTP and over OTLP/gRPC, and the Instance's OTLP endpoint
-// receives each with the cluster, namespace and pod set. No collector pods
-// run; with no OTLP endpoint the exports still succeed; scope NONE removes
-// the Service and keeps the Instrumentation CRD. Not parallel: it sets the
+// receives each with the cluster, namespace and pod set. An
+// Instrumentation configures the pods it selects to send there
+// (FR-GKE-021). No collector pods run; with no OTLP endpoint the exports
+// still succeed; scope NONE removes the Service and keeps the
+// Instrumentation CRD. Not parallel: it sets the
 // process environment.
 func TestManagedCollector(t *testing.T) {
 	emutest.RequireRuntime(t)
@@ -150,18 +154,16 @@ func TestManagedCollector(t *testing.T) {
 		t.Fatalf("GET collector Service = %d: %s", code, body)
 	}
 
-	// send runs otlpapp as pod over protocol and fails unless it succeeds.
-	send := func(pod, protocol string) {
+	// run runs otlpapp as pod, labelled with labels, with env, and fails
+	// unless it succeeds.
+	run := func(pod string, labels map[string]string, env ...map[string]string) {
 		t.Helper()
 		e.mustKube("POST", "/api/v1/namespaces/default/pods", map[string]any{
 			"apiVersion": "v1", "kind": "Pod",
-			"metadata": map[string]any{"name": pod, "namespace": "default"},
+			"metadata": map[string]any{"name": pod, "namespace": "default", "labels": labels},
 			"spec": map[string]any{
 				"restartPolicy": "Never",
-				"containers": []map[string]any{{
-					"name": "app", "image": image,
-					"env": []map[string]string{{"name": "PROTOCOL", "value": protocol}},
-				}},
+				"containers":    []map[string]any{{"name": "app", "image": image, "env": env}},
 			},
 		}, nil)
 		var phase string
@@ -178,6 +180,11 @@ func TestManagedCollector(t *testing.T) {
 			e.kube("GET", "/api/v1/namespaces/default/pods/"+pod, "", nil, &p)
 			t.Fatalf("pod %s: phase %q\nlogs:\n%s\nstatus: %v", pod, phase, logs, p["status"])
 		}
+	}
+	// send runs otlpapp as pod over protocol.
+	send := func(pod, protocol string) {
+		t.Helper()
+		run(pod, nil, map[string]string{"name": "PROTOCOL", "value": protocol})
 	}
 
 	for _, protocol := range []string{"http", "grpc"} {
@@ -201,6 +208,75 @@ func TestManagedCollector(t *testing.T) {
 	if len(pods.Items) != 0 {
 		t.Errorf("%d pods in gke-managed-otel, want none", len(pods.Items))
 	}
+
+	// FR-GKE-021: an Instrumentation configures the pods it selects to send
+	// to the Managed collector, so the OTel SDK of a pod that sets nothing
+	// but its service name reaches the OTLP endpoint. The pod's own
+	// OTEL_EXPORTER_OTLP_ENDPOINT is replaced, since GKE documents that its
+	// automatic configuration overrides manual configuration. A pod it does
+	// not select gets none of GKE's variables.
+	t.Run("Instrumentation", func(t *testing.T) {
+		const insts = "/apis/telemetry.googleapis.com/v1alpha1/namespaces/default/instrumentations"
+		e.mustKube("POST", insts, map[string]any{
+			"apiVersion": "telemetry.googleapis.com/v1alpha1", "kind": "Instrumentation",
+			"metadata": map[string]any{"name": "sdk", "namespace": "default"},
+			"spec": map[string]any{
+				"selector":                  map[string]any{"matchLabels": map[string]string{"app": "sdk"}},
+				"autoInstrumentationConfig": map[string]any{"configInjection": map[string]any{"enabled": true}},
+				"otelSDKConfig":             map[string]any{"logger_provider": nil},
+			},
+		}, nil)
+		t.Cleanup(func() { e.kube("DELETE", insts+"/sdk", "", nil, nil) })
+		envOf := func(pod string) map[string]string {
+			var p struct {
+				Spec struct {
+					Containers []struct {
+						Env []struct{ Name, Value string }
+					}
+				}
+			}
+			e.mustKube("GET", "/api/v1/namespaces/default/pods/"+pod, nil, &p)
+			env := map[string]string{}
+			for _, v := range p.Spec.Containers[0].Env {
+				env[v.Name] = v.Value
+			}
+			return env
+		}
+
+		run("otlp-sdk", map[string]string{"app": "sdk"},
+			map[string]string{"name": "PROTOCOL", "value": "sdk"},
+			map[string]string{"name": "OTEL_SERVICE_NAME", "value": "otlpapp-sdk"},
+			map[string]string{"name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": "http://elsewhere.invalid:4318"})
+		env := envOf("otlp-sdk")
+		for name, want := range map[string]string{
+			"OTEL_SERVICE_NAME":           "otlpapp-sdk",
+			"OTEL_EXPORTER_OTLP_ENDPOINT": "http://opentelemetry-collector.gke-managed-otel.svc.cluster.local:4318",
+			"OTEL_TRACES_SAMPLER":         "parentbased_always_on",
+			"OTEL_TRACES_EXPORTER":        "otlp",
+			"OTEL_METRICS_EXPORTER":       "otlp",
+			"OTEL_LOGS_EXPORTER":          "none", // the null logger_provider is kept
+		} {
+			if env[name] != want {
+				t.Errorf("selected pod: %s = %q, want %q", name, env[name], want)
+			}
+		}
+		for _, signal := range []string{"traces", "metrics"} {
+			want := map[string]string{"service.name": "otlpapp-sdk", "k8s.cluster.name": "otel",
+				"k8s.namespace.name": "default", "k8s.pod.name": "otlp-sdk"}
+			if !sink.has(signal, want) {
+				sink.mu.Lock()
+				t.Errorf("%s: no resource with %v; got %v", signal, want, sink.got[signal])
+				sink.mu.Unlock()
+			}
+		}
+
+		run("otlp-unselected", map[string]string{"app": "other"}, map[string]string{"name": "PROTOCOL", "value": "http"})
+		for name := range envOf("otlp-unselected") {
+			if strings.HasPrefix(name, "OTEL_") {
+				t.Errorf("unselected pod has %s", name)
+			}
+		}
+	})
 
 	t.Run("NoEndpoint", func(t *testing.T) {
 		os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "") // t.Setenv restores it

@@ -746,6 +746,17 @@ dropped. A failed forward fails the pod's export, which the sender
 retries. The scope also installs the `instrumentations.telemetry.googleapis.com` CRD. Setting
 the scope to `NONE` removes the Service and keeps the CRD, the namespace and your objects
 (FR-GKE-019).
+While the scope is on, an `Instrumentation` object (`telemetry.googleapis.com/v1alpha1`) with
+`autoInstrumentationConfig.configInjection.enabled: true` sets GKE's OTel SDK variables in
+the containers and native sidecars of new pods its `selector` picks in its namespace:
+`OTEL_EXPORTER_OTLP_ENDPOINT` (the managed collector's port 4318), `OTEL_TRACES_SAMPLER` and
+`_ARG`, `OTEL_METRIC_EXPORT_INTERVAL`, and `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` (`none` for a
+provider set to `null` in `otelSDKConfig`). It also sets the generative AI upload variables
+when `promptsResponses.uploadBasePath` is set, and `k8s.pod.uid` for `hostNetwork` pods. When
+several objects select a pod, the most recently updated one applies. GKE's values replace a
+pod's own variables of the same name, except that a `hostNetwork` pod's own
+`OTEL_RESOURCE_ATTRIBUTES` are kept after `k8s.pod.uid`. Existing pods are unchanged until they
+are recreated (FR-GKE-021).
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
 or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,

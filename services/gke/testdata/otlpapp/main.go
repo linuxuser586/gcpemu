@@ -1,7 +1,10 @@
 // Command otlpapp is the workload of the GKE Managed collector test
 // (FR-GKE-019). It sends one trace, one metric and one log to GKE's
 // in-cluster collector address over OTLP, as PROTOCOL (http or grpc)
-// says, and prints OTLPAPP OK once each export has succeeded.
+// says, and prints OTLPAPP OK once each export has succeeded. With
+// PROTOCOL=sdk it instead exports a span and a metric through the OTel
+// SDK, configured by nothing but the standard OTEL_* variables that an
+// Instrumentation object sets (FR-GKE-021).
 package main
 
 import (
@@ -13,6 +16,10 @@ import (
 	"os"
 	"time"
 
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -69,6 +76,8 @@ func run(protocol string) error {
 			}
 		}
 		return nil
+	case "sdk":
+		return runSDK(ctx)
 	case "grpc":
 		cc, err := grpc.NewClient(collector+":4317", grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
@@ -86,7 +95,37 @@ func run(protocol string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("PROTOCOL %q: want http or grpc", protocol)
+	return fmt.Errorf("PROTOCOL %q: want http, grpc or sdk", protocol)
+}
+
+// runSDK exports a span and a metric with SDK exporters and providers
+// given no options, so the endpoint, sampler and service name come from
+// the environment.
+func runSDK(ctx context.Context) error {
+	te, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return err
+	}
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(te))
+	_, span := tp.Tracer("otlpapp").Start(ctx, "checkout")
+	span.End()
+	if err := tp.Shutdown(ctx); err != nil {
+		return fmt.Errorf("traces: %w", err)
+	}
+	me, err := otlpmetrichttp.New(ctx)
+	if err != nil {
+		return err
+	}
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewPeriodicReader(me)))
+	orders, err := mp.Meter("otlpapp").Int64Counter("orders")
+	if err != nil {
+		return err
+	}
+	orders.Add(ctx, 1)
+	if err := mp.Shutdown(ctx); err != nil {
+		return fmt.Errorf("metrics: %w", err)
+	}
+	return nil
 }
 
 func post(ctx context.Context, url string, m proto.Message) error {
