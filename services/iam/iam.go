@@ -87,6 +87,9 @@ func (s *Service) Register(r emu.Router) error {
 	r.Mount("iamcredentials", []string{"iamcredentials.googleapis.com"}, http.HandlerFunc(s.serveCredentials))
 	r.Mount("sts", []string{"sts.googleapis.com"}, http.HandlerFunc(s.serveSTS))
 	r.Handle("/service_accounts/v1/metadata/", http.HandlerFunc(s.serveX509))
+	// Google's path for the same, named by keys created through a real
+	// Google hostname (#692).
+	r.Handle("/robot/v1/metadata/", http.HandlerFunc(s.serveX509))
 	r.Handle("GET /.well-known/openid-configuration", http.HandlerFunc(s.serveDiscovery))
 	credentialspb.RegisterIAMCredentialsServer(r.GRPC(), &credentialsServer{s: s})
 	iampb.RegisterPoliciesServer(r.GRPC(), &policiesServer{s: s})

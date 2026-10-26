@@ -28,8 +28,9 @@ var projectSegment = regexp.MustCompile(`(?:^|/)projects/([^/:?]+)`)
 var accountSegment = regexp.MustCompile(`(?:^|/)projects/-/serviceAccounts/([^/:?]+)`)
 
 // accountCerts matches a service account's public certificates (a key
-// file's client_x509_cert_url), whose Project is in its email.
-var accountCerts = regexp.MustCompile(`^/service_accounts/v1/metadata/(?:x509|jwk)/([^/]+)$`)
+// file's client_x509_cert_url), at gcpemu's path or Google's, whose
+// Project is in its email.
+var accountCerts = regexp.MustCompile(`^/(?:service_accounts|robot)/v1/metadata/(?:x509|jwk)/([^/]+)$`)
 
 // bucketCollection matches Cloud Storage's bucket collection, whose
 // project parameter names the Project of the buckets it lists or creates.

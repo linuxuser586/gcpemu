@@ -56,6 +56,10 @@ func TestRequestProjects(t *testing.T) {
 		{"/service_accounts/v1/metadata/jwk/sa%40team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
 		{"/service_accounts/v1/metadata/x509/someone@example.com", nil},
 		{"/service_accounts/v1/metadata/x509", nil},
+		{"/robot/v1/metadata/x509/sa@team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/robot/v1/metadata/jwk/sa%40team-shared.iam.gserviceaccount.com", []string{"team-shared"}},
+		{"/robot/v1/metadata/x509/someone@example.com", nil},
+		{"/robot/v1/metadata/raw/sa@team-shared.iam.gserviceaccount.com", nil},
 		{"/storage/v1/b/projects/o", nil},
 		// The Admin API, the Web console and agent callbacks name none,
 		// however they are escaped.
