@@ -67,6 +67,28 @@ func newOTLPExporter(ctx context.Context, protocol string) (sdkmetric.Exporter, 
 	return nil, fmt.Errorf("unsupported OTLP protocol %q (want grpc or http/protobuf)", protocol)
 }
 
+// otlpExporter returns an exporter to the OTLP endpoint and its settings,
+// or false when no endpoint is set or it can't be made (logging what, the
+// metrics not exported).
+func (s *Service) otlpExporter(ctx context.Context, key, what string) (sdkmetric.Exporter, otlpSettings, bool) {
+	set, ok := otlpFromEnv(os.Getenv)
+	if !ok {
+		return nil, set, false
+	}
+	exp, err := newOTLPExporter(ctx, set.protocol)
+	if err != nil {
+		s.env.Log.Warn("gke: not exporting "+what, "cluster", key, "err", err)
+		return nil, set, false
+	}
+	return exp, set, true
+}
+
+func shutdownExporter(exp sdkmetric.Exporter) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = exp.Shutdown(ctx)
+}
+
 func systemComponentsOn(c *containerpb.Cluster) bool {
 	return slices.Contains(c.GetMonitoringConfig().GetComponentConfig().GetEnableComponents(),
 		containerpb.MonitoringComponentConfig_SYSTEM_COMPONENTS)
@@ -76,20 +98,11 @@ func systemComponentsOn(c *containerpb.Cluster) bool {
 // interval while SYSTEM_COMPONENTS is enabled; with no OTLP endpoint it
 // returns at once.
 func (s *Service) systemMetricsLoop(ctx context.Context, key string) {
-	set, ok := otlpFromEnv(os.Getenv)
+	exp, set, ok := s.otlpExporter(ctx, key, "system metrics")
 	if !ok {
 		return
 	}
-	exp, err := newOTLPExporter(ctx, set.protocol)
-	if err != nil {
-		s.env.Log.Warn("gke: not exporting system metrics", "cluster", key, "err", err)
-		return
-	}
-	defer func() {
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = exp.Shutdown(sctx)
-	}()
+	defer shutdownExporter(exp)
 	t := time.NewTicker(set.interval)
 	defer t.Stop()
 	for {
@@ -185,20 +198,12 @@ func (s *Service) exportSystemMetrics(ctx context.Context, key string, exp sdkme
 	var (
 		nodes kubeList[metricsNode]
 		pods  kubeList[metricsPod]
-		rsets kubeList[metricsOwned]
-		jobs  kubeList[metricsOwned]
 	)
 	if err := kc.get(ctx, "/api/v1/nodes", &nodes); err != nil {
 		return err
 	}
 	if err := kc.get(ctx, "/api/v1/pods", &pods); err != nil {
 		return err
-	}
-	// Without these, pods only lose their Deployment and CronJob.
-	for path, out := range map[string]any{"/apis/apps/v1/replicasets": &rsets, "/apis/batch/v1/jobs": &jobs} {
-		if err := kc.get(ctx, path, out); err != nil {
-			s.env.Log.Debug("gke: system metrics owners", "cluster", key, "path", path, "err", err)
-		}
 	}
 	stats := map[string]*kubeletStats{}
 	for _, n := range nodes.Items {
@@ -234,13 +239,7 @@ func (s *Service) exportSystemMetrics(ctx context.Context, key string, exp sdkme
 		emit([]attribute.KeyValue{attribute.String("k8s.node.name", n.Metadata.Name)}, g.ms)
 	}
 
-	owners := map[string]objectMeta{} // kind/namespace/name → owned object
-	for _, o := range rsets.Items {
-		owners["ReplicaSet/"+o.Metadata.Namespace+"/"+o.Metadata.Name] = o.Metadata
-	}
-	for _, o := range jobs.Items {
-		owners["Job/"+o.Metadata.Namespace+"/"+o.Metadata.Name] = o.Metadata
-	}
+	owners := s.workloadOwners(ctx, kc, key)
 	for _, p := range pods.Items {
 		m := p.Metadata
 		podAttrs := []attribute.KeyValue{
@@ -315,6 +314,24 @@ func clusterResourceAttrs(rec *clusterRecord) []attribute.KeyValue {
 		return append(attrs, attribute.String("cloud.availability_zone", rec.Int.Location))
 	}
 	return append(attrs, attribute.String("cloud.region", rec.Int.Location))
+}
+
+// workloadOwners returns the cluster's ReplicaSets and Jobs by
+// kind/namespace/name, for workloadAttrs. Without them, pods only lose
+// their Deployment and CronJob.
+func (s *Service) workloadOwners(ctx context.Context, kc *kubeClient, key string) map[string]objectMeta {
+	owners := map[string]objectMeta{}
+	for kind, path := range map[string]string{"ReplicaSet": "/apis/apps/v1/replicasets", "Job": "/apis/batch/v1/jobs"} {
+		var list kubeList[metricsOwned]
+		if err := kc.get(ctx, path, &list); err != nil {
+			s.env.Log.Debug("gke: workload owners", "cluster", key, "path", path, "err", err)
+			continue
+		}
+		for _, o := range list.Items {
+			owners[kind+"/"+o.Metadata.Namespace+"/"+o.Metadata.Name] = o.Metadata
+		}
+	}
+	return owners
 }
 
 // workloadAttrs names the workload that owns a pod: its ReplicaSet and

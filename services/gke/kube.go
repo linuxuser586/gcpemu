@@ -104,6 +104,8 @@ func isKubeNotFound(err error) bool {
 	return errors.As(err, &ke) && ke.Status == http.StatusNotFound
 }
 
+// do sends a request and decodes the response into out, or keeps it as
+// it is for a *[]byte.
 func (k *kubeClient) do(ctx context.Context, method, path, contentType string, body, out any) error {
 	var rd io.Reader
 	if body != nil {
@@ -134,6 +136,10 @@ func (k *kubeClient) do(ctx context.Context, method, path, contentType string, b
 		return &kubeError{Status: resp.StatusCode, Body: strings.TrimSpace(string(b))}
 	}
 	if out == nil {
+		return nil
+	}
+	if raw, ok := out.(*[]byte); ok {
+		*raw = b
 		return nil
 	}
 	return json.Unmarshal(b, out)

@@ -50,14 +50,14 @@ func negKey(cluster, zone, name string) string { return cluster + "|" + zone + "
 // before a Reset starts none (#293).
 func (s *Service) startControllers(ctx context.Context, key string) {
 	g := genOf(ctx)
-	if g == nil || !s.join(g, 6) {
+	if g == nil || !s.join(g, 7) {
 		return
 	}
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	if rt.cancel != nil {
 		rt.mu.Unlock()
-		g.wg.Add(-6)
+		g.wg.Add(-7)
 		return
 	}
 	ctx, cancel := context.WithCancel(g.ctx)
@@ -78,6 +78,10 @@ func (s *Service) startControllers(ctx context.Context, key string) {
 	go func() {
 		defer g.wg.Done()
 		s.systemMetricsLoop(ctx, key)
+	}()
+	go func() {
+		defer g.wg.Done()
+		s.prometheusLoop(ctx, key)
 	}()
 	go func() {
 		defer g.wg.Done()

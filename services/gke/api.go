@@ -518,8 +518,9 @@ func (a *api) UpdateCluster(ctx context.Context, req *containerpb.UpdateClusterR
 		return a.upgradePools(ctx, r, pool, u.DesiredNodeVersion)
 	}
 	var work workFunc
+	// Enabling managed Prometheus installs its CRDs; disabling it keeps them.
 	if u.DesiredGatewayApiConfig != nil || u.DesiredSecretManagerConfig != nil || u.DesiredSecretSyncConfig != nil ||
-		u.DesiredManagedOpentelemetryConfig != nil {
+		u.DesiredManagedOpentelemetryConfig != nil || u.DesiredMonitoringConfig.GetManagedPrometheusConfig().GetEnabled() {
 		work = func(ctx context.Context) error { return a.s.reconcileAddons(ctx, r.key()) }
 	}
 	return a.mutate(ctx, r, containerpb.Operation_UPDATE_CLUSTER, u.Etag, func(rec *clusterRecord, c *containerpb.Cluster) error {
