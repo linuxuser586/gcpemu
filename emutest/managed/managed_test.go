@@ -53,6 +53,29 @@ func TestManagedEmulators(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	var ext struct {
+		External []struct {
+			API       string `json:"api"`
+			Address   string `json:"address"`
+			Managed   bool   `json:"managed"`
+			Reachable bool   `json:"reachable"`
+		} `json:"external"`
+	}
+	resp, err := http.Get(inst.GatewayURL() + "/_emu/v1/external")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = json.NewDecoder(resp.Body).Decode(&ext)
+	resp.Body.Close()
+	if err != nil || len(ext.External) != 4 {
+		t.Fatalf("external = %+v (%v), want the four APIs", ext.External, err)
+	}
+	for _, e := range ext.External {
+		if !e.Managed || !e.Reachable || e.Address != "" {
+			t.Errorf("%s = %+v, want it managed and reachable, with no address", e.API, e)
+		}
+	}
+
 	fs := firestoreRoundTrip(ctx, t)
 	ds := datastoreRoundTrip(ctx, t)
 	sp := spannerRoundTrip(ctx, t)
@@ -236,7 +259,7 @@ func TestManagedReady(t *testing.T) {
 	deadline := time.Now().Add(time.Minute)
 	for {
 		if r := getReady(t, inst); !r.Ready {
-			if s := r.Services["external/firestore"]; !s.Ready && strings.Contains(s.Reason, "firestore") {
+			if s := r.Services["managed-emulator/firestore"]; !s.Ready && strings.Contains(s.Reason, "firestore") {
 				break
 			}
 		}
@@ -253,7 +276,7 @@ func TestManagedReady(t *testing.T) {
 	if err := in.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if r := getReady(t, inst); !r.Ready || !r.Services["external/firestore"].Ready {
+	if r := getReady(t, inst); !r.Ready || !r.Services["managed-emulator/firestore"].Ready {
 		t.Errorf("ready = %+v, want the Managed emulator for firestore ready", r)
 	}
 }

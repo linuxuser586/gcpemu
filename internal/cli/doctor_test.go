@@ -816,7 +816,7 @@ func TestReportManagedExternal(t *testing.T) {
 	reportExternal(func(ok bool, what, fix string) {
 		oks, whats, fixes = append(oks, ok), append(whats, what), append(fixes, fix)
 	}, []byte(`{"external":[
-		{"api":"bigtable","address":"172.18.0.3:8086","managed":true,"reachable":true},
+		{"api":"bigtable","address":"","managed":true,"reachable":true},
 		{"api":"firestore","address":"","managed":true,"reachable":false,"error":"it needs a container runtime, and none is usable: no container runtime found"}]}`))
 	if len(oks) != 2 {
 		t.Fatalf("reported %v %q, want bigtable and firestore", oks, whats)

@@ -191,7 +191,7 @@ function ExternalCard() {
               <TableRow key={e.api}>
                 <TableCell className="font-mono">{e.api}</TableCell>
                 <TableCell className="font-mono">
-                  {e.managed ? `Managed${e.address ? ` (${e.address})` : ''}` : e.address}
+                  {e.managed ? 'Managed' : e.address}
                 </TableCell>
                 <TableCell>
                   <Badge variant={e.reachable ? 'success' : 'destructive'}>

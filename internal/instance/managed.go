@@ -232,16 +232,6 @@ func (m *managedEmulator) startAndWait(ctx context.Context, rt *runtime.Manager,
 	return ip, nil
 }
 
-// addr returns its gRPC address, or "" and why it is not running.
-func (m *managedEmulator) addr() (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.ip == "" {
-		return "", m.why
-	}
-	return net.JoinHostPort(m.ip, strconv.Itoa(m.spec.grpcPort)), nil
-}
-
 // readiness is nil once it accepts connections, or when there is no usable
 // container runtime, as Runtime Services are skipped then; else why not.
 func (m *managedEmulator) readiness() error {

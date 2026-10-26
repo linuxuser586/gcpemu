@@ -528,7 +528,7 @@ func (in *Instance) Readiness() map[string]error {
 		out[s.Name()] = s.Ready()
 	}
 	for api, m := range in.managed {
-		out["external/"+api] = m.readiness()
+		out["managed-emulator/"+api] = m.readiness()
 	}
 	return out
 }

@@ -1616,7 +1616,7 @@ components:
       required: [api, address, hosts, reachable]
       properties:
         api: { type: string, description: "The API name, e.g. firestore." }
-        address: { type: string, description: "The External emulator's host:port; a Managed emulator's on the Instance's services network, empty until it runs." }
+        address: { type: string, description: "The External emulator's host:port; empty for a Managed emulator, which clients reach only through the API gateway." }
         managed: { type: boolean, description: "Whether the Instance runs it as a Managed emulator (ADR 0029)." }
         hosts:
           type: array

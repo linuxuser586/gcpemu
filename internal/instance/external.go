@@ -60,8 +60,8 @@ type ExternalStatus struct {
 const externalDialTimeout = 2 * time.Second
 
 // External returns each Delegated API, sorted by API name, with whether
-// its External emulator accepts a TCP connection now. A Managed emulator's
-// address is its own on the services network, once it runs.
+// its External emulator accepts a TCP connection now. A Managed emulator
+// has no address clients could dial, so none is reported for it.
 func (in *Instance) External(ctx context.Context) []ExternalStatus {
 	ds := in.gw.DelegatedAPIs()
 	out := make([]ExternalStatus, len(ds))
@@ -74,7 +74,6 @@ func (in *Instance) External(ctx context.Context) []ExternalStatus {
 			var c net.Conn
 			var err error
 			if m := in.managed[d.API]; d.Managed && m != nil {
-				out[i].Address, _ = m.addr()
 				c, err = m.dial(ctx, true)
 			} else {
 				dialer := net.Dialer{}

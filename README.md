@@ -572,7 +572,7 @@ eval "$(gcpemu env)"
   pinned tag. Each API gets its own container. The first start pulls the images: the
   `google-cloud-cli` emulators image is over 1 GB, and the Instance is not ready until the pull
   is done and each emulator accepts connections. `/_emu/v1/ready` names the one it waits for
-  (`external/firestore`).
+  (`managed-emulator/firestore`).
 - A Managed emulator has no address on the host or the LAN: clients reach it only through the API
   gateway, exactly as an External emulator configured by address, with no IAM check. Spanner's
   REST requests go to its emulator's REST port.

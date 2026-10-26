@@ -1277,7 +1277,7 @@ export interface components {
         External: {
             /** @description The API name, e.g. firestore. */
             api: string;
-            /** @description The External emulator's host:port; a Managed emulator's on the Instance's services network, empty until it runs. */
+            /** @description The External emulator's host:port; empty for a Managed emulator, which clients reach only through the API gateway. */
             address: string;
             /** @description Whether the Instance runs it as a Managed emulator (ADR 0029). */
             managed?: boolean;
