@@ -103,6 +103,10 @@ type Config struct {
 	// Buckets returns this Instance's Cloud Storage buckets and their
 	// Projects, which paired Instances watch (see Manager.BucketOwner).
 	Buckets func() map[string]string
+	// SigningKey returns this Instance's ID token signing key, which
+	// paired Instances list (see Manager.LinkedSigningKeys); ok false
+	// when it has none.
+	SigningKey func() (SigningKey, bool)
 	// StaticAddrs lists link addresses that Discover asks besides browsing
 	// mDNS, for networks multicast doesn't cross.
 	StaticAddrs []string
@@ -134,6 +138,8 @@ type Manager struct {
 	watchMu  sync.Mutex // serialises watch, which reads the Delegations
 	watchers map[string]context.CancelFunc
 	buckets  map[string]map[string]string
+	// signingKeys holds the signing key each watched link last sent, by link.
+	signingKeys map[string]SigningKey
 	// warnings holds, by link name, the latest refused connection that
 	// claimed that link's Instance ID with another CA, until the Instance
 	// pinned connects again. It is unverified, so it is never stored and
@@ -152,7 +158,7 @@ func New(cfg Config) *Manager {
 		cfg.ApprovalTimeout = DefaultApprovalTimeout
 	}
 	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}, transports: map[string]*http.Transport{}, tokens: map[string]tokenAnswer{},
-		watchers: map[string]context.CancelFunc{}, buckets: map[string]map[string]string{}}
+		watchers: map[string]context.CancelFunc{}, buckets: map[string]map[string]string{}, signingKeys: map[string]SigningKey{}}
 }
 
 // Identity is what an Instance tells another about itself.
@@ -282,6 +288,7 @@ func (m *Manager) handler() http.Handler {
 	mux.HandleFunc("GET /link/v1/shared", m.serveShared)
 	mux.HandleFunc("POST /link/v1/tokens", m.serveToken)
 	mux.HandleFunc("GET /link/v1/buckets", m.serveBuckets)
+	mux.HandleFunc("GET /link/v1/signing-key", m.serveSigningKey)
 	mux.HandleFunc("GET /link/v1/status", func(w http.ResponseWriter, r *http.Request) {
 		p, v, ok := m.admit(w, r)
 		if !ok {
@@ -905,7 +912,7 @@ func (m *Manager) call(ctx context.Context, addr, method, path string, verify fu
 		if json.Unmarshal(b, &ref) == nil && ref.Error != "" {
 			return nil, &RefusedError{Reason: ref.Reason, Msg: ref.Error}
 		}
-		return nil, fmt.Errorf("link %s: %s %s", addr, resp.Status, bytes.TrimSpace(b))
+		return nil, &statusError{fmt.Errorf("link %s: %s %s", addr, resp.Status, bytes.TrimSpace(b)), resp.StatusCode}
 	}
 	if out != nil {
 		if err := json.Unmarshal(b, out); err != nil {
@@ -921,6 +928,12 @@ type RefusedError struct {
 }
 
 func (e *RefusedError) Error() string { return e.Msg }
+
+// statusError is a link request answered with code, and no refusal.
+type statusError struct {
+	error
+	code int
+}
 
 // clientCert is this Instance's link client certificate, issued again
 // once the Instance CA is rotated.

@@ -55,6 +55,12 @@ func newLinked(t *testing.T, name, dir string, opts ...func(*link.Config)) *link
 // newLinkedOn is newLinked serving on ip.
 func newLinkedOn(t *testing.T, name, dir, ip string, opts ...func(*link.Config)) *linked {
 	t.Helper()
+	return newLinkedAt(t, name, dir, net.JoinHostPort(ip, "0"), opts...)
+}
+
+// newLinkedAt is newLinked serving on the address addr.
+func newLinkedAt(t *testing.T, name, dir, addr string, opts ...func(*link.Config)) *linked {
+	t.Helper()
 	if dir == "" {
 		dir = t.TempDir()
 	}
@@ -72,7 +78,7 @@ func newLinkedOn(t *testing.T, name, dir, ip string, opts ...func(*link.Config))
 		o(&cfg)
 	}
 	n := link.New(cfg)
-	l, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

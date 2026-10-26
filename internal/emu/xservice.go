@@ -44,6 +44,21 @@ type IAMPolicyStore interface {
 	DeletePolicy(ctx context.Context, resource string) error
 }
 
+// SigningKey is an Instance's ID token signing key, as its certificate
+// endpoints list it.
+type SigningKey struct {
+	KeyID string
+	// JWK is the public key as a JSON Web Key.
+	JWK     map[string]string
+	CertPEM string
+}
+
+// SigningKeyer is implemented by the iam Service: the key it signs ID
+// tokens with, which the Instances it is paired with list (ADR 0027).
+type SigningKeyer interface {
+	SigningKey() SigningKey
+}
+
 // Buckets is implemented by the gcs Service: the Project each bucket is
 // in, by which requests naming a bucket, and no Project, are routed
 // across links (ADR 0027).

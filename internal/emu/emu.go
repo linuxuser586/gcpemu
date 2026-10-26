@@ -149,6 +149,10 @@ type Env struct {
 	// Delegated returns the link the Project id is delegated to (ADR
 	// 0027); nil delegates none.
 	Delegated func(id string) (link string, ok bool)
+	// LinkedSigningKeys returns the ID token signing keys of the Linked
+	// Instances Projects are delegated to, as last heard (ADR 0027); nil
+	// lists none.
+	LinkedSigningKeys func() []SigningKey
 	// Middleware wraps HTTP handlers on per-service ports with the same
 	// auth/logging the gateway applies.
 	Middleware func(service string, h http.Handler) http.Handler

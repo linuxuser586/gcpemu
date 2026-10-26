@@ -79,6 +79,10 @@ _Avoid_: "mode" for anything else
 The root certificate authority an Instance creates the first time it starts. It signs Google-managed certificates and Host mode serving certificates, and clients trust it once. It is made of a certificate and a private key, which always belong together: an Instance never uses one without the other. An Instance keeps its CA until the user rotates it, and never replaces either part on its own. Rotating it replaces the certificate and key together: Google-managed certificates are re-issued from the new CA, and self-managed certificates are the user's and are left as they are.
 _Avoid_: local CA, root CA, emulator CA
 
+**Signing key**:
+The key an Instance signs the ID tokens it issues with. Its certificate endpoints list it first, then the Signing key of each Linked Instance it delegates a Project to, as last heard. It is not the Instance CA and belongs to no service account.
+_Avoid_: signer, OIDC key, service account key
+
 **Host trust**:
 The places on the user's machine that trust the Instance CA: the OS certificate store, container runtimes' registry trust and browser certificate databases. `gcpemu ca install` adds the Instance CA to them and `gcpemu doctor` reports where it is. A place is part of Host trust once it holds the Instance CA, even if a client on the host is set up not to read it, such as a kubelet whose containerd does not read the registry trust; doctor reports that client separately.
 _Avoid_: trust store (that is part of a Trust config)
@@ -580,5 +584,6 @@ _Avoid_: egress check, leak detector
 - "Condition" on its own is ambiguous: Kubernetes objects inside a GKE cluster have their own conditions. Use *Wait condition* for what a script blocks on.
 - "Kubernetes pulls" on its own is ambiguous: an emulated GKE cluster's nodes pull with their own registry settings, apart from Host trust. Say *a kubelet on the host* for a Kubernetes cluster that runs directly on the user's machine and pulls through the host's containerd.
 - "Cluster" on its own means a GKE cluster in either mode. Say *Autopilot cluster* or *Standard cluster* when the mode matters.
+- "Key" on its own is ambiguous. Say *Signing key*, *service account key*, or *the Instance CA's key*.
 - "Node" on its own always means a GKE node. Another Instance is a *Linked Instance* or *Discovered Instance*, and a non-gcpemu server is an *External emulator*.
 - "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.

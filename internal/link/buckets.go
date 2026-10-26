@@ -139,6 +139,7 @@ func (m *Manager) watch() {
 			stop()
 			delete(m.watchers, name)
 			delete(m.buckets, name)
+			delete(m.signingKeys, name)
 		}
 	}
 	for _, name := range want {
@@ -189,6 +190,8 @@ func (m *Manager) watchOnce(ctx context.Context, name string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("link %q: %s", name, resp.Status)
 	}
+	// The Linked Instance may have restarted with another signing key.
+	m.refreshSigningKey(ctx, name)
 	dec := json.NewDecoder(resp.Body)
 	for {
 		var msg struct{ Buckets map[string]string }

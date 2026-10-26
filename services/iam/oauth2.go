@@ -43,9 +43,9 @@ func (s *Service) serveOAuth2(w http.ResponseWriter, r *http.Request) {
 	case "/tokeninfo", "/v1/tokeninfo", "/v3/tokeninfo", "/oauth2/v3/tokeninfo":
 		s.serveTokenInfo(w, r)
 	case "/v3/certs", "/oauth2/v3/certs":
-		writeJSON(w, s.signer.jwks())
+		writeJSON(w, s.jwks())
 	case "/v1/certs", "/oauth2/v1/certs":
-		writeJSON(w, map[string]string{s.signer.kid: s.signer.certPEM})
+		writeJSON(w, s.certs())
 	case "/.well-known/openid-configuration":
 		s.serveDiscovery(w, r)
 	case "/userinfo", "/v1/userinfo", "/v2/userinfo", "/v3/userinfo", "/oauth2/v3/userinfo":
@@ -238,7 +238,7 @@ func (s *Service) serveTokenInfo(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	if idt := r.Form.Get("id_token"); idt != "" {
 		claims := jwt.MapClaims{}
-		_, err := jwt.ParseWithClaims(idt, claims, func(*jwt.Token) (any, error) { return &s.signer.priv.PublicKey, nil },
+		_, err := jwt.ParseWithClaims(idt, claims, s.idTokenKey,
 			jwt.WithValidMethods([]string{"RS256"}), jwt.WithTimeFunc(s.env.Clock.Now))
 		if err != nil {
 			oauthError(w, http.StatusBadRequest, "invalid_token", "Invalid Value")

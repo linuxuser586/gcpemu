@@ -50,6 +50,14 @@ func (in *Instance) newLink() (*link.Manager, error) {
 			}
 			return nil
 		},
+		SigningKey: func() (link.SigningKey, bool) {
+			if svc, ok := in.Env.Lookup("iam"); ok {
+				if s, ok := svc.(emu.SigningKeyer); ok {
+					return link.SigningKey(s.SigningKey()), true
+				}
+			}
+			return link.SigningKey{}, false
+		},
 		Authenticate: func(ctx context.Context, token string) (string, bool) {
 			p, ok := in.Env.Auth.Authenticate(ctx, token)
 			return string(p), ok

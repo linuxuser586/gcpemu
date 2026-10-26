@@ -124,9 +124,11 @@ func (m *Manager) Delegate(ctx context.Context, id, to string) (Delegation, erro
 	}
 	m.cfg.Log.Info("Project delegated", "project", id, "link", to)
 	m.watch()
-	// The link's buckets are routed from the moment Delegate returns,
-	// not from when its watch first hears of them.
+	// The link's buckets are routed, and its ID tokens verified, from the
+	// moment Delegate returns, not from when its watch first hears of
+	// them.
 	m.RefreshBuckets(ctx, to)
+	m.refreshSigningKey(ctx, to)
 	return d, nil
 }
 
