@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -56,38 +57,38 @@ func (m *Manager) serveToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // Authenticate returns the Principal of token, which this Instance did not
-// issue, as a Linked Instance it delegates to issued it.
-func (m *Manager) Authenticate(ctx context.Context, token string) (string, bool) {
+// issue, as a Linked Instance it delegates to issued it, and the links it
+// could not ask, each with why, naming the link: broken, with no
+// --link-bind address, or not answering.
+func (m *Manager) Authenticate(ctx context.Context, token string) (principal string, unreachable map[string]error) {
 	now := time.Now()
 	m.mu.Lock()
 	a, ok := m.tokens[token]
 	m.mu.Unlock()
 	if ok && now.Before(a.expires) {
-		return a.principal, a.principal != ""
+		return a.principal, nil
 	}
-	principal, reached := "", true
 	for _, name := range m.DelegatedLinks() {
-		l, err := m.usable(name)
+		p, err := m.askToken(ctx, name, token)
 		if err != nil {
-			continue
-		}
-		var reply struct{ Principal string }
-		if _, err := m.call(ctx, l.Address, http.MethodPost, "/link/v1/tokens", l.pinned(), map[string]string{"token": token}, &reply); err != nil {
 			m.cfg.Log.Debug("could not ask a Linked Instance about a token", "link", name, "err", err)
-			reached = false
+			if unreachable == nil {
+				unreachable = map[string]error{}
+			}
+			unreachable[name] = err
 			continue
 		}
 		// A Linked Instance speaks only for the service accounts and
 		// Federated principals of the Projects delegated to it, never for
 		// this Instance's own.
-		if to, ok := m.DelegatedTo(principalProject(reply.Principal)); ok && to == name {
-			principal = reply.Principal
+		if to, ok := m.DelegatedTo(principalProject(p)); ok && to == name {
+			principal, unreachable = p, nil
 			break
 		}
 	}
 	// An answer that missed an unreachable Linked Instance is not kept, so
 	// that its token works once it is back.
-	if principal != "" || reached {
+	if principal != "" || len(unreachable) == 0 {
 		m.mu.Lock()
 		if len(m.tokens) >= maxTokens {
 			clear(m.tokens)
@@ -95,7 +96,20 @@ func (m *Manager) Authenticate(ctx context.Context, token string) (string, bool)
 		m.tokens[token] = tokenAnswer{principal, now.Add(tokenTTL)}
 		m.mu.Unlock()
 	}
-	return principal, principal != ""
+	return principal, unreachable
+}
+
+// askToken asks the link name for the Principal of the access token token.
+func (m *Manager) askToken(ctx context.Context, name, token string) (string, error) {
+	l, err := m.usable(name)
+	if err != nil {
+		return "", err
+	}
+	var reply struct{ Principal string }
+	if _, err := m.call(ctx, l.Address, http.MethodPost, "/link/v1/tokens", l.pinned(), map[string]string{"token": token}, &reply); err != nil {
+		return "", fmt.Errorf("link %q does not answer: %w", name, err)
+	}
+	return reply.Principal, nil
 }
 
 // federatedPrincipal matches the Project of a Federated principal: a

@@ -21,6 +21,9 @@ import (
 	crmv1 "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/project"
@@ -157,6 +160,35 @@ func TestDelegatedServiceAccountToken(t *testing.T) {
 	}
 	if code, body := bearerGet(t, laptop, "/pubsub/v1/projects/"+shared+"/topics", "ya29.gcpemu.not-a-token"); code != http.StatusUnauthorized {
 		t.Errorf("listing topics through the laptop with a token no Instance issued = %d %s, want 401", code, body)
+	}
+}
+
+// With the office down, a token it issued is not run as the default
+// Principal or refused as unknown: a request with it through the laptop,
+// even for the laptop's own Project, fails UNAVAILABLE naming the link,
+// over REST and gRPC (#733).
+func TestDelegatedServiceAccountTokenWhileLinkedInstanceIsDown(t *testing.T) {
+	laptop, office := delegated(t, nil, nil)
+	callAdmin(t, laptop, http.MethodPost, "/iam/v1/projects/"+shared+"/serviceAccounts", map[string]string{"accountId": "runner"}, nil)
+	_, file := keyFileThrough(t, laptop, runner, nil)
+	cfg, err := google.JWTConfigFromJSON(file, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := cfg.TokenSource(context.Background()).Token()
+	if err != nil {
+		t.Fatalf("token from the laptop's token endpoint: %v", err)
+	}
+	if err := office.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := bearerGet(t, laptop, "/pubsub/v1/projects/laptop-own/topics", tok.AccessToken); code != http.StatusServiceUnavailable || !strings.Contains(body, `\"office\"`) {
+		t.Errorf("listing the laptop's own topics with the office's token, the office down = %d %s, want 503 naming the link", code, body)
+	}
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer "+tok.AccessToken)
+	_, err = rawPublisher(t, laptop).ListTopics(ctx, &pubsubpb.ListTopicsRequest{Project: "projects/laptop-own"})
+	if status.Code(err) != codes.Unavailable || !strings.Contains(err.Error(), `"office"`) {
+		t.Errorf("gRPC ListTopics with the office's token, the office down = %v, want UNAVAILABLE naming the link", err)
 	}
 }
 

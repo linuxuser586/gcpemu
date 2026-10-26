@@ -280,7 +280,7 @@ One Instance asking another to pair, which waits for that other Instance's appro
 _Avoid_: join request, link request
 
 **Link**:
-What each of two paired Instances keeps of the other: a name, and the Instance CA it pinned at Pairing. A Link is broken once that Instance CA no longer matches what this side itself sees: its own Instance CA was rotated, or the other Instance answered with another one. Unpairing removes the Link on that side only.
+What each of two paired Instances keeps of the other: a name, and the Instance CA it pinned at Pairing. A Link is broken once that Instance CA no longer matches what this side itself sees: its own Instance CA was rotated, or the other Instance answered with another one. A Link is unreachable when this Instance cannot ask the other one right now: it is broken, has no `--link-bind` address, or the other Instance does not answer. Unpairing removes the Link on that side only.
 _Avoid_: Pairing (for what lasts after the act), peering, trust
 
 **Shared Project**:
