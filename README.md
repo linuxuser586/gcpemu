@@ -746,15 +746,16 @@ dropped. A failed forward fails the pod's export, which the sender
 retries. The scope also installs the `instrumentations.telemetry.googleapis.com` CRD. Setting
 the scope to `NONE` removes the Service and keeps the CRD, the namespace and your objects
 (FR-GKE-019).
-With managed Prometheus enabled (the default on Autopilot), a cluster has GMP's `PodMonitoring`
-and `ClusterPodMonitoring` CRDs, and, with the same OTLP endpoint set, the Instance scrapes the
-pod endpoints they select through the API server at each endpoint's `interval` and `timeout`. It
-applies `metricRelabeling` (to a histogram or summary as one series under its family's name)
-and exports metrics named as the OTel Collector's `prometheus`
-receiver names them, with the attributes above, `service.name` (the monitoring's name) and
-`service.instance.id` (`<pod>:<port>`) (FR-GKE-020). Endpoints' `authorization`, `basicAuth`,
-`oauth2`, `tls`, `proxyUrl` and `limits` are ignored. Disabling managed Prometheus stops the
-scraping and keeps the CRDs and your objects.
+With Managed Prometheus enabled (the default on Autopilot), a cluster has GMP's `PodMonitoring`
+and `ClusterPodMonitoring` CRDs. With the same OTLP endpoint set, the Instance scrapes the pod
+endpoints they select through the API server, at each endpoint's `interval` and `timeout`
+(ADR 0036). It applies `metricRelabeling`, seeing a histogram or summary as one series under its
+family's name, and exports metrics named as the OTel Collector's `prometheus` receiver names them
+by default, with the attributes above, `service.name` (the PodMonitoring's or
+ClusterPodMonitoring's name) and `service.instance.id` (`<pod>:<port>`) (FR-GKE-020). Endpoints'
+`authorization`, `basicAuth`, `oauth2`, `tls` and `proxyUrl`, and `limits`, are not applied; the
+object's `ConfigurationCreateSuccess` condition names any that are set. Disabling Managed
+Prometheus stops the scraping and keeps the CRDs and your objects.
 `LoadBalancer` Services are given node addresses on the cluster's VPC by k3s's built-in service
 load balancer (servicelb), the emulator's in-cluster L4 allocator (FR-GKE-009). On a VM runtime,
 or when the cluster's subnetwork is a Translated network, the host can't reach node addresses,

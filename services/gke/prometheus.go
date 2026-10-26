@@ -33,8 +33,10 @@ import (
 // disabled), and, with an OTLP endpoint set as for FR-GKE-014, the
 // Instance scrapes the endpoints they select through the API server's pod
 // proxy and exports the samples as OTLP metrics named as the OTel
-// Collector's prometheus receiver names them. Endpoints' authorization,
-// basicAuth, oauth2, tls, proxyUrl and limits are ignored.
+// Collector's prometheus receiver names them by default (without its
+// NormalizeName feature gate). Endpoints' authorization, basicAuth,
+// oauth2, tls and proxyUrl, and limits, are not applied; the condition
+// names them (ADR 0036).
 
 const defaultScrapeInterval = time.Minute
 
@@ -64,7 +66,14 @@ type promMonitoring struct {
 			Interval         string              `json:"interval"`
 			Timeout          string              `json:"timeout"`
 			MetricRelabeling []relabelRule       `json:"metricRelabeling"`
+			// Not applied (ADR 0036): only reported.
+			Authorization json.RawMessage `json:"authorization"`
+			BasicAuth     json.RawMessage `json:"basicAuth"`
+			OAuth2        json.RawMessage `json:"oauth2"`
+			TLS           json.RawMessage `json:"tls"`
+			ProxyURL      string          `json:"proxyUrl"`
 		} `json:"endpoints"`
+		Limits json.RawMessage `json:"limits"`
 	} `json:"spec"`
 	Status struct {
 		ObservedGeneration int64 `json:"observedGeneration"`
@@ -735,17 +744,41 @@ func (ps *prometheusScraper) scrape(ctx context.Context, kc *kubeClient, t promT
 	}
 }
 
-// markConfigured sets the condition GMP's operator sets on a monitoring
-// whose configuration it took, for the current generation.
+// markConfigured sets the condition GMP's operator sets on a
+// PodMonitoring or ClusterPodMonitoring whose configuration it took, for
+// the current generation.
 func markConfigured(ctx context.Context, kc *kubeClient, resource string, m *promMonitoring) error {
 	path := monitoringPath + "/"
 	if m.Metadata.Namespace != "" {
 		path += "namespaces/" + m.Metadata.Namespace + "/"
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	return kc.mergePatch(ctx, path+resource+"/"+m.Metadata.Name+"/status", map[string]any{"status": map[string]any{
-		"observedGeneration": m.Metadata.Generation,
-		"conditions": []map[string]any{{"type": "ConfigurationCreateSuccess", "status": "True",
-			"lastUpdateTime": now, "lastTransitionTime": now}},
-	}})
+	return kc.mergePatch(ctx, path+resource+"/"+m.Metadata.Name+"/status", map[string]any{"status": configuredStatus(m, time.Now())})
+}
+
+// configuredStatus is m's status once configured; the condition's message
+// names the settings the Instance does not apply (ADR 0036).
+func configuredStatus(m *promMonitoring, now time.Time) map[string]any {
+	ts := now.UTC().Format(time.RFC3339)
+	cond := map[string]any{"type": "ConfigurationCreateSuccess", "status": "True", "lastUpdateTime": ts, "lastTransitionTime": ts}
+	var ignored []string
+	for i, ep := range m.Spec.Endpoints {
+		for _, f := range []struct {
+			name string
+			set  bool
+		}{
+			{"authorization", len(ep.Authorization) > 0}, {"basicAuth", len(ep.BasicAuth) > 0}, {"oauth2", len(ep.OAuth2) > 0},
+			{"tls", len(ep.TLS) > 0}, {"proxyUrl", ep.ProxyURL != ""},
+		} {
+			if f.set {
+				ignored = append(ignored, "endpoints["+strconv.Itoa(i)+"]."+f.name)
+			}
+		}
+	}
+	if len(m.Spec.Limits) > 0 {
+		ignored = append(ignored, "limits")
+	}
+	if len(ignored) > 0 {
+		cond["message"] = "Not applied by the emulator: " + strings.Join(ignored, ", ") + "."
+	}
+	return map[string]any{"observedGeneration": m.Metadata.Generation, "conditions": []map[string]any{cond}}
 }

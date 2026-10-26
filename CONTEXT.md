@@ -415,6 +415,14 @@ _Avoid_: OTel sidecar, collector (unqualified)
 How much of GKE's managed OpenTelemetry a cluster asks for: none, or collection together with instrumentation. A cluster serves a Managed collector only when its scope asks for collection.
 _Avoid_: OTel mode, telemetry level, scope (unqualified)
 
+**Managed Prometheus**:
+GKE's managed collection of Prometheus metrics, which a cluster asks for in its monitoring settings and an Autopilot cluster has unless it turns it off. Its PodMonitorings and ClusterPodMonitorings choose the Scrape targets, and the results go to the OTLP endpoint. The Instance does the scraping, not pods in the cluster (ADR 0036).
+_Avoid_: GMP, Prometheus add-on, Prometheus collector
+
+**Scrape target**:
+One endpoint of one pod that a PodMonitoring or ClusterPodMonitoring selects, scraped at that endpoint's interval. On the OTLP endpoint it is one instance of a job named after its PodMonitoring or ClusterPodMonitoring.
+_Avoid_: target (unqualified), monitoring (for the PodMonitoring or ClusterPodMonitoring itself: name the kind)
+
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
 _Avoid_: secret (unqualified)

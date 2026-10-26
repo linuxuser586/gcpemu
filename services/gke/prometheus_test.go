@@ -240,3 +240,31 @@ func TestPromTargetMetricsFailed(t *testing.T) {
 		t.Errorf("metrics = %v, want up and the scrape_ metrics only", names)
 	}
 }
+
+// FR-GKE-020: the condition marking a PodMonitoring configured names the
+// endpoint settings the Instance does not apply (ADR 0036), and says
+// nothing when there are none.
+func TestConfiguredStatus(t *testing.T) {
+	cond := func(spec string) map[string]any {
+		t.Helper()
+		m := decodeJSON[promMonitoring](t, `{"metadata": {"name": "web", "generation": 3}, "spec": `+spec+`}`)
+		st := configuredStatus(&m, time.Unix(0, 0))
+		if st["observedGeneration"] != int64(3) {
+			t.Errorf("observedGeneration = %v, want 3", st["observedGeneration"])
+		}
+		c := st["conditions"].([]map[string]any)[0]
+		if c["type"] != "ConfigurationCreateSuccess" || c["status"] != "True" {
+			t.Errorf("condition = %v", c)
+		}
+		return c
+	}
+	if c := cond(`{"endpoints": [{"port": 8080}]}`); c["message"] != nil {
+		t.Errorf("message = %q, want none", c["message"])
+	}
+	c := cond(`{"limits": {"samples": 10}, "endpoints": [{"port": 8080, "tls": {"insecureSkipVerify": true}},
+	  {"port": "m", "basicAuth": {"username": "u"}, "proxyUrl": "http://p"}]}`)
+	want := "Not applied by the emulator: endpoints[0].tls, endpoints[1].basicAuth, endpoints[1].proxyUrl, limits."
+	if c["message"] != want {
+		t.Errorf("message = %q, want %q", c["message"], want)
+	}
+}
