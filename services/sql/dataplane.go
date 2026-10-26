@@ -322,10 +322,7 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 			}
 		}
 		msg := strings.ToLower(err.Error())
-		// The runtime says "Address already in use" both for a taken
-		// container address and for a taken host port: drop the recorded
-		// address first, then pick another port.
-		if publicIP != "" && runtime.IsAddressInUse(err) {
+		if publicIP != "" && publicIPTaken(err, s.hostIP(), hostPort) {
 			// Something outside the emulator holds the recorded address.
 			s.env.Log.Warn("sql: public IP taken; using a new one", "instance", project+":"+name, "ip", publicIP)
 			publicIP = ""
@@ -402,6 +399,15 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 		r.Instance.IpAddresses = ipMappings(r)
 		return nil
 	})
+}
+
+// publicIPTaken reports whether err, from starting an instance's container,
+// says its address on the external network is taken. The runtime says
+// "Address already in use" for a taken host port too, which names the
+// binding (hostIP:hostPort): a taken host port picks another port and keeps
+// the Public IP, so a restart never moves it for that (#673).
+func publicIPTaken(err error, hostIP string, hostPort int) bool {
+	return runtime.IsAddressInUse(err) && !mentions(strings.ToLower(err.Error()), hostIP, hostPort)
 }
 
 // ipMappings lists the instance's addresses as reported by the API.
