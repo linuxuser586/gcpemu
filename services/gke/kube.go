@@ -217,6 +217,8 @@ type kubeNode struct {
 			Type    string `json:"type"`
 			Address string `json:"address"`
 		} `json:"addresses"`
+		Capacity    map[string]string `json:"capacity,omitempty"`
+		Allocatable map[string]string `json:"allocatable,omitempty"`
 	} `json:"status"`
 }
 

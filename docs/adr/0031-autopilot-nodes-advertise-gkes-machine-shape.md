@@ -11,3 +11,4 @@ An Autopilot cluster adds a node when a pod is Pending for lack of capacity (FR-
 
 - Nodes can promise more than the host has. A cluster that is full by GCP's measure may still fit on the host, and one that fits by GCP's measure can still exhaust the host.
 - Standard nodes are unchanged: their machine type stays Recorded.
+- Reservations can only lower what a node advertises, so a host smaller than a shape advertises what it has. The guarantee holds for the shapes the host can hold; a pod that only a larger shape fits gets no node on that host.

@@ -643,7 +643,14 @@ proxy translates onto the workload's port block on its own external address, reu
 destination; endpoint-independent mapping caps a workload's concurrent connections at its block,
 and dynamic port allocation lets it grow to `maxPortsPerVm`. Mapping info, status and NAT logs
 name the NAT IP the block stands for.
-`GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5).
+`GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5), Standard and Autopilot alike.
+An Autopilot cluster starts with one node and adds one when a pod is Pending for lack of room,
+removing a node once it has been empty for 30 s, never the last (FR-GKE-015). Each node
+advertises the allocatable CPU, memory and 32 pods of the GKE shape its first pod fits
+(`ek-standard-2` to `ek-standard-32`), whatever the host has, by reserving the rest for the
+kubelet (ADR 0031); a host smaller than the shape advertises less. Pods selecting
+`cloud.google.com/compute-class` or `cloud.google.com/gke-spot` get a node with those labels. At
+the node limit, pods stay Pending with a `FailedScaleUp` event.
 A cluster whose `monitoring_config` enables `SYSTEM_COMPONENTS` exports its node, pod and
 container CPU and memory usage, requests, limits, allocatable and restarts (with the last
 termination reason, e.g. `OOMKilled`) over OTLP when the Instance's environment sets

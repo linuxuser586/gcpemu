@@ -9,8 +9,9 @@ import (
 // Autopilot clusters (FR-GKE-012). GKE owns their nodes: it sets Workload
 // Identity, Dataplane V2, a release channel, Shielded nodes and vertical
 // Pod autoscaling, refuses requests that contradict them, and reports the
-// node pools it manages while refusing to let the user change them. Until
-// node provisioning (FR-GKE-015) lands, the managed pool runs one node.
+// node pools it manages while refusing to let the user change them. The
+// managed pool starts with one node; autoscale.go adds and removes nodes
+// for the cluster's pods (FR-GKE-015).
 //
 // No Recording of an Autopilot cluster exists yet (ADR 0023), so the
 // error messages below are GKE's as best known, not checked against one.
@@ -45,6 +46,7 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 	c.NetworkConfig.DatapathProvider = containerpb.DatapathProvider_ADVANCED_DATAPATH
 	c.ShieldedNodes = &containerpb.ShieldedNodes{Enabled: true}
 	c.VerticalPodAutoscaling = &containerpb.VerticalPodAutoscaling{Enabled: true}
+	c.DefaultMaxPodsConstraint = &containerpb.MaxPodsConstraint{MaxPodsPerNode: autopilotMaxPods}
 	if c.IpAllocationPolicy == nil {
 		c.IpAllocationPolicy = &containerpb.IPAllocationPolicy{}
 	}
@@ -93,6 +95,65 @@ func autopilotCounts(np *containerpb.NodePool) []int {
 		counts[0] = 1
 	}
 	return counts
+}
+
+// autopilotMaxPods is the pod limit of an Autopilot node.
+const autopilotMaxPods = 32
+
+// machineShape is a machine type Autopilot provisions nodes as (ADR
+// 0031): its vCPUs and memory before GKE's reservations.
+type machineShape struct {
+	Name  string
+	CPUs  int64
+	MemKi int64
+}
+
+// autopilotShapes are the general-purpose shapes Autopilot provisions,
+// smallest first; a cluster's first node is the smallest.
+var autopilotShapes = []machineShape{
+	{"ek-standard-2", 2, 8 << 20},
+	{"ek-standard-4", 4, 16 << 20},
+	{"ek-standard-8", 8, 32 << 20},
+	{"ek-standard-16", 16, 64 << 20},
+	{"ek-standard-32", 32, 128 << 20},
+}
+
+// shapeOf returns the shape of an Autopilot node; nodes recorded before
+// they had one are the smallest.
+func shapeOf(n nodeRecord) machineShape {
+	for _, sh := range autopilotShapes {
+		if sh.Name == n.MachineType {
+			return sh
+		}
+	}
+	return autopilotShapes[0]
+}
+
+// evictionKi is the kubelet's hard memory eviction threshold, 100 MiB as
+// on GKE.
+const evictionKi = 100 << 10
+
+// nodeAllocatable is what an Autopilot node advertises (ADR 0031).
+type nodeAllocatable struct {
+	CPUMilli int64 `json:"cpuMilli"`
+	MemoryKi int64 `json:"memoryKi"`
+}
+
+// allocatable is the shape's capacity less GKE's reservations: 6% of the
+// first core, 1% of the next, 0.5% of the next 2 and 0.25% of the rest;
+// 25% of the first 4 GiB of memory, 20% of the next 4 GiB, 10% of the
+// next 8 GiB, 6% of the next 112 GiB and 2% of the rest, and the eviction
+// threshold.
+func (m machineShape) allocatable() nodeAllocatable {
+	cpu := 60 + 10*min(max(m.CPUs-1, 0), 1) + 5*min(max(m.CPUs-2, 0), 2) + 25*max(m.CPUs-4, 0)/10
+	var memRes int64
+	left := m.MemKi
+	for _, t := range []struct{ ki, pct int64 }{{4 << 20, 25}, {4 << 20, 20}, {8 << 20, 10}, {112 << 20, 6}, {left, 2}} {
+		part := min(left, t.ki)
+		memRes += part * t.pct / 100
+		left -= part
+	}
+	return nodeAllocatable{CPUMilli: m.CPUs*1000 - cpu, MemoryKi: m.MemKi - memRes - evictionKi}
 }
 
 // refusePoolChange refuses a change to an Autopilot cluster's node pools.

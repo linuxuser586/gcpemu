@@ -89,6 +89,11 @@ type nodeRecord struct {
 	// Password is the k3s node password, kept so that a recreated node
 	// container can re-register under the same name.
 	Password string `json:"password"`
+	// MachineType is an Autopilot node's shape (autopilotShapes), and
+	// Labels the labels it was provisioned with for its pods' compute
+	// class and Spot selectors (FR-GKE-015).
+	MachineType string            `json:"machineType,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 // dialIP is the address the emulator reaches the node at.
