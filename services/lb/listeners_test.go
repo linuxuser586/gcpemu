@@ -115,7 +115,9 @@ func TestSingleLoopback(t *testing.T) {
 // TestPrivilegedWildcard: macOS lets an unprivileged process bind port
 // 443 only on the wildcard address, so the first forwarding rule on it
 // listens there, reported as 127.0.0.1:443, and serves the --lb-bind
-// addresses on the port too; a second rule gets a fallback port.
+// addresses on the port too; a second rule gets a fallback port. It
+// forces single-loopback mode, as hosts with loopback aliases give each
+// rule its own address (#646).
 func TestPrivilegedWildcard(t *testing.T) {
 	if goruntime.GOOS != "darwin" {
 		t.Skip("macOS only")
@@ -126,6 +128,8 @@ func TestPrivilegedWildcard(t *testing.T) {
 	}
 	lan := hostIP(t)
 	e := startLBBind(t, lan)
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
+	lb.SetSingleLoopback(svc, true)
 	e.lanLB(newBackend(t))
 	e.twoRules("443")
 	want := net.JoinHostPort(lan, "443")
