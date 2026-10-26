@@ -2,6 +2,7 @@ package link_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -16,11 +17,12 @@ func issuing(c *link.Config) {
 	c.Authenticate = func(_ context.Context, token string) (string, bool) { return runner, token == "tok" }
 }
 
-// tokenDelegating pairs a laptop with an office that issues runner's
-// access tokens and shares team-shared, which the laptop delegates.
-func tokenDelegating(t *testing.T) (laptop, office *linked) {
+// tokenDelegating pairs a laptop, configured by opts, with an office that
+// issues runner's access tokens and shares team-shared, which the laptop
+// delegates.
+func tokenDelegating(t *testing.T, opts ...func(*link.Config)) (laptop, office *linked) {
 	t.Helper()
-	laptop, office = newLinked(t, "laptop", ""), newLinked(t, "office", "", issuing)
+	laptop, office = newLinked(t, "laptop", "", opts...), newLinked(t, "office", "", issuing)
 	pair(t, laptop, office)
 	if err := office.Share("team-shared", ""); err != nil {
 		t.Fatal(err)
@@ -31,7 +33,7 @@ func tokenDelegating(t *testing.T) (laptop, office *linked) {
 	return laptop, office
 }
 
-// setLink changes the laptop's link name.
+// setLink changes the laptop's link named name.
 func setLink(t *testing.T, laptop *linked, name string, change func(*link.Link)) {
 	t.Helper()
 	if err := laptop.store.Update(func(ls []link.Link) ([]link.Link, error) {
@@ -69,14 +71,7 @@ func TestAuthenticateWithUnusableLink(t *testing.T) {
 	debug := func(c *link.Config) {
 		c.Log = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
-	laptop, office := newLinked(t, "laptop", "", debug), newLinked(t, "office", "", issuing)
-	pair(t, laptop, office)
-	if err := office.Share("team-shared", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := laptop.Delegate(ctxT(t), "team-shared", "office"); err != nil {
-		t.Fatal(err)
-	}
+	laptop, office := tokenDelegating(t, debug)
 
 	setLink(t, laptop, "office", func(l *link.Link) { l.Address = "" })
 	p, unreachable := laptop.Authenticate(ctxT(t), "tok")
@@ -91,7 +86,7 @@ func TestAuthenticateWithUnusableLink(t *testing.T) {
 	if err := office.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if p, unreachable := laptop.Authenticate(ctxT(t), "tok"); p != "" || len(unreachable) != 1 || unreachable["office"] == nil {
+	if p, unreachable := laptop.Authenticate(ctxT(t), "tok"); p != "" || len(unreachable) != 1 || !strings.Contains(fmt.Sprint(unreachable["office"]), `link "office" does not answer`) {
 		t.Errorf("Authenticate with the office down = %q %v, want none, the office unreachable", p, unreachable)
 	}
 	newLinkedAt(t, "office", office.dir, office.addr, issuing)

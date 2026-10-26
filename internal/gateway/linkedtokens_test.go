@@ -44,7 +44,7 @@ const linkedTok = "ya29.gcpemu.issued-elsewhere"
 // a request with it fails UNAVAILABLE naming the link and why, in every
 // IAM mode, and never runs as the default Principal (#733).
 func TestLinkedTokenWithUnreachableLink(t *testing.T) {
-	down := map[string]error{"office": errors.New("link 127.0.0.1:1: connection refused")}
+	down := map[string]error{"office": errors.New(`link "office" does not answer: connection refused`)}
 	for _, mode := range []string{config.IAMEnforce, config.IAMAudit, config.IAMOff} {
 		g := linkedTokenGateway(t, mode, "", down)
 		code, body, ran := bearerREST(g, linkedTok)

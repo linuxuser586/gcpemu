@@ -292,14 +292,14 @@ func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, e
 }
 
 // unreachableLinks is the UNAVAILABLE error for an access token this
-// Instance did not issue while the links unreachable, whose Linked
-// Instances may have issued it, cannot be asked about it.
+// Instance did not issue, which the Linked Instances of the links
+// unreachable may have issued but cannot be asked about.
 func unreachableLinks(unreachable map[string]error) error {
 	why := make([]string, 0, len(unreachable))
 	for _, name := range slices.Sorted(maps.Keys(unreachable)) {
-		why = append(why, fmt.Sprintf("link %q: %v", name, unreachable[name]))
+		why = append(why, unreachable[name].Error())
 	}
-	return apierr.New(codes.Unavailable, "Cannot authenticate the access token: this Instance did not issue it, and the Linked Instance that may have cannot be reached (%s).", strings.Join(why, "; "))
+	return apierr.New(codes.Unavailable, "Cannot authenticate the access token: this Instance did not issue it, and a Linked Instance that may have issued it cannot be reached: %s.", strings.Join(why, "; "))
 }
 
 // Router returns the registration surface for one service.

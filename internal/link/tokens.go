@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -57,8 +58,8 @@ func (m *Manager) serveToken(w http.ResponseWriter, r *http.Request) {
 
 // Authenticate returns the Principal of token, which this Instance did not
 // issue, as a Linked Instance it delegates to issued it, and the links it
-// could not ask, with why: broken, with no --link-bind address, or not
-// answering.
+// could not ask, each with why, naming the link: broken, with no
+// --link-bind address, or not answering.
 func (m *Manager) Authenticate(ctx context.Context, token string) (principal string, unreachable map[string]error) {
 	now := time.Now()
 	m.mu.Lock()
@@ -105,8 +106,10 @@ func (m *Manager) askToken(ctx context.Context, name, token string) (string, err
 		return "", err
 	}
 	var reply struct{ Principal string }
-	_, err = m.call(ctx, l.Address, http.MethodPost, "/link/v1/tokens", l.pinned(), map[string]string{"token": token}, &reply)
-	return reply.Principal, err
+	if _, err := m.call(ctx, l.Address, http.MethodPost, "/link/v1/tokens", l.pinned(), map[string]string{"token": token}, &reply); err != nil {
+		return "", fmt.Errorf("link %q does not answer: %w", name, err)
+	}
+	return reply.Principal, nil
 }
 
 // federatedPrincipal matches the Project of a Federated principal: a
