@@ -28,8 +28,9 @@ import (
 // NET_BIND_SERVICE, it runs the agent in LAN mode, listens on host
 // addresses on ports the emulator cannot bind (privileged ports) and
 // relays each connection, with a PROXY v2 header, to an ingress on the
-// host's loopback. It forwards plain TCP. The lb Service's lb-lan
-// (--lb-bind) and the Google front end's gfe-lan (--gfe-bind) are two.
+// host's loopback. It forwards plain TCP. The lb Service's lb-lan, the
+// LAN load balancing relay (--lb-bind), and the Google front end's
+// gfe-lan, the LAN front-end relay (--gfe-bind), are two.
 type LANRelay struct {
 	// Runtime returns the container runtime.
 	Runtime func(context.Context) (*runtime.Manager, error)
