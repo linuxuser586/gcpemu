@@ -749,8 +749,7 @@ func (s *Service) waitAdmin(ctx context.Context, d *deps, id string) (adminCreds
 			return false, err
 		}
 		if !ct.Running {
-			logs, _ := d.rt.Logs(ctx, id, 30)
-			return false, &serverExitedError{code: ct.ExitCode, logs: strings.TrimSpace(logs)}
+			return false, &serverExitedError{code: ct.ExitCode, logs: d.rt.LogTail(ctx, ct, 30)}
 		}
 		b, err := d.rt.CopyFrom(ctx, id, "/etc/rancher/k3s/k3s.yaml")
 		if err != nil || len(b) == 0 {
@@ -1273,17 +1272,14 @@ func nodeExited(ctx context.Context, rt *runtime.Manager, name, node string) err
 }
 
 // containerExit reports whether container name has exited, with its exit
-// code and the tail of its logs.
+// code and the tail of its logs, or where they are if the runtime cannot
+// read them (#633).
 func containerExit(ctx context.Context, rt *runtime.Manager, name string) (code int, logs string, ok bool) {
 	ct, err := rt.InspectContainer(ctx, name)
 	if err != nil || (ct.Status != "exited" && ct.Status != "dead") {
 		return 0, "", false
 	}
-	logs, err = rt.Logs(ctx, name, 30)
-	if err != nil {
-		logs = "(logs unavailable: " + err.Error() + ")"
-	}
-	return ct.ExitCode, strings.TrimSpace(logs), true
+	return ct.ExitCode, rt.LogTail(ctx, ct, 30), true
 }
 
 // reconcilePool starts a pool's missing node containers and waits for them.

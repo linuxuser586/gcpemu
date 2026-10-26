@@ -826,6 +826,11 @@ type ContainerSpec struct {
 	DNS []string
 	// ExtraHosts are "name:ip" lines added to the container's /etc/hosts.
 	ExtraHosts []string
+	// LogDriver is the container's log driver; "" keeps the runtime's
+	// default (but see Manager.CreateContainer).
+	LogDriver string
+	// LogOpts are LogDriver's options; they apply only with a LogDriver.
+	LogOpts map[string]string
 }
 
 // Container is an inspected container.
@@ -887,6 +892,9 @@ func (c *Client) CreateContainer(ctx context.Context, s ContainerSpec) (string, 
 	}
 	if s.CgroupnsHost {
 		host["CgroupnsMode"] = "host"
+	}
+	if s.LogDriver != "" {
+		host["LogConfig"] = map[string]any{"Type": s.LogDriver, "Config": s.LogOpts}
 	}
 	body := map[string]any{
 		"Image":        s.Image,
