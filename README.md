@@ -707,7 +707,8 @@ one issue per constraint, naming each pod's top-level workload as `<namespace>/<
 `INCOMPATIBILITY` for what Autopilot refuses, `ADDITIONAL_CONFIG_REQUIRED` for `NET_ADMIN`, and
 `PASSED_WITH_OPTIONAL_CONFIG` (`autogke-pod-resources`) for pods whose requests Autopilot would
 change. A Standard cluster takes `--enable-autopilot-compatibility-auditing` and stores it. The
-check doesn't wait for auditing to be on.
+check doesn't wait for auditing to be on. Pods you put in `kube-system` yourself aren't checked,
+though Autopilot would refuse them, because the check can't tell them from the cluster's own.
 A cluster whose `monitoring_config` enables `SYSTEM_COMPONENTS` exports its node, pod and
 container CPU and memory usage, requests, limits, allocatable and restarts (with the last
 termination reason, e.g. `OOMKilled`) over OTLP when the Instance's environment sets
