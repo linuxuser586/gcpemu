@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
 // Delegated APIs (ADR 0027): an API that no Service serves, such as
@@ -150,7 +151,7 @@ func (g *Gateway) delegate(d *delegatedAPI, target string, rest, grpc http.Round
 	if err := g.delegable(d); err != nil {
 		value := d.Address
 		if d.Managed {
-			value = "managed"
+			value = config.Managed
 		}
 		return fmt.Errorf("--external %s=%s: %w", d.API, value, err)
 	}

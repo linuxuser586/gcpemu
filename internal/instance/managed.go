@@ -29,7 +29,18 @@ const (
 	// managedStart bounds how long a started Managed emulator may take to
 	// accept connections; the image pull is not counted.
 	managedStart = 3 * time.Minute
+	// managedRetry is how long a start waits before asking a container
+	// runtime that failed transiently again.
+	managedRetry = 2 * time.Second
+	// managedDialTimeout bounds each connection attempt while it starts.
+	managedDialTimeout = 2 * time.Second
+	// managedPoll is how often a start checks whether it accepts
+	// connections.
+	managedPoll = 250 * time.Millisecond
 )
+
+// errStarting is why a Managed emulator is not running while it starts.
+var errStarting = errors.New("it is starting")
 
 // managedSpec is how one API's Managed emulator runs.
 type managedSpec struct {
@@ -60,13 +71,16 @@ type managedEmulator struct {
 	spec managedSpec
 	c    *containers
 
-	// runMu serialises starts: the Instance's, and Reset's.
+	// runMu is held by a start, the Instance's or Reset's, until it ends.
 	runMu sync.Mutex
 
 	mu sync.Mutex
 	// ip is its address on the services network once it accepts
 	// connections, else "".
 	ip string
+	// gen counts its starts, so a connection dialed to a container that
+	// was replaced meanwhile is told apart even at the same address.
+	gen int
 	// why says why it is not running while ip is "".
 	why error
 	// noRuntime is whether why is that there is no usable container
@@ -76,8 +90,9 @@ type managedEmulator struct {
 	conns map[net.Conn]struct{}
 }
 
+// newManagedEmulator returns the Managed emulator for api, not started.
 func newManagedEmulator(api string, c *containers) *managedEmulator {
-	return &managedEmulator{api: api, spec: managedSpecs[api], c: c, why: errors.New("it is starting"), conns: map[net.Conn]struct{}{}}
+	return &managedEmulator{api: api, spec: managedSpecs[api], c: c, why: errStarting, conns: map[net.Conn]struct{}{}}
 }
 
 // start (re)creates its container, replacing any it has, and waits until
@@ -85,8 +100,24 @@ func newManagedEmulator(api string, c *containers) *managedEmulator {
 func (m *managedEmulator) start(ctx context.Context) error {
 	m.runMu.Lock()
 	defer m.runMu.Unlock()
+	return m.startLocked(ctx)
+}
+
+// replace starts it again, clearing its data, unless a start is under way:
+// that one's container is new, and no client has reached it yet.
+func (m *managedEmulator) replace(ctx context.Context) error {
+	if !m.runMu.TryLock() {
+		return nil
+	}
+	defer m.runMu.Unlock()
+	return m.startLocked(ctx)
+}
+
+// startLocked is start, with runMu held.
+func (m *managedEmulator) startLocked(ctx context.Context) error {
 	m.mu.Lock()
-	m.ip, m.why, m.noRuntime = "", errors.New("it is starting"), false
+	m.ip, m.why, m.noRuntime = "", errStarting, false
+	m.gen++
 	conns := m.conns
 	m.conns = map[net.Conn]struct{}{}
 	m.mu.Unlock()
@@ -104,8 +135,8 @@ func (m *managedEmulator) start(ctx context.Context) error {
 	return err
 }
 
-// status records why it is not running yet.
-func (m *managedEmulator) status(format string, args ...any) {
+// starting records what a start is doing, as why it is not running yet.
+func (m *managedEmulator) starting(format string, args ...any) {
 	m.mu.Lock()
 	m.why = fmt.Errorf(format, args...)
 	m.mu.Unlock()
@@ -116,11 +147,11 @@ func (m *managedEmulator) status(format string, args ...any) {
 func (m *managedEmulator) run(ctx context.Context) (string, error) {
 	rt, err := m.c.Runtime(ctx)
 	for err != nil && !errors.Is(err, emu.ErrNoRuntime) { // transient
-		m.status("it is waiting for the container runtime: %v", err)
+		m.starting("it is waiting for the container runtime: %v", err)
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		case <-time.After(2 * time.Second):
+		case <-time.After(managedRetry):
 		}
 		rt, err = m.c.Runtime(ctx)
 	}
@@ -135,11 +166,11 @@ func (m *managedEmulator) run(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m.status("it is starting: pulling %s", m.spec.image)
+	m.starting("it is starting: pulling %s", m.spec.image)
 	if err := rt.EnsureImage(ctx, m.spec.image, rt.Offline); err != nil {
 		return "", fmt.Errorf("image %s: %w", m.spec.image, err)
 	}
-	m.status("it is starting")
+	m.starting("%w", errStarting)
 	name := rt.Name("external", m.api)
 	_ = rt.RemoveContainer(ctx, name, true)
 	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
@@ -154,7 +185,7 @@ func (m *managedEmulator) run(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ip, err := m.wait(ctx, rt, id, svc.Name)
+	ip, err := m.startAndWait(ctx, rt, id, svc.Name)
 	if err != nil {
 		_ = rt.RemoveContainer(context.WithoutCancel(ctx), id, true)
 		return "", err
@@ -162,9 +193,9 @@ func (m *managedEmulator) run(ctx context.Context) (string, error) {
 	return ip, nil
 }
 
-// wait starts container id and waits until it accepts connections on its
-// ports, returning its address on network.
-func (m *managedEmulator) wait(ctx context.Context, rt *runtime.Manager, id, network string) (string, error) {
+// startAndWait starts container id and waits until it accepts connections
+// on its ports, returning its address on network.
+func (m *managedEmulator) startAndWait(ctx context.Context, rt *runtime.Manager, id, network string) (string, error) {
 	if err := rt.StartContainer(ctx, id); err != nil {
 		return "", err
 	}
@@ -180,7 +211,7 @@ func (m *managedEmulator) wait(ctx context.Context, rt *runtime.Manager, id, net
 	defer cancel()
 	for _, port := range []int{m.spec.grpcPort, m.spec.restPort} {
 		for {
-			dctx, dcancel := context.WithTimeout(ctx, 2*time.Second)
+			dctx, dcancel := context.WithTimeout(ctx, managedDialTimeout)
 			c, err := m.c.DialContext(dctx, "tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
 			dcancel()
 			if err == nil {
@@ -194,7 +225,7 @@ func (m *managedEmulator) wait(ctx context.Context, rt *runtime.Manager, id, net
 			select {
 			case <-ctx.Done():
 				return "", fmt.Errorf("it did not accept connections on port %d: %w", port, ctx.Err())
-			case <-time.After(250 * time.Millisecond):
+			case <-time.After(managedPoll):
 			}
 		}
 	}
@@ -225,7 +256,7 @@ func (m *managedEmulator) readiness() error {
 // dial is its gateway.ManagedDialer.
 func (m *managedEmulator) dial(ctx context.Context, grpc bool) (net.Conn, error) {
 	m.mu.Lock()
-	ip, why := m.ip, m.why
+	ip, why, gen := m.ip, m.why, m.gen
 	m.mu.Unlock()
 	if ip == "" {
 		return nil, why
@@ -240,9 +271,9 @@ func (m *managedEmulator) dial(ctx context.Context, grpc bool) (net.Conn, error)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.ip != ip { // replaced meanwhile
+	if m.gen != gen { // replaced meanwhile
 		c.Close()
-		return nil, errors.New("it is starting")
+		return nil, errStarting
 	}
 	t := &trackedConn{Conn: c, m: m}
 	m.conns[t] = struct{}{}
@@ -257,6 +288,7 @@ type trackedConn struct {
 	once sync.Once
 }
 
+// Close closes the connection and forgets it.
 func (t *trackedConn) Close() error {
 	t.once.Do(func() {
 		t.m.mu.Lock()
@@ -279,14 +311,14 @@ func (in *Instance) startManaged() {
 }
 
 // resetManaged replaces every Managed emulator's container, clearing its
-// data (Reset).
+// data (Reset). One still on its first start is left to finish it.
 func (in *Instance) resetManaged() error {
 	errs := make([]error, 0, len(in.managed))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, m := range in.managed {
 		wg.Go(func() {
-			if err := m.start(in.managedCtx); err != nil {
+			if err := m.replace(in.managedCtx); err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("the Managed emulator for %s: %w", m.api, err))
 				mu.Unlock()
@@ -297,9 +329,14 @@ func (in *Instance) resetManaged() error {
 	return errors.Join(errs...)
 }
 
-// stopManaged stops starting Managed emulators; their containers go with
-// the Instance's others.
+// stopManaged stops starting Managed emulators, the Instance's starts and
+// Reset's, and waits until they end, so that none creates a container once
+// the Instance's others are removed, which theirs go with.
 func (in *Instance) stopManaged() {
 	in.managedCancel()
 	in.managedWG.Wait()
+	for _, m := range in.managed {
+		m.runMu.Lock()
+		m.runMu.Unlock() //nolint:staticcheck // waits for a start to end
+	}
 }
