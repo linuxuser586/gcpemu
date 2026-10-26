@@ -84,7 +84,7 @@ func TestReferenceStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.tf = newTofu(t, tofuBin, r.inst.Endpoint("gateway"))
+	r.tf = newTofu(t, tofuBin, r.inst.Endpoint("gateway"), "stack")
 	r.web = r.lbClient()
 
 	r.step("1 tofu apply", true, r.step1)

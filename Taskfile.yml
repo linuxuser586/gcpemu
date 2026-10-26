@@ -275,10 +275,19 @@ tasks:
   # download Helm, Istio charts and images: set GCPEMU_NET_TESTS=0 to skip them)
   # and the Containerized Instance tests, which build the OCI image (they need
   # the net and Docker too). Each test's own checks decide whether it runs.
+  # TestAutopilot alone is skipped: task autopilot runs it, in its own CI job.
   e2e:
     desc: Run the SRS 11.2 Reference stack and the Containerized Instance tests
     cmds:
-      - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -count=1 -timeout 30m -v
+      - GCPEMU_NET_TESTS=${GCPEMU_NET_TESTS:-1} go test -tags e2e ./e2e -skip '^TestAutopilot$' -count=1 -timeout 30m -v
+
+  # SRS 11.4: an Autopilot cluster from OpenTofu at each supported minor, with
+  # Kubernetes conformance (Sonobuoy quick mode), scaling past one node, a
+  # privileged pod refused and Istio sidecar injection. Needs the net.
+  autopilot:
+    desc: Run the SRS 11.4 Autopilot acceptance test
+    cmds:
+      - GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run '^TestAutopilot$' -count=1 -timeout 45m -v
 
   # #606: the Pre-release host checks (docs/release.md) on each runtime in
   # RUNTIMES, docker contexts (default: the Required runtimes). Every OS
