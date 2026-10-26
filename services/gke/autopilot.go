@@ -10,13 +10,15 @@ import (
 // Autopilot clusters (FR-GKE-012). GKE owns their nodes: it sets Workload
 // Identity, Dataplane V2, a release channel, Shielded nodes and vertical
 // Pod autoscaling, refuses requests that contradict them, and reports the
-// node pools it manages while refusing to let the user change them. The
-// managed pool starts with one node; autoscale.go adds and removes nodes
-// for the cluster's pods (FR-GKE-015), and restrictions.go applies Workload
-// restrictions to them (FR-GKE-016).
+// node pools it manages while refusing to let the user change them. It
+// also turns managed Prometheus on unless the request turns it off
+// (FR-GKE-018). The managed pool starts with one node; autoscale.go adds
+// and removes nodes for the cluster's pods (FR-GKE-015), and
+// restrictions.go applies Workload restrictions to them (FR-GKE-016).
 //
 // No Recording of an Autopilot cluster exists yet (ADR 0023), so the
-// error messages below are GKE's as best known, not checked against one.
+// defaults and error messages below are GKE's as best known, not checked
+// against one.
 
 func autopilotOn(c *containerpb.Cluster) bool { return c.GetAutopilot().GetEnabled() }
 
@@ -53,6 +55,13 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 		c.IpAllocationPolicy = &containerpb.IPAllocationPolicy{}
 	}
 	c.IpAllocationPolicy.UseIpAliases = true
+	// Managed Prometheus is on unless the request turns it off (FR-GKE-018).
+	if c.MonitoringConfig == nil {
+		c.MonitoringConfig = &containerpb.MonitoringConfig{}
+	}
+	if c.MonitoringConfig.ManagedPrometheusConfig == nil {
+		c.MonitoringConfig.ManagedPrometheusConfig = &containerpb.ManagedPrometheusConfig{Enabled: true}
+	}
 	// The managed pool gets GKE's node config, not the request's.
 	c.NodeConfig = nil
 	return nil

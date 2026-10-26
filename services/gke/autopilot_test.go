@@ -46,20 +46,7 @@ func createRunning(t *testing.T, a *api, parent string, c *containerpb.Cluster) 
 	}
 	r, _ := parseRef(parent, "", "", "", "", 0)
 	r.Cluster = c.Name
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		got, err := a.s.getOp(r.Project, op.Name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Status == containerpb.Operation_DONE {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("create operation not done: %v", got)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitOp(t, a, r.Project, op.Name)
 	if err := a.s.updateCluster(r.key(), func(_ *clusterRecord, c *containerpb.Cluster) error {
 		c.Status = containerpb.Cluster_RUNNING
 		return nil
@@ -71,6 +58,25 @@ func createRunning(t *testing.T, a *api, parent string, c *containerpb.Cluster) 
 		t.Fatalf("GetCluster: %v", err)
 	}
 	return got
+}
+
+// waitOp waits for the operation named name in project to end.
+func waitOp(t *testing.T, a *api, project, name string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := a.s.getOp(project, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == containerpb.Operation_DONE {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("operation not done: %v", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func autopilot(name string) *containerpb.Cluster {
