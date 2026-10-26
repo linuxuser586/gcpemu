@@ -43,7 +43,8 @@ func acquireHostLock(path string, deadline time.Time) (release func(), err error
 // acquireLock takes an exclusive OS lock on whichever of paths is free
 // first, so that len(paths) holders get in at once. The OS releases it if
 // the process dies. It polls until deadline (zero: forever), then fails
-// with errLockHeld.
+// with errLockHeld. The caller keeps release reachable until it calls it:
+// a dropped release lets the collector close the file, dropping the lock.
 func acquireLock(paths []string, deadline time.Time) (release func(), err error) {
 	files := make([]*os.File, 0, len(paths))
 	defer func() {
