@@ -351,6 +351,14 @@ _Avoid_: host node limit, quota
 What an Autopilot cluster refuses or changes in a pod before it is admitted: it rejects privileged pods, host namespaces, most host paths and disallowed capabilities, refuses user writes to `kube-system`, and sets resource requests to Autopilot's minimums and ratios.
 _Avoid_: Warden (GKE's internal name), Autopilot policy
 
+**OTLP endpoint**:
+Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, the telemetry is dropped.
+_Avoid_: collector endpoint, metrics endpoint
+
+**Managed collector**:
+The OTLP receiver a cluster serves at GKE's in-cluster collector address, for workloads' logs, metrics and traces. It forwards them to the OTLP endpoint.
+_Avoid_: OTel sidecar, collector (unqualified)
+
 **Secret Manager secret**:
 A named container in Secret Manager whose payloads are held in its Secret versions. Always qualify it so it is not confused with a Kubernetes Secret.
 _Avoid_: secret (unqualified)
