@@ -82,10 +82,6 @@ const (
 	lbServicelb
 )
 
-// publishedHost is the address published ports are served on in the
-// emulator's container; "" is the wildcard.
-var publishedHost = ""
-
 // lbService is the host side of one LoadBalancer Service.
 type lbService struct {
 	sig     string // the ports it serves, to notice changes
@@ -354,8 +350,11 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 	if pub == nil {
 		pub = published.NewPorts(nil, s.env.Config)
 	}
+	s.loopMu.Lock()
+	host := s.publishedHost
+	s.loopMu.Unlock()
 	listen := func(port int) (net.Listener, error) {
-		return net.Listen("tcp", net.JoinHostPort(publishedHost, strconv.Itoa(port)))
+		return net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	}
 	l.unserved = false
 	var missing []int
@@ -371,7 +370,7 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 			continue
 		}
 		l.ex = append(l.ex, np.Serve(b.Listener, s.nodePorts(key, p.nodePort)))
-		l.own[p.port] = ownListener{addr: net.JoinHostPort(publishedHost, strconv.Itoa(b.Port)), wildcard: publishedHost == ""}
+		l.own[p.port] = ownListener{addr: net.JoinHostPort(host, strconv.Itoa(b.Port)), wildcard: host == ""}
 		s.env.Endpoints.Set(ep, b.Host)
 		l.endpoints = append(l.endpoints, ep)
 		l.served[p.port] = true

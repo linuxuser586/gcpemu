@@ -133,10 +133,14 @@ type Service struct {
 	pubVia string
 	pubIPs []string
 	// loops maps cluster key/namespace/name to the loopback address a
-	// LoadBalancer Service holds on a VM runtime (lbservices.go). loopMu
-	// is never held while calling another Service.
-	loopMu sync.Mutex
-	loops  map[string]string
+	// LoadBalancer Service holds on a VM runtime (lbservices.go), and
+	// publishedHost is the address LoadBalancer Services' Published ports
+	// are served on in the emulator's container ("" is the wildcard; set
+	// by tests). loopMu guards both, and is never held while calling
+	// another Service.
+	loopMu        sync.Mutex
+	loops         map[string]string
+	publishedHost string
 	// hostMu guards the Services served to host clients at Loopback
 	// aliases (hostsvc.go): hostSvcs by CLUSTERKEY/NAMESPACE/NAME,
 	// hostNames each cluster's answered Services by namespace/name,

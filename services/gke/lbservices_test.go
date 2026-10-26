@@ -232,8 +232,9 @@ func TestLBServicesPublished(t *testing.T) {
 		defer logMu.Unlock()
 		return logs.Write(b)
 	}), nil))
-	publishedHost = "127.0.0.1"
-	t.Cleanup(func() { publishedHost = "" })
+	s.loopMu.Lock()
+	s.publishedHost = "127.0.0.1"
+	s.loopMu.Unlock()
 	own, ranged := freePort(t), freePort(t)
 	s.env.Config.PortRange = fmt.Sprintf("%d-%d", ranged, ranged)
 	published := map[int]string{own: net.JoinHostPort("127.0.0.1", strconv.Itoa(own)), ranged: "127.0.0.1:40001"}
