@@ -75,6 +75,8 @@ type Client struct {
 	joined   func(Network, bool)
 	// memberAddr pins the member's address per network (SetMemberAddr).
 	memberAddr func(network string) string
+	// reserved returns the addresses attach never takes (SetReserved).
+	reserved func() []string
 	// starts records the containers the client started (Disrupted).
 	startsMu sync.Mutex
 	starts   map[string]start // by container ID

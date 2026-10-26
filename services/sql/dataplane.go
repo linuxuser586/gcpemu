@@ -425,6 +425,9 @@ func (s *Service) publicIPAfter(ctx context.Context, rt *runtime.Manager, ext ne
 	if err != nil {
 		return "", fmt.Errorf("%w (looking up what holds the Public IP %s: %v)", cause, ip, err)
 	}
+	if h.Name == containerName(rt, project, name) {
+		held = false // the container just tried, which failed to be removed
+	}
 	next, err := nextPublicIP(ip, ext.Subnet, rt.InstanceID, h, held)
 	if err != nil {
 		return "", fmt.Errorf("%w (%v)", err, cause)
@@ -438,15 +441,15 @@ func (s *Service) publicIPAfter(ctx context.Context, rt *runtime.Manager, ext ne
 // nextPublicIP decides, after a start of a Cloud SQL instance at the
 // Public IP ip failed, what its next start asks for (ADR 0035): ip again
 // while nothing holds it, and "" (a new address) when ip is outside the
-// External network's subnet or holder, a container that is not the
-// Instance instanceID's own, holds it. A holder of the Instance's own took
+// External network's subnet (when known) or holder, a container that is
+// not the Instance instanceID's own, holds it. A holder of the Instance's own took
 // a reserved address, which no Service may: that is an error, and the
 // Public IP never moves for it.
 func nextPublicIP(ip, subnet, instanceID string, holder runtime.Container, held bool) (string, error) {
 	p, perr := netip.ParsePrefix(subnet)
 	a, aerr := netip.ParseAddr(ip)
 	switch {
-	case perr != nil || aerr != nil || !p.Contains(a):
+	case perr == nil && aerr == nil && !p.Contains(a):
 		return "", nil
 	case !held:
 		return ip, nil

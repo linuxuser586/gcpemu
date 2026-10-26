@@ -109,6 +109,34 @@ func (c *Client) SetMemberAddr(addr func(network string) string) {
 	c.memberAddr = addr
 }
 
+// SetReserved has AttachSelf and AttachMember skip the addresses reserved
+// returns: those stored resources record and ask for again when their
+// containers are recreated (Manager.Reserved), such as a Cloud SQL
+// instance's Public IP (ADR 0035).
+func (c *Client) SetReserved(reserved func() []string) {
+	c.memberMu.Lock()
+	defer c.memberMu.Unlock()
+	c.reserved = reserved
+}
+
+// reservedIn returns the reserved addresses (SetReserved) within subnet.
+func (c *Client) reservedIn(subnet string) map[string]bool {
+	c.memberMu.Lock()
+	reserved := c.reserved
+	c.memberMu.Unlock()
+	p, err := netip.ParsePrefix(subnet)
+	if reserved == nil || err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, a := range reserved() {
+		if ip, err := netip.ParseAddr(a); err == nil && p.Contains(ip) {
+			out[ip.String()] = true
+		}
+	}
+	return out
+}
+
 // AttachMember connects the member container (SetMember) to network; it is
 // a no-op without a member and when already connected. With reserved, it
 // takes the subnet's second-to-last address as AttachSelf does. Without,
@@ -159,7 +187,8 @@ func (c *Client) attach(ctx context.Context, network, container string, reserved
 			err = c.Connect(ctx, network, container, ip)
 		}
 	}
-	if err != nil && ip != "" && !IsAlreadyExists(err) {
+	if err != nil && ip != "" && !IsAlreadyExists(err) && len(c.reservedIn(n.Subnet)) == 0 {
+		// The runtime's own choice could be a reserved address.
 		err = c.Connect(ctx, network, container, "")
 	}
 	if IsAlreadyExists(err) {
@@ -169,7 +198,8 @@ func (c *Client) attach(ctx context.Context, network, container string, reserved
 }
 
 // highestFree returns the highest address of n below its second-to-last
-// one that no container holds and that is not the gateway, or "".
+// one that no container holds and that is neither reserved (SetReserved)
+// nor the gateway, or "".
 func (c *Client) highestFree(ctx context.Context, n Network) string {
 	top, err := netip.ParseAddr(secondToLast(n.Subnet))
 	if err != nil {
@@ -179,6 +209,9 @@ func (c *Client) highestFree(ctx context.Context, n Network) string {
 	held, err := c.NetworkAddrs(ctx, n.Name)
 	if err != nil {
 		return ""
+	}
+	for a := range c.reservedIn(n.Subnet) {
+		held[a] = true
 	}
 	for a := top.Prev(); a.IsValid() && p.Contains(a) && a != p.Masked().Addr(); a = a.Prev() {
 		if !held[a.String()] && a.String() != n.Gateway {

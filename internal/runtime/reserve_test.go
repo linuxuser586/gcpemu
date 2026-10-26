@@ -81,10 +81,11 @@ func TestReservedAddrs(t *testing.T) {
 }
 
 // fakeReserving serves network ext (172.24.0.0/16; .3 held by a running
-// container, .4 by a created one) and records the address each create and
+// container, .4 by a created one), with reserved as the Manager's and the
+// Client's reserved addresses, and records the address each create and
 // connect asks for on it. It refuses the addresses in refuse as taken, as
 // the runtime does for one held outside its view.
-func fakeReserving(t *testing.T, refuse ...string) (*Manager, func() []string) {
+func fakeReserving(t *testing.T, reserved []string, refuse ...string) (*Manager, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
 	var asked []string
@@ -133,7 +134,8 @@ func fakeReserving(t *testing.T, refuse ...string) (*Manager, func() []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &Manager{Client: cl, Reserved: func() []string { return []string{"172.24.0.2", "172.24.0.5"} }}
+	cl.SetReserved(func() []string { return reserved })
+	m := &Manager{Client: cl, Reserved: func() []string { return reserved }}
 	return m, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
@@ -145,7 +147,7 @@ func fakeReserving(t *testing.T, refuse ...string) (*Manager, func() []string) {
 // holds a reserved address gets the lowest free address outside the
 // reserved set, as one created on it does (#673); a fixed address is kept.
 func TestReservedAddrsConnect(t *testing.T) {
-	m, asked := fakeReserving(t)
+	m, asked := fakeReserving(t, []string{"172.24.0.2", "172.24.0.5"})
 	if err := m.Connect(context.Background(), "ext", "edge", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +163,7 @@ func TestReservedAddrsConnect(t *testing.T) {
 // one outside the reserved set, never by the runtime's own choice, which
 // could be a reserved address whose container has not started (#673).
 func TestReservedAddrsRefused(t *testing.T) {
-	m, asked := fakeReserving(t, "172.24.0.6")
+	m, asked := fakeReserving(t, []string{"172.24.0.2", "172.24.0.5"}, "172.24.0.6")
 	if _, err := m.CreateContainer(context.Background(), ContainerSpec{Name: "node", Networks: []Attachment{{Network: "ext"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -211,5 +213,45 @@ func TestAddrHolder(t *testing.T) {
 	}
 	if h, _, _ := cl.AddrHolder(context.Background(), "ext", "172.24.0.3"); h.Labels[LabelInstance] != "i1" {
 		t.Errorf("holder labels = %v; want %s=i1", h.Labels, LabelInstance)
+	}
+}
+
+// When the runtime refuses every pick, the container is not created or
+// connected: the runtime's own choice could be a reserved address
+// (ADR 0035).
+func TestReservedAddrsAllRefused(t *testing.T) {
+	refused := []string{"172.24.0.6", "172.24.0.7", "172.24.0.8"}
+	m, asked := fakeReserving(t, []string{"172.24.0.2", "172.24.0.5"}, refused...)
+	if _, err := m.CreateContainer(context.Background(), ContainerSpec{Name: "node", Networks: []Attachment{{Network: "ext"}}}); err == nil {
+		t.Error("create succeeded; want the runtime's refusal")
+	}
+	if err := m.Connect(context.Background(), "ext", "edge", ""); err == nil {
+		t.Error("connect succeeded; want the runtime's refusal")
+	}
+	if got, want := asked(), append(slices.Clone(refused), refused...); !slices.Equal(got, want) {
+		t.Errorf("addresses asked for %q; want %q", got, want)
+	}
+}
+
+// The member container (the VM relay) skips reserved addresses too when it
+// takes the highest free address of a network it joins, and does not leave
+// the choice to the runtime when that is refused (ADR 0035).
+func TestReservedAddrsMember(t *testing.T) {
+	m, asked := fakeReserving(t, []string{"172.24.255.253"})
+	m.SetMember("relay", func(Network, bool) {})
+	if err := m.AttachMember(context.Background(), "ext", false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := asked(), []string{"172.24.255.252"}; !slices.Equal(got, want) {
+		t.Errorf("member asked for %q; want %q (.254 is the subnet's reserved address, .253 a Public IP)", got, want)
+	}
+
+	m, asked = fakeReserving(t, []string{"172.24.255.253"}, "172.24.255.252")
+	m.SetMember("relay", func(Network, bool) {})
+	if err := m.AttachMember(context.Background(), "ext", false); err == nil {
+		t.Error("member attach succeeded; want the runtime's refusal")
+	}
+	if got, want := asked(), []string{"172.24.255.252"}; !slices.Equal(got, want) {
+		t.Errorf("member asked for %q; want %q", got, want)
 	}
 }

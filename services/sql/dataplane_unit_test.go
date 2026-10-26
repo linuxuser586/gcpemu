@@ -18,7 +18,7 @@ func TestHostPortTaken(t *testing.T) {
 		{"failed to set up container networking: Address already in use", false},
 		{"driver failed programming external connectivity on endpoint gcpemu-x-sql: Error starting userland proxy: listen tcp4 127.0.0.1:41234: bind: address already in use", true},
 		{"rootlessport listen tcp 127.0.0.1:41234: bind: address already in use", true},
-		// Another port on the same address is not the instance's.
+		// Another port on the same address is not the Cloud SQL instance's.
 		{"listen tcp4 127.0.0.1:412345: bind: address already in use", false},
 		{"some other failure", false},
 	} {
@@ -50,6 +50,8 @@ func TestNextPublicIP(t *testing.T) {
 		{name: "another Instance", subnet: subnet, holder: other, held: true, want: ""},
 		{name: "another Service of the Instance", subnet: subnet, holder: ours, held: true, wantErr: true},
 		{name: "outside the range", subnet: "172.22.0.0/16", want: ""},
+		{name: "range unknown", subnet: "", want: ip},
+		{name: "range unknown and held from outside", subnet: "", holder: stranger, held: true, want: ""},
 		{name: "outside the range and held", subnet: "172.22.0.0/16", holder: ours, held: true, want: ""},
 	} {
 		got, err := nextPublicIP(ip, c.subnet, inst, c.holder, c.held)

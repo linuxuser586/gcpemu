@@ -4,10 +4,10 @@ Clients connect to a Cloud SQL instance's Public IP, so a restart that moves it 
 
 ## Considered options
 
-- **Move on any start failure.** The instance stays available, but at an address its clients don't know, and the cause (often a transient error) goes unseen.
+- **Move on any start failure.** The Cloud SQL instance stays available, but at an address its clients don't know, and the cause (often a transient error) goes unseen.
 - **Never move.** A container someone started by hand on the External network would keep the Cloud SQL instance FAILED until they removed it, and nothing in the emulator could clear it.
 
 ## Consequences
 
 - A start error the emulator does not recognise now ends in FAILED, where it used to end in RUNNABLE at a new address.
-- Another Service of the Instance holding a Public IP is a reservation bug. The emulator logs the holder as an error instead of working around it, so every path that gives a container an address on the External network must skip reserved addresses, not only container creation.
+- Another Service of the Instance holding a Public IP is a reservation bug. The start fails with an error naming the holder instead of working around it, so every path that gives a container an address on the External network must skip reserved addresses, not only container creation.
