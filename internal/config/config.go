@@ -72,9 +72,10 @@ type Config struct {
 	// Console serves the Web console under /console on the gateway
 	// (FR-UI-002); nil means the default of ConsoleEnabled.
 	Console *bool `yaml:"console" env:"CONSOLE"`
-	// LBBind lists extra addresses on which the load balancer's forwarding
-	// rule listeners also serve, on their real ports, alongside loopback.
-	// Nothing else is exposed there, so it needs no Insecure.
+	// LBBind lists extra addresses on which the load balancing Data plane,
+	// forwarding rules and GKE LoadBalancer Services, also serves, on
+	// their real ports, alongside loopback. Nothing else is exposed there,
+	// so it needs no Insecure.
 	LBBind []string `yaml:"lbBind" env:"LB_BIND"`
 	// GKEBind lists extra addresses on which every GKE cluster's
 	// Kubernetes API is also served, and which its serving certificate

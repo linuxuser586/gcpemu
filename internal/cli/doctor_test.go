@@ -829,3 +829,39 @@ func TestReportManagedExternal(t *testing.T) {
 		t.Errorf("firestore: %v %q fix %q", oks[1], whats[1], fixes[1])
 	}
 }
+
+// A running Instance lists the --lb-bind addresses a forwarding rule or a
+// GKE LoadBalancer Service cannot serve because another frontend holds
+// them, or the bind failed (#713).
+func TestReportLBBindUnavailable(t *testing.T) {
+	body := `{"listeners":[],"lanUnavailable":[
+		{"frontend":"LoadBalancer Service p/us-central1-a/c0/default/web","address":"192.0.2.7:8080","error":"already serves forwarding rule fr"}]}`
+	var out strings.Builder
+	reportUnpublished(&out, []byte(body))
+	want := "[WARN] LoadBalancer Service p/us-central1-a/c0/default/web is not served on --lb-bind address 192.0.2.7:8080: already serves forwarding rule fr"
+	if got := out.String(); !strings.Contains(got, want) {
+		t.Errorf("output lacks %q:\n%s", want, got)
+	}
+}
+
+// A running Instance names what each --lb-bind endpoint serves: a
+// forwarding rule, or a GKE LoadBalancer Service (#713).
+func TestReportLANEndpoints(t *testing.T) {
+	var out strings.Builder
+	reportLANEndpoints(&out, map[string]string{
+		"lb-lan:fr": "192.0.2.7:8080",
+		"lb-lan:gke:p/us-central1-a/c0/default/web": "192.0.2.7:80,192.0.2.7:443",
+	})
+	got := out.String()
+	for _, want := range []string{
+		"[ok  ] forwarding rule fr exposed beyond loopback on 192.0.2.7:8080",
+		"[ok  ] LoadBalancer Service p/us-central1-a/c0/default/web exposed beyond loopback on 192.0.2.7:80,192.0.2.7:443",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "forwarding rule gke:") {
+		t.Errorf("a Service is named as a forwarding rule:\n%s", got)
+	}
+}

@@ -50,11 +50,14 @@ type dataplane struct {
 	logs *accessLogger
 	edge *edge
 
-	// --lb-bind (lan.go): claimed address:port → binding, and failures
-	// already logged.
-	lan    map[string]*lanBinding
-	lanErr map[string]string
-	relay  *edgeagent.LANRelay
+	// --lb-bind (lan.go): claimed address:port → binding, failures
+	// already logged, the current ones (by "address:port key"), and the
+	// frontends other Services registered, by owner and key.
+	lan     map[string]*lanBinding
+	lanErr  map[string]string
+	lanDown map[string]lanFailure
+	ext     map[string]map[string]*listener
+	relay   *edgeagent.LANRelay
 
 	// Published ports (published.go), learnt on first use.
 	pub      publishing

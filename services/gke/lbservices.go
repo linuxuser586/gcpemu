@@ -54,6 +54,14 @@ import (
 // host IP as the ingress, and its host address as the endpoint. A Service
 // port with no free published port is not served, and is retried while
 // its Service stays; a Service with none served has no ingress.
+//
+// With --lb-bind (#713), every LoadBalancer Service port is also served on
+// each --lb-bind address, as forwarding rules are: the controller
+// registers the ports with the lb Service (emu.LANFrontends), whose claim
+// rule they share, and lists each --lb-bind address a Service claimed in
+// its ingress after its own address, for every caller, until it loses the
+// claim (seen on the controller's next sync). A cluster that runs servicelb (lbServicelb) gets the ports served
+// too, but servicelb owns its ingress, which so lists only its nodes.
 
 const lbEndpointPrefix = "gke:"
 
@@ -69,6 +77,9 @@ const (
 	// lbPublished: the container's published ports, for a Containerized
 	// Instance on a VM runtime.
 	lbPublished
+	// lbServicelb: servicelb serves the Services and owns their ingress;
+	// the controller only registers their ports for --lb-bind.
+	lbServicelb
 )
 
 // publishedHost is the address published ports are served on in the
@@ -77,15 +88,26 @@ var publishedHost = ""
 
 // lbService is the host side of one LoadBalancer Service.
 type lbService struct {
-	sig       string // the ports it serves, to notice changes
-	ip        string // its loopback address; "" when the nodes serve it
-	ingress   []string
+	sig     string // the ports it serves, to notice changes
+	ports   []lbPort
+	ip      string // its loopback address; "" when the nodes serve it
+	ingress []string
+	// own holds the listener of each Service port served on the host or
+	// a published port, for --lb-bind (emu.LANFrontend).
+	own       map[int]ownListener
 	endpoints []string
 	ex        []*netplane.Exposed
 	// served holds the Service ports served on published ports
 	// (lbPublished); unserved is set while some wait for a free one.
 	served   map[int]bool
 	unserved bool
+}
+
+// ownListener is the address of a Service port's own listener, and
+// whether it is on the wildcard address.
+type ownListener struct {
+	addr     string
+	wildcard bool
 }
 
 // lbPort is a Service port served on the host.
@@ -99,7 +121,8 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	if s.env.Containers == nil {
 		return
 	}
-	if rec, err := s.loadKey(key); err != nil || !rec.Int.HostLB {
+	rec, err := s.loadKey(key)
+	if err != nil || !rec.Int.HostLB && s.lbLAN() == nil {
 		return
 	}
 	np, err := s.env.Containers.Netplane(ctx)
@@ -110,7 +133,10 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	// Translated network, or a VM runtime.
 	rt := np.Runtime()
 	mode := lbLoopback
-	if rt.Self() != "" {
+	switch {
+	case !rec.Int.HostLB:
+		mode = lbServicelb
+	case rt.Self() != "":
 		mode = lbNodes
 		if rt.VM.On {
 			mode = lbPublished
@@ -122,6 +148,9 @@ func (s *Service) lbServicesLoop(ctx context.Context, key string) {
 	defer func() {
 		for id, l := range lbs {
 			s.closeLB(key, id, l)
+		}
+		if lan := s.lbLAN(); lan != nil {
+			lan.SetLANFrontends(key, nil)
 		}
 	}()
 	t := time.NewTicker(negInterval)
@@ -217,11 +246,13 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 				continue
 			}
 			switch mode {
+			case lbServicelb:
+				l = &lbService{}
 			case lbNodes:
 				l = s.reportLB(key, id, ports, nodeIPs)
 				s.env.Log.Info("gke: LoadBalancer Service at its nodes", "cluster", key, "service", id, "ips", nodeIPs)
 			case lbPublished:
-				l = &lbService{served: map[int]bool{}}
+				l = &lbService{served: map[int]bool{}, own: map[int]ownListener{}}
 				s.servePublished(np, key, id, ports, pub, l, true)
 			default:
 				if l, err = s.serveLB(np, key, id, ports, prev); err != nil {
@@ -230,19 +261,31 @@ func (s *Service) syncLBServices(ctx context.Context, np *netplane.Plane, key st
 				}
 				s.env.Log.Info("gke: LoadBalancer Service listening", "cluster", key, "service", id, "ip", l.ip)
 			}
-			l.sig = sig
+			l.sig, l.ports = sig, ports
 			lbs[id] = l
 		} else if l.unserved {
 			s.servePublished(np, key, id, ports, pub, l, false)
 		}
+	}
+	claims := s.syncLBBind(np, key, lbs)
+	if mode == lbServicelb {
+		return errors.Join(errs...)
+	}
+	for _, svc := range svcs.Items {
+		id := svc.Metadata.Namespace + "/" + svc.Metadata.Name
+		l := lbs[id]
+		if svc.Spec.Type != "LoadBalancer" || l == nil {
+			continue
+		}
+		wantIPs := lbBindIngress(l.ingress, lbBindClaimed(key, id, l, claims), s.env.Config.LBBind)
 		ing := svc.Status.LoadBalancer.Ingress
-		same := len(ing) == len(l.ingress)
+		same := len(ing) == len(wantIPs)
 		for i := 0; same && i < len(ing); i++ {
-			same = ing[i].IP == l.ingress[i] && ing[i].Hostname == ""
+			same = ing[i].IP == wantIPs[i] && ing[i].Hostname == ""
 		}
 		if !same {
-			want := make([]map[string]string, len(l.ingress))
-			for i, ip := range l.ingress {
+			want := make([]map[string]string, len(wantIPs))
+			for i, ip := range wantIPs {
 				want[i] = map[string]string{"ip": ip}
 			}
 			patch := map[string]any{"status": map[string]any{"loadBalancer": map[string]any{"ingress": want}}}
@@ -265,7 +308,7 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 	}
 	var errs []error
 	for _, ip := range cands {
-		l := &lbService{ip: ip, ingress: []string{ip}}
+		l := &lbService{ip: ip, ingress: []string{ip}, own: map[int]ownListener{}}
 		var err error
 		for _, p := range ports {
 			var ln net.Listener
@@ -275,6 +318,14 @@ func (s *Service) serveLB(np *netplane.Plane, key, id string, ports []lbPort, pr
 			if ln, addr, err = loopback.Listen(ip, p.port, !aliases); err != nil {
 				break
 			}
+			own := ownListener{addr: addr}
+			if f, ok := ln.(*loopback.LocalFilter); ok {
+				// macOS's wildcard listener on a privileged port also
+				// serves the --lb-bind addresses on it.
+				f.Allow = func(a net.Addr) bool { return loopback.IsLoopback(a) || s.lbBindAddr(a) }
+				own.wildcard = true
+			}
+			l.own[p.port] = own
 			l.ex = append(l.ex, np.Serve(ln, s.nodePorts(key, p.nodePort)))
 			ep := lbEndpoint(key, id, p.port)
 			s.env.Endpoints.Set(ep, addr)
@@ -320,6 +371,7 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 			continue
 		}
 		l.ex = append(l.ex, np.Serve(b.Listener, s.nodePorts(key, p.nodePort)))
+		l.own[p.port] = ownListener{addr: net.JoinHostPort(publishedHost, strconv.Itoa(b.Port)), wildcard: publishedHost == ""}
 		s.env.Endpoints.Set(ep, b.Host)
 		l.endpoints = append(l.endpoints, ep)
 		l.served[p.port] = true
@@ -332,6 +384,91 @@ func (s *Service) servePublished(np *netplane.Plane, key, id string, ports []lbP
 		s.env.Log.Warn("gke: no free published port for a LoadBalancer Service; the host cannot reach it until one frees",
 			"cluster", key, "service", id, "ports", missing, "fix", pub.Hint(missing[0], "the Service"))
 	}
+}
+
+// syncLBBind registers the ports of a cluster's LoadBalancer Services
+// with the lb Service, which serves them on the --lb-bind addresses, and
+// returns the address:ports each claimed, by frontend key: nil without
+// --lb-bind.
+func (s *Service) syncLBBind(np *netplane.Plane, key string, lbs map[string]*lbService) map[string][]string {
+	lan := s.lbLAN()
+	if lan == nil {
+		return nil
+	}
+	var fes []emu.LANFrontend
+	for _, id := range slices.Sorted(maps.Keys(lbs)) {
+		l := lbs[id]
+		name := lbBindName(key, id)
+		for _, p := range l.ports {
+			own := l.own[p.port]
+			fes = append(fes, emu.LANFrontend{Key: lbBindKey(key, id, p.port), Name: name, What: "LoadBalancer Service " + key + "/" + id,
+				Port: p.port, Addr: own.addr, Wildcard: own.wildcard, Sig: strconv.Itoa(p.nodePort),
+				Serve: func(ln net.Listener) { np.Serve(ln, s.nodePorts(key, p.nodePort)) }})
+		}
+	}
+	lan.SetLANFrontends(key, fes)
+	return lan.LANClaims(key)
+}
+
+// lbLAN returns the lb Service, which serves --lb-bind, or nil
+// without --lb-bind or the lb Service.
+func (s *Service) lbLAN() emu.LANFrontends {
+	if len(s.env.Config.LBBind) == 0 {
+		return nil
+	}
+	svc, ok := s.env.Lookup("lb")
+	if !ok {
+		return nil
+	}
+	lan, _ := svc.(emu.LANFrontends)
+	return lan
+}
+
+// lbBindName names a Service of the cluster key for --lb-bind: its
+// frontends' keys start with it, and its endpoint is "lb-lan:<name>".
+func lbBindName(key, id string) string {
+	return lbEndpointPrefix + key + "/" + id
+}
+
+// lbBindKey is the frontend key of a Service port of the cluster key.
+func lbBindKey(key, id string, port int) string {
+	return lbBindName(key, id) + "/" + strconv.Itoa(port)
+}
+
+// lbBindClaimed returns the --lb-bind address:ports the ports of Service
+// id hold, from claims.
+func lbBindClaimed(key, id string, l *lbService, claims map[string][]string) []string {
+	var out []string
+	for _, p := range l.ports {
+		out = append(out, claims[lbBindKey(key, id, p.port)]...)
+	}
+	return out
+}
+
+// lbBindIngress is a Service's ingress: its own addresses, then each of
+// the --lb-bind addresses binds that some address:port in claimed is on,
+// once and in binds' order.
+func lbBindIngress(own, claimed, binds []string) []string {
+	out := slices.Clone(own)
+	for _, ip := range binds {
+		on := slices.ContainsFunc(claimed, func(addr string) bool {
+			host, _, _ := net.SplitHostPort(addr)
+			return host == ip
+		})
+		if on && !slices.Contains(out, ip) {
+			out = append(out, ip)
+		}
+	}
+	return out
+}
+
+// lbBindAddr reports whether a is an --lb-bind address.
+func (s *Service) lbBindAddr(a net.Addr) bool {
+	ta, ok := a.(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	return slices.ContainsFunc(s.env.Config.LBBind, func(b string) bool { return ta.IP.Equal(net.ParseIP(b)) })
 }
 
 // reportLB records a Service that its nodes serve at ips: no listener,

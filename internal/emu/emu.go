@@ -361,6 +361,41 @@ type LoopbackHolder interface {
 	LoopbackAddrs() []string
 }
 
+// LANFrontends is implemented by the lb Service, which serves --lb-bind
+// addresses (Config.LBBind) for forwarding rules and, through it, for the
+// frontends of other Services (GKE LoadBalancer Services), so that one
+// claim rule covers them all: one address:port serves one frontend, the
+// one with the lowest key.
+type LANFrontends interface {
+	// SetLANFrontends replaces the frontends owner (such as a GKE
+	// cluster) registers; nil removes them.
+	SetLANFrontends(owner string, fes []LANFrontend)
+	// LANClaims returns the --lb-bind address:ports each of owner's
+	// frontends serves, by key.
+	LANClaims(owner string) map[string][]string
+}
+
+// LANFrontend is a port another Service serves on the --lb-bind
+// addresses.
+type LANFrontend struct {
+	// Key is unique among all frontends, forwarding rules' "ip:port"
+	// included; of those on one port, the lowest gets an address.
+	Key string
+	// Name groups a frontend's ports in endpoint "lb-lan:<Name>", and
+	// What names it in messages ("LoadBalancer Service c/ns/web").
+	Name, What string
+	Port       int
+	// Addr is the address of the frontend's own listener, if any, and
+	// Wildcard is set when that listener is on the wildcard address, so
+	// that it serves the --lb-bind addresses on its port itself.
+	Addr     string
+	Wildcard bool
+	// Sig changes when Serve would serve differently.
+	Sig string
+	// Serve serves the connections ln accepts until ln closes.
+	Serve func(ln net.Listener)
+}
+
 // ErrNoRuntime marks a permanent Containers.Runtime failure (see
 // NoRuntime).
 var ErrNoRuntime = errors.New("no container runtime")
