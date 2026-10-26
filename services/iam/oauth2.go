@@ -2,6 +2,8 @@ package iam
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -138,13 +140,18 @@ func tokenForm(r *http.Request) (url.Values, error) {
 
 func (s *Service) jwtBearerGrant(w http.ResponseWriter, form url.Values) {
 	assertion := form.Get("assertion")
+	claims := jwt.MapClaims{}
+	_, _, _ = jwt.NewParser().ParseUnverified(assertion, claims)
 	email, err := s.verifyAccountJWT(assertion, "")
+	iss, _ := claims["iss"].(string)
+	if p := projectOfEmail(iss); errors.Is(err, errUnknownAccount) && s.absentProject(p) {
+		oauthError(w, http.StatusBadRequest, "invalid_grant", fmt.Sprintf("Project %q is not on this Instance and is not delegated by it.", p))
+		return
+	}
 	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "Invalid JWT Signature. "+err.Error())
 		return
 	}
-	claims := jwt.MapClaims{}
-	_, _, _ = jwt.NewParser().ParseUnverified(assertion, claims)
 	if aud, _ := claims["target_audience"].(string); aud != "" {
 		tok, err := s.mintIDToken(email, aud, true, nil)
 		if err != nil {
@@ -162,6 +169,21 @@ func (s *Service) jwtBearerGrant(w http.ResponseWriter, form url.Values) {
 		return
 	}
 	writeJSON(w, tokenResponse{AccessToken: tok, ExpiresIn: s.expiresIn(exp), TokenType: "Bearer"})
+}
+
+// absentProject reports whether the Project p is neither on this
+// Instance nor delegated by it, as that of a key created over a link is
+// once the Project stops being delegated (#695).
+func (s *Service) absentProject(p string) bool {
+	if p == "" || s.env.HasProject(p) {
+		return false
+	}
+	if s.env.Delegated != nil {
+		if _, ok := s.env.Delegated(p); ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) expiresIn(exp time.Time) int {

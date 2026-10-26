@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,9 +35,7 @@ func (in *Instance) newLink() (*link.Manager, error) {
 		CA: in.Env.CA, Instance: in.Config.Instance, ID: in.ID, Store: st,
 		Log:         in.Env.Log.With("component", "link"),
 		StaticAddrs: in.Config.LinkDiscover, MDNS: mdns.Options{Port: in.Config.LinkMDNSPort},
-		HasProject: func(id string) bool {
-			return slices.Contains(in.Config.Projects, id) || slices.Contains(in.Env.Projects(), id)
-		},
+		HasProject: in.Env.HasProject,
 		Serve: func(w http.ResponseWriter, r *http.Request, from, principal string) {
 			in.gw.ServeLinked(w, r, from, principal)
 		},

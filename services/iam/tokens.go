@@ -248,6 +248,10 @@ func (s *Service) accountDisabled(email string) bool {
 	return disabled
 }
 
+// errUnknownAccount is verifyAccountJWT's error for an issuer that is no
+// service account on this Instance.
+var errUnknownAccount = errors.New("unknown service account")
+
 // verifyAccountJWT verifies a JWT signed with one of a service account's
 // keys (iss = account email, kid = key ID) and returns the account email.
 // aud, when non-empty, must be among the token's audiences.
@@ -273,7 +277,7 @@ func (s *Service) verifyAccountJWT(tok, aud string) (string, error) {
 		err := s.env.Store.View(func(tx store.Tx) error {
 			sa, ok := s.getAccount(tx, iss)
 			if !ok {
-				return fmt.Errorf("unknown service account %s", iss)
+				return fmt.Errorf("%w %s", errUnknownAccount, iss)
 			}
 			if sa.Disabled {
 				return fmt.Errorf("service account %s is disabled", iss)

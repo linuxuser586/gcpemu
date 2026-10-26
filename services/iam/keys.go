@@ -185,12 +185,13 @@ func (s *Service) tokenURI() string { return s.gatewayURL() + "/oauth2/token" }
 func googleHosted(r *http.Request) bool { return emu.IsGoogleHost(r.Host) }
 
 // keyBase is the base URL of the token and certificate URLs in a key file
-// created by r: the front Instance's, by the Host and scheme the caller
-// used, when r came over a link (ADR 0027), or else the gateway's. The
-// scheme is https only for an X-Forwarded-Proto of https, and http for
-// any other.
+// created by r: the Host and scheme the caller used, whoever the caller
+// is (#695), so a LAN caller of a wildcard --bind gets its own address,
+// and a request over a link, which keeps both, the front Instance's (ADR
+// 0027). The scheme is https only for an X-Forwarded-Proto of https, and
+// http for any other. A request with no Host gets the gateway's.
 func (s *Service) keyBase(r *http.Request) string {
-	if _, _, ok := emu.AssertedBy(r.Context()); !ok {
+	if r.Host == "" {
 		return s.gatewayURL()
 	}
 	scheme := "http"
