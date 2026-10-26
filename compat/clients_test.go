@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -198,6 +201,78 @@ func longTempDir(t *testing.T) string {
 	return d
 }
 
+// writeTree writes files, named with slashes, under dir.
+func writeTree(t *testing.T, dir string, files map[string][]byte) {
+	t.Helper()
+	for name, b := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// readTree returns the files under dir, named with slashes.
+func readTree(t *testing.T, dir string) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		files[filepath.ToSlash(rel)], err = os.ReadFile(p)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+func treesEqual(a, b map[string][]byte) bool {
+	return maps.EqualFunc(a, b, func(x, y []byte) bool { return slices.Equal(x, y) })
+}
+
+// bucketHas fails unless the objects in bucket are exactly files, by name
+// and by bytes, as gcloud storage cp fetches them.
+func bucketHas(t *testing.T, e *emulator, gcloud, bucket string, files map[string][]byte) {
+	t.Helper()
+	// One name per line (names can hold spaces); ** lists past "/".
+	got := strings.Split(strings.TrimSpace(e.run(t, gcloud, "storage", "objects", "list", bucket+"/**", "--format=value(name)")), "\n")
+	for i := range got {
+		got[i] = strings.TrimRight(got[i], "\r")
+	}
+	slices.Sort(got)
+	if want := slices.Sorted(maps.Keys(files)); !slices.Equal(got, want) {
+		t.Fatalf("objects in %s: %q, want %q", bucket, got, want)
+	}
+	dir := longTempDir(t)
+	e.run(t, gcloud, "storage", "cp", "-r", bucket, dir)
+	if b := readTree(t, filepath.Join(dir, strings.TrimPrefix(bucket, "gs://"))); !treesEqual(b, files) {
+		t.Fatalf("objects in %s hold %q, want %q", bucket, b, files)
+	}
+}
+
+// plainGet fetches u with no credentials and no proxy.
+func plainGet(t *testing.T, u string) (int, []byte) {
+	t.Helper()
+	cl := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{}}
+	resp, err := cl.Get(u)
+	if err != nil {
+		t.Fatalf("GET %s: %v", u, err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("GET %s: %v", u, err)
+	}
+	return resp.StatusCode, b
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -238,7 +313,12 @@ func gcloudCanary(t *testing.T, e *emulator, gcloud string) {
 // resources (the SQL instance, the cluster) and run in order.
 func TestClients(t *testing.T) {
 	e := start(t)
-	gcloud := func(t *testing.T) string { return onPath(t, "gcloud") }
+	var version sync.Once
+	gcloud := func(t *testing.T) string {
+		g := onPath(t, "gcloud")
+		version.Do(func() { t.Logf("gcloud version:\n%s", e.run(t, g, "version")) })
+		return g
+	}
 
 	t.Run("gcloud/escape-guard", func(t *testing.T) {
 		gcloudCanary(t, e, gcloud(t))
@@ -263,6 +343,87 @@ func TestClients(t *testing.T) {
 		e.run(t, g, "storage", "rm", "gs://compat-bucket/dir/hello.txt")
 		if out, _ := e.try(t, g, "storage", "ls", "gs://compat-bucket/dir/"); strings.Contains(out, "hello.txt") {
 			t.Fatalf("object still listed: %s", out)
+		}
+	})
+
+	t.Run("gcloud/storage/rsync", func(t *testing.T) {
+		g := gcloud(t)
+		src := longTempDir(t)
+		tree := map[string][]byte{
+			"top.txt":                      []byte("top\n"),
+			"sub/gone.txt":                 []byte("deleted on the second sync\n"),
+			"sub/deep/bytes.bin":           {0, 1, 2, 0xfe, 0xff, '\n', '\r', 0},
+			"sub/deep/name with space.txt": []byte("spaced\n"),
+		}
+		writeTree(t, src, tree)
+		e.run(t, g, "storage", "buckets", "create", "gs://compat-rsync", "--location=us-central1")
+		e.run(t, g, "storage", "rsync", "-r", src, "gs://compat-rsync")
+		bucketHas(t, e, g, "gs://compat-rsync", tree)
+
+		// Another size, so rsync sees the change whatever the mtime
+		// granularity.
+		tree["top.txt"] = []byte("top, changed\n")
+		delete(tree, "sub/gone.txt")
+		writeTree(t, src, map[string][]byte{"top.txt": tree["top.txt"]})
+		if err := os.Remove(filepath.Join(src, "sub", "gone.txt")); err != nil {
+			t.Fatal(err)
+		}
+		e.run(t, g, "storage", "rsync", "-r", "--delete-unmatched-destination-objects", src, "gs://compat-rsync")
+		bucketHas(t, e, g, "gs://compat-rsync", tree)
+
+		dst := longTempDir(t)
+		e.run(t, g, "storage", "rsync", "-r", "gs://compat-rsync", dst)
+		if got := readTree(t, dst); !treesEqual(got, tree) {
+			t.Fatalf("synced back down: %q, want %q", got, tree)
+		}
+	})
+
+	t.Run("gcloud/storage/sign-url", func(t *testing.T) {
+		g := gcloud(t)
+		f := filepath.Join(longTempDir(t), "signed.bin")
+		content := []byte("signed by gcloud\x00\xff\n")
+		if err := os.WriteFile(f, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		e.run(t, g, "storage", "buckets", "create", "gs://compat-signed", "--location=us-central1")
+		e.run(t, g, "storage", "cp", f, "gs://compat-signed/dir/signed.bin")
+		// A key the emulator issued signs locally; the emulator checks the
+		// signature against the account's public keys.
+		sa := "compat-signer@" + project + ".iam.gserviceaccount.com"
+		e.run(t, g, "iam", "service-accounts", "create", "compat-signer")
+		e.run(t, g, "storage", "buckets", "add-iam-policy-binding", "gs://compat-signed", "--member=serviceAccount:"+sa, "--role=roles/storage.objectViewer")
+		key := filepath.Join(t.TempDir(), "signer.json")
+		e.run(t, g, "iam", "service-accounts", "keys", "create", key, "--iam-account", sa)
+		// Path style: a virtual-hosted URL would put the bucket in front of
+		// the gateway's IP address.
+		sign := func(duration string) string {
+			t.Helper()
+			u := strings.TrimSpace(e.run(t, g, "storage", "sign-url", "gs://compat-signed/dir/signed.bin", "--private-key-file="+key,
+				"--duration="+duration, "--path-style-url", "--format=value(signed_url)"))
+			if !strings.HasPrefix(u, e.vars["CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL"]+"/compat-signed/dir/signed.bin?") {
+				t.Fatalf("signed URL %q is not on CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL %s", u, e.vars["CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL"])
+			}
+			return u
+		}
+		u := sign("10m")
+		if code, body := plainGet(t, u); code != http.StatusOK || !slices.Equal(body, content) {
+			t.Fatalf("GET of the signed URL = %d %q, want 200 %q", code, body, content)
+		}
+		before, sig, ok := strings.Cut(u, "x-goog-signature=")
+		if !ok || sig == "" {
+			t.Fatalf("no x-goog-signature in %s", u)
+		}
+		digit := "0"
+		if sig[0] == '0' {
+			digit = "1"
+		}
+		if code, body := plainGet(t, before+"x-goog-signature="+digit+sig[1:]); code != http.StatusForbidden {
+			t.Errorf("GET with a modified signature = %d %s, want 403", code, body)
+		}
+		expiring := sign("1s")
+		time.Sleep(2 * time.Second)
+		if code, body := plainGet(t, expiring); code != http.StatusBadRequest || !strings.Contains(string(body), "ExpiredToken") {
+			t.Errorf("GET of an expired signed URL = %d %s, want 400 ExpiredToken", code, body)
 		}
 	})
 

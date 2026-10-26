@@ -1453,6 +1453,10 @@ issued. Outside Google's universe gcloud behaves differently in a few places:
   looking up the universe descriptor at `storage.gcpemu.invalid`. Pass `--no-standard-images`, or
   `--image-family` with `--image-project`.
 - `gcloud storage buckets create` requires `--location`.
+- `gcloud storage sign-url` needs `--path-style-url`, and a key the emulator issued
+  (`--private-key-file`). It signs for the XML API at `CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL`,
+  which `gcpemu env` sets to the API gateway. Without the flag it puts the bucket name in front of
+  the gateway's IP address.
 
 `gcpemu env --no-universe` leaves that variable out, for a shell that also points gcloud at Google
 with stored credentials.

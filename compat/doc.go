@@ -15,6 +15,15 @@
 // copy from Docker Hub, ko's base image) need the internet. gcloud runs
 // behind an Escape guard (internal/escapeguard), so a gcloud request that
 // no endpoint override covers fails the step instead of reaching Google.
+// GCPEMU_COMPAT_REQUIRE=1, which the Linux CI jobs set, fails a test whose
+// client toolchain is missing or won't install instead of skipping it.
+//
+// The gcloud/storage subtests (#599) also sync a tree up with gcloud
+// storage rsync, again with --delete-unmatched-destination-objects after a
+// change and a deletion, and back down, comparing names and bytes. They
+// sign a URL with gcloud storage sign-url and an emulator-issued key, fetch
+// it with no credentials, and check that a modified signature and an
+// expired URL are refused.
 //
 // The universe subtests (#215) probe the Python and Node client libraries
 // with an emulator-issued key, and Python google-auth with the metadata

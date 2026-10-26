@@ -593,7 +593,7 @@ A release whose `SHA256SUMS` comes with a Sigstore bundle proving it was produce
 _Avoid_: "verified release" (setup-gcpemu always hash-verifies the binary, signed or not)
 
 **Escape guard**:
-A proxy that the OpenTofu acceptance, the Reference stack and the gcloud runs in the Client compatibility suite go through, so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine.
+A proxy that the OpenTofu acceptance, the Reference stack and the clients in the Client compatibility suite go through (a JVM by `JAVA_TOOL_OPTIONS`, the others by the proxy variables), so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine.
 _Avoid_: egress check, leak detector
 
 ## Flagged ambiguities

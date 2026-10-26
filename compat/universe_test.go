@@ -38,7 +38,7 @@ func pinDir(t *testing.T, kind string, pins []string) string {
 }
 
 // pythonLibs returns a Python interpreter with pythonPins installed,
-// creating the virtual environment once, or skips the test.
+// creating the virtual environment once, or calls missing.
 func pythonLibs(t *testing.T) string {
 	t.Helper()
 	py, bin := "python3", filepath.Join("bin", "python")
@@ -46,6 +46,7 @@ func pythonLibs(t *testing.T) string {
 		py, bin = "python", filepath.Join("Scripts", "python.exe")
 	}
 	py = onPath(t, py)
+	logVersion(t, py, "--version")
 	dir := pinDir(t, "python", pythonPins)
 	bin = filepath.Join(dir, bin)
 	if _, err := os.Stat(filepath.Join(dir, ".done")); err == nil {
@@ -53,20 +54,21 @@ func pythonLibs(t *testing.T) string {
 	}
 	_ = os.RemoveAll(dir)
 	if out, err := exec.Command(py, "-m", "venv", dir).CombinedOutput(); err != nil {
-		t.Skipf("python3 -m venv: %v\n%s", err, out)
+		missing(t, "python3 -m venv: %v\n%s", err, out)
 	}
 	if out, err := exec.Command(bin, append([]string{"-m", "pip", "install", "-q"}, pythonPins...)...).CombinedOutput(); err != nil {
-		t.Skipf("pip install: %v\n%s", err, out)
+		missing(t, "pip install: %v\n%s", err, out)
 	}
 	_ = os.WriteFile(filepath.Join(dir, ".done"), nil, 0o644)
 	return bin
 }
 
 // nodeLibs returns node and a node_modules directory with nodePins
-// installed, installing them once, or skips the test.
+// installed, installing them once, or calls missing.
 func nodeLibs(t *testing.T) (node, modules string) {
 	t.Helper()
 	node, npm := onPath(t, "node"), onPath(t, "npm")
+	logVersion(t, node, "--version")
 	dir := pinDir(t, "node", nodePins)
 	modules = filepath.Join(dir, "node_modules")
 	if _, err := os.Stat(filepath.Join(dir, ".done")); err == nil {
@@ -74,7 +76,7 @@ func nodeLibs(t *testing.T) (node, modules string) {
 	}
 	_ = os.RemoveAll(dir)
 	if out, err := exec.Command(npm, append([]string{"install", "--silent", "--prefix", dir}, nodePins...)...).CombinedOutput(); err != nil {
-		t.Skipf("npm install: %v\n%s", err, out)
+		missing(t, "npm install: %v\n%s", err, out)
 	}
 	_ = os.WriteFile(filepath.Join(dir, ".done"), nil, 0o644)
 	return node, modules

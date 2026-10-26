@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,12 +108,12 @@ func tool(t *testing.T, name string) string {
 	cl := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := cl.Get(u)
 	if err != nil {
-		t.Skipf("download %s: %v", name, err)
+		missing(t, "download %s: %v", name, err)
 	}
 	b, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Skipf("download %s: %d %v", u, resp.StatusCode, err)
+		missing(t, "download %s: %d %v", u, resp.StatusCode, err)
 	}
 	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != want {
 		t.Fatalf("%s: checksum mismatch (got %x, want %s)", u, sum, want)
@@ -159,12 +160,34 @@ func exe(name string) string {
 	return name
 }
 
-// onPath returns a tool from PATH or skips the test.
+// onPath returns a tool from PATH, or calls missing.
 func onPath(t *testing.T, name string) string {
 	t.Helper()
 	p, err := exec.LookPath(name)
 	if err != nil {
-		t.Skipf("%s not on PATH", name)
+		missing(t, "%s not on PATH", name)
 	}
 	return p
+}
+
+// missing skips a test whose client toolchain is missing or fails to
+// install, or fails it under GCPEMU_COMPAT_REQUIRE=1, which the Linux CI
+// jobs set so that a broken setup step can't quietly drop a client (ADR
+// 0025).
+func missing(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("GCPEMU_COMPAT_REQUIRE") == "1" {
+		t.Fatalf(format+" (GCPEMU_COMPAT_REQUIRE=1)", args...)
+	}
+	t.Skipf(format, args...)
+}
+
+// logVersion logs what a client's toolchain says its version is.
+func logVersion(t *testing.T, bin string, args ...string) {
+	t.Helper()
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	if err != nil {
+		t.Logf("%s %s: %v", filepath.Base(bin), strings.Join(args, " "), err)
+	}
+	t.Logf("%s: %s", filepath.Base(bin), bytes.TrimSpace(out))
 }

@@ -128,3 +128,19 @@ func TestEnvExemptsOnlyLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestJavaEnvSetsSystemProperties(t *testing.T) {
+	g := New(t)
+	env := g.JavaEnv()
+	_, port, _ := net.SplitHostPort(g.addr)
+	want := "JAVA_TOOL_OPTIONS=-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=" + port +
+		" -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=" + port + " -Dhttp.nonProxyHosts=localhost|127.*|[::1]"
+	if !slices.Contains(env, want) {
+		t.Errorf("JavaEnv() = %v, lacks %s", env, want)
+	}
+	for _, kv := range g.Env() {
+		if !slices.Contains(env, kv) {
+			t.Errorf("JavaEnv() = %v, lacks %s from Env()", env, kv)
+		}
+	}
+}
