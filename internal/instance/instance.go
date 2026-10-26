@@ -188,6 +188,14 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	in.gw = gateway.New(env, in.Log)
 	in.gw.SetLinks(in.link)
 	env.Delegated = in.link.DelegatedTo
+	env.LinkedSigningKeys = func() []emu.SigningKey {
+		ks := in.link.LinkedSigningKeys()
+		out := make([]emu.SigningKey, len(ks))
+		for i, k := range ks {
+			out[i] = emu.SigningKey(k)
+		}
+		return out
+	}
 	if err := in.setupAdminToken(); err != nil {
 		return nil, err
 	}

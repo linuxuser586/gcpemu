@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -95,13 +96,76 @@ func loadSigningKey(dir string, now time.Time) (*signingKey, error) {
 	return &signingKey{priv: priv, kid: hex.EncodeToString(sum[:20]), certPEM: cert}, nil
 }
 
-// jwks renders the public key as a JSON Web Key Set.
-func (k *signingKey) jwks() map[string]any {
-	return map[string]any{"keys": []map[string]string{{
+// jwk renders the public key as a JSON Web Key.
+func (k *signingKey) jwk() map[string]string {
+	return map[string]string{
 		"kty": "RSA", "alg": "RS256", "use": "sig", "kid": k.kid,
 		"n": b64url(k.priv.N.Bytes()),
 		"e": b64url(bigEndian(k.priv.E)),
-	}}}
+	}
+}
+
+// SigningKey implements emu.SigningKeyer.
+func (s *Service) SigningKey() emu.SigningKey {
+	return emu.SigningKey{KeyID: s.signer.kid, JWK: s.signer.jwk(), CertPEM: s.signer.certPEM}
+}
+
+// linkedSigningKeys returns the signing keys of the Linked Instances this
+// Instance delegates Projects to, which sign the ID tokens of their
+// service accounts (ADR 0027), leaving out any with this Instance's own
+// key ID.
+func (s *Service) linkedSigningKeys() []emu.SigningKey {
+	if s.env.LinkedSigningKeys == nil {
+		return nil
+	}
+	return slices.DeleteFunc(s.env.LinkedSigningKeys(), func(k emu.SigningKey) bool { return k.KeyID == s.signer.kid })
+}
+
+// jwks renders this Instance's public key, then each Linked Instance's,
+// as a JSON Web Key Set.
+func (s *Service) jwks() map[string]any {
+	keys := []map[string]string{s.signer.jwk()}
+	for _, k := range s.linkedSigningKeys() {
+		keys = append(keys, k.JWK)
+	}
+	return map[string]any{"keys": keys}
+}
+
+// certs maps the key ID of this Instance's key, and of each Linked
+// Instance's, to its certificate.
+func (s *Service) certs() map[string]string {
+	out := map[string]string{s.signer.kid: s.signer.certPEM}
+	for _, k := range s.linkedSigningKeys() {
+		out[k.KeyID] = k.CertPEM
+	}
+	return out
+}
+
+// idTokenKey returns the public key that verifies the ID token t: this
+// Instance's, or that of the Linked Instance its kid names.
+func (s *Service) idTokenKey(t *jwt.Token) (any, error) {
+	kid, _ := t.Header["kid"].(string)
+	if kid == "" || kid == s.signer.kid {
+		return &s.signer.priv.PublicKey, nil
+	}
+	for _, k := range s.linkedSigningKeys() {
+		if k.KeyID != kid {
+			continue
+		}
+		blk, _ := pem.Decode([]byte(k.CertPEM))
+		if blk == nil {
+			break
+		}
+		c, err := x509.ParseCertificate(blk.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		if pub, ok := c.PublicKey.(*rsa.PublicKey); ok {
+			return pub, nil
+		}
+		break
+	}
+	return nil, fmt.Errorf("no signing key %q", kid)
 }
 
 func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

@@ -53,6 +53,7 @@ var (
 	_ emu.EnvVarer            = (*Service)(nil)
 	_ emu.ADCKeyer            = (*Service)(nil)
 	_ emu.Resetter            = (*Service)(nil)
+	_ emu.SigningKeyer        = (*Service)(nil)
 )
 
 // New returns the service.
