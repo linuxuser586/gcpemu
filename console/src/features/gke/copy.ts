@@ -10,7 +10,14 @@ import {
   type Recipe,
 } from '@/lib/copyAs'
 
-import { clusterName, parentName, type Cluster, type ClusterRef, type NodePool } from './api'
+import {
+  clusterName,
+  isAutopilot,
+  parentName,
+  type Cluster,
+  type ClusterRef,
+  type NodePool,
+} from './api'
 import { formatTaints } from './taints'
 
 // Copy as (FR-UI-015) for clusters and node pools: gcloud container, the
@@ -140,14 +147,24 @@ export function nodePoolRecipe(r: ClusterRef, np: NodePool, clusterZones?: strin
  * clusterRecipe creates the cluster with its first node pool as the
  * default pool, then adds the others. OpenTofu manages every pool as a
  * google_container_node_pool, removing the default one, as the provider
- * recommends.
+ * recommends. An Autopilot cluster is created without node pools, as GKE
+ * manages them.
  */
 export function clusterRecipe(project: string, c: Cluster): Recipe {
   const r: ClusterRef = { project, location: c.location, cluster: c.name }
-  const [first, ...rest] = c.nodePools ?? []
-  const zones = same(c.locations, [c.location]) ? undefined : c.locations
+  const autopilot = isAutopilot(c)
+  const pools = autopilot ? [] : (c.nodePools ?? [])
+  const [first, ...rest] = pools
+  const zones = autopilot || same(c.locations, [c.location]) ? undefined : c.locations
   const channel = c.releaseChannel?.channel
-  const pcc = c.privateClusterConfig
+  // gcloud's create-auto keeps nodes and endpoint private in networkConfig
+  // and controlPlaneEndpointsConfig rather than privateClusterConfig.
+  const privateNodes =
+    c.privateClusterConfig?.enablePrivateNodes || c.networkConfig?.defaultEnablePrivateNodes
+  const privateEndpoint =
+    c.privateClusterConfig?.enablePrivateEndpoint ||
+    c.controlPlaneEndpointsConfig?.ipEndpointsConfig?.enablePublicEndpoint === false
+  const netAdmin = c.autopilot?.workloadPolicyConfig?.allowNetAdmin
   const ref = expr(`google_container_cluster.${tofuName(c.name)}.name`)
   const cluster = resource('google_container_cluster', c.name, {
     project,
@@ -159,44 +176,54 @@ export function clusterRecipe(project: string, c: Cluster): Recipe {
     network: c.network,
     subnetwork: c.subnetwork,
     resource_labels: c.resourceLabels,
-    remove_default_node_pool: true,
-    initial_node_count: 1,
+    ...(autopilot
+      ? { enable_autopilot: true, allow_net_admin: netAdmin }
+      : { remove_default_node_pool: true, initial_node_count: 1 }),
     release_channel: channel ? block({ channel }) : undefined,
-    workload_identity_config: c.workloadIdentityConfig?.workloadPool
-      ? block({ workload_pool: c.workloadIdentityConfig.workloadPool })
-      : undefined,
-    private_cluster_config: pcc?.enablePrivateNodes
-      ? block({
-          enable_private_nodes: true,
-          enable_private_endpoint: pcc.enablePrivateEndpoint ?? false,
-        })
+    // Autopilot sets the project's workload pool itself.
+    workload_identity_config:
+      !autopilot && c.workloadIdentityConfig?.workloadPool
+        ? block({ workload_pool: c.workloadIdentityConfig.workloadPool })
+        : undefined,
+    private_cluster_config: privateNodes
+      ? block({ enable_private_nodes: true, enable_private_endpoint: privateEndpoint })
       : undefined,
   })
+  const flags = {
+    project,
+    location: c.location,
+    'node-locations': zones,
+    'cluster-version': c.initialClusterVersion,
+    'release-channel': channel === 'UNSPECIFIED' ? 'None' : channel?.toLowerCase(),
+    network: c.network,
+    subnetwork: c.subnetwork,
+    labels: keyValues(c.resourceLabels),
+    'workload-pool': autopilot ? undefined : c.workloadIdentityConfig?.workloadPool,
+    'enable-private-nodes': privateNodes,
+    'enable-private-endpoint': privateEndpoint,
+  }
+  const body = omit(c, CLUSTER_OUTPUT)
   return {
-    gcloud: [
-      gcloud(['container', 'clusters', 'create', c.name], {
-        project,
-        location: c.location,
-        'node-locations': zones,
-        'cluster-version': c.initialClusterVersion,
-        'release-channel': channel === 'UNSPECIFIED' ? 'None' : channel?.toLowerCase(),
-        network: c.network,
-        subnetwork: c.subnetwork,
-        labels: keyValues(c.resourceLabels),
-        'workload-pool': c.workloadIdentityConfig?.workloadPool,
-        'enable-private-nodes': pcc?.enablePrivateNodes,
-        'enable-private-endpoint': pcc?.enablePrivateEndpoint,
-        ...nodeFlags(first),
-      }),
-      ...rest.map((np) => poolGcloud(r, np, c.locations)),
-    ],
+    gcloud: autopilot
+      ? [
+          gcloud(['container', 'clusters', 'create-auto', c.name], {
+            ...flags,
+            'workload-policies': netAdmin ? 'allow-net-admin' : undefined,
+          }),
+        ]
+      : [
+          gcloud(['container', 'clusters', 'create', c.name], { ...flags, ...nodeFlags(first) }),
+          ...rest.map((np) => poolGcloud(r, np, c.locations)),
+        ],
     rest: {
       method: 'POST',
       path: `${API}/${parentName(project, c.location)}/clusters`,
-      body: { cluster: { ...omit(c, CLUSTER_OUTPUT), nodePools: c.nodePools?.map(poolBody) } },
+      body: {
+        cluster: autopilot
+          ? omit(body, ['nodePools'])
+          : { ...body, nodePools: c.nodePools?.map(poolBody) },
+      },
     },
-    tofu: [cluster, ...(c.nodePools ?? []).map((np) => poolTofu(r, np, ref, c.locations))].join(
-      '\n\n',
-    ),
+    tofu: [cluster, ...pools.map((np) => poolTofu(r, np, ref, c.locations))].join('\n\n'),
   }
 }
