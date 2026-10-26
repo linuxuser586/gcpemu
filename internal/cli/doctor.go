@@ -83,6 +83,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 				if infoErr == nil {
 					checkRuntimeArch(out, runtime.GOOS, machineArch(), info.Arch)
+					checkCPUSet(report, runtime.GOOS, info)
 				}
 				found, err := findAbandoned(cmd.Context(), cl)
 				checkAbandoned(out, found, err)
@@ -1194,6 +1195,14 @@ func checkRuntimeArch(out io.Writer, goos, hostArch, rtArch string) {
 	fmt.Fprintf(out, "[--  ] container runtime VM is linux/%s but this Mac is %s: the VM is emulated, so every container runs slowly; "+
 		"recreate it for %s (Colima: `colima delete`, then `colima start --arch %s`; Docker Desktop, OrbStack and Podman: install the build for this Mac)\n",
 		rtArch, hostArch, hostArch, vmArch(hostArch))
+}
+
+// checkCPUSet reports a runtime whose containers lack the cpuset cgroup
+// controller, on which GKE nodes cannot start (#632).
+func checkCPUSet(report func(bool, string, string), goos string, info emuruntime.Info) {
+	if problem, fix := emuruntime.CPUSetProblem(info, goos); problem != "" {
+		report(false, problem, fix)
+	}
 }
 
 // machineArch is the host's GOARCH. An amd64 build under Rosetta on an

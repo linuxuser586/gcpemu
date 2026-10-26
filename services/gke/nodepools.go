@@ -57,6 +57,17 @@ func (a *api) CreateNodePool(ctx context.Context, req *containerpb.CreateNodePoo
 	}
 	np := cloneCluster(&containerpb.Cluster{NodePools: []*containerpb.NodePool{req.NodePool}}).NodePools[0]
 	r.Pool = np.Name
+	// Permission and the cluster come first, as in mutate, and the runtime
+	// is asked outside its store transaction.
+	if err := a.check(ctx, r, "container.clusters.update", r.clusterResource()); err != nil {
+		return nil, err
+	}
+	if _, err := a.load(r); err != nil {
+		return nil, err
+	}
+	if err := a.s.checkCPUSet(ctx); err != nil {
+		return nil, err
+	}
 	others := a.s.nodesElsewhere(r.key())
 	return a.mutate(ctx, r, containerpb.Operation_CREATE_NODE_POOL, "", func(rec *clusterRecord, c *containerpb.Cluster) error {
 		if err := refusePoolChange(c); err != nil {

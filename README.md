@@ -659,6 +659,14 @@ warns about such abandoned Instance IDs, and `gcpemu prune` lists their containe
 volumes and removes them once you confirm (`--yes` skips the question). An ID with a running
 container is never touched.
 
+GKE nodes run k3s, which needs the cpuset cgroup controller. A rootless Podman machine (the
+`podman machine init` default) doesn't give containers one, so GKE needs a rootful Podman machine:
+`podman machine stop && podman machine set --rootful && podman machine start`. Rootless Podman
+(or Docker) on Linux needs `cpuset` delegated to the user: put `[Service]` and
+`Delegate=cpu cpuset io memory pids` in `/etc/systemd/system/user@.service.d/delegate.conf`, run
+`sudo systemctl daemon-reload` and log in again. On a runtime without it, `gcpemu doctor` reports
+the problem and cluster and node pool create fail with `FAILED_PRECONDITION`.
+
 On a VM runtime, host clients reach Cloud SQL instances, forwarding rules and GKE `LoadBalancer`
 Services on loopback addresses: a `127.0.0.x` of their own each. A GKE cluster's endpoint is
 `127.0.0.1` and a port the emulator serves, so `gcloud container clusters get-credentials` writes
