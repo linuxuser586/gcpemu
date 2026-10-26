@@ -67,7 +67,10 @@ const pickAttempts = 3
 // holds a Reserved address, gets the lowest free address outside the
 // reserved set. The runtime would otherwise hand out a reserved address
 // whose container is not running yet, e.g. after a restart (withPicks).
+// On Podman, a container without a LogDriver gets readable logs
+// (readableLogs).
 func (m *Manager) CreateContainer(ctx context.Context, s ContainerSpec) (string, error) {
+	s = m.readableLogs(s)
 	reserved := m.reserved()
 	var dynamic []int // attachments without a fixed address
 	var networks []string
