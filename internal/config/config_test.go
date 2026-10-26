@@ -408,3 +408,25 @@ func TestExternal(t *testing.T) {
 		}
 	}
 }
+
+// "managed" has the Instance run the External emulator itself, for the
+// four APIs Google ships an emulator for and no other (#624, ADR 0029).
+func TestExternalManaged(t *testing.T) {
+	c := Defaults()
+	c.External = map[string]string{"firestore": "managed", "datastore": "managed", "spanner": "managed", "bigtable": "managed"}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, api := range []string{"pubsub", "foo"} {
+		c.External = map[string]string{api: "managed"}
+		err := c.Validate()
+		if err == nil {
+			t.Fatalf("--external %s=managed accepted", api)
+		}
+		for _, want := range []string{api, "bigtable", "datastore", "firestore", "spanner"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("--external %s=managed: %q does not name %s", api, err, want)
+			}
+		}
+	}
+}

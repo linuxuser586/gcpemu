@@ -558,6 +558,34 @@ gcpemu start --external firestore=localhost:8080 --external spanner=localhost:90
 eval "$(gcpemu env)"
 ```
 
+Or let the Instance run Google's emulator itself: `--external <api>=managed` (e.g.
+`GCPEMU_EXTERNAL=firestore=managed,spanner=managed`) starts it as a Managed emulator, a container
+the Instance owns, for `firestore`, `datastore`, `spanner` or `bigtable`, and no other API
+(`docs/adr/0029-instances-run-googles-emulators-as-managed-emulators.md`).
+
+```sh
+gcpemu start --external firestore=managed --external spanner=managed
+eval "$(gcpemu env)"
+```
+
+- Firestore and Bigtable run from Google's `gcr.io/google.com/cloudsdktool/google-cloud-cli`
+  image at a pinned `-emulators` tag, Datastore runs the Firestore emulator in Datastore mode
+  from the same image, and Spanner runs from `gcr.io/cloud-spanner-emulator/emulator` at a
+  pinned tag. Each API gets its own container. The first start pulls the images: the
+  `google-cloud-cli` emulators image is over 1 GB, and the Instance is not ready until the pull
+  is done and each emulator accepts connections. `/_emu/v1/ready` names the one it waits for
+  (`managed-emulator/firestore`).
+- A Managed emulator has no address on the host or the LAN: clients reach it only through the API
+  gateway, exactly as an External emulator configured by address, with no IAM check. Spanner's
+  REST requests go to its emulator's REST port.
+- **A Managed emulator's data never survives a stop.** It is in memory only: Reset replaces each
+  Managed emulator's container, which clears its data, State snapshots don't hold it, and a
+  Persistent Instance loses it on every stop.
+- It needs a container runtime. With none, the Instance still starts and is ready, and the API
+  answers UNAVAILABLE saying the runtime is missing, as `gcpemu doctor` does. One that the runtime
+  stops or restarts behind the Instance's back is a Disrupted container. In Go tests,
+  `emutest.WithExternal("firestore", "managed")` does the same as the flag.
+
 - gRPC, streaming included, goes through as it comes, for the API's `google.<api>.*` services
   and for `google.longrunning` calls naming one of its Operations (a Spanner database's, say).
   REST goes through under `/<api>/` on the API gateway, with the prefix taken off, and Firestore's
@@ -575,14 +603,14 @@ eval "$(gcpemu env)"
   issued before it is forwarded.
 - No IAM check is made for a Delegated API and the emulator claims no Fidelity for it: whatever
   the External emulator does is what clients get. Reset, State snapshots, Fault injection and
-  the Request log leave Delegated APIs out.
+  the Request log leave Delegated APIs out, except that Reset clears a Managed emulator's data.
 - An External emulator that can't be reached answers UNAVAILABLE, naming the API and its
-  address. The Instance stays ready without it. `gcpemu doctor` reports each External emulator,
+  address. The Instance stays ready without one configured by address. `gcpemu doctor` reports each External emulator,
   and so do the Web console's dashboard and `GET /_emu/v1/external`.
 
 ### Container runtime
 
-Cloud SQL, GKE, Cloud NAT and Cloud Build need Docker Engine (>= 24) or Podman (>= 4.9,
+Cloud SQL, GKE, Cloud NAT, Cloud Build and Managed emulators need Docker Engine (>= 24) or Podman (>= 4.9,
 Docker-compatible socket). On macOS, Docker Desktop, OrbStack, Colima and Podman machine work too,
 and on Windows Docker Desktop and Podman machine, in Linux-containers mode. The emulator uses
 `DOCKER_HOST` first, then the Docker context (`DOCKER_CONTEXT`, or the current context in

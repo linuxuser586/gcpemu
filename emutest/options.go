@@ -69,7 +69,9 @@ func WithOffline() Option { return WithConfig(func(c *config.Config) { c.Offline
 
 // WithExternal delegates the API named api ("firestore", "spanner", …),
 // which no Service serves, to the External emulator at addr (host:port),
-// as `gcpemu start --external api=addr` does.
+// as `gcpemu start --external api=addr` does. An addr of "managed" has the
+// Instance run Google's emulator for firestore, datastore, spanner or
+// bigtable itself, which needs a container runtime (see RequireRuntime).
 func WithExternal(api, addr string) Option {
 	return WithConfig(func(c *config.Config) {
 		if c.External == nil {

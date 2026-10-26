@@ -190,7 +190,7 @@ function ExternalCard() {
             {query.data.map((e) => (
               <TableRow key={e.api}>
                 <TableCell className="font-mono">{e.api}</TableCell>
-                <TableCell className="font-mono">{e.address}</TableCell>
+                <TableCell className="font-mono">{e.managed ? 'Managed' : e.address}</TableCell>
                 <TableCell>
                   <Badge variant={e.reachable ? 'success' : 'destructive'}>
                     {e.reachable ? 'Reachable' : 'Unreachable'}

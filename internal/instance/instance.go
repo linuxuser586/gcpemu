@@ -87,6 +87,13 @@ type Instance struct {
 	shutdownOnce sync.Once
 	done         chan struct{}
 
+	// managed are the Managed emulators by API (ADR 0029), which start
+	// under managedCtx.
+	managed       map[string]*managedEmulator
+	managedCtx    context.Context
+	managedCancel context.CancelFunc
+	managedWG     sync.WaitGroup
+
 	// consoleServed reports whether the gateway serves the Web console.
 	consoleServed bool
 	// adminToken is the Admin token, "" on a loopback bind (FR-UI-009).
@@ -185,6 +192,8 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	}
 	in.containers = &containers{in: in}
 	env.Containers = in.containers
+	in.managed = map[string]*managedEmulator{}
+	in.managedCtx, in.managedCancel = context.WithCancel(context.Background())
 	in.gw = gateway.New(env, in.Log)
 	in.gw.SetLinks(in.link)
 	env.Delegated = in.link.DelegatedTo
@@ -346,6 +355,7 @@ func (in *Instance) Start(ctx context.Context) error {
 	if err := in.delegate(); err != nil {
 		return err
 	}
+	in.startManaged()
 	in.gw.HandleAdmin(newAdmin(in))
 	in.mountConsole()
 
@@ -517,6 +527,9 @@ func (in *Instance) Readiness() map[string]error {
 		}
 		out[s.Name()] = s.Ready()
 	}
+	for api, m := range in.managed {
+		out["managed-emulator/"+api] = m.readiness()
+	}
 	return out
 }
 
@@ -609,6 +622,7 @@ func (in *Instance) reset(ctx context.Context) error {
 		}
 	}
 	errs = append(errs, in.containers.reset(ctx))
+	errs = append(errs, in.resetManaged())
 	errs = append(errs, in.Env.Store.Reset())
 	for _, s := range in.services {
 		if f, ok := s.(emu.ResetFinisher); ok {
@@ -654,6 +668,7 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		in.hm.Stop()
 		in.fe.StopLAN()
 		errs = append(errs, in.link.Close())
+		in.stopManaged()
 		errs = append(errs, in.containers.shutdown())
 		errs = append(errs, in.fe.Close())
 		in.Events.Close() // end event streams so the gateway can drain

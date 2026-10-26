@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -20,11 +21,13 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
 // Delegated APIs (ADR 0027): an API that no Service serves, such as
 // Firestore's, which the API gateway forwards as it comes to the External
-// emulator configured for it by address. The gateway checks no IAM for it.
+// emulator configured for it by address, or to the Managed emulator the
+// Instance runs for it (ADR 0029). The gateway checks no IAM for it.
 
 // knownAPI is what the API gateway knows of an API Google ships an
 // emulator for, beyond the google.API.* gRPC package and API.googleapis.com
@@ -90,10 +93,20 @@ type delegatedAPI struct {
 
 // DelegatedAPI is a Delegated API and its External emulator.
 type DelegatedAPI struct {
-	API     string   `json:"api"`
-	Address string   `json:"address"`
+	API string `json:"api"`
+	// Address is "" for a Managed emulator, whose address the Instance
+	// knows.
+	Address string `json:"address"`
+	// Managed is whether the Instance runs the External emulator (ADR
+	// 0029).
+	Managed bool     `json:"managed,omitempty"`
 	Hosts   []string `json:"hosts"` // the hostnames the Google front end serves for it
 }
+
+// ManagedDialer connects to a Managed emulator's gRPC server, or to its
+// REST server when grpc is false. Its error says why the emulator is
+// unavailable.
+type ManagedDialer func(ctx context.Context, grpc bool) (net.Conn, error)
 
 // Delegate forwards the API named api to the External emulator at addr
 // (host:port). It refuses an API that a registered Service serves, by its
@@ -102,31 +115,52 @@ type DelegatedAPI struct {
 // Call it after Register, before Serve.
 func (g *Gateway) Delegate(api, addr string) error {
 	d := &delegatedAPI{DelegatedAPI: DelegatedAPI{API: api, Address: addr, Hosts: APIHosts(api)}, known: knownAPIs[api]}
-	target := &url.URL{Scheme: "http", Host: addr}
-	rewrite := func(pr *httputil.ProxyRequest) {
-		pr.SetURL(target)
-		pr.Out.Host = pr.In.Host
-	}
 	h2c := &http.Transport{Protocols: new(http.Protocols)}
 	h2c.Protocols.SetUnencryptedHTTP2(true)
-	d.rest = &httputil.ReverseProxy{Rewrite: rewrite, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+	return g.delegate(d, addr, nil, h2c)
+}
+
+// DelegateManaged forwards the API named api, as Delegate does, to the
+// Managed emulator that dial connects to (ADR 0029).
+func (g *Gateway) DelegateManaged(api string, dial ManagedDialer) error {
+	d := &delegatedAPI{DelegatedAPI: DelegatedAPI{API: api, Managed: true, Hosts: APIHosts(api)}, known: knownAPIs[api]}
+	rest := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, false) }}
+	h2c := &http.Transport{Protocols: new(http.Protocols), DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, true) }}
+	h2c.Protocols.SetUnencryptedHTTP2(true)
+	return g.delegate(d, api+".managed", rest, h2c)
+}
+
+// delegate forwards d's requests to target (host:port, or a name that
+// rest's and grpc's dialers ignore), REST over rest and gRPC over grpc;
+// a nil rest is http.DefaultTransport.
+func (g *Gateway) delegate(d *delegatedAPI, target string, rest, grpc http.RoundTripper) error {
+	u := &url.URL{Scheme: "http", Host: target}
+	rewrite := func(pr *httputil.ProxyRequest) {
+		pr.SetURL(u)
+		pr.Out.Host = pr.In.Host
+	}
+	d.rest = &httputil.ReverseProxy{Rewrite: rewrite, Transport: rest, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 		apierr.Write(w, d.unavailable(err))
 	}}
-	d.grpc = &httputil.ReverseProxy{Rewrite: rewrite, Transport: h2c, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+	d.grpc = &httputil.ReverseProxy{Rewrite: rewrite, Transport: grpc, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 		writeGRPCError(w, d.unavailable(err))
 	}}
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.delegable(d); err != nil {
-		return fmt.Errorf("--external %s=%s: %w", api, addr, err)
+		value := d.Address
+		if d.Managed {
+			value = config.Managed
+		}
+		return fmt.Errorf("--external %s=%s: %w", d.API, value, err)
 	}
 	for _, h := range d.Hosts {
 		g.hosts[h] = d.rest
 		g.delegatedHosts[h] = d
 	}
 	g.delegated = append(g.delegated, d)
-	prefix := "/" + api
+	prefix := "/" + d.API
 	g.mux.Handle(prefix+"/", http.StripPrefix(prefix, d.rest))
 	return nil
 }
@@ -135,6 +169,9 @@ func (g *Gateway) Delegate(api, addr string) error {
 // held.
 func (g *Gateway) delegable(d *delegatedAPI) error {
 	for _, o := range g.delegated {
+		if o.API == d.API && o.Managed {
+			return fmt.Errorf("%s is already delegated to a Managed emulator", d.API)
+		}
 		if o.API == d.API {
 			return fmt.Errorf("%s is already delegated to %s", d.API, o.Address)
 		}
@@ -301,6 +338,9 @@ func firstMessage(r *http.Request) []byte {
 // unavailable is the error a request gets when the External emulator could
 // not be reached, or stopped answering, with err.
 func (d *delegatedAPI) unavailable(err error) *apierr.Error {
+	if d.Managed {
+		return apierr.New(codes.Unavailable, "The Managed emulator for the Delegated API %s is unavailable: %v", d.API, err)
+	}
 	return apierr.New(codes.Unavailable, "The External emulator for the Delegated API %s at %s is unavailable: %v", d.API, d.Address, err)
 }
 

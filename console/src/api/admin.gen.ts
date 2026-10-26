@@ -155,7 +155,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The Delegated APIs, which the API gateway forwards to the External emulators configured with --external (ADR 0027), and whether each External emulator accepts connections now. The Instance's readiness never depends on them. */
+        /** The Delegated APIs, which the API gateway forwards to the External emulators configured with --external (ADR 0027), and whether each External emulator accepts connections now. The Instance's readiness never depends on one configured by address, only on the Managed emulators it runs (--external API=managed, ADR 0029). */
         get: operations["external"];
         put?: never;
         post?: never;
@@ -1277,13 +1277,15 @@ export interface components {
         External: {
             /** @description The API name, e.g. firestore. */
             api: string;
-            /** @description The External emulator's host:port. */
+            /** @description The External emulator's host:port; empty for a Managed emulator, which clients reach only through the API gateway. */
             address: string;
+            /** @description Whether the Instance runs it as a Managed emulator (ADR 0029). */
+            managed?: boolean;
             /** @description The real hostnames the Google front end serves for the API. */
             hosts: string[];
             /** @description Whether the External emulator accepted a TCP connection. */
             reachable: boolean;
-            /** @description Why it did not. */
+            /** @description Why it did not, such as a Managed emulator still starting or having no container runtime. */
             error?: string;
         };
         /** @description The container runtime the instance uses, or would use once a service needs one. Probed at most every few seconds. */

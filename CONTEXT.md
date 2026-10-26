@@ -178,7 +178,7 @@ A range of ports that Windows reserves for Hyper-V, WSL and others, which no pro
 _Avoid_: reserved port, privileged port (on Windows)
 
 **State snapshot**:
-A named, saved copy of all of an Instance's state that can be restored later.
+A named, saved copy of all of an Instance's state that can be restored later, except its Managed emulators' data.
 _Avoid_: snapshot (unqualified, collides with Pub/Sub snapshot)
 
 **Datastore**:
@@ -205,7 +205,7 @@ _Avoid_: condition (on its own), readiness check
 An Instance whose state disappears when it stops.
 
 **Persistent Instance**:
-An Instance that keeps its state in a data directory across restarts.
+An Instance that keeps its state in a data directory across restarts, except its Managed emulators' data.
 
 **Containerized Instance**:
 An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host. It still sees only its own container's files, such as its trust store, not the host's.
@@ -292,7 +292,7 @@ A Delegate that is not an Instance but speaks a GCP API's wire format, such as G
 _Avoid_: third-party emulator, compatible node
 
 **Managed emulator**:
-An External emulator that the Instance runs itself as a Managed container, from Google's own emulator, for Firestore, Datastore, Spanner or Bigtable. Reset clears its data, and State snapshots do not hold it.
+An External emulator that the Instance runs itself as a Managed container, from Google's own emulator, for Firestore, Datastore, Spanner or Bigtable. Its data never survives a stop, even in a Persistent Instance: Reset clears it, and State snapshots do not hold it.
 _Avoid_: built-in emulator, bundled emulator
 
 **Discovered Instance**:
