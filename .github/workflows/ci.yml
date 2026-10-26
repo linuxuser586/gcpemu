@@ -244,11 +244,41 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin,kubectl
+      # ADR 0025: the IF-007/IF-008 clients run from host toolchains.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      # Not setup-java's cache: it fails while no pom.xml exists.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository
+          key: m2-${{ runner.arch }}-${{ hashFiles('compat/**/pom.xml') }}
+          restore-keys: m2-${{ runner.arch }}-
+      # Maven and the aws CLI v2 from the runner image, where it has them.
+      - name: Maven and the aws CLI
+        run: |
+          command -v mvn >/dev/null || { sudo apt-get update -q && sudo apt-get install -yq maven; }
+          if ! command -v aws >/dev/null; then
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$RUNNER_TEMP/awscli.zip"
+            unzip -q "$RUNNER_TEMP/awscli.zip" -d "$RUNNER_TEMP"
+            sudo "$RUNNER_TEMP/aws/install"
+          fi
+          python3 --version; node --version; java -version; mvn --version; aws --version
       - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-compat
           key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
+      # A missing client fails its test here instead of skipping it.
       - name: Client compatibility (SRS 7.1)
+        env:
+          GCPEMU_COMPAT_REQUIRE: "1"
         run: task compat
       # #611: gcpemu dns install through systemd-resolved, with the
       # runner's passwordless sudo. The Pre-release host checks run it on

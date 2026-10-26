@@ -6,7 +6,8 @@
 // The guard never forwards a request off the machine. It refuses every
 // request, except that after Tunnel a CONNECT to a host Host mode serves
 // goes to the Google front end, which runs on this machine. A client
-// reaches it through HTTPS_PROXY and HTTP_PROXY (Env). Requests to the
+// reaches it through HTTPS_PROXY and HTTP_PROXY (Env), or a JVM through
+// JAVA_TOOL_OPTIONS (JavaEnv). Requests to the
 // API gateway bypass it: Go never proxies loopback addresses, and NO_PROXY
 // exempts them for clients such as gcloud that otherwise would. The guard
 // only sees traffic that would leave the machine.
@@ -75,6 +76,16 @@ func (g *Guard) Env() []string {
 		"HTTP_PROXY=" + u, "http_proxy=" + u,
 		"NO_PROXY=" + loopback, "no_proxy=" + loopback,
 	}
+}
+
+// JavaEnv returns Env plus JAVA_TOOL_OPTIONS, which carries the same
+// settings as system properties: the JVM ignores the proxy variables.
+// http.nonProxyHosts is loopback in the JVM's syntax.
+func (g *Guard) JavaEnv() []string {
+	host, port, _ := net.SplitHostPort(g.addr)
+	opts := fmt.Sprintf("-Dhttp.proxyHost=%s -Dhttp.proxyPort=%s -Dhttps.proxyHost=%s -Dhttps.proxyPort=%s -Dhttp.nonProxyHosts=localhost|127.*|[::1]",
+		host, port, host, port)
+	return append(g.Env(), "JAVA_TOOL_OPTIONS="+opts)
 }
 
 // Tunnel passes each CONNECT to one of hosts on to ip, at the port the

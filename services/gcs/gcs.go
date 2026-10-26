@@ -177,6 +177,9 @@ func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]str
 	}
 	if gw != "" {
 		out["CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE"] = "http://" + gw + "/storage/v1/"
+		// gcloud storage sign-url signs for, and probes, the XML API here;
+		// the gateway root serves /BUCKET/OBJECT.
+		out["CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL"] = "http://" + gw
 	}
 	return out
 }

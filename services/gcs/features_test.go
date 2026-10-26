@@ -3,7 +3,12 @@ package gcs_test
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -14,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -409,6 +415,117 @@ func TestEnvVars(t *testing.T) {
 	ev := inst.EnvVars()
 	if ev["STORAGE_EMULATOR_HOST"] != inst.Endpoint("gcs") || ev["CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE"] != inst.GatewayURL()+"/storage/v1/" {
 		t.Errorf("env = %v", ev)
+	}
+}
+
+// gcloudSignedURL signs a GET of /bucket/object at endpoint the way gcloud
+// storage sign-url does (googlecloudsdk/command_lib/storage/sign_url_util.py):
+// path style, lowercase x-goog-* parameter names.
+func gcloudSignedURL(t *testing.T, f *fakeIAM, endpoint, bucket, object string, at time.Time, expires int) string {
+	t.Helper()
+	host := strings.TrimPrefix(endpoint, "http://")
+	path := "/" + bucket + "/" + strings.ReplaceAll(url.PathEscape(object), "%2F", "/")
+	scope := at.UTC().Format("20060102") + "/us-central1/storage/goog4_request"
+	date := at.UTC().Format("20060102T150405Z")
+	q := url.Values{
+		"x-goog-algorithm":     {"GOOG4-RSA-SHA256"},
+		"x-goog-credential":    {f.email + "/" + scope},
+		"x-goog-date":          {date},
+		"x-goog-signedheaders": {"host"},
+		"x-goog-expires":       {strconv.Itoa(expires)},
+	}
+	query := q.Encode() // sorted, quote_plus-style, as gcloud builds it
+	creq := strings.Join([]string{"GET", path, query, "host:" + host + "\n", "host", "UNSIGNED-PAYLOAD"}, "\n")
+	ch := sha256.Sum256([]byte(creq))
+	sts := strings.Join([]string{"GOOG4-RSA-SHA256", date, scope, hex.EncodeToString(ch[:])}, "\n")
+	sum := sha256.Sum256([]byte(sts))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, f.key, crypto.SHA256, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return endpoint + path + "?x-goog-signature=" + hex.EncodeToString(sig) + "&" + query
+}
+
+// gcloud's signed URLs name their parameters in lowercase (#599): they are
+// verified, not served as unsigned requests.
+func TestSignedURLLowercaseParameters(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	ctx := context.Background()
+	const sa = "signer@test-project.iam.gserviceaccount.com"
+	fk := newFakeIAM(t, sa)
+	inject(inst, fk)
+	b := c.Bucket("lowercase")
+	if err := b.Create(ctx, testProject, nil); err != nil {
+		t.Fatal(err)
+	}
+	write(t, ctx, b.Object("dir/obj.txt"), []byte("lower"), 0)
+	ep := inst.EnvVars()["CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL"]
+	get := func(u string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(body)
+	}
+
+	u := gcloudSignedURL(t, fk, ep, "lowercase", "dir/obj.txt", time.Now(), 600)
+	if code, body := get(u); code != 200 || body != "lower" {
+		t.Fatalf("signed GET = %d %q", code, body)
+	}
+	i := strings.Index(u, "x-goog-signature=") + len("x-goog-signature=")
+	digit := "0"
+	if u[i] == '0' {
+		digit = "1"
+	}
+	tampered := u[:i] + digit + u[i+1:]
+	if code, body := get(tampered); code != 403 || !strings.Contains(body, "SignatureDoesNotMatch") {
+		t.Errorf("tampered = %d %s", code, body)
+	}
+	expired := gcloudSignedURL(t, fk, ep, "lowercase", "dir/obj.txt", time.Now().Add(-time.Hour), 60)
+	if code, body := get(expired); code != 400 || !strings.Contains(body, "ExpiredToken") {
+		t.Errorf("expired = %d %s", code, body)
+	}
+}
+
+// gcloud storage sign-url signs for, and probes, the host in
+// storage/gs_xml_endpoint_url (#599): a path-style signed URL there must
+// serve the object.
+func TestEnvVarsXMLEndpointServesSignedURL(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	ctx := context.Background()
+	const sa = "signer@test-project.iam.gserviceaccount.com"
+	fk := newFakeIAM(t, sa)
+	inject(inst, fk)
+	b := c.Bucket("xml-endpoint")
+	if err := b.Create(ctx, testProject, nil); err != nil {
+		t.Fatal(err)
+	}
+	write(t, ctx, b.Object("dir/obj.txt"), []byte("via xml"), 0)
+
+	ep, err := url.Parse(inst.EnvVars()["CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL"])
+	if err != nil || ep.Scheme != "http" || ep.Host == "" || strings.Trim(ep.Path, "/") != "" {
+		t.Fatalf("CLOUDSDK_STORAGE_GS_XML_ENDPOINT_URL = %q (%v), want http://host:port", ep, err)
+	}
+	u, err := b.SignedURL("dir/obj.txt", &storage.SignedURLOptions{
+		GoogleAccessID: sa, PrivateKey: pemKey(fk), Method: "GET", Expires: time.Now().Add(time.Hour),
+		Scheme: storage.SigningSchemeV4, Insecure: true, Hostname: ep.Host, Style: storage.PathStyle(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(body) != "via xml" {
+		t.Fatalf("signed GET of %s = %d %q", u, resp.StatusCode, body)
 	}
 }
 

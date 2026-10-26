@@ -62,12 +62,15 @@ type sigParams struct {
 }
 
 // signedURLParams extracts query-string signature parameters, or nil if the
-// request is not a signed URL.
+// request is not a signed URL. The client libraries send X-Goog-Signature,
+// gcloud storage sign-url x-goog-signature.
 func signedURLParams(q url.Values) (*sigParams, error) {
 	get := func(name string) string {
 		for _, p := range []string{"X-Goog-", "X-Amz-"} {
-			if v := q.Get(p + name); v != "" {
-				return v
+			for _, k := range []string{p + name, strings.ToLower(p + name)} {
+				if v := q.Get(k); v != "" {
+					return v
+				}
 			}
 		}
 		return ""
