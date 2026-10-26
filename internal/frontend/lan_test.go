@@ -32,8 +32,11 @@ import (
 // tokenAuth accepts one bearer token.
 type tokenAuth struct{ emu.Authorizer }
 
-func (tokenAuth) Authenticate(_ context.Context, tok string) (emu.Principal, bool) {
-	return "serviceAccount:ci-runner@p.iam.gserviceaccount.com", tok == "good"
+func (tokenAuth) Authenticate(_ context.Context, tok string) (emu.Principal, error) {
+	if tok != "good" {
+		return "", emu.ErrUnknownToken
+	}
+	return "serviceAccount:ci-runner@p.iam.gserviceaccount.com", nil
 }
 
 // stubStorage owns the bucket "ours" and treats XML API requests with a

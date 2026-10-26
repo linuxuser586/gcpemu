@@ -46,12 +46,16 @@ func (s *Service) authRequired(ctx context.Context) bool { return s.enforcing() 
 func (s *Service) lanHandler(next http.Handler) http.Handler {
 	guard := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/token" {
-			tok, ok := cutBearer(r.Header.Get("Authorization"))
-			if ok {
-				_, ok = s.env.Auth.Authenticate(r.Context(), tok)
+			err := emu.ErrUnknownToken
+			if tok, ok := cutBearer(r.Header.Get("Authorization")); ok {
+				_, err = s.env.Auth.Authenticate(r.Context(), tok)
 			}
-			if !ok {
+			if err != nil {
 				w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
+				if !errors.Is(err, emu.ErrUnknownToken) {
+					writeRegError(w, unavailable(err))
+					return
+				}
 				s.challenge(w, r, "", "")
 				return
 			}

@@ -63,9 +63,16 @@ func (in *Instance) newLink() (*link.Manager, error) {
 			}
 			return "", false
 		},
+		// Only from the tokens this Instance issued: Instances that
+		// delegate to each other must not ask each other in circles.
 		Authenticate: func(ctx context.Context, token string) (string, bool) {
-			p, ok := in.Env.Auth.Authenticate(ctx, token)
-			return string(p), ok
+			if svc, ok := in.Env.Lookup("iam"); ok {
+				if a, ok := svc.(emu.LocalAuthenticator); ok {
+					p, err := a.AuthenticateLocal(ctx, token)
+					return string(p), err == nil
+				}
+			}
+			return "", false
 		},
 	}), nil
 }

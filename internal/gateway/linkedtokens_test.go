@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -12,17 +13,37 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
-// linkedTokenGateway is a gateway under IAM mode whose links answer every
-// access token with principal, and unreachable.
+// linkedAuthn answers every access token as the Instance's authenticator
+// does once its links answered principal, and unreachable (#736).
+type linkedAuthn struct {
+	principal   string
+	unreachable map[string]error
+}
+
+func (a linkedAuthn) Authenticate(context.Context, string) (emu.Principal, error) {
+	switch {
+	case a.principal != "":
+		return emu.Principal(a.principal), nil
+	case a.unreachable != nil:
+		return "", apierr.New(codes.Unavailable, "Cannot authenticate the access token: %v", a.unreachable["office"])
+	}
+	return "", emu.ErrUnknownToken
+}
+
+// linkedTokenGateway is a gateway under IAM mode whose authenticator
+// answers every access token with principal, and unreachable.
 func linkedTokenGateway(t *testing.T, mode, principal string, unreachable map[string]error) *Gateway {
 	t.Helper()
 	log := slog.New(slog.DiscardHandler)
-	g := New(&emu.Env{Config: &config.Config{DefaultPrincipal: "user:default@example.com"}, Auth: emu.NewPolicyAuthorizer(mode, log), Log: log}, nil)
-	g.SetLinks(fakeLinks{delegated: map[string]string{"team-shared": "office"}, principal: principal, unreachable: unreachable})
+	auth := emu.NewPolicyAuthorizer(mode, log)
+	auth.Install(linkedAuthn{principal, unreachable}, nil)
+	g := New(&emu.Env{Config: &config.Config{DefaultPrincipal: "user:default@example.com"}, Auth: auth, Log: log}, nil)
+	g.SetLinks(fakeLinks{delegated: map[string]string{"team-shared": "office"}})
 	return g
 }
 
@@ -42,7 +63,7 @@ const linkedTok = "ya29.gcpemu.issued-elsewhere"
 
 // With no Linked Instance claiming an access token and a link unreachable,
 // a request with it fails UNAVAILABLE naming the link and why, in every
-// IAM mode, and never runs as the default Principal (#733).
+// IAM mode, and never runs as the default Principal (#733, #736).
 func TestLinkedTokenWithUnreachableLink(t *testing.T) {
 	down := map[string]error{"office": errors.New(`link "office" does not answer: connection refused`)}
 	for _, mode := range []string{config.IAMEnforce, config.IAMAudit, config.IAMOff} {

@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -22,7 +23,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	iamv1 "google.golang.org/api/iam/v1"
+	"google.golang.org/grpc/codes"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -234,34 +237,77 @@ func (s *Service) mintAccessToken(p emu.Principal, scopes []string, clientID str
 
 // lookupToken returns an unexpired token record.
 func (s *Service) lookupToken(tok string) (*tokenRecord, bool) {
+	rec, found := s.issuedToken(tok)
+	if !found || s.env.Clock.Now().After(rec.Expiry) {
+		return nil, false
+	}
+	return rec, true
+}
+
+// issuedToken returns the record of a token this Instance issued, expired
+// or not, until it is pruned.
+func (s *Service) issuedToken(tok string) (*tokenRecord, bool) {
 	var rec tokenRecord
 	var found bool
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		found = store.GetJSON(tx, nsTokens, tok, &rec) == nil
 		return nil
 	})
-	if !found || s.env.Clock.Now().After(rec.Expiry) {
-		return nil, false
-	}
-	return &rec, true
+	return &rec, found
 }
 
 // Authenticate implements emu.Authenticator (FR-CORE-051): emulator access
 // tokens and self-signed service-account JWTs (as sent by client libraries
-// using a JSON key without a token exchange) identify the caller.
-func (s *Service) Authenticate(ctx context.Context, tok string) (emu.Principal, bool) {
+// using a JSON key without a token exchange) identify the caller. An
+// emulator access token this Instance did not issue may have been issued
+// by a Linked Instance it delegates to, which it asks (ADR 0027).
+func (s *Service) Authenticate(ctx context.Context, tok string) (emu.Principal, error) {
+	p, err := s.AuthenticateLocal(ctx, tok)
+	if !errors.Is(err, emu.ErrUnknownToken) || s.env.LinkedAccessToken == nil {
+		return p, err
+	}
+	// Only a token an Instance could have issued is sent over a link,
+	// never Foreign credentials, and never one this Instance issued for an
+	// account since disabled, or that has expired.
+	if _, own := s.issuedToken(tok); own || !strings.HasPrefix(tok, tokenPrefix) {
+		return p, err
+	}
+	linked, unreachable := s.env.LinkedAccessToken(ctx, tok)
+	switch {
+	case linked != "":
+		return emu.Principal(linked), nil
+	case len(unreachable) > 0:
+		return "", unreachableLinks(unreachable)
+	}
+	return "", emu.ErrUnknownToken
+}
+
+// unreachableLinks is the UNAVAILABLE error for an access token this
+// Instance did not issue, which the Linked Instances of the links
+// unreachable may have issued but cannot be asked about (#733).
+func unreachableLinks(unreachable map[string]error) error {
+	why := make([]string, 0, len(unreachable))
+	for _, name := range slices.Sorted(maps.Keys(unreachable)) {
+		why = append(why, unreachable[name].Error())
+	}
+	return apierr.New(codes.Unavailable, "Cannot authenticate the access token: this Instance did not issue it, and a Linked Instance that may have issued it cannot be reached: %s.", strings.Join(why, "; "))
+}
+
+// AuthenticateLocal implements emu.LocalAuthenticator: Authenticate for
+// the tokens this Instance issued only.
+func (s *Service) AuthenticateLocal(_ context.Context, tok string) (emu.Principal, error) {
 	if rec, ok := s.lookupToken(tok); ok {
 		if email, isSA := strings.CutPrefix(rec.Principal, "serviceAccount:"); isSA && s.accountDisabled(email) {
-			return "", false
+			return "", emu.ErrUnknownToken
 		}
-		return emu.Principal(rec.Principal), true
+		return emu.Principal(rec.Principal), nil
 	}
 	if strings.Count(tok, ".") == 2 {
 		if email, err := s.verifyAccountJWT(tok, ""); err == nil {
-			return emu.Principal("serviceAccount:" + email), true
+			return emu.Principal("serviceAccount:" + email), nil
 		}
 	}
-	return "", false
+	return "", emu.ErrUnknownToken
 }
 
 func (s *Service) accountDisabled(email string) bool {

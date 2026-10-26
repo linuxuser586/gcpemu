@@ -274,8 +274,8 @@ func TestPolicyStoreContract(t *testing.T) {
 	if err != nil || exp < 3500 {
 		t.Fatalf("AccessToken: %v %d", err, exp)
 	}
-	if p, ok := inst.Env.Auth.Authenticate(ctx, tok); !ok || p != emu.Principal("serviceAccount:"+sa.Email) {
-		t.Fatalf("Authenticate: %v %v", p, ok)
+	if p, err := inst.Env.Auth.Authenticate(ctx, tok); err != nil || p != emu.Principal("serviceAccount:"+sa.Email) {
+		t.Fatalf("Authenticate: %v %v", p, err)
 	}
 	idt, err := keys.IDToken(ctx, sa.Email, "https://push.example")
 	if err != nil {

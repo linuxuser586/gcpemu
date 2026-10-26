@@ -2,6 +2,7 @@ package sql
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -53,8 +55,11 @@ func (s *Service) principalForToken(ctx context.Context, tok string) (string, er
 	if tok == "" {
 		return "", nil
 	}
-	p, ok := s.env.Auth.Authenticate(ctx, tok)
-	if !ok {
+	p, err := s.env.Auth.Authenticate(ctx, tok)
+	if err != nil && !errors.Is(err, emu.ErrUnknownToken) {
+		return "", err
+	}
+	if err != nil {
 		return "", apierr.Unauthenticated("Invalid request: the access token in the request is invalid or expired.").
 			WithReason(errDomain, "INVALID_ACCESS_TOKEN")
 	}

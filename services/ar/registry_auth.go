@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -37,6 +38,10 @@ func (s *Service) withRegistryAuth(next http.Handler) http.Handler {
 			tok, err := s.basicToToken(r.Context(), user, pass)
 			if err != nil {
 				w.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
+				if re := (*regError)(nil); errors.As(err, &re) {
+					writeRegError(w, re)
+					return
+				}
 				s.challenge(w, r, "", "")
 				return
 			}
@@ -49,11 +54,17 @@ func (s *Service) withRegistryAuth(next http.Handler) http.Handler {
 // basicToToken validates Basic credentials and returns a bearer token for
 // them. Invalid credentials are rejected only when authentication is
 // required (authRequired); otherwise they fall back to anonymous access.
+// An access token only a Linked Instance that cannot be reached might
+// have issued is neither: it is refused as unavailable (unavailable).
 func (s *Service) basicToToken(ctx context.Context, user, pass string) (string, error) {
 	switch {
 	case accessTokenUsers[user]:
-		if _, ok := s.env.Auth.Authenticate(ctx, pass); ok {
+		_, err := s.env.Auth.Authenticate(ctx, pass)
+		if err == nil {
 			return pass, nil
+		}
+		if !errors.Is(err, emu.ErrUnknownToken) {
+			return "", unavailable(err)
 		}
 	case user == "_json_key" || user == "_json_key_base64":
 		key := pass
@@ -136,6 +147,10 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 		switch r.PostForm.Get("grant_type") {
 		case "password":
 			t, err := s.basicToToken(r.Context(), r.PostForm.Get("username"), r.PostForm.Get("password"))
+			if re := (*regError)(nil); errors.As(err, &re) {
+				writeRegError(w, re)
+				return
+			}
 			if err != nil {
 				writeRegError(w, regErr(http.StatusUnauthorized, "UNAUTHORIZED", "%v", err))
 				return
@@ -158,6 +173,12 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 		"expires_in":   3600,
 		"issued_at":    s.env.Clock.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// unavailable is the registry's error for an access token Authenticate
+// could not verify for want of a Linked Instance (ADR 0027), naming it.
+func unavailable(err error) *regError {
+	return regErr(http.StatusServiceUnavailable, "UNAVAILABLE", "%s", apierr.From(err).Message)
 }
 
 func cutBearer(h string) (string, bool) {

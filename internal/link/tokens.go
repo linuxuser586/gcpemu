@@ -61,6 +61,10 @@ func (m *Manager) serveToken(w http.ResponseWriter, r *http.Request) {
 // could not ask, each with why, naming the link: broken, with no
 // --link-bind address, or not answering.
 func (m *Manager) Authenticate(ctx context.Context, token string) (principal string, unreachable map[string]error) {
+	links := m.DelegatedLinks()
+	if len(links) == 0 {
+		return "", nil
+	}
 	now := time.Now()
 	m.mu.Lock()
 	a, ok := m.tokens[token]
@@ -68,7 +72,7 @@ func (m *Manager) Authenticate(ctx context.Context, token string) (principal str
 	if ok && now.Before(a.expires) {
 		return a.principal, nil
 	}
-	for _, name := range m.DelegatedLinks() {
+	for _, name := range links {
 		p, err := m.askToken(ctx, name, token)
 		if err != nil {
 			m.cfg.Log.Debug("could not ask a Linked Instance about a token", "link", name, "err", err)

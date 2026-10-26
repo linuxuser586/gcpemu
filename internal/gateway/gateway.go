@@ -10,11 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net"
 	"net/http"
 	"runtime/debug"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -250,9 +248,6 @@ func (g *Gateway) authGRPC(ctx context.Context) (context.Context, error) {
 	return emu.WithPrincipal(ctx, p), nil
 }
 
-// emulatorToken prefixes the access tokens Instances issue.
-const emulatorToken = "ya29.gcpemu."
-
 // principal implements FR-CORE-050/051. A request a Linked Instance
 // forwarded is its asserted Principal's, whatever its credentials say.
 func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, error) {
@@ -267,39 +262,21 @@ func (g *Gateway) principal(ctx context.Context, authz string) (emu.Principal, e
 	if !ok || tok == "" || tok == "owner" { // "owner" is the Pub/Sub emulator convention
 		return def, nil
 	}
-	if p, ok := g.env.Auth.Authenticate(ctx, tok); ok {
+	// A token for a service account of a Delegated Project was issued by
+	// its Linked Instance (ADR 0027), which Authenticate asks; one it
+	// could not ask fails the request, naming the link.
+	p, err := g.env.Auth.Authenticate(ctx, tok)
+	if err == nil {
 		return p, nil
 	}
-	// A token for a service account of a Delegated Project was issued by
-	// its Linked Instance (ADR 0027). Only a token an Instance could have
-	// issued is sent over a link, never Foreign credentials. While a Linked
-	// Instance that may have issued it cannot be asked, no IAM mode answers
-	// for it (#733).
-	if l := g.linker(); l != nil && l.Delegating() && strings.HasPrefix(tok, emulatorToken) {
-		p, unreachable := l.Authenticate(ctx, tok)
-		if p != "" {
-			return emu.Principal(p), nil
-		}
-		if len(unreachable) > 0 {
-			return "", unreachableLinks(unreachable)
-		}
+	if !errors.Is(err, emu.ErrUnknownToken) {
+		return "", err
 	}
 	if g.env.Auth.Mode() == config.IAMEnforce {
 		return "", apierr.Unauthenticated("Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.").
 			WithReason("googleapis.com", "ACCESS_TOKEN_TYPE_UNSUPPORTED")
 	}
 	return def, nil
-}
-
-// unreachableLinks is the UNAVAILABLE error for an access token this
-// Instance did not issue, which the Linked Instances of the links
-// unreachable may have issued but cannot be asked about.
-func unreachableLinks(unreachable map[string]error) error {
-	why := make([]string, 0, len(unreachable))
-	for _, name := range slices.Sorted(maps.Keys(unreachable)) {
-		why = append(why, unreachable[name].Error())
-	}
-	return apierr.New(codes.Unavailable, "Cannot authenticate the access token: this Instance did not issue it, and a Linked Instance that may have issued it cannot be reached: %s.", strings.Join(why, "; "))
 }
 
 // Router returns the registration surface for one service.

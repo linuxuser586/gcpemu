@@ -98,7 +98,10 @@ type Config struct {
 	// Serve serves the requests paired Instances forward; nil refuses them.
 	Serve ServeFunc
 	// Authenticate returns the Principal of an access token this Instance
-	// issued, which paired Instances ask about (see Manager.Authenticate).
+	// issued, which paired Instances ask about (see
+	// Manager.Authenticate). It must not ask this Instance's own
+	// links, so that Instances that delegate to each other do not ask
+	// each other in circles.
 	Authenticate func(ctx context.Context, token string) (principal string, ok bool)
 	// VerifyIDToken returns the service account of an ID token this
 	// Instance signed, which paired Instances ask about (see

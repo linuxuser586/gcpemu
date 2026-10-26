@@ -17,7 +17,9 @@ import (
 	"testing"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
+	"google.golang.org/grpc/codes"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -462,5 +464,55 @@ func TestLANCallerLogin(t *testing.T) {
 	s.agentLogin(httptest.NewRecorder(), hr)
 	if es := s.env.RequestLog.Entries("sql"); len(es) != 1 || es[0].Method != "CONNECT direct 192.168.1.7" {
 		t.Errorf("request log %+v", es)
+	}
+}
+
+// linkDown knows no token, and "down" as one only the unreachable link
+// "office" might have issued.
+type linkDown struct{}
+
+func (linkDown) Authenticate(_ context.Context, tok string) (emu.Principal, error) {
+	if tok == "down" {
+		return "", apierr.New(codes.Unavailable, `link "office" cannot be reached`)
+	}
+	return "", emu.ErrUnknownToken
+}
+
+// A token only an unreachable Linked Instance might have issued is not
+// bad credentials: an IAM database login with it is refused as "cannot
+// connect now" (57P03), and an ephemeral certificate for it as
+// UNAVAILABLE, naming the link; a token no Instance issued keeps its
+// outcome (#736).
+func TestIAMTokenWithUnreachableLink(t *testing.T) {
+	for _, mode := range []string{config.IAMOff, config.IAMAudit, config.IAMEnforce} {
+		t.Run(mode, func(t *testing.T) { iamTokenWithUnreachableLink(t, mode) })
+	}
+}
+
+func iamTokenWithUnreachableLink(t *testing.T, mode string) {
+	s := testService(t, mode)
+	s.env.Auth.(*emu.PolicyAuthorizer).Install(linkDown{}, nil)
+	rec := &instanceRecord{PublicIP: "172.30.0.5", PrivateIP: "10.9.0.3", Instance: &sqladmin.DatabaseInstance{
+		Project: "p", Name: "i", ConnectionName: "p:r:i",
+		Settings: &sqladmin.Settings{IpConfiguration: &sqladmin.IpConfiguration{Ipv4Enabled: true, SslMode: "ALLOW_UNENCRYPTED_AND_ENCRYPTED"},
+			DatabaseFlags: []*sqladmin.DatabaseFlags{{Name: "cloudsql.iam_authentication", Value: "on"}}},
+	}}
+	_ = s.env.Store.Update(func(tx store.Tx) error {
+		_ = store.PutJSON(tx, nsInstances, "p/i", rec)
+		return store.PutJSON(tx, nsUsers, "p/i/sa@p.iam", &userRecord{User: newUser("p", "i", "sa@p.iam", "CLOUD_IAM_SERVICE_ACCOUNT")})
+	})
+	ctx := context.Background()
+	for tok, code := range map[string]string{"down": "57P03", "garbage": "28P01"} {
+		req := proxy.LoginRequest{Listener: proxy.ListenerDirect, Local: "10.9.0.3", Remote: "10.9.0.77", User: "sa@p.iam", Password: &tok}
+		r := s.decideLogin(ctx, rec, &req)
+		if r.Action != proxy.ActionDeny || r.Code != code || (tok == "down") != strings.Contains(r.Message, `"office"`) {
+			t.Errorf("IAM login with %s token = %+v, want denied %s", tok, r, code)
+		}
+	}
+	if _, err := s.principalForToken(ctx, "down"); apierr.From(err).Code != codes.Unavailable || !strings.Contains(err.Error(), `"office"`) {
+		t.Errorf("ephemeral certificate for a token of an unreachable link: %v, want UNAVAILABLE naming the office", err)
+	}
+	if _, err := s.principalForToken(ctx, "garbage"); apierr.From(err).Reason != "INVALID_ACCESS_TOKEN" {
+		t.Errorf("ephemeral certificate for a token no Instance issued: %v, want INVALID_ACCESS_TOKEN", err)
 	}
 }

@@ -127,3 +127,18 @@ func TestAuthenticateKeepsAnswerOfEveryLink(t *testing.T) {
 		t.Errorf("Authenticate of the same token with the office down = %q %v, want the kept answer", p, unreachable)
 	}
 }
+
+// An Instance that delegates nothing asks no link about a token, even
+// with its links down (#736).
+func TestAuthenticateDelegatingNothing(t *testing.T) {
+	laptop, office := tokenDelegating(t)
+	if err := laptop.Undelegate("team-shared"); err != nil {
+		t.Fatal(err)
+	}
+	if err := office.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if p, unreachable := laptop.Authenticate(ctxT(t), "tok"); p != "" || len(unreachable) != 0 {
+		t.Errorf("Authenticate delegating nothing = %q %v, want none, nothing asked", p, unreachable)
+	}
+}

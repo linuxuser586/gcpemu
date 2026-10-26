@@ -159,6 +159,13 @@ type Env struct {
 	// Principal, "" when none claims it, and the links it could not ask;
 	// nil asks none.
 	LinkedIDToken func(ctx context.Context, token string) (principal string, unreachable []string)
+	// LinkedAccessToken asks the Linked Instances Projects are delegated
+	// to which of them issued the access token, for a service account or
+	// Federated principal of a Project delegated to it (ADR 0027). It
+	// returns that Principal, "" when none claims it, and, when none
+	// does, the links it could not ask, each with why, naming the link;
+	// nil asks none.
+	LinkedAccessToken func(ctx context.Context, token string) (principal string, unreachable map[string]error)
 	// Middleware wraps HTTP handlers on per-service ports with the same
 	// auth/logging the gateway applies.
 	Middleware func(service string, h http.Handler) http.Handler
