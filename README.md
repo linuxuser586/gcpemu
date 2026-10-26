@@ -701,6 +701,13 @@ Pod requests are set as on clusters with bursting: 0.5 vCPU, 2 GiB memory and 1 
 storage for each container or sidecar that sets none, at least 50m CPU and 52 MiB memory per
 Pod, and memory or CPU raised to keep 1 to 6.5 GiB per vCPU. The response carries GKE's
 `autopilot-default-resources-mutator` warning. These webhooks fail closed, as GKE's do.
+`gcloud container clusters check-autopilot-compatibility` on a running Standard cluster puts its
+pods outside `kube-system` that haven't finished through the same rules (FR-GKE-017). It returns
+one issue per constraint, naming each pod's top-level workload as `<namespace>/<name>`:
+`INCOMPATIBILITY` for what Autopilot refuses, `ADDITIONAL_CONFIG_REQUIRED` for `NET_ADMIN`, and
+`PASSED_WITH_OPTIONAL_CONFIG` (`autogke-pod-resources`) for pods whose requests Autopilot would
+change. A Standard cluster takes `--enable-autopilot-compatibility-auditing` and stores it. The
+check doesn't wait for auditing to be on.
 A cluster whose `monitoring_config` enables `SYSTEM_COMPONENTS` exports its node, pod and
 container CPU and memory usage, requests, limits, allocatable and restarts (with the last
 termination reason, e.g. `OOMKilled`) over OTLP when the Instance's environment sets

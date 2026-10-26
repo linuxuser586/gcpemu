@@ -2,6 +2,7 @@ package gke
 
 import (
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 )
@@ -58,15 +59,24 @@ func applyAutopilot(r ref, c *containerpb.Cluster) error {
 }
 
 // checkAutopilotUpdate refuses a ClusterUpdate that would undo what GKE
-// sets on an Autopilot cluster, and Autopilot settings on a Standard one.
+// sets on an Autopilot cluster, and Autopilot settings on a Standard one
+// but for Autopilot compatibility auditing (FR-GKE-017).
 func checkAutopilotUpdate(c *containerpb.Cluster, u *containerpb.ClusterUpdate) error {
 	if !autopilotOn(c) {
-		if u.DesiredAutopilotWorkloadPolicyConfig != nil {
+		if wp := u.DesiredAutopilotWorkloadPolicyConfig; wp != nil && !auditingOnly(wp) {
 			return apierr.InvalidArgument("Workload policies can only be set on Autopilot clusters.")
 		}
 		return nil
 	}
 	return checkKept(u.DesiredWorkloadIdentityConfig, u.DesiredShieldedNodes, u.DesiredReleaseChannel, u.DesiredVerticalPodAutoscaling)
+}
+
+// auditingOnly reports whether wp sets Autopilot compatibility auditing
+// and nothing else.
+func auditingOnly(wp *containerpb.WorkloadPolicyConfig) bool {
+	rest := proto.Clone(wp).(*containerpb.WorkloadPolicyConfig)
+	rest.AutopilotCompatibilityAuditingEnabled = nil
+	return wp.AutopilotCompatibilityAuditingEnabled != nil && proto.Size(rest) == 0
 }
 
 // checkKept refuses, in a create request or a ClusterUpdate, turning off
