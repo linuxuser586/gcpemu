@@ -10,7 +10,6 @@ import (
 )
 
 func TestPrecedence(t *testing.T) {
-	t.Setenv("CI", "")
 	dir := t.TempDir()
 	file := filepath.Join(dir, "gcpemu.yaml")
 	if err := os.WriteFile(file, []byte("iamMode: enforce\nlogFormat: json\nports:\n  gcs: 9000\nservices: [gcs]\n"), 0o600); err != nil {
@@ -43,26 +42,42 @@ func TestPrecedence(t *testing.T) {
 	}
 }
 
-func TestCIDefaults(t *testing.T) {
+// TestDefaultsIgnoreCI is ADR 0039: the CI defaults are the CLI's, so
+// Defaults and ConsoleEnabled give the same answer whatever CI holds.
+func TestDefaultsIgnoreCI(t *testing.T) {
 	t.Setenv("CI", "true")
 	c := Defaults()
-	if !c.Ephemeral || c.LogFormat != "json" {
-		t.Errorf("CI defaults not applied: %+v", c)
+	if c.Ephemeral || c.LogFormat != "text" {
+		t.Errorf("Defaults under CI=true: Ephemeral %v, LogFormat %q; want false, text", c.Ephemeral, c.LogFormat)
 	}
-	if c.ConsoleEnabled() {
-		t.Error("console should be off under CI=true unless asked for")
-	}
-	on := true
-	c.ApplyFlags(&Config{Console: &on}, map[string]bool{"Console": true})
 	if !c.ConsoleEnabled() {
-		t.Error("--console should turn the console on under CI=true")
+		t.Error("a nil Console should mean on, under CI=true too")
+	}
+}
+
+// TestLoadFileExplicitZero: a key the file names wins even when its value
+// is the zero one, so "ephemeral: false" beats a default of true.
+func TestLoadFileExplicitZero(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "gcpemu.yaml")
+	if err := os.WriteFile(file, []byte("ephemeral: false\nstrictProjects: false\nlogLevel:\nbuild:\n  concurrency: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := Defaults()
+	c.Ephemeral, c.StrictProjects, c.LogLevel = true, true, "warn"
+	if err := c.LoadFile(file); err != nil {
+		t.Fatal(err)
+	}
+	if c.Ephemeral || c.StrictProjects || c.Build.Concurrency != 0 {
+		t.Errorf("explicit zeros not applied: Ephemeral %v, StrictProjects %v, Build.Concurrency %d", c.Ephemeral, c.StrictProjects, c.Build.Concurrency)
+	}
+	if c.LogLevel != "warn" || c.IAMMode != IAMAudit {
+		t.Errorf("keys absent or empty in the file changed: LogLevel %q, IAMMode %q", c.LogLevel, c.IAMMode)
 	}
 }
 
 // TestConsoleSetting: the console is on by default, and "false" in the
 // file or the environment turns it off.
 func TestConsoleSetting(t *testing.T) {
-	t.Setenv("CI", "")
 	c := Defaults()
 	if !c.ConsoleEnabled() {
 		t.Error("console should be on by default")

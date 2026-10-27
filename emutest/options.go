@@ -20,8 +20,8 @@ func WithDeterministic() Option {
 	return WithConfig(func(c *config.Config) { c.Deterministic = true })
 }
 
-// WithConsole serves the Web console under /console, as it is even under
-// CI=true.
+// WithConsole serves the Web console under /console, as an Instance does
+// by default.
 func WithConsole() Option {
 	return WithConfig(func(c *config.Config) { on := true; c.Console = &on })
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/link"
 	"github.com/linuxuser586/gcpemu/internal/porttest"
@@ -18,12 +19,9 @@ import (
 // listener on loopback.
 func startLinked(t *testing.T, name, dir string) *Instance {
 	t.Helper()
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Instance = name
 	cfg.DataDir = dir
-	// Defaults makes an Instance Ephemeral under CI=true; the test needs
-	// one that keeps its Links across a restart.
-	cfg.Ephemeral = false
 	cfg.Services = []string{"dns"}
 	cfg.Ports["gateway"] = 0
 	cfg.Ports[link.Endpoint] = 0

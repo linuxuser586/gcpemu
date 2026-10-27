@@ -106,8 +106,12 @@ func (o *rootOpts) load(fs *pflag.FlagSet) (*config.Config, error) {
 	return o.loadOver(fs, config.Defaults())
 }
 
-// loadOver is load with c as the defaults.
+// loadOver is load with c as the defaults. Under CI=true the CI defaults
+// (FR-CI-003) go on top of c, below the file, env and flags (ADR 0039).
 func (o *rootOpts) loadOver(fs *pflag.FlagSet, c config.Config) (*config.Config, error) {
+	if os.Getenv("CI") == "true" {
+		ciDefaults(&c)
+	}
 	if err := c.LoadFile(o.configFile); err != nil {
 		return nil, err
 	}
@@ -134,6 +138,13 @@ func (o *rootOpts) loadOver(fs *pflag.FlagSet, c config.Config) (*config.Config,
 	}
 	c.ApplyFlags(&o.flags, changed)
 	return &c, nil
+}
+
+// ciDefaults applies the CI defaults (FR-CI-003): an Ephemeral Instance,
+// JSON logs and no Web console.
+func ciDefaults(c *config.Config) {
+	off := false
+	c.Ephemeral, c.LogFormat, c.Console = true, "json", &off
 }
 
 func (o *rootOpts) startCmd() *cobra.Command {

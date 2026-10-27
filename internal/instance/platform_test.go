@@ -144,7 +144,7 @@ func TestNewRefusesHostModeOnVMRuntime(t *testing.T) {
 	hostModeProbe = func(string) (hostModeRuntime, bool) {
 		return hostModeRuntime{VM: runtime.VMDecision{On: true, Reason: "forced by GCPEMU_VM_RUNTIME"}}, true
 	}
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.DataDir = filepath.Join(t.TempDir(), "absent")
 	cfg.HostMode = true
 	if _, err := New(&cfg, nil, io.Discard); !errors.Is(err, hostmode.ErrVMRuntime) {
@@ -161,7 +161,7 @@ func TestNewRefusesHostModeOffLinux(t *testing.T) {
 	if hostmode.UnsupportedOn(goruntime.GOOS) == nil {
 		t.Skip("host mode is supported")
 	}
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.DataDir = filepath.Join(t.TempDir(), "absent")
 	cfg.HostMode = true
 	if _, err := New(&cfg, nil, io.Discard); !errors.Is(err, hostmode.ErrLinuxOnly) {
@@ -198,7 +198,7 @@ func TestDefaultServices(t *testing.T) {
 // starts: its control plane needs no runtime (ADR 0015).
 func TestNewWithoutUsableRuntime(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:1")
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"gcs", "nat"}

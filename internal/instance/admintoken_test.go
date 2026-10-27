@@ -34,8 +34,7 @@ func (s *adminSvc) Register(r emu.Router) error {
 
 func startAdminToken(t *testing.T, bind, token string) (*Instance, string, *syncBuffer) {
 	t.Helper()
-	t.Setenv("CI", "") // serve the Web console
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -194,7 +193,7 @@ func TestAdminTokenConfigured(t *testing.T) {
 		t.Errorf("configured token: %d %s", resp.StatusCode, body)
 	}
 
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Bind = "0.0.0.0"
 	cfg.AdminToken = "short"
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "GCPEMU_ADMIN_TOKEN") {
@@ -203,13 +202,12 @@ func TestAdminTokenConfigured(t *testing.T) {
 }
 
 func TestAdminTokenLoopback(t *testing.T) {
-	t.Setenv("CI", "") // serve the Web console
 	dir := t.TempDir()
 	stale := filepath.Join(dir, AdminTokenFile)
 	if err := os.WriteFile(stale, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Ephemeral = true
 	cfg.DataDir = dir
 	cfg.Services = []string{"dns"}
