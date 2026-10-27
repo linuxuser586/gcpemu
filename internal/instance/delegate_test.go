@@ -45,7 +45,7 @@ func startWithProjects(t *testing.T, name string, change func(*config.Config)) *
 // change may enable.
 func startWith(t *testing.T, name string, change func(*config.Config), extra map[string]Factory) *Instance {
 	t.Helper()
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Instance = name
 	cfg.DataDir = t.TempDir()
 	cfg.Ephemeral = true

@@ -41,7 +41,7 @@ func (s *condSvc) WaitConditions() map[string]emu.WaitCondition {
 // malformed one. The Admin API is not subject to IAM, so it answers under
 // --iam-mode=enforce with no grants.
 func TestConditions(t *testing.T) {
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}

@@ -152,12 +152,9 @@ type BuildConfig struct {
 const MinAdminTokenLen = 32
 
 // ConsoleEnabled reports whether the Web console is served: as configured,
-// otherwise on except under CI=true (FR-CI-003).
+// otherwise on. The CLI turns it off under CI=true (FR-CI-003, ADR 0039).
 func (c *Config) ConsoleEnabled() bool {
-	if c.Console != nil {
-		return *c.Console
-	}
-	return os.Getenv("CI") != "true"
+	return c.Console == nil || *c.Console
 }
 
 // Default service ports (Section 3.2).
@@ -174,8 +171,8 @@ var DefaultPorts = map[string]int{
 // order: a peer a service depends on at seed time must come first).
 var AllServices = []string{"iam", "compute", "dns", "certs", "ar", "pubsub", "secrets", "gcs", "sql", "gke", "lb", "cdn", "nat", "build"}
 
-// Defaults returns the default configuration. CI=true switches on the CI
-// defaults of FR-CI-003.
+// Defaults returns the default configuration. It never reads the
+// environment: the CI defaults of FR-CI-003 are the CLI's (ADR 0039).
 func Defaults() Config {
 	c := Config{
 		Instance:         "default",
@@ -191,10 +188,6 @@ func Defaults() Config {
 		LoopbackAliases:  "auto",
 		Containerized:    "auto",
 		Build:            BuildConfig{Concurrency: 4},
-	}
-	if os.Getenv("CI") == "true" {
-		c.Ephemeral = true
-		c.LogFormat = "json"
 	}
 	return c
 }
@@ -288,7 +281,9 @@ func (c *Config) LRO(service string) time.Duration {
 	return d
 }
 
-// LoadFile overlays a YAML file onto c. A missing file is not an error.
+// LoadFile overlays the keys a YAML file names onto c, zero values
+// included, so "ephemeral: false" beats a default of true. A missing file
+// is not an error.
 func (c *Config) LoadFile(path string) error {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -301,8 +296,38 @@ func (c *Config) LoadFile(path string) error {
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	c.overlay(&f, nil)
+	var keys map[string]any
+	if err := yaml.Unmarshal(b, &keys); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	set := map[string]bool{}
+	fileKeys(reflect.TypeOf(f), keys, "", set)
+	c.overlay(&f, set)
 	return nil
+}
+
+// fileKeys adds to set the field names, as overlay names them, of the
+// struct t whose yaml keys have a value in keys. A key left empty
+// ("logFormat:") counts as absent.
+func fileKeys(t reflect.Type, keys map[string]any, prefix string, set map[string]bool) {
+	for i := 0; i < t.NumField(); i++ {
+		key, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ",")
+		if key == "-" {
+			continue
+		}
+		v := keys[key]
+		if v == nil {
+			continue
+		}
+		name := prefix + t.Field(i).Name
+		if t.Field(i).Type.Kind() == reflect.Struct {
+			if sub, ok := v.(map[string]any); ok {
+				fileKeys(t.Field(i).Type, sub, name+".", set)
+			}
+			continue
+		}
+		set[name] = true
+	}
 }
 
 // overlay copies non-zero fields of src onto c (all of them when set is nil,
