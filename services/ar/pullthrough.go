@@ -489,6 +489,7 @@ func (s *Service) joinFetch(pt *pullThrough, digest string) *blobFetch {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f := s.fetches[digest]
+	var runCtx context.Context
 	if f == nil {
 		f = &blobFetch{s: s, digest: digest, ready: make(chan struct{}), size: -1, notify: make(chan struct{}), refs: 1}
 		if ctx, ok := s.enterFetchLocked(); !ok {
@@ -496,16 +497,21 @@ func (s *Service) joinFetch(pt *pullThrough, digest string) *blobFetch {
 			close(f.ready)
 		} else {
 			s.fetches[digest] = f
-			go func() {
-				defer s.fetchRuns.Exit()
-				f.run(ctx, pt.up)
-			}()
+			runCtx = ctx
 		}
 	}
+	// The scope is added before a new fetch starts, so the fetch cannot
+	// end without linking it (#798).
 	f.mu.Lock()
 	f.refs++
 	f.scopes = append(f.scopes, scopeImg{pt.scope, pt.img})
 	f.mu.Unlock()
+	if runCtx != nil {
+		go func() {
+			defer s.fetchRuns.Exit()
+			f.run(runCtx, pt.up)
+		}()
+	}
 	return f
 }
 
@@ -626,13 +632,22 @@ func (f *blobFetch) run(ctx context.Context, up upstreamRef) {
 	s.blobs.gc.RLock()
 	err = s.blobs.install(tmp, f.digest)
 	if err == nil {
+		// install leaves tmp when the blob was already in place.
+		_ = os.Remove(tmp)
 		tmp = ""
+		// No caller joins once the scopes are copied: a later one finds
+		// the installed blob and links it itself (#798).
+		s.mu.Lock()
+		if s.fetches[f.digest] == f {
+			delete(s.fetches, f.digest)
+		}
+		s.mu.Unlock()
 		f.mu.Lock()
 		scopes := append([]scopeImg(nil), f.scopes...)
 		f.mu.Unlock()
 		for _, si := range scopes {
 			if lerr := s.linkScope(si.scope, si.img, f.digest, f.written); lerr != nil {
-				s.env.Log.Debug("ar: link cached blob", "scope", si.scope.key(), "err", lerr)
+				s.env.Log.Warn("ar: cannot link a cached blob into its repository", "scope", si.scope.key(), "digest", f.digest, "err", lerr)
 			}
 		}
 	}
