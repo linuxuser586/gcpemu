@@ -45,8 +45,8 @@ func (s *Service) downloadJSON(w http.ResponseWriter, r *http.Request, bucket, n
 }
 
 // setObjectHeaders writes the response headers GCS sends with object data
-// (also used for XML HEAD).
-func setObjectHeaders(h http.Header, o *storage.Object) {
+// (also used for XML HEAD), naming user metadata metaPrefix+key.
+func setObjectHeaders(h http.Header, o *storage.Object, metaPrefix string) {
 	h.Set("Content-Type", o.ContentType)
 	h.Set("X-Goog-Generation", strconv.FormatInt(o.Generation, 10))
 	h.Set("X-Goog-Metageneration", strconv.FormatInt(o.Metageneration, 10))
@@ -81,8 +81,10 @@ func setObjectHeaders(h http.Header, o *storage.Object) {
 	if o.CustomTime != "" {
 		h.Set("X-Goog-Custom-Time", o.CustomTime)
 	}
+	// As stored, not canonicalized: botocore keeps the spelling of the key.
+	// h.Get and h.Del don't find these keys, which aren't canonical.
 	for k, v := range o.Metadata {
-		h.Set("X-Goog-Meta-"+k, v)
+		h[metaPrefix+k] = []string{v}
 	}
 }
 
@@ -173,7 +175,7 @@ func (s *Service) serveMedia(w http.ResponseWriter, r *http.Request, rec *object
 	}
 	defer f.Close()
 	h := w.Header()
-	setObjectHeaders(h, o)
+	setObjectHeaders(h, o, metaHeaderPrefix(r))
 	for k, v := range over {
 		h[k] = v
 	}
@@ -221,6 +223,21 @@ func (s *Service) serveMedia(w http.ResponseWriter, r *http.Request, rec *object
 	}
 	copyOut(w, io.LimitReader(f, length))
 	return nil
+}
+
+// metaHeaderPrefix is the prefix of the user metadata headers in a response
+// to r: x-amz-meta- when an S3 client signed it (AWS4-HMAC-SHA256, in the
+// Authorization header or a presigned URL), since that is where S3 clients
+// such as the aws CLI read it, and x-goog-meta- otherwise.
+func metaHeaderPrefix(r *http.Request) string {
+	p, _ := signedURLParams(r.URL.Query())
+	if p == nil {
+		p = headerSigParams(r)
+	}
+	if p != nil && strings.HasPrefix(p.algorithm, "AWS4-") {
+		return "x-amz-meta-"
+	}
+	return "x-goog-meta-"
 }
 
 func acceptsGzip(r *http.Request) bool {
