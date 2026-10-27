@@ -27,7 +27,7 @@ func ok(t *testing.T, path, resp string) Exchange {
 	return Exchange{Request: Request{Method: "GET", Path: path}, Response: Response{Status: 200, Body: body(t, resp)}}
 }
 
-// normaliseAll normalises raw as one test's exchanges, failing on a bad
+// normaliseAll normalises raw as one test's Exchanges, failing on a bad
 // option.
 func normaliseAll(t *testing.T, raw []Exchange, opts ...Option) Recording {
 	t.Helper()
@@ -146,19 +146,19 @@ func TestGeneratedValuesAreReplacedInsideOtherStrings(t *testing.T) {
 func TestAReusedIDThatChangesIsAMismatch(t *testing.T) {
 	want := normaliseAll(t, []Exchange{ok(t, "/t", `{"id": "aaaa1"}`), ok(t, "/t/1", `{"id": "aaaa1"}`)})
 	got := normaliseAll(t, []Exchange{ok(t, "/t", `{"id": "bbbb1"}`), ok(t, "/t/1", `{"id": "cccc1"}`)})
-	assertMismatches(t, compare(want, got, false), "exchanges[1].response.body.id")
+	assertMismatches(t, mismatches(t, want, got, false), "exchanges[1].response.body.id")
 }
 
 func TestAMalformedTimestampIsAMismatch(t *testing.T) {
 	want := normaliseAll(t, []Exchange{ok(t, "/s", `{"createTime": "2024-05-01T10:11:12Z"}`)})
 	got := normaliseAll(t, []Exchange{ok(t, "/s", `{"createTime": "2024-05-01 10:11"}`)})
-	assertMismatches(t, compare(want, got, false), "exchanges[0].response.body.createTime")
+	assertMismatches(t, mismatches(t, want, got, false), "exchanges[0].response.body.createTime")
 }
 
 func TestExtraMissingAndChangedFieldsAreMismatches(t *testing.T) {
 	want := normaliseAll(t, []Exchange{ok(t, "/b", `{"name": "b", "labels": {"a": "1"}, "acl": [{"role": "OWNER"}], "kind": "storage#bucket"}`)})
 	got := normaliseAll(t, []Exchange{ok(t, "/b", `{"name": "b", "labels": {"a": "2"}, "acl": [{"role": "OWNER", "extra": true}], "location": "US"}`)})
-	ms := compare(want, got, false)
+	ms := mismatches(t, want, got, false)
 	assertMismatches(t, ms,
 		"exchanges[0].response.body.acl[0].extra",
 		"exchanges[0].response.body.kind",
@@ -177,10 +177,57 @@ func TestExtraMissingAndChangedFieldsAreMismatches(t *testing.T) {
 	}
 }
 
-func TestStatusAndExchangeCountAreCompared(t *testing.T) {
-	want := normaliseAll(t, []Exchange{ok(t, "/a", `{}`), ok(t, "/b", `{}`)})
+func TestStatusIsCompared(t *testing.T) {
+	want := normaliseAll(t, []Exchange{ok(t, "/a", `{}`)})
 	got := normaliseAll(t, []Exchange{{Request: Request{Method: "GET", Path: "/a"}, Response: Response{Status: 201, Body: map[string]any{}}}})
-	assertMismatches(t, compare(want, got, false), "exchanges", "exchanges[0].response.status")
+	assertMismatches(t, mismatches(t, want, got, false), "exchanges[0].response.status")
+}
+
+func TestADifferentRequestIsAStaleRecording(t *testing.T) {
+	want := normaliseAll(t, []Exchange{ok(t, "/a", `{}`), ok(t, "/b", `{}`)})
+	got := normaliseAll(t, []Exchange{ok(t, "/a", `{}`), ok(t, "/c", `{"x": 1}`)})
+	assertStale(t, want, got, "exchanges[1]: the Recording has GET /b, the test made GET /c")
+}
+
+func TestAStepAddedAtTheEndIsAStaleRecording(t *testing.T) {
+	want := normaliseAll(t, []Exchange{ok(t, "/a", `{}`)})
+	got := normaliseAll(t, []Exchange{ok(t, "/a", `{}`), ok(t, "/b", `{}`)})
+	assertStale(t, want, got, "exchanges[1]: the Recording ends, the test made GET /b")
+}
+
+func TestAStepRemovedFromTheEndIsAStaleRecording(t *testing.T) {
+	want := normaliseAll(t, []Exchange{ok(t, "/a", `{}`), ok(t, "/b", `{}`)})
+	got := normaliseAll(t, []Exchange{ok(t, "/a", `{}`)})
+	assertStale(t, want, got, "exchanges[1]: the Recording has GET /b, the test made no request")
+}
+
+// A response that differs first is the Mismatch, even when the test then
+// makes other requests because of it; only that Exchange is reported.
+func TestTheFirstDifferenceDecides(t *testing.T) {
+	want := normaliseAll(t, []Exchange{ok(t, "/a", `{"n": 1}`), ok(t, "/b", `{}`)})
+	got := normaliseAll(t, []Exchange{ok(t, "/a", `{"n": 2}`), ok(t, "/c", `{}`), ok(t, "/d", `{}`)})
+	assertMismatches(t, mismatches(t, want, got, false), "exchanges[0].response.body.n")
+}
+
+// mismatches is compare's Mismatches, failing t if want is a Stale
+// Recording.
+func mismatches(t *testing.T, want, got Recording, messages bool) []Mismatch {
+	t.Helper()
+	ms, err := compare(want, got, messages)
+	if err != nil {
+		t.Errorf("Stale Recording: %v", err)
+	}
+	return ms
+}
+
+// assertStale fails t unless compare finds want a Stale Recording with
+// the error msg.
+func assertStale(t *testing.T, want, got Recording, msg string) {
+	t.Helper()
+	ms, err := compare(want, got, false)
+	if err == nil || err.Error() != msg || ms != nil {
+		t.Errorf("compare = %v, %v; want a Stale Recording: %s", ms, err, msg)
+	}
 }
 
 func TestUnorderedFieldsCompareInAnyOrder(t *testing.T) {
@@ -189,17 +236,17 @@ func TestUnorderedFieldsCompareInAnyOrder(t *testing.T) {
 	opt := Unordered("items", "")
 	want := normaliseAll(t, []Exchange{ok(t, "/l", a)}, opt)
 	got := normaliseAll(t, []Exchange{ok(t, "/l", b)}, opt)
-	assertMismatches(t, compare(want, got, false), "exchanges[0].response.body.ordered[0]", "exchanges[0].response.body.ordered[1]")
+	assertMismatches(t, mismatches(t, want, got, false), "exchanges[0].response.body.ordered[0]", "exchanges[0].response.body.ordered[1]")
 
 	// Another sort key, inside a nested array.
 	opt = Unordered("bindings[].members", "")
 	c := `{"bindings": [{"members": ["b", "a"]}]}`
 	d := `{"bindings": [{"members": ["a", "b"]}]}`
-	assertMismatches(t, compare(normaliseAll(t, []Exchange{ok(t, "/p", c)}, opt), normaliseAll(t, []Exchange{ok(t, "/p", d)}, opt), false))
+	assertMismatches(t, mismatches(t, normaliseAll(t, []Exchange{ok(t, "/p", c)}, opt), normaliseAll(t, []Exchange{ok(t, "/p", d)}, opt), false))
 	opt = Unordered("bindings", "role")
 	e := `{"bindings": [{"role": "r1"}, {"role": "r0"}]}`
 	f := `{"bindings": [{"role": "r0"}, {"role": "r1"}]}`
-	assertMismatches(t, compare(normaliseAll(t, []Exchange{ok(t, "/p", e)}, opt), normaliseAll(t, []Exchange{ok(t, "/p", f)}, opt), false))
+	assertMismatches(t, mismatches(t, normaliseAll(t, []Exchange{ok(t, "/p", e)}, opt), normaliseAll(t, []Exchange{ok(t, "/p", f)}, opt), false))
 }
 
 func TestAnIgnoredFieldNeedsAReason(t *testing.T) {
@@ -209,7 +256,7 @@ func TestAnIgnoredFieldNeedsAReason(t *testing.T) {
 	opt := Ignore("acl[].etag", "ACL etags are per entity and not part of this check")
 	want := normaliseAll(t, []Exchange{ok(t, "/b", `{"acl": [{"etag": "CAE=", "role": "OWNER"}]}`)}, opt)
 	got := normaliseAll(t, []Exchange{ok(t, "/b", `{"acl": [{"etag": "CAI=", "role": "OWNER"}]}`)}, opt)
-	assertMismatches(t, compare(want, got, false))
+	assertMismatches(t, mismatches(t, want, got, false))
 	assertJSON(t, got.Exchanges[0].Response.Body, map[string]any{"acl": []any{map[string]any{"role": "OWNER"}}})
 }
 
@@ -224,14 +271,14 @@ func TestErrorsCompareCodeAndReasonNotMessage(t *testing.T) {
 	}
 	norm := func(e Exchange) Recording { return normaliseAll(t, []Exchange{e}) }
 
-	assertMismatches(t, compare(norm(restErr(404, "notFound", "No such bucket")), norm(restErr(404, "notFound", "bucket missing")), false))
-	assertMismatches(t, compare(norm(restErr(404, "notFound", "a")), norm(restErr(404, "required", "a")), false), "exchanges[0].response.body.reasons[0]")
-	assertMismatches(t, compare(norm(restErr(404, "notFound", "a")), norm(restErr(400, "notFound", "a")), false), "exchanges[0].response.status")
-	assertMismatches(t, compare(norm(restErr(404, "notFound", "a")), norm(restErr(404, "notFound", "b")), true), "exchanges[0].response.body.message")
+	assertMismatches(t, mismatches(t, norm(restErr(404, "notFound", "No such bucket")), norm(restErr(404, "notFound", "bucket missing")), false))
+	assertMismatches(t, mismatches(t, norm(restErr(404, "notFound", "a")), norm(restErr(404, "required", "a")), false), "exchanges[0].response.body.reasons[0]")
+	assertMismatches(t, mismatches(t, norm(restErr(404, "notFound", "a")), norm(restErr(400, "notFound", "a")), false), "exchanges[0].response.status")
+	assertMismatches(t, mismatches(t, norm(restErr(404, "notFound", "a")), norm(restErr(404, "notFound", "b")), true), "exchanges[0].response.body.message")
 
-	assertMismatches(t, compare(norm(grpcErr("NOT_FOUND", "R", "f", "x")), norm(grpcErr("NOT_FOUND", "R", "f", "y")), false))
-	assertMismatches(t, compare(norm(grpcErr("NOT_FOUND", "R", "f", "x")), norm(grpcErr("ALREADY_EXISTS", "R", "f", "x")), false), "exchanges[0].response.code")
-	assertMismatches(t, compare(norm(grpcErr("NOT_FOUND", "R", "f", "x")), norm(grpcErr("NOT_FOUND", "R", "g", "x")), false), "exchanges[0].response.body.fieldViolations[0]")
+	assertMismatches(t, mismatches(t, norm(grpcErr("NOT_FOUND", "R", "f", "x")), norm(grpcErr("NOT_FOUND", "R", "f", "y")), false))
+	assertMismatches(t, mismatches(t, norm(grpcErr("NOT_FOUND", "R", "f", "x")), norm(grpcErr("ALREADY_EXISTS", "R", "f", "x")), false), "exchanges[0].response.code")
+	assertMismatches(t, mismatches(t, norm(grpcErr("NOT_FOUND", "R", "f", "x")), norm(grpcErr("NOT_FOUND", "R", "g", "x")), false), "exchanges[0].response.body.fieldViolations[0]")
 }
 
 func TestRecordingFilesAreDeterministic(t *testing.T) {

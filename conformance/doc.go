@@ -14,10 +14,16 @@
 // emutest starts (not Deterministic), behind the Escape guard: the clients'
 // transport and gRPC dialer reach loopback only, so a request that would
 // leave the machine fails the test, naming the host. No credentials are
-// needed. Each response is compared with the test's Recording; any
-// difference is a Mismatch and fails the test with the field's path, e.g.
-// exchanges[2].response.body.labels.color. A test without a Recording
-// skips and says to run `task conformance:record`.
+// needed. The test's Exchanges are compared with its Recording's in
+// order, and the first that differs fails the test. If its request's
+// method or path differs, or one side has no Exchange there, the test
+// changed since it was recorded: the Recording is a Stale Recording, and
+// the failure names the Exchange and says to run `task
+// conformance:record`. Otherwise its response differs, and each
+// difference is a Mismatch named by the field's path, e.g.
+// exchanges[2].response.body.labels.color. Later Exchanges are not
+// reported, since they may differ only because of the first. A test
+// without a Recording skips and says to run `task conformance:record`.
 //
 // Record mode (GCPEMU_CONFORMANCE_RECORD=1) runs the Products' tests
 // against the project GCPEMU_CONFORMANCE_PROJECT names, with Application
@@ -28,13 +34,13 @@
 // characters), every resource whose API takes labels is labelled
 // gcpemu-conformance=<suffix>, and each test deletes what it creates.
 // A step that GCP's eventual consistency can fail is retried against GCP
-// only, keeping the last attempt's exchanges; against the emulator it is
+// only, keeping the last attempt's Exchanges; against the emulator it is
 // tried once, so a Mismatch cannot hide behind a retry.
 //
-// A Recording is testdata/<product>/<TestName>.json: the test's exchanges
-// in order, each with its request's method, path and body (kept for
-// context and readable Drift diffs, never compared) and the normalised
-// response's HTTP status or gRPC code and body. Exchanges are captured at
+// A Recording is testdata/<product>/<TestName>.json: the test's Exchanges
+// in order, each with its request's method, path and body (the body kept
+// for context and readable Drift diffs, never compared) and the
+// normalised response's HTTP status or gRPC code and body. Exchanges are captured at
 // the wire, by an http.RoundTripper for REST and gRPC interceptors whose
 // messages are stored in protojson, so a field the client library does
 // not know is still compared. Polls of a long-running Operation are left
@@ -58,8 +64,8 @@
 // is compared by its HTTP status or gRPC code, its reasons and its field
 // violations, not by its message unless the test asks with CompareMessages.
 //
-// TestSelfRecording records every test against the emulator, standing in
-// for GCP, twice (the files must be byte-identical) and then compares with
-// what it recorded. TestChangedRecordingNamesTheField changes one field
+// TestSelfRecording makes a Recording of every test against the emulator,
+// standing in for GCP, twice (the files must be byte-identical), and then
+// compares with it. These Recordings are temporary and never committed. TestChangedRecordingNamesTheField changes one field
 // of a Recording and checks the Mismatch names it.
 package conformance

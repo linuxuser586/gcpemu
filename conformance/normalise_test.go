@@ -20,7 +20,7 @@ type runIDs struct {
 	project, number, suffix string
 }
 
-// Option adjusts how a test's exchanges are normalised and compared.
+// Option adjusts how a test's Exchanges are normalised and compared.
 type Option struct {
 	apply func(*rules) error
 }
@@ -112,9 +112,9 @@ var (
 	operationRE = regexp.MustCompile(`(operations/)([^/\s"?#]+)`)
 )
 
-// normaliser turns one test's raw exchanges into a Recording. It keeps the
+// normaliser turns one test's raw Exchanges into a Recording. It keeps the
 // placeholders it has given, so one value has one placeholder in all the
-// test's exchanges.
+// test's Exchanges.
 type normaliser struct {
 	ids       runIDs
 	rules     rules

@@ -28,30 +28,49 @@ func mismatchText(ms []Mismatch) string {
 	return b.String()
 }
 
-// compare returns the Mismatches of got against the Recording want, both
-// normalised. Requests are not compared. An error response is compared by
-// its essence (errorEssence); messages adds its message.
-func compare(want, got Recording, messages bool) []Mismatch {
+// compare compares got with the Recording want, both normalised, Exchange
+// by Exchange, and stops at the first that differs. If its request differs
+// (method or path), or one side has no Exchange there, want is a Stale
+// Recording and the error names the Exchange; later differences follow
+// from the test changing. Otherwise the Mismatches are that Exchange's
+// response's; later Exchanges' differences follow from it. Request bodies
+// are not compared. An error response is compared by its essence
+// (errorEssence); messages adds its message.
+func compare(want, got Recording, messages bool) ([]Mismatch, error) {
+	for i := range max(len(want.Exchanges), len(got.Exchanges)) {
+		if i >= len(got.Exchanges) {
+			w := want.Exchanges[i].Request
+			return nil, fmt.Errorf("exchanges[%d]: the Recording has %s %s, the test made no request", i, w.Method, w.Path)
+		}
+		if i >= len(want.Exchanges) {
+			g := got.Exchanges[i].Request
+			return nil, fmt.Errorf("exchanges[%d]: the Recording ends, the test made %s %s", i, g.Method, g.Path)
+		}
+		w, g := want.Exchanges[i].Request, got.Exchanges[i].Request
+		if w.Method != g.Method || w.Path != g.Path {
+			return nil, fmt.Errorf("exchanges[%d]: the Recording has %s %s, the test made %s %s", i, w.Method, w.Path, g.Method, g.Path)
+		}
+		if ms := compareResponse(fmt.Sprintf("exchanges[%d].response", i), want.Exchanges[i].Response, got.Exchanges[i].Response, messages); len(ms) > 0 {
+			return ms, nil
+		}
+	}
+	return nil, nil
+}
+
+// compareResponse returns the Mismatches of got from want at path.
+func compareResponse(path string, want, got Response, messages bool) []Mismatch {
 	var ms []Mismatch
-	if len(want.Exchanges) != len(got.Exchanges) {
-		ms = append(ms, Mismatch{"exchanges", fmt.Sprintf("want %d exchanges, got %d", len(want.Exchanges), len(got.Exchanges))})
+	if want.Status != got.Status {
+		ms = append(ms, Mismatch{path + ".status", fmt.Sprintf("want %d, got %d", want.Status, got.Status)})
 	}
-	for i := range min(len(want.Exchanges), len(got.Exchanges)) {
-		w, g := want.Exchanges[i].Response, got.Exchanges[i].Response
-		p := fmt.Sprintf("exchanges[%d].response", i)
-		if w.Status != g.Status {
-			ms = append(ms, Mismatch{p + ".status", fmt.Sprintf("want %d, got %d", w.Status, g.Status)})
-		}
-		if w.Code != g.Code {
-			ms = append(ms, Mismatch{p + ".code", fmt.Sprintf("want %s, got %s", w.Code, g.Code)})
-		}
-		wb, gb := w.Body, g.Body
-		if w.failed() || g.failed() {
-			wb, gb = errorEssence(wb, messages), errorEssence(gb, messages)
-		}
-		ms = compareValue(ms, p+".body", wb, gb)
+	if want.Code != got.Code {
+		ms = append(ms, Mismatch{path + ".code", fmt.Sprintf("want %s, got %s", want.Code, got.Code)})
 	}
-	return ms
+	wb, gb := want.Body, got.Body
+	if want.failed() || got.failed() {
+		wb, gb = errorEssence(wb, messages), errorEssence(gb, messages)
+	}
+	return compareValue(ms, path+".body", wb, gb)
 }
 
 // errorEssence is what is compared of an error body: the reasons (a REST

@@ -142,7 +142,8 @@ func gcpTarget(t testing.TB) *target {
 	return gcpOnce.tg
 }
 
-// recordHint is how a skipped test says its Recording is made.
+// recordHint is how a skipped test, or one whose Recording is stale, says
+// its Recording is made.
 const recordHint = "run `task conformance:record` to record it against GCP"
 
 // mode is how a test runs: whether it records, where Recordings are, what
@@ -245,7 +246,7 @@ func (c *conn) Cleanup(f func(ctx context.Context)) {
 }
 
 // HTTP is the client options of the REST client library for api
-// ("storage", "dns", "iam", …), capturing its exchanges.
+// ("storage", "dns", "iam", …), capturing its Exchanges.
 func (c *conn) HTTP(api string) []option.ClientOption {
 	c.t.Helper()
 	if c.target.gcp {
@@ -263,7 +264,7 @@ func (c *conn) HTTP(api string) []option.ClientOption {
 }
 
 // GRPC is the client options of a gRPC client library, capturing its
-// exchanges.
+// Exchanges.
 func (c *conn) GRPC() []option.ClientOption {
 	opts := []option.ClientOption{
 		option.WithGRPCDialOption(grpc.WithChainUnaryInterceptor(c.unary)),
@@ -278,7 +279,7 @@ func (c *conn) GRPC() []option.ClientOption {
 
 // Retry runs step until it returns nil. Against GCP, which is eventually
 // consistent, it tries up to maxAttempts times and keeps only the last
-// attempt's exchanges; against the emulator it tries once, so a Mismatch
+// attempt's Exchanges; against the emulator it tries once, so a Mismatch
 // cannot hide behind a retry.
 func (c *conn) Retry(step func() error) {
 	c.t.Helper()
@@ -370,7 +371,12 @@ func (c *conn) finish() {
 		t.Error(err)
 		return
 	}
-	if ms := compare(want, got, c.norm.rules.messages); len(ms) > 0 {
+	ms, err := compare(want, got, c.norm.rules.messages)
+	if err != nil {
+		t.Errorf("Stale Recording %s: %v: %s", c.file, err, recordHint)
+		return
+	}
+	if len(ms) > 0 {
 		c.mode.report(t, c.file, ms)
 	}
 }

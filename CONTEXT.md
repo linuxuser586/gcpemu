@@ -340,7 +340,7 @@ Fidelity level for behaviour reimplemented by the emulator and conformance-teste
 
 **Recorded**:
 Fidelity level for configuration that is stored and returned but has no effect.
-_Avoid_: using "recorded" for logging or capturing traffic. Say "logged" or "captured" instead.
+_Avoid_: using "recorded" for logging or capturing traffic. Say "logged" or "captured" instead, except for making a Recording, which is recording.
 
 **Absent**:
 Fidelity level for behaviour that is not emulated and answers UNIMPLEMENTED.
@@ -584,19 +584,27 @@ Tests that make the same requests of an Instance and of a real GCP project and c
 _Avoid_: "conformance" on its own, parity tests
 
 **Recording**:
-GCP's responses to the Conformance suite, captured from a real project and kept so that the emulator's responses can be compared with them without reaching GCP.
+The Exchanges of one Conformance suite test against a real GCP project, normalised and kept so that the emulator's responses can be compared with them without reaching GCP.
 _Avoid_: golden, snapshot
+
+**Exchange**:
+One request a Conformance suite test makes and the response it gets, as kept in a Recording.
+_Avoid_: call, interaction, round trip
 
 **Drift**:
 GCP's responses changing from one Recording to the next. It means the emulator may no longer be Faithful, even though nothing in the emulator changed.
 _Avoid_: using "drift" for the emulator disagreeing with a Recording; that is a Mismatch
 
 **Mismatch**:
-The emulator's response to a Conformance suite request differing from the Recording.
+The emulator's response to a Conformance suite request differing from the Recording. A different error message is not a Mismatch unless the test compares messages; a different status, code, reason or field violation is.
 _Avoid_: drift, diff
 
 **OpenTofu acceptance**:
 Tests that apply, re-plan and destroy OpenTofu configurations covering every resource type behind the Products.
+
+**Stale Recording**:
+A Recording whose requests no longer match those its test makes, because the test changed and was not recorded again. It is fixed by recording again, not by changing the emulator.
+_Avoid_: outdated Recording; calling it a Mismatch
 
 **Kubernetes conformance**:
 Upstream Kubernetes' own conformance tests, run with Sonobuoy against an emulated GKE cluster at each supported minor version. It checks the clusters, not their agreement with GCP.
