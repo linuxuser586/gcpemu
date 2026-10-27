@@ -119,11 +119,11 @@ tasks:
           # task compat downloads its other clients; these must be on PATH,
           # and each test skips without its own.
           missing=
-          for c in gcloud kubectl dig; do
+          for c in gcloud kubectl dig aws; do
             command -v $c >/dev/null || missing=${missing:+$missing, }$c
           done
-          if [ -z "$missing" ]; then ok "gcloud, kubectl, dig"
-          else warn "task compat: missing $missing; install: https://cloud.google.com/sdk/docs/install (gcloud components install kubectl), dig from BIND (dnsutils, bind-utils, brew install bind)"; fi
+          if [ -z "$missing" ]; then ok "gcloud, kubectl, dig, aws"
+          else warn "task compat: missing $missing; install: https://cloud.google.com/sdk/docs/install (gcloud components install kubectl), dig from BIND (dnsutils, bind-utils, brew install bind), the aws CLI v2 from https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"; fi
 
           echo
           echo "$fails required and $warns optional tools missing or too old. For running the emulator: bin/gcpemu doctor"

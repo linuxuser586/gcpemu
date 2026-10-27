@@ -60,7 +60,7 @@ func (s *Service) ServeObject(w http.ResponseWriter, r *http.Request, bucket, pa
 	}
 	if status == http.StatusOK && notModified(r, rec.Object.Md5Hash, rec.Object.Updated) {
 		h := w.Header()
-		setObjectHeaders(h, rec.Object)
+		setObjectHeaders(h, rec.Object, "x-goog-meta-")
 		h.Del("Content-Length")
 		w.WriteHeader(http.StatusNotModified)
 		return

@@ -1503,6 +1503,15 @@ The `gcloud/escape-guard` subtest lists Pub/Sub topics without the pubsub overri
 unless the guard refuses `pubsub.gcpemu.invalid`. The other clients run without the guard: they
 either stay on loopback or reach the internet on purpose.
 
+The `java` subtests (IF-008) build a Maven project in `compat/sdk/java/`, pinned to one
+`libraries-bom`, with `java` (JDK 21) and `mvn` from `PATH`. They create a bucket, write, read,
+list and delete a binary object with the Cloud Storage library, and publish a message with an
+attribute that the Pub/Sub library's streaming-pull `Subscriber` receives and acks. The probe's
+JVM runs behind the Escape guard through `JAVA_TOOL_OPTIONS`, since the JVM ignores
+`HTTPS_PROXY`. A canary run without the overrides fails unless the guard refuses
+`storage.googleapis.com` and `pubsub.gcpemu.invalid`. `GCPEMU_COMPAT_REQUIRE=1`, which the Linux
+CI jobs set, fails a test whose client toolchain is missing instead of skipping it.
+
 ### Kubernetes conformance (SRS 11.1)
 
 `task kube-conformance` starts an ephemeral instance with GKE, reads the supported versions from
@@ -1518,7 +1527,8 @@ plugin that never finished or no test run all fail it. A failed minor logs
 version to the GKE versions table adds its minor here with no test change.
 
 Sonobuoy is downloaded at a pinned, checksum-verified version for `linux/amd64` and
-`linux/arm64`; elsewhere, or without a container runtime, the test skips. It also needs gcloud
+`linux/arm64`; elsewhere, or without a container runtime, the test skips (without a runtime it
+fails under `GCPEMU_COMPAT_REQUIRE=1`). It also needs gcloud
 with `gke-gcloud-auth-plugin` on `PATH`, and the nodes pull the Sonobuoy and Kubernetes
 conformance images from the internet. Sonobuoy runs behind the Escape guard (below), with
 `NO_PROXY` covering loopback and the cluster's Public endpoint, so any other host it reaches fails the
@@ -1592,6 +1602,12 @@ and Node Cloud Storage clients ignore the variable, so they need the Cloud Stora
   the client is made. The Node client sends JSON API calls to the variable as it is, without
   `/storage/v1`, so no value of it works.
 
+The Java Cloud Storage client ignores both the variable and `STORAGE_EMULATOR_HOST`, and goes to
+`storage.googleapis.com`, so pass the emulator host yourself:
+`StorageOptions.newBuilder().setHost("http://" + System.getenv("STORAGE_EMULATOR_HOST"))`. Its ADC
+(the metadata server, or the key `gcpemu env` names) is in the Invalid universe, so it needs no
+other change.
+
 `gcpemu env` also sets `GOOGLE_API_USE_MTLS_ENDPOINT=never`, which `--no-universe` keeps. In
 `always` mode, or when a client certificate is found, a Go client dials a hard-coded
 `<api>.mtls.googleapis.com`, which the universe does not change. If you set
@@ -1611,6 +1627,10 @@ clients compare the key with Google's universe whatever the variable says:
   `client_options={"universe_domain": "gcpemu.invalid"}`.
 - Node Pub/Sub, including with `PUBSUB_EMULATOR_HOST`: pass `universeDomain: 'gcpemu.invalid'`
   with `emulatorMode: true`, since any `universeDomain` otherwise turns emulator mode off.
+- Java Pub/Sub on the plaintext `PUBSUB_EMULATOR_HOST` channel the emulator docs describe:
+  grpc-java sends no credentials over plaintext, and gax compares `NoCredentialsProvider` with
+  Google's universe. Next to `setCredentialsProvider(NoCredentialsProvider.create())`, call
+  `setUniverseDomain("googleapis.com")` on each settings builder, `Publisher` and `Subscriber`.
 - An OpenTofu `provider "google"` block that loads a key: set `universe_domain = "gcpemu.invalid"`,
   as the `gcpemu tofu-provider` blocks do.
 

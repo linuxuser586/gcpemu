@@ -1,17 +1,18 @@
 // Package compat is the client compatibility suite (SRS 7.1, IF-003 to
-// IF-006 and IF-009): the real gcloud, kubectl with gke-gcloud-auth-plugin,
-// Helm, Docker, crane, ko, psql, the Cloud SQL Auth Proxy v2 and dig run
-// against a detached gcpemu instance with only endpoint configuration.
+// IF-009): the real gcloud, the aws CLI v2, the Python, Node and Java
+// client libraries, kubectl with gke-gcloud-auth-plugin, Helm, Docker,
+// crane, ko, psql, the Cloud SQL Auth Proxy v2 and dig run against a
+// detached gcpemu instance with only endpoint configuration.
 //
 //	go test -tags compat ./compat -v -timeout 30m
 //
-// gcloud (with the gke-gcloud-auth-plugin component), kubectl, dig and
-// Docker come from PATH; their tests skip when one is missing. Helm, crane,
-// ko and the Auth Proxy are downloaded at pinned, checksum-verified
-// versions into $GCPEMU_COMPAT_CACHE (default <user cache dir>/gcpemu-compat),
-// and psql runs from the PostgreSQL image. Cloud SQL, GKE and the Docker
-// steps need a container runtime, which native Windows cannot use (ADR
-// 0008), so only crane and ko are pinned for Windows. Some steps (crane
+// gcloud (with the gke-gcloud-auth-plugin component), the aws CLI, kubectl,
+// dig and Docker come from PATH; their tests skip when one is missing.
+// Helm, crane, ko and the Auth Proxy are downloaded at pinned,
+// checksum-verified versions into $GCPEMU_COMPAT_CACHE (default <user cache
+// dir>/gcpemu-compat), and psql runs from the PostgreSQL image. Cloud SQL,
+// GKE and the Docker steps need a container runtime, which native Windows
+// cannot use (ADR 0008), so only crane and ko are pinned for Windows. Some steps (crane
 // copy from Docker Hub, ko's base image) need the internet. gcloud runs
 // behind an Escape guard (internal/escapeguard), so a gcloud request that
 // no endpoint override covers fails the step instead of reaching Google.
@@ -24,6 +25,16 @@
 // sign a URL with gcloud storage sign-url and an emulator-issued key, fetch
 // it with no credentials, and check that a modified signature and an
 // expired URL are refused.
+//
+// The aws subtests (#600) use an HMAC key the emulator issued, against the
+// XML API with path-style addressing: aws s3 cp of a small object and of
+// one that goes multipart, with --metadata, then ls and rm; the same
+// four-step sync round trip as gcloud's, with --delete; aws s3 presign,
+// with a modified signature refused; and a wrong secret, an inactive key
+// and a deleted key each refused with a 403. The aws CLI runs behind the
+// Escape guard with every AWS_* variable from the environment dropped and
+// its config and credentials files in a temp directory, so the developer's
+// AWS profile is never read.
 //
 // The universe subtests (#215) probe the Python and Node client libraries
 // with an emulator-issued key, and Python google-auth with the metadata
@@ -44,6 +55,15 @@
 // through the library's streaming-pull subscriber within a bounded time.
 // Both run behind the Escape guard, and a canary run without the emulator
 // variables must reach the guard.
+//
+// The java subtests (#602) build the Maven project in sdk/java, whose
+// Storage and Pub/Sub library versions libraries-bom pins, with java and
+// mvn from PATH (JDK 21), and skip when either is missing. Maven resolves
+// into ~/.m2; the probe's JVM then runs behind the Escape guard through
+// JAVA_TOOL_OPTIONS. It creates a bucket, writes and reads a binary object
+// byte for byte, lists and deletes it, and publishes a message with an
+// attribute that the streaming-pull Subscriber receives and acks. A
+// canary run without the overrides must reach the guard.
 //
 // The gcloud/builds subtests (#393) run gcloud builds submit with
 // --config and --tag, builds list and cancel, and create and run a Build

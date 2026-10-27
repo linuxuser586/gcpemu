@@ -8,4 +8,5 @@
 !/console/dist/index.html
 /console/test-results/
 /console/playwright-report/
+/compat/sdk/java/target/
 /compat/kube-conformance-results/

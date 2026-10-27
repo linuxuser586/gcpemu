@@ -2,17 +2,24 @@ package gcs_test
 
 import (
 	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // do sends a raw request and returns status, headers and body.
@@ -337,5 +344,173 @@ func TestXMLResponseOverrides(t *testing.T) {
 	code, h, _ := do(t, "GET", base+"/overrides/a.svg", nil, nil)
 	if code != 200 || h.Get("Content-Type") != "image/svg+xml" || h.Get("Cache-Control") != "no-store" || h.Get("Content-Disposition") != "" {
 		t.Errorf("plain get = %d %v", code, h)
+	}
+}
+
+// signV4 signs req with an HMAC key the way S3 clients do (AWS Signature
+// Version 4, docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html),
+// with prefix "AWS4" or "GOOG4". query signs it as a presigned URL instead
+// of an Authorization header.
+func signV4(req *http.Request, prefix, accessID, secret string, query bool) {
+	lower := strings.ToLower(prefix)
+	date := time.Now().UTC().Format("20060102T150405Z")
+	scope := date[:8] + "/us-central1/" + map[string]string{"AWS4": "s3", "GOOG4": "storage"}[prefix] + "/" + lower + "_request"
+	alg := prefix + "-HMAC-SHA256"
+	hdr := map[string]string{"AWS4": "X-Amz-", "GOOG4": "X-Goog-"}[prefix]
+	signed := "host"
+	q := req.URL.Query()
+	if query {
+		q.Set(hdr+"Algorithm", alg)
+		q.Set(hdr+"Credential", accessID+"/"+scope)
+		q.Set(hdr+"Date", date)
+		q.Set(hdr+"Expires", "600")
+		q.Set(hdr+"SignedHeaders", signed)
+	} else {
+		req.Header.Set(hdr+"Date", date)
+		req.Header.Set(hdr+"Content-Sha256", "UNSIGNED-PAYLOAD")
+		signed = "host;" + strings.ToLower(hdr) + "content-sha256;" + strings.ToLower(hdr) + "date"
+	}
+	canon := []string{req.Method, req.URL.EscapedPath(), strings.ReplaceAll(q.Encode(), "+", "%20"), "host:" + req.URL.Host}
+	if !query {
+		canon = append(canon, strings.ToLower(hdr)+"content-sha256:UNSIGNED-PAYLOAD", strings.ToLower(hdr)+"date:"+date)
+	}
+	canon = append(canon, "", signed, "UNSIGNED-PAYLOAD")
+	sum := sha256.Sum256([]byte(strings.Join(canon, "\n")))
+	key := []byte(prefix + secret)
+	for _, part := range strings.Split(scope, "/") {
+		m := hmac.New(sha256.New, key)
+		m.Write([]byte(part))
+		key = m.Sum(nil)
+	}
+	m := hmac.New(sha256.New, key)
+	m.Write([]byte(strings.Join([]string{alg, date, scope, hex.EncodeToString(sum[:])}, "\n")))
+	sig := hex.EncodeToString(m.Sum(nil))
+	if query {
+		q.Set(hdr+"Signature", sig)
+		req.URL.RawQuery = q.Encode()
+		return
+	}
+	req.Header.Set("Authorization", alg+" Credential="+accessID+"/"+scope+", SignedHeaders="+signed+", Signature="+sig)
+}
+
+// An S3 client signs with AWS4-HMAC-SHA256 and reads user metadata from
+// x-amz-meta-* (the aws CLI's --metadata), so a read signed that way names
+// it so; any other read keeps x-goog-meta-*. botocore keeps a key as the
+// response spells it, so the key goes out as stored, not canonicalized.
+func TestXMLMetadataHeadersFollowSigner(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	k, err := c.CreateHMACKey(context.Background(), testProject, "s3@test-project.iam.gserviceaccount.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + inst.Endpoint("gcs")
+	if code, _, b := do(t, "PUT", base+"/meta-bucket", nil, map[string]string{"X-Goog-Project-Id": testProject}); code != 200 {
+		t.Fatalf("create = %d %s", code, b)
+	}
+	if code, _, b := do(t, "PUT", base+"/meta-bucket/o.txt", strings.NewReader("o"), map[string]string{"X-Amz-Meta-Color": "red"}); code != 200 {
+		t.Fatalf("put = %d %s", code, b)
+	}
+	for _, tc := range []struct {
+		name, prefix string // prefix "" sends the request unsigned
+		query        bool
+		want, absent string // the header line that carries the metadata, and the one that must not
+	}{
+		{"unsigned", "", false, "x-goog-meta-color: red", "x-amz-meta-"},
+		{"GOOG4 header", "GOOG4", false, "x-goog-meta-color: red", "x-amz-meta-"},
+		{"GOOG4 query", "GOOG4", true, "x-goog-meta-color: red", "x-amz-meta-"},
+		{"AWS4 header", "AWS4", false, "x-amz-meta-color: red", "x-goog-meta-"},
+		{"AWS4 query", "AWS4", true, "x-amz-meta-color: red", "x-goog-meta-"},
+	} {
+		for _, method := range []string{"GET", "HEAD"} {
+			req, _ := http.NewRequest(method, base+"/meta-bucket/o.txt", nil)
+			if tc.prefix != "" {
+				signV4(req, tc.prefix, k.AccessID, k.Secret, tc.query)
+			}
+			// The raw response: Go's client would canonicalize the names.
+			req.Close = true // so the read below ends with the response
+			conn, err := net.Dial("tcp", inst.Endpoint("gcs"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := req.Write(conn); err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := io.ReadAll(io.LimitReader(conn, 1<<16))
+			conn.Close()
+			head, _, _ := bytes.Cut(raw, []byte("\r\n\r\n"))
+			if !bytes.HasPrefix(head, []byte("HTTP/1.1 200 ")) || !bytes.Contains(head, []byte("\r\n"+tc.want+"\r\n")) || bytes.Contains(bytes.ToLower(head), []byte("\r\n"+tc.absent)) {
+				t.Errorf("%s %s: want %q and no %s* in:\n%s", tc.name, method, tc.want, tc.absent, head)
+			}
+		}
+	}
+}
+
+// gzipped returns b gzip-compressed, as google-api-client (the Java
+// library) sends JSON and upload bodies.
+func gzipped(t *testing.T, b []byte) io.Reader {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &buf
+}
+
+// Content-Encoding: gzip on a JSON API or upload request is transport
+// encoding: the request means what its decoded body says (#602).
+func TestRawGzipRequestBodies(t *testing.T) {
+	inst := start(t)
+	base := inst.GatewayURL()
+	gz := map[string]string{"Content-Type": "application/json", "Content-Encoding": "gzip"}
+	code, _, b := do(t, "POST", base+"/storage/v1/b?project="+testProject, gzipped(t, []byte(`{"name":"gzip-bucket"}`)), gz)
+	if code != 200 {
+		t.Fatalf("gzipped bucket insert = %d %s", code, b)
+	}
+
+	data := []byte{0, 1, 2, 0xfe, 0xff, '\n', '\r', 0}
+	media := base + "/upload/storage/v1/b/gzip-bucket/o?uploadType=media&name=media.bin"
+	code, _, b = do(t, "POST", media, gzipped(t, data), map[string]string{"Content-Type": "application/octet-stream", "Content-Encoding": "gzip"})
+	if code != 200 {
+		t.Fatalf("gzipped media upload = %d %s", code, b)
+	}
+	multipart := "--BOUND\r\nContent-Type: application/json\r\n\r\n{\"name\":\"multipart.bin\"}\r\n--BOUND\r\nContent-Type: application/octet-stream\r\n\r\n" + string(data) + "\r\n--BOUND--\r\n"
+	code, _, b = do(t, "POST", base+"/upload/storage/v1/b/gzip-bucket/o?uploadType=multipart", gzipped(t, []byte(multipart)),
+		map[string]string{"Content-Type": "multipart/related; boundary=BOUND", "Content-Encoding": "gzip"})
+	if code != 200 {
+		t.Fatalf("gzipped multipart upload = %d %s", code, b)
+	}
+	for _, name := range []string{"media.bin", "multipart.bin"} {
+		code, _, b = do(t, "GET", base+"/storage/v1/b/gzip-bucket/o/"+name, nil, nil)
+		var obj map[string]any
+		_ = json.Unmarshal(b, &obj)
+		if code != 200 || obj["size"] != "8" || obj["contentEncoding"] != nil {
+			t.Errorf("%s metadata = %d %s, want size 8 and no contentEncoding", name, code, b)
+		}
+		code, _, b = do(t, "GET", base+"/download/storage/v1/b/gzip-bucket/o/"+name+"?alt=media", nil, nil)
+		if code != 200 || !bytes.Equal(b, data) {
+			t.Errorf("%s = %d %q, want %q", name, code, b, data)
+		}
+	}
+
+	code, _, b = do(t, "POST", base+"/storage/v1/b?project="+testProject, strings.NewReader("\x1f\x8bnot gzip"), gz)
+	if e := envelope(t, b); code != 400 || e.Error.Errors[0].Reason != "invalid" {
+		t.Errorf("corrupt gzip body = %d %s", code, b)
+	}
+
+	// On the XML API the header is the object's Content-Encoding.
+	code, _, b = do(t, "PUT", base+"/gzip-bucket/stored.gz", gzipped(t, data), map[string]string{"Content-Encoding": "gzip"})
+	if code != 200 {
+		t.Fatalf("XML PUT = %d %s", code, b)
+	}
+	code, _, b = do(t, "GET", base+"/storage/v1/b/gzip-bucket/o/stored.gz", nil, nil)
+	var obj map[string]any
+	_ = json.Unmarshal(b, &obj)
+	if code != 200 || obj["contentEncoding"] != "gzip" {
+		t.Errorf("XML-uploaded object = %d %s, want contentEncoding gzip", code, b)
 	}
 }
