@@ -607,7 +607,7 @@ eval "$(gcpemu env)"
   When a Persistent Instance stops cleanly, it exports each Firestore and Datastore database its
   clients used into its data directory, and imports them when it starts again, before it is
   ready; State snapshots hold that data too
-  (`docs/adr/0036-firestores-and-datastores-managed-emulators-keep-their-data.md`). If the
+  (`docs/adr/0036-firestore-and-datastore-managed-emulators-keep-their-data.md`). If the
   export fails, for example because the container was stopped behind the Instance's back, the
   data saved at the stop before is kept and anything written since is lost. Spanner's and
   Bigtable's emulators are in memory only: a Persistent Instance loses their data on every stop
@@ -766,7 +766,7 @@ the scope to `NONE` removes the Service and keeps the CRD, the namespace and you
 With Managed Prometheus enabled (the default on Autopilot), a cluster has GMP's `PodMonitoring`
 and `ClusterPodMonitoring` CRDs. With the same OTLP endpoint set, the Instance scrapes the pod
 endpoints they select through the API server, at each endpoint's `interval` and `timeout`
-(ADR 0036). It applies `metricRelabeling`, seeing a histogram or summary as one series under its
+(ADR 0038). It applies `metricRelabeling`, seeing a histogram or summary as one series under its
 family's name, and exports metrics named as the OTel Collector's `prometheus` receiver names them
 by default, with the attributes above, `service.name` (the PodMonitoring's or
 ClusterPodMonitoring's name) and `service.instance.id` (`<pod>:<port>`) (FR-GKE-020). Endpoints'

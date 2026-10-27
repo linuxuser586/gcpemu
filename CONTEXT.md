@@ -400,7 +400,7 @@ A report, for a Standard cluster, of the workloads whose pods haven't finished t
 _Avoid_: migration check, Autopilot readiness
 
 **Admin kubeconfig**:
-The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0035).
+The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
 
 **OTLP endpoint**:
@@ -420,7 +420,7 @@ A namespaced object in a cluster that tells GKE which of the namespace's new pod
 _Avoid_: auto-instrumentation, OTel Operator Instrumentation (a different type, `opentelemetry.io`), config injection (unqualified)
 
 **Managed Prometheus**:
-GKE's managed collection of Prometheus metrics, which a cluster asks for in its monitoring settings and an Autopilot cluster has unless it turns it off. Its PodMonitorings and ClusterPodMonitorings choose the Scrape targets, and the results go to the OTLP endpoint. The Instance does the scraping, not pods in the cluster (ADR 0036).
+GKE's managed collection of Prometheus metrics, which a cluster asks for in its monitoring settings and an Autopilot cluster has unless it turns it off. Its PodMonitorings and ClusterPodMonitorings choose the Scrape targets, and the results go to the OTLP endpoint. The Instance does the scraping, not pods in the cluster (ADR 0038).
 _Avoid_: GMP, Prometheus add-on, Prometheus collector
 
 **Scrape target**:

@@ -36,7 +36,7 @@ import (
 // Collector's prometheus receiver names them by default (without its
 // NormalizeName feature gate). Endpoints' authorization, basicAuth,
 // oauth2, tls and proxyUrl, and limits, are not applied; the condition
-// names them (ADR 0036).
+// names them (ADR 0038).
 
 const defaultScrapeInterval = time.Minute
 
@@ -66,7 +66,7 @@ type promMonitoring struct {
 			Interval         string              `json:"interval"`
 			Timeout          string              `json:"timeout"`
 			MetricRelabeling []relabelRule       `json:"metricRelabeling"`
-			// Not applied (ADR 0036): only reported.
+			// Not applied (ADR 0038): only reported.
 			Authorization json.RawMessage `json:"authorization"`
 			BasicAuth     json.RawMessage `json:"basicAuth"`
 			OAuth2        json.RawMessage `json:"oauth2"`
@@ -756,7 +756,7 @@ func markConfigured(ctx context.Context, kc *kubeClient, resource string, m *pro
 }
 
 // configuredStatus is m's status once configured; the condition's message
-// names the settings the Instance does not apply (ADR 0036).
+// names the settings the Instance does not apply (ADR 0038).
 func configuredStatus(m *promMonitoring, now time.Time) map[string]any {
 	ts := now.UTC().Format(time.RFC3339)
 	cond := map[string]any{"type": "ConfigurationCreateSuccess", "status": "True", "lastUpdateTime": ts, "lastTransitionTime": ts}

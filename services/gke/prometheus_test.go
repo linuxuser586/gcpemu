@@ -242,7 +242,7 @@ func TestPromTargetMetricsFailed(t *testing.T) {
 }
 
 // FR-GKE-020: the condition marking a PodMonitoring configured names the
-// endpoint settings the Instance does not apply (ADR 0036), and says
+// endpoint settings the Instance does not apply (ADR 0038), and says
 // nothing when there are none.
 func TestConfiguredStatus(t *testing.T) {
 	cond := func(spec string) map[string]any {
