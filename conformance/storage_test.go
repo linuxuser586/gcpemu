@@ -4,12 +4,10 @@ package conformance
 
 import (
 	"context"
-	"errors"
 	"io"
 	"testing"
 
 	"cloud.google.com/go/storage"
-	"google.golang.org/api/iterator"
 )
 
 func TestStorageBuckets(t *testing.T) { storageBuckets.test(t) }
@@ -35,12 +33,13 @@ func createBucket(t testing.TB, c *conn, cl *storage.Client, base string) *stora
 	if err := b.Create(c.ctx, c.Project(), &storage.BucketAttrs{Location: "US", Labels: c.Labels()}); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
-	c.Cleanup(func(ctx context.Context) { deleteBucket(ctx, b) })
+	c.Cleanup(func(ctx context.Context) { _ = deleteBucket(ctx, b) })
 	return b
 }
 
-// deleteBucket deletes b and every object in it, ignoring errors.
-func deleteBucket(ctx context.Context, b *storage.BucketHandle) {
+// deleteBucket deletes every object in b and then b, returning the
+// bucket's deletion error.
+func deleteBucket(ctx context.Context, b *storage.BucketHandle) error {
 	it := b.Objects(ctx, &storage.Query{Versions: true})
 	for {
 		o, err := it.Next()
@@ -49,7 +48,7 @@ func deleteBucket(ctx context.Context, b *storage.BucketHandle) {
 		}
 		_ = b.Object(o.Name).Generation(o.Generation).Delete(ctx)
 	}
-	_ = b.Delete(ctx)
+	return b.Delete(ctx)
 }
 
 var storageBuckets = scenario{
@@ -64,16 +63,7 @@ var storageBuckets = scenario{
 		c.Retry(func() error {
 			it := cl.Buckets(c.ctx, c.Project())
 			it.Prefix = c.Name("")
-			for {
-				_, err := it.Next()
-				if err == iterator.Done {
-					return errors.New("the new bucket is not listed")
-				}
-				if err == nil {
-					return nil
-				}
-				return err
-			}
+			return listed(it.Next, "the new bucket", func(x *storage.BucketAttrs) bool { return x.Name == c.Name("bucket") })
 		})
 		var update storage.BucketAttrsToUpdate
 		update.SetLabel("color", "blue")
@@ -120,15 +110,9 @@ var storageObjects = scenario{
 		}
 		_, _ = io.ReadAll(r)
 		_ = r.Close()
-		it := b.Objects(c.ctx, nil)
-		for {
-			if _, err := it.Next(); err != nil {
-				if err != iterator.Done {
-					t.Fatalf("list: %v", err)
-				}
-				break
-			}
-		}
+		c.Retry(func() error {
+			return listed(b.Objects(c.ctx, nil).Next, "the new object", func(x *storage.ObjectAttrs) bool { return x.Name == o.ObjectName() })
+		})
 		if _, err := o.Update(c.ctx, storage.ObjectAttrsToUpdate{Metadata: map[string]string{"color": "blue"}}); err != nil {
 			t.Fatalf("update: %v", err)
 		}

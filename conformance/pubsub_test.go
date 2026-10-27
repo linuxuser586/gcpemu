@@ -62,15 +62,7 @@ var pubsubTopics = scenario{
 		}
 		c.Retry(func() error {
 			it := topics.ListTopics(c.ctx, &pubsubpb.ListTopicsRequest{Project: "projects/" + c.Project(), PageSize: 1000})
-			for {
-				got, err := it.Next()
-				if err != nil {
-					return errors.New("the new topic is not listed")
-				}
-				if got.Name == topic.Name {
-					return nil
-				}
-			}
+			return listed(it.Next, "the new topic", func(x *pubsubpb.Topic) bool { return x.Name == topic.Name })
 		})
 		labels := c.Labels()
 		labels["color"] = "blue"
@@ -111,15 +103,7 @@ var pubsubSubscriptions = scenario{
 		}
 		c.Retry(func() error {
 			it := subs.ListSubscriptions(c.ctx, &pubsubpb.ListSubscriptionsRequest{Project: "projects/" + c.Project(), PageSize: 1000})
-			for {
-				got, err := it.Next()
-				if err != nil {
-					return errors.New("the new subscription is not listed")
-				}
-				if got.Name == sub.Name {
-					return nil
-				}
-			}
+			return listed(it.Next, "the new subscription", func(x *pubsubpb.Subscription) bool { return x.Name == sub.Name })
 		})
 		if _, err := subs.UpdateSubscription(c.ctx, &pubsubpb.UpdateSubscriptionRequest{
 			Subscription: &pubsubpb.Subscription{Name: name, AckDeadlineSeconds: 30},

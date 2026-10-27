@@ -49,7 +49,7 @@ func compare(want, got Recording, messages bool) []Mismatch {
 		if w.failed() || g.failed() {
 			wb, gb = errorEssence(wb, messages), errorEssence(gb, messages)
 		}
-		ms = diff(ms, p+".body", wb, gb)
+		ms = compareValue(ms, p+".body", wb, gb)
 	}
 	return ms
 }
@@ -96,8 +96,8 @@ func list(v any) []map[string]any {
 	return out
 }
 
-// diff appends to ms the differences of got from want at path.
-func diff(ms []Mismatch, path string, want, got any) []Mismatch {
+// compareValue appends to ms the Mismatches of got from want at path.
+func compareValue(ms []Mismatch, path string, want, got any) []Mismatch {
 	wm, wok := want.(map[string]any)
 	gm, gok := got.(map[string]any)
 	if wok && gok {
@@ -114,7 +114,7 @@ func diff(ms []Mismatch, path string, want, got any) []Mismatch {
 			case !inW:
 				ms = append(ms, Mismatch{p, "unexpected field, got " + show(g)})
 			default:
-				ms = diff(ms, p, w, g)
+				ms = compareValue(ms, p, w, g)
 			}
 		}
 		return ms
@@ -130,7 +130,7 @@ func diff(ms []Mismatch, path string, want, got any) []Mismatch {
 			case i >= len(wa):
 				ms = append(ms, Mismatch{p, "unexpected element, got " + show(ga[i])})
 			default:
-				ms = diff(ms, p, wa[i], ga[i])
+				ms = compareValue(ms, p, wa[i], ga[i])
 			}
 		}
 		return ms

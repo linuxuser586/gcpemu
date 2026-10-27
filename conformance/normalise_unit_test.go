@@ -328,3 +328,21 @@ func TestSuffixDatesTheRun(t *testing.T) {
 		t.Error("a short suffix parsed")
 	}
 }
+
+func TestAnUnquotedEtagMustBeAToken(t *testing.T) {
+	got := normaliseAll(t, []Exchange{ok(t, "/b", `{"a": {"etag": "CAE="}, "b": {"etag": "W/\"x1\""}, "c": {"etag": "{x:1}"}, "d": {"etag": "\"x"}}`)})
+	assertJSON(t, got.Exchanges[0].Response.Body, map[string]any{
+		"a": map[string]any{"etag": "<etag:1>"},
+		"b": map[string]any{"etag": `W/"<etag:2>"`},
+		"c": map[string]any{"etag": "{x:1}"},
+		"d": map[string]any{"etag": `"x`},
+	})
+}
+
+func TestAGeneratedKeyNeedsAReason(t *testing.T) {
+	if _, err := newNormaliser(ids, Generated("nameServers", "")); err == nil {
+		t.Error("Generated with no reason: no error")
+	}
+	got := normaliseAll(t, []Exchange{ok(t, "/z", `{"nameServers": ["ns-cloud-a1.googledomains.com."]}`)}, Generated("nameServers", "picked per zone"))
+	assertJSON(t, got.Exchanges[0].Response.Body, map[string]any{"nameServers": []any{"<nameServers:1>"}})
+}

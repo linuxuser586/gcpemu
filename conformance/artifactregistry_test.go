@@ -8,7 +8,6 @@ import (
 
 	artifactregistry "cloud.google.com/go/artifactregistry/apiv1"
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
-	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -58,15 +57,10 @@ var artifactRegistryRepos = scenario{
 		if _, err := cl.GetRepository(c.ctx, &artifactregistrypb.GetRepositoryRequest{Name: repo.Name}); err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		it := cl.ListRepositories(c.ctx, &artifactregistrypb.ListRepositoriesRequest{Parent: parent, PageSize: 1000})
-		for {
-			if _, err := it.Next(); err != nil {
-				if err != iterator.Done {
-					t.Fatalf("list: %v", err)
-				}
-				break
-			}
-		}
+		c.Retry(func() error {
+			it := cl.ListRepositories(c.ctx, &artifactregistrypb.ListRepositoriesRequest{Parent: parent, PageSize: 1000})
+			return listed(it.Next, "the new repository", func(x *artifactregistrypb.Repository) bool { return x.Name == repo.Name })
+		})
 		if _, err := cl.UpdateRepository(c.ctx, &artifactregistrypb.UpdateRepositoryRequest{
 			Repository: &artifactregistrypb.Repository{Name: repo.Name, Description: "updated"},
 			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"description"}},

@@ -26,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	htransport "google.golang.org/api/transport/http"
 	"google.golang.org/genproto/googleapis/rpc/code"
@@ -36,6 +37,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 	"github.com/linuxuser586/gcpemu/internal/project"
 )
@@ -46,8 +48,10 @@ const (
 	// labelKey labels every resource whose API takes labels; its value is
 	// the run's suffix, which dates it for the sweeper.
 	labelKey = "gcpemu-conformance"
-	// emuProject is the project in compare mode.
-	emuProject = "gcpemu-conformance"
+	// emuProject is the project in compare mode. It must not be a string
+	// the tests send for themselves, such as labelKey: the normaliser
+	// replaces it everywhere with <project>.
+	emuProject = "conformance-proj"
 	// maxAttempts bounds Retry against GCP.
 	maxAttempts = 10
 	// cloudPlatform is the OAuth scope record mode asks ADC for.
@@ -75,9 +79,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// emulator is the shared Instance. It is not Deterministic: the
+// sharedInstance is the Instance the package's tests share. It is not Deterministic: the
 // normaliser handles generated values as it does GCP's.
-func emulator(t testing.TB) *emutest.Instance {
+func sharedInstance(t testing.TB) *emutest.Instance {
 	t.Helper()
 	shared.once.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -95,12 +99,12 @@ func emulator(t testing.TB) *emutest.Instance {
 type target struct {
 	gcp             bool
 	project, number string
-	inst            *emutest.Instance // the emulator, when !gcp
+	inst            *emutest.Instance // the shared Instance, when !gcp
 }
 
 // emulatorTarget is the shared Instance, serving emuProject.
 func emulatorTarget(t testing.TB) *target {
-	return &target{project: emuProject, number: project.NumberString(emuProject), inst: emulator(t)}
+	return &target{project: emuProject, number: project.NumberString(emuProject), inst: sharedInstance(t)}
 }
 
 var gcpOnce struct {
@@ -298,6 +302,27 @@ func (c *conn) Retry(step func() error) {
 		c.mu.Unlock()
 		time.Sleep(time.Duration(i) * time.Second)
 	}
+}
+
+// listed reads a whole listing, so the pages it captures do not depend on
+// when the item turns up, and fails unless an item satisfies want. GCP may
+// list a new resource late, so callers wrap it in Retry.
+func listed[T any](next func() (T, error), what string, want func(T) bool) error {
+	found := false
+	for {
+		x, err := next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		found = found || want(x)
+	}
+	if !found {
+		return fmt.Errorf("%s is not listed", what)
+	}
+	return nil
 }
 
 // stop ends capturing.
@@ -510,22 +535,13 @@ func protoBody(m any) any {
 	return v
 }
 
-// loopback reports whether host is this machine's loopback.
-func loopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
 // guardedTransport sends each request that would leave the machine to the
 // Escape guard g, which refuses it and remembers the host.
 func guardedTransport(g *escapeguard.Guard) http.RoundTripper {
 	proxy := &url.URL{Scheme: "http", Host: g.Addr()}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = func(r *http.Request) (*url.URL, error) {
-		if loopback(r.URL.Hostname()) {
+		if config.IsLoopback(r.URL.Hostname()) {
 			return nil, nil
 		}
 		return proxy, nil
@@ -538,7 +554,7 @@ func guardedTransport(g *escapeguard.Guard) http.RoundTripper {
 func guardedDialer(g *escapeguard.Guard) func(context.Context, string) (net.Conn, error) {
 	return func(ctx context.Context, addr string) (net.Conn, error) {
 		var d net.Dialer
-		if host, _, _ := net.SplitHostPort(addr); loopback(host) {
+		if host, _, _ := net.SplitHostPort(addr); config.IsLoopback(host) {
 			return d.DialContext(ctx, "tcp", addr)
 		}
 		conn, err := d.DialContext(ctx, "tcp", g.Addr())

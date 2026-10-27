@@ -4,7 +4,9 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	dns "google.golang.org/api/dns/v1"
@@ -41,8 +43,7 @@ func createZone(t testing.TB, c *conn, s *dns.Service, base string) *dns.Managed
 	return z
 }
 
-// dnsZoneOptions: a zone's name servers are picked per zone.
-var dnsZoneOptions = []Option{Generated("nameServers")}
+var dnsZoneOptions = []Option{Generated("nameServers", "Cloud DNS picks a zone's name server shard when it creates the zone")}
 
 var dnsManagedZones = scenario{
 	product: "dns",
@@ -53,9 +54,16 @@ var dnsManagedZones = scenario{
 		if _, err := s.ManagedZones.Get(c.Project(), z.Name).Context(c.ctx).Do(); err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		if _, err := s.ManagedZones.List(c.Project()).DnsName(z.DnsName).Context(c.ctx).Do(); err != nil {
-			t.Fatalf("list: %v", err)
-		}
+		c.Retry(func() error {
+			zs, err := s.ManagedZones.List(c.Project()).DnsName(z.DnsName).Context(c.ctx).Do()
+			if err != nil {
+				return err
+			}
+			if !slices.ContainsFunc(zs.ManagedZones, func(x *dns.ManagedZone) bool { return x.Name == z.Name }) {
+				return errors.New("the new zone is not listed")
+			}
+			return nil
+		})
 		if _, err := s.ManagedZones.Patch(c.Project(), z.Name, &dns.ManagedZone{Description: "patched"}).Context(c.ctx).Do(); err != nil {
 			t.Fatalf("patch: %v", err)
 		}

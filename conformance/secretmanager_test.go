@@ -8,7 +8,6 @@ import (
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
-	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -56,15 +55,10 @@ var secretManagerSecrets = scenario{
 		if _, err := cl.GetSecret(c.ctx, &secretmanagerpb.GetSecretRequest{Name: s.Name}); err != nil {
 			t.Fatalf("get: %v", err)
 		}
-		it := cl.ListSecrets(c.ctx, &secretmanagerpb.ListSecretsRequest{Parent: "projects/" + c.Project(), Filter: "name:" + c.Name("")})
-		for {
-			if _, err := it.Next(); err != nil {
-				if err != iterator.Done {
-					t.Fatalf("list: %v", err)
-				}
-				break
-			}
-		}
+		c.Retry(func() error {
+			it := cl.ListSecrets(c.ctx, &secretmanagerpb.ListSecretsRequest{Parent: "projects/" + c.Project(), Filter: "name:" + c.Name("")})
+			return listed(it.Next, "the new secret", func(x *secretmanagerpb.Secret) bool { return x.Name == s.Name })
+		})
 		labels := c.Labels()
 		labels["color"] = "blue"
 		if _, err := cl.UpdateSecret(c.ctx, &secretmanagerpb.UpdateSecretRequest{
@@ -106,15 +100,10 @@ var secretManagerVersions = scenario{
 		if _, err := cl.AccessSecretVersion(c.ctx, &secretmanagerpb.AccessSecretVersionRequest{Name: s.Name + "/versions/latest"}); err != nil {
 			t.Fatalf("access: %v", err)
 		}
-		it := cl.ListSecretVersions(c.ctx, &secretmanagerpb.ListSecretVersionsRequest{Parent: s.Name})
-		for {
-			if _, err := it.Next(); err != nil {
-				if err != iterator.Done {
-					t.Fatalf("list versions: %v", err)
-				}
-				break
-			}
-		}
+		c.Retry(func() error {
+			it := cl.ListSecretVersions(c.ctx, &secretmanagerpb.ListSecretVersionsRequest{Parent: s.Name})
+			return listed(it.Next, "the new version", func(x *secretmanagerpb.SecretVersion) bool { return x.Name == v.Name })
+		})
 		if _, err := cl.DisableSecretVersion(c.ctx, &secretmanagerpb.DisableSecretVersionRequest{Name: v.Name}); err != nil {
 			t.Fatalf("disable: %v", err)
 		}

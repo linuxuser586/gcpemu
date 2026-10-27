@@ -70,11 +70,15 @@ func RunOnly(path string) Option {
 	}}
 }
 
-// Generated adds keys whose values the target generates, as it does for
-// "id": each distinct value becomes <key:n>.
-func Generated(keys ...string) Option {
+// Generated makes key a field whose values the target generates, as it
+// does for "id": each distinct value becomes <key:n>. reason says why the
+// value is generated and is required.
+func Generated(key, reason string) Option {
 	return Option{func(r *rules) error {
-		r.generated = append(r.generated, keys...)
+		if strings.TrimSpace(reason) == "" {
+			return fmt.Errorf("conformance: Generated(%q) needs a reason", key)
+		}
+		r.generated = append(r.generated, key)
 		return nil
 	}}
 }
@@ -99,7 +103,10 @@ const minEmbedded = 6
 var (
 	urlHost     = regexp.MustCompile(`https?://[^/\s"?#]+`)
 	timestampRE = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[Tt ]`)
-	etagRE      = regexp.MustCompile(`^(W/)?("?)([!#-~]+)("?)$`)
+	// An etag keeps its shape: weak or strong, quoted or not, and an
+	// unquoted one a base64url token (GCS's "CAE=", IAM's "BwX…").
+	etagRE   = regexp.MustCompile(`^(W/)?"([!#-~]+)"$`)
+	etagBare = regexp.MustCompile(`^[A-Za-z0-9+/=_-]+$`)
 	// operationRE matches a long-running Operation's name, whose last
 	// segment the target generates.
 	operationRE = regexp.MustCompile(`(operations/)([^/\s"?#]+)`)
@@ -222,8 +229,12 @@ func (n *normaliser) mark(v any, key string) any {
 		case generated:
 			return n.placeholder(kind, v)
 		case key == "etag":
-			if m := etagRE.FindStringSubmatch(v); m != nil && m[2] == m[4] {
-				return m[1] + m[2] + n.placeholder("etag", m[3]) + m[4]
+			// A malformed etag is left as is, so it mismatches.
+			if m := etagRE.FindStringSubmatch(v); m != nil {
+				return m[1] + `"` + n.placeholder("etag", m[2]) + `"`
+			}
+			if etagBare.MatchString(v) {
+				return n.placeholder("etag", v)
 			}
 		case timestampRE.MatchString(v):
 			// A malformed timestamp is left as is, so it mismatches.

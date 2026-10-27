@@ -44,8 +44,9 @@
 //
 // Both targets' responses are normalised alike before comparing and before
 // writing. Generated values (id, generation, messageId, ackId, …, an
-// Operation's ID, and a test's Generated keys) become placeholders that
-// stay consistent within a test, <id:1>, <generation:2>, so a create and a
+// Operation's ID, and the keys a test names Generated, each with a written
+// reason) become placeholders that stay consistent within a test, <id:1>,
+// <generation:2>, so a create and a
 // later get returning the same ID are still checked; a value made from the
 // run's own names stays as is. Timestamps become <timestamp> but must
 // parse as RFC 3339, and etags <etag:n> but must keep their shape. The

@@ -18,6 +18,7 @@ import (
 	"cloud.google.com/go/storage"
 	dns "google.golang.org/api/dns/v1"
 	iam "google.golang.org/api/iam/v1"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -63,12 +64,11 @@ func TestSweep(t *testing.T) {
 		defer cl.Close()
 		it := cl.Buckets(ctx, p)
 		it.Prefix = "gcpemu-"
-		for b, err := it.Next(); err == nil; b, err = it.Next() {
+		each(t, "buckets", it.Next, func(b *storage.BucketAttrs) {
 			if staleLabels(b.Labels) {
-				deleteBucket(ctx, cl.Bucket(b.Name))
-				report("bucket "+b.Name, nil)
+				report("bucket "+b.Name, deleteBucket(ctx, cl.Bucket(b.Name)))
 			}
-		}
+		})
 	}
 
 	if subs, err := pubsub.NewSubscriptionAdminClient(ctx, opts...); err != nil {
@@ -76,22 +76,22 @@ func TestSweep(t *testing.T) {
 	} else {
 		defer subs.Close()
 		it := subs.ListSubscriptions(ctx, &pubsubpb.ListSubscriptionsRequest{Project: "projects/" + p})
-		for s, err := it.Next(); err == nil; s, err = it.Next() {
+		each(t, "subscriptions", it.Next, func(s *pubsubpb.Subscription) {
 			if staleLabels(s.Labels) {
 				report(s.Name, subs.DeleteSubscription(ctx, &pubsubpb.DeleteSubscriptionRequest{Subscription: s.Name}))
 			}
-		}
+		})
 	}
 	if topics, err := pubsub.NewTopicAdminClient(ctx, opts...); err != nil {
 		t.Error(err)
 	} else {
 		defer topics.Close()
 		it := topics.ListTopics(ctx, &pubsubpb.ListTopicsRequest{Project: "projects/" + p})
-		for tp, err := it.Next(); err == nil; tp, err = it.Next() {
+		each(t, "topics", it.Next, func(tp *pubsubpb.Topic) {
 			if staleLabels(tp.Labels) {
 				report(tp.Name, topics.DeleteTopic(ctx, &pubsubpb.DeleteTopicRequest{Topic: tp.Name}))
 			}
-		}
+		})
 	}
 
 	if sm, err := secretmanager.NewClient(ctx, opts...); err != nil {
@@ -99,17 +99,17 @@ func TestSweep(t *testing.T) {
 	} else {
 		defer sm.Close()
 		it := sm.ListSecrets(ctx, &secretmanagerpb.ListSecretsRequest{Parent: "projects/" + p, Filter: "labels." + labelKey + ":*"})
-		for s, err := it.Next(); err == nil; s, err = it.Next() {
+		each(t, "secrets", it.Next, func(s *secretmanagerpb.Secret) {
 			if staleLabels(s.Labels) {
 				report(s.Name, sm.DeleteSecret(ctx, &secretmanagerpb.DeleteSecretRequest{Name: s.Name}))
 			}
-		}
+		})
 	}
 
 	if d, err := dns.NewService(ctx, opts...); err != nil {
 		t.Error(err)
 	} else {
-		_ = d.ManagedZones.List(p).Pages(ctx, func(zs *dns.ManagedZonesListResponse) error {
+		err := d.ManagedZones.List(p).Pages(ctx, func(zs *dns.ManagedZonesListResponse) error {
 			for _, z := range zs.ManagedZones {
 				if staleLabels(z.Labels) {
 					report("zone "+z.Name, sweepZone(ctx, d, p, z.Name))
@@ -117,6 +117,9 @@ func TestSweep(t *testing.T) {
 			}
 			return nil
 		})
+		if err != nil {
+			t.Errorf("sweep: list zones: %v", err)
+		}
 	}
 
 	if ar, err := artifactregistry.NewClient(ctx, opts...); err != nil {
@@ -124,7 +127,7 @@ func TestSweep(t *testing.T) {
 	} else {
 		defer ar.Close()
 		it := ar.ListRepositories(ctx, &artifactregistrypb.ListRepositoriesRequest{Parent: "projects/" + p + "/locations/" + arLocation})
-		for r, err := it.Next(); err == nil; r, err = it.Next() {
+		each(t, "repositories", it.Next, func(r *artifactregistrypb.Repository) {
 			if staleLabels(r.Labels) {
 				op, err := ar.DeleteRepository(ctx, &artifactregistrypb.DeleteRepositoryRequest{Name: r.Name})
 				if err == nil {
@@ -132,13 +135,13 @@ func TestSweep(t *testing.T) {
 				}
 				report(r.Name, err)
 			}
-		}
+		})
 	}
 
 	if s, err := iam.NewService(ctx, opts...); err != nil {
 		t.Error(err)
 	} else {
-		_ = s.Projects.ServiceAccounts.List("projects/"+p).Pages(ctx, func(as *iam.ListServiceAccountsResponse) error {
+		err := s.Projects.ServiceAccounts.List("projects/"+p).Pages(ctx, func(as *iam.ListServiceAccountsResponse) error {
 			for _, a := range as.Accounts {
 				id, _, _ := strings.Cut(a.Email, "@")
 				if m := accountRE.FindStringSubmatch(id); m != nil && stale(m[1]) {
@@ -148,6 +151,26 @@ func TestSweep(t *testing.T) {
 			}
 			return nil
 		})
+		if err != nil {
+			t.Errorf("sweep: list service accounts: %v", err)
+		}
+	}
+}
+
+// each calls f with every item of a listing, and fails t if listing what
+// fails, so a sweep that could not see everything says so.
+func each[T any](t testing.TB, what string, next func() (T, error), f func(T)) {
+	t.Helper()
+	for {
+		x, err := next()
+		if err == iterator.Done {
+			return
+		}
+		if err != nil {
+			t.Errorf("sweep: list %s: %v", what, err)
+			return
+		}
+		f(x)
 	}
 }
 

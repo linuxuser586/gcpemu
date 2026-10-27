@@ -4,6 +4,8 @@ package conformance
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 
 	"cloud.google.com/go/iam/apiv1/iampb"
@@ -30,7 +32,7 @@ func createServiceAccount(t testing.TB, c *conn, s *iam.Service, base string) *i
 	t.Helper()
 	sa, err := s.Projects.ServiceAccounts.Create("projects/"+c.Project(), &iam.CreateServiceAccountRequest{
 		AccountId:      c.Name(base),
-		ServiceAccount: &iam.ServiceAccount{DisplayName: "gcpemu Conformance suite", Description: labelKey},
+		ServiceAccount: &iam.ServiceAccount{DisplayName: "gcpemu Conformance suite", Description: "made by the gcpemu Conformance suite"},
 	}).Context(c.ctx).Do()
 	if err != nil {
 		t.Fatalf("create service account: %v", err)
@@ -49,9 +51,16 @@ var iamServiceAccounts = scenario{
 	body: func(t testing.TB, c *conn) {
 		s := iamService(t, c)
 		sa := createServiceAccount(t, c, s, "sa")
-		if _, err := s.Projects.ServiceAccounts.List("projects/" + c.Project()).PageSize(100).Context(c.ctx).Do(); err != nil {
-			t.Fatalf("list: %v", err)
-		}
+		c.Retry(func() error {
+			as, err := s.Projects.ServiceAccounts.List("projects/" + c.Project()).PageSize(100).Context(c.ctx).Do()
+			if err != nil {
+				return err
+			}
+			if !slices.ContainsFunc(as.Accounts, func(x *iam.ServiceAccount) bool { return x.Name == sa.Name }) {
+				return errors.New("the new service account is not listed")
+			}
+			return nil
+		})
 		if _, err := s.Projects.ServiceAccounts.Patch(sa.Name, &iam.PatchServiceAccountRequest{
 			ServiceAccount: &iam.ServiceAccount{DisplayName: "patched"},
 			UpdateMask:     "displayName",
