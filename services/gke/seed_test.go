@@ -2,13 +2,16 @@ package gke
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
+	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -327,5 +330,85 @@ clusters:
 		if r.Allowed != want {
 			t.Errorf("NET_ADMIN pod on %s: allowed %v; want %v (%+v)", name, r.Allowed, want, r.Status)
 		}
+	}
+}
+
+// TestSeedTelemetryRoundTrip checks that a cluster's telemetry settings
+// survive Seeding and export in either Cluster mode: each field seeds its
+// setting and exports only where it differs from the Cluster mode's
+// default, so the export is the seed it came from.
+func TestSeedTelemetryRoundTrip(t *testing.T) {
+	a := newAPI(t)
+	src := `clusters:
+    - project: ap-test
+      location: us-central1
+      name: auto-off
+      managedPrometheus: false
+      autopilot: true
+    - project: ap-test
+      location: us-central1
+      name: auto-on
+      autopilot: true
+    - project: ap-test
+      location: us-central1-a
+      name: std-all
+      managedPrometheus: true
+      systemMetrics: true
+      managedOpenTelemetry: true
+    - project: ap-test
+      location: us-central1-a
+      name: std-none
+`
+	// Without a container runtime the clusters' bring-up fails; they stay.
+	_ = a.s.ApplySeed(context.Background(), seedNode(t, src), "")
+	type telemetry struct{ prom, system, otel bool }
+	for name, want := range map[string]telemetry{
+		apParent + "/clusters/auto-off":                              {},
+		apParent + "/clusters/auto-on":                               {prom: true},
+		"projects/ap-test/locations/us-central1-a/clusters/std-all":  {prom: true, system: true, otel: true},
+		"projects/ap-test/locations/us-central1-a/clusters/std-none": {},
+	} {
+		c, err := a.GetCluster(context.Background(), &containerpb.GetClusterRequest{Name: name})
+		if err != nil {
+			t.Fatalf("GetCluster %s: %v", name, err)
+		}
+		if got := (telemetry{managedPrometheusOn(c), systemComponentsOn(c), managedOTelOn(c)}); got != want {
+			t.Errorf("%s: telemetry = %+v; want %+v", name, got, want)
+		}
+	}
+	sec, err := a.s.ExportSeed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := yaml.Marshal(sec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != src {
+		t.Fatalf("export =\n%s\nwant\n%s", b, src)
+	}
+}
+
+// TestApplySeedOTelBelowMinVersion checks that an entry with a Managed
+// OpenTelemetry scope and a version below 1.34 fails Seeding with the
+// API's INVALID_ARGUMENT, naming the entry. No offered version is below
+// 1.34 (TestNoVersionBelowOTelFloor), so the API refuses the version
+// itself before any scope check.
+func TestApplySeedOTelBelowMinVersion(t *testing.T) {
+	a := newAPI(t)
+	err := a.s.ApplySeed(context.Background(), seedNode(t, `
+clusters:
+  - project: ap-test
+    location: us-central1
+    name: old
+    version: "1.33"
+    managedOpenTelemetry: true
+`), "")
+	var ae *apierr.Error
+	if !errors.As(err, &ae) || ae.Code != codes.InvalidArgument {
+		t.Fatalf("ApplySeed = %v; want INVALID_ARGUMENT", err)
+	}
+	if want := "clusters[0] (" + apParent + "/clusters/old)"; !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("ApplySeed = %v; want it to name %s", err, want)
 	}
 }

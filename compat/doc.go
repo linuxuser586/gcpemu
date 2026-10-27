@@ -46,6 +46,16 @@
 // guard, which names the host it dialed. The node-mtls subtest (#246)
 // does the same with sdk/universemtls.js.
 //
+// The flows subtests (#601, IF-008) run sdk/flows.py and sdk/flows.js,
+// with the same pinned libraries plus Node Cloud Storage, configured only
+// by `gcpemu env` and the scheme its STORAGE_EMULATOR_HOST leaves out
+// (Node takes it as an apiEndpoint): each creates a bucket, writes, reads back, lists and
+// deletes an object of binary content, and creates a topic and a
+// subscription, publishes a message with an attribute and receives it
+// through the library's streaming-pull subscriber within a bounded time.
+// Both run behind the Escape guard, and a canary run without the emulator
+// variables must reach the guard.
+//
 // The gcloud/builds subtests (#393) run gcloud builds submit with
 // --config and --tag, builds list and cancel, and create and run a Build
 // trigger. They also build the Go probe in sdk/buildgo, which creates a

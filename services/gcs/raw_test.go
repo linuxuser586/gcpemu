@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,49 @@ func TestRawErrorsAndChecksums(t *testing.T) {
 	code, _, b = do(t, "DELETE", base+"/storage/v1/b/raw-bucket", nil, nil)
 	if e := envelope(t, b); code != 409 || e.Error.Errors[0].Reason != "conflict" {
 		t.Errorf("non-empty delete = %d %s", code, b)
+	}
+}
+
+// TestResumableOpenEnded covers "bytes O-*/T", which the Node client
+// sends for a single-request upload: the body runs from O to its end, and
+// the upload completes there when T is * or the object reaches T (#601).
+func TestResumableOpenEnded(t *testing.T) {
+	inst := start(t)
+	base := "http://" + inst.Endpoint("gcs")
+	do(t, "POST", base+"/storage/v1/b?project="+testProject, strings.NewReader(`{"name":"open"}`), nil)
+	session := func(name string) string {
+		t.Helper()
+		code, h, b := do(t, "POST", base+"/upload/storage/v1/b/open/o?uploadType=resumable&name="+name, nil, nil)
+		if code != 200 || h.Get("Location") == "" {
+			t.Fatalf("init %s = %d %s", name, code, b)
+		}
+		return h.Get("Location")
+	}
+	data := []byte(strings.Repeat("0123456789", 1000)) // 10000 bytes
+	type put struct {
+		body         []byte
+		contentRange string
+		want         int
+	}
+	for _, c := range []struct {
+		name string
+		puts []put
+	}{
+		{"whole.bin", []put{{data, "bytes 0-*/*", 200}}},
+		{"rest.bin", []put{{data[:4000], "bytes 0-3999/*", 308}, {data[4000:], "bytes 4000-*/10000", 200}}},
+		// Bytes past the total are not the object's.
+		{"capped.bin", []put{{append(slices.Clone(data), "extra"...), "bytes 0-*/10000", 200}}},
+	} {
+		loc := session(c.name)
+		for _, p := range c.puts {
+			code, _, b := do(t, "PUT", loc, bytes.NewReader(p.body), map[string]string{"Content-Range": p.contentRange})
+			if code != p.want {
+				t.Fatalf("%s: PUT %q = %d %s, want %d", c.name, p.contentRange, code, b, p.want)
+			}
+		}
+		if code, _, got := do(t, "GET", base+"/open/"+c.name, nil, nil); code != 200 || !bytes.Equal(got, data) {
+			t.Errorf("%s: read = %d, %d bytes", c.name, code, len(got))
+		}
 	}
 }
 
