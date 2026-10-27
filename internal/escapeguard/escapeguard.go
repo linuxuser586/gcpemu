@@ -62,6 +62,10 @@ func New(t testing.TB) *Guard {
 	return g
 }
 
+// Addr is the guard's host:port, for an in-process client that sends its
+// non-loopback requests to it as a proxy.
+func (g *Guard) Addr() string { return g.addr }
+
 // loopback is the NO_PROXY list Env sets: the hosts Go never proxies,
 // spelled out for Python clients (gcloud), which proxy them too.
 const loopback = "127.0.0.1,localhost,::1"

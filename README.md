@@ -1512,6 +1512,40 @@ JVM runs behind the Escape guard through `JAVA_TOOL_OPTIONS`, since the JVM igno
 `storage.googleapis.com` and `pubsub.gcpemu.invalid`. `GCPEMU_COMPAT_REQUIRE=1`, which the Linux
 CI jobs set, fails a test whose client toolchain is missing instead of skipping it.
 
+### Conformance suite (SRS 11.1, ADR 0023)
+
+The Conformance suite in `conformance/` checks Faithful behaviour against GCP. Its tests use only
+public GCP APIs through the official Go client libraries, so one test body runs against either
+target. Each test drives a resource through create, get, list, update and delete, gets one that
+doesn't exist and creates one whose name is taken, for Cloud Storage buckets and objects (plus a
+precondition failure), Pub/Sub topics and subscriptions (plus a publish and pull), Secret Manager
+secrets and versions (access, disable, destroy), Cloud DNS managed zones and record-set changes,
+Artifact Registry repositories, and IAM service accounts and the IAM policies of a bucket and a topic.
+
+```sh
+task conformance                  # compare mode: = go test -tags conformance ./conformance -v
+GCPEMU_CONFORMANCE_PROJECT=my-sandbox task conformance:record   # record mode, real GCP
+```
+
+- **Compare mode** (the default; CI runs it on `ubuntu-24.04` and `ubuntu-24.04-arm`) runs each
+  test against an in-process Instance behind the Escape guard, with no credentials, and compares
+  every response with the test's Recording. Any difference is a Mismatch and fails the test with
+  the field's JSON path. A test with no Recording skips and says to run `task conformance:record`.
+- **Record mode** (`GCPEMU_CONFORMANCE_RECORD=1`, which `task conformance:record` sets) runs the
+  tests against the project in `GCPEMU_CONFORMANCE_PROJECT` with Application Default Credentials and
+  writes the Recordings. It first sweeps resources that earlier runs left more than 24 hours ago.
+  Resource names carry a per-run suffix, resources are labelled `gcpemu-conformance`, and each test
+  deletes what it creates.
+
+A Recording is `conformance/testdata/<product>/<TestName>.json`: the test's exchanges in order,
+each with the request's method, path and body (never compared) and the response's HTTP status or
+gRPC code and body. Responses are captured at the wire and normalised the same way on both targets:
+generated IDs become placeholders that stay consistent within a test (`<id:1>`), timestamps become
+`<timestamp>`, etags become `<etag:n>`, and the project, project number, run suffix and URL hosts
+become `<project>`, `<project-number>`, `<suffix>` and `<host>`. Errors are compared by status or
+code, reason and field violations, not by message. The `conformance` package's doc comment has the
+full rules.
+
 ### Kubernetes conformance (SRS 11.1)
 
 `task kube-conformance` starts an ephemeral instance with GKE, reads the supported versions from
