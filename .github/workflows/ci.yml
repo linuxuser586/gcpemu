@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  # Docs-only changes skip every job below rather than the whole workflow,
-  # so ci-ok still reports and a docs-only PR can merge.
+  # Docs-only changes skip every job below except adr rather than the whole
+  # workflow, so ci-ok still reports and a docs-only PR can merge.
   changes:
     runs-on: ubuntu-24.04
     permissions:
@@ -25,8 +25,16 @@ jobs:
               - "**"
               - "!**/*.md"
               - "!docs/**"
-      # #482: changes is the one job that runs on docs-only changes, where
-      # ADRs land, so the ADR numbering check runs here.
+
+  # #482, #766: the ADR numbering check runs on every change, docs-only
+  # ones included, where ADRs land. Its own job, so a clash fails here
+  # alone and the test jobs still run.
+  adr:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
       - uses: go-task/setup-task@v2
         with:
           version: 3.54.0
@@ -276,6 +284,14 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+      # #766: the Linux arm64 SDK bundles no Python, so gcloud runs on this
+      # one, and sign-url needs its cryptography library.
+      - name: cryptography for gcloud on arm64
+        if: runner.arch == 'ARM64'
+        run: |
+          python -m pip install -q cryptography
+          echo "CLOUDSDK_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+          echo "CLOUDSDK_PYTHON_SITEPACKAGES=1" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -552,6 +568,24 @@ jobs:
         run: go test ./...
       - uses: google-github-actions/setup-gcloud@v3
         if: runner.os == 'Windows'
+      # #766: the Windows SDK bundles no Python either. Without one on
+      # PATH, gcloud prints the Microsoft Store alias's notice into its
+      # output; sign-url needs cryptography; the Java probe needs 21.
+      - uses: actions/setup-python@v7
+        if: runner.os == 'Windows'
+        with:
+          python-version: "3.13"
+      - name: cryptography for gcloud on Windows
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install -q cryptography
+          echo "CLOUDSDK_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+          echo "CLOUDSDK_PYTHON_SITEPACKAGES=1" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v6
+        if: runner.os == 'Windows'
+        with:
+          distribution: temurin
+          java-version: 21
       # os.UserCacheDir on Windows is %LocalAppData%.
       - uses: actions/cache@v6
         if: runner.os == 'Windows'
@@ -630,18 +664,21 @@ jobs:
   # The only required check: the matrix legs above report unexpanded names
   # when skipped, so the ruleset requires this job instead. It passes when
   # every job it needs ran green, or when the change touched docs alone and
-  # every job was skipped. perf is left out on purpose (see its comment).
+  # every job but adr was skipped. perf is left out on purpose (see its
+  # comment).
   ci-ok:
     if: always()
-    needs: [changes, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, kube-conformance, conformance, action, action-artifacts, platforms]
+    needs: [changes, adr, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, kube-conformance, conformance, action, action-artifacts, platforms]
     runs-on: ubuntu-24.04
     steps:
       - env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          changes=$(jq -r .changes.result <<<"$NEEDS")
-          test "$changes" = success || { echo "::error::changes: $changes"; exit 1; }
+          # The jobs that run on every change.
+          always='["changes", "adr"]'
+          bad=$(jq -r --argjson always "$always" 'to_entries[] | select(.key | IN($always[])) | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          test -z "$bad" || { echo "::error::$bad"; exit 1; }
           want=skipped
           test "$(jq -r .changes.outputs.code <<<"$NEEDS")" = true && want=success
-          bad=$(jq -r --arg want "$want" 'del(.changes) | to_entries[] | select(.value.result != $want) | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          bad=$(jq -r --arg want "$want" --argjson always "$always" 'to_entries[] | select(.key | IN($always[]) | not) | select(.value.result != $want) | "\(.key): \(.value.result)"' <<<"$NEEDS")
           test -z "$bad" || { echo "::error::want every job $want, got:"; echo "$bad"; exit 1; }
