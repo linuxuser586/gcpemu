@@ -8,6 +8,8 @@ import (
 	"net"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // TestScanUDPSkipsReuseHeld: a port a udp4 socket holds on the wildcard
@@ -18,8 +20,8 @@ func TestScanUDPSkipsReuseHeld(t *testing.T) {
 	lc := net.ListenConfig{Control: func(_, _ string, c syscall.RawConn) error {
 		var serr error
 		err := c.Control(func(fd uintptr) {
-			for _, opt := range []int{syscall.SO_REUSEADDR, syscall.SO_REUSEPORT} {
-				if serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, opt, 1); serr != nil {
+			for _, opt := range []int{unix.SO_REUSEADDR, unix.SO_REUSEPORT} {
+				if serr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, opt, 1); serr != nil {
 					return
 				}
 			}
