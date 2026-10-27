@@ -44,7 +44,10 @@ func pythonLibs(t *testing.T) string {
 	}
 	py = onPath(t, py)
 	logVersion(t, py, "--version")
-	dir := pinDir(t, "python", pythonPins)
+	// The venv links to py, so a cache restored where another interpreter
+	// runs (a newer setup-python patch) needs a venv of its own.
+	ver, _ := exec.Command(py, "--version").CombinedOutput()
+	dir := pinDir(t, "python", append([]string{py, string(ver)}, pythonPins...))
 	bin = filepath.Join(dir, bin)
 	if _, err := os.Stat(filepath.Join(dir, ".done")); err == nil {
 		return bin
