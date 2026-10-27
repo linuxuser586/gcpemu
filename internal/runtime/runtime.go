@@ -822,8 +822,12 @@ type ContainerSpec struct {
 	// Networks: the first is used at create time, the rest are connected
 	// before start.
 	Networks []Attachment
-	Ports    []Port
-	Mounts   []Mount
+	// HostNetwork runs the container in the runtime's host network
+	// namespace, which on a VM runtime is the VM's, not the host's. It
+	// takes no Networks or Ports.
+	HostNetwork bool
+	Ports       []Port
+	Mounts      []Mount
 	// Tmpfs maps paths to mount options.
 	Tmpfs map[string]string
 	// CgroupnsHost runs in the host cgroup namespace (needed by some
@@ -913,6 +917,9 @@ func (c *Client) CreateContainer(ctx context.Context, s ContainerSpec) (string, 
 	}
 	if s.LogDriver != "" {
 		host["LogConfig"] = map[string]any{"Type": s.LogDriver, "Config": s.LogOpts}
+	}
+	if s.HostNetwork {
+		host["NetworkMode"] = "host"
 	}
 	body := map[string]any{
 		"Image":        s.Image,

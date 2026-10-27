@@ -25,11 +25,14 @@
 // whose `gcpemu dns install` routes resolve both through the host's
 // resolver until `gcpemu dns uninstall` takes them away. On Windows its
 // Instance is on the host, gcpemu.exe, with dns on port 53 (ADR 0026), so
-// `task prerelease` builds it there too. Last, the VM relay check: with
+// `task prerelease` builds it there too. Next, the VM relay check: with
 // GCPEMU_VM_RELAY cleared, gcpemu doctor on the host must report the
 // relay on by the bridge-gateway probe, and the VM relay's own tests,
 // which CI runs only on Linux with the relay forced, must all pass
-// against the runtime.
+// against the runtime. Then the Registry relay check: an Instance on the
+// host with Artifact Registry, to and from which the runtime's own docker
+// (podman on Podman machine) pushes and pulls an image at
+// $GCPEMU_REGISTRY (ADR 0043).
 //
 // TestResolverRoutes is the same check on Linux, without the GKE Service,
 // for CI: it runs only with GCPEMU_RESOLVER_TESTS=1.

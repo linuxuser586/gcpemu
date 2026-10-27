@@ -93,6 +93,7 @@ func testConfig(svcs []string, opts []Option) config.Config {
 	cfg.LogLevel = "warn"
 	cfg.Ports[config.AllPorts] = 0
 	cfg.NoSQLHostClients = true
+	cfg.NoRegistryRelay = true
 	for _, o := range opts {
 		if o.apply != nil {
 			o.apply(&cfg)

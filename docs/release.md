@@ -114,6 +114,7 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
 6. **Resolver routes:** see below. The names resolve through `dscacheutil -q host -a name`, and
    after `uninstall` the `/etc/resolver` files gcpemu wrote are gone.
 7. **VM relay:** see below.
+8. **Registry relay:** see below.
 
 The suite also runs on Linux, but only for the runtimes `RUNTIMES` names, so it can be worked on
 with Docker Desktop for Linux. Check 6 changes the host's resolver there only with
@@ -149,6 +150,7 @@ gets `GCPEMU_VM_RUNTIME=true`.
    53 is in use on the host (ICS, Hyper-V or WSL's DNS proxy may hold it), the check is skipped and
    says so.
 7. **VM relay:** see below. Like checks 5 and 6, it runs on the host, not in the container.
+8. **Registry relay:** see below. Like checks 5 to 7, it runs on the host.
 
 ### Host attachment (macOS and Windows)
 
@@ -185,6 +187,19 @@ forces the relay on. Check 7 runs them on each runtime, where the relay is reall
 With `GCPEMU_VM_RELAY` cleared, `gcpemu doctor` on the host must report the VM relay as on because
 the bridge gateway isn't bindable: off, undetermined or forced fails the check. Then every test in the
 package runs with `go test` against the runtime, and any failure or skip fails the check.
+
+### Registry relay (macOS and Windows)
+
+On a VM runtime the runtime's own `docker push` runs inside its VM, and reaches an Instance on the
+host only through the Registry relay (ADR 0043). CI has no VM runtime, so check 8 is the only push
+through one. It starts an Ephemeral Instance with IAM and Artifact Registry on the host, creates a
+Docker repository with `gcloud`, waits until `gcpemu doctor` reports the Registry relay running,
+then tags `busybox:1.37` as `$GCPEMU_REGISTRY/us-central1-docker.pkg.dev/prerelease/relay/busybox`,
+pushes it, removes it and pulls it back with the runtime's own `docker`. A doctor line that reports
+the relay skipped or failed fails the check. On Podman machine it pushes and pulls with
+`podman push --tls-verify=false` instead, as Podman sends `localhost` registries HTTPS. Docker
+Desktop with host networking turned on may forward the port like OrbStack and Colima do; run the
+check once with it on when that's at hand.
 
 ### What stays manual
 

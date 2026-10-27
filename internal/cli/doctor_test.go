@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -743,6 +744,39 @@ func TestReportBuildDaemon(t *testing.T) {
 		}, []byte(tc.body))
 		if len(oks) != len(tc.ok) || (len(oks) == 1 && (oks[0] != tc.ok[0] || !strings.Contains(whats[0], tc.what) || !strings.Contains(fixes[0], tc.fixNames))) {
 			t.Errorf("%s: reported %v %q fix %q", tc.body, oks, whats, fixes)
+		}
+	}
+}
+
+// doctor reports a running Instance's Registry relay (ADR 0043): passing
+// while it runs, with Podman machine's step, and failing with the fix when
+// it was skipped or failed.
+func TestReportRegistryRelay(t *testing.T) {
+	for _, tc := range []struct {
+		body  string
+		ok    []bool
+		what  string
+		fix   string
+		lines string // printed besides report
+	}{
+		{`{"state":"running","listen":"127.0.0.1:4561"}`, []bool{true}, "reach the registry at 127.0.0.1:4561 inside the runtime's VM", "", ""},
+		{`{"state":"running","listen":"127.0.0.1:4561","podman":"run podman push --tls-verify=false"}`, []bool{true}, "127.0.0.1:4561", "", "[WARN] Podman machine pushes to the registry over HTTPS by default"},
+		{`{"state":"skipped","reason":"127.0.0.1:4561 is taken inside the runtime's VM","fix":"stop whatever listens"}`, []bool{false}, "can't reach the registry", "stop whatever listens", ""},
+		{`{"state":"failed","reason":"boom"}`, []bool{false}, "failed to start, so the runtime's own docker push can't reach the registry: boom", "log", ""},
+		{`{"state":"off","reason":"the runtime's daemon shares the host's loopback"}`, nil, "", "", "[--  ] Registry relay: off (the runtime's daemon shares the host's loopback)"},
+		{`{"state":"starting"}`, nil, "", "", "[--  ] Registry relay: starting"},
+	} {
+		var oks []bool
+		var whats, fixes []string
+		var out bytes.Buffer
+		reportRegistryRelay(&out, func(ok bool, what, fix string) {
+			oks, whats, fixes = append(oks, ok), append(whats, what), append(fixes, fix)
+		}, []byte(tc.body))
+		if len(oks) != len(tc.ok) || (len(oks) == 1 && (oks[0] != tc.ok[0] || !strings.Contains(whats[0], tc.what) || !strings.Contains(fixes[0], tc.fix))) {
+			t.Errorf("%s: reported %v %q fix %q", tc.body, oks, whats, fixes)
+		}
+		if !strings.Contains(out.String(), tc.lines) {
+			t.Errorf("%s: printed %q; want %q", tc.body, out.String(), tc.lines)
 		}
 	}
 }

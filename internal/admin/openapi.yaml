@@ -236,6 +236,32 @@ paths:
                   path: { type: string }
         "404": { $ref: "#/components/responses/Error" }
         "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/registry-relay:
+    get:
+      summary: The Registry relay's state (ADR 0043; gcpemu doctor).
+      operationId: registryRelay
+      description: >-
+        On a VM runtime the Instance starts the Registry relay in the
+        background after its Services start: a container in the VM's host
+        network namespace listening on 127.0.0.1 at the registry's port, so
+        that VM-side clients such as the runtime's own docker push use the
+        same image references as Host clients. It is off elsewhere, skipped
+        when the port is taken inside the VM, and failed when it could not
+        start.
+      responses:
+        "200":
+          description: The Registry relay.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state]
+                properties:
+                  state: { type: string, enum: [off, starting, running, skipped, failed] }
+                  reason: { type: string, description: Why it is off, skipped or failed. }
+                  listen: { type: string, description: The address it listens on inside the runtime's VM. }
+                  fix: { type: string, description: What to do when it is skipped. }
+                  podman: { type: string, description: The step Podman machine users take, as Podman sends localhost registries HTTPS. }
   /_emu/v1/hostmode:
     get:
       summary: Host mode state (FR-CORE-043).

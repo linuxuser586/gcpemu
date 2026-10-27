@@ -136,6 +136,12 @@ type Config struct {
 	// an instance's reported address don't contend for 127.0.0.1 (#316).
 	// Only emutest sets it: it has no flag, env var or config key.
 	NoSQLHostClients bool `yaml:"-" env:"-"`
+	// NoRegistryRelay stops an Instance on a VM runtime starting the
+	// Registry relay (ADR 0043) and, with it, connecting to the runtime
+	// as it starts, so that tests which push from the host start no
+	// containers. Only emutest sets it: it has no flag, env var or config
+	// key.
+	NoRegistryRelay bool `yaml:"-" env:"-"`
 	// Build configures Cloud Build: the build: section of gcpemu.yaml and
 	// the GCPEMU_BUILD_* variables.
 	Build BuildConfig `yaml:"build" env:"BUILD"`
