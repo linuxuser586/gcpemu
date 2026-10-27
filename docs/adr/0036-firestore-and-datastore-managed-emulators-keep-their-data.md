@@ -12,9 +12,11 @@ ADR 0029 keeps every Managed emulator's data in memory only, so a Persistent Ins
 
 ## Considered options
 
-- **`--export-on-exit` and `--import-data`.** Export on exit does not run on SIGTERM, which is how a container is stopped; where it does run, it fails on named Firestore databases and writes every Datastore database into one directory. `--import-data` takes a single export and shows it in every project.
+- **`--export-on-exit` and `--import-data`.** The Instance force-removes its containers, and export on exit does not run on SIGTERM either; where it does run, it fails on named Firestore databases and writes every Datastore database into one directory. `--import-data` takes a single export and shows it in every project.
 - **Periodic export**, to survive a crash or a Disrupted container. Each export copies every database, and a crash recovers only up to the last one anyway; left for a later decision.
 - **Keeping the container and its data between runs**, by stopping rather than removing it. It would be the only Managed container kept across a stop, and Reset and State snapshots would still need export and import.
+- **Keeping all four in memory**, as ADR 0029 does for consistency. Firestore and Datastore are the emulators people seed and work against across sessions, and losing their data is a limitation rather than behavior anyone depends on.
+- **Exporting only each known Project's default database.** It would miss named databases and Projects that exist only in the emulator.
 
 ## Consequences
 
