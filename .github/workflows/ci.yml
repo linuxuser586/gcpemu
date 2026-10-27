@@ -106,7 +106,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-compat
-          key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
+          key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go', 'compat/universe_test.go') }}
       - name: gcloud container, kubectl, Helm and builds (SRS 7.1)
         run: go test -tags compat ./compat -run 'TestClients/gcloud/(container\+kubectl\+helm|builds)' -count=1 -timeout 25m -v
 
@@ -302,7 +302,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.cache/gcpemu-compat
-          key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
+          key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go', 'compat/universe_test.go') }}
       # A missing client fails its test here instead of skipping it.
       - name: Client compatibility (SRS 7.1)
         env:
@@ -505,7 +505,7 @@ jobs:
         if: runner.os == 'Windows'
         with:
           path: ~/AppData/Local/gcpemu-compat
-          key: gcpemu-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go') }}
+          key: gcpemu-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go', 'compat/universe_test.go') }}
       - name: Client compatibility (SRS 7.1)
         if: runner.os == 'Windows'
         shell: pwsh

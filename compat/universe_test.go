@@ -25,10 +25,11 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 )
 
-// SDK library versions the universe probes install into the compat cache.
+// SDK library versions the universe probes and the flows install into the
+// compat cache.
 var (
 	pythonPins = []string{"google-auth==2.62.0", "google-cloud-storage==3.17.0", "google-cloud-pubsub==2.42.0"}
-	nodePins   = []string{"@google-cloud/pubsub@6.3.0"}
+	nodePins   = []string{"@google-cloud/pubsub@6.3.0", "@google-cloud/storage@8.4.0"}
 )
 
 // pinDir is the cache directory for a set of pinned packages.

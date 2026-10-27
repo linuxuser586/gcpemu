@@ -162,9 +162,10 @@ func (e *emulator) try(t *testing.T, bin string, args ...string) (string, error)
 }
 
 // exec runs a client in env and returns the hosts the Escape guard
-// refused. Only gcloud and the Python probes run behind the guard: the
-// other clients are Go, which keeps to loopback, or reach the internet on
-// purpose (crane from Docker Hub).
+// refused. It puts gcloud and the Python probes behind the guard, and
+// callers add e.guard.Env() for the Node and Go probes. The other clients
+// are Go, which keeps to loopback, or reach the internet on purpose (crane
+// from Docker Hub).
 func (e *emulator) exec(env []string, bin string, args ...string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -476,6 +477,10 @@ func TestClients(t *testing.T) {
 
 	t.Run("foreign", func(t *testing.T) {
 		testForeign(t, e)
+	})
+
+	t.Run("flows", func(t *testing.T) {
+		testFlows(t, e)
 	})
 
 	t.Run("gcloud/dns+dig", func(t *testing.T) {
