@@ -4,14 +4,11 @@ package compat
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"maps"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +16,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
@@ -100,20 +96,7 @@ func withEnv(env []string, set map[string]string, unset ...string) []string {
 func emulatorKey(t *testing.T, e *emulator, accountID string) string {
 	t.Helper()
 	call := func(path string, body any) []byte {
-		b, _ := json.Marshal(body)
-		req, _ := http.NewRequest("POST", "http://"+e.vars["GCPEMU_GATEWAY"]+"/iam/v1/projects/"+project+path, bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer owner")
-		resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		out, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode/100 != 2 {
-			t.Fatalf("POST %s: %d %s", path, resp.StatusCode, out)
-		}
-		return out
+		return ownerCall(t, e, "POST", "/iam/v1/projects/"+project+path, body)
 	}
 	sa := accountID + "@" + project + ".iam.gserviceaccount.com"
 	call("/serviceAccounts", map[string]string{"accountId": accountID})

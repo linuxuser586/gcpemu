@@ -162,9 +162,10 @@ func (e *emulator) try(t *testing.T, bin string, args ...string) (string, error)
 }
 
 // exec runs a client in env and returns the hosts the Escape guard
-// refused. Only gcloud and the Python probes run behind the guard: the
-// other clients are Go, which keeps to loopback, or reach the internet on
-// purpose (crane from Docker Hub).
+// refused. exec puts only gcloud and the Python probes behind the guard
+// (the aws subtests put it in env themselves): the other clients are Go,
+// which keeps to loopback, or reach the internet on purpose (crane from
+// Docker Hub).
 func (e *emulator) exec(env []string, bin string, args ...string) (string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -468,6 +469,10 @@ func TestClients(t *testing.T) {
 		contains(t, "get-iam-policy", e.run(t, g, "projects", "get-iam-policy", project, "--format=json"), "serviceAccount:"+sa)
 		contains(t, "print-access-token (impersonated)",
 			e.run(t, g, "auth", "print-access-token", "--impersonate-service-account", sa), ".")
+	})
+
+	t.Run("aws", func(t *testing.T) {
+		testAWS(t, e)
 	})
 
 	t.Run("universe", func(t *testing.T) {
