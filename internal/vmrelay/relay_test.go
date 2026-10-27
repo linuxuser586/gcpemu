@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/yamux"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // startInProcess runs the agent on loopback and returns the emulator's
@@ -845,4 +848,106 @@ func TestReconnectLookupFails(t *testing.T) {
 	if got := roundTrip(t, d, "back"); got != "re:back" {
 		t.Fatalf("dial after the lookup recovered: %q", got)
 	}
+}
+
+// TestJoinRefreshesControl: when a network the relay joins makes the
+// runtime publish the control port elsewhere without dropping the
+// session (OrbStack, #808), Control() follows the port while the
+// session stays up.
+func TestJoinRefreshesControl(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go newRelayAgent().serve(l)
+	t.Cleanup(func() { l.Close() })
+	ctrl := l.Addr().String()
+	// Nothing listens at moved: the join must not redial.
+	const moved = "127.0.0.1:1"
+	var mu sync.Mutex
+	current := ctrl
+	r := connect(t, ctrl, func(context.Context) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return current, nil
+	}, nil)
+	s := currentSession(r)
+	mu.Lock()
+	current = moved
+	mu.Unlock()
+	r.joined(runtime.Network{Name: "build", Subnet: "10.9.0.0/24"}, true)
+	if got := r.Control(); got != moved {
+		t.Fatalf("Control() = %s, want %s", got, moved)
+	}
+	if currentSession(r) != s || s.IsClosed() {
+		t.Fatal("the join replaced or closed the control session")
+	}
+	if err := r.ping(context.Background()); err != nil {
+		t.Fatalf("ping over the session after the join: %v", err)
+	}
+}
+
+// TestJoinLookupFails: a join whose lookup fails keeps the control
+// address and the session.
+func TestJoinLookupFails(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go newRelayAgent().serve(l)
+	t.Cleanup(func() { l.Close() })
+	ctrl := l.Addr().String()
+	r := connect(t, ctrl, func(context.Context) (string, error) {
+		return "", errors.New("no such container")
+	}, nil)
+	s := currentSession(r)
+	r.joined(runtime.Network{Name: "build", Subnet: "10.9.0.0/24"}, true)
+	if got := r.Control(); got != ctrl {
+		t.Fatalf("Control() = %s, want %s", got, ctrl)
+	}
+	if currentSession(r) != s || s.IsClosed() {
+		t.Fatal("the join replaced or closed the control session")
+	}
+	if !r.Covers("10.9.0.5") {
+		t.Fatal("the join was not recorded")
+	}
+}
+
+// TestJoinWithoutLookup: leaving a network, and joining one before the
+// relay is ready (Start, before the control port is published), do not
+// look the control port up.
+func TestJoinWithoutLookup(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go newRelayAgent().serve(l)
+	t.Cleanup(func() { l.Close() })
+	lookups := 0
+	lookup := func(context.Context) (string, error) {
+		lookups++
+		return "127.0.0.1:1", nil
+	}
+	n := runtime.Network{Name: "build", Subnet: "10.9.0.0/24"}
+	r := connect(t, l.Addr().String(), lookup, nil)
+	r.joined(n, false)
+	if lookups != 0 {
+		t.Fatalf("%d lookups on leaving a network", lookups)
+	}
+
+	// Not through connect, which waits for the relay to be ready.
+	starting := &Relay{log: slog.New(slog.DiscardHandler), lookup: lookup, nets: map[string]netip.Prefix{}}
+	starting.joined(n, true)
+	if lookups != 0 {
+		t.Fatalf("%d lookups on a join before the relay is ready", lookups)
+	}
+	if !starting.Covers("10.9.0.5") {
+		t.Fatal("the join was not recorded")
+	}
+}
+
+func currentSession(r *Relay) *yamux.Session {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sess
 }

@@ -231,14 +231,26 @@ func controlAddr(ct runtime.Container) string {
 }
 
 // joined tracks the subnets the relay can reach (runtime.SetMember).
+// Once ready, a join also finds the control port again: a runtime may
+// move it without dropping the session (OrbStack, #808), and the next
+// session should dial where it is. The live session stays up.
 func (r *Relay) joined(n runtime.Network, in bool) {
 	p, err := netip.ParsePrefix(n.Subnet)
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if !in {
 		delete(r.nets, n.Name)
 	} else if err == nil {
 		r.nets[n.Name] = p.Masked()
+	}
+	ready := r.ready
+	r.mu.Unlock()
+	if !in || !ready {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.refreshControl(ctx); err != nil {
+		r.log.Debug("VM relay control port not refreshed after a join", "network", n.Name, "err", err)
 	}
 }
 
