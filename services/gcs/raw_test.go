@@ -2,6 +2,7 @@ package gcs_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/hmac"
 	"crypto/md5"
@@ -442,5 +443,74 @@ func TestXMLMetadataHeadersFollowSigner(t *testing.T) {
 				t.Errorf("%s %s: want %q and no %s* in:\n%s", tc.name, method, tc.want, tc.absent, head)
 			}
 		}
+	}
+}
+
+// gzipped returns b gzip-compressed, as google-api-client (the Java
+// library) sends JSON and upload bodies.
+func gzipped(t *testing.T, b []byte) io.Reader {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &buf
+}
+
+// Content-Encoding: gzip on a JSON API or upload request is transport
+// encoding: the request means what its decoded body says (#602).
+func TestRawGzipRequestBodies(t *testing.T) {
+	inst := start(t)
+	base := inst.GatewayURL()
+	gz := map[string]string{"Content-Type": "application/json", "Content-Encoding": "gzip"}
+	code, _, b := do(t, "POST", base+"/storage/v1/b?project="+testProject, gzipped(t, []byte(`{"name":"gzip-bucket"}`)), gz)
+	if code != 200 {
+		t.Fatalf("gzipped bucket insert = %d %s", code, b)
+	}
+
+	data := []byte{0, 1, 2, 0xfe, 0xff, '\n', '\r', 0}
+	media := base + "/upload/storage/v1/b/gzip-bucket/o?uploadType=media&name=media.bin"
+	code, _, b = do(t, "POST", media, gzipped(t, data), map[string]string{"Content-Type": "application/octet-stream", "Content-Encoding": "gzip"})
+	if code != 200 {
+		t.Fatalf("gzipped media upload = %d %s", code, b)
+	}
+	multipart := "--BOUND\r\nContent-Type: application/json\r\n\r\n{\"name\":\"multipart.bin\"}\r\n--BOUND\r\nContent-Type: application/octet-stream\r\n\r\n" + string(data) + "\r\n--BOUND--\r\n"
+	code, _, b = do(t, "POST", base+"/upload/storage/v1/b/gzip-bucket/o?uploadType=multipart", gzipped(t, []byte(multipart)),
+		map[string]string{"Content-Type": "multipart/related; boundary=BOUND", "Content-Encoding": "gzip"})
+	if code != 200 {
+		t.Fatalf("gzipped multipart upload = %d %s", code, b)
+	}
+	for _, name := range []string{"media.bin", "multipart.bin"} {
+		code, _, b = do(t, "GET", base+"/storage/v1/b/gzip-bucket/o/"+name, nil, nil)
+		var obj map[string]any
+		_ = json.Unmarshal(b, &obj)
+		if code != 200 || obj["size"] != "8" || obj["contentEncoding"] != nil {
+			t.Errorf("%s metadata = %d %s, want size 8 and no contentEncoding", name, code, b)
+		}
+		code, _, b = do(t, "GET", base+"/download/storage/v1/b/gzip-bucket/o/"+name+"?alt=media", nil, nil)
+		if code != 200 || !bytes.Equal(b, data) {
+			t.Errorf("%s = %d %q, want %q", name, code, b, data)
+		}
+	}
+
+	code, _, b = do(t, "POST", base+"/storage/v1/b?project="+testProject, strings.NewReader("\x1f\x8bnot gzip"), gz)
+	if e := envelope(t, b); code != 400 || e.Error.Errors[0].Reason != "invalid" {
+		t.Errorf("corrupt gzip body = %d %s", code, b)
+	}
+
+	// On the XML API the header is the object's Content-Encoding.
+	code, _, b = do(t, "PUT", base+"/gzip-bucket/stored.gz", gzipped(t, data), map[string]string{"Content-Encoding": "gzip"})
+	if code != 200 {
+		t.Fatalf("XML PUT = %d %s", code, b)
+	}
+	code, _, b = do(t, "GET", base+"/storage/v1/b/gzip-bucket/o/stored.gz", nil, nil)
+	var obj map[string]any
+	_ = json.Unmarshal(b, &obj)
+	if code != 200 || obj["contentEncoding"] != "gzip" {
+		t.Errorf("XML-uploaded object = %d %s, want contentEncoding gzip", code, b)
 	}
 }
