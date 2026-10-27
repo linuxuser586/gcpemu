@@ -289,8 +289,8 @@ jobs:
       - name: cryptography for gcloud on arm64
         if: runner.arch == 'ARM64'
         run: |
-          python3 -m pip install -q cryptography
-          echo "CLOUDSDK_PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
+          python -m pip install -q cryptography
+          echo "CLOUDSDK_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
           echo "CLOUDSDK_PYTHON_SITEPACKAGES=1" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v7
         with:
@@ -568,6 +568,24 @@ jobs:
         run: go test ./...
       - uses: google-github-actions/setup-gcloud@v3
         if: runner.os == 'Windows'
+      # #766: the Windows SDK bundles no Python either. Without one on
+      # PATH, gcloud prints the Microsoft Store alias's notice into its
+      # output; sign-url needs cryptography; the Java probe needs 21.
+      - uses: actions/setup-python@v7
+        if: runner.os == 'Windows'
+        with:
+          python-version: "3.13"
+      - name: cryptography for gcloud on Windows
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install -q cryptography
+          echo "CLOUDSDK_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+          echo "CLOUDSDK_PYTHON_SITEPACKAGES=1" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v6
+        if: runner.os == 'Windows'
+        with:
+          distribution: temurin
+          java-version: 21
       # os.UserCacheDir on Windows is %LocalAppData%.
       - uses: actions/cache@v6
         if: runner.os == 'Windows'
