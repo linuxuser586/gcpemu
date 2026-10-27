@@ -403,6 +403,10 @@ _Avoid_: migration check, Autopilot readiness
 The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
 
+**Mirror cache**:
+The copies of public-registry images that the registry keeps after a GKE node pulls them through it, so later pulls work while the emulator is offline. It is cache: a State snapshot may miss an image pulled just before it was saved, and such an image is fetched again.
+_Avoid_: pull-through cache (remote repositories pull through too, but their images are packages users see)
+
 **OTLP endpoint**:
 Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, or one whose protocol the Instance does not speak, the telemetry is dropped; one that is set but unreachable fails the exports instead.
 _Avoid_: collector endpoint, metrics endpoint
