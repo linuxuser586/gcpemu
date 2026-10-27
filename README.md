@@ -1503,6 +1503,28 @@ The `gcloud/escape-guard` subtest lists Pub/Sub topics without the pubsub overri
 unless the guard refuses `pubsub.gcpemu.invalid`. The other clients run without the guard: they
 either stay on loopback or reach the internet on purpose.
 
+### Kubernetes conformance (SRS 11.1)
+
+`task kube-conformance` starts an ephemeral instance with GKE, reads the supported versions from
+`gcloud container get-server-config` and, for each minor at its newest patch, one at a time,
+creates a one-node Standard cluster with `gcloud container clusters create --cluster-version`,
+checks its `currentMasterVersion`, runs Sonobuoy's quick mode (its `e2e` plugin, with
+`--kubernetes-version` set from the GKE version rather than k3s's `+k3s1` server version, and
+20 minutes to finish), retrieves the results and deletes the cluster. A minor passes when the
+plugin's status is `passed` with at least one passed test; `failed`, `unknown`, a timeout, a
+plugin that never finished or no test run all fail it. A failed minor logs
+`sonobuoy results --mode detailed` (skipped tests left out) and keeps the tarball in
+`compat/kube-conformance-results/` (`GCPEMU_KUBE_CONFORMANCE_RESULTS` moves it). Adding a
+version to the GKE versions table adds its minor here with no test change.
+
+Sonobuoy is downloaded at a pinned, checksum-verified version for `linux/amd64` and
+`linux/arm64`; elsewhere, or without a container runtime, the test skips. It also needs gcloud
+with `gke-gcloud-auth-plugin` on `PATH`, and the nodes pull the Sonobuoy and Kubernetes
+conformance images from the internet. Sonobuoy runs behind the Escape guard (below), with
+`NO_PROXY` covering loopback and the cluster's endpoint, so any other host it reaches fails the
+test, named. The `escape-guard` subtest points Sonobuoy at `kube-conformance.gcpemu.invalid` and
+fails unless the guard refuses it. `task compat` skips it.
+
 ### OpenTofu acceptance (SRS 11.1, IF-001)
 
 `task tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
