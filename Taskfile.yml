@@ -370,7 +370,7 @@ tasks:
   compat:
     desc: Run the SRS 7.1 client compatibility suite
     cmds:
-      - go test -tags compat ./compat -skip TestOpenTofu -count=1 -timeout 30m -v
+      - go test -tags compat ./compat -skip '^(TestOpenTofu|TestKubeConformance)$' -count=1 -timeout 30m -v
 
   # SRS 11.1 / IF-001 OpenTofu acceptance: every module in compat/tofu with
   # google and google-beta at the current and previous minor
@@ -379,6 +379,14 @@ tasks:
     desc: Run the SRS 11.1 OpenTofu acceptance tests
     cmds:
       - go test -tags compat ./compat -run TestOpenTofu -count=1 -timeout 35m -v
+
+  # SRS 11.1 Kubernetes conformance: Sonobuoy quick mode on a Standard
+  # cluster from gcloud at each supported minor's newest patch. A failed
+  # run leaves its tarball in compat/kube-conformance-results.
+  kube-conformance:
+    desc: Run Kubernetes conformance (Sonobuoy quick mode) at each supported GKE minor
+    cmds:
+      - go test -tags compat ./compat -run TestKubeConformance -count=1 -timeout 75m -v
 
   # NFR-PORT-001: static builds for every supported OS/arch, with the real
   # Web console embedded.

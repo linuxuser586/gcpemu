@@ -355,6 +355,38 @@ jobs:
       - name: OpenTofu acceptance (SRS 11.1)
         run: task tofu
 
+  # SRS 11.1 Kubernetes conformance: Sonobuoy quick mode on a Standard
+  # cluster at each supported minor's newest patch.
+  kube-conformance:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          install_components: gke-gcloud-auth-plugin
+      - name: Kubernetes conformance (SRS 11.1)
+        env:
+          GCPEMU_COMPAT_REQUIRE: "1"
+        run: task kube-conformance
+      - name: Sonobuoy results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kube-conformance-${{ matrix.runner }}
+          path: compat/kube-conformance-results/
+          if-no-files-found: ignore
+
   # FR-CI-001/002: the setup-gcpemu action, with this commit's binary
   # served as release v0.0.0-selftest.
   action:
@@ -581,7 +613,7 @@ jobs:
   # every job was skipped. perf is left out on purpose (see its comment).
   ci-ok:
     if: always()
-    needs: [changes, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, action, action-artifacts, platforms]
+    needs: [changes, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, kube-conformance, action, action-artifacts, platforms]
     runs-on: ubuntu-24.04
     steps:
       - env:
