@@ -103,7 +103,7 @@ The emulator's helper process that runs inside a Managed container.
 _Avoid_: agent (unqualified)
 
 **NAT egress proxy**:
-The Managed container through which Cloud NAT traffic leaves the emulated network.
+The Managed container through which Cloud NAT traffic leaves the emulated network. On each VPC container network it holds its range's second-to-last address, which GCP reserves; nothing else the emulator runs takes it, the Instance's own container included.
 _Avoid_: egress gateway, NAT gateway
 
 **NAT gateway**:

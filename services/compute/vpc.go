@@ -265,7 +265,7 @@ func (s *Service) PrivateServicesNetwork(ctx context.Context, network string) (e
 func (s *Service) realize(ctx context.Context, rt *runtime.Manager, key, name, rng, np, region, sp string) (*vpcNet, error) {
 	s.vpcMu.Lock()
 	defer s.vpcMu.Unlock()
-	labels := rt.Labels("compute", key, "vpc")
+	labels := rt.Labels("compute", key, runtime.RoleVPC)
 	n, err := rt.InspectNetwork(ctx, name)
 	if errors.Is(err, runtime.ErrNotFound) {
 		n, err = s.createBridge(ctx, rt, name, rng, labels)

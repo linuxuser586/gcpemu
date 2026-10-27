@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"maps"
 	"net/http"
@@ -94,5 +95,45 @@ func TestDetectSelfFound(t *testing.T) {
 				t.Errorf("Self, SelfFound = %q, %v; want %q, %v", cl.Self(), cl.SelfFound(), tc.want, tc.found)
 			}
 		})
+	}
+}
+
+// On a VPC container network the emulator's own container takes the
+// highest free address below the second-to-last one, which the NAT egress
+// proxy holds; elsewhere it takes the second-to-last (#806).
+func TestAttachSelfVPC(t *testing.T) {
+	asked := map[string]string{}
+	cl := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/networks/vpc"):
+			_, _ = io.WriteString(w, `{"Id":"v","Name":"vpc","Labels":{"gcpemu.role":"vpc"},
+				"IPAM":{"Config":[{"Subnet":"10.89.9.0/24","Gateway":"10.89.9.1"}]},
+				"Containers":{"a":{"IPv4Address":"10.89.9.253/24"}}}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/networks/svc"):
+			_, _ = io.WriteString(w, `{"Id":"s","Name":"svc","Labels":{"gcpemu.role":"services"},
+				"IPAM":{"Config":[{"Subnet":"10.9.0.0/24","Gateway":"10.9.0.1"}]}}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/containers/json"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/connect"):
+			var body struct {
+				EndpointConfig struct{ IPAMConfig struct{ IPv4Address string } }
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			parts := strings.Split(r.URL.Path, "/")
+			asked[parts[len(parts)-2]] = body.EndpointConfig.IPAMConfig.IPv4Address
+		default:
+			w.WriteHeader(404)
+		}
+	})
+	cl.self = "me"
+	for _, n := range []string{"vpc", "svc"} {
+		if err := cl.AttachSelf(context.Background(), n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]string{"vpc": "10.89.9.252", "svc": "10.9.0.254"}
+	if !maps.Equal(asked, want) {
+		t.Errorf("AttachSelf asked for %v; want %v (10.89.9.254 is the NAT egress proxy's, .253 is held)", asked, want)
 	}
 }
