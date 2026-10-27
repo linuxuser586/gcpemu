@@ -152,11 +152,13 @@ jobs:
 
   # FR-UI-023: Playwright on Chromium, Firefox and WebKit against a binary
   # with the real console. The runner's Docker backs the GKE view's clusters.
+  # #817: a healthy run takes 14-15 minutes, 12.5 of them in the suite, so 30
+  # is about twice that.
   console-e2e:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
@@ -173,8 +175,45 @@ jobs:
           cache-dependency-path: console/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: console
-      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      # #817: --with-deps fetches Firefox's and WebKit's system packages from
+      # the Ubuntu mirror, which sometimes crawls at ~50 KB/s. The browsers and
+      # those .debs are cached per runner image and Playwright version, so a
+      # hit only refreshes apt's indexes. ImageOS is a runner variable, not in
+      # the env context, hence the shell.
+      - id: playwright-key
+        run: echo "key=playwright-$RUNNER_OS-$ImageOS-$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
         working-directory: console
+      - id: playwright-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-debs
+          key: ${{ steps.playwright-key.outputs.key }}
+      - name: Install Playwright browsers and their system packages
+        timeout-minutes: 12
+        working-directory: console
+        run: |
+          debs=~/.cache/playwright-debs
+          mkdir -p "$debs"
+          # apt-get skips a package already in its archive directory.
+          sudo cp "$debs"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          for attempt in 1 2; do
+            if timeout 5m pnpm exec playwright install --with-deps chromium firefox webkit; then
+              cp /var/cache/apt/archives/*.deb "$debs"/ 2>/dev/null || true
+              exit 0
+            fi
+            echo "::warning::Playwright install attempt $attempt failed or took over 5 minutes"
+          done
+          exit 1
+      # Saved straight away, so a failing suite still keeps the cache.
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-debs
+          key: ${{ steps.playwright-key.outputs.key }}
       # The Instance removes its containers on exit, so record how they end.
       - run: docker events --filter type=container --filter event=die --filter event=oom --filter event=kill --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' > "$RUNNER_TEMP/container-events.log" &
       - run: task console-e2e
