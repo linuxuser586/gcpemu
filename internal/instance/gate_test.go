@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -55,7 +54,7 @@ func startGateInstance(t *testing.T, svc *gateSvc) (*Instance, string) {
 	t.Helper()
 	svc.blocked, svc.release = make(chan struct{}), make(chan struct{})
 	svc.resetting, svc.resume = make(chan bool, 1), make(chan struct{})
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}

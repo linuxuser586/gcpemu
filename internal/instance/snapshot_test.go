@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -55,7 +54,7 @@ func (s *snapSvc) Restore(_ context.Context, dir string) error {
 
 func startSnapInstance(t *testing.T) (*Instance, *snapSvc) {
 	t.Helper()
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
