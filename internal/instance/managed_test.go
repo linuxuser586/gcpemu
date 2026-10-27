@@ -26,7 +26,7 @@ import (
 // /_emu/v1/external says why (#624, ADR 0029).
 func TestManagedNoRuntime(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix://"+t.TempDir()+"/no-docker.sock")
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -101,9 +101,8 @@ func TestManagedSpecs(t *testing.T) {
 func TestManagedNotKeptLogged(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix://"+t.TempDir()+"/no-docker.sock")
 	for _, ephemeral := range []bool{false, true} {
-		cfg := config.Defaults()
+		cfg := testConfig()
 		cfg.Ephemeral = ephemeral
-		cfg.LogFormat = "text" // CI=true defaults to JSON
 		cfg.DataDir = t.TempDir()
 		cfg.Services = []string{"dns"}
 		cfg.Ports["gateway"] = 0

@@ -42,7 +42,7 @@ func (f *fakeSvc) Stop(context.Context) error  { f.stopped = true; return nil }
 func (f *fakeSvc) Ready() error                { return nil }
 
 func TestInstanceLifecycle(t *testing.T) {
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -121,7 +121,7 @@ func TestInstanceLifecycle(t *testing.T) {
 }
 
 func TestFaultInjection(t *testing.T) {
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -214,12 +214,11 @@ func TestBindWarning(t *testing.T) {
 		bind string
 		warn bool
 	}{{"127.0.0.1", false}, {"0.0.0.0", true}, {"192.0.2.10", true}} {
-		cfg := config.Defaults()
+		cfg := testConfig()
 		cfg.Ephemeral = true
 		cfg.DataDir = t.TempDir()
 		cfg.Services = []string{"dns"}
 		cfg.Bind = tc.bind
-		cfg.LogFormat = "text" // CI=true defaults to JSON
 		var out strings.Builder
 		in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &out)
 		if err != nil {
@@ -237,7 +236,7 @@ func TestBindWarning(t *testing.T) {
 // method, principal, resource, status and latency, in JSON and text.
 func TestRequestLogEntries(t *testing.T) {
 	for _, format := range []string{"json", "text"} {
-		cfg := config.Defaults()
+		cfg := testConfig()
 		cfg.Ephemeral = true
 		cfg.DataDir = t.TempDir()
 		cfg.Services = []string{"dns"}
@@ -283,7 +282,7 @@ func TestRequestLogEntries(t *testing.T) {
 // bodies are kept with its Request log entry and read by its ID, but not
 // listed.
 func TestRequestBodies(t *testing.T) {
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -390,6 +389,14 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// testConfig is config.Defaults() with text logs: Defaults() picks JSON
+// under CI=true, which tests matching log lines don't expect (#792).
+func testConfig() config.Config {
+	cfg := config.Defaults()
+	cfg.LogFormat = "text"
+	return cfg
+}
+
 // namedSvc is a fake service; failing makes Start return an error.
 type namedSvc struct {
 	name    string
@@ -421,7 +428,7 @@ func (n *namedSvc) Ready() error {
 // fails to start reports not-ready with its reason while the others serve;
 // services that were not selected are never constructed.
 func TestServiceIsolation(t *testing.T) {
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"gcs", "secrets"}
@@ -507,14 +514,13 @@ func TestConsole(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CI", tc.ci)
-			cfg := config.Defaults()
+			cfg := testConfig()
 			cfg.Ephemeral = true
 			cfg.DataDir = t.TempDir()
 			cfg.Services = []string{"dns"}
 			cfg.Ports["gateway"] = 0
 			cfg.Console = tc.console
 			cfg.Bind = tc.bind
-			cfg.LogFormat = "text"
 			var log syncBuffer
 			in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &countingSvc{} }}, &log)
 			if err != nil {
@@ -566,14 +572,13 @@ func TestConsole(t *testing.T) {
 func TestEnforcementBeyondLoopback(t *testing.T) {
 	for _, insecure := range []bool{false, true} {
 		t.Run(fmt.Sprintf("insecure=%v", insecure), func(t *testing.T) {
-			cfg := config.Defaults()
+			cfg := testConfig()
 			cfg.Ephemeral = true
 			cfg.DataDir = t.TempDir()
 			cfg.Services = []string{"dns"}
 			cfg.Ports["gateway"] = 0
 			cfg.Bind = "0.0.0.0"
 			cfg.Insecure = insecure
-			cfg.LogFormat = "text"
 			var log syncBuffer
 			in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &log)
 			if err != nil {
@@ -629,7 +634,7 @@ func (s *storeSvc) Register(r emu.Router) error {
 // TestEvents: a Service's store write and the request that caused it reach
 // /_emu/v1/events, and Shutdown ends the stream (FR-UI-006).
 func TestEvents(t *testing.T) {
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -702,7 +707,7 @@ func (s *opsSvc) Operations() []emu.OperationInfo { return s.ops }
 // newest first, filtered by Service and Project (FR-UI-012).
 func TestOperations(t *testing.T) {
 	t0 := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns", "compute", "gcs"}
@@ -772,12 +777,11 @@ func TestContainerBindWarning(t *testing.T) {
 		where lanbind.Where
 		warn  bool
 	}{{lanbind.Bridge, true}, {lanbind.Host, false}, {lanbind.Unconfirmed, false}} {
-		cfg := config.Defaults()
+		cfg := testConfig()
 		cfg.Ephemeral = true
 		cfg.DataDir = t.TempDir()
 		cfg.Services = []string{"dns"}
 		cfg.Ports["gateway"] = 0
-		cfg.LogFormat = "text"
 		cfg.GKEBind = []string{"172.17.0.2"}
 		cfg.ARBind = []string{"172.17.0.2"}
 		var out syncBuffer
@@ -831,8 +835,8 @@ func (s *listenSvc) EnvVars(gw string, eps map[string]string) map[string]string 
 func TestEnvVarsBoundToAllInterfaces(t *testing.T) {
 	for _, bind := range []string{"0.0.0.0", "::"} {
 		t.Run(bind, func(t *testing.T) {
-			t.Setenv("CI", "")
-			cfg := config.Defaults()
+			t.Setenv("CI", "") // serve the Web console
+			cfg := testConfig()
 			cfg.Ephemeral = true
 			cfg.DataDir = t.TempDir()
 			cfg.Services = []string{"dns"}
@@ -840,7 +844,6 @@ func TestEnvVarsBoundToAllInterfaces(t *testing.T) {
 			cfg.Ports["pubsub"] = 0
 			cfg.Ports[frontend.Endpoint] = 0
 			cfg.Bind = bind
-			cfg.LogFormat = "text"
 			var log syncBuffer
 			in, err := New(&cfg, map[string]Factory{"dns": func(env *emu.Env) emu.Service { return &listenSvc{env: env} }}, &log)
 			if err != nil {

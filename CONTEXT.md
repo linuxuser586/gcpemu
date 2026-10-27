@@ -219,6 +219,10 @@ An Instance whose state disappears when it stops.
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
 
+**CI defaults**:
+The defaults a `gcpemu` command takes under `CI=true`: an Ephemeral Instance, JSON logs and no Web console, each overridden by an explicit setting. An Instance started by `emutest` does not take them (ADR 0039).
+_Avoid_: CI mode
+
 **Containerized Instance**:
 An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host. It still sees only its own container's files, such as its trust store, not the host's.
 _Avoid_: container mode, in-container, DooD, host-network mode (for a container on the host's network, which is not one); native Instance or native stage (for one that isn't Containerized: say an Instance on the host)

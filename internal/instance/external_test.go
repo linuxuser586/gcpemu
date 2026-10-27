@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 )
@@ -34,7 +33,7 @@ func TestExternal(t *testing.T) {
 	down := l.Addr().String()
 	l.Close()
 
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -88,7 +87,7 @@ func TestExternal(t *testing.T) {
 // TestExternalServed: an Instance refuses to start when --external names
 // an API that one of its Services serves (#623).
 func TestExternalServed(t *testing.T) {
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
@@ -115,7 +114,7 @@ func TestExternalLAN(t *testing.T) {
 	ext := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached.Add(1) }))
 	defer ext.Close()
 
-	cfg := config.Defaults()
+	cfg := testConfig()
 	cfg.Ephemeral = true
 	cfg.DataDir = t.TempDir()
 	cfg.Services = []string{"dns"}
