@@ -1,8 +1,8 @@
 // Package compat is the client compatibility suite (SRS 7.1, IF-003 to
-// IF-007 and IF-009): the real gcloud, the aws CLI v2, kubectl with
-// gke-gcloud-auth-plugin, Helm, Docker, crane, ko, psql, the Cloud SQL Auth
-// Proxy v2 and dig run against a detached gcpemu instance with only endpoint
-// configuration.
+// IF-009): the real gcloud, the aws CLI v2, the Python, Node and Java
+// client libraries, kubectl with gke-gcloud-auth-plugin, Helm, Docker,
+// crane, ko, psql, the Cloud SQL Auth Proxy v2 and dig run against a
+// detached gcpemu instance with only endpoint configuration.
 //
 //	go test -tags compat ./compat -v -timeout 30m
 //
@@ -55,6 +55,15 @@
 // through the library's streaming-pull subscriber within a bounded time.
 // Both run behind the Escape guard, and a canary run without the emulator
 // variables must reach the guard.
+//
+// The java subtests (#602) build the Maven project in sdk/java, whose
+// Storage and Pub/Sub library versions libraries-bom pins, with java and
+// mvn from PATH (JDK 21), and skip when either is missing. Maven resolves
+// into ~/.m2; the probe's JVM then runs behind the Escape guard through
+// JAVA_TOOL_OPTIONS. It creates a bucket, writes and reads a binary object
+// byte for byte, lists and deletes it, and publishes a message with an
+// attribute that the streaming-pull Subscriber receives and acks. A
+// canary run without the overrides must reach the guard.
 //
 // The gcloud/builds subtests (#393) run gcloud builds submit with
 // --config and --tag, builds list and cancel, and create and run a Build

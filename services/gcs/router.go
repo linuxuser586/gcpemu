@@ -1,6 +1,7 @@
 package gcs
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,9 +22,14 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.EscapedPath()
 	switch {
 	case strings.HasPrefix(p, "/storage/v1/"):
-		s.serveJSON(w, r, strings.TrimPrefix(p, "/storage/v1/"))
+		if gunzipBody(w, r) {
+			s.serveJSON(w, r, strings.TrimPrefix(p, "/storage/v1/"))
+		}
 	case strings.HasPrefix(p, "/upload/storage/v1/"):
-		s.serveUpload(w, r, strings.TrimPrefix(p, "/upload/storage/v1/"))
+		// A resumable chunk's Content-Range counts the bytes as sent.
+		if r.URL.Query().Has("upload_id") || gunzipBody(w, r) {
+			s.serveUpload(w, r, strings.TrimPrefix(p, "/upload/storage/v1/"))
+		}
 	case strings.HasPrefix(p, "/download/storage/v1/"):
 		s.serveDownloadPath(w, r, strings.TrimPrefix(p, "/download/storage/v1/"))
 	case p == "/batch/storage/v1" || strings.HasPrefix(p, "/batch/storage/v1/"):
@@ -31,6 +37,30 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.serveXML(w, r)
 	}
+}
+
+// gunzipBody decodes a request body sent with Content-Encoding: gzip,
+// which the JSON API treats as transport encoding: google-api-client (the
+// Java library) gzips JSON and upload bodies by default, and the object
+// keeps the decoded bytes. On the XML API the header is object metadata
+// instead. It writes an error and returns false for a corrupt body.
+func gunzipBody(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Encoding")), "gzip") {
+		return true
+	}
+	zr, err := gzip.NewReader(r.Body)
+	switch {
+	case err == io.EOF:
+		r.Body = http.NoBody
+	case err != nil:
+		apierr.Write(w, errInvalid("Invalid gzip request body: %v", err))
+		return false
+	default:
+		r.Body = zr
+	}
+	r.Header.Del("Content-Encoding")
+	r.ContentLength = -1
+	return true
 }
 
 // splitPath splits an escaped path into unescaped segments.
