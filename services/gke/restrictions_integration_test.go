@@ -157,18 +157,68 @@ func TestAutopilotWorkloadRestrictions(t *testing.T) {
 		map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "mine"}}, nil); code != http.StatusCreated {
 		t.Errorf("user create in default: %d %s", code, b)
 	}
-	var sys struct {
-		Items []apPod `json:"items"`
+	// They may still be starting on a new cluster, so wait for them (#796).
+	stuck := func() []string {
+		var sys struct {
+			Items []sysPod `json:"items"`
+		}
+		e.mustKube("GET", "/api/v1/namespaces/kube-system/pods", nil, &sys)
+		if len(sys.Items) == 0 {
+			return []string{"no kube-system pods"}
+		}
+		var out []string
+		for _, p := range sys.Items {
+			if p.Status.Phase != "Running" && p.Status.Phase != "Succeeded" {
+				out = append(out, p.why())
+			}
+		}
+		return out
 	}
-	e.mustKube("GET", "/api/v1/namespaces/kube-system/pods", nil, &sys)
-	if len(sys.Items) == 0 {
-		t.Error("no kube-system pods")
-	}
-	for _, p := range sys.Items {
-		if p.Status.Phase != "Running" && p.Status.Phase != "Succeeded" {
-			t.Errorf("kube-system pod %s is %s", p.Metadata.Name, p.Status.Phase)
+	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(time.Second) {
+		s := stuck()
+		if len(s) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("kube-system pods not running after 2m:\n%s", strings.Join(s, "\n"))
 		}
 	}
+}
+
+// sysPod is a kube-system pod with what says why it is not running.
+type sysPod struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Status struct {
+		Phase      string `json:"phase"`
+		Conditions []struct {
+			Type, Status, Reason, Message string
+		} `json:"conditions"`
+		ContainerStatuses []struct {
+			Name  string `json:"name"`
+			State struct {
+				Waiting *struct{ Reason, Message string } `json:"waiting"`
+			} `json:"state"`
+		} `json:"containerStatuses"`
+	} `json:"status"`
+}
+
+// why names the pod, its phase, and an unmet PodScheduled condition or
+// containers' waiting reasons, so starvation reads apart from slowness.
+func (p sysPod) why() string {
+	s := p.Metadata.Name + " is " + p.Status.Phase
+	for _, c := range p.Status.Conditions {
+		if c.Type == "PodScheduled" && c.Status != "True" {
+			s += "; unscheduled: " + strings.TrimSpace(c.Reason+" "+c.Message)
+		}
+	}
+	for _, c := range p.Status.ContainerStatuses {
+		if w := c.State.Waiting; w != nil {
+			s += "; " + c.Name + " waiting: " + strings.TrimSpace(w.Reason+" "+w.Message)
+		}
+	}
+	return s
 }
 
 // TestAutopilotCompatibilityCheck is FR-GKE-017 on a running Standard

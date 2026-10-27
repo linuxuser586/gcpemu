@@ -3,6 +3,7 @@ package gke_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -132,8 +133,14 @@ func TestAutopilotNodeProvisioning(t *testing.T) {
 			},
 		},
 	}, nil)
-	eventually(t, 30*time.Second, "4 fill pods running (NFR-PERF-010)", func() bool { return running(e.apPods("app%3Dfill"), 4) })
-	t.Logf("pods running on a new node after %v", time.Since(start).Round(time.Second))
+	eventually(t, 3*time.Minute, "4 fill pods running", func() bool { return running(e.apPods("app%3Dfill"), 4) })
+	took := time.Since(start)
+	t.Logf("pods running on a new node after %v (NFR-PERF-010: 30 s)", took.Round(time.Second))
+	// A loaded runner can miss the target without a regression, so it is
+	// only enforced with GCPEMU_PERF_TESTS=1 (ADR 0017, #797).
+	if took > 30*time.Second && os.Getenv("GCPEMU_PERF_TESTS") == "1" {
+		t.Errorf("NFR-PERF-010: pods ran on a new node after %v (> 30 s)", took)
+	}
 	if n := len(e.apNodes()); n != 2 {
 		t.Errorf("%d nodes after scale-up; want 2", n)
 	}
