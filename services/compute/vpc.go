@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -61,6 +62,9 @@ type vpcNet struct {
 	Region     string `json:"region,omitempty"`
 	// Subnetwork is the subnetwork path, empty for PSA ranges.
 	Subnetwork string `json:"subnetwork,omitempty"`
+	// Self is the Self address of a Containerized Instance on the
+	// container network, which no internal address takes (#811).
+	Self string `json:"self,omitempty"`
 }
 
 func psaKey(np string) string { return "psa:" + np }
@@ -276,6 +280,11 @@ func (s *Service) realize(ctx context.Context, rt *runtime.Manager, key, name, r
 	var prev *vpcNet
 	_ = s.env.Store.View(func(tx store.Tx) error { prev, _ = get[vpcNet](tx, nsVPCNets, key); return nil })
 	st := &vpcNet{Name: n.Name, Subnet: n.Subnet, Gateway: n.Gateway, Range: rng, Network: np, Region: region, Subnetwork: sp}
+	if self, err := rt.SelfIP(ctx, n.Name); err == nil {
+		st.Self = self
+	} else if prev != nil && prev.Name == n.Name {
+		st.Self = prev.Self
+	}
 	st.Fallback = st.Subnet != rng
 	switch {
 	case !st.Fallback:
@@ -296,6 +305,41 @@ func (s *Service) realize(ctx context.Context, rt *runtime.Manager, key, name, r
 		return nil, err
 	}
 	return st, nil
+}
+
+// SelfJoined implements emu.SelfJoiner: it records the Self address on
+// each VPC container network, clearing it on those the Instance did not
+// rejoin. realize records it on networks realised later.
+func (s *Service) SelfJoined(addrs map[string]string) {
+	err := s.env.Store.Update(func(tx store.Tx) error {
+		changed := map[string]*vpcNet{}
+		tx.Scan(nsVPCNets, "", func(k string, b []byte) bool {
+			var st vpcNet
+			if json.Unmarshal(b, &st) == nil && addrs[st.Name] != st.Self {
+				st.Self = addrs[st.Name]
+				changed[k] = &st
+			}
+			return true
+		})
+		for k, st := range changed {
+			if err := store.PutJSON(tx, nsVPCNets, k, st); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		s.env.Log.Warn("compute: recording the Self address on VPC container networks", "err", err)
+	}
+}
+
+// selfAddr returns the recorded Self address on subnetwork sp's container
+// network, which no internal address takes.
+func selfAddr(tx store.Tx, sp string) (uint32, bool) {
+	if st, ok := get[vpcNet](tx, nsVPCNets, sp); ok {
+		return parseIP(st.Self)
+	}
+	return 0, false
 }
 
 // aliasProbeImage runs the probe that checks that Managed containers can

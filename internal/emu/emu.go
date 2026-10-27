@@ -366,6 +366,16 @@ type RelayAddresser interface {
 	RelayAddr(network string) string
 }
 
+// SelfJoiner is implemented by services that record the Self address of a
+// Containerized Instance on their container networks: compute keeps no
+// internal address on it (#811). SelfJoined is called with the Self
+// address on each network (by name) once the Instance has rejoined the
+// networks it kept, which a recreated container may do at other addresses;
+// a network it holds no address on is absent (all are, on the host).
+type SelfJoiner interface {
+	SelfJoined(addrs map[string]string)
+}
+
 // LoopbackHolder is implemented by services that serve host clients on
 // 127.0.0.x addresses they allocate (LB forwarding rules, Cloud SQL
 // instances and GKE LoadBalancer Services on a VM runtime), so that each

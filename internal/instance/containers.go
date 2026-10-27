@@ -77,6 +77,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	if err := m.Reclaim(ctx); err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
+	c.selfJoined(ctx, m)
 	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
 	if cl.Self() != "" {
 		m.Log.Info("VM runtime " + m.VM.String())
@@ -86,6 +87,27 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	}
 	c.rt = m
 	return m, nil
+}
+
+// selfJoined tells services the Self address on each network the
+// Instance's container has joined (emu.SelfJoiner); on the host there is
+// none. It runs with c.mu held and SelfJoined writes the store, so neither
+// SelfJoined nor a store transaction may call Runtime.
+func (c *containers) selfJoined(ctx context.Context, m *runtime.Manager) {
+	addrs := map[string]string{}
+	if m.Self() != "" {
+		ct, err := m.InspectContainer(ctx, m.Self())
+		if err != nil {
+			m.Log.Warn("inspecting the Instance's container for its Self addresses", "err", err)
+			return
+		}
+		addrs = ct.IPs
+	}
+	for _, s := range c.in.services {
+		if j, ok := s.(emu.SelfJoiner); ok {
+			j.SelfJoined(addrs)
+		}
+	}
 }
 
 // reservedAddrs collects the addresses services' stored resources have
