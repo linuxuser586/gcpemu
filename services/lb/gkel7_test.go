@@ -190,8 +190,18 @@ func TestGKEIngressAndGateway(t *testing.T) {
 			}
 		}
 	}
-	k.getJSON(gwAPI+"/namespaces/default/httproutes/web", &route)
-	if len(route.Status.Parents) != 1 || route.Status.Parents[0].ControllerName != "networking.gke.io/gateway" {
+	// The controller writes the route's status after the Gateway's, so it
+	// can lag the traffic seen above.
+	routed := func() bool {
+		route.Status.Parents = nil
+		k.getJSON(gwAPI+"/namespaces/default/httproutes/web", &route)
+		return len(route.Status.Parents) == 1 && route.Status.Parents[0].ControllerName == "networking.gke.io/gateway"
+	}
+	ok := routed()
+	for deadline := time.Now().Add(time.Minute); !ok && time.Now().Before(deadline); ok = routed() {
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !ok {
 		t.Errorf("HTTPRoute status %+v", route.Status)
 	}
 
