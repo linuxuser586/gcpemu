@@ -348,6 +348,7 @@ type contentRange struct {
 	last       int64
 	total      int64 // -1 when "*"
 	hasRange   bool
+	openEnded  bool // "bytes a-*/...": the body runs from a to its end
 	wholeShape bool // no Content-Range: the body is the whole object
 }
 
@@ -377,9 +378,21 @@ func parseContentRange(v string) (contentRange, error) {
 		return cr, nil
 	}
 	a, b, ok := strings.Cut(rng, "-")
-	first, err1 := strconv.ParseInt(a, 10, 64)
-	last, err2 := strconv.ParseInt(b, 10, 64)
-	if !ok || err1 != nil || err2 != nil || first < 0 || last < first {
+	first, err := strconv.ParseInt(a, 10, 64)
+	if !ok || err != nil || first < 0 {
+		return cr, errInvalid("Invalid Content-Range header: %s", v)
+	}
+	if b == "*" {
+		// The Node client's single-request upload (#601); Google's
+		// documentation names only closed ranges.
+		if cr.total >= 0 && first > cr.total {
+			return cr, errInvalid("Invalid Content-Range header: %s", v)
+		}
+		cr.first, cr.openEnded = first, true
+		return cr, nil
+	}
+	last, err := strconv.ParseInt(b, 10, 64)
+	if err != nil || last < first {
 		return cr, errInvalid("Invalid Content-Range header: %s", v)
 	}
 	cr.first, cr.last, cr.hasRange = first, last, true
@@ -473,8 +486,11 @@ func (s *Service) uploadChunk(w http.ResponseWriter, r *http.Request, id string)
 	}
 	bp := copyBufPool.Get().(*[]byte)
 	var limit io.Reader = r.Body
-	if cr.hasRange {
+	switch {
+	case cr.hasRange:
 		limit = io.LimitReader(r.Body, cr.last+1-max(size, cr.first))
+	case cr.openEnded && cr.total >= 0:
+		limit = io.LimitReader(r.Body, cr.total-max(size, cr.first))
 	}
 	_, cerr := io.CopyBuffer(writerOnly{dst}, limit, *bp)
 	copyBufPool.Put(bp)
@@ -487,7 +503,9 @@ func (s *Service) uploadChunk(w http.ResponseWriter, r *http.Request, id string)
 		resumeIncomplete(w, r, size)
 		return
 	}
-	final := cr.wholeShape || (cr.total >= 0 && size == cr.total)
+	// An open-ended request of unknown total is the last: its end is the
+	// object's.
+	final := cr.wholeShape || (cr.openEnded && cr.total < 0) || (cr.total >= 0 && size == cr.total)
 	if !final {
 		resumeIncomplete(w, r, size)
 		return

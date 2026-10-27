@@ -1560,7 +1560,13 @@ with stored credentials.
 For the client libraries, `gcpemu env` sets `GOOGLE_CLOUD_UNIVERSE_DOMAIN=gcpemu.invalid` (which
 `--no-universe` keeps). A Go client, or a generated gRPC client such as Pub/Sub in Python or Node,
 then sends an API with no endpoint override to `<api>.gcpemu.invalid` instead of Google. The Python
-and Node Cloud Storage clients ignore the variable, so they still need `STORAGE_EMULATOR_HOST`.
+and Node Cloud Storage clients ignore the variable, so they need the Cloud Storage port that
+`STORAGE_EMULATOR_HOST` names, with a scheme, which `gcpemu env` leaves out:
+
+- Python: `STORAGE_EMULATOR_HOST=http://$STORAGE_EMULATOR_HOST`.
+- Node: `new Storage({apiEndpoint: 'http://' + host})`, with `STORAGE_EMULATOR_HOST` unset before
+  the client is made. The Node client sends JSON API calls to the variable as it is, without
+  `/storage/v1`, so no value of it works.
 
 `gcpemu env` also sets `GOOGLE_API_USE_MTLS_ENDPOINT=never`, which `--no-universe` keeps. In
 `always` mode, or when a client certificate is found, a Go client dials a hard-coded
