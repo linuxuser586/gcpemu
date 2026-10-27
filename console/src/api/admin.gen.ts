@@ -692,6 +692,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/links/lb-frontends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Load balancing frontends of the Linked Instances this Instance delegates to (`gcpemu status`).
+         * @description Asks each Linked Instance this Instance delegates a Project to for the forwarding rules and LoadBalancer Service ports of those Projects, at the --lb-bind address it tells a LAN caller on the --link-bind address asked on, else the first (ADR 0027). An endpoint with no address says why; a link that could not be asked says why and lists none. These are the endpoints `gcpemu env` names.
+         */
+        get: operations["linkedFrontendsFrontends"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/links/identify": {
         parameters: {
             query?: never;
@@ -1994,6 +2014,8 @@ export interface operations {
                 trust?: boolean;
                 /** @description With false, leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe. */
                 universe?: boolean;
+                /** @description With true, answer {"vars": ..., "notes": [...]}: the notes say which Load balancing frontends of the Linked Instances this Instance delegates to got no variable, and why (ADR 0027), for `gcpemu env` to print on stderr. */
+                notes?: boolean;
             };
             header?: never;
             path?: never;
@@ -2001,7 +2023,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Variable name to value. */
+            /** @description Variable name to value; with notes=true, those under vars, and the notes. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2009,6 +2031,11 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: string;
+                    } | {
+                        vars?: {
+                            [key: string]: string;
+                        };
+                        notes?: string[];
                     };
                 };
             };
@@ -2742,6 +2769,44 @@ export interface operations {
                 };
             };
             502: components["responses"]["Error"];
+        };
+    };
+    linkedFrontendsFrontends: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Linked Instances' endpoints, by link. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        links?: {
+                            link?: string;
+                            /** @description The Linked Instance has --lb-bind. */
+                            lbBind?: boolean;
+                            /** @description Why the link could not be asked. */
+                            error?: string;
+                            frontends?: {
+                                /** @description Service endpoint name, e.g. lb:P/global/web or gke:CLUSTER/NAMESPACE/SERVICE/PORT. */
+                                name?: string;
+                                project?: string;
+                                what?: string;
+                                /** @description The --lb-bind address:port; absent when there is none. */
+                                address?: string;
+                                /** @description Why there is no address. */
+                                error?: string;
+                            }[];
+                        }[];
+                    };
+                };
+            };
         };
     };
     identifyLink: {

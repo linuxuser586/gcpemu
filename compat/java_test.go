@@ -23,10 +23,12 @@ func javaProbe(t *testing.T) (java, classpath string) {
 	dir := t.TempDir()
 	cpFile := filepath.Join(dir, "classpath.txt")
 	mvnArgs := []string{"-q", "-B", "-f", filepath.Join("sdk", "java", "pom.xml"), "-DbuildDir=" + dir}
-	// Resolving downloads the libraries, so a failure is a toolchain that
-	// won't install; compiling offline afterwards must not fail.
-	if out, err := exec.Command(mvn, append(mvnArgs, "dependency:build-classpath", "-Dmdep.outputFile="+cpFile, "-Dmdep.includeScope=runtime")...).CombinedOutput(); err != nil {
-		missing(t, "mvn dependency:build-classpath: %v\n%s", err, out)
+	// Resolving downloads the libraries and the build's plugins, so a
+	// failure is a toolchain that won't install; compiling offline
+	// afterwards must not fail. build-classpath alone leaves out the
+	// plugins, which an empty ~/.m2 then lacks (#766).
+	if out, err := exec.Command(mvn, append(mvnArgs, "dependency:resolve-plugins", "dependency:build-classpath", "-Dmdep.outputFile="+cpFile, "-Dmdep.includeScope=runtime")...).CombinedOutput(); err != nil {
+		missing(t, "mvn dependency:resolve-plugins dependency:build-classpath: %v\n%s", err, out)
 	}
 	if out, err := exec.Command(mvn, append(mvnArgs, "-o", "compile")...).CombinedOutput(); err != nil {
 		t.Fatalf("mvn compile: %v\n%s", err, out)

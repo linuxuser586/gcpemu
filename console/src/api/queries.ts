@@ -96,7 +96,12 @@ export const requestsQuery = (service = '') =>
 export const envQuery = () =>
   queryOptions({
     queryKey: ['admin', 'env'],
-    queryFn: () => unwrap(admin.GET('/_emu/v1/env', { params: { query: {} } })),
+    // Without notes=true the answer is the variables alone.
+    queryFn: async () =>
+      (await unwrap(admin.GET('/_emu/v1/env', { params: { query: {} } }))) as Record<
+        string,
+        string
+      >,
     refetchInterval: POLL_MS,
   })
 

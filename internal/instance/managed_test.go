@@ -103,6 +103,7 @@ func TestManagedNotKeptLogged(t *testing.T) {
 	for _, ephemeral := range []bool{false, true} {
 		cfg := config.Defaults()
 		cfg.Ephemeral = ephemeral
+		cfg.LogFormat = "text" // CI=true defaults to JSON
 		cfg.DataDir = t.TempDir()
 		cfg.Services = []string{"dns"}
 		cfg.Ports["gateway"] = 0
