@@ -17,7 +17,7 @@ The user-chosen label for an Instance's configuration, e.g. "default".
 The unique identifier that tags everything an Instance owns, such as its containers and networks.
 
 **Product**:
-A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build). There are twelve.
+A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
 
 **Service**:
 An independently enabled unit of emulation that implements all or part of a Product. One Product may be split across several Services, which is why there are more Services than Products.
@@ -368,6 +368,26 @@ A GCP project that exists in an Instance. It is created implicitly the first tim
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
+**VM**:
+A Compute Engine virtual machine instance in a Project, as the `instances` resource of `compute.googleapis.com` describes it.
+_Avoid_: instance, Compute Engine instance (an Instance is a running emulator)
+
+**Cloud Run service**:
+A Cloud Run resource that serves requests at its own URL from a sequence of revisions.
+_Avoid_: service, Run service (a Service is a unit of emulation)
+
+**Cloud Run instance**:
+One running copy of a Cloud Run service's revision. There are none while the Cloud Run service is scaled to zero.
+_Avoid_: instance, replica, container (on their own)
+
+**Public image catalogue**:
+The fixed set of GCP public image families that a VM can boot, each standing for a pinned OS image. A VM asking for any other image is refused.
+_Avoid_: image list, base images
+
+**IAP tunnel**:
+A TCP connection from a host client to a port on a VM, carried through the Instance as Identity-Aware Proxy's TCP forwarding carries it, such as `gcloud compute ssh --tunnel-through-iap`. It is how a host reaches a VM on every platform.
+_Avoid_: SSH tunnel, port forward
+
 **Cluster mode**:
 Whether a GKE cluster is a Standard cluster or an Autopilot cluster, fixed when it is created.
 _Avoid_: "mode" unqualified, cluster type
@@ -634,6 +654,14 @@ _Avoid_: "acceptance" on its own, e2e
 The v1.0 test that accepts Autopilot clusters on their own, apart from the Reference stack, which stays on a Standard cluster.
 _Avoid_: Autopilot e2e, Autopilot stack
 
+**Compute Engine acceptance**:
+The v1.0 test that accepts VMs on their own, apart from the Reference stack, which does not change.
+_Avoid_: GCE e2e, VM stack
+
+**Cloud Run acceptance**:
+The v1.0 test that accepts Cloud Run on its own, apart from the Reference stack, which does not change.
+_Avoid_: Cloud Run e2e, Run stack
+
 **Containerized Instance tests**:
 Tests that build the OCI image and drive a Containerized Instance from the host.
 _Avoid_: image tests
@@ -677,5 +705,7 @@ _Avoid_: egress check, leak detector
 - "Kubernetes pulls" on its own is ambiguous: an emulated GKE cluster's nodes pull with their own registry settings, apart from Host trust. Say *a kubelet on the host* for a Kubernetes cluster that runs directly on the user's machine and pulls through the host's containerd.
 - "Cluster" on its own means a GKE cluster in either mode. Say *Autopilot cluster* or *Standard cluster* when the mode matters.
 - "Key" on its own is ambiguous. Say *Signing key*, *service account key*, or *the Instance CA's key*.
+- "Instance" on its own always means a running emulator. A Compute Engine instance is a *VM*; GCP's other instances are always qualified: *Cloud SQL instance*, *Cloud Run instance*, *managed instance group*, *instance template*.
+- "Service" for Cloud Run is always a *Cloud Run service*.
 - "Node" on its own always means a GKE node. Another Instance is a *Linked Instance* or *Discovered Instance*, and a non-gcpemu server is an *External emulator*.
 - "Conformance" on its own is ambiguous: the *Conformance suite* compares the emulator's responses with real GCP's, while *Kubernetes conformance* runs upstream's tests against an emulated cluster. Always qualify it.

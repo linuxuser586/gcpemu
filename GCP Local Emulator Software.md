@@ -6,7 +6,7 @@ Oct 7, 2026 · @Barry
 
 ### 1.1 Purpose
 
-This SRS defines the requirements for `gcpemu`, a single Go binary that emulates twelve Google Cloud Products well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for Endpoint overrides, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
+This SRS defines the requirements for `gcpemu`, a single Go binary that emulates fourteen Google Cloud Products well enough that the same OpenTofu modules, Kubernetes manifests, application code and client SDKs that target real GCP can be run, unmodified except for Endpoint overrides, on a developer workstation and in CI. It is written for the people who will build, test and accept the emulator.
 
 ### 1.2 Scope
 
@@ -26,8 +26,10 @@ In scope are the control-plane APIs and a working data plane for these Products:
 | Cloud NAT | `compute.googleapis.com` v1 routers and NAT configs | NAT egress proxy for cluster workloads |
 | Secret Manager | `secretmanager.googleapis.com` v1 (gRPC and REST), global and regional endpoints | Secret payload store with Pub/Sub event notifications and Cloud SQL credential rotation |
 | Cloud Build | `cloudbuild.googleapis.com` v1 (builds, Build triggers, worker pools) | Build steps run as real containers against a per-Instance Docker daemon |
+| Cloud Run | `run.googleapis.com` v2 and the Knative-style v1 surface (services, revisions, jobs, executions) | Cloud Run instances run as real containers behind an in-process autoscaling proxy |
+| Compute Engine | `compute.googleapis.com` v1 (instances, boot disks, images, machine types, instance templates, managed instance groups); IAP TCP forwarding (`tunnel.cloudproxy.app`) | VMs run as real containers booting an OS image |
 
-Supporting resources those Products depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, Operations) are emulated to the degree the twelve Products need them. A React web console embedded in the binary lets users inspect and operate all twelve Products from a browser.
+Supporting resources those Products depend on (projects, regions/zones, VPC networks, subnetworks, firewall rules, Operations) are emulated to the degree the fourteen Products need them. A React web console embedded in the binary lets users inspect and operate all fourteen Products from a browser.
 
 Out of scope: production use, performance or SLA parity with GCP, billing, real global anycast, and every Google Cloud product not listed. Section 10 gives the full exclusions list.
 
@@ -41,7 +43,8 @@ Out of scope: production use, performance or SLA parity with GCP, billing, real 
 | Endpoint override | Pointing a client at the emulator through an env var, provider setting or SDK option instead of `*.googleapis.com` |
 | Host mode | Optional mode where the emulator answers on real Google hostnames via local DNS and a locally trusted CA |
 | Instance | One running emulator process and its state directory |
-| Product | A GCP product the emulator promises to cover; the twelve are listed in 1.2 |
+| Product | A GCP product the emulator promises to cover; the fourteen are listed in 1.2 |
+| VM | A Compute Engine virtual machine instance; never called an "instance", which would collide with Instance |
 | Service | An independently enabled unit of emulation that implements all or part of a Product, named by its Service ID (`gcs`, `sql`, `gke`, …) |
 
 ### 1.4 Requirement conventions
@@ -256,6 +259,8 @@ The web console is a React single-page app compiled into the binary and served a
 | VPC network | Networks, subnetworks, firewalls, routes, addresses, peering and private services access; per subnetwork its VPC container network (Declared and Fallback range, whether it is Translated, attached Managed containers) | Create, edit, delete | M |
 | Secret Manager | Global and regional secrets, labels, expiry, rotation and topics; versions with state and aliases | CRUD secrets; add a version; reveal a payload (masked by default); enable, disable and destroy versions | M |
 | Cloud Build | Builds per Project with status, duration, Build steps and live per-step logs; Build triggers; the Build daemon's cache size | Cancel and retry a Build; run a Build trigger; prune the Build daemon's cache | M |
+| Cloud Run | Cloud Run services with their URLs, revisions, traffic split and live Cloud Run instance count; jobs and executions | Deploy a revision from an image, change the traffic split, view a Cloud Run instance's logs, run a job | M |
+| Compute Engine | VMs with status, image, internal and external IPs and service account; instance templates; managed instance groups with target and current size | Start, stop, reset and delete a VM; view serial port output; copy the `gcloud compute ssh --tunnel-through-iap` command; resize a managed instance group | M |
 | Load Balancer traffic | Live per-request trace: forwarding rule, matched route, backend, cache status, latency | Filter by host or path | S |
 
 #### 4.8.4 Console quality
@@ -297,7 +302,7 @@ IAM is the identity backbone every other service calls; the IAM enforcement leve
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-IAM-001 | Service accounts: create, get, list, patch, disable/enable, delete, undelete; keys: create (JSON, RSA-2048), list, delete, upload. | M |
-| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the twelve Products, plus project-level custom roles (create, patch, delete, undelete). | M |
+| FR-IAM-002 | Roles: an embedded catalogue of predefined roles and their permissions for the fourteen Products, plus project-level custom roles (create, patch, delete, undelete). | M |
 | FR-IAM-003 | `getIamPolicy`, `setIamPolicy`, `testIamPermissions` on projects and on every resource type GCP supports them on (buckets, topics, subscriptions, AR repositories, service accounts, clusters via project). Etag concurrency enforced. | M |
 | FR-IAM-004 | IAM enforcement levels: `off` (allow all), `audit` (allow, log every call that real IAM would deny with the missing permission), `enforce` (deny with `PERMISSION_DENIED`). The default level is audit. Each API method maps to the permission GCP checks. | M |
 | FR-IAM-005 | IAM Conditions on bindings, evaluating `request.time`, `resource.name` and `resource.type` CEL expressions. | S |
@@ -481,6 +486,44 @@ Builds execute: each Build step is a real container, and Docker-builder steps re
 | FR-CB-014 | Every Build status change is published to the Project's `cloud-builds` topic, when it exists, with `buildId` and `status` attributes and the Build as JSON. | M |
 | FR-CB-015 | Worker pools: create, get, list, patch and delete are Recorded; a Build naming a pool runs on the Build daemon like any other. | C |
 
+### 5.13 Cloud Run
+
+Each Cloud Run instance of a revision is a Managed container, started and stopped by an autoscaler in the Instance, behind an in-process proxy that enforces the revision's serving settings (ADR 0041). One model of Cloud Run services and revisions is served over v2 and over the Knative-style v1 surface that `gcloud run` uses. Cloud Run is a Runtime Service.
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-RUN-001 | v2 Cloud Run services: create, get, list, patch and delete on `projects/*/locations/*/services`, returning Operations, and get, list and delete on their revisions. A Cloud Run service reports `uri`, `urls`, `latestReadyRevision`, `latestCreatedRevision`, `traffic`, `trafficStatuses` and `conditions` as Cloud Run does. | M |
+| FR-RUN-002 | v1 surface: `namespaces/PROJECT/services`, `revisions`, `routes` and `configurations` on the regional `REGION-run.googleapis.com` endpoints, over the same model, so that `gcloud run deploy`, `services describe`, `list`, `delete` and `update-traffic` and OpenTofu's `google_cloud_run_service` work. | M |
+| FR-RUN-003 | Revisions: every change to a Cloud Run service's template creates a new immutable revision, named as Cloud Run names them, with its image resolved to a digest. A revision whose image cannot be pulled, or whose container does not listen on `PORT` before its startup probe gives up, is not Ready and takes no traffic, with the reason in its conditions. | M |
+| FR-RUN-004 | Serving: Cloud Run instances get `PORT`, `K_SERVICE`, `K_REVISION` and `K_CONFIGURATION`. The proxy holds a revision to its `maxInstanceRequestConcurrency` per Cloud Run instance and its `maxInstanceCount`, answering 429 when no Cloud Run instance can take a request; applies the request `timeout` (504); keeps `minInstanceCount` Cloud Run instances running; and scales an idle revision to zero. Liveness probes restart a Cloud Run instance. | M |
+| FR-RUN-005 | URLs: every Cloud Run service is served at `https://SERVICE-PROJECT_NUMBER.REGION.run.app` and `https://SERVICE-HASH-REGION_CODE.a.run.app`, which emulated DNS resolves, over TLS from the Instance CA, for host clients, VPC container networks and GKE pods. `gcpemu env` reports each as `GCPEMU_RUN_<PROJECT>_<REGION>_<NAME>`, and as `GCPEMU_RUN_<NAME>` while the name is unique, as FR-LB-002 does. `ingress` is honoured: `INGRESS_TRAFFIC_INTERNAL_ONLY` admits only callers on VPC container networks and GKE pods. | M |
+| FR-RUN-006 | Traffic: percentage splits across revisions and `LATEST`, revision tags with their own tag URLs, and deploying with no traffic. | M |
+| FR-RUN-007 | Invocation: a request needs an ID token whose audience is the Cloud Run service's URL or one of its `customAudiences`, for a Principal with `run.routes.invoke`, unless `allUsers` holds `roles/run.invoker` or `invokerIamDisabled` is set. This applies under every IAM enforcement level, as an unauthenticated request to a private Cloud Run service fails on GCP. | M |
+| FR-RUN-008 | Identity: a Cloud Run instance gets the environment a GKE pod gets (FR-INT-007), with the metadata server answering as the revision's `serviceAccount`, by default the Compute Engine default service account. Setting `serviceAccount` needs `iam.serviceAccounts.actAs`. | M |
+| FR-RUN-009 | Jobs: create, get, list, patch, delete and `run` on `projects/*/locations/*/jobs`, with executions and tasks honouring `taskCount`, `parallelism`, `maxRetries` and `timeout`, and `CLOUD_RUN_TASK_INDEX`, `CLOUD_RUN_TASK_COUNT` and `CLOUD_RUN_TASK_ATTEMPT` in each task. | S |
+| FR-RUN-010 | Serverless NEGs: a `SERVERLESS` network endpoint group naming a Cloud Run service is a backend of the Application Load Balancer. `urlMask` is honoured. | S |
+| FR-RUN-011 | Source deploys: `gcloud run deploy --source` builds the image through the emulated Cloud Build and deploys it. | C |
+
+### 5.14 Compute Engine
+
+Each VM is a Managed container booting an OS image from the Public image catalogue on its subnetwork's VPC container network (ADR 0040). Host clients reach a VM through IAP tunnels; its external IP is Recorded (ADR 0042). Compute Engine is a Runtime Service.
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| FR-GCE-001 | VMs: `instances` insert, get, list, aggregatedList, delete, start, stop, reset, setMetadata, setLabels, setTags, setServiceAccount and getSerialPortOutput (the guest's console output), returning zonal Operations. Status moves through `PROVISIONING`, `STAGING`, `RUNNING`, `STOPPING` and `TERMINATED` as on Compute Engine. | M |
+| FR-GCE-002 | Public image catalogue: `debian-12`, `ubuntu-2404-lts-amd64` and `cos-stable`, with their arm64 families `debian-12-arm64`, `ubuntu-2404-lts-arm64` and `cos-arm64-stable`, in their public image projects, readable through `images.get` and `images.getFromFamily`. A VM naming any other image is refused with `INVALID_ARGUMENT` listing the catalogue. | M |
+| FR-GCE-003 | `rocky-linux-9` and `ubuntu-2204-lts` join the Public image catalogue. | C |
+| FR-GCE-004 | Boot disks: created with the VM and listed as `disks` (get, list, delete, `autoDelete`). Their contents survive stop and start, and restarts of a Persistent Instance. Size and type are Recorded. | M |
+| FR-GCE-005 | Guest: the VM boots systemd with its name as hostname and runs `startup-script` (or `startup-script-url` from Cloud Storage) on every boot and `shutdown-script` on stop. The metadata server, at 169.254.169.254 and `metadata.google.internal`, serves its instance and project attributes, network interfaces and `wait-for-change`, and tokens for its service account, by default the Compute Engine default service account. Setting a service account needs `iam.serviceAccounts.actAs`. Access scopes are Recorded. | M |
+| FR-GCE-006 | Containers on `cos-stable`: the `gce-container-declaration` metadata key runs the declared container (image, command, args, env, restart policy, privileged), as `gcloud compute instances create-with-container` and Terraform's `container-vm` module expect. | M |
+| FR-GCE-007 | Networking: a VM holds its internal IP, from the subnetwork's primary range or `networkIP`, on the VPC container network, reaches other VMs, Cloud SQL private IPs and the internet through Cloud NAT, and resolves as `VM.ZONE.c.PROJECT.internal`. An `accessConfigs` external IP is allocated and reported but not dialable. | M |
+| FR-GCE-008 | IAP tunnels: the Instance serves IAP's TCP forwarding, so `gcloud compute ssh --tunnel-through-iap` and `gcloud compute start-iap-tunnel` reach any port of a VM on every platform, needing `iap.tunnelInstances.accessViaIAP`. SSH accepts keys from the `ssh-keys` metadata of the VM and its Project; `enable-oslogin` is Recorded. | M |
+| FR-GCE-009 | Instance templates, global and regional: insert, get, list and delete, and VMs created from `sourceInstanceTemplate`. | M |
+| FR-GCE-010 | Managed instance groups, zonal and regional: create, get, list, resize, `recreateInstances`, `deleteInstances` and delete, keeping the target size by recreating deleted VMs, autohealing with a health check, named ports, and use as Application Load Balancer backends. Autoscalers are Recorded. | M |
+| FR-GCE-011 | Rolling updates of a managed instance group to a new instance template (`updatePolicy`). | S |
+| FR-GCE-012 | Ingress firewall rules (source ranges, target tags, target service accounts, priority, allow and deny) are enforced for traffic into VMs, inside each VM's container. GKE nodes are not affected. | S |
+| FR-GCE-013 | `machineTypes` and `zones` list and get from a fixed catalogue. A VM's machine type is Recorded: it runs with the container runtime's CPU and memory. | M |
+
 ## 6. Cross-service integration
 
 The emulator's value is in the seams: each row below is a path that must work end to end without user glue.
@@ -504,6 +547,11 @@ The emulator's value is in the seams: each row below is a path that must work en
 | FR-INT-015 | Cloud Build ↔ GCS | `gcloud builds submit` sources, build logs and `artifacts.objects` live in emulated buckets (FR-CB-003, FR-CB-006, FR-CB-008). | M |
 | FR-INT-016 | Cloud Build → Secret Manager | `availableSecrets` resolve Secret versions as the Build's service account (FR-CB-007). | M |
 | FR-INT-017 | Cloud Build ↔ Pub/Sub | Build status notifications on `cloud-builds` (FR-CB-014), and `pubsubConfig` Build triggers start Builds (FR-CB-012), so a GCS upload can start a Build through a bucket notification. | M |
+| FR-INT-018 | Cloud Run, VMs → Artifact Registry | Cloud Run revisions and declared containers on `cos-stable` pull `LOCATION-docker.pkg.dev/...` images as their service account. | M |
+| FR-INT-019 | Cloud Run, VMs → GCS, Pub/Sub, Cloud SQL, Secret Manager | Unmodified client libraries in a Cloud Run instance or a VM get tokens from the metadata server and reach emulated Services by real hostname with no Endpoint override (FR-RUN-008, FR-GCE-005). | M |
+| FR-INT-020 | Pub/Sub → Cloud Run push | A push subscription to a Cloud Run service's URL with an OIDC token passes FR-RUN-007 and is verifiable by the app. | M |
+| FR-INT-021 | LB → managed instance group | A backend service with a managed instance group backend routes to its healthy VMs and follows the group as VMs are recreated (FR-GCE-010). | M |
+| FR-INT-022 | LB → Cloud Run via serverless NEG | A URL map routes to a Cloud Run service through a serverless NEG (FR-RUN-010). | S |
 
 ## 7. External interface requirements
 
@@ -513,15 +561,17 @@ The compatibility bar is the client, not the spec: a requirement is met when the
 
 | ID | Client | How it is pointed at the emulator | Must work for | Pri |
 | --- | --- | --- | --- | --- |
-| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the twelve Products, including `plan` with no diff after `apply` and clean `destroy` | M |
-| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or Host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector, Cloud Build | M |
-| IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `secrets`, `container`, `compute` (LB, routers, NEGs), `dns`, `artifacts`, `sql`, `iam`, `builds` command groups, including `builds submit --tag` and `--config` | M |
+| IF-001 | OpenTofu `google` and `google-beta` providers (current and previous minor) | `*_custom_endpoint` settings (FR-CORE-005), `access_token` from emulator | Every resource type behind the fourteen Products, including `plan` with no diff after `apply` and clean `destroy` | M |
+| IF-002 | Go Cloud Client Libraries (`cloud.google.com/go/...`) | `option.WithEndpoint`, emulator env vars, or Host mode | Storage, Pub/Sub, Secret Manager, IAM, Artifact Registry, Container, Compute, DNS, SQL Admin, Cloud SQL connector, Cloud Build, Cloud Run | M |
+| IF-003 | `gcloud` CLI | `api_endpoint_overrides/*` properties set by `gcpemu env` | `storage`, `pubsub`, `secrets`, `container`, `compute` (LB, routers, NEGs, instances, instance templates, instance groups), `dns`, `artifacts`, `sql`, `iam`, `builds`, `run` command groups, including `builds submit --tag` and `--config`, `run deploy` and `compute instances create-with-container` | M |
 | IF-004 | `kubectl`, Helm, `istioctl` | Kubeconfig from `get-credentials` | Standard cluster operations | M |
 | IF-005 | Docker, Podman, `crane`, `ko` | Registry host from `gcpemu env`; credential helper | Push and pull multi-arch images | M |
 | IF-006 | `psql`, pgx, Cloud SQL Auth Proxy v2 | Host port, or proxy pointed at the emulator | Connect, IAM auth | M |
 | IF-007 | `gcloud storage`, S3 clients via XML API | Endpoint override | Copy, sync, signed URLs | S |
 | IF-008 | Client libraries in Node, Python, Java | Endpoint override / emulator env vars | Storage and Pub/Sub at minimum | S |
 | IF-009 | `dig`, browsers, `curl` | Emulated DNS port; local CA trusted | Name resolution and HTTPS through the LB | M |
+| IF-010 | `gcloud compute ssh --tunnel-through-iap`, `gcloud compute start-iap-tunnel` | `api_endpoint_overrides/iap` set by `gcpemu env` | SSH and TCP to any port of a VM on every platform (FR-GCE-008) | M |
+| IF-011 | `curl`, browsers, client libraries' ID-token transports | Emulated DNS; local CA trusted | HTTPS to Cloud Run service and tag URLs with an ID token (FR-RUN-005, FR-RUN-007) | M |
 
 ### 7.2 Protocol interfaces
 
@@ -654,10 +704,14 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 | IAM | — | Policies, roles, tokens, impersonation, metadata server | Org policy, recommender, audit logs as a separate API |
 | Cloud Build | Build steps, Docker daemon | Builds API, Build triggers, substitutions, secrets, logs in Cloud Storage, `cloud-builds` notifications | Machine type, disk size, worker pools, logging mode, SCM-event triggers. Unlike GCP, Builds share one image cache (ADR 0016), steps are not on the `cloudbuild` network themselves, and steps reach the metadata server at the Build agent's address (`GCE_METADATA_HOST`), not 169.254.169.254 |
 | Secret Manager | — | Secrets, versions, aliases, expiry, delayed destruction, event notifications, managed rotation of Cloud SQL credentials | Replication policy, CMEK, the secret's own identity (`policy_member`) |
+| Cloud Run | Containers, HTTP serving | Admin API (v1 and v2), revisions, traffic splits and tags, concurrency, scale to zero and instance bounds, ingress, invoker IAM, jobs | CPU and memory limits, CPU allocation, execution environment, session affinity, VPC egress settings, startup CPU boost |
+| Compute Engine | Guest processes, startup scripts, declared containers | Instances API, metadata server, internal networking, instance templates, managed instance group target size and autohealing, IAP tunnels, ingress firewall rules for VMs | Machine type, disk size and type, external IPs, access scopes, CPU platform, scheduling and live migration, OS Login, autoscalers. Unlike GCP, a VM has no kernel of its own (ADR 0040) |
 
 ### 10.3 Out of scope for v1.0
 
-- Any GCP service not in Section 1.2 (BigQuery, Cloud Run, Firestore, Cloud Logging and Monitoring APIs, KMS, etc.)
+- Any GCP service not in Section 1.2 (BigQuery, Firestore, Cloud Logging and Monitoring APIs, KMS, etc.)
+- Compute Engine Windows guests, GPUs, custom images and image import, snapshots, sole-tenant nodes, reservations, nested virtualization and kernel modules
+- Cloud Run worker pools, Cloud Run functions as their own resource, domain mappings and multi-region services
 - Billing, quotas (except a configurable soft cap per resource type), budgets, SLAs
 - Organisation, folder and Shared VPC hierarchies; VPC peering; Private Service Connect; interconnect and VPN
 - Classic Application Load Balancer and network (L4) load balancers except the in-cluster `LoadBalancer` Service allocator
@@ -669,7 +723,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 
 ## 11. Verification, acceptance and open questions
 
-v1.0 is accepted when every **M** requirement has a passing automated test and the Reference stack below runs green in CI on both architectures.
+v1.0 is accepted when every **M** requirement has a passing automated test and the Reference stack, the Autopilot acceptance, the Cloud Run acceptance and the Compute Engine acceptance below run green in CI on both architectures.
 
 ### 11.1 Verification methods
 
@@ -697,6 +751,29 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 9. `urlMaps.invalidateCache` on `/*` makes the next static request a `miss`.
 10. `tofu destroy` succeeds and `gcpemu status` shows no leftover containers.
 
+#### 11.2.1 Cloud Run acceptance test
+
+Runs on both architectures in ≤ 5 minutes, apart from the Reference stack, which does not change:
+
+1. `gcloud run deploy` (v1) deploys an image from AR; `curl` to its `run.app` URL with an ID token returns 200, and without one 403.
+2. A second revision deployed with no traffic and a tag: the tag URL reaches only it, and after a 50/50 split 100 requests divide within ±15%.
+3. `tofu apply` creates a `google_cloud_run_v2_service` (v2) with `min_instance_count = 0`; after idling past the scale-down window it has no Cloud Run instances, and the next request starts one.
+4. With `containerConcurrency = 1` and `max_instance_count = 2`, three concurrent slow requests get one 429.
+5. The service writes an object to GCS as its `serviceAccount` with no Endpoint override.
+6. A Pub/Sub push subscription delivers to the service with a verifiable OIDC token.
+7. `tofu destroy` succeeds and `gcpemu status` shows no leftover containers.
+
+#### 11.2.2 Compute Engine acceptance test
+
+Runs on both architectures in ≤ 8 minutes, apart from the Reference stack, which does not change:
+
+1. `tofu apply` creates a VPC, a subnet, a firewall rule allowing `tcp:80` only from the load balancer's proxy ranges, an instance template on `debian-12` whose `startup-script` installs and starts nginx, and a regional managed instance group of size 2 behind a global external ALB with a health check.
+2. `curl` through the LB returns pages from both VMs, told apart by hostname. Deleting one VM makes the managed instance group recreate it, and the LB keeps serving.
+3. `gcloud compute ssh --tunnel-through-iap` runs `curl -H Metadata-Flavor:Google` for the default service account's email on a VM and gets the template's service account; with IAM set to `enforce` and `iap.tunnelInstances.accessViaIAP` removed, the tunnel is refused.
+4. A request to a VM's port 80 from outside the proxy ranges is dropped by the firewall rule.
+5. A `cos-stable` VM created with `gcloud compute instances create-with-container` serves its declared container's port through an IAP tunnel.
+6. `tofu destroy` succeeds and `gcpemu status` shows no leftover containers.
+
 ### 11.3 Decisions
 
 | Question | Decision |
@@ -707,6 +784,9 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | Default IAM enforcement level | `audit` |
 | Backend mTLS API surface | Follow the current googleapis/googleapis protos on GitHub |
 | GKE on macOS | Supported in v1.0 through the VM relay (ADR 0005) |
+| What runs a VM | A Managed container booting an OS image, not a microVM, so VMs run wherever GKE does (ADR 0040) |
+| What runs a Cloud Run service | Managed containers scaled by an autoscaler and proxy in the Instance, not Knative (ADR 0041) |
+| How the host reaches a VM | IAP tunnels; external IPs are Recorded (ADR 0042) |
 | Autopilot | In v1.0, Faithful; the Reference stack stays on a Standard cluster unchanged, and Autopilot is accepted by its own test (11.4) |
 | `gcloud builds submit` log streaming without Host mode | Accepted and documented. gcloud reads the log from `https://storage.UNIVERSE_DOMAIN/BUCKET/log-BUILD_ID.txt` and ignores Endpoint overrides, so under the Invalid universe it never reaches the log, and its final poll fails the command even when the Build succeeds; `gcloud builds log` fails the same way. Without Host mode, users pass `--async` or set `options.logging: NONE` in the build config (`--suppress-logs` still reads the log), and read the log with `gcloud storage cat`, the Web console or `logUrl`. Streaming works in Host mode, with `gcpemu env --no-universe`. |
 
@@ -717,7 +797,9 @@ Runs from one OpenTofu root module and one Helm release, on `ubuntu-24.04` and `
 | M1 | Core, IAM, GCS, Pub/Sub, DNS, AR | Go libs, gcloud and OpenTofu tests green |
 | M2 | Cloud SQL, GKE, NAT | Workload Identity and private cluster tests green |
 | M3 | ALB, CDN, backend mTLS, NEGs | Reference stack steps 1–4 and 9 green |
-| v1.0 | All | Full Reference stack on both arches; an Autopilot cluster from OpenTofu `enable_autopilot = true` passes Kubernetes conformance, scales a Deployment past one node and rejects a privileged pod; all **M** requirements tested |
+| v1.0 | All | Full Reference stack on both arches; an Autopilot cluster from OpenTofu `enable_autopilot = true` passes Kubernetes conformance, scales a Deployment past one node and rejects a privileged pod; M5 and M6 exit criteria met; all **M** requirements tested |
 | M4 | Cloud Build | `gcloud builds submit --tag` and `--config` in the Client compatibility suite and `google_cloudbuild_trigger` in OpenTofu acceptance green; all **M** FR-CB requirements tested |
+| M5 | Cloud Run | Cloud Run acceptance (11.2.1) green on both arches; `gcloud run deploy` in the Client compatibility suite and `google_cloud_run_v2_service` and `google_cloud_run_service` in OpenTofu acceptance green; all **M** FR-RUN requirements tested |
+| M6 | Compute Engine | Compute Engine acceptance (11.2.2) green on both arches; `gcloud compute instances` and `gcloud compute ssh --tunnel-through-iap` in the Client compatibility suite and `google_compute_instance`, `google_compute_instance_template` and `google_compute_region_instance_group_manager` in OpenTofu acceptance green; all **M** FR-GCE requirements tested |
 
 The web console ships with each milestone: the shell, dashboard, request log and IAM views in M1, then each service's view in the milestone that delivers the service.
