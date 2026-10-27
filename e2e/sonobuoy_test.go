@@ -3,17 +3,15 @@
 package e2e
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	goruntime "runtime"
 	"testing"
-	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 	"github.com/linuxuser586/gcpemu/internal/sonobuoytest"
 )
 
@@ -49,19 +47,25 @@ func sonobuoy(t *testing.T) string {
 }
 
 // kubernetesConformance runs Kubernetes conformance (sonobuoytest.Quick)
-// against k's cluster at version ("1.36.5-gke.100").
+// against k's cluster at version ("1.36.5-gke.100"). Sonobuoy runs behind
+// the Escape guard, which lets through only loopback and the cluster's API
+// server, so a request it sends off the machine fails the test; the
+// escape_guard subtest first proves the guard sees Sonobuoy's requests.
 func kubernetesConformance(t *testing.T, k *kube, version string) {
 	t.Helper()
-	bin := sonobuoy(t)
+	g := sonobuoytest.Guarded{
+		Bin:       sonobuoy(t),
+		Env:       append(os.Environ(), "KUBECONFIG="+k.file),
+		Guard:     escapeguard.New(t),
+		APIServer: k.endpoint,
+	}
+	t.Run("escape_guard", func(t *testing.T) {
+		if err := g.Canary(t.TempDir()); err != nil {
+			t.Error(err)
+		}
+	})
 	q := sonobuoytest.Quick{
-		Sonobuoy: func(timeout time.Duration, args ...string) (string, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, bin, args...)
-			cmd.Env = append(os.Environ(), "KUBECONFIG="+k.file)
-			out, err := cmd.CombinedOutput()
-			return string(out), err
-		},
+		Sonobuoy: g.Sonobuoy(t.Errorf),
 		Diagnose: func() string { return k.logs("sonobuoy", "component=sonobuoy") },
 		Logf:     t.Logf,
 	}

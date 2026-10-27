@@ -657,7 +657,7 @@ A release whose `SHA256SUMS` comes with a Sigstore bundle proving it was produce
 _Avoid_: "verified release" (setup-gcpemu always hash-verifies the binary, signed or not)
 
 **Escape guard**:
-A proxy that the OpenTofu acceptance, the Reference stack, the clients in the Client compatibility suite, Kubernetes conformance on Standard clusters and the Conformance suite in compare mode go through (a JVM by `JAVA_TOOL_OPTIONS`, the Conformance suite's in-process clients by their transport and gRPC dialer, the others by the proxy variables), so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine. Kubernetes conformance in the Autopilot acceptance does not go through it yet.
+A proxy that the OpenTofu acceptance, the Reference stack, the clients in the Client compatibility suite, Kubernetes conformance and the Conformance suite in compare mode go through (a JVM by `JAVA_TOOL_OPTIONS`, the Conformance suite's in-process clients by their transport and gRPC dialer, the others by the proxy variables), so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine.
 _Avoid_: egress check, leak detector
 
 ## Flagged ambiguities

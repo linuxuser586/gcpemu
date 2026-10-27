@@ -72,13 +72,15 @@ const loopback = "127.0.0.1,localhost,::1"
 
 // Env returns the variables that send a client's outbound requests to
 // the guard. They override any proxy set in the environment, and set
-// NO_PROXY so that only loopback is exempt.
-func (g *Guard) Env() []string {
+// NO_PROXY to loopback and the exempt hosts (a cluster's API server on
+// this machine, say).
+func (g *Guard) Env(exempt ...string) []string {
 	u := "http://" + g.addr
+	noProxy := strings.Join(append([]string{loopback}, exempt...), ",")
 	return []string{
 		"HTTPS_PROXY=" + u, "https_proxy=" + u,
 		"HTTP_PROXY=" + u, "http_proxy=" + u,
-		"NO_PROXY=" + loopback, "no_proxy=" + loopback,
+		"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
 	}
 }
 

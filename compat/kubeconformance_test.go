@@ -4,21 +4,15 @@ package compat
 
 import (
 	"cmp"
-	"context"
 	"encoding/json"
-	"fmt"
 	"maps"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/sonobuoytest"
 )
@@ -42,7 +36,9 @@ func TestKubeConformance(t *testing.T) {
 	e := startWith(t, options{services: "compute,gke"})
 
 	t.Run("escape-guard", func(t *testing.T) {
-		(&kubeConformance{e: e, bin: sonobuoy}).canary(t)
+		if err := guardedSonobuoy(e, sonobuoy, "").Canary(t.TempDir()); err != nil {
+			t.Error(err)
+		}
 	})
 
 	var sc struct {
@@ -76,8 +72,7 @@ func TestKubeConformance(t *testing.T) {
 			if got := describe("currentMasterVersion"); got != v {
 				t.Errorf("currentMasterVersion = %q, want %q", got, v)
 			}
-			k := &kubeConformance{e: e, bin: sonobuoy, endpoint: describe("endpoint")}
-			k.verify(t, results, name, v)
+			verifyKubeConformance(t, guardedSonobuoy(e, sonobuoy, describe("endpoint")), results, name, v)
 			e.run(t, gcloud, "container", "clusters", "delete", name, "--zone=us-central1-a")
 			deleted = true
 		})
@@ -96,94 +91,25 @@ func kubeConformanceResults(t *testing.T) string {
 	return d
 }
 
-// kubeConformance runs sonobuoy against the cluster the kubeconfig's
-// current context names.
-type kubeConformance struct {
-	e        *emulator
-	bin      string
-	endpoint string // the cluster's Public endpoint, which the Escape guard lets through
+// guardedSonobuoy runs sonobuoy, behind the Escape guard, against the
+// cluster the kubeconfig's current context names, whose Public endpoint, on
+// this machine, the guard lets through.
+func guardedSonobuoy(e *emulator, bin, endpoint string) sonobuoytest.Guarded {
+	return sonobuoytest.Guarded{Bin: bin, Env: e.env, Guard: e.guard, APIServer: endpoint}
 }
 
-// verify runs Kubernetes conformance (sonobuoytest.Quick) at version
-// ("1.36.5-gke.100"), keeping a failed run's tarball in results.
-func (k *kubeConformance) verify(t *testing.T, results, name, version string) {
+// verifyKubeConformance runs Kubernetes conformance (sonobuoytest.Quick)
+// at version ("1.36.5-gke.100"), keeping a failed run's tarball in
+// results.
+func verifyKubeConformance(t *testing.T, g sonobuoytest.Guarded, results, name, version string) {
 	t.Helper()
 	q := sonobuoytest.Quick{
-		Sonobuoy: func(timeout time.Duration, args ...string) (string, error) {
-			return k.sonobuoy(t, timeout, args...)
-		},
-		Keep: filepath.Join(results, name+".tar.gz"),
-		Logf: t.Logf,
+		Sonobuoy: g.Sonobuoy(t.Errorf),
+		Keep:     filepath.Join(results, name+".tar.gz"),
+		Logf:     t.Logf,
 	}
 	if err := q.Run(t.TempDir(), version); err != nil {
 		t.Error(err)
-	}
-}
-
-// sonobuoy runs sonobuoy behind the Escape guard, which lets through only
-// loopback and the cluster's Public endpoint, and fails t on each request the
-// guard refused. gke-gcloud-auth-plugin runs gcloud under it, so gcloud's
-// universe descriptor fetch is not an escape.
-func (k *kubeConformance) sonobuoy(t *testing.T, timeout time.Duration, args ...string) (string, error) {
-	t.Helper()
-	out, escaped, err := k.exec(timeout, args...)
-	for _, h := range escapeguard.Gcloud(escaped) {
-		t.Errorf("sonobuoy %s: Escaped request to %s", args[0], h)
-	}
-	return out, err
-}
-
-func (k *kubeConformance) exec(timeout time.Duration, args ...string) (string, []string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	env := append(slices.Clip(k.e.env), k.e.guard.Env()...)
-	if k.endpoint != "" {
-		host := k.endpoint
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		// Later entries win in exec.Cmd.Env.
-		noProxy := "127.0.0.1,localhost,::1," + host
-		env = append(env, "NO_PROXY="+noProxy, "no_proxy="+noProxy)
-	}
-	cmd := exec.CommandContext(ctx, k.bin, args...)
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		err = fmt.Errorf("timed out after %v: %w", timeout, err)
-	}
-	return string(out), k.e.guard.Take(), err
-}
-
-// kubeConformanceCanaryHost is the API server the escape-guard subtest's
-// kubeconfig names: not on this machine, so the guard must refuse it.
-const kubeConformanceCanaryHost = "kube-conformance.gcpemu.invalid"
-
-// canary asks for the server version of a cluster at
-// kubeConformanceCanaryHost and fails unless the Escape guard refuses the
-// request. Without it, a sonobuoy that ignored HTTPS_PROXY would pass
-// every run with the guard never seeing a request.
-func (k *kubeConformance) canary(t *testing.T) {
-	cfg := filepath.Join(t.TempDir(), "kubeconfig")
-	if err := os.WriteFile(cfg, []byte(`apiVersion: v1
-kind: Config
-clusters:
-- name: canary
-  cluster:
-    server: https://`+kubeConformanceCanaryHost+`
-contexts:
-- name: canary
-  context: {cluster: canary, user: canary}
-current-context: canary
-users:
-- name: canary
-  user: {token: canary}
-`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out, escaped, _ := k.exec(time.Minute, "version", "--kubeconfig", cfg)
-	if !slices.Equal(escaped, []string{kubeConformanceCanaryHost}) {
-		t.Errorf("the Escape guard refused %v, want [%s]; sonobuoy said:\n%s", escaped, kubeConformanceCanaryHost, out)
 	}
 }
 

@@ -1473,7 +1473,8 @@ For each supported minor, at its newest version on the Rapid channel, `tofu appl
 `e2e/autopilot/` creates an Autopilot cluster (`enable_autopilot = true`, `allow_net_admin = true`),
 a plan right after must be empty, Kubernetes conformance passes (Sonobuoy quick mode, its `e2e`
 plugin only, since Autopilot refuses the privileged `systemd-logs` DaemonSet, judged as
-`task kube-conformance` judges it, with the same runner in `internal/sonobuoytest`) and `tofu destroy`
+`task kube-conformance` judges it, with the same runner in `internal/sonobuoytest`, and behind the
+Escape guard as there, after the same canary) and `tofu destroy`
 leaves no containers. The cluster at the default version's minor also scales a Deployment past
 one node, has a privileged pod refused by the Workload restrictions, and installs Istio from its Helm charts with
 the proxy's requests left unset: an injected pod runs, and its `istio-proxy` gets Autopilot's
