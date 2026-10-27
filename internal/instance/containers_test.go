@@ -59,7 +59,7 @@ func TestReclaimOrphans(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cl.RemoveContainer(context.Background(), other, true) })
 
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.DataDir = dir
 	cfg.Services = []string{"dns"}
 	cfg.Ports[config.AllPorts] = 0
@@ -107,7 +107,7 @@ func TestReadyReportsDisruptedContainers(t *testing.T) {
 		t.Skipf("image %s unavailable: %v", image, err)
 	}
 
-	cfg := testConfig()
+	cfg := config.Defaults()
 	cfg.DataDir = t.TempDir()
 	cfg.Ephemeral = true
 	cfg.Services = []string{"dns"}

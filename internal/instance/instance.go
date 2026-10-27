@@ -445,7 +445,7 @@ func (in *Instance) warnContainerized(ctx context.Context) {
 }
 
 // mountConsole serves the Web console on the gateway unless it is turned
-// off (--console=false, or CI=true without --console; FR-CI-003).
+// off (--console=false, which the CLI implies under CI=true; FR-CI-003).
 func (in *Instance) mountConsole() {
 	if !in.Config.ConsoleEnabled() {
 		return

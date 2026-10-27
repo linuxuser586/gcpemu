@@ -192,7 +192,7 @@ The API gateway serves the Web console at `http://127.0.0.1:4562/console/`; `gcp
 opens it. It calls only the public APIs and the admin API, and works offline. It acts as
 the default principal until you pick another user or service account in the header's
 principal switcher, so the views show what IAM allows that principal (try it with
-`--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` it is off unless `--console`
+`--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` a `gcpemu` command leaves it off unless `--console`
 is passed. `task build` builds it when
 `pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
 It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gateway
@@ -1058,8 +1058,9 @@ CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the h
 
 ### Configuration
 
-Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. `CI=true` implies `--ephemeral`,
-JSON logs and no Web console. The IAM enforcement level is `audit` by default (`--iam-mode off|audit|enforce`);
+Flags > `GCPEMU_*` env vars > `gcpemu.yaml` > defaults. Under `CI=true`, `gcpemu` commands default to
+`--ephemeral`, JSON logs and no Web console; an explicit flag, env var or config file setting wins.
+An `emutest` Instance does not take these defaults: it logs text and serves the Web console in CI too. The IAM enforcement level is `audit` by default (`--iam-mode off|audit|enforce`);
 `PUT /_emu/v1/iam/enforcement` with `{"level":"enforce"}` switches it while the Instance runs.
 IAM v2 deny policies (`google_iam_deny_policy`, `/iam/v2/policies/…/denypolicies`) are checked
 before any allow policy and bind every Principal they name, the Default principal included;

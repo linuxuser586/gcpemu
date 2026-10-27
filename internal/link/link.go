@@ -150,11 +150,16 @@ type Manager struct {
 	tokens map[string]tokenAnswer
 	// watching is set by StartWatching; watchers stop watching the buckets
 	// of each link a Project is delegated to, and buckets holds them, by
-	// link and then bucket.
-	watching bool
-	watchMu  sync.Mutex // serialises watch, which reads the Delegations
-	watchers map[string]context.CancelFunc
-	buckets  map[string]map[string]string
+	// link and then bucket, and bucketSeqs the Seq of the reply they came
+	// in, by link (see bucketsReply).
+	watching   bool
+	watchMu    sync.Mutex // serialises watch, which reads the Delegations
+	watchers   map[string]context.CancelFunc
+	buckets    map[string]map[string]string
+	bucketSeqs map[string]int64
+	// bucketSeq is the Seq of the last bucketsReply this Instance sent.
+	bucketSeqMu sync.Mutex
+	bucketSeq   int64
 	// signingKeys holds the signing key each watched link last sent, by link.
 	signingKeys map[string]SigningKey
 	// warnings holds, by link name, the latest refused connection that
@@ -175,7 +180,7 @@ func New(cfg Config) *Manager {
 		cfg.ApprovalTimeout = DefaultApprovalTimeout
 	}
 	return &Manager{cfg: cfg, pending: map[string]*pendingRequest{}, warnings: map[string]string{}, transports: map[string]*http.Transport{}, tokens: map[string]tokenAnswer{},
-		watchers: map[string]context.CancelFunc{}, buckets: map[string]map[string]string{}, signingKeys: map[string]SigningKey{}}
+		watchers: map[string]context.CancelFunc{}, buckets: map[string]map[string]string{}, bucketSeqs: map[string]int64{}, signingKeys: map[string]SigningKey{}}
 }
 
 // Identity is what an Instance tells another about itself.

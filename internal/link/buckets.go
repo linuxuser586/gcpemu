@@ -25,16 +25,30 @@ var (
 	bucketRetry = 10 * time.Second
 )
 
+// bucketsReply is a Linked Instance's buckets, with the Projects they are
+// in, and Seq, which orders its replies by when it looked at them: a reply
+// on the watch stream may arrive after one to a later RefreshBuckets, and
+// is then stale. A Linked Instance that predates Seq sends none.
+type bucketsReply struct {
+	Buckets map[string]string `json:"buckets"`
+	Seq     int64             `json:"seq,omitempty"`
+}
+
 // sharedBuckets returns the buckets of the Projects shared with the link
-// name, with their Projects.
-func (m *Manager) sharedBuckets(name string) map[string]string {
-	out := map[string]string{}
+// name, with their Projects, numbered past every earlier reply, which it
+// looked at before. Seq is the time, so it also passes those this
+// Instance sent before a restart.
+func (m *Manager) sharedBuckets(name string) bucketsReply {
+	m.bucketSeqMu.Lock()
+	defer m.bucketSeqMu.Unlock()
+	m.bucketSeq = max(time.Now().UnixNano(), m.bucketSeq+1)
+	out := bucketsReply{Buckets: map[string]string{}, Seq: m.bucketSeq}
 	if m.cfg.Buckets == nil {
 		return out
 	}
 	for b, id := range m.cfg.Buckets() {
 		if m.Shared(name, id) {
-			out[b] = id
+			out.Buckets[b] = id
 		}
 	}
 	return out
@@ -50,7 +64,7 @@ func (m *Manager) serveBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("watch") != "1" {
-		writeJSON(w, http.StatusOK, map[string]any{"buckets": m.sharedBuckets(p.Name)})
+		writeJSON(w, http.StatusOK, m.sharedBuckets(p.Name))
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -61,11 +75,11 @@ func (m *Manager) serveBuckets(w http.ResponseWriter, r *http.Request) {
 	defer tick.Stop()
 	var sent map[string]string
 	for {
-		if b := m.sharedBuckets(p.Name); sent == nil || !maps.Equal(b, sent) {
-			if enc.Encode(map[string]any{"buckets": b}) != nil || rc.Flush() != nil {
+		if b := m.sharedBuckets(p.Name); sent == nil || !maps.Equal(b.Buckets, sent) {
+			if enc.Encode(b) != nil || rc.Flush() != nil {
 				return
 			}
-			sent = b
+			sent = b.Buckets
 		}
 		select {
 		case <-r.Context().Done():
@@ -97,21 +111,24 @@ func (m *Manager) RefreshBuckets(ctx context.Context, name string) {
 	if err != nil {
 		return
 	}
-	var reply struct{ Buckets map[string]string }
+	var reply bucketsReply
 	if _, err := m.callPaired(ctx, l, http.MethodGet, "/link/v1/buckets", &reply); err != nil {
 		m.cfg.Log.Debug("could not ask a Linked Instance for its buckets", "link", name, "err", err)
 		return
 	}
-	m.setBuckets(name, reply.Buckets)
+	m.setBuckets(name, reply)
 }
 
-// setBuckets keeps the buckets the link name has, while it is watched.
-func (m *Manager) setBuckets(name string, b map[string]string) {
+// setBuckets keeps the buckets the link name has, while it is watched,
+// unless the link already sent a later reply.
+func (m *Manager) setBuckets(name string, b bucketsReply) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, watched := m.watchers[name]; watched {
-		m.buckets[name] = b
+	if _, watched := m.watchers[name]; !watched || (b.Seq != 0 && b.Seq < m.bucketSeqs[name]) {
+		return
 	}
+	m.buckets[name] = b.Buckets
+	m.bucketSeqs[name] = b.Seq
 }
 
 // StartWatching has this Instance watch the buckets of every link it
@@ -139,6 +156,7 @@ func (m *Manager) watch() {
 			stop()
 			delete(m.watchers, name)
 			delete(m.buckets, name)
+			delete(m.bucketSeqs, name)
 			delete(m.signingKeys, name)
 		}
 	}
@@ -194,10 +212,10 @@ func (m *Manager) watchOnce(ctx context.Context, name string) error {
 	m.refreshSigningKey(ctx, name)
 	dec := json.NewDecoder(resp.Body)
 	for {
-		var msg struct{ Buckets map[string]string }
+		var msg bucketsReply
 		if err := dec.Decode(&msg); err != nil {
 			return err
 		}
-		m.setBuckets(name, msg.Buckets)
+		m.setBuckets(name, msg)
 	}
 }
