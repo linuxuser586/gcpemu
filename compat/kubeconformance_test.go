@@ -31,21 +31,22 @@ const kubeConformanceWait = 20 * time.Minute
 // another, a one-node Standard cluster from gcloud runs Sonobuoy's quick
 // mode (its e2e plugin), which must pass with at least one test passed.
 // Sonobuoy runs behind the Escape guard, so a request it sends off the
-// machine fails the test; the cluster's API server, on this machine, is
-// exempt. A failed subtest logs the detailed results and keeps the
+// machine fails the test; the cluster's Public endpoint, on this machine,
+// is exempt. A failed subtest logs the detailed results and keeps the
 // retrieved tarball in kubeConformanceResults.
 func TestKubeConformance(t *testing.T) {
+	sonobuoy := tool(t, "sonobuoy") // skips where none is pinned, native Windows among them
 	if _, err := emuruntime.Detect(); err != nil {
-		t.Skipf("GKE needs a container runtime: %v", err)
+		missing(t, "GKE needs a container runtime: %v", err)
 	}
-	sonobuoy := tool(t, "sonobuoy")
 	gcloud := onPath(t, "gcloud")
 	onPath(t, "gke-gcloud-auth-plugin")
 	results := kubeConformanceResults(t)
 	e := startWith(t, options{services: "compute,gke"})
-	k := &kubeConformance{e: e, bin: sonobuoy}
 
-	t.Run("escape-guard", func(t *testing.T) { k.canary(t) })
+	t.Run("escape-guard", func(t *testing.T) {
+		(&kubeConformance{e: e, bin: sonobuoy}).canary(t)
+	})
 
 	var sc struct {
 		ValidMasterVersions []string `json:"validMasterVersions"`
@@ -78,8 +79,8 @@ func TestKubeConformance(t *testing.T) {
 			if got := describe("currentMasterVersion"); got != v {
 				t.Errorf("currentMasterVersion = %q, want %q", got, v)
 			}
-			k.endpoint = describe("endpoint")
-			k.run(t, results, name, v)
+			k := &kubeConformance{e: e, bin: sonobuoy, endpoint: describe("endpoint")}
+			k.verify(t, results, name, v)
 			e.run(t, gcloud, "container", "clusters", "delete", name, "--zone=us-central1-a")
 			deleted = true
 		})
@@ -103,12 +104,12 @@ func kubeConformanceResults(t *testing.T) string {
 type kubeConformance struct {
 	e        *emulator
 	bin      string
-	endpoint string // the cluster's API server, which the Escape guard lets through
+	endpoint string // the cluster's Public endpoint, which the Escape guard lets through
 }
 
-// run runs Sonobuoy's quick mode at version ("1.36.5-gke.100"), retrieves
-// the results and fails t unless judgeReport passes them.
-func (k *kubeConformance) run(t *testing.T, results, name, version string) {
+// verify runs Sonobuoy's quick mode at version ("1.36.5-gke.100"),
+// retrieves the results and fails t unless judgeReport passes them.
+func (k *kubeConformance) verify(t *testing.T, results, name, version string) {
 	t.Helper()
 	// The conformance image's version, not the one Sonobuoy would read off
 	// the server, which carries k3s's "+k3s1".
@@ -123,7 +124,9 @@ func (k *kubeConformance) run(t *testing.T, results, name, version string) {
 	file := name + ".tar.gz"
 	tmp := t.TempDir()
 	if out, err := k.sonobuoy(t, 2*time.Minute, "retrieve", tmp, "--filename", file); err != nil {
-		t.Fatalf("sonobuoy retrieve: %v\n%s", err, tail(out, 40))
+		// A run that never finished has no results to retrieve.
+		status, _ := k.sonobuoy(t, time.Minute, "status")
+		t.Fatalf("sonobuoy retrieve: %v\n%s\nsonobuoy status:\n%s", err, tail(out, 40), status)
 	}
 	tarball := filepath.Join(tmp, file)
 	report, err := k.sonobuoy(t, time.Minute, "results", tarball, "--plugin", "e2e")
@@ -157,7 +160,7 @@ func (k *kubeConformance) run(t *testing.T, results, name, version string) {
 }
 
 // sonobuoy runs sonobuoy behind the Escape guard, which lets through only
-// loopback and the cluster's endpoint, and fails t on each request the
+// loopback and the cluster's Public endpoint, and fails t on each request the
 // guard refused. gke-gcloud-auth-plugin runs gcloud under it, so gcloud's
 // universe descriptor fetch is not an escape.
 func (k *kubeConformance) sonobuoy(t *testing.T, timeout time.Duration, args ...string) (string, error) {

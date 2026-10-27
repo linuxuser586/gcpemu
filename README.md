@@ -1521,7 +1521,7 @@ Sonobuoy is downloaded at a pinned, checksum-verified version for `linux/amd64` 
 `linux/arm64`; elsewhere, or without a container runtime, the test skips. It also needs gcloud
 with `gke-gcloud-auth-plugin` on `PATH`, and the nodes pull the Sonobuoy and Kubernetes
 conformance images from the internet. Sonobuoy runs behind the Escape guard (below), with
-`NO_PROXY` covering loopback and the cluster's endpoint, so any other host it reaches fails the
+`NO_PROXY` covering loopback and the cluster's Public endpoint, so any other host it reaches fails the
 test, named. The `escape-guard` subtest points Sonobuoy at `kube-conformance.gcpemu.invalid` and
 fails unless the guard refuses it. `task compat` skips it.
 

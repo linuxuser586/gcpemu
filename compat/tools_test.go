@@ -68,7 +68,8 @@ var tools = map[string]pinned{
 		},
 		member: "ko",
 	},
-	// Kubernetes conformance runs on GKE, so Linux only.
+	// Kubernetes conformance runs on GKE, so Linux only. The same release
+	// as e2e/sonobuoy_test.go pins; bump both together.
 	"sonobuoy": {
 		url: map[string]string{
 			"linux/amd64": "https://github.com/vmware-tanzu/sonobuoy/releases/download/v0.57.5/sonobuoy_0.57.5_linux_amd64.tar.gz",
