@@ -142,12 +142,20 @@ _Avoid_: remote caller, external client
 A client on the host that reaches an Instance's Data plane at a loopback address or a container address the host can route to, not through a LAN listener. Cloud SQL's authorized networks match it as `127.0.0.1`.
 _Avoid_: local client
 
+**VM-side client**:
+A client inside a VM runtime's VM but outside the Instance's networks, such as the runtime's daemon pushing or pulling images. The host's loopback addresses don't reach it.
+_Avoid_: daemon client, in-VM client
+
 **VM runtime**:
 A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, Docker Desktop or Podman machine on Windows, and Docker Desktop on Linux.
 
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
 _Avoid_: bridge container, tunnel
+
+**Registry relay**:
+The Managed container that gives VM-side clients an Instance's registry at the registry's own loopback address inside a VM runtime's VM, so they push and pull with the same image references as Host clients.
+_Avoid_: registry proxy, registry forwarder
 
 **Bridge gateway**:
 The host's side of a container runtime's bridge network: the address the host would hold on that network. When the host cannot bind it, the network lives in a VM, so the runtime is a VM runtime and an Instance on the host uses the VM relay.
