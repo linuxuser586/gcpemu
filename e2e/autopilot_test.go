@@ -123,7 +123,7 @@ func autopilotCluster(t *testing.T, inst *emutest.Instance, tofuBin, version str
 		t.Run("privileged_pod_rejected", func(t *testing.T) { privilegedRejected(t, k.on(t)) })
 		t.Run("istio_sidecar_injection", func(t *testing.T) { istioInjection(t, k.on(t)) })
 	}
-	t.Run("kubernetes_conformance", func(t *testing.T) { kubernetesConformance(t, k.on(t), strings.SplitN(version, "-", 2)[0]) })
+	t.Run("kubernetes_conformance", func(t *testing.T) { kubernetesConformance(t, k.on(t), version) })
 
 	tf.run(15*time.Minute, "destroy", "-auto-approve")
 	destroyed = true

@@ -20,11 +20,8 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/escapeguard"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/sonobuoytest"
 )
-
-// kubeConformanceWait is how long `sonobuoy run` may take, apart from the
-// limit on every other client command.
-const kubeConformanceWait = 20 * time.Minute
 
 // TestKubeConformance is Kubernetes conformance (SRS 11.1): for each
 // minor that getServerConfig reports, at its newest patch, one after
@@ -107,56 +104,20 @@ type kubeConformance struct {
 	endpoint string // the cluster's Public endpoint, which the Escape guard lets through
 }
 
-// verify runs Sonobuoy's quick mode at version ("1.36.5-gke.100"),
-// retrieves the results and fails t unless judgeReport passes them.
+// verify runs Kubernetes conformance (sonobuoytest.Quick) at version
+// ("1.36.5-gke.100"), keeping a failed run's tarball in results.
 func (k *kubeConformance) verify(t *testing.T, results, name, version string) {
 	t.Helper()
-	// The conformance image's version, not the one Sonobuoy would read off
-	// the server, which carries k3s's "+k3s1".
-	kube := "v" + strings.SplitN(version, "-", 2)[0]
-	start := time.Now()
-	out, runErr := k.sonobuoy(t, kubeConformanceWait, "run", "--mode", "quick", "--plugin", "e2e",
-		"--kubernetes-version", kube, "--wait="+strconv.Itoa(int(kubeConformanceWait/time.Minute)))
-	t.Logf("sonobuoy run on %s (%v)", kube, time.Since(start).Round(time.Second))
-	if runErr != nil {
-		t.Errorf("sonobuoy run: %v\n%s", runErr, tail(out, 40))
+	q := sonobuoytest.Quick{
+		Sonobuoy: func(timeout time.Duration, args ...string) (string, error) {
+			return k.sonobuoy(t, timeout, args...)
+		},
+		Keep: filepath.Join(results, name+".tar.gz"),
+		Logf: t.Logf,
 	}
-	file := name + ".tar.gz"
-	tmp := t.TempDir()
-	if out, err := k.sonobuoy(t, 2*time.Minute, "retrieve", tmp, "--filename", file); err != nil {
-		// A run that never finished has no results to retrieve.
-		status, _ := k.sonobuoy(t, time.Minute, "status")
-		t.Fatalf("sonobuoy retrieve: %v\n%s\nsonobuoy status:\n%s", err, tail(out, 40), status)
+	if err := q.Run(t.TempDir(), version); err != nil {
+		t.Error(err)
 	}
-	tarball := filepath.Join(tmp, file)
-	report, err := k.sonobuoy(t, time.Minute, "results", tarball, "--plugin", "e2e")
-	if err == nil {
-		t.Logf("sonobuoy results:\n%s", report)
-		err = judgeReport(report)
-	} else {
-		err = fmt.Errorf("sonobuoy results: %v\n%s", err, tail(report, 40))
-	}
-	kept := filepath.Join(results, file)
-	_ = os.Remove(kept) // a tarball from an earlier run
-	if err == nil && runErr == nil && !t.Failed() {
-		return
-	}
-	if err != nil {
-		t.Errorf("Kubernetes conformance on %s: %v", kube, err)
-	}
-	detailed, _ := k.sonobuoy(t, time.Minute, "results", tarball, "--plugin", "e2e", "--mode", "detailed")
-	t.Logf("sonobuoy results --mode detailed (skipped tests left out):\n%s", withoutSkipped(detailed))
-	if err := os.MkdirAll(results, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(tarball)
-	if err == nil {
-		err = os.WriteFile(kept, b, 0o644)
-	}
-	if err != nil {
-		t.Fatalf("keeping the results tarball: %v", err)
-	}
-	t.Logf("results tarball: %s", kept)
 }
 
 // sonobuoy runs sonobuoy behind the Escape guard, which lets through only
@@ -226,18 +187,6 @@ users:
 	}
 }
 
-// withoutSkipped drops the skipped tests from `sonobuoy results --mode
-// detailed`, one JSON object a line: quick mode skips all but one.
-func withoutSkipped(detailed string) string {
-	var kept []string
-	for _, l := range strings.Split(detailed, "\n") {
-		if !strings.Contains(l, `"status":"skipped"`) {
-			kept = append(kept, l)
-		}
-	}
-	return strings.Join(kept, "\n")
-}
-
 // newestPatches returns the newest version of each minor in versions
 // ("1.36.5-gke.100"), oldest minor first.
 func newestPatches(versions []string) []string {
@@ -251,34 +200,6 @@ func newestPatches(versions []string) []string {
 	out := slices.Collect(maps.Values(newest))
 	slices.SortFunc(out, func(a, b string) int { return slices.Compare(versionNums(a), versionNums(b)) })
 	return out
-}
-
-// judgeReport passes the e2e plugin's report (`sonobuoy results --plugin
-// e2e`) when its status is passed and at least one test passed.
-func judgeReport(report string) error {
-	fields := map[string]string{}
-	for _, l := range strings.Split(report, "\n") {
-		if k, v, ok := strings.Cut(l, ": "); ok {
-			if _, seen := fields[k]; !seen { // the first block is the plugin's
-				fields[k] = strings.TrimSpace(v)
-			}
-		}
-	}
-	status, ok := fields["Status"]
-	if !ok {
-		return fmt.Errorf("no e2e plugin status: the plugin did not finish")
-	}
-	if status != "passed" {
-		return fmt.Errorf("e2e plugin status %q, want passed", status)
-	}
-	passed, err := strconv.Atoi(fields["Passed"])
-	if err != nil {
-		return fmt.Errorf("e2e plugin report has no passed count")
-	}
-	if passed == 0 {
-		return fmt.Errorf("e2e plugin passed with no test run")
-	}
-	return nil
 }
 
 // gkeMinor returns "1.36" for "1.36.5-gke.100".
