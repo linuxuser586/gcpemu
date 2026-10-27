@@ -619,7 +619,7 @@ A Recording whose requests no longer match those its test makes, because the tes
 _Avoid_: outdated Recording; calling it a Mismatch
 
 **Kubernetes conformance**:
-Upstream Kubernetes' own conformance tests, run with Sonobuoy against an emulated GKE cluster at each supported minor version. It checks the clusters, not their agreement with GCP.
+Upstream Kubernetes' own conformance tests, run with Sonobuoy's quick mode against an emulated Standard cluster and an emulated Autopilot cluster at each supported minor version. It checks the clusters, not their agreement with GCP.
 _Avoid_: "conformance" on its own
 
 **Reference stack**:
@@ -653,7 +653,7 @@ A release whose `SHA256SUMS` comes with a Sigstore bundle proving it was produce
 _Avoid_: "verified release" (setup-gcpemu always hash-verifies the binary, signed or not)
 
 **Escape guard**:
-A proxy that the OpenTofu acceptance, the Reference stack, the clients in the Client compatibility suite and the Conformance suite in compare mode go through (a JVM by `JAVA_TOOL_OPTIONS`, the Conformance suite's in-process clients by their transport and gRPC dialer, the others by the proxy variables), so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine.
+A proxy that the OpenTofu acceptance, the Reference stack, the clients in the Client compatibility suite, Kubernetes conformance on Standard clusters and the Conformance suite in compare mode go through (a JVM by `JAVA_TOOL_OPTIONS`, the Conformance suite's in-process clients by their transport and gRPC dialer, the others by the proxy variables), so that any request leaving the machine fails the test, naming the host. Loopback never goes through it. In a Host mode test it passes requests for the hostnames Host mode serves to the Google front end, which runs on the same machine. Kubernetes conformance in the Autopilot acceptance does not go through it yet.
 _Avoid_: egress check, leak detector
 
 ## Flagged ambiguities

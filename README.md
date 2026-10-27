@@ -1472,7 +1472,8 @@ The Reference stack stays on a Standard cluster; `TestAutopilot` accepts Autopil
 For each supported minor, at its newest version on the Rapid channel, `tofu apply` of
 `e2e/autopilot/` creates an Autopilot cluster (`enable_autopilot = true`, `allow_net_admin = true`),
 a plan right after must be empty, Kubernetes conformance passes (Sonobuoy quick mode, its `e2e`
-plugin only, since Autopilot refuses the privileged `systemd-logs` DaemonSet) and `tofu destroy`
+plugin only, since Autopilot refuses the privileged `systemd-logs` DaemonSet, judged as
+`task kube-conformance` judges it, with the same runner in `internal/sonobuoytest`) and `tofu destroy`
 leaves no containers. The cluster at the default version's minor also scales a Deployment past
 one node, has a privileged pod refused by the Workload restrictions, and installs Istio from its Helm charts with
 the proxy's requests left unset: an injected pod runs, and its `istio-proxy` gets Autopilot's
@@ -1551,7 +1552,8 @@ full rules.
 `task kube-conformance` starts an ephemeral instance with GKE, reads the supported versions from
 `gcloud container get-server-config` and, for each minor at its newest patch, one at a time,
 creates a one-node Standard cluster with `gcloud container clusters create --cluster-version`,
-checks its `currentMasterVersion`, runs Sonobuoy's quick mode (its `e2e` plugin, with
+checks its `currentMasterVersion`, runs Sonobuoy's quick mode (its `e2e` plugin only, as on
+Autopilot, since on a Standard cluster `systemd-logs` would only gather node journals; with
 `--kubernetes-version` set from the GKE version rather than k3s's `+k3s1` server version, and
 20 minutes to finish), retrieves the results and deletes the cluster. A minor passes when the
 plugin's status is `passed` with at least one passed test; `failed`, `unknown`, a timeout, a

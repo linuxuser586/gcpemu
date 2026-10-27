@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/sonobuoytest"
 )
 
 // pinned is a downloadable tool: url and sha256 by GOOS/GOARCH, and the
@@ -68,16 +70,15 @@ var tools = map[string]pinned{
 		},
 		member: "ko",
 	},
-	// Kubernetes conformance runs on GKE, so Linux only. The same release
-	// as e2e/sonobuoy_test.go pins; bump both together.
+	// Kubernetes conformance runs on GKE, so Linux only.
 	"sonobuoy": {
 		url: map[string]string{
-			"linux/amd64": "https://github.com/vmware-tanzu/sonobuoy/releases/download/v0.57.5/sonobuoy_0.57.5_linux_amd64.tar.gz",
-			"linux/arm64": "https://github.com/vmware-tanzu/sonobuoy/releases/download/v0.57.5/sonobuoy_0.57.5_linux_arm64.tar.gz",
+			"linux/amd64": sonobuoytest.URL("linux/amd64"),
+			"linux/arm64": sonobuoytest.URL("linux/arm64"),
 		},
 		sha256: map[string]string{
-			"linux/amd64": "7c5c2250e5103c98f4dad2bcab86baf954e319c57c419c113f28f5060e62f129",
-			"linux/arm64": "ec482b5d1ec237f4c94b6fd7be5a69f95678a4331001b3edcb6ad7835ec40695",
+			"linux/amd64": sonobuoytest.SHA256["linux/amd64"],
+			"linux/arm64": sonobuoytest.SHA256["linux/arm64"],
 		},
 		member: "sonobuoy",
 	},
