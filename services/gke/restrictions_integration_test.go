@@ -157,17 +157,31 @@ func TestAutopilotWorkloadRestrictions(t *testing.T) {
 		map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "mine"}}, nil); code != http.StatusCreated {
 		t.Errorf("user create in default: %d %s", code, b)
 	}
-	var sys struct {
-		Items []apPod `json:"items"`
-	}
-	e.mustKube("GET", "/api/v1/namespaces/kube-system/pods", nil, &sys)
-	if len(sys.Items) == 0 {
-		t.Error("no kube-system pods")
-	}
-	for _, p := range sys.Items {
-		if p.Status.Phase != "Running" && p.Status.Phase != "Succeeded" {
-			t.Errorf("kube-system pod %s is %s", p.Metadata.Name, p.Status.Phase)
+	// The bare and Istio pods can fill the node until Autopilot adds
+	// capacity, so system pods may wait to be scheduled.
+	var pending []string
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		var sys struct {
+			Items []apPod `json:"items"`
 		}
+		e.mustKube("GET", "/api/v1/namespaces/kube-system/pods", nil, &sys)
+		pending = pending[:0]
+		for _, p := range sys.Items {
+			if p.Status.Phase != "Running" && p.Status.Phase != "Succeeded" {
+				pending = append(pending, "kube-system pod "+p.Metadata.Name+" is "+p.Status.Phase)
+			}
+		}
+		if len(sys.Items) == 0 {
+			pending = append(pending, "no kube-system pods")
+		}
+		if len(pending) == 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	for _, p := range pending {
+		t.Error(p)
 	}
 }
 
