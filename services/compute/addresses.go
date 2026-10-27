@@ -244,6 +244,9 @@ func (s *Service) allocRegionalInternal(tx store.Tx, project, region string, a *
 			used[ip] = true
 		}
 	}
+	if ip, ok := selfAddr(tx, sp); ok {
+		used[ip] = true
+	}
 	if a.Address != "" {
 		ip, ok := parseIP(a.Address)
 		if !ok || !c.usable(ip) {
