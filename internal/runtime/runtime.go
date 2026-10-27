@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -265,6 +266,15 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 				in.Rootless = true
 			}
 		}
+	}
+	// Podman 6's compat /info says "CPUSet": false even where containers
+	// have cpuset, so a Podman's own /libpod/info, which lists the
+	// controllers containers get, decides.
+	var lp struct {
+		Host struct{ CgroupControllers []string }
+	}
+	if in.Name == "podman" && c.do(ctx, http.MethodGet, "/libpod/info", nil, nil, &lp) == nil && lp.Host.CgroupControllers != nil {
+		in.NoCPUSet = !slices.Contains(lp.Host.CgroupControllers, "cpuset")
 	}
 	return in, nil
 }

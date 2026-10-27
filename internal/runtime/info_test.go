@@ -42,22 +42,33 @@ func TestInfo(t *testing.T) {
 	}
 }
 
-// TestInfoCPUSet: Info reports a runtime whose /info says containers lack
-// the cpuset cgroup controller, as a rootless Podman machine's does (#632),
-// and only then.
+// TestInfoCPUSet: Info reports a runtime whose containers lack the cpuset
+// cgroup controller, as a rootless Podman machine's do (#632), and only
+// then. A Podman's /libpod/info decides over its compat /info, whose
+// "CPUSet" is false on a rootful Podman 6 machine whose containers have
+// cpuset; without /libpod/info, /info does.
 func TestInfoCPUSet(t *testing.T) {
 	for _, tc := range []struct {
-		info string
-		want bool
+		info, libpod string
+		want         bool
 	}{
-		{`{"CPUSet":false,"CgroupVersion":"2"}`, true},
-		{`{"CPUSet":true,"CgroupVersion":"2"}`, false},
-		{`{}`, false},
+		{`{"CPUSet":false,"CgroupVersion":"2"}`, ``, true},
+		{`{"CPUSet":true,"CgroupVersion":"2"}`, ``, false},
+		{`{}`, ``, false},
+		{`{"CPUSet":false}`, `{"host":{"cgroupControllers":["cpuset","cpu","io","memory","pids"]}}`, false},
+		{`{"CPUSet":false}`, `{"host":{"cgroupControllers":["cpu","io","memory","pids"]}}`, true},
+		{`{"CPUSet":false}`, `{"host":{}}`, true},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case strings.HasSuffix(r.URL.Path, "/version"):
 				_, _ = io.WriteString(w, `{"Version":"6.1.4","Arch":"arm64","Components":[{"Name":"Podman Engine"}]}`)
+			case strings.HasSuffix(r.URL.Path, "/libpod/info"):
+				if tc.libpod == "" {
+					w.WriteHeader(404)
+					return
+				}
+				_, _ = io.WriteString(w, tc.libpod)
 			case strings.HasSuffix(r.URL.Path, "/info"):
 				_, _ = io.WriteString(w, tc.info)
 			default:
@@ -74,7 +85,7 @@ func TestInfoCPUSet(t *testing.T) {
 			t.Fatal(err)
 		}
 		if in.NoCPUSet != tc.want {
-			t.Errorf("/info %s: NoCPUSet = %v; want %v", tc.info, in.NoCPUSet, tc.want)
+			t.Errorf("/info %s, /libpod/info %s: NoCPUSet = %v; want %v", tc.info, tc.libpod, in.NoCPUSet, tc.want)
 		}
 	}
 }
