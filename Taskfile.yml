@@ -214,7 +214,7 @@ tasks:
       - go test -race -timeout 45m ./...
 
   vet:
-    desc: Check gofmt, run go vet (with the e2e and compat build tags too), keep go-winio Windows-only and check ADR numbers
+    desc: Check gofmt, run go vet (with the e2e, compat and conformance build tags too), keep go-winio Windows-only and check ADR numbers
     cmds:
       - cmd: |
           unformatted=$(gofmt -l .)
@@ -223,6 +223,7 @@ tasks:
       - go vet ./...
       - go vet -tags e2e ./e2e/...
       - go vet -tags compat ./compat/...
+      - go vet -tags conformance ./conformance/...
       # ADR 0015 (#419): only Windows builds link go-winio. The template
       # prints the go-winio packages (the module's subpackages too) that a
       # linux or darwin build of the binary depends on.
@@ -387,6 +388,29 @@ tasks:
     desc: Run Kubernetes conformance (Sonobuoy quick mode) at each supported GKE minor
     cmds:
       - go test -tags compat ./compat -run TestKubeConformance -count=1 -timeout 75m -v
+
+  # SRS 11.1 / ADR 0023 Conformance suite: compare an in-process Instance
+  # with the Recordings in conformance/testdata, behind the Escape guard.
+  # A test without a Recording skips.
+  conformance:
+    desc: Compare the emulator with the Conformance suite's Recordings
+    cmds:
+      - go test -tags conformance ./conformance -count=1 -timeout 15m -v
+
+  # Records GCP's responses into conformance/testdata, against the project
+  # GCPEMU_CONFORMANCE_PROJECT names with Application Default Credentials,
+  # after sweeping what earlier runs left there.
+  conformance:record:
+    desc: Record the Conformance suite against GCPEMU_CONFORMANCE_PROJECT (real GCP)
+    env:
+      GCPEMU_CONFORMANCE_RECORD: "1"
+    preconditions:
+      - sh: '[ -n "$GCPEMU_CONFORMANCE_PROJECT" ]'
+        msg: set GCPEMU_CONFORMANCE_PROJECT to the GCP project to record against
+    cmds:
+      - go test -tags conformance ./conformance -run '^TestSweep$' -count=1 -timeout 15m -v
+      # The Products' tests, by name prefix; the harness's own tests need no GCP.
+      - go test -tags conformance ./conformance -run '^Test(Storage|PubSub|SecretManager|DNS|ArtifactRegistry|IAM)' -count=1 -timeout 30m -v
 
   # NFR-PORT-001: static builds for every supported OS/arch, with the real
   # Web console embedded.
