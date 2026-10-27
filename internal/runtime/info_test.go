@@ -19,7 +19,7 @@ func TestInfo(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/info"):
 			_, _ = io.WriteString(w, `{"OperatingSystem":"Docker Desktop","KernelVersion":"6.10.14-linuxkit","OSType":"linux"}`)
 		default:
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
@@ -65,14 +65,14 @@ func TestInfoCPUSet(t *testing.T) {
 				_, _ = io.WriteString(w, `{"Version":"6.1.4","Arch":"arm64","Components":[{"Name":"Podman Engine"}]}`)
 			case strings.HasSuffix(r.URL.Path, "/libpod/info"):
 				if tc.libpod == "" {
-					w.WriteHeader(404)
+					w.WriteHeader(http.StatusNotFound)
 					return
 				}
 				_, _ = io.WriteString(w, tc.libpod)
 			case strings.HasSuffix(r.URL.Path, "/info"):
 				_, _ = io.WriteString(w, tc.info)
 			default:
-				w.WriteHeader(404)
+				w.WriteHeader(http.StatusNotFound)
 			}
 		}))
 		cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))

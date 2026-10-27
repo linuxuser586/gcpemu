@@ -101,10 +101,11 @@ type Info struct {
 	// "windows" for Docker Engine in Windows containers mode; "" if /info
 	// did not answer.
 	OSType string
-	// NoCPUSet reports the runtime's /info said containers lack the cpuset
-	// cgroup controller ("CPUSet": false), as on a rootless Podman machine,
-	// whose systemd delegates only cpu, io, memory and pids (#632). k3s,
-	// and so every GKE node, needs it. False when /info did not say.
+	// NoCPUSet reports containers lack the cpuset cgroup controller, as on
+	// a rootless Podman machine, whose systemd delegates only cpu, io,
+	// memory and pids (#632). k3s, and so every GKE node, needs it. A
+	// Podman's /libpod/info controller list decides (#805); otherwise
+	// /info's "CPUSet": false. False when neither said.
 	NoCPUSet bool
 }
 
@@ -269,7 +270,7 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 	}
 	// Podman 6's compat /info says "CPUSet": false even where containers
 	// have cpuset, so a Podman's own /libpod/info, which lists the
-	// controllers containers get, decides.
+	// controllers containers get, decides (#805).
 	var lp struct {
 		Host struct{ CgroupControllers []string }
 	}
