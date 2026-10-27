@@ -210,3 +210,64 @@ func TestPinnedNetworkProbeName(t *testing.T) {
 		t.Errorf("pinned = %+v; want gcpemu-i1-svc on 172.18.0.0/16", pinned)
 	}
 }
+
+// TestPinnedNetworkFallbackProbe: with the default pools used up, the
+// probe of a pinned create comes from the fallback range too, and the
+// emulator's container must not join it, or the runtime refuses to delete
+// it ("has active endpoints"). The emulator joins the real network once.
+func TestPinnedNetworkFallbackProbe(t *testing.T) {
+	var mu sync.Mutex
+	subnets := map[string]string{} // network ID and name -> subnet
+	var connects []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/networks/create"):
+			var body struct {
+				Name string
+				IPAM *struct{ Config []map[string]string }
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			if body.IPAM == nil {
+				w.WriteHeader(400)
+				_, _ = io.WriteString(w, `{"message":"all predefined address pools have been fully subnetted"}`)
+				return
+			}
+			id := "n" + strconv.Itoa(len(subnets))
+			subnets[id], subnets[body.Name] = body.IPAM.Config[0]["Subnet"], body.IPAM.Config[0]["Subnet"]
+			_, _ = io.WriteString(w, `{"Id":"`+id+`"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/connect"):
+			name := strings.TrimSuffix(r.URL.Path[strings.Index(r.URL.Path, "/networks/")+len("/networks/"):], "/connect")
+			connects = append(connects, name)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/networks"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/networks/"):
+			key := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			s, ok := subnets[key]
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			_, _ = io.WriteString(w, `{"Id":"`+key+`","Name":"`+key+`","IPAM":{"Config":[{"Subnet":"`+s+`"}]}}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/containers/"):
+			_, _ = io.WriteString(w, `{"NetworkSettings":{"Networks":{}}}`)
+		case r.Method == "DELETE":
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl.self = "self1"
+	if _, err := cl.CreateNetwork(context.Background(), NetworkSpec{Name: "gcpemu-i1-svc", Pin: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(connects) != 1 || connects[0] != "gcpemu-i1-svc" {
+		t.Errorf("connects = %q; want the emulator on gcpemu-i1-svc once, never on the probe", connects)
+	}
+}

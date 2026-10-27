@@ -525,7 +525,9 @@ func (c *Client) createInFallbackRange(ctx context.Context, s NetworkSpec, cause
 		t.Subnet = p.String()
 		a[3] = 1
 		t.Gateway = netip.AddrFrom4(a).String()
-		id, err := c.CreateNetwork(ctx, t)
+		// Not CreateNetwork: its caller attaches, and a probe of
+		// createPinned must stay unattached so it can be deleted.
+		id, err := c.createNetwork(ctx, t)
 		if err == nil {
 			return id, nil
 		}
