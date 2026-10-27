@@ -227,6 +227,10 @@ _Avoid_: CI mode
 An Instance that itself runs in a container, such as the OCI image, and joins its own networks instead of relying on the host's (ADR 0003). An Instance in a container on the host's network is not one: it runs as on the host. It still sees only its own container's files, such as its trust store, not the host's.
 _Avoid_: container mode, in-container, DooD, host-network mode (for a container on the host's network, which is not one); native Instance or native stage (for one that isn't Containerized: say an Instance on the host)
 
+**Self address**:
+The address a Containerized Instance's own container holds on a network it joins. On a VPC container network no resource can reserve or take it, and it is never the NAT egress proxy's address.
+_Avoid_: Instance address (a Compute Engine instance's address), emulator IP
+
 **Abandoned Instance ID**:
 An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, so no future Instance will reclaim them.
 _Avoid_: orphan, dead instance
