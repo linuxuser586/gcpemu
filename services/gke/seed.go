@@ -27,6 +27,9 @@ import (
 //	      subnetwork: default         # optional
 //	      privateNodes: false
 //	      workloadIdentity: true      # workloadPool = PROJECT.svc.id.goog
+//	      managedPrometheus: true     # default: on for Autopilot, off for Standard
+//	      systemMetrics: true         # monitoring components SYSTEM_COMPONENTS
+//	      managedOpenTelemetry: true  # Managed OpenTelemetry scope COLLECTION_AND_INSTRUMENTATION_COMPONENTS
 //	      nodePools:                  # default: one default-pool of 1 node
 //	        - name: default-pool
 //	          nodeCount: 1
@@ -38,6 +41,7 @@ import (
 //	      name: auto
 //	      autopilot: true             # default: a Standard cluster
 //	      allowNetAdmin: true         # Autopilot only
+//	      managedPrometheus: false    # turns off the Autopilot default
 //
 // An Autopilot cluster (FR-GKE-012) takes no nodePools, as GKE owns its
 // node pools, and always has Workload Identity, so workloadIdentity
@@ -50,17 +54,21 @@ type seedFile struct {
 }
 
 type seedCluster struct {
-	Project          string     `yaml:"project"`
-	Location         string     `yaml:"location"`
-	Name             string     `yaml:"name"`
-	Version          string     `yaml:"version,omitempty"`
-	Network          string     `yaml:"network,omitempty"`
-	Subnetwork       string     `yaml:"subnetwork,omitempty"`
-	PrivateNodes     bool       `yaml:"privateNodes,omitempty"`
-	WorkloadIdentity bool       `yaml:"workloadIdentity,omitempty"`
-	Autopilot        bool       `yaml:"autopilot,omitempty"`
-	AllowNetAdmin    bool       `yaml:"allowNetAdmin,omitempty"`
-	NodePools        []seedPool `yaml:"nodePools,omitempty"`
+	Project          string `yaml:"project"`
+	Location         string `yaml:"location"`
+	Name             string `yaml:"name"`
+	Version          string `yaml:"version,omitempty"`
+	Network          string `yaml:"network,omitempty"`
+	Subnetwork       string `yaml:"subnetwork,omitempty"`
+	PrivateNodes     bool   `yaml:"privateNodes,omitempty"`
+	WorkloadIdentity bool   `yaml:"workloadIdentity,omitempty"`
+	// ManagedPrometheus left out takes the Cluster mode's default.
+	ManagedPrometheus    *bool      `yaml:"managedPrometheus,omitempty"`
+	SystemMetrics        bool       `yaml:"systemMetrics,omitempty"`
+	ManagedOpenTelemetry bool       `yaml:"managedOpenTelemetry,omitempty"`
+	Autopilot            bool       `yaml:"autopilot,omitempty"`
+	AllowNetAdmin        bool       `yaml:"allowNetAdmin,omitempty"`
+	NodePools            []seedPool `yaml:"nodePools,omitempty"`
 }
 
 type seedPool struct {
@@ -76,8 +84,10 @@ var _ emu.SeedExporter = (*Service)(nil)
 // ExportSeed writes the clusters back as the "gke" section (FR-CORE-013),
 // ordered by project, location and name, with the fields that differ from
 // what the seed defaults to: the current master version, network, private
-// nodes, Workload Identity and each node pool's size, machine type, labels
-// and service account. An Autopilot cluster exports its Cluster mode and
+// nodes, Workload Identity, telemetry (managed Prometheus against the
+// Cluster mode's default, system metrics and the managed OpenTelemetry
+// scope) and each node pool's size, machine type, labels and service
+// account. An Autopilot cluster exports its Cluster mode and
 // NET_ADMIN setting in place of Workload Identity and node pools, which
 // GKE sets. Kubernetes objects are data plane and are not exported, nor
 // is anything else the seed file cannot declare (release channel, node
@@ -117,6 +127,13 @@ func (s *Service) ExportSeed(ctx context.Context) (any, error) {
 		if c.GetSubnetwork() != "default" {
 			sc.Subnetwork = c.GetSubnetwork()
 		}
+		// The API always records managed Prometheus on an Autopilot
+		// cluster; one without the setting stays at the Seed file's default.
+		if prom := managedPrometheusOn(c); c.GetMonitoringConfig().GetManagedPrometheusConfig() != nil && prom != autopilotOn(c) {
+			sc.ManagedPrometheus = &prom
+		}
+		sc.SystemMetrics = systemComponentsOn(c)
+		sc.ManagedOpenTelemetry = managedOTelOn(c)
 		// GKE sets an Autopilot cluster's Workload Identity and owns its
 		// node pools (FR-GKE-012).
 		if autopilotOn(c) {
@@ -205,7 +222,9 @@ func (s *Service) ApplySeed(ctx context.Context, section *yaml.Node, baseDir str
 }
 
 // cluster is the cluster ApplySeed asks CreateCluster for, with no node
-// pools for an Autopilot cluster, as GKE adds its own. Private nodes go
+// pools for an Autopilot cluster, as GKE adds its own, and no managed
+// Prometheus setting unless the entry names one, so the API applies the
+// Cluster mode's default (FR-GKE-018). Private nodes go
 // in privateClusterConfig, which clusterPrivateNodes reads first, so
 // export reads them back however the cluster first made them private.
 func (sc seedCluster) cluster() *containerpb.Cluster {
@@ -218,6 +237,23 @@ func (sc seedCluster) cluster() *containerpb.Cluster {
 	}
 	if sc.WorkloadIdentity {
 		c.WorkloadIdentityConfig = &containerpb.WorkloadIdentityConfig{WorkloadPool: sc.Project + ".svc.id.goog"}
+	}
+	if sc.ManagedPrometheus != nil {
+		c.MonitoringConfig = &containerpb.MonitoringConfig{
+			ManagedPrometheusConfig: &containerpb.ManagedPrometheusConfig{Enabled: *sc.ManagedPrometheus},
+		}
+	}
+	if sc.SystemMetrics {
+		if c.MonitoringConfig == nil {
+			c.MonitoringConfig = &containerpb.MonitoringConfig{}
+		}
+		c.MonitoringConfig.ComponentConfig = &containerpb.MonitoringComponentConfig{
+			EnableComponents: []containerpb.MonitoringComponentConfig_Component{containerpb.MonitoringComponentConfig_SYSTEM_COMPONENTS},
+		}
+	}
+	if sc.ManagedOpenTelemetry {
+		scope := containerpb.ManagedOpenTelemetryConfig_COLLECTION_AND_INSTRUMENTATION_COMPONENTS
+		c.ManagedOpentelemetryConfig = &containerpb.ManagedOpenTelemetryConfig{Scope: &scope}
 	}
 	if sc.Autopilot {
 		c.Autopilot = &containerpb.Autopilot{Enabled: true}
