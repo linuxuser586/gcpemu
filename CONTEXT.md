@@ -391,6 +391,10 @@ _Avoid_: preemptible node (GKE's older, separate kind)
 The most GKE nodes one Instance runs, across all its clusters, Standard and Autopilot alike. A request that would exceed it fails, and an Autopilot cluster's pods that need a node beyond it stay Pending.
 _Avoid_: host node limit, quota
 
+**Mirror cache**:
+The images an Instance's GKE nodes pulled from public registries through the emulator, kept so later pulls are served locally. An image is in it only once every one of its blobs is. State snapshots hold it, but a change to it while one is saved does not count as the Instance's state changing; an image a restore lacks is fetched again when next pulled.
+_Avoid_: pull-through cache, image cache (the Build daemon's)
+
 **Workload restrictions**:
 What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates (a cluster can be set to allow the NET_ADMIN capability); refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
 _Avoid_: Warden (GKE's internal name), Autopilot policy, workload policy
