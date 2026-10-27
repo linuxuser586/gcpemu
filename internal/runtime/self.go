@@ -77,7 +77,8 @@ func (c *Client) Self() string { return c.self }
 func (c *Client) SelfFound() bool { return c.selfFound }
 
 // AttachSelf connects the emulator's container to network; it is a no-op
-// on the host and when already connected.
+// on the host and when already connected. It takes the subnet's
+// second-to-last address, but not on a VPC container network (attach).
 func (c *Client) AttachSelf(ctx context.Context, network string) error {
 	if c.self == "" {
 		return nil
@@ -166,14 +167,16 @@ func (c *Client) AttachMember(ctx context.Context, network string, reserved bool
 
 // attach connects container to network, with reserved at the subnet's
 // second-to-last address when it is free: GCP reserves that address, so
-// no resource the emulator places on a VPC subnetwork can take it.
-// Otherwise it asks for pinned, or the highest free address without one.
+// no resource the emulator places on a VPC subnetwork can take it. On a
+// VPC container network (RoleVPC) the NAT egress proxy holds it, so
+// reserved takes the highest free address there (#806). Otherwise it asks for pinned, or the
+// highest free address without one.
 func (c *Client) attach(ctx context.Context, network, container string, reserved bool, pinned string) (Network, error) {
 	n, ierr := c.InspectNetwork(ctx, network)
 	ip := ""
 	switch {
 	case ierr != nil:
-	case reserved:
+	case reserved && n.Labels[LabelRole] != RoleVPC:
 		ip = secondToLast(n.Subnet)
 	case pinned != "":
 		ip = pinned

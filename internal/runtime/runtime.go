@@ -42,6 +42,11 @@ const (
 	LabelHostLB = "gcpemu.hostlb"
 )
 
+// RoleVPC is the LabelRole of a VPC container network (a subnetwork's or
+// a private services access allocation's), whose second-to-last address
+// the NAT egress proxy holds.
+const RoleVPC = "vpc"
+
 // LabelHostLB values.
 const (
 	HostLBRelay      = "vm-relay"
