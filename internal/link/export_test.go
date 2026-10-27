@@ -32,3 +32,14 @@ func AskIDTokensAt(t *testing.T, path string) {
 	idTokensRoute = path
 	t.Cleanup(func() { idTokensRoute = old })
 }
+
+// HearBuckets has m hear the buckets b from the link name, in a reply
+// numbered seq, as it does on its watch or a refresh, watching name.
+func (m *Manager) HearBuckets(name string, b map[string]string, seq int64) {
+	m.mu.Lock()
+	if _, ok := m.watchers[name]; !ok {
+		m.watchers[name] = func() {}
+	}
+	m.mu.Unlock()
+	m.setBuckets(name, bucketsReply{Buckets: b, Seq: seq})
+}
