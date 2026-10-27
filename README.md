@@ -692,7 +692,7 @@ runtime; give the subnetwork a range that doesn't overlap, and everything else k
 | --- | --- |
 | Docker Desktop | supported (4.96.2) |
 | Colima | supported (0.10.3) |
-| OrbStack | supported (2.2.4) |
+| OrbStack | supported (2.2.5) |
 | Podman machine | supported (6.1.4) |
 
 The emulator copies a static linux gcpemu binary into containers as a Sidecar agent, for the
