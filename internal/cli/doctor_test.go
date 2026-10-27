@@ -781,6 +781,30 @@ func TestReportRegistryRelay(t *testing.T) {
 	}
 }
 
+// When the registry's port is taken before start, doctor names another
+// Instance's Registry relay that holds it, and on OrbStack and Colima,
+// which forward their VM's host network, says a container with host
+// networking may.
+func TestReportRegistryPortHolder(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		h        relayHolder
+		endpoint string
+		want     string
+	}{
+		{"another Instance's relay", relayHolder{name: "gcpemu-abc-registryrelay", dir: "/data/other"}, "unix:///var/run/docker.sock", "held by gcpemu-abc-registryrelay, the Registry relay of the Instance in /data/other"},
+		{"OrbStack", relayHolder{}, "unix:///Users/me/.orbstack/run/docker.sock", "a container with host networking that listens on port 4561 holds it here too"},
+		{"Colima", relayHolder{}, "unix:///Users/me/.colima/default/docker.sock", "a container with host networking"},
+		{"Docker Desktop", relayHolder{}, "unix:///Users/me/.docker/run/docker.sock", ""},
+	} {
+		var out bytes.Buffer
+		reportRegistryPortHolder(&out, tc.h, 4561, forwardsHostNetwork(tc.endpoint))
+		if tc.want == "" && out.Len() > 0 || !strings.Contains(out.String(), tc.want) {
+			t.Errorf("%s: printed %q; want %q", tc.name, out.String(), tc.want)
+		}
+	}
+}
+
 // doctor decides once whether the Instance is a Containerized Instance,
 // and on a bridge network, for its network checks (#564), and warns that
 // it guesses only with the marker files, no answer from the runtime and

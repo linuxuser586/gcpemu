@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -23,21 +24,25 @@ import (
 // Services have started, so that its host listeners hold the registry's
 // port first: OrbStack and Colima forward a port the relay takes in the
 // VM to the host, and whichever side binds first keeps it. It starts
-// again after Reset, which removes the VM relay it forwards through.
+// again after Reset, which removes it and the VM relay it forwards
+// through.
 
-// Registry relay states (RegistryRelayStatus.State).
+// RegistryRelayState is the Registry relay's state, as GET
+// /_emu/v1/registry-relay reports it.
+type RegistryRelayState string
+
 const (
-	relayOff      = "off"
-	relayStarting = "starting"
-	relayRunning  = "running"
-	// relaySkipped: the port is taken inside the VM.
-	relaySkipped = "skipped"
-	relayFailed  = "failed"
+	RegistryRelayOff      RegistryRelayState = "off"
+	RegistryRelayStarting RegistryRelayState = "starting"
+	RegistryRelayRunning  RegistryRelayState = "running"
+	// RegistryRelaySkipped: the port is taken inside the VM.
+	RegistryRelaySkipped RegistryRelayState = "skipped"
+	RegistryRelayFailed  RegistryRelayState = "failed"
 )
 
 // RegistryRelayStatus is what GET /_emu/v1/registry-relay reports.
 type RegistryRelayStatus struct {
-	State string `json:"state"`
+	State RegistryRelayState `json:"state"`
 	// Reason says why it is off, skipped or failed.
 	Reason string `json:"reason,omitempty"`
 	// Listen is the address it listens on inside the runtime's VM.
@@ -62,7 +67,7 @@ type registryRelay struct {
 }
 
 func newRegistryRelay() *registryRelay {
-	r := &registryRelay{st: RegistryRelayStatus{State: relayOff, Reason: "not started"}}
+	r := &registryRelay{st: RegistryRelayStatus{State: RegistryRelayOff, Reason: "not started"}}
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	return r
 }
@@ -86,72 +91,88 @@ func (r *registryRelay) stop() {
 	r.wg.Wait()
 }
 
-// relayDeps is what a Registry relay start needs from the Instance.
-type relayDeps struct {
-	// runtime connects to the container runtime.
-	runtime func(ctx context.Context) (*runtime.Manager, error)
+// registryRelayDeps is what a Registry relay start needs from the
+// Instance.
+type registryRelayDeps struct {
 	// registry is the registry's host endpoint, "" when it isn't running.
 	registry func() string
-	// decide says whether the runtime's host network is a VM's.
-	decide func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision
-	// target is the registry's address on the services network, through
-	// the VM relay.
-	target func(ctx context.Context) (string, error)
+	// runtime connects to the container runtime.
+	runtime func(ctx context.Context) (*runtime.Manager, error)
+	// probe guesses whether the runtime's host network is a VM's from the
+	// default bridge network, before the services network exists, so that
+	// an Instance elsewhere creates none.
+	probe func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision
+	// target is the registry's address on the services network, and the
+	// netplane's own VM relay decision, made with that network.
+	target func(ctx context.Context) (string, vmrelay.Decision, error)
 	// start starts the relay container.
 	start func(ctx context.Context, rt *runtime.Manager, o registryrelay.Options) error
 	log   *slog.Logger
 }
 
 // startRegistryRelay starts the Registry relay if the Instance needs one
-// and reports what happened.
-func startRegistryRelay(ctx context.Context, d relayDeps) RegistryRelayStatus {
-	rt, err := d.runtime(ctx)
-	if errors.Is(err, emu.ErrNoRuntime) {
-		return RegistryRelayStatus{State: relayOff, Reason: "no container runtime"}
-	}
-	if err != nil {
-		return RegistryRelayStatus{State: relayFailed, Reason: "connecting to the container runtime: " + err.Error()}
-	}
-	if rt.Self() != "" {
-		return RegistryRelayStatus{State: relayOff, Reason: "a Containerized Instance has no Registry relay yet (#835)"}
-	}
+// and reports what happened. It asks for the registry first, so that an
+// Instance without one never connects to the runtime for it.
+func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayStatus {
 	reg := d.registry()
 	if reg == "" {
-		return RegistryRelayStatus{State: relayOff, Reason: "Artifact Registry is not running"}
+		return RegistryRelayStatus{State: RegistryRelayOff, Reason: "Artifact Registry is not running"}
 	}
 	_, ps, err := net.SplitHostPort(reg)
 	port, perr := strconv.Atoi(ps)
 	if err != nil || perr != nil {
-		return RegistryRelayStatus{State: relayFailed, Reason: "the registry endpoint " + reg + " has no port"}
+		return RegistryRelayStatus{State: RegistryRelayFailed, Reason: "the registry endpoint " + reg + " has no port"}
 	}
-	dec := d.decide(ctx, rt)
-	switch {
-	case !dec.VM:
-		return RegistryRelayStatus{State: relayOff, Reason: "the runtime's daemon shares the host's loopback"}
-	case !dec.On:
-		return RegistryRelayStatus{State: relayOff, Reason: "the VM relay is " + dec.Reason}
+	rt, err := d.runtime(ctx)
+	if errors.Is(err, emu.ErrNoRuntime) {
+		return RegistryRelayStatus{State: RegistryRelayOff, Reason: "no container runtime"}
+	}
+	if err != nil {
+		return RegistryRelayStatus{State: RegistryRelayFailed, Reason: "connecting to the container runtime: " + err.Error()}
+	}
+	if rt.Self() != "" {
+		return RegistryRelayStatus{State: RegistryRelayOff, Reason: "a Containerized Instance has no Registry relay yet (#835)"}
+	}
+	if off := vmSideOff(d.probe(ctx, rt)); off != "" {
+		return RegistryRelayStatus{State: RegistryRelayOff, Reason: off}
 	}
 	listen := net.JoinHostPort("127.0.0.1", ps)
 	st := RegistryRelayStatus{Listen: listen}
 	if rt.Info.Name == "podman" {
 		st.Podman = podmanStep(ps)
 	}
-	target, err := d.target(ctx)
+	target, dec, err := d.target(ctx)
 	if err != nil {
-		st.State, st.Reason = relayFailed, "the registry on the services network: "+err.Error()
+		st.State, st.Reason = RegistryRelayFailed, "the registry on the services network: "+err.Error()
 		return st
+	}
+	if off := vmSideOff(dec); off != "" {
+		return RegistryRelayStatus{State: RegistryRelayOff, Reason: off}
 	}
 	err = d.start(ctx, rt, registryrelay.Options{Port: port, Target: target, Log: d.log})
 	switch {
 	case errors.Is(err, registryrelay.ErrPortTaken):
-		st.State, st.Reason = relaySkipped, fmt.Sprintf("%s is taken inside the runtime's VM", listen)
+		st.State, st.Reason = RegistryRelaySkipped, fmt.Sprintf("%s is taken inside the runtime's VM", listen)
 		st.Fix = fmt.Sprintf("stop whatever listens on %s in the VM (a container with host networking), or start with --port ar=PORT, then restart the Instance", listen)
 	case err != nil:
-		st.State, st.Reason = relayFailed, err.Error()
+		st.State, st.Reason = RegistryRelayFailed, err.Error()
 	default:
-		st.State = relayRunning
+		st.State = RegistryRelayRunning
 	}
 	return st
+}
+
+// vmSideOff says why VM-side clients need no Registry relay under the VM
+// relay decision d, or "" when they need one: only a runtime in a VM,
+// with the VM relay on, does.
+func vmSideOff(d vmrelay.Decision) string {
+	switch {
+	case !d.VM:
+		return "the runtime's daemon shares the host's loopback"
+	case !d.On:
+		return "the VM relay is " + d.String()
+	}
+	return ""
 }
 
 // podmanStep is what Podman machine users do to push to the registry at
@@ -168,26 +189,31 @@ func (in *Instance) startRegistryRelay() {
 		return
 	}
 	if in.Config.NoRegistryRelay {
-		r.set(RegistryRelayStatus{State: relayOff, Reason: "turned off for tests"})
+		r.set(RegistryRelayStatus{State: RegistryRelayOff, Reason: "turned off for tests"})
 		return
 	}
-	r.set(RegistryRelayStatus{State: relayStarting})
+	r.set(RegistryRelayStatus{State: RegistryRelayStarting})
 	r.wg.Go(func() {
 		r.run.Lock()
 		defer r.run.Unlock()
 		log := in.Env.Log.With("component", "registryrelay")
-		st := startRegistryRelay(r.ctx, relayDeps{
-			runtime:  in.containers.Runtime,
+		st := startRegistryRelay(r.ctx, registryRelayDeps{
 			registry: func() string { return in.Env.Endpoints.Get("ar") },
-			decide: func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision {
+			runtime:  in.containers.Runtime,
+			probe: func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision {
 				return vmrelay.Decide(false, vmrelay.DefaultGateway(ctx, rt.Client))
 			},
-			target: func(ctx context.Context) (string, error) {
+			target: func(ctx context.Context) (string, vmrelay.Decision, error) {
 				plane, err := in.containers.Netplane(ctx)
 				if err != nil {
-					return "", err
+					return "", vmrelay.Decision{}, err
 				}
-				return plane.Addr(ctx, "ar")
+				addr, err := plane.Addr(ctx, "ar")
+				if err != nil {
+					return "", vmrelay.Decision{}, err
+				}
+				d, _ := plane.RelayDecision()
+				return addr, d, nil
 			},
 			start: registryrelay.Start,
 			log:   log,
@@ -197,14 +223,14 @@ func (in *Instance) startRegistryRelay() {
 		}
 		r.set(st)
 		switch st.State {
-		case relayRunning:
+		case RegistryRelayRunning:
 			log.Info("VM-side clients reach the registry at " + st.Listen + " inside the runtime's VM")
 			if st.Podman != "" {
 				log.Warn("Podman machine pushes to the registry over HTTPS by default; "+st.Podman, "registry", st.Listen)
 			}
-		case relaySkipped:
+		case RegistryRelaySkipped:
 			log.Warn("the runtime's own docker push can't reach the registry: "+st.Reason, "fix", st.Fix)
-		case relayFailed:
+		case RegistryRelayFailed:
 			log.Warn("the runtime's own docker push can't reach the registry: the Registry relay failed to start", "err", st.Reason)
 		default:
 			log.Debug("no Registry relay: " + st.Reason)
@@ -224,21 +250,22 @@ func (in *Instance) removeLeftoverRegistryRelay(ctx context.Context) {
 	if err != nil || cl.Self() != "" {
 		return
 	}
+	dir, err := filepath.Abs(in.Dir)
+	if err != nil {
+		dir = in.Dir
+	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	name := (&runtime.Manager{InstanceID: in.ID}).Name(registryrelay.Suffix)
-	if err := cl.RemoveContainer(ctx, name, true); err != nil {
-		in.Env.Log.Debug("removing a leftover Registry relay", "container", name, "err", err)
+	cts, err := registryrelay.Leftovers(ctx, cl, dir)
+	if err != nil {
+		in.Env.Log.Debug("listing leftover Registry relays", "err", err)
+		return
 	}
-}
-
-func (in *Instance) hasService(name string) bool {
-	for _, s := range in.services {
-		if s.Name() == name {
-			return true
+	for _, ct := range cts {
+		if err := cl.RemoveContainer(ctx, ct.ID, true); err != nil {
+			in.Env.Log.Debug("removing a leftover Registry relay", "container", ct.Name, "err", err)
 		}
 	}
-	return false
 }
 
 // serveRegistryRelay serves GET /_emu/v1/registry-relay.

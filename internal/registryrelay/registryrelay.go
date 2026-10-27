@@ -29,29 +29,31 @@ const Suffix = "registryrelay"
 
 const agentName = "registryrelay"
 
-// listening is what the agent prints once it listens; Start waits for it.
+// listening is what the Sidecar agent prints once it listens; Start
+// waits for it.
 const listening = "registry relay listening on "
 
-// taken is what the agent prints when its address is in use.
+// taken is what the Sidecar agent prints when its address is in use.
 const taken = "registry relay address in use: "
 
 // ErrPortTaken is returned by Start when something in the VM already
 // listens on 127.0.0.1 at the port.
 var ErrPortTaken = errors.New("the port is taken inside the runtime's VM")
 
-// readyTimeout bounds how long Start waits for the agent to listen.
+// readyTimeout bounds how long Start waits for the Sidecar agent to listen.
 const readyTimeout = 20 * time.Second
 
 func init() { agent.Register(agentName, runAgent) }
 
-// runAgent listens on args[0] and pipes each connection to args[1].
+// runAgent is the Sidecar agent: it listens on args[0] and pipes each
+// connection to args[1].
 func runAgent(ctx context.Context, args []string) error {
 	if len(args) != 2 {
 		return fmt.Errorf("want LISTEN TARGET, got %q", args)
 	}
 	l, err := net.Listen("tcp", args[0])
 	if err != nil {
-		if isAddrInUse(err) {
+		if runtime.IsAddressInUse(err) {
 			fmt.Println(taken + args[0])
 		}
 		return err
@@ -83,10 +85,6 @@ func serve(l net.Listener, target string) {
 			netplane.Splice(c, u)
 		}()
 	}
-}
-
-func isAddrInUse(err error) bool {
-	return strings.Contains(err.Error(), "address already in use")
 }
 
 // Options configure Start.
@@ -145,8 +143,8 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) error {
 	return nil
 }
 
-// waitListening waits until the agent in container id prints that it
-// listens, or exits.
+// waitListening waits until the Sidecar agent in container id prints
+// that it listens, or exits.
 func waitListening(ctx context.Context, rt *runtime.Manager, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
@@ -177,7 +175,19 @@ func waitListening(ctx context.Context, rt *runtime.Manager, id string) error {
 	}
 }
 
-// Remove removes the Instance's Registry relay, if there is one.
+// Remove removes the Instance's Registry relay, if there is one (Reset).
 func Remove(ctx context.Context, rt *runtime.Manager) error {
 	return rt.RemoveContainer(ctx, rt.Name(Suffix), true)
+}
+
+// Leftovers returns the Registry relays of the Instance whose data dir is
+// dir (absolute), as its labels name it, or of every Instance when dir is
+// "": one a previous run left behind holds the registry's port on the
+// host on OrbStack and Colima.
+func Leftovers(ctx context.Context, cl *runtime.Client, dir string) ([]runtime.Container, error) {
+	labels := map[string]string{runtime.LabelResource: Suffix}
+	if dir != "" {
+		labels[runtime.LabelDir] = dir
+	}
+	return cl.ListContainers(ctx, labels)
 }

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/registryrelay"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -174,16 +176,21 @@ func (c *containers) RelayIP() string {
 	return ""
 }
 
-// reset removes the VM relay (Instance.Reset); it starts again when next
-// needed.
+// reset removes the Registry relay and the VM relay (Instance.Reset); the
+// Instance starts the Registry relay again, and the VM relay starts when
+// next needed.
 func (c *containers) reset(ctx context.Context) error {
 	c.mu.Lock()
-	plane := c.plane
+	rt, plane := c.rt, c.plane
 	c.mu.Unlock()
-	if plane == nil {
-		return nil
+	var errs []error
+	if rt != nil {
+		errs = append(errs, registryrelay.Remove(ctx, rt))
 	}
-	return plane.Reset(ctx)
+	if plane != nil {
+		errs = append(errs, plane.Reset(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 // shutdown removes the instance's containers (and, for ephemeral instances,

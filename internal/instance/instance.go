@@ -512,6 +512,16 @@ func writeAtomic(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
+// hasService reports whether the Instance runs the Service named name.
+func (in *Instance) hasService(name string) bool {
+	for _, s := range in.services {
+		if s.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (in *Instance) setFailed(name string, err error) {
 	in.failedMu.Lock()
 	in.failed[name] = err

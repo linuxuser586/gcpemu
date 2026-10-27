@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
 
 func TestRegistryPushPullImage(t *testing.T) {
@@ -391,6 +394,55 @@ func TestRegistryChallengeRealmBehindFrontend(t *testing.T) {
 		if got := resp.Header.Get("WWW-Authenticate"); resp.StatusCode != 401 || got != want {
 			t.Errorf("Host %s: ping = %d %q, want 401 %q", host, resp.StatusCode, got, want)
 		}
+	}
+}
+
+// A VM-side client reaches the registry through the Registry relay, a
+// TCP pipe to the loopback listener (ADR 0043). It is challenged as a
+// Host client is, with a realm on the address it dialed, localhost and
+// the relay's port, and pushes as one.
+func TestRegistryThroughTCPRelay(t *testing.T) {
+	e := start(t)
+	e.createRepo(testLoc, "images")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				u, err := net.Dial("tcp", e.registry())
+				if err != nil {
+					return
+				}
+				defer u.Close()
+				netplane.Splice(c, u)
+			}()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+	relay := "localhost:" + port
+	resp, err := http.Get("http://" + relay + "/v2/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if want := `Bearer realm="http://` + relay + `/v2/token"`; resp.StatusCode != 401 || !strings.Contains(resp.Header.Get("WWW-Authenticate"), want) {
+		t.Fatalf("ping through the relay = %d %q; want 401 with %s", resp.StatusCode, resp.Header.Get("WWW-Authenticate"), want)
+	}
+	ref, err := name.ParseReference(relay+"/"+testProject+"/images/app:relay", name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, _ := random.Image(128, 1)
+	if err := remote.Write(ref, img); err != nil {
+		t.Fatalf("anonymous push through the relay: %v", err)
 	}
 }
 
