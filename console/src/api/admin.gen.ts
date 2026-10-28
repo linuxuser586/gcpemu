@@ -182,6 +182,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/registry-relay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Registry relay's state (ADR 0043; gcpemu doctor).
+         * @description On a VM runtime the Instance starts the Registry relay in the background after its Services start: a container in the VM's host network namespace listening on 127.0.0.1 at the registry's port, so that VM-side clients such as the runtime's own docker push use the same image references as Host clients. It is off elsewhere, skipped when the port is taken inside the VM, and failed when it could not start.
+         */
+        get: operations["registryRelay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/hostmode": {
         parameters: {
             query?: never;
@@ -2086,6 +2106,37 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             500: components["responses"]["Error"];
+        };
+    };
+    registryRelay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Registry relay. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        state: "off" | "starting" | "running" | "skipped" | "failed";
+                        /** @description Why it is off */
+                        reason?: string;
+                        /** @description The address it listens on inside the runtime's VM. */
+                        listen?: string;
+                        /** @description What to do when it is skipped. */
+                        fix?: string;
+                        /** @description The step Podman machine users take */
+                        podman?: string;
+                    };
+                };
+            };
         };
     };
     hostMode: {

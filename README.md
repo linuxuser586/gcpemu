@@ -682,6 +682,23 @@ again fixes them, and `gcpemu doctor` flags them. A Cloud SQL instance needs por
 address; 5432 is served there too while it is free, so a local PostgreSQL on `127.0.0.1:5432`
 doesn't keep connectors out.
 
+On a VM runtime the runtime's own `docker push` and `docker pull` (and `podman push`) run inside
+its VM, where `localhost` is the VM's loopback, not the host's. So when the Instance starts there,
+it starts a Registry relay in the background: a container in the VM's host network that listens on
+`127.0.0.1` at the registry's port and forwards to the registry through the VM relay (ADR 0043).
+`docker push localhost:4561/LOCATION-docker.pkg.dev/PROJECT/REPO/IMAGE` then works on the host and
+in the VM alike, with the same reference as `$GCPEMU_REGISTRY` and no `insecure-registries` entry,
+since Docker treats loopback registries as insecure. It listens on the Instance's registry port,
+so it follows `--port ar=PORT`. If something in the VM already listens there, such as a registry
+container with host networking, the Instance starts without the relay, warns, and `gcpemu doctor`
+says what holds it. Podman sends `localhost` registries HTTPS, so on Podman machine push with
+`podman push --tls-verify=false`, or add `[[registry]]` with `location = "localhost:4561"` and
+`insecure = true` to `/etc/containers/registries.conf` inside the machine (`podman machine ssh`);
+`gcpemu doctor` prints that step. OrbStack and Colima forward a port taken inside their VM to the
+host too, so the Instance binds its registry port on the host before starting the relay, and
+removes a relay that a crashed run left behind first. A Containerized Instance has no Registry
+relay yet (#835).
+
 When a subnetwork's range overlaps another network on the host, its container network runs on a
 free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
 (a Translated network, ADR 0004). That needs VLAN (8021q) support in the runtime's kernel, which on
@@ -1609,6 +1626,8 @@ lookup. Upgrade them, or set `HTTPS_PROXY` to an address that refuses connection
 Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus a token: for
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
 clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.
+That address works for a VM runtime's own `docker push` too, through the Registry relay (see
+"Container runtime").
 
 `gcpemu env` also sets `CLOUDSDK_CORE_UNIVERSE_DOMAIN=gcpemu.invalid`, in Host mode too. A gcloud
 API with no `CLOUDSDK_API_ENDPOINT_OVERRIDES_<API>` then goes to `<api>.gcpemu.invalid`, which

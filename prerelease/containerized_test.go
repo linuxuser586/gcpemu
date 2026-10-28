@@ -80,6 +80,8 @@ func containerizedChecks(t *testing.T, rt string) {
 	// since NRPT can't name a port (ADR 0015, ADR 0026).
 	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
 	step(t, rt, "7-vm-relay", 15*time.Minute, vmRelay)
+	// Like checks 5 to 7, on the host.
+	step(t, rt, "8-registry-relay", 15*time.Minute, func(t *testing.T, ctx context.Context) { registryRelay(t, ctx, rt) })
 }
 
 // containerEnv returns what `gcpemu env --shell powershell` prints in the

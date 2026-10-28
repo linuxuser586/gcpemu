@@ -95,6 +95,9 @@ type Instance struct {
 	managedCancel context.CancelFunc
 	managedWG     sync.WaitGroup
 
+	// registryRelay starts the Registry relay (ADR 0043).
+	registryRelay *registryRelay
+
 	// consoleServed reports whether the gateway serves the Web console.
 	consoleServed bool
 	// adminToken is the Admin token, "" on a loopback bind (FR-UI-009).
@@ -195,6 +198,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	env.Containers = in.containers
 	in.managed = map[string]*managedEmulator{}
 	in.managedCtx, in.managedCancel = context.WithCancel(context.Background())
+	in.registryRelay = newRegistryRelay()
 	in.gw = gateway.New(env, in.Log)
 	in.gw.SetLinks(in.link)
 	env.Delegated = in.link.DelegatedTo
@@ -384,6 +388,7 @@ func (in *Instance) Start(ctx context.Context) error {
 		return err
 	}
 
+	in.removeLeftoverRegistryRelay(ctx)
 	for _, s := range in.services {
 		if in.failure(s.Name()) != nil {
 			continue
@@ -395,6 +400,7 @@ func (in *Instance) Start(ctx context.Context) error {
 	}
 	in.startGFELAN()
 	in.startLink()
+	in.startRegistryRelay()
 	in.warnContainerBind(ctx)
 	warnLoopbackNetmask(in.Env.Log, goruntime.GOOS, loopback.Lo0Aliases)
 	in.warnContainerized(ctx)
@@ -504,6 +510,16 @@ func writeAtomic(path string, b []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// hasService reports whether the Instance runs the Service named name.
+func (in *Instance) hasService(name string) bool {
+	for _, s := range in.services {
+		if s.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (in *Instance) setFailed(name string, err error) {
@@ -643,6 +659,7 @@ func (in *Instance) reset(ctx context.Context) error {
 		}
 	}
 	errs = append(errs, in.containers.reset(ctx))
+	in.startRegistryRelay()
 	errs = append(errs, in.resetManaged())
 	errs = append(errs, in.Env.Store.Reset())
 	for _, s := range in.services {
@@ -690,6 +707,7 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		in.fe.StopLAN()
 		errs = append(errs, in.link.Close())
 		in.stopManaged(ctx)
+		in.registryRelay.stop()
 		errs = append(errs, in.containers.shutdown())
 		errs = append(errs, in.fe.Close())
 		in.Events.Close() // end event streams so the gateway can drain

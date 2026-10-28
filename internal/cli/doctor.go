@@ -31,6 +31,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/link"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/registryrelay"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
@@ -98,7 +99,18 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 					if p == 0 {
 						continue
 					}
-					checkPort(out, report, runtime.GOOS, n, p, probePort(cfg.Bind, p))
+					pr := probePort(cfg.Bind, p)
+					if n == "ar" && pr.err != nil && hasRuntime {
+						holder := registryRelayHolder(cmd.Context(), cl, cfg, p)
+						if holder.ours {
+							fmt.Fprintf(out, "[ok  ] port %s (ar) is held by %s, a Registry relay a previous run left; start removes it first\n", pr.addr, holder.name)
+							continue
+						}
+						checkPort(out, report, runtime.GOOS, n, p, pr)
+						reportRegistryPortHolder(out, holder, p, forwardsHostNetwork(det.Endpoint))
+						continue
+					}
+					checkPort(out, report, runtime.GOOS, n, p, pr)
 					if n == "dns" {
 						checkDNSUDP(out, report, cfg.Bind, strconv.Itoa(p))
 					}
@@ -109,6 +121,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			if running == nil {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
+				checkRegistryRelay(out, report, cfg)
 				checkLinks(out, report, cfg)
 				checkExternal(report, cfg)
 			}
@@ -513,6 +526,99 @@ func checkBuildDaemon(report func(bool, string, string), cfg *config.Config) {
 	if b, err := c.get("/_emu/v1/build/daemon"); err == nil {
 		reportBuildDaemon(report, b)
 	}
+}
+
+// checkRegistryRelay reports a running Instance's Registry relay (ADR
+// 0043), through which VM-side clients reach the registry.
+func checkRegistryRelay(out io.Writer, report func(bool, string, string), cfg *config.Config) {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return
+	}
+	if b, err := c.get("/_emu/v1/registry-relay"); err == nil {
+		reportRegistryRelay(out, report, b)
+	}
+}
+
+func reportRegistryRelay(out io.Writer, report func(bool, string, string), body []byte) {
+	var v instance.RegistryRelayStatus
+	if json.Unmarshal(body, &v) != nil {
+		return
+	}
+	const cant = ", so the runtime's own docker push can't reach the registry"
+	switch v.State {
+	case instance.RegistryRelayRunning:
+		report(true, "Registry relay: VM-side clients, such as the runtime's own docker push, reach the registry at "+v.Listen+" inside the runtime's VM", "")
+		if v.Podman != "" {
+			fmt.Fprintf(out, "[WARN] Podman machine pushes to the registry over HTTPS by default\n       fix: %s\n", v.Podman)
+		}
+	case instance.RegistryRelaySkipped:
+		report(false, "Registry relay: "+v.Reason+cant, v.Fix)
+	case instance.RegistryRelayFailed:
+		report(false, "Registry relay failed to start"+cant+": "+v.Reason, "see the Instance's log, then restart it")
+	case instance.RegistryRelayStarting:
+		fmt.Fprintln(out, "[--  ] Registry relay: starting")
+	default:
+		if v.Reason != "" {
+			fmt.Fprintf(out, "[--  ] Registry relay: off (%s)\n", v.Reason)
+		}
+	}
+}
+
+// relayHolder is a Registry relay that listens on the registry's port in
+// the runtime's VM, which OrbStack and Colima forward to the host.
+type relayHolder struct {
+	name string
+	// dir is the data dir of the Instance it belongs to; ours, that it is
+	// the checked Instance's own, left by a previous run.
+	dir  string
+	ours bool
+}
+
+// registryRelayHolder finds the Registry relay listening on port, of any
+// Instance, or returns the zero relayHolder.
+func registryRelayHolder(ctx context.Context, cl *emuruntime.Client, cfg *config.Config, port int) relayHolder {
+	dir, err := filepath.Abs(cfg.InstanceDir())
+	if err != nil {
+		return relayHolder{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cts, err := registryrelay.Leftovers(ctx, cl, "")
+	if err != nil {
+		return relayHolder{}
+	}
+	listen := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	for _, c := range cts {
+		ct, err := cl.InspectContainer(ctx, c.ID)
+		if err != nil || len(ct.Cmd) == 0 || ct.Cmd[0] != listen {
+			continue
+		}
+		d := ct.Labels[emuruntime.LabelDir]
+		return relayHolder{name: ct.Name, dir: d, ours: d == dir}
+	}
+	return relayHolder{}
+}
+
+// reportRegistryPortHolder says what may hold the registry's port, which
+// doctor found taken: another Instance's Registry relay, or on a runtime
+// that forwards its VM's host network to the host, any container with
+// host networking.
+func reportRegistryPortHolder(out io.Writer, h relayHolder, port int, forwards bool) {
+	switch {
+	case h.name != "":
+		fmt.Fprintf(out, "       it is held by %s, the Registry relay of the Instance in %s\n", h.name, h.dir)
+	case forwards:
+		fmt.Fprintf(out, "       OrbStack and Colima forward their VM's host network to this host: a container with host networking that listens on port %d holds it here too\n", port)
+	}
+}
+
+// forwardsHostNetwork reports whether the runtime at endpoint forwards a
+// port that a container with host networking takes in its VM to the
+// host, as OrbStack and Colima do.
+func forwardsHostNetwork(endpoint string) bool {
+	e := strings.ToLower(endpoint)
+	return strings.Contains(e, "orbstack") || strings.Contains(e, "colima")
 }
 
 // checkExternal reports the running Instance's External emulators.

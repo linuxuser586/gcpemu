@@ -1,0 +1,74 @@
+//go:build prerelease
+
+package prerelease
+
+import (
+	"context"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
+)
+
+// relayImage is what the Registry relay check pushes and pulls.
+const relayImage = "busybox:1.37"
+
+// registryRelay is step 8 of both suites: the runtime's own push and pull
+// of $GCPEMU_REGISTRY/... reach an Instance on the host through the
+// Registry relay (ADR 0043). CI has no VM runtime, where the daemon pushes
+// from inside its VM. Podman machine pushes with `podman push
+// --tls-verify=false`, as Podman sends localhost registries HTTPS.
+func registryRelay(t *testing.T, ctx context.Context, rt string) {
+	requireTools(t, "docker", "gcloud")
+	requireBin(t)
+	h := startHost(t, ctx, "", "iam,ar")
+	c := newClients(t)
+	env := hosttest.ParseEnv(h.env(t))
+	c.load(env)
+	reg := env["GCPEMU_REGISTRY"]
+	if reg == "" {
+		t.Fatalf("gcpemu env sets no GCPEMU_REGISTRY:\n%s", h.env(t))
+	}
+	c.run(t, ctx, "gcloud", "artifacts", "repositories", "create", "relay", "--repository-format=docker", "--location=us-central1")
+	waitRegistryRelay(t, ctx, h)
+
+	ref := reg + "/us-central1-docker.pkg.dev/" + project + "/relay/busybox:prerelease"
+	cli, push := "docker", []string{"push", ref}
+	pull := []string{"pull", ref}
+	if tableRow(rt) == "Podman machine" {
+		requireTools(t, "podman")
+		cli, push = "podman", []string{"push", "--tls-verify=false", ref}
+		pull = []string{"pull", "--tls-verify=false", ref}
+	}
+	c.run(t, ctx, cli, "pull", relayImage)
+	c.run(t, ctx, cli, "tag", relayImage, ref)
+	c.run(t, ctx, cli, push...)
+	c.run(t, ctx, cli, "rmi", ref)
+	t.Cleanup(func() { _ = exec.Command(cli, "rmi", ref).Run() })
+	c.run(t, ctx, cli, pull...)
+}
+
+// waitRegistryRelay waits until doctor reports the Instance's Registry
+// relay running, which it starts in the background, and fails t when it
+// reports it skipped or failed.
+func waitRegistryRelay(t *testing.T, ctx context.Context, h *hostInstance) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		out, _ := h.gcpemu(ctx, "doctor")
+		for line := range strings.Lines(out) {
+			switch {
+			case strings.HasPrefix(line, "[ok  ] Registry relay:"):
+				return
+			case strings.Contains(line, "Registry relay") && strings.HasPrefix(line, "[FAIL]"):
+				t.Fatalf("gcpemu doctor reports the Registry relay not running:\n%s", out)
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("gcpemu doctor does not report the Registry relay running after 2 minutes:\n%s", out)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
