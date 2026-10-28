@@ -154,7 +154,7 @@ The Managed container through which an Instance on a VM runtime reaches its othe
 _Avoid_: bridge container, tunnel
 
 **Registry relay**:
-The Managed container that gives VM-side clients an Instance's registry at the registry's own loopback address inside a VM runtime's VM, so they push and pull with the same image references as Host clients.
+The Managed container that gives VM-side clients the registry of an Instance on the host at the registry's own loopback address inside a VM runtime's VM, so they push and pull with the same image references as Host clients. A Containerized Instance needs none: its Published registry port already reaches them.
 _Avoid_: registry proxy, registry forwarder
 
 **Bridge gateway**:
@@ -186,7 +186,7 @@ The address a GKE `LoadBalancer` Service reports as its own, at which host clien
 _Avoid_: external IP, LB address
 
 **Published port**:
-A port that a Containerized Instance's own container publishes to the host. On a VM runtime it is the only way host clients reach a Containerized Instance's GKE `LoadBalancer` Services, and on any runtime it is the only way they reach its forwarding rules (ADR 0012). Its host side, not the container port, is what the Instance reports.
+A port that a Containerized Instance's own container publishes to the host. On a VM runtime it is the only way host clients reach a Containerized Instance's GKE `LoadBalancer` Services, and on any runtime it is the only way they reach its forwarding rules (ADR 0012). Its host side, not the container port, is what the Instance reports. On a VM runtime the runtime binds it inside the VM too, so VM-side clients reach it at the same `localhost` address as host clients.
 _Avoid_: exposed port, mapped port
 
 **Own port**:

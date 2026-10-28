@@ -15,4 +15,4 @@ On a VM runtime, `docker push` and `podman push` are done by the runtime's daemo
 - OrbStack and Colima forward a host-network container's port to the host, and whichever side binds first holds it. The Instance binds its host registry listeners before starting the Registry relay, and removes a leftover Registry relay before binding.
 - Podman doesn't treat `localhost` as insecure, so Podman machine users need `podman push --tls-verify=false` or a `registries.conf` entry inside the machine. The Instance prints the step but never edits the VM.
 - CI has no VM runtime, so the Pre-release host checks push with each Required runtime's own CLI.
-- A Containerized Instance on a VM runtime is not covered yet; it never starts the VM relay (ADR 0012).
+- A Containerized Instance needs no Registry relay (#835). The runtime binds its Published registry port inside the VM, where VM-side clients reach it at the same `localhost` address as Host clients, and a relay there would only compete with that binding. The Pre-release host checks push to a Containerized Instance's registry on each Required runtime, and a runtime where that fails gets its own issue.
