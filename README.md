@@ -697,7 +697,11 @@ says what holds it. Podman sends `localhost` registries HTTPS, so on Podman mach
 `gcpemu doctor` prints that step. OrbStack and Colima forward a port taken inside their VM to the
 host too, so the Instance binds its registry port on the host before starting the relay, and
 removes a relay that a crashed run left behind first. A Containerized Instance has no Registry
-relay yet (#835).
+relay yet (#835), so on a VM runtime its `$GCPEMU_REGISTRY` address is for host clients only: the
+runtime's own `docker push` and `docker pull` (and `podman push`) are VM-side clients and can't
+reach it. Push from the host instead, for example `docker save -o image.tar REF` and then
+`crane push --insecure image.tar REF`. When an Instance on the host started without the relay,
+VM-side pushes reach whatever holds the port in the VM instead, so push from the host the same way.
 
 When a subnetwork's range overlaps another network on the host, its container network runs on a
 free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
@@ -1627,7 +1631,7 @@ Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus 
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
 clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.
 That address works for a VM runtime's own `docker push` too, through the Registry relay (see
-"Container runtime").
+"Container runtime"), except on a Containerized Instance (#835).
 
 `gcpemu env` also sets `CLOUDSDK_CORE_UNIVERSE_DOMAIN=gcpemu.invalid`, in Host mode too. A gcloud
 API with no `CLOUDSDK_API_ENDPOINT_OVERRIDES_<API>` then goes to `<api>.gcpemu.invalid`, which
