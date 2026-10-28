@@ -215,7 +215,9 @@ hit and miss totals survive a purge and are cleared by `gcpemu reset`.
 Its Artifact Registry view lists repositories in every location by asking each one in turn, as
 the API lists one location at a time. Deleting a digest deletes the tags on it too
 (`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when Host mode is
-ready and the registry port (`127.0.0.1:4561/LOCATION-docker.pkg.dev/...`) otherwise.
+ready and the registry port (`127.0.0.1:4561/LOCATION-docker.pkg.dev/...`) otherwise. On a VM
+runtime, the runtime's own `docker pull` can't reach a Containerized Instance's registry port yet
+(see "Container runtime", #835).
 Its Cloud DNS view edits record sets only through `changes.create` (an edit deletes and re-adds
 the record set in one change), and deleting a zone first deletes its record sets in one change.
 Its query box asks `GET /_emu/v1/dns/query?name=N&type=T[&network=projects/P/global/networks/V]`,
