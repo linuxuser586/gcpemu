@@ -1028,10 +1028,21 @@ anonymous calls only; on private nodes they need Cloud NAT. A pod that sets `dns
 keeps its own DNS, and a `dnsConfig` of its own is merged in. The label does nothing in
 `kube-system` or with `gcpemu.dev/inject=disabled` (ADR 0019).
 
+The pod's own containers do trust the CA, so one that reads a bucket the Instance doesn't have,
+such as a public one on real Cloud Storage, gets 404 `NoSuchBucket` from the Google front end
+instead. Playwright's browser download fails this way, since `cdn.playwright.dev` redirects to the
+`chrome-for-testing-public` bucket, and so does the Go module proxy, which redirects to
+`proxy-golang-org-prod`. The fix is the same `gcpemu.dev/googleapis=real` label on that pod. Its
+`googleapis.com` calls are then Escaped requests, as above, so it loses the emulated
+`googleapis.com` Services and the Instance's Workload Identity tokens. A workload that needs both
+public buckets and the emulated Services should download in a separate labelled pod, or at image
+build time. A pod doesn't get a Read-through: that applies only to clients of `--gfe-bind`
+(ADR 0019, ADR 0021).
+
 ```yaml
 metadata:
   labels:
-    gcpemu.dev/googleapis: real   # e.g. on the BuildKit pod
+    gcpemu.dev/googleapis: real   # e.g. on the BuildKit pod or a Playwright download pod
 ```
 
 **Host mode** (`gcpemu start --host-mode`, Linux hosts only: `start` refuses it on macOS and Windows,
