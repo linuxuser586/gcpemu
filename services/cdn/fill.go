@@ -28,6 +28,7 @@ type fillWriter struct {
 	stale         *entry
 	staleMeta     *entryMeta
 	rangeStripped bool
+	noStore       bool // NoStore: never store, whatever the cache mode
 
 	mode   int
 	status int
@@ -61,6 +62,11 @@ func (f *fillWriter) WriteHeader(code int) {
 			return
 		}
 	}
+	if f.noStore {
+		f.d = no("no-store")
+		f.pass()
+		return
+	}
 	f.d = f.q.p.decide(f.q.r, code, f.header, f.q.signed, now)
 	if f.d.cacheable && f.d.ttl == 0 && f.header.Get("Etag") == "" && f.header.Get("Last-Modified") == "" {
 		// Always stale and impossible to revalidate: storing is useless.
@@ -77,6 +83,24 @@ func (f *fillWriter) WriteHeader(code int) {
 		return
 	}
 	f.pass()
+}
+
+// NoStore keeps the response the origin is about to write to w out of the
+// cache, whatever the cache mode (FORCE_CACHE_ALL ignores no-store). It
+// finds the cache fill through w's Unwrap chain, and does nothing when w
+// isn't one. Call it before writing the header.
+func NoStore(w http.ResponseWriter) {
+	for w != nil {
+		if f, ok := w.(*fillWriter); ok {
+			f.noStore = true
+			return
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
 }
 
 // pass switches to streaming the response to the client.

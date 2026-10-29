@@ -23,8 +23,9 @@ import (
 // The request pipeline of a frontend: TLS termination with SNI/certificate
 // map selection and SSL policy (FR-LB-004, FR-LB-009), URL map routing
 // (FR-LB-003), redirects, header actions with variables, then the backend
-// service or bucket, optionally behind Cloud CDN (FR-CDN-001), and an
-// access log entry per request (FR-LB-010).
+// service or bucket with its custom error responses (FR-LB-012),
+// optionally behind Cloud CDN (FR-CDN-001), and an access log entry per
+// request (FR-LB-010).
 
 // reqState carries per-request facts for header variables and logs.
 type reqState struct {
@@ -42,6 +43,8 @@ type reqState struct {
 	details string         // statusDetails
 	backend string         // backend endpoint ip:port
 	bLat    time.Duration
+	// override is the overrideResponseCode served (0 when none).
+	override int
 
 	logEnable bool
 	sample    float64
@@ -252,7 +255,7 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 		if rs.logEnable {
 			rs.sample = conf.LogConfig.SampleRate
 		}
-		origin := bs.handler(rs, res.Action)
+		origin := d.errorPolicy(cfg, rs, bs.handler(rs, res.Action))
 		// Cloud CDN passes protocol switches (WebSockets) to the backend.
 		if conf.EnableCDN && r.Header.Get("Upgrade") == "" {
 			if c := d.s.cdnCache(); c != nil {
@@ -276,7 +279,7 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 			applyCustomHeaders(rh, b.CustomResponseHeaders, rs)
 			applyResponseActions(rh, res.HeaderActions, rs)
 		}
-		origin := d.bucketHandler(rs, b)
+		origin := d.errorPolicy(cfg, rs, d.bucketHandler(rs, b))
 		if b.EnableCdn {
 			if c := d.s.cdnCache(); c != nil {
 				rs.cdnOn = true

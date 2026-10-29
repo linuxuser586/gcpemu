@@ -428,6 +428,7 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | FR-LB-009 | LB frontend mTLS (client cert validation at the LB via server TLS policy). | S |
 | FR-LB-010 | Access logs per request in Cloud Logging `httpRequest` JSON shape, including `statusDetails` and backend latency. | M |
 | FR-LB-011 | Cloud Armor security policies. | C |
+| FR-LB-012 | URL map `customErrorResponsePolicy` on global external Application Load Balancers (`EXTERNAL_MANAGED`): each backend status is checked from the route or path rule, to the path matcher's default, to the URL map's default, and within one policy an exact code beats a class (`4xx`, `5xx`); the error page is fetched from a backend bucket or backend service and served with `overrideResponseCode`. It applies only to responses from backends, not to the load balancer's own errors or redirects, and not to requests with `Authorization`. With Cloud CDN, the error page is cached under the requested URL. | M |
 
 ### 5.9 Cloud CDN
 

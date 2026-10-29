@@ -310,3 +310,73 @@ func BenchmarkRoute(b *testing.B) {
 		rt.Route(req, func(int64) int64 { return 0 })
 	}
 }
+
+// TestErrorRule is FR-LB-012: each status is checked from the route or
+// path rule, to the path matcher's default, to the URL map's default; the
+// first level with a matching rule wins, and an exact code beats a class.
+func TestErrorRule(t *testing.T) {
+	pol := func(svc string, rules ...*compute.CustomErrorResponsePolicyCustomErrorResponseRule) *compute.CustomErrorResponsePolicy {
+		return &compute.CustomErrorResponsePolicy{ErrorService: svc, ErrorResponseRules: rules}
+	}
+	rule := func(path string, override int64, codes ...string) *compute.CustomErrorResponsePolicyCustomErrorResponseRule {
+		return &compute.CustomErrorResponsePolicyCustomErrorResponseRule{MatchResponseCodes: codes, Path: path, OverrideResponseCode: override}
+	}
+	m := &compute.UrlMap{
+		Name: "m", DefaultService: "default",
+		DefaultCustomErrorResponsePolicy: pol("map-errors", rule("/map-5xx", 503, "5xx")),
+		HostRules: []*compute.HostRule{
+			{Hosts: []string{"routes.test"}, PathMatcher: "routes"},
+			{Hosts: []string{"paths.test"}, PathMatcher: "paths"},
+			{Hosts: []string{"plain.test"}, PathMatcher: "plain"},
+		},
+		PathMatchers: []*compute.PathMatcher{
+			{Name: "routes", DefaultService: "default",
+				DefaultCustomErrorResponsePolicy: pol("pm-errors", rule("/pm-4xx", 0, "4xx"), rule("/pm-404", 200, "404")),
+				RouteRules: []*compute.HttpRouteRule{
+					{Priority: 1, MatchRules: []*compute.HttpRouteRuleMatch{{PrefixMatch: "/spa"}}, Service: "bucket",
+						CustomErrorResponsePolicy: pol("bucket", rule("/index.html", 200, "404"))},
+					{Priority: 2, MatchRules: []*compute.HttpRouteRuleMatch{{PrefixMatch: "/"}}, Service: "default"},
+				}},
+			{Name: "paths", DefaultService: "default",
+				PathRules: []*compute.PathRule{{Paths: []string{"/spa/*"}, Service: "bucket",
+					CustomErrorResponsePolicy: pol("bucket", rule("/index.html", 200, "404"))}}},
+			{Name: "plain", DefaultService: "default"},
+		},
+	}
+	rt, err := Compile(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		host, path string
+		status     int
+		svc, page  string // "" when no rule applies
+	}{
+		{"routes.test", "/spa/settings", 404, "bucket", "/index.html"},
+		{"routes.test", "/spa/settings", 503, "map-errors", "/map-5xx"},
+		{"routes.test", "/spa/settings", 401, "pm-errors", "/pm-4xx"},
+		{"routes.test", "/other", 404, "pm-errors", "/pm-404"},
+		{"routes.test", "/other", 401, "pm-errors", "/pm-4xx"},
+		{"routes.test", "/other", 302, "", ""},
+		{"paths.test", "/spa/x", 404, "bucket", "/index.html"},
+		{"paths.test", "/spa/x", 500, "map-errors", "/map-5xx"},
+		{"paths.test", "/elsewhere", 404, "", ""},
+		{"plain.test", "/", 502, "map-errors", "/map-5xx"},
+		{"nohost.test", "/", 500, "map-errors", "/map-5xx"},
+		{"nohost.test", "/", 404, "", ""},
+	} {
+		res := rt.Route(&Request{Host: tc.host, Path: tc.path}, nil)
+		r, svc := res.ErrorRule(tc.status)
+		page := ""
+		if r != nil {
+			page = r.Path
+		}
+		if svc != tc.svc || page != tc.page {
+			t.Errorf("%s%s %d: rule %q from %q, want %q from %q", tc.host, tc.path, tc.status, page, svc, tc.page, tc.svc)
+		}
+	}
+	none, _ := Compile(&compute.UrlMap{Name: "n", DefaultService: "default"})
+	if r, _ := none.Route(&Request{Host: "x", Path: "/"}, nil).ErrorRule(404); r != nil {
+		t.Errorf("map without policies matched %+v", r)
+	}
+}
