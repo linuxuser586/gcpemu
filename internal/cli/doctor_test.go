@@ -750,7 +750,8 @@ func TestReportBuildDaemon(t *testing.T) {
 
 // doctor reports a running Instance's Registry relay (ADR 0043): passing
 // while it runs, with Podman machine's step, and failing with the fix when
-// it was skipped or failed.
+// it was skipped or failed. A Containerized Instance's is off, with
+// Podman machine's step too (#835).
 func TestReportRegistryRelay(t *testing.T) {
 	for _, tc := range []struct {
 		body  string
@@ -765,6 +766,8 @@ func TestReportRegistryRelay(t *testing.T) {
 		{`{"state":"failed","reason":"boom"}`, []bool{false}, "failed to start, so the runtime's own docker push can't reach the registry: boom", "log", ""},
 		{`{"state":"off","reason":"the runtime's daemon shares the host's loopback"}`, nil, "", "", "[--  ] Registry relay: off (the runtime's daemon shares the host's loopback)"},
 		{`{"state":"starting"}`, nil, "", "", "[--  ] Registry relay: starting"},
+		{`{"state":"off","reason":"a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561)"}`, nil, "", "", "[--  ] Registry relay: off (a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561))"},
+		{`{"state":"off","reason":"a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561)","podman":"run podman push --tls-verify=false"}`, nil, "", "", "(-p 127.0.0.1:4561:4561))\n[WARN] Podman machine pushes to the registry over HTTPS by default\n       fix: run podman push --tls-verify=false"},
 	} {
 		var oks []bool
 		var whats, fixes []string

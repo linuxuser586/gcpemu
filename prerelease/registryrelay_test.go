@@ -34,7 +34,13 @@ func registryRelay(t *testing.T, ctx context.Context, rt string) {
 	c.run(t, ctx, "gcloud", "artifacts", "repositories", "create", "relay", "--repository-format=docker", "--location=us-central1")
 	waitRegistryRelay(t, ctx, h)
 
-	ref := reg + "/us-central1-docker.pkg.dev/" + project + "/relay/busybox:prerelease"
+	pushPull(t, ctx, c, rt, reg+"/us-central1-docker.pkg.dev/"+project+"/relay/busybox:prerelease")
+}
+
+// pushPull pushes relayImage to ref with the runtime's own CLI, removes
+// it and pulls it back.
+func pushPull(t *testing.T, ctx context.Context, c *clients, rt, ref string) {
+	t.Helper()
 	cli, push := "docker", []string{"push", ref}
 	pull := []string{"pull", ref}
 	if tableRow(rt) == "Podman machine" {
@@ -48,6 +54,40 @@ func registryRelay(t *testing.T, ctx context.Context, rt string) {
 	c.run(t, ctx, cli, "rmi", ref)
 	t.Cleanup(func() { _ = exec.Command(cli, "rmi", ref).Run() })
 	c.run(t, ctx, cli, pull...)
+}
+
+// registryPort is the registry's default port, which a Containerized
+// Instance publishes at the same host port.
+const registryPort = "4561"
+
+// containerizedRegistryStep is macOS step 9: the release's image as a
+// Containerized Instance with Artifact Registry, its registry port
+// published at the same host port, then containerizedRegistry.
+func containerizedRegistryStep(t *testing.T, ctx context.Context, rt string) {
+	requireTools(t, "docker", "gcloud")
+	image := releaseImage(t)
+	hosttest.RunEmulator(t, container, image, "", containerArgs(t, rt, registryPort), "--services", "iam,ar")
+	containerizedRegistry(t, ctx, rt)
+}
+
+// containerizedRegistry is step 9 of both suites: the runtime's own push
+// and pull of $GCPEMU_REGISTRY/... reach the registry of the Containerized
+// Instance in container, whose Published registry port VM-side clients
+// reach with no Registry relay (#835).
+func containerizedRegistry(t *testing.T, ctx context.Context, rt string) {
+	out, _ := exec.CommandContext(ctx, "docker", "exec", container, "/gcpemu", "doctor").CombinedOutput()
+	want := []string{"[--  ] Registry relay: off (a Containerized Instance's Published registry port " + registryPort}
+	if tableRow(rt) == "Podman machine" {
+		want = append(want, "[WARN] Podman machine pushes to the registry over HTTPS by default")
+	}
+	requireDoctor(t, string(out), want...)
+	c := containerClients(t)
+	reg := c.vars["GCPEMU_REGISTRY"]
+	if reg != "127.0.0.1:"+registryPort {
+		t.Fatalf("gcpemu env sets GCPEMU_REGISTRY=%q; want 127.0.0.1:%s:\n%s", reg, registryPort, containerEnv(t))
+	}
+	c.run(t, ctx, "gcloud", "artifacts", "repositories", "create", "published", "--repository-format=docker", "--location=us-central1")
+	pushPull(t, ctx, c, rt, reg+"/us-central1-docker.pkg.dev/"+project+"/published/busybox:prerelease")
 }
 
 // waitRegistryRelay waits until doctor reports the Instance's Registry

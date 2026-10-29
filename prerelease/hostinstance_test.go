@@ -61,6 +61,7 @@ func hostInstanceChecks(t *testing.T, rt string) {
 	step(t, rt, "6-resolver-routes", 30*time.Minute, resolverRoutesStep)
 	step(t, rt, "7-vm-relay", 15*time.Minute, vmRelay)
 	step(t, rt, "8-registry-relay", 15*time.Minute, func(t *testing.T, ctx context.Context) { registryRelay(t, ctx, rt) })
+	step(t, rt, "9-containerized-registry", 30*time.Minute, func(t *testing.T, ctx context.Context) { containerizedRegistryStep(t, ctx, rt) })
 }
 
 // doctor returns `gcpemu doctor`'s output.

@@ -98,6 +98,8 @@ type registryRelayDeps struct {
 	registry func() string
 	// runtime connects to the container runtime.
 	runtime func(ctx context.Context) (*runtime.Manager, error)
+	// containerized says whether the emulator runs in a container on rt.
+	containerized func(rt *runtime.Manager) bool
 	// probe guesses whether the runtime's host network is a VM's from the
 	// default bridge network, before the services network exists, so that
 	// an Instance elsewhere creates none.
@@ -130,8 +132,14 @@ func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayS
 	if err != nil {
 		return RegistryRelayStatus{State: RegistryRelayFailed, Reason: "connecting to the container runtime: " + err.Error()}
 	}
-	if rt.Self() != "" {
-		return RegistryRelayStatus{State: RegistryRelayOff, Reason: "a Containerized Instance has no Registry relay yet (#835)"}
+	if d.containerized(rt) {
+		// The runtime binds the Published registry port inside its VM too,
+		// where VM-side clients reach it at the Host clients' address.
+		st := RegistryRelayStatus{State: RegistryRelayOff, Reason: fmt.Sprintf("a Containerized Instance's Published registry port %s reaches VM-side clients when published at the same host port (-p 127.0.0.1:%s:%s)", ps, ps, ps)}
+		if rt.Info.Name == "podman" && rt.VM.On {
+			st.Podman = podmanStep(ps)
+		}
+		return st
 	}
 	if off := vmSideOff(d.probe(ctx, rt)); off != "" {
 		return RegistryRelayStatus{State: RegistryRelayOff, Reason: off}
@@ -200,6 +208,9 @@ func (in *Instance) startRegistryRelay() {
 		st := startRegistryRelay(r.ctx, registryRelayDeps{
 			registry: func() string { return in.Env.Endpoints.Get("ar") },
 			runtime:  in.containers.Runtime,
+			containerized: func(rt *runtime.Manager) bool {
+				return rt.Self() != ""
+			},
 			probe: func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision {
 				return vmrelay.Decide(false, vmrelay.DefaultGateway(ctx, rt.Client))
 			},
@@ -225,15 +236,17 @@ func (in *Instance) startRegistryRelay() {
 		switch st.State {
 		case RegistryRelayRunning:
 			log.Info("VM-side clients reach the registry at " + st.Listen + " inside the runtime's VM")
-			if st.Podman != "" {
-				log.Warn("Podman machine pushes to the registry over HTTPS by default; "+st.Podman, "registry", st.Listen)
-			}
 		case RegistryRelaySkipped:
 			log.Warn("the runtime's own docker push can't reach the registry: "+st.Reason, "fix", st.Fix)
 		case RegistryRelayFailed:
 			log.Warn("the runtime's own docker push can't reach the registry: the Registry relay failed to start", "err", st.Reason)
 		default:
 			log.Debug("no Registry relay: " + st.Reason)
+		}
+		// A Containerized Instance on Podman machine has the step with
+		// its relay off (#835).
+		if st.Podman != "" && (st.State == RegistryRelayRunning || st.State == RegistryRelayOff) {
+			log.Warn("Podman machine pushes to the registry over HTTPS by default; " + st.Podman)
 		}
 	})
 }

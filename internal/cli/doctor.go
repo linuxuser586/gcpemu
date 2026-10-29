@@ -549,9 +549,6 @@ func reportRegistryRelay(out io.Writer, report func(bool, string, string), body 
 	switch v.State {
 	case instance.RegistryRelayRunning:
 		report(true, "Registry relay: VM-side clients, such as the runtime's own docker push, reach the registry at "+v.Listen+" inside the runtime's VM", "")
-		if v.Podman != "" {
-			fmt.Fprintf(out, "[WARN] Podman machine pushes to the registry over HTTPS by default\n       fix: %s\n", v.Podman)
-		}
 	case instance.RegistryRelaySkipped:
 		report(false, "Registry relay: "+v.Reason+cant, v.Fix)
 	case instance.RegistryRelayFailed:
@@ -562,6 +559,11 @@ func reportRegistryRelay(out io.Writer, report func(bool, string, string), body 
 		if v.Reason != "" {
 			fmt.Fprintf(out, "[--  ] Registry relay: off (%s)\n", v.Reason)
 		}
+	}
+	// A Containerized Instance on Podman machine has the step with its
+	// relay off (#835).
+	if v.Podman != "" && (v.State == instance.RegistryRelayRunning || v.State == instance.RegistryRelayOff) {
+		fmt.Fprintf(out, "[WARN] Podman machine pushes to the registry over HTTPS by default\n       fix: %s\n", v.Podman)
 	}
 }
 

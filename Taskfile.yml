@@ -294,11 +294,11 @@ tasks:
   # RUNTIMES, docker contexts (default: the Required runtimes). Every OS
   # runs bin/gcpemu on the host, so build it first. On macOS loopback and
   # dns install need sudo, whose timestamp the tests keep alive; on Linux
-  # they run only for the runtimes named. On Windows they build the
-  # release's image unless IMAGE names one, and dns install shows UAC
-  # dialogs. Each runtime's VLAN result goes into README.md.
+  # they run only for the runtimes named. macOS and Windows build the
+  # release's image unless IMAGE names one; on Windows dns install shows
+  # UAC dialogs. Each runtime's VLAN result goes into README.md.
   prerelease:
-    desc: Run the Pre-release host checks on macOS or Windows (RUNTIMES=<context,...>, IMAGE=<ref> on Windows)
+    desc: Run the Pre-release host checks on macOS or Windows (RUNTIMES=<context,...>, IMAGE=<ref>)
     env:
       GCPEMU_PRERELEASE_RUNTIMES: "{{.RUNTIMES}}"
       GCPEMU_PRERELEASE_IMAGE: "{{.IMAGE}}"

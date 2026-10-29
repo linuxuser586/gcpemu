@@ -215,9 +215,7 @@ hit and miss totals survive a purge and are cleared by `gcpemu reset`.
 Its Artifact Registry view lists repositories in every location by asking each one in turn, as
 the API lists one location at a time. Deleting a digest deletes the tags on it too
 (`versions.delete` with `force`). Pull commands name `LOCATION-docker.pkg.dev` when Host mode is
-ready and the registry port (`127.0.0.1:4561/LOCATION-docker.pkg.dev/...`) otherwise. On a VM
-runtime, the runtime's own `docker pull` can't reach a Containerized Instance's registry port yet
-(see "Container runtime", #835).
+ready and the registry port (`127.0.0.1:4561/LOCATION-docker.pkg.dev/...`) otherwise.
 Its Cloud DNS view edits record sets only through `changes.create` (an edit deletes and re-adds
 the record set in one change), and deleting a zone first deletes its record sets in one change.
 Its query box asks `GET /_emu/v1/dns/query?name=N&type=T[&network=projects/P/global/networks/V]`,
@@ -693,17 +691,19 @@ in the VM alike, with the same reference as `$GCPEMU_REGISTRY` and no `insecure-
 since Docker treats loopback registries as insecure. It listens on the Instance's registry port,
 so it follows `--port ar=PORT`. If something in the VM already listens there, such as a registry
 container with host networking, the Instance starts without the relay, warns, and `gcpemu doctor`
-says what holds it. Podman sends `localhost` registries HTTPS, so on Podman machine push with
+says what holds it. OrbStack and Colima forward a port taken inside their VM to the host too, so
+the Instance binds its registry port on the host before starting the relay, and removes a relay
+that a crashed run left behind first. When an Instance on the host started without the relay,
+VM-side pushes reach whatever holds the port in the VM instead, so push from the host, for example
+`docker save -o image.tar REF` and then `crane push --insecure image.tar REF`. A Containerized
+Instance needs no Registry relay: the runtime binds its Published registry port inside the VM too,
+where the runtime's own `docker push` reaches it (see "Container image").
+
+Podman sends `localhost` registries HTTPS, so on Podman machine push with
 `podman push --tls-verify=false`, or add `[[registry]]` with `location = "localhost:4561"` and
-`insecure = true` to `/etc/containers/registries.conf` inside the machine (`podman machine ssh`);
-`gcpemu doctor` prints that step. OrbStack and Colima forward a port taken inside their VM to the
-host too, so the Instance binds its registry port on the host before starting the relay, and
-removes a relay that a crashed run left behind first. A Containerized Instance has no Registry
-relay yet (#835), so on a VM runtime its `$GCPEMU_REGISTRY` address is for host clients only: the
-runtime's own `docker push` and `docker pull` (and `podman push`) are VM-side clients and can't
-reach it. Push from the host instead, for example `docker save -o image.tar REF` and then
-`crane push --insecure image.tar REF`. When an Instance on the host started without the relay,
-VM-side pushes reach whatever holds the port in the VM instead, so push from the host the same way.
+`insecure = true` to `/etc/containers/registries.conf` inside the machine (`podman machine ssh`).
+That goes for an Instance on the host and a Containerized Instance alike, and `gcpemu doctor`
+prints that step.
 
 When a subnetwork's range overlaps another network on the host, its container network runs on a
 free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
@@ -1276,6 +1276,13 @@ its own port when the container publishes it (`-p 127.0.0.1:28080:8080` gives
 no `GCPEMU_LB_*` variable; the
 emulator logs what to publish, `gcpemu doctor` lists it, and it is served once a port frees.
 
+To push images to a Containerized Instance's registry, publish the registry port at the same host
+port (`-p 127.0.0.1:4561:4561`, or the port `--port ar=PORT` gives it): `$GCPEMU_REGISTRY` is the
+container-side address, like every endpoint `gcpemu env` prints. On a VM runtime the runtime binds
+that port inside its VM too, so its own `docker push` and `docker pull` work against
+`$GCPEMU_REGISTRY` as well as the host's, with no `insecure-registries` entry. On Podman machine,
+see the Podman step under "Container runtime".
+
 A container on the host's network (`--network host`) isn't a Containerized Instance, and runs as
 on the host. When the runtime can't tell (no Docker socket, or it can't find the emulator's
 container), set `--containerized=false` to say so (see below).
@@ -1644,7 +1651,8 @@ Pointing gcloud at an instance needs nothing beyond `eval "$(gcpemu env)"` plus 
 example `echo owner > /tmp/tok; export CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/tmp/tok`. Registry
 clients log in to `$GCPEMU_REGISTRY` as `oauth2accesstoken` with `gcloud auth print-access-token`.
 That address works for a VM runtime's own `docker push` too, through the Registry relay (see
-"Container runtime"), except on a Containerized Instance (#835).
+"Container runtime"), or on a Containerized Instance through its Published registry port (see
+"Container image").
 
 `gcpemu env` also sets `CLOUDSDK_CORE_UNIVERSE_DOMAIN=gcpemu.invalid`, in Host mode too. A gcloud
 API with no `CLOUDSDK_API_ENDPOINT_OVERRIDES_<API>` then goes to `<api>.gcpemu.invalid`, which
