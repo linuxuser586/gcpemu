@@ -1065,7 +1065,11 @@ command to run there; Docker Desktop and OrbStack use the macOS keychain. Docker
 it only when it starts, so `ca install` and `ca uninstall` tell you to restart it. On Windows it
 adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
 which needs no administrator rights. Windows shows a security dialog to confirm the change, and
-another for `gcpemu ca uninstall`; choose Yes. `gcpemu ca rotate` replaces the CA in the browser NSS
+another for `gcpemu ca uninstall`; choose Yes. Windows' `curl.exe` (Schannel) also checks
+revocation: every certificate the Instance CA issues names an empty CRL that the API gateway
+serves at `http://<--bind address, or 127.0.0.1>:<gateway port>/ca.crl` (ADR 0046). The CRL is
+served only on the Instance's own host, so curl on another Windows machine reaching the Instance
+through `--gfe-bind` still needs `--ssl-revoke-best-effort`. `gcpemu ca rotate` replaces the CA in the browser NSS
 databases, and `gcpemu doctor` reports where it is trusted: the OS store, the browser NSS databases,
 and Docker's and containerd's registry trust; for a VM runtime it notes that it cannot check and
 repeats `ca install`'s advice. `ca install --cert FILE` and

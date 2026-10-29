@@ -66,28 +66,20 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 	changed := false
 	for _, obj := range s.loadAll(kindSSLCertificate, "") {
 		c := obj.(*computev1.SslCertificate)
-		if c.Type != "MANAGED" || c.Managed == nil || c.Managed.Status == "ACTIVE" {
+		if c.Type != "MANAGED" || c.Managed == nil {
+			continue
+		}
+		// An ACTIVE certificate stays authorized; it is only issued again
+		// once the Instance CA no longer counts its leaf as current (a CA
+		// rotation, or another CRL URL; ADR 0046).
+		reissue := c.Managed.Status == "ACTIVE"
+		if reissue && (s.env.CA == nil || s.env.CA.CurrentPEM([]byte(c.Certificate))) {
 			continue
 		}
 		path := relPath(c.SelfLink)
-		serving := s.servingIPs(path)
-		status := map[string]string{}
-		all := len(c.Managed.Domains) > 0
-		for _, d := range c.Managed.Domains {
-			st := "PROVISIONING"
-			if len(serving) > 0 {
-				rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-				for _, ip := range s.resolveA(rctx, d) {
-					if serving[ip] {
-						st = "ACTIVE"
-					}
-				}
-				cancel()
-			}
-			if st != "ACTIVE" {
-				all = false
-			}
-			status[d] = st
+		status, all := c.Managed.DomainStatus, len(c.Managed.Domains) > 0
+		if !reissue {
+			status, all = s.domainStatus(ctx, path, c.Managed.Domains)
 		}
 		next := jsonClone(c)
 		next.Managed.DomainStatus = status
@@ -138,6 +130,31 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 	}
 }
 
+// domainStatus reports, for each of domains, whether it resolves to an IP
+// serving certificate (path), and whether all of them do.
+func (s *Service) domainStatus(ctx context.Context, path string, domains []string) (status map[string]string, all bool) {
+	serving := s.servingIPs(path)
+	status = map[string]string{}
+	all = len(domains) > 0
+	for _, d := range domains {
+		st := "PROVISIONING"
+		if len(serving) > 0 {
+			rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			for _, ip := range s.resolveA(rctx, d) {
+				if serving[ip] {
+					st = "ACTIVE"
+				}
+			}
+			cancel()
+		}
+		if st != "ACTIVE" {
+			all = false
+		}
+		status[d] = st
+	}
+	return status, all
+}
+
 func equalStatus(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -176,6 +193,12 @@ func (s *Service) servingIPs(certificate string) map[string]bool {
 }
 
 // --- hooks for the certs service ---
+
+// ReissueManagedCerts runs a managed-certificate pass now, so that a CA
+// rotation issues every ACTIVE certificate again before it returns.
+func (s *Service) ReissueManagedCerts(ctx context.Context) { s.provisionManagedCerts(ctx) }
+
+var _ certs.ManagedCertReissuer = (*Service)(nil)
 
 // ForwardingRuleIPs returns the forwarding rule IPs of a project and their
 // mapped listener IPs (Certificate Manager load balancer authorization).

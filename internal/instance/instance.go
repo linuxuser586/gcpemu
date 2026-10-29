@@ -361,6 +361,15 @@ func (in *Instance) Services() []emu.Service { return in.services }
 // endpoints.json. A failing service is reported not-ready rather than
 // stopping the others (NFR-REL-003).
 func (in *Instance) Start(ctx context.Context) error {
+	// The gateway listens first: every leaf the Instance CA issues names
+	// the CRL on its port (ADR 0046), so the CA learns it before anything
+	// can issue one. Connections wait until Serve.
+	l, err := in.Env.ListenBind(in.Config.Port("gateway"), true)
+	if err != nil {
+		return fmt.Errorf("gateway listen %s: %w", net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway"))), err)
+	}
+	in.Env.Endpoints.Set("gateway", l.Addr().String())
+	in.Env.CA.SetCRLURL(ca.CRLURL(emu.Dialable(l.Addr().String())))
 	for _, s := range in.services {
 		if err := in.gw.Register(s); err != nil {
 			in.setFailed(s.Name(), err)
@@ -368,17 +377,13 @@ func (in *Instance) Start(ctx context.Context) error {
 		}
 	}
 	if err := in.delegate(); err != nil {
+		_ = l.Close()
 		return err
 	}
 	in.startManaged()
 	in.gw.HandleAdmin(newAdmin(in))
 	in.mountConsole()
 
-	l, err := in.Env.ListenBind(in.Config.Port("gateway"), true)
-	if err != nil {
-		return fmt.Errorf("gateway listen %s: %w", net.JoinHostPort(in.Config.Bind, strconv.Itoa(in.Config.Port("gateway"))), err)
-	}
-	in.Env.Endpoints.Set("gateway", l.Addr().String())
 	go func() {
 		if err := in.gw.Serve(l); err != nil {
 			in.Env.Log.Error("gateway stopped", "err", err)
