@@ -365,9 +365,13 @@ func (g *Gateway) HandleConsole(h http.Handler) {
 	g.mux.Handle("/console/", h)
 }
 
-// ServeHTTP dispatches gRPC, host-mode and path-routed requests, and
-// forwards those naming a Delegated Project.
+// ServeHTTP answers the Instance CA's CRL, dispatches gRPC, host-mode and
+// path-routed requests, and forwards those naming a Delegated Project.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if g.crlRequest(r) {
+		g.serveCRL(w, r)
+		return
+	}
 	markFrontend(r)
 	name, answered := g.delegation(w, r)
 	l := g.linker()

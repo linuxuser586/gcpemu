@@ -46,6 +46,10 @@ type CA struct {
 	pem   []byte
 	cache map[string]*tls.Certificate
 	now   func() time.Time
+	// crlURL is the CRL distribution point of every leaf (see SetCRLURL);
+	// crlNumber the number of the last CRL signed.
+	crlURL    string
+	crlNumber *big.Int
 }
 
 // Load opens the Instance CA in dir. instance names it. The CA is created
@@ -263,6 +267,9 @@ func (c *CA) Issue(l Leaf) (*tls.Certificate, error) {
 	}
 	c.mu.RLock()
 	parent, signer, rootDER := c.cert, c.key, c.cert.Raw
+	if c.crlURL != "" {
+		tmpl.CRLDistributionPoints = []string{c.crlURL}
+	}
 	c.mu.RUnlock()
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, signer)
 	if err != nil {

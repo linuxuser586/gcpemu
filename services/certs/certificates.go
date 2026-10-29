@@ -35,9 +35,6 @@ import (
 type keyRecord struct {
 	Chain string `json:"chain"`
 	Key   string `json:"key"`
-	// Issuer is the SHA-256 of the CA that issued a managed certificate,
-	// to re-issue after `gcpemu ca rotate`.
-	Issuer string `json:"issuer,omitempty"`
 }
 
 var certScopes = map[string]bool{"DEFAULT": true, "EDGE_CACHE": true, "ALL_REGIONS": true, "CLIENT_AUTH": true}
@@ -318,6 +315,13 @@ type resolver interface {
 	Resolve(ctx context.Context, name string, qtype uint16) ([]mdns.RR, error)
 }
 
+// ManagedCertReissuer is optionally implemented by the "lb" service: it
+// issues again, before returning, every managed SslCertificate whose leaf
+// the Instance CA no longer counts as current, as after a CA rotation.
+type ManagedCertReissuer interface {
+	ReissueManagedCerts(ctx context.Context)
+}
+
 // ForwardingRuleIPs is optionally implemented by the "lb" service for
 // load balancer authorization of managed certificates: the IP addresses of
 // the project's forwarding rules.
@@ -325,18 +329,10 @@ type ForwardingRuleIPs interface {
 	ForwardingRuleIPs(ctx context.Context, project string) []string
 }
 
-// caID identifies the current instance CA.
-func (s *Service) caID() string {
-	if s.env.CA == nil {
-		return ""
-	}
-	sum := sha256.Sum256(s.env.CA.Certificate().Raw)
-	return hex.EncodeToString(sum[:])
-}
-
 // reconcileCert advances a managed certificate: PROVISIONING → ACTIVE once
-// authorized, and re-issues ACTIVE certificates after a CA rotation. It
-// reports whether the stored certificate changed.
+// authorized, and re-issues ACTIVE certificates the Instance CA no longer
+// counts as current: after a CA rotation, or once the CRL URL changes
+// (ADR 0046). It reports whether the stored certificate changed.
 func (s *Service) reconcileCert(ctx context.Context, name string) bool {
 	var o obj
 	var rec keyRecord
@@ -355,7 +351,7 @@ func (s *Service) reconcileCert(ctx context.Context, name string) bool {
 	m := c.Managed
 	switch m.State {
 	case "ACTIVE":
-		if rec.Issuer == s.caID() {
+		if s.env.CA.CurrentPEM([]byte(rec.Chain)) {
 			return false
 		}
 	case "PROVISIONING":
@@ -395,7 +391,7 @@ func (s *Service) reconcileCert(ctx context.Context, name string) bool {
 		if err != nil {
 			return false
 		}
-		newRec = &keyRecord{Chain: string(chain), Key: string(key), Issuer: s.caID()}
+		newRec = &keyRecord{Chain: string(chain), Key: string(key)}
 		m.State = "ACTIVE"
 		m.ProvisioningIssue = nil
 		upd["pemCertificate"] = string(chain)

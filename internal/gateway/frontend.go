@@ -46,9 +46,15 @@ func connContext(ctx context.Context, c net.Conn) context.Context {
 // markFrontend sets X-Forwarded-Proto: https on requests that came through
 // the Google front end, replacing any value the client sent.
 func markFrontend(r *http.Request) {
-	if via, _ := r.Context().Value(frontKey{}).(bool); via {
+	if viaFrontend(r) {
 		r.Header.Set("X-Forwarded-Proto", "https")
 	}
+}
+
+// viaFrontend reports whether r came through the Google front end.
+func viaFrontend(r *http.Request) bool {
+	via, _ := r.Context().Value(frontKey{}).(bool)
+	return via
 }
 
 // frontConn is a connection handed over by ServeFrontend; done is closed
