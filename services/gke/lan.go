@@ -53,18 +53,23 @@ func (s *Service) lanSANs() []string {
 // serveLAN serves the API server at target on every --gke-bind address,
 // trying port first, and returns the port to try next time. An address it
 // cannot serve is logged and skipped. It replaces the cluster's previous
-// listeners.
+// listeners, unless they serve the same target: a restarted Cluster
+// server's endpoint then neither unbinds nor moves (ADR 0045).
 func (s *Service) serveLAN(ctx context.Context, d *deps, key, cluster string, port int, target string) int {
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	if len(rt.lan) > 0 && rt.lanTarget == target {
+		_, port = netplane.HostPort(rt.lan[0].Addr())
+		return port
+	}
 	s.closeLAN(rt)
 	binds := s.env.Config.GKEBind
 	if len(binds) == 0 {
 		return port
 	}
 	for _, ip := range binds {
-		ex, err := d.np.Expose("GKE cluster "+key, net.JoinHostPort(ip, strconv.Itoa(port)), target, true)
+		ex, err := d.np.Expose(endpointName(key), net.JoinHostPort(ip, strconv.Itoa(port)), target, true)
 		if err != nil {
 			s.env.Log.Warn("gke: cannot serve the Kubernetes API on --gke-bind address", "cluster", cluster, "address", ip, "err", s.env.ExplainBind(ctx, err))
 			continue
@@ -76,7 +81,7 @@ func (s *Service) serveLAN(ctx context.Context, d *deps, key, cluster string, po
 		rt.lanAddrs = append(rt.lanAddrs, ex.Addr())
 	}
 	if len(rt.lanAddrs) > 0 {
-		rt.lanName = "gke-lan:" + cluster
+		rt.lanName, rt.lanTarget = "gke-lan:"+cluster, target
 		s.env.Endpoints.Set(rt.lanName, strings.Join(rt.lanAddrs, ","))
 		s.env.Log.Info("gke: Kubernetes API exposed", "cluster", cluster, "address", strings.Join(rt.lanAddrs, ","))
 	}
@@ -92,7 +97,7 @@ func (s *Service) closeLAN(rt *clusterRT) {
 	if rt.lanName != "" {
 		s.env.Endpoints.Delete(rt.lanName)
 	}
-	rt.lan, rt.lanAddrs, rt.lanName = nil, nil, ""
+	rt.lan, rt.lanAddrs, rt.lanName, rt.lanTarget = nil, nil, "", ""
 }
 
 // lanServer returns the cluster's address on the --gke-bind address ip.

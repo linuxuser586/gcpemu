@@ -2,6 +2,7 @@ package gke
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -20,6 +22,9 @@ const (
 	// DEGRADED.
 	serverExitLimit  = 3
 	serverExitWindow = 10 * time.Minute
+	// waitRetry is the pause before waiting again for a Cluster server
+	// whose wait failed while it still ran.
+	waitRetry = time.Second
 )
 
 // serverStoppedError reports that a watched Cluster server exited.
@@ -49,14 +54,22 @@ type serverSupervisor struct {
 	degrade func(err error)
 }
 
-// run watches container id until ctx ends or the supervisor gives up.
+// run watches container id until ctx ends or the supervisor gives up. It
+// gives up with the last failure, and the last k3s log tail seen if that
+// failure has none.
 func (v *serverSupervisor) run(ctx context.Context, id string) {
 	var exits []time.Time
+	tail := ""
 	for {
 		err := v.wait(ctx, id)
 		for {
 			if ctx.Err() != nil {
 				return
+			}
+			if l := serverLogs(err); l != "" {
+				tail = l
+			} else if tail != "" {
+				err = fmt.Errorf("%w; the Cluster server's last log lines: %s", err, tail)
 			}
 			now := v.now()
 			exits = append(slices.DeleteFunc(exits, func(t time.Time) bool { return now.Sub(t) >= serverExitWindow }), now)
@@ -74,24 +87,23 @@ func (v *serverSupervisor) run(ctx context.Context, id string) {
 	}
 }
 
+// serverLogs returns the k3s log tail err carries, if any.
+func serverLogs(err error) string {
+	var stopped *serverStoppedError
+	var exited *serverExitedError
+	switch {
+	case errors.As(err, &stopped):
+		return stopped.logs
+	case errors.As(err, &exited):
+		return exited.logs
+	}
+	return ""
+}
+
 // serverWatch is a running watch of a cluster's Cluster server.
 type serverWatch struct {
 	cancel context.CancelFunc
 	done   chan struct{}
-}
-
-// setServer records the cluster's ready Cluster server container.
-func (rt *clusterRT) setServer(id string) {
-	rt.mu.Lock()
-	rt.server = id
-	rt.mu.Unlock()
-}
-
-// watching reports whether the cluster's Cluster server is watched.
-func (rt *clusterRT) watching() bool {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.watch != nil
 }
 
 // watchServer watches the cluster's Cluster server on ctx's background
@@ -163,20 +175,35 @@ func (s *Service) supervisor(d *deps, key string) *serverSupervisor {
 }
 
 // awaitServerExit blocks until the Cluster server, container id, exits
-// and returns why, or nil once ctx ends. The exit is forgotten by the
-// runtime's start record: the Service starts the server again, so it is
-// not Disrupted.
+// and returns why, or nil once ctx ends. A wait that fails while the
+// container still runs, or while the runtime cannot say, is waited again
+// after waitRetry: the runtime's API failed, not the server. The exit is
+// forgotten by the runtime's start record: the Service starts the server
+// again, so it is not Disrupted.
 func awaitServerExit(ctx context.Context, d *deps, id string) error {
-	code, err := d.rt.WaitContainer(ctx, id)
-	if ctx.Err() != nil {
-		return nil
+	for {
+		code, err := d.rt.WaitContainer(ctx, id)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			ct, ierr := d.rt.InspectContainer(ctx, id)
+			if ierr == nil && ct.Running || ierr != nil && !errors.Is(ierr, runtime.ErrNotFound) {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(waitRetry):
+				}
+				continue
+			}
+		}
+		d.rt.ForgetStart(id)
+		if err != nil {
+			return fmt.Errorf("waiting for the Cluster server: %w", err)
+		}
+		_, logs, _ := containerExit(ctx, d.rt, id)
+		return &serverStoppedError{code: code, logs: logs}
 	}
-	d.rt.ForgetStart(id)
-	if err != nil {
-		return fmt.Errorf("waiting for the Cluster server: %w", err)
-	}
-	_, logs, _ := containerExit(ctx, d.rt, id)
-	return &serverStoppedError{code: code, logs: logs}
 }
 
 // restartServer starts the cluster's Cluster server again on its volume,
@@ -193,6 +220,8 @@ func (s *Service) restartServer(ctx context.Context, d *deps, key string) (strin
 	if err := s.bringUpServer(ctx, d, key, sn, rec.cluster().CurrentMasterVersion, true); err != nil {
 		return "", err
 	}
+	// The endpoint keeps its port unless the server's address changed.
+	s.writeKubeconfig()
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()

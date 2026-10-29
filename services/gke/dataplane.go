@@ -70,13 +70,16 @@ type clusterRT struct {
 	// has logged dropping.
 	otlpWarned sync.Map
 	syncs      sync.Map // SecretSync UID → syncState
-	// api serves the API server on the host's 127.0.0.1 on a VM runtime.
-	api *netplane.Exposed
-	// lan serves it on the --gke-bind addresses (lan.go), at lanAddrs,
-	// recorded as endpoint lanName.
-	lan      []*netplane.Exposed
-	lanAddrs []string
-	lanName  string
+	// api serves the API server, at apiTarget, on the host's 127.0.0.1 on
+	// a VM runtime.
+	api       *netplane.Exposed
+	apiTarget string
+	// lan serves it, at lanTarget, on the --gke-bind addresses (lan.go),
+	// at lanAddrs, recorded as endpoint lanName.
+	lan       []*netplane.Exposed
+	lanAddrs  []string
+	lanName   string
+	lanTarget string
 	// server is the ready Cluster server container, and watch its watch
 	// (serverwatch.go).
 	server string
@@ -98,7 +101,7 @@ func (s *Service) stopRT(rt *clusterRT) {
 func (rt *clusterRT) closeAPI() {
 	if rt.api != nil {
 		_ = rt.api.Close()
-		rt.api = nil
+		rt.api, rt.apiTarget = nil, ""
 	}
 }
 
@@ -699,19 +702,28 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 
 // serveAPI serves the API server at target on the host's 127.0.0.1,
 // through the VM relay, on port when it is free, and returns the address.
-// It replaces the cluster's previous listener.
+// It replaces the cluster's previous listener, unless that one serves the
+// same target: a restarted Cluster server's endpoint then neither unbinds
+// nor moves (ADR 0045).
 func (s *Service) serveAPI(d *deps, key string, port int, target string) (string, error) {
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	if rt.api != nil && rt.apiTarget == target {
+		return rt.api.Addr(), nil
+	}
 	rt.closeAPI()
-	ex, err := d.np.Expose("GKE cluster "+key, net.JoinHostPort(loopback.Host, strconv.Itoa(port)), target, true)
+	ex, err := d.np.Expose(endpointName(key), net.JoinHostPort(loopback.Host, strconv.Itoa(port)), target, true)
 	if err != nil {
 		return "", fmt.Errorf("serving the API server on %s: %w", loopback.Host, err)
 	}
-	rt.api = ex
+	rt.api, rt.apiTarget = ex, target
 	return ex.Addr(), nil
 }
+
+// endpointName names a cluster's API endpoint in the warning that it
+// cannot reach the Cluster server.
+func endpointName(key string) string { return "GKE cluster " + key }
 
 // serverExitedError reports that the control-plane container exited
 // before the API server became ready.

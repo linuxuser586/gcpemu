@@ -2,15 +2,24 @@ package gke
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // fakeServer drives a serverSupervisor: each exit sent on exits ends the
@@ -209,8 +218,9 @@ func TestSupervisorFailedRestartCounts(t *testing.T) {
 	if len(f.warned) != 2 || !strings.Contains(f.warned[1].Error(), "never ready") {
 		t.Errorf("warned %v; want the exit, then the failed restart", f.warned)
 	}
-	if len(f.degraded) != 1 || !strings.Contains(f.degraded[0].Error(), "pulling image") {
-		t.Errorf("degraded with %v; want the last failed restart", f.degraded)
+	// The last k3s log tail seen is kept when the last failure has none.
+	if len(f.degraded) != 1 || !strings.Contains(f.degraded[0].Error(), "pulling image") || !strings.Contains(f.degraded[0].Error(), "never ready") {
+		t.Errorf("degraded with %v; want the last failed restart and the last log tail", f.degraded)
 	}
 }
 
@@ -243,6 +253,20 @@ func (w *watched) restarted() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.restarts
+}
+
+// setServer records the cluster's ready Cluster server container.
+func (rt *clusterRT) setServer(id string) {
+	rt.mu.Lock()
+	rt.server = id
+	rt.mu.Unlock()
+}
+
+// watching reports whether the cluster's Cluster server is watched.
+func (rt *clusterRT) watching() bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.watch != nil
 }
 
 // watchTestServer gives a RUNNING test cluster a Cluster server, cp1,
@@ -373,5 +397,82 @@ func TestPurposefulStopsAreNotExits(t *testing.T) {
 				t.Error("still watching the server")
 			}
 		})
+	}
+}
+
+// A wait that fails while the Cluster server still runs, as when the
+// runtime's API drops a connection, is not an exit: the watch waits again
+// and reports the exit that follows, with its code and log tail.
+func TestAwaitServerExitRetriesRuntimeError(t *testing.T) {
+	var waits atomic.Int32
+	docker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exited := waits.Load() >= 2
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/containers/cp1/wait"):
+			if waits.Add(1) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message":"connection reset"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"StatusCode": 1})
+		case strings.HasSuffix(r.URL.Path, "/containers/cp1/json"):
+			status := map[bool]string{false: "running", true: "exited"}[exited]
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": "cp1", "Name": "/cp1",
+				"State": map[string]any{"Status": status, "Running": !exited, "ExitCode": 1}})
+		case strings.HasSuffix(r.URL.Path, "/containers/cp1/logs"):
+			msg := `level=fatal msg="Transaction commit failed"` + "\n"
+			hdr := make([]byte, 8)
+			hdr[0] = 2
+			binary.BigEndian.PutUint32(hdr[4:], uint32(len(msg)))
+			_, _ = w.Write(append(hdr, msg...))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer docker.Close()
+	cl, err := runtime.New("tcp://" + strings.TrimPrefix(docker.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &deps{rt: &runtime.Manager{Client: cl, InstanceID: "i1"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err = awaitServerExit(ctx, d, "cp1")
+	var stopped *serverStoppedError
+	if !errors.As(err, &stopped) || stopped.code != 1 || !strings.Contains(stopped.logs, "Transaction commit failed") {
+		t.Fatalf("awaitServerExit = %v; want the exit with code 1 and the log tail", err)
+	}
+	if n := waits.Load(); n != 2 {
+		t.Errorf("waited %d times; want 2", n)
+	}
+}
+
+// Serving the API server again at the same target keeps the listeners and
+// their ports, so a restarted Cluster server's endpoint neither unbinds
+// nor moves (#840); a new target is served anew.
+func TestServeAPIKeepsListenerForSameTarget(t *testing.T) {
+	s := newUnitService(t)
+	s.env.Config.GKEBind = []string{"127.0.0.1"}
+	d := &deps{np: netplane.New(nil, nil, "127.0.0.1", slog.New(slog.NewTextHandler(io.Discard, nil)))}
+	const key = "p/us-central1-a/c"
+	rt := s.rtFor(key)
+	t.Cleanup(func() { s.stopRT(rt) })
+	addr, err := s.serveAPI(d, key, 0, "10.0.0.2:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lan := s.serveLAN(context.Background(), d, key, "c", 0, "10.0.0.2:443")
+	api, lanEx := rt.api, rt.lan[0]
+	if again, err := s.serveAPI(d, key, 0, "10.0.0.2:443"); err != nil || again != addr || rt.api != api {
+		t.Errorf("serveAPI again = %s, %v; want the same listener at %s", again, err, addr)
+	}
+	if again := s.serveLAN(context.Background(), d, key, "c", lan, "10.0.0.2:443"); again != lan || rt.lan[0] != lanEx {
+		t.Errorf("serveLAN again = %d; want the same listener at %d", again, lan)
+	}
+	if _, err := s.serveAPI(d, key, 0, "10.0.0.3:443"); err != nil || rt.api == api {
+		t.Errorf("serveAPI at a new target = %v; want a new listener", err)
+	}
+	if s.serveLAN(context.Background(), d, key, "c", lan, "10.0.0.3:443"); rt.lan[0] == lanEx {
+		t.Error("serveLAN at a new target kept the old listener")
 	}
 }
