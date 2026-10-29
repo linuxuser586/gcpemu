@@ -25,6 +25,24 @@ To run the check locally after `task release`, on a host with Docker and Go, for
 docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist && task image-check IMAGE=gcpemu:check
 ```
 
+## Echo image
+
+Each release also publishes `docker.io/linuxuser586/gcpemu-echo`, the Conformance suite's test
+backend (#862), for amd64 and arm64. Its binaries are built once, in the `echo-dist` job into
+`dist-echo/`, so they aren't in the GitHub release, and it runs only once the release job has
+published. Before pushing, `echo-image-check` runs each platform's image on its own runner and
+checks that it answers on `PORT`; if either fails, the image isn't pushed, and the rest of the
+release is unaffected. Re-run the failed jobs once the cause is fixed.
+
+The first release that pushes it creates the Docker Hub repository. If the account makes new
+repositories private, make it public, or Cloud Run on GCP can't pull it.
+
+To run the check locally, on a host with Docker and Go, for the host's architecture:
+
+```sh
+task echo:dist && docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo && task echo:image-check IMAGE=gcpemu-echo:check
+```
+
 ## Signing
 
 The release job signs `SHA256SUMS` with keyless cosign (`SHA256SUMS.sigstore.json`), writes an
@@ -63,6 +81,9 @@ cosign verify \
 cosign verify \
   --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/linuxuser586/gcpemu:X.Y.Z
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/linuxuser586/gcpemu/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com docker.io/linuxuser586/gcpemu-echo:X.Y.Z
 ```
 
 ## Pre-release host checks

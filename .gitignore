@@ -10,3 +10,4 @@
 /console/playwright-report/
 /compat/sdk/java/target/
 /compat/kube-conformance-results/
+/dist-echo/
