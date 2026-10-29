@@ -244,8 +244,12 @@ The address a Containerized Instance's own container holds on a network it joins
 _Avoid_: Instance address (a Compute Engine instance's address), emulator IP
 
 **Abandoned Instance ID**:
-An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, so no future Instance will reclaim them.
+An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, or that only a Test data dir whose test has ended holds, so no future Instance will reclaim them.
 _Avoid_: orphan, dead instance
+
+**Test data dir**:
+A data directory that a test owns for as long as the test's process lives. Once that process has ended, no Instance will start in it again, even if the directory is still there. A data directory a test hands to an Instance that should outlive the test is not one (ADR 0047).
+_Avoid_: temp dir, scratch dir
 
 **Emulator clock**:
 The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
