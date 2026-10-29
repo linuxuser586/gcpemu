@@ -328,7 +328,7 @@ func (b *backendSvc) rewrite(pr *httputil.ProxyRequest) {
 
 func (b *backendSvc) modifyResponse(resp *http.Response) error {
 	if rs, _ := resp.Request.Context().Value(rsKey{}).(*reqState); rs != nil {
-		rs.details = "response_sent_by_backend"
+		rs.details = detailsByBackend
 	}
 	return nil
 }

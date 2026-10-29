@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path"
 	"strconv"
@@ -202,20 +203,30 @@ func TestCustomErrorResponseRules(t *testing.T) {
 	app := "global/backendServices/app"
 	route := func(prio int64, prefix string, p *computev1.CustomErrorResponsePolicy, fault *computev1.HttpFaultInjection) *computev1.HttpRouteRule {
 		rr := &computev1.HttpRouteRule{Priority: prio, MatchRules: []*computev1.HttpRouteRuleMatch{{PrefixMatch: prefix}}, Service: app, CustomErrorResponsePolicy: p,
-			HeaderAction: &computev1.HttpHeaderAction{ResponseHeadersToAdd: []*computev1.HttpHeaderOption{{HeaderName: "X-Route", HeaderValue: prefix}}}}
+			HeaderAction: &computev1.HttpHeaderAction{ResponseHeadersToAdd: []*computev1.HttpHeaderOption{{HeaderName: "X-Route", HeaderValue: prefix}},
+				RequestHeadersToAdd: []*computev1.HttpHeaderOption{{HeaderName: "X-Route-Request", HeaderValue: prefix}}}}
 		if fault != nil {
 			rr.RouteAction = &computev1.HttpRouteAction{FaultInjectionPolicy: fault}
 		}
 		return rr
 	}
 	errs := "global/backendServices/errors"
+	// "down" has an endpoint nothing listens on.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.Close()
+	e.backendService("down", int64(ln.Addr().(*net.TCPAddr).Port), "EXTERNAL_MANAGED")
 	base := e.errLB(&computev1.UrlMap{DefaultService: app,
-		DefaultCustomErrorResponsePolicy: errPolicy(errs, errRule("/5xx.html", 0, "5xx")),
+		DefaultCustomErrorResponsePolicy: errPolicy(errs, errRule("/5xx.html", 0, "5xx"), errRule("/301.html", 200, "301")),
 		HostRules:                        []*computev1.HostRule{{Hosts: []string{"*"}, PathMatcher: "pm"}},
 		PathMatchers: []*computev1.PathMatcher{{Name: "pm", DefaultService: app, RouteRules: []*computev1.HttpRouteRule{
 			route(1, "/status/", errPolicy(errs, errRule("/404.html", 200, "404"), errRule("/4xx.html", 299, "4xx")), nil),
 			route(2, "/fail/", errPolicy(errs, errRule("/missing.html", 200, "404")), nil),
 			route(3, "/abort/", nil, &computev1.HttpFaultInjection{Abort: &computev1.HttpFaultAbort{HttpStatus: 503, Percentage: 100}}),
+			route(4, "/down/", errPolicy("global/backendServices/down", errRule("/404.html", 200, "404")), nil),
+			{Priority: 5, MatchRules: []*computev1.HttpRouteRuleMatch{{PrefixMatch: "/old"}}, UrlRedirect: &computev1.HttpRedirectAction{PathRedirect: "/new"}},
 		}}}}, "EXTERNAL_MANAGED", "")
 
 	for _, tc := range []struct {
@@ -232,6 +243,7 @@ func TestCustomErrorResponseRules(t *testing.T) {
 		{"/status/404", map[string]string{"Authorization": "Bearer x"}, 404, "app 404"},
 		{"/fail/404", nil, 404, "404 Not Found\n"},     // the page is missing
 		{"/abort/x", nil, 503, "fault filter abort\n"}, // the data plane's own answer
+		{"/down/404", nil, 404, "404 Not Found\n"},     // the error service is unreachable
 	} {
 		code, body, h := fetch(t, "GET", base+tc.path+"?q=1", tc.hdr)
 		if code != tc.code || body != tc.body {
@@ -260,7 +272,8 @@ func TestCustomErrorResponseRules(t *testing.T) {
 		t.Fatalf("Range request: %d %q, want the whole page", code, body)
 	}
 	pr := <-pages
-	if pr.URL.RawQuery != "" || pr.Method != "GET" || pr.Header.Get("Range") != "" || pr.Header.Get("If-None-Match") != "" || pr.Header.Get("X-Client") != "c" {
+	if pr.URL.RawQuery != "" || pr.Method != "GET" || pr.Header.Get("Range") != "" || pr.Header.Get("If-None-Match") != "" || pr.Header.Get("X-Client") != "c" ||
+		pr.Header.Get("X-Route-Request") != "" {
 		t.Errorf("error page fetch: %s %s %v", pr.Method, pr.URL, pr.Header)
 	}
 	if code, body, h := fetch(t, "HEAD", base+"/status/404", nil); code != 200 || body != "" || h.Get("Content-Type") != "text/html" {
@@ -269,11 +282,16 @@ func TestCustomErrorResponseRules(t *testing.T) {
 	if pr := <-pages; pr.Method != "HEAD" {
 		t.Errorf("HEAD fetched the page with %s", pr.Method)
 	}
+	// A redirect is the load balancer's own answer, even with a rule for
+	// its status.
+	if code, _, h := fetch(t, "GET", base+"/old", nil); code != 301 || h.Get("Location") == "" {
+		t.Errorf("redirect: %d %v", code, h)
+	}
 
 	// The access log has the status served and, when one was applied, the
 	// override code.
 	logs := map[string]logLine{}
-	for _, l := range accessLog(t, e, 10) {
+	for _, l := range accessLog(t, e, 12) {
 		u := fmt.Sprint(l.HTTPRequest["requestUrl"])
 		if _, seen := logs[u]; !seen {
 			logs[u] = l
@@ -288,6 +306,7 @@ func TestCustomErrorResponseRules(t *testing.T) {
 		"/status/401?q=1": {299, float64(299), "response_sent_by_backend"},
 		"/status/503?q=1": {503, nil, "response_sent_by_backend"},
 		"/fail/404?q=1":   {404, nil, "custom_error_response_fetch_failed"},
+		"/down/404?q=1":   {404, nil, "custom_error_response_fetch_failed"},
 	} {
 		l := logs[base+path]
 		if l.HTTPRequest["status"] != want.status || l.JSONPayload["overrideResponseCodeServed"] != want.override || l.JSONPayload["statusDetails"] != want.details {
@@ -406,6 +425,16 @@ func TestCustomErrorResponseCDN(t *testing.T) {
 		e.putObject(sc, "index.html", object{body: "<h1>app v2</h1>", contentType: "text/html"})
 		e.inst.Internal().Env.Clock.(interface{ Advance(time.Duration) }).Advance(2 * time.Minute)
 		expect(t, base, "/settings", 200, "<h1>app v2</h1>", "miss", "hit")
+	})
+	t.Run("error service cache bypassed", func(t *testing.T) {
+		e, base := setup(t, &computev1.BackendBucketCdnPolicy{CacheMode: "FORCE_CACHE_ALL", DefaultTtl: 60}, spa, static(""))
+		expect(t, base, "/index.html", 200, "<h1>app</h1>", "miss", "hit")
+		sc, err := storage.NewClient(context.Background(), option.WithEndpoint("http://"+e.inst.Endpoint("gcs")+"/storage/v1/"), option.WithoutAuthentication())
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.putObject(sc, "index.html", object{body: "<h1>app v2</h1>", contentType: "text/html"})
+		expect(t, base, "/settings", 200, "<h1>app v2</h1>", "miss")
 	})
 	t.Run("log", func(t *testing.T) {
 		e, base := setup(t, &computev1.BackendBucketCdnPolicy{CacheMode: "FORCE_CACHE_ALL", DefaultTtl: 60}, spa, static(""))

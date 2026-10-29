@@ -37,14 +37,13 @@ type reqState struct {
 	clientPort string
 	certErr    string
 
-	route   *urlmap.Result // nil when the URL map is missing or invalid
-	service string         // backend service/bucket path
-	kind    string         // "backendService" or "backendBucket"
-	details string         // statusDetails
-	backend string         // backend endpoint ip:port
-	bLat    time.Duration
-	// override is the overrideResponseCode served (0 when none).
-	override int
+	route    *urlmap.Result // nil when the URL map is missing or invalid
+	service  string         // backend service/bucket path
+	kind     string         // "backendService" or "backendBucket"
+	details  string         // statusDetails
+	backend  string         // backend endpoint ip:port
+	bLat     time.Duration
+	override int // overrideResponseCode served, 0 when none
 
 	logEnable bool
 	sample    float64

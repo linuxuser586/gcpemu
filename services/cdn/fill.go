@@ -28,7 +28,7 @@ type fillWriter struct {
 	stale         *entry
 	staleMeta     *entryMeta
 	rangeStripped bool
-	noStore       bool // NoStore: never store, whatever the cache mode
+	noStore       bool // never store, whatever the cache mode (NoStore)
 
 	mode   int
 	status int

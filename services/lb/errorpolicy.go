@@ -16,6 +16,9 @@ import (
 // policy's errorService, with overrideResponseCode as the status. The
 // handler sits inside Cloud CDN, so the cache stores the error page.
 
+// detailsByBackend is the statusDetails of a response from the backend.
+const detailsByBackend = "response_sent_by_backend"
+
 // detailsFetchFailed is the statusDetails of a request whose error page
 // could not be fetched. GCP doesn't name one; the emulator made it up.
 const detailsFetchFailed = "custom_error_response_fetch_failed"
@@ -46,20 +49,21 @@ func (d *dataplane) errorPolicy(cfg *config, rs *reqState, origin http.Handler) 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ew := &errorWriter{ResponseWriter: w, d: d, cfg: cfg, rs: rs, r: r, header: http.Header{}}
 		origin.ServeHTTP(ew, r)
-		if ew.state == errUndecided {
+		if ew.state == pageUndecided {
 			// Nothing written (a client that went away): leave the
 			// headers as the origin set them.
-			for k, v := range ew.header {
-				w.Header()[k] = v
-			}
+			copyHeader(w.Header(), ew.header)
 		}
 	})
 }
 
+// pageState is what an errorWriter does with the backend's response.
+type pageState int
+
 const (
-	errUndecided = iota
-	errPassed    // the backend's response goes to the client
-	errReplaced  // the error page was served; the backend's body is dropped
+	pageUndecided pageState = iota // the header isn't written yet
+	pagePassed                     // the backend's response goes to the client
+	pageReplaced                   // the error page was served; the backend's body is dropped
 )
 
 // errorWriter holds back the backend's header until its status is known,
@@ -71,11 +75,11 @@ type errorWriter struct {
 	rs     *reqState
 	r      *http.Request
 	header http.Header
-	state  int
+	state  pageState
 }
 
 func (w *errorWriter) Header() http.Header {
-	if w.state == errPassed {
+	if w.state == pagePassed {
 		return w.ResponseWriter.Header()
 	}
 	return w.header
@@ -83,43 +87,40 @@ func (w *errorWriter) Header() http.Header {
 
 func (w *errorWriter) WriteHeader(code int) {
 	switch {
-	case w.state == errPassed:
+	case w.state == pagePassed:
 		w.ResponseWriter.WriteHeader(code)
 		return
-	case w.state == errReplaced, code < 200:
+	case w.state == pageReplaced, code < 200:
 		return
 	}
 	// Only statuses from the backend count, never the data plane's own
 	// answers (no healthy upstream, timeouts, ...).
 	rule, svc := w.rs.route.ErrorRule(code)
-	if rule == nil || w.rs.details != "response_sent_by_backend" {
-		w.state = errPassed
-		h := w.ResponseWriter.Header()
-		for k, v := range w.header {
-			h[k] = v
-		}
+	if rule == nil || w.rs.details != detailsByBackend {
+		w.state = pagePassed
+		copyHeader(w.ResponseWriter.Header(), w.header)
 		w.ResponseWriter.WriteHeader(code)
 		return
 	}
-	w.state = errReplaced
+	w.state = pageReplaced
 	w.d.serveErrorPage(w.ResponseWriter, w.cfg, w.rs, w.r, code, rule, svc)
 }
 
 func (w *errorWriter) Write(b []byte) (int, error) {
-	if w.state == errUndecided {
+	if w.state == pageUndecided {
 		w.WriteHeader(http.StatusOK)
 	}
-	if w.state == errReplaced {
+	if w.state == pageReplaced {
 		return len(b), nil
 	}
 	return w.ResponseWriter.Write(b)
 }
 
 func (w *errorWriter) Flush() {
-	if w.state == errUndecided {
+	if w.state == pageUndecided {
 		w.WriteHeader(http.StatusOK)
 	}
-	if w.state == errPassed {
+	if w.state == pagePassed {
 		_ = http.NewResponseController(w.ResponseWriter).Flush()
 	}
 }
@@ -170,7 +171,8 @@ func (d *dataplane) serveErrorPage(w http.ResponseWriter, cfg *config, rs *reqSt
 // fetchErrorPage gets path from errorService, a backend bucket or backend
 // service, straight from its origin (never its Cloud CDN cache). The fetch
 // is a GET (HEAD for HEAD) without query, body, Range or conditional
-// headers. It returns nil unless the service answers 2xx.
+// headers, carrying the client's other headers. It returns nil unless the
+// service answers 2xx.
 func (d *dataplane) fetchErrorPage(cfg *config, rs *reqState, r *http.Request, path, errorService string) *pageRecorder {
 	// The fetch has its own request state so that it doesn't overwrite
 	// the matched backend's in the access log.
@@ -198,6 +200,9 @@ func (d *dataplane) fetchErrorPage(cfg *config, rs *reqState, r *http.Request, p
 	u.Path, u.RawPath, u.RawQuery = path, "", ""
 	fr.URL = &u
 	fr.Body, fr.GetBody, fr.ContentLength = http.NoBody, nil, 0
+	// The client's own headers, not those the route and matched backend
+	// added.
+	fr.Host, fr.Header = rs.req.Host, rs.req.Header.Clone()
 	for _, k := range errorFetchDrop {
 		fr.Header.Del(k)
 	}
@@ -210,6 +215,12 @@ func (d *dataplane) fetchErrorPage(cfg *config, rs *reqState, r *http.Request, p
 		return nil
 	}
 	return rec
+}
+
+func copyHeader(dst, src http.Header) {
+	for k, v := range src {
+		dst[k] = v
+	}
 }
 
 // pageRecorder buffers an error page.

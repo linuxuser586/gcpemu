@@ -24,7 +24,7 @@ func (d *dataplane) bucketHandler(rs *reqState, b *computev1.BackendBucket) http
 		}
 		// Set before serving: custom error responses check it when the
 		// status is written.
-		rs.details = "response_sent_by_backend"
+		rs.details = detailsByBackend
 		sw := clock.StartStopwatch()
 		g.ServeObject(w, r, b.BucketName, r.URL.Path)
 		rs.bLat = sw.Elapsed()
