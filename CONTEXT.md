@@ -95,8 +95,12 @@ _Avoid_: frontend (unqualified)
 A container that an Instance starts, owns and removes, e.g. a Cloud SQL instance's Postgres, a GKE node, the NAT egress proxy, the host-mode container.
 
 **Disrupted container**:
-A Managed container that the container runtime stopped or started again without the Instance doing it, e.g. when a VM runtime or daemon restarts. An Instance with one is not ready until it is stopped and started.
+A Managed container that stopped or was started again without the Instance doing it, e.g. when a VM runtime or daemon restarts. An Instance with one is not ready until it is stopped and started. A Cluster server that exits is not one while the Instance starts it again itself (ADR 0045).
 _Avoid_: crashed container, dead container
+
+**Cluster server**:
+The Managed container that runs a GKE cluster's Kubernetes API server and its Datastore. When it exits, the Instance starts it again, until it has exited too often in a short time; the cluster is then DEGRADED.
+_Avoid_: control plane (collides with Control plane), master
 
 **Sidecar agent**:
 The emulator's helper process that runs inside a Managed container.
