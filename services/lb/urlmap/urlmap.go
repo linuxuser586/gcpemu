@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	compute "google.golang.org/api/compute/v1"
@@ -63,8 +64,10 @@ type Result struct {
 	HeaderActions []*compute.HttpHeaderAction
 	// Host and Path are the request host and path after URL rewrites.
 	Host, Path string
-	// ErrorPolicy is the effective custom error response policy.
-	ErrorPolicy *compute.CustomErrorResponsePolicy
+	// ErrorPolicies are the custom error response policies that apply,
+	// most specific first: the matched route or path rule's, the path
+	// matcher's default, the URL map's default (see ErrorRule).
+	ErrorPolicies []*compute.CustomErrorResponsePolicy
 	// PathMatcher names the matched path matcher ("" for map defaults).
 	PathMatcher string
 	// RouteRule or PathRule is the rule that matched; neither is set when
@@ -212,16 +215,12 @@ func (rt *Router) Route(req *Request, pick func(total int64) int64) *Result {
 	mt := rt.hostMatcher(req.Host)
 	if mt == nil {
 		rt.apply(res, req, pick, rt.m.DefaultService, rt.m.DefaultRouteAction, rt.m.DefaultUrlRedirect, nil, matchInfo{kind: matchNone})
-		res.ErrorPolicy = rt.m.DefaultCustomErrorResponsePolicy
+		res.addErrorPolicy(rt.m.DefaultCustomErrorResponsePolicy)
 		rt.addHeaderAction(res, rt.m.HeaderAction)
 		return res
 	}
 	pm := mt.pm
 	res.PathMatcher = pm.Name
-	res.ErrorPolicy = rt.m.DefaultCustomErrorResponsePolicy
-	if pm.DefaultCustomErrorResponsePolicy != nil {
-		res.ErrorPolicy = pm.DefaultCustomErrorResponsePolicy
-	}
 	matched := false
 	if len(mt.rules) > 0 {
 		for _, rr := range mt.rules {
@@ -231,9 +230,7 @@ func (rt *Router) Route(req *Request, pick func(total int64) int64) *Result {
 				var ha []*compute.HttpHeaderAction
 				ha = append(ha, rr.HeaderAction)
 				rt.apply(res, req, pick, rr.Service, rr.RouteAction, rr.UrlRedirect, ha, mi)
-				if rr.CustomErrorResponsePolicy != nil {
-					res.ErrorPolicy = rr.CustomErrorResponsePolicy
-				}
+				res.addErrorPolicy(rr.CustomErrorResponsePolicy)
 				break
 			}
 		}
@@ -243,9 +240,7 @@ func (rt *Router) Route(req *Request, pick func(total int64) int64) *Result {
 				matched = true
 				res.PathRule = e.rule
 				rt.apply(res, req, pick, e.rule.Service, e.rule.RouteAction, e.rule.UrlRedirect, nil, mi)
-				if e.rule.CustomErrorResponsePolicy != nil {
-					res.ErrorPolicy = e.rule.CustomErrorResponsePolicy
-				}
+				res.addErrorPolicy(e.rule.CustomErrorResponsePolicy)
 				break
 			}
 		}
@@ -253,9 +248,46 @@ func (rt *Router) Route(req *Request, pick func(total int64) int64) *Result {
 	if !matched {
 		rt.apply(res, req, pick, pm.DefaultService, pm.DefaultRouteAction, pm.DefaultUrlRedirect, nil, matchInfo{kind: matchNone})
 	}
+	res.addErrorPolicy(pm.DefaultCustomErrorResponsePolicy)
+	res.addErrorPolicy(rt.m.DefaultCustomErrorResponsePolicy)
 	rt.addHeaderAction(res, pm.HeaderAction)
 	rt.addHeaderAction(res, rt.m.HeaderAction)
 	return res
+}
+
+func (res *Result) addErrorPolicy(p *compute.CustomErrorResponsePolicy) {
+	if p != nil {
+		res.ErrorPolicies = append(res.ErrorPolicies, p)
+	}
+}
+
+// ErrorRule returns the custom error response rule for a backend's status
+// and the error service that serves its page (FR-LB-012). Each status is
+// checked separately: the first policy in ErrorPolicies with a rule
+// matching it wins, and within a policy a rule naming the exact code
+// ("404") beats one naming its class ("4xx"). It returns nil when no rule
+// lists the status.
+func (res *Result) ErrorRule(status int) (*compute.CustomErrorResponsePolicyCustomErrorResponseRule, string) {
+	exact, class := strconv.Itoa(status), strconv.Itoa(status/100)+"xx"
+	for _, p := range res.ErrorPolicies {
+		var byClass *compute.CustomErrorResponsePolicyCustomErrorResponseRule
+		for _, r := range p.ErrorResponseRules {
+			for _, c := range r.MatchResponseCodes {
+				switch strings.ToLower(c) {
+				case exact:
+					return r, p.ErrorService
+				case class:
+					if byClass == nil {
+						byClass = r
+					}
+				}
+			}
+		}
+		if byClass != nil {
+			return byClass, p.ErrorService
+		}
+	}
+	return nil, ""
 }
 
 func (rt *Router) addHeaderAction(res *Result, ha *compute.HttpHeaderAction) {

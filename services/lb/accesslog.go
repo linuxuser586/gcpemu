@@ -173,6 +173,9 @@ func (l *accessLogger) log(rs *reqState, w *respWriter) {
 			e.JSONPayload["cacheDecision"] = []string{"RESPONSE_HAS_CONTENT_TYPE", "CACHE_MODE"}
 		}
 	}
+	if rs.override != 0 {
+		e.JSONPayload["overrideResponseCodeServed"] = rs.override
+	}
 	if rs.bLat > 0 {
 		e.JSONPayload["backendLatency"] = fmt.Sprintf("%.6fs", rs.bLat.Seconds())
 	}

@@ -22,10 +22,12 @@ func (d *dataplane) bucketHandler(rs *reqState, b *computev1.BackendBucket) http
 			http.Error(w, "Cloud Storage is not running", http.StatusBadGateway)
 			return
 		}
+		// Set before serving: custom error responses check it when the
+		// status is written.
+		rs.details = detailsByBackend
 		sw := clock.StartStopwatch()
 		g.ServeObject(w, r, b.BucketName, r.URL.Path)
 		rs.bLat = sw.Elapsed()
 		rs.backend = "storage.googleapis.com/" + b.BucketName
-		rs.details = "response_sent_by_backend"
 	})
 }

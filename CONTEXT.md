@@ -381,6 +381,10 @@ How long an Operation takes before it completes, configured per Service ID (`gke
 **Project**:
 A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects. Only a request handled by a Service counts as a reference. Choosing a Project in the Web console only scopes what is shown and creates nothing.
 
+**Custom error response**:
+A backend's error status that a global external Application Load Balancer answers instead with a page fetched from the error service named by the URL map's policy, optionally under another status. The load balancer's own errors and redirects never get one.
+_Avoid_: SPA fallback, error override, 404 rewrite
+
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
