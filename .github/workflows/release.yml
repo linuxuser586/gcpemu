@@ -4,10 +4,12 @@ name: release
 # (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves. The image
 # job then publishes the same linux binaries as the OCI image (NFR-PORT-004),
 # once image-check has run each platform's image natively (#498, #630).
-# The release and image jobs sign what they publish with keyless cosign,
-# and the binaries get an SBOM each and SLSA provenance (NFR-SEC-005);
-# docs/release.md shows how to verify them. Run the manual macOS checks in
-# docs/release.md before pushing the tag.
+# The echo-image job publishes gcpemu-echo, the Conformance suite's test
+# backend, to Docker Hub, once echo-image-check has run it natively (#862).
+# The release, image and echo-image jobs sign what they publish with
+# keyless cosign, and the binaries get an SBOM each and SLSA provenance
+# (NFR-SEC-005); docs/release.md shows how to verify them. Run the manual
+# macOS checks in docs/release.md before pushing the tag.
 on:
   push:
     tags: ["v*.*.*"]
@@ -212,3 +214,102 @@ jobs:
         run: |
           cosign sign --yes "docker.io/linuxuser586/gcpemu@$DIGEST"
           cosign sign --yes "ghcr.io/linuxuser586/gcpemu@$DIGEST"
+
+  # #862: the Conformance suite's test backend, gcpemu-echo. Its binaries
+  # are built once, here rather than in the release job so they never reach
+  # the GitHub release, and the image job pushes exactly what
+  # echo-image-check ran. It waits for the release job only so that a
+  # release that fails publishes nothing.
+  echo-dist:
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - run: task echo:dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: echo-binaries
+          path: dist-echo/gcpemu-echo-linux-*
+          if-no-files-found: error
+
+  # Each platform's image on its own runner, like image-check.
+  echo-image-check:
+    needs: echo-dist
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: echo-binaries
+          path: dist-echo
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: dist-echo
+          file: cmd/gcpemu-echo/Dockerfile
+          load: true
+          tags: gcpemu-echo:check
+      - uses: go-task/setup-task@v2
+        with:
+          version: 3.54.0
+      - name: Echo image check
+        run: task echo:image-check IMAGE=gcpemu-echo:check
+
+  # Docker Hub only: Cloud Run on GCP, which #859's recordings deploy it
+  # to, can't pull from ghcr.io.
+  echo-image:
+    needs: echo-image-check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: echo-binaries
+          path: dist-echo
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # vX.Y.Z pushes X.Y.Z, X.Y, X and latest; a prerelease only its
+      # exact version.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: docker.io/linuxuser586/gcpemu-echo
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      - id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: dist-echo
+          file: cmd/gcpemu-echo/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          sbom: true
+          provenance: mode=max
+      - uses: sigstore/cosign-installer@v4.1.2
+      - name: Sign the image
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "docker.io/linuxuser586/gcpemu-echo@$DIGEST"

@@ -269,6 +269,12 @@ jobs:
           task cross
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist
           task image-check IMAGE=gcpemu:check
+      # #862: the release workflow's echo-image-check, likewise.
+      - name: Echo image check
+        run: |
+          task echo:dist
+          docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo
+          task echo:image-check IMAGE=gcpemu-echo:check
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
 

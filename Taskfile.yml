@@ -366,6 +366,56 @@ tasks:
           echo "image-check: $IMAGE failed: $reason" >&2
           exit 1
 
+  # #862: the Conformance suite's test backend. Its binaries go to
+  # dist-echo/, not dist/, so they stay out of the GitHub release; its image
+  # copies them like the main image does:
+  #
+  #   docker buildx build --platform linux/amd64,linux/arm64 -f cmd/gcpemu-echo/Dockerfile dist-echo
+  echo:dist:
+    desc: Build the gcpemu-echo linux binaries into dist-echo/
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+    cmds:
+      - for: [amd64, arm64]
+        cmd: GOARCH={{.ITEM}} go build -trimpath -ldflags '-s -w' -o dist-echo/gcpemu-echo-linux-{{.ITEM}} ./cmd/gcpemu-echo
+
+  # Unlike image-check it uses sleep, seq and curl from PATH: it runs only
+  # on linux, where they are always there.
+  echo:image-check:
+    desc: Check a built gcpemu-echo image answers on PORT (IMAGE=<ref>; never builds or pulls it)
+    silent: true
+    requires:
+      vars: [IMAGE]
+    env:
+      IMAGE: "{{.IMAGE}}"
+    cmds:
+      - cmd: |
+          cid=
+          body=$(mktemp)
+          cleanup() {
+            status=$?
+            [ -z "$cid" ] || docker rm -f "$cid" >/dev/null
+            rm -f "$body"
+            exit $status
+          }
+          trap cleanup EXIT
+          cid=$(docker run -d --pull never -e PORT=9090 -e ECHO_HEADERS=x-test -p 127.0.0.1::9090 "$IMAGE") || exit 1
+          addr=$(docker port "$cid" 9090/tcp | head -n1) || exit 1
+          want='503 {"method":"GET","path":"/status/503","headers":{"x-test":"hi"}}'
+          for _ in $(seq 20); do
+            code=$(curl -s -o "$body" -H 'X-Test: hi' -w '%{http_code}' "http://$addr/status/503") && break
+            sleep 0.5
+          done
+          got="$code $(cat "$body")"
+          if [ "$got" != "$want" ]; then
+            docker logs "$cid" 2>&1
+            echo "echo:image-check: $IMAGE answered: $got" >&2
+            echo "echo:image-check: want: $want" >&2
+            exit 1
+          fi
+          echo "echo:image-check: $IMAGE answers on PORT"
+
   # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
   # psql, the Cloud SQL Auth Proxy and dig against a detached instance.
   compat:
