@@ -64,7 +64,7 @@ func (s *Service) serveLAN(ctx context.Context, d *deps, key, cluster string, po
 		return port
 	}
 	for _, ip := range binds {
-		ex, err := d.np.Expose(net.JoinHostPort(ip, strconv.Itoa(port)), target, true)
+		ex, err := d.np.Expose("GKE cluster "+key, net.JoinHostPort(ip, strconv.Itoa(port)), target, true)
 		if err != nil {
 			s.env.Log.Warn("gke: cannot serve the Kubernetes API on --gke-bind address", "cluster", cluster, "address", ip, "err", s.env.ExplainBind(ctx, err))
 			continue

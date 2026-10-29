@@ -77,6 +77,10 @@ type clusterRT struct {
 	lan      []*netplane.Exposed
 	lanAddrs []string
 	lanName  string
+	// server is the ready Cluster server container, and watch its watch
+	// (serverwatch.go).
+	server string
+	watch  *serverWatch
 }
 
 func (s *Service) stopRT(rt *clusterRT) {
@@ -217,7 +221,8 @@ func (s *Service) restore(ctx context.Context, key string) {
 // RECONCILING until it is back.
 func (s *Service) markRestoring(key string) {
 	_ = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
-		if c.Status == containerpb.Cluster_RUNNING || c.Status == containerpb.Cluster_ERROR {
+		switch c.Status {
+		case containerpb.Cluster_RUNNING, containerpb.Cluster_ERROR, containerpb.Cluster_DEGRADED:
 			c.Status = containerpb.Cluster_RECONCILING
 		}
 		return nil
@@ -296,6 +301,7 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	}
 	s.writeKubeconfig()
 	s.startControllers(ctx, key)
+	s.watchServer(ctx, d, key)
 	return nil
 }
 
@@ -409,8 +415,9 @@ func clusterPrivateNodes(c *containerpb.Cluster) bool {
 // from a State snapshot) starts on a fresh volume holding it; the staged
 // archive is dropped once the server is up, so later restarts keep the
 // volume. A server that exits before it is ready is recreated once on its
-// volume (#395).
+// volume (#395). A watch of the server it replaces ends first.
 func (s *Service) startServer(ctx context.Context, d *deps, key string, sn emu.SubnetNet, version string) error {
+	s.unwatchServer(key)
 	if s.beforeServerStart != nil {
 		s.beforeServerStart(ctx, key)
 	}
@@ -648,7 +655,7 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 	}
 	rt := s.rtFor(key)
 	rt.mu.Lock()
-	rt.kube, rt.creds = kc, creds
+	rt.kube, rt.creds, rt.server = kc, creds, id
 	rt.mu.Unlock()
 	if staged != "" {
 		if err := os.Remove(staged); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -698,7 +705,7 @@ func (s *Service) serveAPI(d *deps, key string, port int, target string) (string
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.closeAPI()
-	ex, err := d.np.Expose(net.JoinHostPort(loopback.Host, strconv.Itoa(port)), target, true)
+	ex, err := d.np.Expose("GKE cluster "+key, net.JoinHostPort(loopback.Host, strconv.Itoa(port)), target, true)
 	if err != nil {
 		return "", fmt.Errorf("serving the API server on %s: %w", loopback.Host, err)
 	}
@@ -800,6 +807,7 @@ func (s *Service) upgradeServer(ctx context.Context, key, version string) error 
 	if err := s.startServer(ctx, d, key, sn, version); err != nil {
 		return err
 	}
+	s.watchServer(ctx, d, key)
 	s.installCAInjector(ctx, d, key)
 	s.installInstrumentationWebhook(ctx, d, key)
 	s.installAutopilotWebhooks(ctx, d, key)
@@ -1492,6 +1500,7 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 
 // destroyDataPlane removes everything a cluster runs.
 func (s *Service) destroyDataPlane(ctx context.Context, key string) error {
+	s.unwatchServer(key)
 	rt := s.rtFor(key)
 	s.stopRT(rt)
 	rt.scaleMu.Lock()

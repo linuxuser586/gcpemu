@@ -92,4 +92,14 @@ func TestDisrupted(t *testing.T) {
 	if got := cl.Disrupted(ctx, all); len(got) != 0 {
 		t.Errorf("Disrupted with a stale listing = %v, want none", got)
 	}
+
+	// A container whose owner saw it exit and starts it again (the GKE
+	// Service's Cluster server, #840) is no disruption once forgotten.
+	mu.Lock()
+	cts["exited"].status = "exited"
+	mu.Unlock()
+	cl.ForgetStart("exited")
+	if got := cl.Disrupted(ctx, all); len(got) != 0 {
+		t.Errorf("Disrupted after ForgetStart = %v, want none", got)
+	}
 }
