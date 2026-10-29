@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/runtime"
@@ -430,6 +431,10 @@ func (f *forwarder) close() {
 type Exposed struct {
 	l  net.Listener
 	wg sync.WaitGroup
+	// name names what the port serves in a warning that its target
+	// cannot be reached, logged once until a dial succeeds again (down).
+	name string
+	down atomic.Bool
 }
 
 // Expose binds addr, a loopback ip:port on the host, or a free port on the
@@ -437,13 +442,15 @@ type Exposed struct {
 // connection it accepts to target, a container address, through
 // DialContext. On a VM runtime this is how host clients reach a container
 // port that appears while the Instance runs, which the runtime cannot
-// publish then.
-func (p *Plane) Expose(addr, target string, fallback bool) (*Exposed, error) {
+// publish then. While target cannot be reached, connections are accepted
+// and closed, and a warning naming name, if set, and target is logged
+// once; without a name, each failure is logged at Debug.
+func (p *Plane) Expose(name, addr, target string, fallback bool) (*Exposed, error) {
 	l, err := listenFallback(addr, fallback)
 	if err != nil {
 		return nil, err
 	}
-	return p.Serve(l, func() []string { return []string{target} }), nil
+	return p.serveConn(l, name, p.dialTargets(func() []string { return []string{target} })), nil
 }
 
 // ExposeConn binds addr as Expose does and pipes each connection c it
@@ -454,7 +461,7 @@ func (p *Plane) ExposeConn(addr string, fallback bool, dial func(ctx context.Con
 	if err != nil {
 		return nil, err
 	}
-	return p.serveConn(l, dial), nil
+	return p.serveConn(l, "", dial), nil
 }
 
 // listenFallback listens on addr, or with fallback on a free port of the
@@ -472,7 +479,12 @@ func listenFallback(addr string, fallback bool) (net.Listener, error) {
 // addresses, that DialContext reaches; targets is read for each
 // connection. It owns l.
 func (p *Plane) Serve(l net.Listener, targets func() []string) *Exposed {
-	return p.ServeDial(l, func(ctx context.Context) (net.Conn, error) {
+	return p.serveConn(l, "", p.dialTargets(targets))
+}
+
+// dialTargets dials the first of targets that DialContext reaches.
+func (p *Plane) dialTargets(targets func() []string) func(ctx context.Context, c net.Conn) (net.Conn, error) {
+	return func(ctx context.Context, _ net.Conn) (net.Conn, error) {
 		ts := targets()
 		err := fmt.Errorf("no target")
 		for _, target := range ts {
@@ -484,18 +496,19 @@ func (p *Plane) Serve(l net.Listener, targets func() []string) *Exposed {
 			}
 		}
 		return nil, fmt.Errorf("targets %v: %w", ts, err)
-	})
+	}
 }
 
 // ServeDial pipes each connection l accepts to the connection dial opens
 // for it; dial sets its own timeouts. It owns l.
 func (p *Plane) ServeDial(l net.Listener, dial func(ctx context.Context) (net.Conn, error)) *Exposed {
-	return p.serveConn(l, func(ctx context.Context, _ net.Conn) (net.Conn, error) { return dial(ctx) })
+	return p.serveConn(l, "", func(ctx context.Context, _ net.Conn) (net.Conn, error) { return dial(ctx) })
 }
 
-// serveConn is ServeDial with dial given the connection accepted.
-func (p *Plane) serveConn(l net.Listener, dial func(ctx context.Context, c net.Conn) (net.Conn, error)) *Exposed {
-	e := &Exposed{l: l}
+// serveConn is ServeDial with dial given the connection accepted, and the
+// port named name (Exposed.name).
+func (p *Plane) serveConn(l net.Listener, name string, dial func(ctx context.Context, c net.Conn) (net.Conn, error)) *Exposed {
+	e := &Exposed{l: l, name: name}
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
@@ -507,7 +520,13 @@ func (p *Plane) serveConn(l net.Listener, dial func(ctx context.Context, c net.C
 			go func() {
 				defer c.Close()
 				u, err := dial(context.Background(), c)
-				if err != nil {
+				switch {
+				case err == nil:
+					e.down.Store(false)
+				case name != "" && !e.down.Swap(true):
+					p.log.Warn("exposed port: cannot reach its target; closing its connections until it is back", "for", name, "addr", l.Addr(), "err", err)
+					return
+				default:
 					p.log.Debug("exposed port: dial failed", "addr", l.Addr(), "err", err)
 					return
 				}

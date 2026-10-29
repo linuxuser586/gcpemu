@@ -152,7 +152,7 @@ func TestVMRelay(t *testing.T) {
 	}
 
 	// A host port served through the relay.
-	e, err := p.Expose("127.0.0.1:0", net.JoinHostPort(ip, "8080"), true)
+	e, err := p.Expose("test", "127.0.0.1:0", net.JoinHostPort(ip, "8080"), true)
 	if err != nil {
 		t.Fatal(err)
 	}

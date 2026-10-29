@@ -1026,6 +1026,11 @@ func (c *Client) forgetStart(id string) {
 	}
 }
 
+// ForgetStart drops the record of starting container id, so that Disrupted
+// no longer reports it: for a container whose exit its owner saw and
+// handles, by starting it again.
+func (c *Client) ForgetStart(id string) { c.forgetStart(id) }
+
 // Disrupted returns, as "name (exited)" or "name (restarted)", the
 // containers among cts that the client started and that have since
 // stopped or been started again by something else, such as a restart of

@@ -225,7 +225,7 @@ func (s *Service) exposeLoopback(plane *netplane.Plane, rec *instanceRecord, pub
 func exposeAll(log *slog.Logger, plane *netplane.Plane, addr, publicIP string) ([]*netplane.Exposed, error) {
 	var out []*netplane.Exposed
 	for _, port := range loopPorts {
-		e, err := plane.Expose(net.JoinHostPort(addr, strconv.Itoa(port)), net.JoinHostPort(publicIP, strconv.Itoa(port)), false)
+		e, err := plane.Expose("", net.JoinHostPort(addr, strconv.Itoa(port)), net.JoinHostPort(publicIP, strconv.Itoa(port)), false)
 		if err != nil && port == proxy.PublicPort {
 			log.Warn("sql: port 5432 is taken; serving host clients on 3307 only", "addr", addr, "err", err)
 			continue

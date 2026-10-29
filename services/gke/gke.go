@@ -127,6 +127,10 @@ type Service struct {
 	// beforeResetTeardown, set by tests, runs once Reset has started a new
 	// background generation, before it tears data planes down.
 	beforeResetTeardown func()
+	// serverWait and serverRestart, set by tests, replace the runtime
+	// calls the watch of a Cluster server makes (serverwatch.go).
+	serverWait    func(ctx context.Context, id string) error
+	serverRestart func(ctx context.Context, key string) (string, error)
 	// pubVia and pubIPs are the load balancer's public routes
 	// (RoutePublic), programmed into nodes with external IPs.
 	pubMu  sync.Mutex
@@ -281,7 +285,7 @@ func (s *Service) recoverClusters() {
 		c := r.cluster()
 		s.index(r.key(), c.Id)
 		switch c.Status {
-		case containerpb.Cluster_PROVISIONING, containerpb.Cluster_RUNNING, containerpb.Cluster_RECONCILING, containerpb.Cluster_ERROR:
+		case containerpb.Cluster_PROVISIONING, containerpb.Cluster_RUNNING, containerpb.Cluster_RECONCILING, containerpb.Cluster_ERROR, containerpb.Cluster_DEGRADED:
 			key := r.key()
 			s.markRestoring(key)
 			s.goBackground(func(ctx context.Context) { s.restore(ctx, key) })
@@ -317,8 +321,15 @@ func (s *Service) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Ready reports readiness of the API; clusters report their own status.
-func (s *Service) Ready() error { return nil }
+// Ready reports readiness of the API; clusters report their own status,
+// except that a DEGRADED cluster, whose Cluster server kept exiting
+// (ADR 0045), makes the Service not ready.
+func (s *Service) Ready() error {
+	if names := s.degraded(); len(names) > 0 {
+		return fmt.Errorf("cluster %s is DEGRADED: its Cluster server kept exiting; stop and start the instance to bring it back", strings.Join(names, ", "))
+	}
+	return nil
+}
 
 // ResourceCounts implements emu.ResourceCounter.
 func (s *Service) ResourceCounts() map[string]int {
