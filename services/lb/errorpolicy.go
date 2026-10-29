@@ -20,7 +20,8 @@ import (
 const detailsByBackend = "response_sent_by_backend"
 
 // detailsFetchFailed is the statusDetails of a request whose error page
-// could not be fetched. GCP doesn't name one; the emulator made it up.
+// could not be fetched. GCP doesn't name one; the emulator made it up
+// (ADR 0048).
 const detailsFetchFailed = "custom_error_response_fetch_failed"
 
 // errorFetchDrop are the client headers an error page fetch leaves out.
@@ -29,7 +30,7 @@ var errorFetchDrop = []string{"Range", "If-None-Match", "If-Modified-Since", "If
 // errorPageHeaders are the error page's headers the client gets; the
 // backend's own headers are discarded.
 var errorPageHeaders = []string{"Content-Type", "Content-Encoding", "Content-Language", "Content-Disposition",
-	"Cache-Control", "Expires", "Etag", "Last-Modified"}
+	"Cache-Control", "Expires", "Etag", "Last-Modified", "Vary"}
 
 // customErrors reports whether fe serves custom error responses: only
 // global EXTERNAL_MANAGED forwarding rules do.

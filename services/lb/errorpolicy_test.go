@@ -198,6 +198,7 @@ func TestCustomErrorResponseRules(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("X-Error-Origin", "1")
+		w.Header().Set("Vary", "Accept-Encoding")
 		_, _ = io.WriteString(w, "page "+r.URL.Path)
 	}), "EXTERNAL_MANAGED", "X-Errors:1")
 	app := "global/backendServices/app"
@@ -252,6 +253,9 @@ func TestCustomErrorResponseRules(t *testing.T) {
 		if strings.HasPrefix(body, "page ") {
 			if h.Get("X-Errors") != "" || h.Get("X-Error-Origin") != "" || h.Get("X-Origin") != "" {
 				t.Errorf("GET %s: error page carries the error service's or backend's headers: %v", tc.path, h)
+			}
+			if h.Get("Vary") != "Accept-Encoding" {
+				t.Errorf("GET %s: error page lost its Vary: %v", tc.path, h)
 			}
 			if h.Get("X-App") != "1" || (strings.HasPrefix(tc.path, "/status/") && h.Get("X-Route") != "/status/") {
 				t.Errorf("GET %s: matched backend's and route's headers missing: %v", tc.path, h)

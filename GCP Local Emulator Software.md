@@ -428,7 +428,7 @@ The emulator runs a real L7 proxy per forwarding rule, configured from the compu
 | FR-LB-009 | LB frontend mTLS (client cert validation at the LB via server TLS policy). | S |
 | FR-LB-010 | Access logs per request in Cloud Logging `httpRequest` JSON shape, including `statusDetails` and backend latency. | M |
 | FR-LB-011 | Cloud Armor security policies. | C |
-| FR-LB-012 | URL map `customErrorResponsePolicy` on global external Application Load Balancers (`EXTERNAL_MANAGED`): each backend status is checked from the route or path rule, to the path matcher's default, to the URL map's default, and within one policy an exact code beats a class (`4xx`, `5xx`); the error page is fetched from a backend bucket or backend service and served with `overrideResponseCode`. It applies only to responses from backends, not to the load balancer's own errors or redirects, and not to requests with `Authorization`. With Cloud CDN, the error page is cached under the requested URL. | M |
+| FR-LB-012 | URL map `customErrorResponsePolicy` on global external Application Load Balancers (`EXTERNAL_MANAGED`): each backend status is checked from the route or path rule, to the path matcher's default, to the URL map's default, and within one policy an exact code beats a class (`4xx`, `5xx`); the error page is fetched from a backend bucket or backend service and served with `overrideResponseCode`. It applies only to responses from backends, not to the load balancer's own errors or redirects, and not to requests with `Authorization` or `Upgrade`. On other load balancers the policy is stored and has no effect. A failed error page fetch is logged as `custom_error_response_fetch_failed` (ADR 0048). With Cloud CDN, the error page is cached under the requested URL. | M |
 
 ### 5.9 Cloud CDN
 
@@ -694,7 +694,7 @@ The emulator is real where behaviour is the point (Kubernetes, PostgreSQL, HTTP,
 | Service | Real | Faithful | Recorded only |
 | --- | --- | --- | --- |
 | GKE | Kubernetes, container runtime, pod networking, Secrets Store CSI driver | Cluster API, node pools, Autopilot node provisioning, settings and Workload restrictions, the Autopilot compatibility check, Workload Identity, NEG sync, private nodes, Gateway API CRD install, Secret Manager add-on and secret synchronization, system metrics (`monitoringConfig` `SYSTEM_COMPONENTS`) over OTLP, the managed collector, managed Prometheus scraping | Machine types (except the allocatable of Autopilot nodes), autoscaling bounds, Autopilot compute classes and Spot selectors, Autopilot compatibility auditing, maintenance windows, logging config, monitoring config other than `SYSTEM_COMPONENTS` and managed Prometheus |
-| ALB | HTTP/TLS proxying | URL map semantics, health checks, backend mTLS, managed-cert lifecycle | Global anycast, regional failover, capacity scaler, Cloud Armor |
+| ALB | HTTP/TLS proxying | URL map semantics, custom error responses on global external Application Load Balancers, health checks, backend mTLS, managed-cert lifecycle | Global anycast, regional failover, capacity scaler, Cloud Armor, custom error response policies on other load balancers |
 | Cloud CDN | HTTP cache | Cache modes, keys, TTLs, invalidation, signed URLs | Edge locations, cache fill between PoPs |
 | Cloud NAT | Packet egress | Coverage rules, port allocation reporting, logging | Exact port-allocation algorithm, NAT IP reputation |
 | Cloud SQL | PostgreSQL | Admin API, connectors, IAM auth, flags | Tier/CPU/RAM, HA failover, maintenance, Query Insights |
