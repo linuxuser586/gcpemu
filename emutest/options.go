@@ -1,6 +1,7 @@
 package emutest
 
 import (
+	"testing"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
@@ -45,9 +46,25 @@ func WithSeed(path string) Option { return WithConfig(func(c *config.Config) { c
 
 // WithDataDir runs a Persistent Instance in dir instead of an Ephemeral
 // one: its state is kept in dir, and an Instance started later in the same
-// dir finds it there. The Instance never removes dir.
+// dir finds it there. The Instance never removes dir, and its networks and
+// volumes outlive the test until `gcpemu prune` removes them. For a dir
+// the test owns (a Test data dir), use WithTestDataDir.
 func WithDataDir(dir string) Option {
 	return WithConfig(func(c *config.Config) { c.Ephemeral, c.DataDir = false, dir })
+}
+
+// WithTestDataDir runs a Persistent Instance in dir, as WithDataDir does,
+// for a Test data dir that t owns, such as t.TempDir(). When t ends, after
+// its Instances have stopped, the containers, networks and volumes of the
+// Instance in dir are removed, as an Ephemeral Instance's are when it
+// stops; Instances started again in dir during t still find them. A
+// failure to remove them fails t.
+func WithTestDataDir(t testing.TB, dir string) Option {
+	persistent := WithDataDir(dir)
+	return WithConfig(func(c *config.Config) {
+		persistent.apply(c)
+		removeAtEnd(t, dir)
+	})
 }
 
 // WithOperationLatency makes the Operations of the Service serviceID

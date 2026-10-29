@@ -3,7 +3,6 @@
 package emutest_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,24 +33,5 @@ func TestStartReportsDataDirLeft(t *testing.T) {
 	rec.runCleanups()
 	if len(rec.errors) != 1 {
 		t.Errorf("Start's cleanup reported %q, want the data dir it could not remove", rec.errors)
-	}
-}
-
-// cleanupTB records the cleanups and errors of what it is passed to, and
-// sends everything else to the test.
-type cleanupTB struct {
-	testing.TB
-	cleanups []func()
-	errors   []string
-}
-
-func (c *cleanupTB) Cleanup(f func()) { c.cleanups = append(c.cleanups, f) }
-func (c *cleanupTB) Errorf(format string, a ...any) {
-	c.errors = append(c.errors, fmt.Sprintf(format, a...))
-}
-
-func (c *cleanupTB) runCleanups() {
-	for i := len(c.cleanups) - 1; i >= 0; i-- {
-		c.cleanups[i]()
 	}
 }

@@ -81,7 +81,7 @@ func call(t *testing.T, method, url, body string) []byte {
 // store and stored data are readable by the owner only.
 func TestDataDirPermissions(t *testing.T) {
 	dir := t.TempDir()
-	inst := emutest.Start(t, []string{"iam", "gcs", "pubsub"}, emutest.WithDataDir(dir))
+	inst := emutest.Start(t, []string{"iam", "gcs", "pubsub"}, emutest.WithTestDataDir(t, dir))
 	gw := inst.GatewayURL()
 	call(t, "POST", gw+"/iam/v1/projects/perm-proj/serviceAccounts", `{"accountId":"perm-sa"}`)
 	call(t, "POST", gw+"/iam/v1/projects/perm-proj/serviceAccounts/perm-sa@perm-proj.iam.gserviceaccount.com/keys", `{}`)

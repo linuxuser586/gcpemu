@@ -231,8 +231,8 @@ func (m *Manager) Reclaim(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Cleanup removes all of the instance's containers; with all=true also its
-// networks and volumes.
+// Cleanup removes all of the instance's containers and the probe networks
+// of failed pinned creates; with all=true also its networks and volumes.
 func (m *Manager) Cleanup(ctx context.Context, all bool) error { return m.cleanup(ctx, all) }
 
 func (m *Manager) cleanup(ctx context.Context, all bool) error {
@@ -256,17 +256,22 @@ func (m *Manager) cleanup(ctx context.Context, all bool) error {
 		}(c.ID, c.Name)
 	}
 	wg.Wait()
-	if !all {
-		return errors.Join(errs...)
-	}
 	nets, err := m.ListNetworks(ctx, sel)
 	if err != nil {
 		errs = append(errs, err)
 	}
 	for _, n := range nets {
+		// Probes are never attached, so they go even when the networks
+		// are kept (#842).
+		if !all && !isProbe(n.Name) {
+			continue
+		}
 		if err := m.RemoveNetwork(ctx, n.ID); err != nil {
 			errs = append(errs, fmt.Errorf("remove network %s: %w", n.Name, err))
 		}
+	}
+	if !all {
+		return errors.Join(errs...)
 	}
 	vols, err := m.ListVolumes(ctx, sel)
 	if err != nil {

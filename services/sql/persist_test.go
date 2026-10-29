@@ -26,7 +26,7 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	dir := t.TempDir()
-	persistent := emutest.WithDataDir(dir)
+	persistent := emutest.WithTestDataDir(t, dir)
 	ctx := context.Background()
 
 	inst := emutest.Start(t, []string{"sql"}, persistent)
@@ -91,7 +91,7 @@ func TestRecoveryWithGKE(t *testing.T) {
 	t.Parallel()
 	emutest.HoldClusterSlot(t)
 	dir := t.TempDir()
-	persistent := emutest.WithDataDir(dir)
+	persistent := emutest.WithTestDataDir(t, dir)
 	ctx := context.Background()
 
 	inst := emutest.Start(t, []string{"sql", "gke"}, persistent)

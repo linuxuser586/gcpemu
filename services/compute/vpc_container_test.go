@@ -452,7 +452,7 @@ func TestNetworksSurviveRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	dir := t.TempDir()
-	persistent := emutest.WithDataDir(dir)
+	persistent := emutest.WithTestDataDir(t, dir)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
 	var first emu.SubnetNet
@@ -503,7 +503,7 @@ func TestTranslatedNetworkSurvivesRestart(t *testing.T) {
 	reserved := fmt.Sprintf("10.%d.%d.2", o2, o3)
 	overlap(t, rng)
 	dir := t.TempDir()
-	persistent := emutest.WithDataDir(dir)
+	persistent := emutest.WithTestDataDir(t, dir)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
 	var first emu.SubnetNet

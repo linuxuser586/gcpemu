@@ -1170,7 +1170,8 @@ Options, for `Start` and `New`:
 | Option | Effect |
 | --- | --- |
 | `WithSeed(path)` | Applies a Seed file before the Instance is ready |
-| `WithDataDir(dir)` | A Persistent Instance in `dir` instead of an Ephemeral one |
+| `WithDataDir(dir)` | A Persistent Instance in `dir` instead of an Ephemeral one. Its networks and volumes outlive the test until `gcpemu prune` |
+| `WithTestDataDir(t, dir)` | A Persistent Instance in a Test data dir, such as `t.TempDir()`. Restarts within the test keep its state, and its containers, networks and volumes are removed when the test ends |
 | `WithOperationLatency(serviceID, d)` | The Service's Operations complete after `d` (`--lro-latency`) |
 | `WithStrictProjects()` | Refuses undeclared projects (`--strict-projects`) |
 | `WithOffline()` | Never reaches the internet (`--offline`) |

@@ -20,7 +20,7 @@ func startPersistent(t *testing.T, dir string) *emutest.Instance {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	inst, err := emutest.New(ctx, []string{"gke"}, emutest.WithDataDir(dir),
+	inst, err := emutest.New(ctx, []string{"gke"}, emutest.WithTestDataDir(t, dir),
 		emutest.WithConfig(func(c *config.Config) { c.Instance = "gke-restart" }))
 	if err != nil {
 		t.Fatal(err)

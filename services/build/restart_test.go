@@ -17,7 +17,7 @@ import (
 // from 4510 to 4562 (#645), gives each Build it kept a logUrl on the new
 // port.
 func TestLogURLFollowsTheGateway(t *testing.T) {
-	persistent := emutest.WithDataDir(t.TempDir())
+	persistent := emutest.WithTestDataDir(t, t.TempDir())
 	e := start(t, persistent)
 	op, _ := e.create(&cloudbuildpb.Build{Steps: []*cloudbuildpb.BuildStep{step("hello", "echo hello")}})
 	b, err := op.Wait(e.ctx)

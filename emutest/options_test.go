@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,10 @@ func TestWithStrictProjects(t *testing.T) {
 }
 
 // TestWithDataDir: a Persistent Instance keeps its state in dir, which a
-// later Instance in dir finds, and Close leaves dir in place.
+// later Instance in dir finds, and Close leaves dir in place. It is the one
+// test that hands a Test data dir to WithDataDir rather than
+// WithTestDataDir, to test that option; its Instances use no runtime, so
+// nothing outlives the test.
 func TestWithDataDir(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
@@ -79,6 +83,33 @@ func TestWithDataDir(t *testing.T) {
 	second := emutest.Start(t, []string{"gcs"}, emutest.WithDataDir(dir))
 	if _, err := second.Storage(t).Bucket("kept-bucket").Attrs(ctx); err != nil {
 		t.Errorf("bucket after restart: %v", err)
+	}
+}
+
+// TestWithTestDataDir: Instances started in the same dir in one test,
+// through one Option or several, register one end-of-test cleanup of the
+// Instance's runtime objects between them, which reports nothing when
+// there are none.
+func TestWithTestDataDir(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	rec := &cleanupTB{TB: t}
+	persistent := emutest.WithTestDataDir(rec, dir)
+	for _, opt := range []emutest.Option{persistent, emutest.WithTestDataDir(rec, dir), persistent} {
+		if err := emutest.Start(rec, []string{"gcs"}, opt).Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One cleanup per Start, and one for dir.
+	if n := len(rec.cleanups); n != 4 {
+		t.Errorf("%d cleanups registered, want 4", n)
+	}
+	rec.runCleanups()
+	if len(rec.errors) != 0 {
+		t.Errorf("cleanups reported %q", rec.errors)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.db")); err != nil {
+		t.Errorf("state in the data dir after the cleanups: %v", err)
 	}
 }
 
@@ -208,5 +239,24 @@ func TestWithExternal(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if want := "external /v1/projects/p/databases/(default)/documents/c/d"; string(b) != want {
 		t.Errorf("got %d %q, want %q", resp.StatusCode, b, want)
+	}
+}
+
+// cleanupTB records the cleanups and errors of what it is passed to, and
+// sends everything else to the test.
+type cleanupTB struct {
+	testing.TB
+	cleanups []func()
+	errors   []string
+}
+
+func (c *cleanupTB) Cleanup(f func()) { c.cleanups = append(c.cleanups, f) }
+func (c *cleanupTB) Errorf(format string, a ...any) {
+	c.errors = append(c.errors, fmt.Sprintf(format, a...))
+}
+
+func (c *cleanupTB) runCleanups() {
+	for i := len(c.cleanups) - 1; i >= 0; i-- {
+		c.cleanups[i]()
 	}
 }
