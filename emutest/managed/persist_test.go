@@ -30,7 +30,7 @@ var keeping = []emutest.Option{
 // set, stopping it when the test ends.
 func startIn(ctx context.Context, t *testing.T, dir string, opts ...emutest.Option) *emutest.Instance {
 	t.Helper()
-	inst, err := emutest.New(ctx, []string{"iam"}, append([]emutest.Option{emutest.WithDataDir(dir)}, opts...)...)
+	inst, err := emutest.New(ctx, []string{"iam"}, append([]emutest.Option{emutest.WithTestDataDir(t, dir)}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

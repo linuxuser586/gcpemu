@@ -158,7 +158,7 @@ func TestHostAttachmentSurvivesRestart(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
 	dir := t.TempDir()
-	persistent := emutest.WithDataDir(dir)
+	persistent := emutest.WithTestDataDir(t, dir)
 	ctx := context.Background()
 	sp := "projects/" + proj + "/regions/us-central1/subnetworks/s"
 	port := hostListener(t)

@@ -271,3 +271,76 @@ func TestPinnedNetworkFallbackProbe(t *testing.T) {
 		t.Errorf("connects = %q; want the emulator on gcpemu-i1-svc once, never on the probe", connects)
 	}
 }
+
+// TestPinnedNetworkProbeRemovedOnError: a pinned create that fails once
+// its probe exists, because inspecting or deleting the probe fails or its
+// context ends, still deletes the probe (#842).
+func TestPinnedNetworkProbeRemovedOnError(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		inspectFails  bool
+		deleteFails   int  // DELETEs that fail before one succeeds
+		cancelOnProbe bool // the context ends while the probe is inspected
+	}{
+		{name: "inspect fails", inspectFails: true},
+		{name: "delete fails", deleteFails: 1},
+		{name: "context ends", cancelOnProbe: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var mu sync.Mutex
+			nets := map[string]string{} // ID -> name
+			deleteFails := tc.deleteFails
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/networks/create"):
+					var body struct{ Name string }
+					b, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(b, &body)
+					id := "n" + strconv.Itoa(len(nets)+1)
+					nets[id] = body.Name
+					_, _ = io.WriteString(w, `{"Id":"`+id+`"}`)
+				case r.Method == "GET" && strings.Contains(r.URL.Path, "/networks/"):
+					if tc.cancelOnProbe {
+						cancel()
+					}
+					if tc.inspectFails {
+						w.WriteHeader(500)
+						_, _ = io.WriteString(w, `{"message":"inspect failed"}`)
+						return
+					}
+					id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+					_, _ = io.WriteString(w, `{"Id":"`+id+`","Name":"`+nets[id]+`","IPAM":{"Config":[{"Subnet":"172.18.0.0/16","Gateway":"172.18.0.1"}]}}`)
+				case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/networks/"):
+					if deleteFails > 0 {
+						deleteFails--
+						w.WriteHeader(500)
+						_, _ = io.WriteString(w, `{"message":"delete failed"}`)
+						return
+					}
+					delete(nets, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+				default:
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cl.CreateNetwork(ctx, NetworkSpec{Name: "gcpemu-i1-svc", Pin: true}); err == nil {
+				t.Fatal("CreateNetwork succeeded; want the probe's error")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, name := range nets {
+				if isProbe(name) {
+					t.Errorf("networks = %q; want no probe left", nets)
+				}
+			}
+		})
+	}
+}

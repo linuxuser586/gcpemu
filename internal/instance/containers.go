@@ -193,8 +193,9 @@ func (c *containers) reset(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// shutdown removes the instance's containers (and, for ephemeral instances,
-// networks and volumes) after services have stopped.
+// shutdown removes the instance's containers and probe networks (and, for
+// ephemeral instances, its other networks and volumes) after services have
+// stopped.
 func (c *containers) shutdown() error {
 	c.mu.Lock()
 	rt, plane := c.rt, c.plane

@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -457,16 +458,17 @@ func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error
 	s.Pin = false
 	for attempt := 0; attempt < 10; attempt++ {
 		probe := s
-		probe.Name = fmt.Sprintf("%s-probe-%08x", s.Name, rand.Uint32())
+		probe.Name = probeName(s.Name)
 		id, err := c.createNetwork(ctx, probe)
 		if err != nil {
 			return "", err
 		}
 		n, err := c.InspectNetwork(ctx, id)
-		if err != nil {
-			return "", err
+		if err == nil {
+			err = c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(id), nil, nil, nil)
 		}
-		if err := c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(id), nil, nil, nil); err != nil {
+		if err != nil {
+			c.removeProbe(id)
 			return "", fmt.Errorf("create network %s: %w", s.Name, err)
 		}
 		if n.Subnet == "" {
@@ -486,6 +488,24 @@ func (c *Client) createPinned(ctx context.Context, s NetworkSpec) (string, error
 		}
 	}
 	return c.createNetwork(ctx, s)
+}
+
+// probeName returns a new name for a probe network of the network name.
+func probeName(name string) string { return fmt.Sprintf("%s-probe-%08x", name, rand.Uint32()) }
+
+// probeSuffix matches the end of a name that probeName returns.
+var probeSuffix = regexp.MustCompile(`-probe-[0-9a-f]{8}$`)
+
+// isProbe reports whether name is that of a createPinned probe network.
+func isProbe(name string) bool { return probeSuffix.MatchString(name) }
+
+// removeProbe deletes the probe network id of a createPinned that failed
+// (#842), with a context of its own, since the caller's may have ended. A
+// probe it cannot delete either is left to the Instance's cleanup.
+func (c *Client) removeProbe(id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = c.do(ctx, http.MethodDelete, "/networks/"+url.PathEscape(id), nil, nil, nil)
 }
 
 // poolsExhausted reports a runtime that has no default address pool left

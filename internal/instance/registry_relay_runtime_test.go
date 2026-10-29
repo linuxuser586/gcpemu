@@ -51,7 +51,7 @@ func TestStartRemovesLeftoverRegistryRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	inst := emutest.Start(t, []string{"ar"}, emutest.WithDataDir(dir),
+	inst := emutest.Start(t, []string{"ar"}, emutest.WithTestDataDir(t, dir),
 		emutest.WithConfig(func(c *config.Config) { c.NoRegistryRelay = false }))
 	defer inst.Close(context.Background())
 	if _, err := cl.InspectContainer(ctx, id); !errors.Is(err, runtime.ErrNotFound) {

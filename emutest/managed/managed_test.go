@@ -304,7 +304,7 @@ func TestManagedStop(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	inst, err := emutest.New(ctx, []string{"iam"}, emutest.WithDataDir(dir), emutest.WithExternal("bigtable", "managed"))
+	inst, err := emutest.New(ctx, []string{"iam"}, emutest.WithTestDataDir(t, dir), emutest.WithExternal("bigtable", "managed"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestManagedStop(t *testing.T) {
 		t.Fatalf("after stop, Managed emulator containers %v remain", cts)
 	}
 
-	inst, err = emutest.New(ctx, []string{"iam"}, emutest.WithDataDir(dir), emutest.WithExternal("bigtable", "managed"))
+	inst, err = emutest.New(ctx, []string{"iam"}, emutest.WithTestDataDir(t, dir), emutest.WithExternal("bigtable", "managed"))
 	if err != nil {
 		t.Fatal(err)
 	}
