@@ -31,7 +31,9 @@ Instance's back:
   whose published control port can move to a different host port
 
 None of them has a restart policy, and none of the Services is written to
-notice that a container came back with lost state. Recovering one of
+notice that a container came back with lost state. The one exception is
+the Cluster server, which keeps all of its state on its volumes: the GKE
+Service starts it again when it exits (ADR 0045). Recovering one of
 them alone restores nothing a user can see: the relay coming back does
 not help while the containers it relays to are still down.
 
