@@ -644,7 +644,7 @@ The Exchanges of one Conformance suite test against a real GCP project, normalis
 _Avoid_: golden, snapshot
 
 **Exchange**:
-One request a Conformance suite test makes and the response it gets, as kept in a Recording.
+One request a Conformance suite test makes and the response it gets, as kept in a Recording. The request goes either to a GCP API or to a data-plane address the test created, such as a load balancer's forwarding rule.
 _Avoid_: call, interaction, round trip
 
 **Drift**:
