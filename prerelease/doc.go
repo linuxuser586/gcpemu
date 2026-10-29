@@ -9,7 +9,7 @@
 //
 //	task prerelease                          # the Required runtimes
 //	task prerelease RUNTIMES=colima,orbstack # docker contexts to check
-//	task prerelease IMAGE=gcpemu:rc          # Windows: an image already built
+//	task prerelease IMAGE=gcpemu:rc          # an image already built
 //
 // On macOS (and on Linux, where they run only for runtimes named in
 // RUNTIMES, so the suite can be worked on there) each runtime runs the
@@ -32,7 +32,10 @@
 // against the runtime. Then the Registry relay check: an Instance on the
 // host with Artifact Registry, to and from which the runtime's own docker
 // (podman on Podman machine) pushes and pulls an image at
-// $GCPEMU_REGISTRY (ADR 0043).
+// $GCPEMU_REGISTRY (ADR 0043). Last, the same push and pull against a
+// Containerized Instance's registry, published at the same host port,
+// which needs no Registry relay (#835): on Windows the container of the
+// first checks, on macOS one of the release's image of its own.
 //
 // TestResolverRoutes is the same check on Linux, without the GKE Service,
 // for CI: it runs only with GCPEMU_RESOLVER_TESTS=1.

@@ -68,8 +68,9 @@ func TestStartRegistryRelay(t *testing.T) {
 					connected = true
 					return tt.rt, tt.rtErr
 				},
-				probe:  func(context.Context, *runtime.Manager) vmrelay.Decision { return tt.probe },
-				target: func(context.Context) (string, vmrelay.Decision, error) { return "10.89.0.2:4561", plane, nil },
+				containerized: func(*runtime.Manager) bool { return false },
+				probe:         func(context.Context, *runtime.Manager) vmrelay.Decision { return tt.probe },
+				target:        func(context.Context) (string, vmrelay.Decision, error) { return "10.89.0.2:4561", plane, nil },
 				start: func(_ context.Context, _ *runtime.Manager, o registryrelay.Options) error {
 					got = &o
 					return tt.startErr
@@ -103,6 +104,62 @@ func TestStartRegistryRelay(t *testing.T) {
 			}
 			if tt.want == RegistryRelaySkipped && st.Fix == "" {
 				t.Error("a skipped relay has no fix")
+			}
+		})
+	}
+}
+
+// TestStartRegistryRelayContainerized: a Containerized Instance starts no
+// Registry relay, as its Published registry port reaches VM-side clients
+// (#835). On Podman machine, with the VM-runtime decision on, its status
+// carries the same Podman step as an Instance on the host.
+func TestStartRegistryRelayContainerized(t *testing.T) {
+	cl, err := runtime.New("tcp://127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmOn := runtime.VMDecision{On: true, Reason: "forced by GCPEMU_VM_RUNTIME"}
+	vmOff := runtime.VMDecision{Reason: "runtime OS Ubuntu"}
+	tests := []struct {
+		name   string
+		rt     *runtime.Manager
+		podman bool
+	}{
+		{name: "Docker Desktop", rt: &runtime.Manager{Client: cl, Info: runtime.Info{Name: "docker"}, VM: vmOn}},
+		{name: "Podman machine", rt: &runtime.Manager{Client: cl, Info: runtime.Info{Name: "podman"}, VM: vmOn}, podman: true},
+		{name: "Podman on Linux", rt: &runtime.Manager{Client: cl, Info: runtime.Info{Name: "podman"}, VM: vmOff}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := startRegistryRelay(context.Background(), registryRelayDeps{
+				registry:      func() string { return "127.0.0.1:4561" },
+				runtime:       func(context.Context) (*runtime.Manager, error) { return tt.rt, nil },
+				containerized: func(*runtime.Manager) bool { return true },
+				probe: func(context.Context, *runtime.Manager) vmrelay.Decision {
+					t.Error("probed the VM relay decision")
+					return vmrelay.Decision{}
+				},
+				target: func(context.Context) (string, vmrelay.Decision, error) {
+					t.Error("asked for the services network")
+					return "", vmrelay.Decision{}, nil
+				},
+				start: func(context.Context, *runtime.Manager, registryrelay.Options) error {
+					t.Error("started a Registry relay")
+					return nil
+				},
+				log: slog.Default(),
+			})
+			if st.State != RegistryRelayOff {
+				t.Errorf("state = %q; want %q", st.State, RegistryRelayOff)
+			}
+			if !strings.Contains(st.Reason, "Published registry port 4561") || strings.Contains(st.Reason, "#835") {
+				t.Errorf("reason = %q; want it to name the Published registry port 4561, and no issue", st.Reason)
+			}
+			if (st.Podman != "") != tt.podman {
+				t.Errorf("podman step = %q; want one: %v", st.Podman, tt.podman)
+			}
+			if tt.podman && !strings.Contains(st.Podman, "localhost:4561") {
+				t.Errorf("podman step = %q; want the registry's port", st.Podman)
 			}
 		})
 	}

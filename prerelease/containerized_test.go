@@ -40,7 +40,8 @@ var release = sync.OnceValue(func() error {
 
 // containerizedChecks runs the Windows checks on runtime rt: the release's
 // image as a Containerized Instance, with the runtime's socket and a port
-// range, reached by the host's clients through its published ports.
+// range and the registry's port, reached by the host's clients through
+// its published ports.
 // Then the Resolver routes check runs an Instance on the host, gcpemu.exe.
 func containerizedChecks(t *testing.T, rt string) {
 	done := setup(t, rt)
@@ -48,22 +49,8 @@ func containerizedChecks(t *testing.T, rt string) {
 	requireTools(t, "docker", "task", "go", "gcloud", "kubectl", "cloud-sql-proxy")
 	requireBin(t)
 	useRuntime(t, rt)
-	image := os.Getenv(imageEnv)
-	if image == "" {
-		requireTools(t, "pnpm")
-		if err := release(); err != nil {
-			t.Fatalf("task release: %v", err)
-		}
-		arch := hosttest.Docker(t, "version", "--format", "{{.Server.Arch}}")
-		hosttest.Docker(t, "build", "-q", "--provenance=false", "--output", "type=docker,oci-mediatypes=false", "--build-arg", "TARGETARCH="+arch, "-t", rcImage, "-f", filepath.Join(repo, "Dockerfile"), filepath.Join(repo, "dist"))
-		image = rcImage
-	}
-	_, _ = exec.Command("docker", "rm", "-f", container).CombinedOutput()
-	args := append(hosttest.SocketArgs(t), "-p", "127.0.0.1:"+portRange+":"+portRange)
-	if strings.Contains(rt, "podman") {
-		args = append(args, "-e", "GCPEMU_VM_RUNTIME=true")
-	}
-	gw := hosttest.RunEmulator(t, container, image, "4562", args, "--port-range", portRange)
+	image := releaseImage(t)
+	gw := hosttest.RunEmulator(t, container, image, "4562", containerArgs(t, rt, portRange, registryPort), "--port-range", portRange)
 	t.Logf("API gateway at %s", gw)
 	done()
 
@@ -82,6 +69,39 @@ func containerizedChecks(t *testing.T, rt string) {
 	step(t, rt, "7-vm-relay", 15*time.Minute, vmRelay)
 	// Like checks 5 to 7, on the host.
 	step(t, rt, "8-registry-relay", 15*time.Minute, func(t *testing.T, ctx context.Context) { registryRelay(t, ctx, rt) })
+	step(t, rt, "9-containerized-registry", 15*time.Minute, func(t *testing.T, ctx context.Context) { containerizedRegistry(t, ctx, rt) })
+}
+
+// containerArgs removes a leftover container and returns the docker run
+// args of the Containerized Instance on runtime rt: the runtime's socket,
+// and ports (a port or a range) each published at the same host port.
+func containerArgs(t *testing.T, rt string, ports ...string) []string {
+	t.Helper()
+	_, _ = exec.Command("docker", "rm", "-f", container).CombinedOutput()
+	args := hosttest.SocketArgs(t)
+	for _, p := range ports {
+		args = append(args, "-p", "127.0.0.1:"+p+":"+p)
+	}
+	if strings.Contains(rt, "podman") {
+		args = append(args, "-e", "GCPEMU_VM_RUNTIME=true")
+	}
+	return args
+}
+
+// releaseImage returns IMAGE, or the image this runtime builds from the
+// release binaries.
+func releaseImage(t *testing.T) string {
+	t.Helper()
+	if image := os.Getenv(imageEnv); image != "" {
+		return image
+	}
+	requireTools(t, "task", "pnpm")
+	if err := release(); err != nil {
+		t.Fatalf("task release: %v", err)
+	}
+	arch := hosttest.Docker(t, "version", "--format", "{{.Server.Arch}}")
+	hosttest.Docker(t, "build", "-q", "--provenance=false", "--output", "type=docker,oci-mediatypes=false", "--build-arg", "TARGETARCH="+arch, "-t", rcImage, "-f", filepath.Join(repo, "Dockerfile"), filepath.Join(repo, "dist"))
+	return rcImage
 }
 
 // containerEnv returns what `gcpemu env --shell powershell` prints in the

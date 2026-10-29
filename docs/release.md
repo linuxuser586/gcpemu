@@ -115,6 +115,8 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
    after `uninstall` the `/etc/resolver` files gcpemu wrote are gone.
 7. **VM relay:** see below.
 8. **Registry relay:** see below.
+9. **Containerized Instance registry:** see below. To build the image it also needs Node and pnpm,
+   unless `IMAGE=<ref>` names one already built.
 
 The suite also runs on Linux, but only for the runtimes `RUNTIMES` names, so it can be worked on
 with Docker Desktop for Linux. Check 6 changes the host's resolver there only with
@@ -125,9 +127,9 @@ with Docker Desktop for Linux. Check 6 changes the host's resolver there only wi
 Needs `go`, `task`, `docker`, `gcloud`, `kubectl` and `cloud-sql-proxy`, with or without
 `IMAGE=<ref>`: `task prerelease` always builds `bin/gcpemu.exe` for the checks that run on the host.
 To build the image it also needs Node and pnpm: it runs `task release` and builds `gcpemu:rc` from
-`dist/`. `IMAGE=<ref>` uses an image already built instead. The container publishes `127.0.0.1:4562` and
-`127.0.0.1:20000-20019`, so those ports must be free. With Podman machine, the container also
-gets `GCPEMU_VM_RUNTIME=true`.
+`dist/`. `IMAGE=<ref>` uses an image already built instead. The container publishes
+`127.0.0.1:4562`, `127.0.0.1:4561` (the registry) and `127.0.0.1:20000-20019`, so those ports must
+be free. With Podman machine, the container also gets `GCPEMU_VM_RUNTIME=true`.
 
 1. **Start:** in the container, `doctor` reports the VM-runtime decision as on (Docker Desktop
    recognized) and the loopback-alias decision as on. The API gateway that
@@ -151,6 +153,7 @@ gets `GCPEMU_VM_RUNTIME=true`.
    says so.
 7. **VM relay:** see below. Like checks 5 and 6, it runs on the host, not in the container.
 8. **Registry relay:** see below. Like checks 5 to 7, it runs on the host.
+9. **Containerized Instance registry:** see below. It uses the container of checks 1–4.
 
 ### Host attachment (macOS and Windows)
 
@@ -200,6 +203,19 @@ the relay skipped or failed fails the check. On Podman machine it pushes and pul
 `podman push --tls-verify=false` instead, as Podman sends `localhost` registries HTTPS. Docker
 Desktop with host networking turned on may forward the port like OrbStack and Colima do; run the
 check once with it on when that's at hand.
+
+### Containerized Instance registry (macOS and Windows)
+
+A Containerized Instance needs no Registry relay: the runtime binds its Published registry port
+inside its VM too, where the runtime's own `docker push` reaches it (#835). Check 9 proves it on
+each runtime. On macOS it runs the release's image as an Ephemeral Containerized Instance with IAM
+and Artifact Registry and `-p 127.0.0.1:4561:4561`; on Windows the container of checks 1–4 already
+publishes 4561. In the container, `gcpemu doctor` must report the Registry relay off because of the
+Published registry port, and `$GCPEMU_REGISTRY` must be `127.0.0.1:4561`. Then, like check 8, it
+creates a Docker repository with `gcloud` and pushes and pulls
+`$GCPEMU_REGISTRY/us-central1-docker.pkg.dev/prerelease/published/busybox` with the runtime's own
+`docker` (`podman --tls-verify=false` on Podman machine). When it fails on a Required runtime, open
+an issue for that runtime.
 
 ### What stays manual
 
