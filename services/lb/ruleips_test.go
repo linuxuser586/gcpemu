@@ -147,3 +147,62 @@ func TestLiteralRuleIPOnAddress(t *testing.T) {
 		t.Errorf("Address vip = %+v, %v; want two users", a, err)
 	}
 }
+
+// A rule that references an internal Address is checked against the
+// Address's subnetwork, whatever subnetwork the rule gives: a second rule
+// may not reference a GCE_ENDPOINT Address another uses, but may share a
+// SHARED_LOADBALANCER_VIP.
+func TestAddressRefRuleIPChecked(t *testing.T) {
+	e := start(t)
+	c := e.c
+	internalLB(e)
+	e.do(reserve(e, "ep", "10.40.0.20", "GCE_ENDPOINT"))
+	e.do(reserve(e, "vip", "10.40.0.21", "SHARED_LOADBALANCER_VIP"))
+	byRef := func(name, addr, port string) *computev1.ForwardingRule {
+		f := internalRule(name, "regions/us-central1/addresses/"+addr, port)
+		f.Subnetwork = ""
+		return f
+	}
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", byRef("ep1", "ep", "8080")).Do())
+	if _, err := c.ForwardingRules.Insert(proj, "us-central1", byRef("ep2", "ep", "9090")).Do(); errReason(err) != "ipInUseByAnotherResource" {
+		t.Errorf("a second rule referencing a GCE_ENDPOINT Address: %v; want ipInUseByAnotherResource", err)
+	}
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", byRef("vip1", "vip", "8080")).Do())
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", byRef("vip2", "vip", "9090")).Do())
+	if a, err := c.Addresses.Get(proj, "us-central1", "ep").Do(); err != nil || len(a.Users) != 1 {
+		t.Errorf("Address ep = %+v, %v; want one user", a, err)
+	}
+	// The rules recorded nothing of their own: the Addresses hold the IPs.
+	e.do(c.ForwardingRules.Delete(proj, "us-central1", "ep1").Do())
+	e.do(c.Addresses.Delete(proj, "us-central1", "ep").Do())
+	e.do(reserve(e, "again", "10.40.0.20", ""))
+}
+
+// A global internal rule that names an IP on its subnetwork is checked
+// like a regional one.
+func TestGlobalLiteralRuleIPChecked(t *testing.T) {
+	e := start(t)
+	c := e.c
+	internalLB(e)
+	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "gilb", LoadBalancingScheme: "INTERNAL_MANAGED", Protocol: "HTTP"}).Do())
+	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "gilb", DefaultService: "global/backendServices/gilb"}).Do())
+	e.do(c.TargetHttpProxies.Insert(proj, &computev1.TargetHttpProxy{Name: "gilb", UrlMap: "global/urlMaps/gilb"}).Do())
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", internalRule("fr", "10.40.0.10", "8080")).Do())
+	global := func(ip string) error {
+		_, err := c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "g", LoadBalancingScheme: "INTERNAL_MANAGED", PortRange: "9090", IPAddress: ip,
+			Network: "global/networks/vpc", Subnetwork: "regions/us-central1/subnetworks/sub", Target: "global/targetHttpProxies/gilb"}).Do()
+		return err
+	}
+	if err := global("10.40.0.10"); errReason(err) != "ipInUseByAnotherResource" {
+		t.Errorf("the regional rule's address: %v; want ipInUseByAnotherResource", err)
+	}
+	if err := global("10.41.0.5"); errReason(err) != "invalid" {
+		t.Errorf("outside the range: %v; want invalid", err)
+	}
+	if err := global("10.40.0.11"); err != nil {
+		t.Fatalf("a free address: %v", err)
+	}
+	if _, err := reserve(e, "a", "10.40.0.11", ""); errReason(err) != "ipInUseByAnotherResource" {
+		t.Errorf("reserving the global rule's address: %v; want ipInUseByAnotherResource", err)
+	}
+}

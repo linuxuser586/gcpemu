@@ -60,22 +60,24 @@ func ruleSubnetwork(tx store.Tx, rule, subnetwork string) (string, *computev1.Su
 }
 
 // recordRuleIP records r unless its address is that of an internal
-// Address on the subnetwork, which already holds it; then it drops the
-// rule's record.
+// Address in the subnetwork's region, which already holds it (a rule that
+// references an Address on another subnetwork gives none of its own);
+// then it drops the rule's record.
 func recordRuleIP(tx store.Tx, r RuleIP) error {
 	rule := relPath(r.Rule)
 	sp, ok := ruleSubnet(rule, r.Subnetwork)
-	if _, valid := parseIP(r.IP); !ok || !valid || r.IP == "0.0.0.0" || addressOn(tx, sp, r.IP) != nil {
+	if _, valid := parseIP(r.IP); !ok || !valid || r.IP == "0.0.0.0" || regionAddress(tx, sp, r.IP) != nil {
 		return tx.Delete(nsRuleIPs, rule)
 	}
 	return store.PutJSON(tx, nsRuleIPs, rule, &ruleIP{Subnetwork: sp, IP: r.IP})
 }
 
-// addressOn returns the internal Address holding ip on subnetwork sp.
-func addressOn(tx store.Tx, sp, ip string) *computev1.Address {
+// regionAddress returns the internal Address holding ip in subnetwork
+// sp's region.
+func regionAddress(tx store.Tx, sp, ip string) *computev1.Address {
 	p, region, _ := pathParts(sp)
 	for _, a := range list[computev1.Address](tx, nsAddresses, "projects/"+p+"/regions/"+region+"/addresses/") {
-		if a.Address == ip && relPath(a.Subnetwork) == sp {
+		if a.Address == ip && a.Subnetwork != "" {
 			return a
 		}
 	}
@@ -123,7 +125,7 @@ func (s *Service) HoldRuleIP(ctx context.Context, r RuleIP) error {
 		if !ok || !c.usable(ip) {
 			return errInvalidField("resource.IPAddress", r.IP, "The specified IP address is not within the subnetwork range or is reserved.")
 		}
-		if a := addressOn(tx, sp, r.IP); a != nil {
+		if a := regionAddress(tx, sp, r.IP); a != nil && relPath(a.Subnetwork) == sp {
 			if a.Purpose != "SHARED_LOADBALANCER_VIP" && slices.ContainsFunc(a.Users, func(u string) bool { return relPath(u) != rule }) {
 				return errIPInUse(r.IP)
 			}
