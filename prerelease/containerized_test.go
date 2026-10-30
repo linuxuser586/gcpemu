@@ -49,6 +49,9 @@ func containerizedChecks(t *testing.T, rt string) {
 	requireTools(t, "docker", "task", "go", "gcloud", "kubectl", "cloud-sql-proxy")
 	requireBin(t)
 	useRuntime(t, rt)
+	// A dev build's Sidecar agent, for this runtime's architecture: the
+	// relays of checks 7 and 8 run it, and gcpemu.exe finds it in bin.
+	task(t, context.Background(), "agent")
 	image := releaseImage(t)
 	gw := hosttest.RunEmulator(t, container, image, "4562", containerArgs(t, rt, portRange, registryPort), "--port-range", portRange)
 	t.Logf("API gateway at %s", gw)
