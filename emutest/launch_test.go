@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -100,4 +101,36 @@ func TestLaunchFailureKeepsGivenDataDir(t *testing.T) {
 	if _, err := os.Stat(keep); err != nil {
 		t.Errorf("given data dir not kept: %v", err)
 	}
+}
+
+// TestLaunchFailureKeepsTestDataDirWhenResourcesRemain: a launch that fails after its
+// Instance was created, and whose containers, networks or volumes cannot
+// be removed, keeps its Test data dir, owner lock released, for the next
+// sweep, as Close does (ADR 0047, #877).
+func TestLaunchFailureKeepsTestDataDirWhenResourcesRemain(t *testing.T) {
+	savedShutdown, savedRemove := shutdownInstance, removeInstanceResources
+	shutdownInstance = func(ctx context.Context, in *instance.Instance) error {
+		return errors.Join(in.Shutdown(ctx), errors.New("container left"))
+	}
+	removeInstanceResources = func(string) error { return errors.New("no runtime") }
+	t.Cleanup(func() { shutdownInstance, removeInstanceResources = savedShutdown, savedRemove })
+	cfg := testConfig([]string{"gcs"}, []Option{WithSeed(filepath.Join(t.TempDir(), "missing.yaml"))})
+	released := 0
+	i, err := launch(context.Background(), &cfg, func() { released++ })
+	if err == nil {
+		i.Close(context.Background())
+		t.Fatal("launch with a missing seed file succeeded")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(cfg.DataDir) })
+	if released != 1 {
+		t.Errorf("release called %d times, want 1", released)
+	}
+	if _, err := os.Stat(cfg.DataDir); err != nil {
+		t.Fatalf("data dir not kept: %v", err)
+	}
+	unlock, err := lockNow(filepath.Join(cfg.DataDir, ownerLockFile), 0)
+	if err != nil {
+		t.Fatalf("owner lock of the kept dir still held: %v", err)
+	}
+	unlock()
 }
