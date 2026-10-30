@@ -22,7 +22,8 @@ func (g *Gateway) SetAdminToken(tok string) { g.adminToken = tok }
 
 // adminGuarded reports whether path needs the Admin token. Liveness and
 // readiness stay open so that probes need no secret; the GKE hooks under
-// /container/_emu/ have their own per-cluster secret.
+// /container/_emu/ have their own per-cluster secret. Only these requests
+// keep their cookies, where the token may travel (#888).
 func adminGuarded(r *http.Request) bool {
 	p := r.URL.Path
 	switch {

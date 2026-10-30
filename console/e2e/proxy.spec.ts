@@ -52,7 +52,7 @@ test.afterAll(() => {
   proxy?.close()
 })
 
-test('console behind a same-origin authenticating proxy', async ({
+test('Authenticating proxy: every console request carries its session cookie', async ({
   page,
   context,
   request,

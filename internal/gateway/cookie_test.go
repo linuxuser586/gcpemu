@@ -74,3 +74,20 @@ func TestAdminRequestKeepsCookies(t *testing.T) {
 		t.Errorf("Admin API with the Admin token cookie: served %v, %d %s", served, w.Code, w.Body)
 	}
 }
+
+// A request a Linked Instance forwarded reaches its Service without
+// cookies, whatever the Linked Instance let through (#888).
+func TestLinkedRequestLosesCookies(t *testing.T) {
+	g := New(&emu.Env{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler)}, nil)
+	g.SetLinks(fakeLinks{shared: []string{"team-shared"}})
+	var cookie []string
+	served := false
+	g.mux.HandleFunc("/v1/", func(_ http.ResponseWriter, r *http.Request) { served, cookie = true, r.Header.Values("Cookie") })
+	r := httptest.NewRequest(http.MethodGet, "/v1/projects/team-shared/topics", nil)
+	r.Header.Set("Cookie", consoleCookies)
+	w := httptest.NewRecorder()
+	g.ServeLinked(w, r, "laptop", "user:a@example.com")
+	if !served || len(cookie) != 0 {
+		t.Errorf("served %v with Cookie %q, want served with none (%d %s)", served, cookie, w.Code, w.Body)
+	}
+}
