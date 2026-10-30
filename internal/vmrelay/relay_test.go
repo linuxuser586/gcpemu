@@ -3,6 +3,7 @@ package vmrelay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -51,7 +52,7 @@ func connect(t *testing.T, ctrl string, lookup func(context.Context) (string, er
 		r.mu.Unlock()
 		r.dropSession()
 	})
-	if err := r.waitReady(context.Background(), 5*time.Second); err != nil {
+	if _, err := r.waitReady(context.Background(), 5*time.Second, time.Second); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -319,6 +320,131 @@ func TestReconnect(t *testing.T) {
 	}
 	if got := roundTrip(t, d, "dial"); got != "re:dial" {
 		t.Fatalf("dial after reconnect: %q", got)
+	}
+}
+
+// silentTCP accepts connections and holds them open without a word, as a
+// stalled port forward does (#807).
+func silentTCP(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var held []net.Conn
+	t.Cleanup(func() {
+		l.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	return l.Addr().String()
+}
+
+// TestWaitReadySilentControlPort: a control port that accepts connections
+// but never answers fails the wait in time, retrying each silent
+// connection, and says how many pings failed and the last error (#807).
+func TestWaitReadySilentControlPort(t *testing.T) {
+	r := &Relay{log: slog.New(slog.DiscardHandler), ctrl: silentTCP(t), streams: map[string]int64{}}
+	t.Cleanup(r.dropSession)
+	start := time.Now()
+	_, err := r.waitReady(context.Background(), 2*time.Second, 300*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitReady on a silent control port succeeded")
+	}
+	if took := time.Since(start); took > 4*time.Second {
+		t.Fatalf("waitReady took %v, want about 2s", took)
+	}
+	var n int
+	if _, scan := fmt.Sscanf(err.Error(), "%d pings failed, the last with: ", &n); scan != nil || n < 3 {
+		t.Fatalf("err = %q, want at least 3 pings failed, the last with: …", err)
+	}
+}
+
+// TestWaitReadyAfterStall: when the first connection to the control port
+// stalls and later ones reach the agent, the wait gives up on the stalled
+// one and is ready on a later ping, well before its timeout (#807).
+func TestWaitReadyAfterStall(t *testing.T) {
+	al, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go newRelayAgent().serve(al)
+	t.Cleanup(func() { al.Close() })
+	stall := silentTCP(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for first := true; ; first = false {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			to := al.Addr().String()
+			if first {
+				to = stall
+			}
+			u, err := net.Dial("tcp", to)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			go pipe(c, u)
+		}
+	}()
+
+	r := &Relay{log: slog.New(slog.DiscardHandler), ctrl: l.Addr().String(), streams: map[string]int64{}}
+	t.Cleanup(func() {
+		r.mu.Lock()
+		r.closed = true
+		r.mu.Unlock()
+		r.dropSession()
+	})
+	start := time.Now()
+	pings, err := r.waitReady(context.Background(), 10*time.Second, 300*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pings != 2 {
+		t.Fatalf("ready after %d pings, want 2", pings)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("waitReady took %v, want well under its 10s timeout", took)
+	}
+}
+
+// TestProbeControl: the probe that runs beside a relay whose control port
+// does not answer on the host gets the agent's answer when it listens, and
+// an error when its port is silent (#807).
+func TestProbeControl(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go newRelayAgent().serve(l)
+	t.Cleanup(func() { l.Close() })
+	if err := probeControl(context.Background(), l.Addr().String(), time.Second); err != nil {
+		t.Fatalf("probe of a listening agent: %v", err)
+	}
+	if err := probeControl(context.Background(), silentTCP(t), 300*time.Millisecond); err == nil {
+		t.Fatal("probe of a silent port succeeded")
 	}
 }
 
