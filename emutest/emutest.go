@@ -23,6 +23,13 @@ import (
 	"github.com/linuxuser586/gcpemu/services"
 )
 
+// shutdownInstance and removeInstanceResources are
+// (*instance.Instance).Shutdown and removeResources, replaced by tests.
+var (
+	shutdownInstance        = func(ctx context.Context, in *instance.Instance) error { return in.Shutdown(ctx) }
+	removeInstanceResources = removeResources
+)
+
 // Instance is a running test emulator.
 type Instance struct {
 	in        *instance.Instance
@@ -145,7 +152,7 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 	stop := func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = in.Shutdown(sctx)
+		_ = i.shutdown(sctx, in)
 	}
 	// Not ready until seeded, as with `gcpemu start --seed`.
 	seeded := func() {}
@@ -176,21 +183,30 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 // then. Calling it again returns the first call's error.
 func (i *Instance) Close(ctx context.Context) error {
 	i.closeOnce.Do(func() {
-		err := i.in.Shutdown(ctx)
-		if err != nil && i.ownedDir != "" && removeResources(i.ownedDir) != nil {
-			// The dir still holds the ID, so the next sweep removes what
-			// is left (ADR 0047).
-			i.ownedDir = ""
-		}
+		err := i.shutdown(ctx, i.in)
 		i.removeErr = i.cleanup()
 		i.closeErr = errors.Join(err, i.removeErr)
 	})
 	return i.closeErr
 }
 
-// cleanup drops the host loopback lock and removes the temporary data dir,
-// dropping its owner lock first: the Instance has removed its containers,
-// networks and volumes by then.
+// shutdown shuts in, i's emulator, down. If that fails and the containers,
+// networks or volumes it leaves cannot be removed, i gives up its
+// temporary data dir, so cleanup leaves it on disk: the dir still holds
+// the Instance ID, and the next sweep removes what is left (ADR 0047).
+// Close and a failed launch both stop this way.
+func (i *Instance) shutdown(ctx context.Context, in *instance.Instance) error {
+	err := shutdownInstance(ctx, in)
+	if err != nil && i.ownedDir != "" && removeInstanceResources(i.ownedDir) != nil {
+		i.ownedDir = ""
+	}
+	return err
+}
+
+// cleanup drops the host loopback lock and the owner lock, then removes
+// the temporary data dir, if i still owns one: shutdown gives up the dir
+// of an Instance whose containers, networks or volumes remain, and with
+// WithDataDir i owns none.
 func (i *Instance) cleanup() error {
 	if i.release != nil {
 		i.release()
