@@ -276,7 +276,7 @@ The Principal an Instance's STS exchange gives a workload, `principal://…/work
 _Avoid_: workload identity, external identity, federated token (say: an access token for a Federated principal)
 
 **Web console**:
-The browser UI an Instance serves for inspecting and operating its Services.
+The browser UI an Instance serves for inspecting and operating its Services. It is never served on a real Google hostname in Host mode, where only public APIs answer.
 
 **Authenticating proxy**:
 A reverse proxy someone puts in front of the API gateway, on the same origin, to sign people in before they reach the Web console, such as oauth2-proxy. The Instance neither knows of it nor trusts it: its session is never a credential.
@@ -287,7 +287,7 @@ The Web console's offer, on a resource's page, of the gcloud command, the REST r
 _Avoid_: export (that is `gcpemu export`, a Seed file)
 
 **Admin API**:
-The emulator-specific API under `/_emu/` for inspecting and operating an Instance (health, reset, fault injection, the request log and the like). It is the only interface not modelled on GCP, and the Web console is one of its clients.
+The emulator-specific API under `/_emu/` for inspecting and operating an Instance (health, reset, fault injection, the request log and the like). It is the only interface not modelled on GCP, and the Web console is one of its clients. It is never served on a real Google hostname in Host mode, where only public APIs answer.
 
 **Admin token**:
 A secret generated at each start that every Admin API and Web console request must present when the API gateway is bound beyond loopback. Public GCP APIs never need it, because IAM governs those.
