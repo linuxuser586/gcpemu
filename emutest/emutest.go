@@ -106,8 +106,8 @@ func testConfig(svcs []string, opts []Option) config.Config {
 // is called once it stops. With no data dir in cfg, it runs in a temporary
 // one it removes then.
 func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instance, err error) {
-	// i is a local, not a named result: return nil, err would set a named
-	// result to nil before the deferred cleanup reads it (#865).
+	// Not the named result: a failed launch returns nil, but must still
+	// clean up the Instance it built (#863).
 	i := &Instance{release: release}
 	defer func() {
 		if err != nil {
