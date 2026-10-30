@@ -373,6 +373,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	markFrontend(r)
+	// Cookies are the Web console's and any proxy's in front of it, never
+	// a public API's credential: only the Admin token guard reads them, so
+	// they go no further, least of all to a forwarded backend (#888).
+	if !adminGuarded(r) {
+		r.Header.Del("Cookie")
+	}
 	name, answered := g.delegation(w, r)
 	l := g.linker()
 	delegating := l != nil && l.Delegating()

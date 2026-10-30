@@ -21,7 +21,7 @@ async function requestToken(principal: string): Promise<Minted> {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: principal }),
-      credentials: 'omit',
+      credentials: 'same-origin',
     }),
   )
   const body = (await res.json().catch(() => ({}))) as {
@@ -55,7 +55,7 @@ export async function revokeToken(token: string): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ token }),
-      credentials: 'omit',
+      credentials: 'same-origin',
     }),
   ).catch(() => undefined)
 }
