@@ -43,7 +43,7 @@ func selfTestService(t *testing.T, self string) *Service {
 // for ip ("" picks one), and returns the address it got.
 func reserveInternal(t *testing.T, s *Service, name, ip string) (string, error) {
 	t.Helper()
-	a := &computev1.Address{Name: name, Address: ip, Subnetwork: "small"}
+	a := &computev1.Address{Name: name, Address: ip, AddressType: "INTERNAL", Subnetwork: "small"}
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		if err := s.allocRegionalInternal(tx, "p", "us-central1", a); err != nil {
 			return err
@@ -80,7 +80,7 @@ func TestAddressSkipsSelf(t *testing.T) {
 // No ephemeral forwarding-rule IP is the Self address (#811).
 func TestEphemeralIPSkipsSelf(t *testing.T) {
 	s := selfTestService(t, "10.0.0.2")
-	ip, err := s.EphemeralIP(context.Background(), "p", "us-central1", true, "small", nil)
+	ip, err := s.EphemeralIP(context.Background(), "p", "us-central1", true, "small", tRule, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

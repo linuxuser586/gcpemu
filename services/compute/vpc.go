@@ -538,7 +538,8 @@ func stateOf(tx store.Tx, net emu.SubnetNet) (*vpcNet, string) {
 // back without translation) for owner, skipping the network and gateway
 // addresses, GCP's reserved second-to-last address (where the NAT egress
 // proxy lives) and the broadcast address, plus internal addresses
-// reserved through the compute API, and addresses held on the container
+// reserved through the compute API and internal forwarding rules'
+// addresses (ADR 0044), and addresses held on the container
 // network by containers compute did not allocate for (#146), such as
 // ones the emulator does not manage, which join with an address the
 // runtime picks.
@@ -575,6 +576,9 @@ func (s *Service) AllocateIP(ctx context.Context, net emu.SubnetNet, owner strin
 						used[v] = true
 					}
 				}
+			}
+			for v := range ruleIPs(tx, st.Subnetwork) {
+				used[v] = true
 			}
 		}
 		for v := c.base + 2; v < c.last(); v++ {

@@ -24,8 +24,15 @@ func init() {
 	kindTargetSSLProxy.prepare = prepareSSLProxy
 	kindTargetTCPProxy.prepare = prepareTCPProxy
 	kindTargetGRPCProxy.prepare = prepareGRPCProxy
-	kindForwardingRule.afterSave = func(ctx context.Context, s *Service, path string, obj, old any) { s.syncAddressUsers(ctx, obj, old) }
-	kindForwardingRule.afterDelete = func(ctx context.Context, s *Service, path string, obj any) { s.syncAddressUsers(ctx, nil, obj) }
+	kindForwardingRule.afterSave = func(ctx context.Context, s *Service, path string, obj, old any) {
+		s.syncAddressUsers(ctx, obj, old)
+		s.syncRuleIP(ctx, path)
+	}
+	kindForwardingRule.afterDelete = func(ctx context.Context, s *Service, path string, obj any) {
+		s.syncAddressUsers(ctx, nil, obj)
+		s.syncRuleIP(ctx, path)
+	}
+	kindForwardingRule.afterFail = func(ctx context.Context, s *Service, path string) { s.syncRuleIP(ctx, path) }
 }
 
 // allKinds lists every collection in dependency order (referenced kinds

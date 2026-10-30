@@ -398,7 +398,12 @@ func (s *Service) deleteSubnetwork(w http.ResponseWriter, r *http.Request) {
 			if err := s.subnetInUse(ctx, path, cur); err != nil {
 				return err
 			}
-			if err := s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsSubnets, path) }); err != nil {
+			if err := s.env.Store.Update(func(tx store.Tx) error {
+				if err := dropSubnetRuleIPs(tx, path); err != nil {
+					return err
+				}
+				return tx.Delete(nsSubnets, path)
+			}); err != nil {
 				return err
 			}
 			if ps, err := s.policyStore(); err == nil {

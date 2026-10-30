@@ -586,6 +586,10 @@ _Avoid_: recording, records
 **Declared range**:
 The CIDR that a subnetwork or a private services access allocation has in GCP's API, as the user declared it.
 
+**Held address**:
+An address in a subnetwork's Declared range that a resource holds: an internal Address's, an internal forwarding rule's, a Managed container's, or the Self address. No other internal address takes it. A forwarding rule may still take an internal Address's IP while the Address has no other users, or always when the Address is a shared load balancer VIP.
+_Avoid_: used address, taken address
+
 **Gateway address**:
 The address GCP reports as a subnetwork's gateway: the second address of its Declared range, after the network address, whatever range its VPC container network uses.
 _Avoid_: gateway (unqualified), Host address

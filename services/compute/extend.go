@@ -104,8 +104,10 @@ func LabelFingerprint(labels map[string]string) string { return labelFingerprint
 // EphemeralIP allocates an ephemeral address for a load balancer
 // forwarding rule: external addresses from the global or regional pool
 // (region == "" means global), internal ones from subnetwork's primary
-// range, skipping reserved addresses and those for which inUse is true.
-func (s *Service) EphemeralIP(ctx context.Context, project, region string, internal bool, subnetwork string, inUse func(ip string) bool) (string, error) {
+// range, skipping the addresses held on it (heldOn) and those for which
+// inUse is true. An internal one is recorded for rule, the forwarding
+// rule's path, in the same transaction (ADR 0044).
+func (s *Service) EphemeralIP(ctx context.Context, project, region string, internal bool, subnetwork, rule string, inUse func(ip string) bool) (string, error) {
 	var ip string
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		if !internal {
@@ -127,42 +129,21 @@ func (s *Service) EphemeralIP(ctx context.Context, project, region string, inter
 		if inUse == nil {
 			inUse = func(string) bool { return false }
 		}
-		return s.allocSkipping(tx, project, region, &computev1.Address{Subnetwork: subnetwork}, inUse, &ip)
+		sp, sn, err := ruleSubnetwork(tx, rule, subnetwork)
+		if err != nil {
+			return err
+		}
+		c, _ := parseCIDR(sn.IpCidrRange, true)
+		used := heldOn(tx, sp, sn)
+		for v := c.base + 2; v < c.last()-1; v++ { // GCP reserves the last two addresses
+			if c.usable(v) && used[v] == "" && !inUse(ipString(v)) {
+				ip = ipString(v)
+				return recordRuleIP(tx, RuleIP{Rule: rule, Subnetwork: subnetwork, IP: ip})
+			}
+		}
+		return apierr.New(8, "IP space of '%s' is exhausted.", sn.SelfLink).WithLegacy("ipSpaceExhausted")
 	})
 	return ip, err
-}
-
-// allocSkipping scans the subnetwork range for a free internal address.
-func (s *Service) allocSkipping(tx store.Tx, project, region string, a *computev1.Address, inUse func(string) bool, out *string) error {
-	ref := a.Subnetwork
-	if ref == "" {
-		ref = "default"
-	}
-	sp, err := regionalRef(project, region, "subnetworks", ref)
-	if err != nil {
-		return errInvalidField("resource.subnetwork", a.Subnetwork, "The URL is malformed.")
-	}
-	sn, ok := get[computev1.Subnetwork](tx, nsSubnets, sp)
-	if !ok {
-		return errInvalidField("resource.subnetwork", ref, "The referenced subnetwork resource cannot be found.")
-	}
-	c, _ := parseCIDR(sn.IpCidrRange, true)
-	used := map[uint32]bool{}
-	for _, o := range list[computev1.Address](tx, nsAddresses, "projects/"+project+"/regions/"+region+"/addresses/") {
-		if v, ok := parseIP(o.Address); ok {
-			used[v] = true
-		}
-	}
-	if v, ok := selfAddr(tx, sp); ok {
-		used[v] = true
-	}
-	for v := c.base + 2; v < c.last()-1; v++ { // GCP reserves the last two addresses
-		if c.usable(v) && !used[v] && !inUse(ipString(v)) {
-			*out = ipString(v)
-			return nil
-		}
-	}
-	return apierr.New(8, "IP space of '%s' is exhausted.", sn.SelfLink).WithLegacy("ipSpaceExhausted")
 }
 
 // AddressByIP finds the reserved address holding ip: a global one when
