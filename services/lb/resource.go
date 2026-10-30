@@ -84,6 +84,9 @@ type kind struct {
 	// afterSave / afterDelete run after the store commit.
 	afterSave   func(ctx context.Context, s *Service, path string, obj, old any)
 	afterDelete func(ctx context.Context, s *Service, path string, obj any)
+	// afterFail runs when storing a prepared obj fails, to undo what
+	// prepare did outside the store.
+	afterFail func(ctx context.Context, s *Service, path string)
 	// inTx runs inside the store transaction that saves obj, after the
 	// common fields are set (secrets are moved out of the resource here).
 	inTx func(tx store.Tx, path string, obj any) error
@@ -380,6 +383,9 @@ func (s *Service) insert(ctx context.Context, k *kind, sc scope, path string, ob
 		}
 		return store.PutJSON(tx, k.ns(), path, obj)
 	}); err != nil {
+		if k.afterFail != nil {
+			k.afterFail(ctx, s, path)
+		}
 		return err
 	}
 	if k.afterSave != nil {
@@ -566,6 +572,9 @@ func (s *Service) save(ctx context.Context, k *kind, sc scope, path string, next
 		}
 		return store.PutJSON(tx, k.ns(), path, next)
 	}); err != nil {
+		if k.afterFail != nil {
+			k.afterFail(ctx, s, path)
+		}
 		return err
 	}
 	if k.afterSave != nil {

@@ -132,7 +132,7 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 			f.IPAddress = o.IPAddress
 		}
 	}
-	if err := s.resolveFRAddress(ctx, sc, f, internal); err != nil {
+	if err := s.resolveFRAddress(ctx, sc, path, f, internal); err != nil {
 		return err
 	}
 	// IP:port must be unique among forwarding rules of the same scope.
@@ -147,7 +147,7 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 
 // resolveFRAddress turns IPAddress into a literal IP, allocating an
 // ephemeral one when it is empty.
-func (s *Service) resolveFRAddress(ctx context.Context, sc scope, f *computev1.ForwardingRule, internal bool) error {
+func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f *computev1.ForwardingRule, internal bool) error {
 	ref := strings.TrimSpace(f.IPAddress)
 	if ref == "" {
 		// The callback runs inside compute's store transaction: no store
@@ -157,7 +157,7 @@ func (s *Service) resolveFRAddress(ctx context.Context, sc scope, f *computev1.F
 			used[other.(*computev1.ForwardingRule).IPAddress] = true
 		}
 		inUse := func(ip string) bool { return used[ip] }
-		ip, err := s.cmp.EphemeralIP(ctx, sc.project, sc.region, internal, f.Subnetwork, inUse)
+		ip, err := s.cmp.EphemeralIP(ctx, sc.project, sc.region, internal, f.Subnetwork, path, inUse)
 		if err != nil {
 			return err
 		}
@@ -208,6 +208,45 @@ func (s *Service) syncAddressUsers(ctx context.Context, now, before any) {
 			return users
 		})
 	}
+}
+
+// ruleIP returns the address compute records for forwarding rule f
+// (ADR 0044): internal rules' only.
+func ruleIP(f *computev1.ForwardingRule) (compute.RuleIP, bool) {
+	if !strings.HasPrefix(f.LoadBalancingScheme, "INTERNAL") {
+		return compute.RuleIP{}, false
+	}
+	return compute.RuleIP{Rule: relPath(f.SelfLink), Subnetwork: f.Subnetwork, IP: f.IPAddress}, true
+}
+
+// syncRuleIP makes compute's record of forwarding rule path's address
+// match the stored rule: after it is saved or deleted, or a save that
+// prepare picked an address for failed.
+func (s *Service) syncRuleIP(ctx context.Context, path string) {
+	obj, ok := s.load(kindForwardingRule, path)
+	r, internal := ruleIP(obj.(*computev1.ForwardingRule))
+	var err error
+	if ok && internal {
+		err = s.cmp.RecordRuleIP(ctx, r)
+	} else {
+		err = s.cmp.ReleaseRuleIP(ctx, path)
+	}
+	if err != nil {
+		s.env.Log.Warn("lb: recording a forwarding rule's address", "rule", path, "err", err)
+	}
+}
+
+// syncRuleIPs replaces compute's records of internal forwarding rule
+// addresses with those of the stored rules, so that a crash between a
+// rule's write and compute's leaves no stale or missing record.
+func (s *Service) syncRuleIPs(ctx context.Context) error {
+	var rules []compute.RuleIP
+	for _, obj := range s.loadAll(kindForwardingRule, "projects/") {
+		if r, ok := ruleIP(obj.(*computev1.ForwardingRule)); ok {
+			rules = append(rules, r)
+		}
+	}
+	return s.cmp.ResetRuleIPs(ctx, rules)
 }
 
 func (s *Service) forwardingRuleMethods() map[string]http.HandlerFunc {

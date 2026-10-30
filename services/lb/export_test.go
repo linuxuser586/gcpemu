@@ -169,3 +169,9 @@ func RuntimeAvailable(svc emu.Service) bool {
 	defer d.mu.Unlock()
 	return d.edge.available(d.ctx)
 }
+
+// ResyncRuleIPs replaces compute's records of internal forwarding rule
+// addresses with the stored rules', as Start does.
+func ResyncRuleIPs(ctx context.Context, svc emu.Service) error {
+	return svc.(*Service).syncRuleIPs(ctx)
+}

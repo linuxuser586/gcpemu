@@ -124,6 +124,9 @@ func (s *Service) Start(ctx context.Context) error {
 	s.stop = cancel
 	s.dp.start(bg)
 	s.loops.Start(s.managedCertLoop, s.dp.edge.routeLoop)
+	if err := s.syncRuleIPs(ctx); err != nil {
+		s.env.Log.Warn("lb: recording internal forwarding rule addresses", "err", err)
+	}
 	s.changed()
 	return nil
 }
@@ -183,6 +186,9 @@ func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
 // Restore implements emu.Snapshotter: it rebuilds the data plane from the
 // restored resources.
 func (s *Service) Restore(ctx context.Context, dir string) error {
+	if err := s.syncRuleIPs(ctx); err != nil {
+		return fmt.Errorf("lb: recording internal forwarding rule addresses: %w", err)
+	}
 	s.changed()
 	return nil
 }

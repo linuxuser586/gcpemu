@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -231,39 +232,59 @@ func (s *Service) allocRegionalInternal(tx store.Tx, project, region string, a *
 	a.Subnetwork = sn.SelfLink
 	a.Network = ""
 	c, _ := parseCIDR(sn.IpCidrRange, true)
-	used := map[uint32]bool{}
-	for _, o := range list[computev1.Address](tx, nsAddresses, "projects/"+project+"/regions/"+region+"/addresses/") {
-		if relPath(o.Subnetwork) == sp {
-			if ip, ok := parseIP(o.Address); ok {
-				used[ip] = true
-			}
-		}
-	}
-	if st, ok := get[vpcNet](tx, nsVPCNets, sp); ok && st.addrRange() == sn.IpCidrRange {
-		for ip := range allocatedIPs(tx, st.Name) {
-			used[ip] = true
-		}
-	}
-	if ip, ok := selfAddr(tx, sp); ok {
-		used[ip] = true
-	}
+	used := heldOn(tx, sp, sn)
 	if a.Address != "" {
 		ip, ok := parseIP(a.Address)
 		if !ok || !c.usable(ip) {
 			return errInvalidField("resource.address", a.Address, "The specified IP address is not within the subnetwork range or is reserved.")
 		}
-		if used[ip] {
-			return apierr.InvalidArgument("IP address '%s' is already being used by another resource.", a.Address).WithLegacy("ipInUseByAnotherResource")
+		if used[ip] != "" {
+			return errIPInUse(a.Address)
 		}
 		return nil
 	}
 	for ip := c.base + 2; ip < c.last(); ip++ {
-		if c.usable(ip) && !used[ip] {
+		if c.usable(ip) && used[ip] == "" {
 			a.Address = ipString(ip)
 			return nil
 		}
 	}
 	return apierr.New(8, "IP space of '%s' is exhausted.", sn.SelfLink).WithLegacy("ipSpaceExhausted")
+}
+
+// heldOn returns the addresses held on subnetwork sp, each with its
+// holder: internal Addresses, the Self address, internal forwarding
+// rules' addresses (holder the rule's path) and, when its container
+// network allocates from the subnetwork's range, the addresses compute
+// allocated on it (Managed containers, the Edge relay, the host
+// attachment). No internal address is taken from them.
+func heldOn(tx store.Tx, sp string, sn *computev1.Subnetwork) map[uint32]string {
+	p, region, _ := pathParts(sp)
+	used := map[uint32]string{}
+	for _, o := range list[computev1.Address](tx, nsAddresses, "projects/"+p+"/regions/"+region+"/addresses/") {
+		if relPath(o.Subnetwork) == sp {
+			if ip, ok := parseIP(o.Address); ok {
+				used[ip] = cmp.Or(relPath(o.SelfLink), o.Name)
+			}
+		}
+	}
+	if st, ok := get[vpcNet](tx, nsVPCNets, sp); ok && st.addrRange() == sn.IpCidrRange {
+		for ip := range allocatedIPs(tx, st.Name) {
+			used[ip] = st.Name
+		}
+	}
+	if ip, ok := selfAddr(tx, sp); ok {
+		used[ip] = "self"
+	}
+	for ip, rule := range ruleIPs(tx, sp) {
+		used[ip] = rule
+	}
+	return used
+}
+
+// errIPInUse refuses an internal address another resource holds.
+func errIPInUse(ip string) error {
+	return apierr.InvalidArgument("IP address '%s' is already being used by another resource.", ip).WithLegacy("ipInUseByAnotherResource")
 }
 
 // allocGlobalInternal handles VPC_PEERING (private services access) and
