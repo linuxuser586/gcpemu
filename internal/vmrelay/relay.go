@@ -145,9 +145,36 @@ const (
 	pingTimeout  = 5 * time.Second
 )
 
+// errForwardStalled is in a start's error when the agent answered a probe
+// inside the VM but not the host: the runtime's port forward stalls.
+var errForwardStalled = errors.New("the port forward from the host to the VM stalls")
+
 // Start creates the relay container, joins it to every network the
-// Instance has and creates, and connects to it.
+// Instance has and creates, and connects to it. When the runtime's port
+// forward stalls, it recreates the relay once (ADR 0050).
 func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) {
+	return recreateOnStall(o.Log, func() (*Relay, error) { return start(ctx, rt, o) })
+}
+
+// recreateOnStall runs start, and once more when its error says the
+// port forward stalled: Podman machine's forward sometimes stalls every
+// connection to a published port, and a new relay publishes a new one
+// (#807). Any other outcome, and the second, is final.
+func recreateOnStall(log *slog.Logger, start func() (*Relay, error)) (*Relay, error) {
+	r, err := start()
+	if !errors.Is(err, errForwardStalled) {
+		return r, err
+	}
+	log.Warn("VM relay control port stalled in the runtime's port forward: recreating the relay", "err", err)
+	r, again := start()
+	if again != nil {
+		return nil, fmt.Errorf("%w\nafter recreating the relay: %w", err, again)
+	}
+	return r, nil
+}
+
+// start creates and connects to one relay container.
+func start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) {
 	if err := rt.EnsureImage(ctx, Image, rt.Offline); err != nil {
 		return nil, fmt.Errorf("VM relay image %s: %w", Image, err)
 	}
@@ -231,7 +258,7 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) 
 	if err != nil {
 		state, probed := diagnose(ctx, rt, id, o.Services, r.ip, bin)
 		logs, _ := rt.Logs(context.Background(), id, 20)
-		return fail(fmt.Errorf("control port %s did not answer (%s): %w\n%s\n%s", ctrl, state, err, probed, logs))
+		return fail(fmt.Errorf("control port %s did not answer (%s): %w\n%w\n%s", ctrl, state, err, probed, logs))
 	}
 	r.log.Info("VM relay started", "container", name, "control", ctrl, "ip", r.ip,
 		"pings", pings, "took", time.Since(began).Round(time.Millisecond))
@@ -241,10 +268,11 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) 
 // diagnose says why the control port did not answer on the host: the
 // state of the relay container id, and what a throwaway probe on the
 // services network got when it pinged the relay at ip from inside the VM.
-// An answer there means the host-to-VM port forward is what stalls (#807).
-// Start's ctx may have timed out, so it has a context of its own; when
-// Start was cancelled instead, no probe runs.
-func diagnose(start context.Context, rt *runtime.Manager, id, services, ip, bin string) (state, probed string) {
+// An answer there means the host-to-VM port forward is what stalls (#807),
+// and probed then holds errForwardStalled. start's ctx may have timed
+// out, so it has a context of its own; when start was cancelled instead,
+// no probe runs.
+func diagnose(start context.Context, rt *runtime.Manager, id, services, ip, bin string) (state string, probed error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	state = "relay container not found"
@@ -252,17 +280,17 @@ func diagnose(start context.Context, rt *runtime.Manager, id, services, ip, bin 
 		state = fmt.Sprintf("relay container %s, exit code %d", ct.Status, ct.ExitCode)
 	}
 	if errors.Is(start.Err(), context.Canceled) {
-		return state, "no probe from the VM: the start was cancelled"
+		return state, errors.New("no probe from the VM: the start was cancelled")
 	}
 	addr := net.JoinHostPort(ip, strconv.Itoa(ControlPort))
 	code, out, err := probeFromVM(ctx, rt, services, addr, bin)
 	switch {
 	case err != nil:
-		return state, fmt.Sprintf("the probe from the VM on %s failed: %v", services, err)
+		return state, fmt.Errorf("the probe from the VM on %s failed: %w", services, err)
 	case code == 0:
-		return state, fmt.Sprintf("a probe on %s got the agent's answer at %s: the port forward from the host to the VM stalls", services, addr)
+		return state, fmt.Errorf("a probe on %s got the agent's answer at %s: %w", services, addr, errForwardStalled)
 	}
-	return state, fmt.Sprintf("a probe on %s got no answer at %s either: %s", services, addr, strings.TrimSpace(out))
+	return state, fmt.Errorf("a probe on %s got no answer at %s either: %s", services, addr, strings.TrimSpace(out))
 }
 
 // probeFromVM runs the vmrelay-probe agent against addr in a short-lived

@@ -448,6 +448,59 @@ func TestProbeControl(t *testing.T) {
 	}
 }
 
+// TestRecreateOnStall: a start whose control port stalled in the
+// runtime's port forward, while the agent answered inside the VM, is
+// tried once more; any other outcome is final (#807).
+func TestRecreateOnStall(t *testing.T) {
+	stalled := fmt.Errorf("VM relay: control port did not answer: %w", errForwardStalled)
+	other := errors.New("VM relay: control port did not answer: a probe got no answer either")
+	ok := &Relay{}
+	for _, tc := range []struct {
+		name     string
+		attempts []error
+		calls    int
+		want     []error // in the error, nil for success
+	}{
+		{"started", []error{nil}, 1, nil},
+		{"stalled then started", []error{stalled, nil}, 2, nil},
+		{"not the port forward", []error{other}, 1, []error{other}},
+		{"stalled twice", []error{stalled, stalled}, 2, []error{stalled}},
+		{"stalled then other", []error{stalled, other}, 2, []error{stalled, other}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			r, err := recreateOnStall(slog.New(slog.DiscardHandler), func() (*Relay, error) {
+				err := tc.attempts[calls]
+				calls++
+				if err != nil {
+					return nil, err
+				}
+				return ok, nil
+			})
+			if calls != tc.calls {
+				t.Errorf("%d attempts, want %d", calls, tc.calls)
+			}
+			if tc.want == nil {
+				if err != nil || r != ok {
+					t.Fatalf("got %v, %v; want the started relay", r, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("succeeded, want an error")
+			}
+			for _, w := range tc.want {
+				if !errors.Is(err, w) {
+					t.Errorf("err = %q, want it to hold %q", err, w)
+				}
+			}
+			if calls == 2 && !strings.Contains(err.Error(), "after recreating the relay") {
+				t.Errorf("err = %q, want both attempts named", err)
+			}
+		})
+	}
+}
+
 func TestDecide(t *testing.T) {
 	for _, tc := range []struct {
 		env         string
