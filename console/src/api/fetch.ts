@@ -6,7 +6,9 @@ import { forgetToken, tokenFor } from './tokens'
 // Public API requests act as the Principal chosen in the Principal
 // switcher, carrying an access token for it. With none chosen they carry
 // no credentials, so the gateway attributes them to the Instance's
-// Default principal (FR-UI-004).
+// Default principal (FR-UI-004). Same-origin cookies go along, for a
+// reverse proxy that signs users in to the console (#888), but they are
+// no public API's credential and the gateway drops them.
 
 /** origin is where the console was served from: the API gateway. */
 export const origin = () => globalThis.location.origin
@@ -38,7 +40,7 @@ export async function sendAs(path: string, init: GcpInit = {}): Promise<Response
   const { principal = usePrefs.getState().principal, ...rest } = init
   const headers = new Headers(rest.headers)
   const url = new URL(path, origin())
-  const go = () => send(new Request(url, { ...rest, headers, credentials: 'omit' }))
+  const go = () => send(new Request(url, { ...rest, headers, credentials: 'same-origin' }))
   if (!principal || headers.has('Authorization')) return go()
   headers.set('Authorization', `Bearer ${await tokenFor(principal)}`)
   const res = await go()

@@ -269,7 +269,7 @@ A rule that makes matching requests fail, drop or slow down on purpose. Using th
 The identity a request is attributed to for IAM checks.
 
 **Default principal**:
-The Principal assumed for requests that carry no credentials.
+The Principal assumed for requests that carry no credentials. Cookies are never credentials to a public API, not even the Admin token's.
 
 **Federated principal**:
 The Principal an Instance's STS exchange gives a workload, `principal://…/workloadIdentityPools/P/subject/S`, for a subject token a Workload Identity Pool provider trusts. It belongs to the pool's Project.
@@ -277,6 +277,10 @@ _Avoid_: workload identity, external identity, federated token (say: an access t
 
 **Web console**:
 The browser UI an Instance serves for inspecting and operating its Services.
+
+**Authenticating proxy**:
+A reverse proxy someone puts in front of the API gateway, on the same origin, to sign people in before they reach the Web console, such as oauth2-proxy. The Instance neither knows of it nor trusts it: its session is never a credential.
+_Avoid_: auth proxy, SSO proxy, login proxy
 
 **Copy as**:
 The Web console's offer, on a resource's page, of the gcloud command, the REST request and the OpenTofu resource that would create that resource as it is now.

@@ -214,6 +214,8 @@ func grpcStatus(h http.Header) codes.Code {
 // with the items of the Projects shared with that link.
 func (g *Gateway) ServeLinked(w http.ResponseWriter, r *http.Request, from, principal string) {
 	r = linkCaller(r)
+	// As in ServeHTTP: cookies are never a public API's (#888).
+	r.Header.Del("Cookie")
 	ids, l := g.projectsOf(r), g.linker()
 	refuse := func(what string) {
 		writeErrorFor(w, r, apierr.PermissionDenied("The request forwarded by the Linked Instance %q %s.", from, what))

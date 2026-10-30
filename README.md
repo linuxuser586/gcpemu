@@ -198,6 +198,10 @@ principal switcher, so the views show what IAM allows that principal (try it wit
 `--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` a `gcpemu` command leaves it off unless `--console`
 is passed. `task build` builds it when
 `pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
+It works behind an authenticating reverse proxy on the same origin, such as oauth2-proxy, since
+its requests carry the proxy's session cookie; the API gateway drops cookies from public API
+requests (`docs/adr/0052-the-api-gateway-drops-cookies-from-public-api-requests.md`). A proxy on
+another origin is not supported.
 It reaches GKE clusters' Kubernetes objects and pod logs through the Connect gateway
 (`/connectgateway/v1/projects/P/locations/L/gkeMemberships/CLUSTER/...`, see
 `docs/adr/0002-kubernetes-api-through-connect-gateway.md`), which `kubectl` can use too.
