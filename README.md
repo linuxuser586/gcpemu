@@ -43,6 +43,9 @@ task doctor   # checks the tools they need (Go, git, Node.js and pnpm, a contain
 optional ones, naming the tasks each one blocks and how to install it. It checks the tools for
 building and testing gcpemu; `gcpemu doctor` checks a host for running it.
 
+The Go tests run alongside your own `gcpemu` Instance, so there is no need to stop it before
+`task test`.
+
 ## Quick start
 
 ```sh
