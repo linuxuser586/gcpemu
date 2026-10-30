@@ -22,7 +22,50 @@ const agentName = "vmrelay"
 // publishes it on the host's 127.0.0.1.
 const ControlPort = 7171
 
-func init() { agent.Register(agentName, runAgent) }
+// probeAgentName runs in a short-lived Managed container on the services
+// network when the control port does not answer on the host: it pings
+// the relay at the address its argument names, from inside the VM (#807),
+// and exits 0 once the agent answers.
+const probeAgentName = "vmrelay-probe"
+
+// probePings is how many pings the probe tries: a stalled connection from
+// the host that the port forward passes on late replaces the probe's
+// session, failing its ping.
+const probePings = 3
+
+func init() {
+	agent.Register(agentName, runAgent)
+	agent.Register(probeAgentName, runProbe)
+}
+
+func runProbe(ctx context.Context, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("want the relay's address, got %q", args)
+	}
+	var err error
+	for range probePings {
+		if err = probeControl(ctx, args[0], pingTimeout); err == nil {
+			fmt.Println(args[0], "answered")
+			return nil
+		}
+	}
+	return fmt.Errorf("%s did not answer %d pings, the last with: %w", args[0], probePings, err)
+}
+
+// probeControl pings the agent at addr on a session of its own, which
+// replaces the emulator's at the agent.
+func probeControl(ctx context.Context, addr string, timeout time.Duration) error {
+	r := &Relay{ctrl: addr, streams: map[string]int64{}}
+	defer func() {
+		r.mu.Lock()
+		r.closed = true
+		r.mu.Unlock()
+		r.dropSession()
+	}()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return r.ping(ctx)
+}
 
 func runAgent(ctx context.Context, _ []string) error {
 	l, err := net.Listen("tcp", ":"+strconv.Itoa(ControlPort))

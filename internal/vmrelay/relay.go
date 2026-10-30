@@ -136,6 +136,15 @@ type Relay struct {
 	reconnecting bool
 }
 
+// readyTimeout bounds how long Start waits for the agent to answer on the
+// control port, and pingTimeout each ping: Podman machine's port forward
+// sometimes holds a connection for tens of seconds without passing it on
+// (#807).
+const (
+	readyTimeout = 60 * time.Second
+	pingTimeout  = 5 * time.Second
+)
+
 // Start creates the relay container, joins it to every network the
 // Instance has and creates, and connects to it.
 func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) {
@@ -217,12 +226,81 @@ func Start(ctx context.Context, rt *runtime.Manager, o Options) (*Relay, error) 
 		return "", fmt.Errorf("no published control port (%v)", ct.Ports)
 	}
 	// Once ready, a reconnect may move r.ctrl: log what was dialed.
-	if err := r.waitReady(ctx, 20*time.Second); err != nil {
+	began := time.Now()
+	pings, err := r.waitReady(ctx, readyTimeout, pingTimeout)
+	if err != nil {
+		state, probed := diagnose(ctx, rt, id, o.Services, r.ip, bin)
 		logs, _ := rt.Logs(context.Background(), id, 20)
-		return fail(fmt.Errorf("control port %s did not answer: %w\n%s", ctrl, err, logs))
+		return fail(fmt.Errorf("control port %s did not answer (%s): %w\n%s\n%s", ctrl, state, err, probed, logs))
 	}
-	r.log.Info("VM relay started", "container", name, "control", ctrl, "ip", r.ip)
+	r.log.Info("VM relay started", "container", name, "control", ctrl, "ip", r.ip,
+		"pings", pings, "took", time.Since(began).Round(time.Millisecond))
 	return r, nil
+}
+
+// diagnose says why the control port did not answer on the host: the
+// state of the relay container id, and what a throwaway probe on the
+// services network got when it pinged the relay at ip from inside the VM.
+// An answer there means the host-to-VM port forward is what stalls (#807).
+// Start's ctx may have timed out, so it has a context of its own; when
+// Start was cancelled instead, no probe runs.
+func diagnose(start context.Context, rt *runtime.Manager, id, services, ip, bin string) (state, probed string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	state = "relay container not found"
+	if ct, err := rt.InspectContainer(ctx, id); err == nil {
+		state = fmt.Sprintf("relay container %s, exit code %d", ct.Status, ct.ExitCode)
+	}
+	if errors.Is(start.Err(), context.Canceled) {
+		return state, "no probe from the VM: the start was cancelled"
+	}
+	addr := net.JoinHostPort(ip, strconv.Itoa(ControlPort))
+	code, out, err := probeFromVM(ctx, rt, services, addr, bin)
+	switch {
+	case err != nil:
+		return state, fmt.Sprintf("the probe from the VM on %s failed: %v", services, err)
+	case code == 0:
+		return state, fmt.Sprintf("a probe on %s got the agent's answer at %s: the port forward from the host to the VM stalls", services, addr)
+	}
+	return state, fmt.Sprintf("a probe on %s got no answer at %s either: %s", services, addr, strings.TrimSpace(out))
+}
+
+// probeFromVM runs the vmrelay-probe agent against addr in a short-lived
+// Managed container on network, and returns its exit code and output.
+func probeFromVM(ctx context.Context, rt *runtime.Manager, network, addr, bin string) (int, string, error) {
+	name := rt.Name("vmrelay", "probe")
+	if err := rt.RemoveContainer(ctx, name, true); err != nil {
+		return 0, "", err
+	}
+	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
+		Name:       name,
+		Image:      Image,
+		Entrypoint: []string{agent.ContainerPath},
+		Cmd:        []string{addr},
+		Env:        []string{agent.EnvVar + "=" + probeAgentName},
+		Labels:     rt.Labels("core", "vmrelay", "probe"),
+		Networks:   []runtime.Attachment{{Network: network}},
+	})
+	if err != nil {
+		return 0, "", err
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = rt.RemoveContainer(ctx, id, true)
+	}()
+	if err := rt.CopyTo(ctx, id, "/", []runtime.File{{Name: strings.TrimPrefix(agent.ContainerPath, "/"), Mode: 0o755, Path: bin}}); err != nil {
+		return 0, "", err
+	}
+	if err := rt.StartContainer(ctx, id); err != nil {
+		return 0, "", err
+	}
+	code, err := rt.WaitContainer(ctx, id)
+	if err != nil {
+		return 0, "", fmt.Errorf("it did not exit: %w", err)
+	}
+	out, err := rt.Logs(ctx, id, 20)
+	return code, out, err
 }
 
 // controlAddr is the host address ct publishes the control port at, or "".
@@ -254,23 +332,28 @@ func (r *Relay) joined(n runtime.Network, in bool) {
 	}
 }
 
-// waitReady pings the agent until it answers. A published port may
-// accept connections before the agent listens behind it.
-func (r *Relay) waitReady(ctx context.Context, timeout time.Duration) error {
+// waitReady pings the agent until it answers, giving up on each ping
+// after perPing, and returns how many pings that took. A published port may
+// accept connections before the agent listens behind it, and a port
+// forward may accept one and never pass it on (#807): the next ping
+// dials again.
+func (r *Relay) waitReady(ctx context.Context, timeout, perPing time.Duration) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	for {
-		err := r.ping(ctx)
+	for pings := 1; ; pings++ {
+		pctx, pcancel := context.WithTimeout(ctx, perPing)
+		err := r.ping(pctx)
+		pcancel()
 		if err == nil {
 			r.mu.Lock()
 			r.ready = true
 			r.mu.Unlock()
-			return nil
+			return pings, nil
 		}
 		r.dropSession()
 		select {
 		case <-ctx.Done():
-			return err
+			return pings, fmt.Errorf("%d pings failed, the last with: %w", pings, err)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
