@@ -105,7 +105,9 @@ type Instance struct {
 }
 
 // New builds an instance from cfg using factories for available services.
-func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*Instance, error) {
+// When it fails, it has closed the state store and removed the temp dir and
+// Admin token file it made (#872).
+func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (_ *Instance, err error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -144,6 +146,14 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (*I
 	in.ID = instanceID(dir, cfg.Ephemeral)
 
 	var st store.Store
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rerr := in.release(st); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
+	}()
 	dataDir := filepath.Join(dir, "data")
 	if cfg.Ephemeral {
 		st = store.NewMemory()
@@ -728,6 +738,31 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		}
 		close(in.done)
 	})
+	return errors.Join(errs...)
+}
+
+// release undoes what a failed New took before it failed: it closes st,
+// so the data directory is unlocked, and removes the temp dir and the
+// Admin token file New wrote. The data directory and its CA stay.
+func (in *Instance) release(st store.Store) error {
+	var errs []error
+	if in.managedCancel != nil {
+		in.managedCancel()
+	}
+	if in.fe != nil {
+		errs = append(errs, in.fe.Close())
+	}
+	if st != nil {
+		errs = append(errs, st.Close())
+	}
+	if in.adminToken != "" {
+		if err := os.Remove(filepath.Join(in.Dir, AdminTokenFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	if in.tmpDir != "" {
+		errs = append(errs, os.RemoveAll(in.tmpDir))
+	}
 	return errors.Join(errs...)
 }
 
