@@ -9,11 +9,11 @@ import (
 )
 
 var abandonedIDs = []instance.Abandoned{
-	{ID: "aaa111", Dirs: []string{"/gone/default"},
+	{Tagged: instance.Tagged{ID: "aaa111", Dirs: []string{"/gone/default"},
 		Containers: []runtime.Container{{ID: "c1", Name: "gcpemu-aaa111-sql"}},
 		Networks:   []runtime.Network{{ID: "n1", Name: "gcpemu-aaa111-vpc"}, {ID: "n2", Name: "gcpemu-aaa111-psa"}},
-		Volumes:    []runtime.Volume{{Name: "gcpemu-aaa111-pgdata"}}},
-	{ID: "bbb222", Unverified: true, Networks: []runtime.Network{{ID: "n3", Name: "gcpemu-bbb222-vpc"}}},
+		Volumes:    []runtime.Volume{{Name: "gcpemu-aaa111-pgdata"}}}},
+	{Tagged: instance.Tagged{ID: "bbb222", Networks: []runtime.Network{{ID: "n3", Name: "gcpemu-bbb222-vpc"}}}, Unverified: true},
 }
 
 // doctor WARNs about each Abandoned Instance ID with its counts, marks

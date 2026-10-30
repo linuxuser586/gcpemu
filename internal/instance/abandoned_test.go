@@ -183,3 +183,41 @@ func TestFindAndPruneAbandoned(t *testing.T) {
 		t.Errorf("after prune: %+v, %v", again, err)
 	}
 }
+
+// TestFindTagged: every Instance ID that tags an object is found, live
+// ones too, with the dirs its objects record (#846).
+func TestFindTagged(t *testing.T) {
+	f := &fakeRuntime{
+		containers: map[string]fakeObj{
+			"c-running":   {labels: labelled("running", "/d/running"), running: true},
+			"c-unrelated": {labels: map[string]string{"app": "x"}},
+		},
+		networks: map[string]fakeObj{
+			"n-running": {labels: labelled("running", "/d/running")},
+			"n-legacy":  {labels: labelled("legacy", "")},
+		},
+		volumes: map[string]fakeObj{"v-two": {labels: labelled("two", "/d/b")}, "v-two2": {labels: labelled("two", "/d/a")}},
+	}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	cl, err := runtime.New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagged, err := FindTagged(context.Background(), cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tagged) != 3 {
+		t.Fatalf("tagged = %+v; want legacy, running and two", tagged)
+	}
+	if a := tagged[0]; a.ID != "legacy" || len(a.Dirs) != 0 || len(a.Networks) != 1 {
+		t.Errorf("tagged[0] = %+v; want legacy with its network and no dir", a)
+	}
+	if a := tagged[1]; a.ID != "running" || len(a.Containers) != 1 || len(a.Networks) != 1 || !slices.Equal(a.Dirs, []string{"/d/running"}) {
+		t.Errorf("tagged[1] = %+v; want running with its container, network and dir", a)
+	}
+	if a := tagged[2]; a.ID != "two" || len(a.Volumes) != 2 || !slices.Equal(a.Dirs, []string{"/d/a", "/d/b"}) {
+		t.Errorf("tagged[2] = %+v; want two with both volumes and sorted dirs", a)
+	}
+}

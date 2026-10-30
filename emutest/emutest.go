@@ -27,6 +27,7 @@ import (
 type Instance struct {
 	in        *instance.Instance
 	ownedDir  string // the temp data dir Close removes, "" with WithDataDir
+	dropOwner func() // drops ownedDir's owner lock, nil when none is held
 	release   func() // drops the host loopback lock, nil when none is held
 	closeOnce sync.Once
 	closeErr  error
@@ -37,9 +38,7 @@ type Instance struct {
 // stops it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	i, err := start(ctx, svcs, opts, testDeadline(t))
+	i, err := start(context.Background(), 60*time.Second, svcs, opts, testDeadline(t), t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,13 +62,24 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 // removes. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func New(ctx context.Context, svcs []string, opts ...Option) (*Instance, error) {
 	deadline, _ := ctx.Deadline()
-	return start(ctx, svcs, opts, deadline)
+	return start(ctx, 0, svcs, opts, deadline, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, format+"\n", args...)
+	})
 }
 
-// start launches an Instance running svcs with opts, waiting for the host
-// loopback lock, when it needs one, until lockDeadline (zero: forever).
-func start(ctx context.Context, svcs []string, opts []Option, lockDeadline time.Time) (*Instance, error) {
+// start launches an Instance running svcs with opts within timeout (zero:
+// only ctx bounds it), waiting for the host loopback lock, when it needs
+// one, until lockDeadline (zero: forever). The first Instance of the
+// process first reclaims those of tests that have ended (ADR 0047),
+// outside timeout, logging failures with logf.
+func start(ctx context.Context, timeout time.Duration, svcs []string, opts []Option, lockDeadline time.Time, logf logFunc) (*Instance, error) {
 	cfg := testConfig(svcs, opts)
+	processSweep.run(logf)
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	var release func()
 	if !cfg.NoSQLHostClients {
 		var err error
@@ -119,6 +129,9 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 			return nil, err
 		}
 		i.ownedDir = cfg.DataDir
+		if i.dropOwner, err = holdOwnerLock(cfg.DataDir); err != nil {
+			return nil, err
+		}
 	}
 	var logOut io.Writer = io.Discard
 	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
@@ -163,17 +176,28 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 func (i *Instance) Close(ctx context.Context) error {
 	i.closeOnce.Do(func() {
 		err := i.in.Shutdown(ctx)
+		if err != nil && i.ownedDir != "" && removeResources(i.ownedDir) != nil {
+			// The dir still holds the ID, so the next sweep removes what
+			// is left (ADR 0047).
+			i.ownedDir = ""
+		}
 		i.removeErr = i.cleanup()
 		i.closeErr = errors.Join(err, i.removeErr)
 	})
 	return i.closeErr
 }
 
-// cleanup drops the host loopback lock and removes the temporary data dir.
+// cleanup drops the host loopback lock and removes the temporary data dir,
+// dropping its owner lock first: the Instance has removed its containers,
+// networks and volumes by then.
 func (i *Instance) cleanup() error {
 	if i.release != nil {
 		i.release()
 		i.release = nil
+	}
+	if i.dropOwner != nil {
+		i.dropOwner()
+		i.dropOwner = nil
 	}
 	if i.ownedDir == "" {
 		return nil

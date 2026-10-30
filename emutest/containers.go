@@ -86,7 +86,9 @@ type testDir struct {
 
 // removeAtEnd removes the containers, networks and volumes of the
 // Instance in dir when t ends. It is called before the Instance starts, so
-// its cleanup runs after the Instance's Close.
+// its cleanup runs after the Instance's Close. Until then t holds dir's
+// owner lock, so that no sweep reclaims it; it fails t if another test
+// process holds it.
 func removeAtEnd(t testing.TB, dir string) {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
@@ -95,8 +97,14 @@ func removeAtEnd(t testing.TB, dir string) {
 	if _, loaded := cleanupRegistered.LoadOrStore(key, true); loaded {
 		return
 	}
+	release, err := holdOwnerLock(dir)
+	if err != nil {
+		cleanupRegistered.Delete(key)
+		t.Fatalf("emutest: %v", err)
+	}
 	t.Cleanup(func() {
 		cleanupRegistered.Delete(key)
+		defer release() // even when removal fails, so a later sweep retries
 		if err := removeResources(dir); err != nil {
 			t.Errorf("emutest: %v", err)
 		}
