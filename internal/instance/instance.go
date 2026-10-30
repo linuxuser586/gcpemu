@@ -742,8 +742,8 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 }
 
 // release undoes what a failed New took before it failed: it closes st,
-// so the instance dir is unlocked, and removes the temp dir and the Admin
-// token file New wrote. The instance dir and its CA stay.
+// so the data directory is unlocked, and removes the temp dir and the
+// Admin token file New wrote. The data directory and its CA stay.
 func (in *Instance) release(st store.Store) error {
 	var errs []error
 	if in.managedCancel != nil {

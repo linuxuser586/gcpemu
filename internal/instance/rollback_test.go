@@ -54,7 +54,7 @@ func TestFailedNewRemovesEphemeralTempDir(t *testing.T) {
 }
 
 // TestFailedNewUnlocksPersistentDir is #872: a failed New closes the state
-// store, so the next New in the instance dir reports its own error, not
+// store, so the next New in the data directory reports its own error, not
 // "is another instance using".
 func TestFailedNewUnlocksPersistentDir(t *testing.T) {
 	cfg := failingConfig(t, t.TempDir(), false)

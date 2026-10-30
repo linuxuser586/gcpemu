@@ -14,7 +14,7 @@ _Avoid_: emulator (when a specific running one is meant), server
 The user-chosen label for an Instance's configuration, e.g. "default".
 
 **Instance ID**:
-The unique identifier that tags everything an Instance owns, such as its containers and networks.
+The unique identifier that tags everything an Instance owns, such as its containers and networks. It is held by the Instance's data directory, so every Instance started in that directory shares it.
 
 **Product**:
 A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
@@ -230,6 +230,10 @@ An Instance whose state disappears when it stops.
 
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
+
+**Data directory**:
+The directory an Instance holds its certificate authority and Instance ID in, and a Persistent Instance its state. Every Instance has one; an Ephemeral Instance keeps no state there.
+_Avoid_: instance dir
 
 **CI defaults**:
 The defaults a `gcpemu` command takes under `CI=true`: an Ephemeral Instance, JSON logs and no Web console, each overridden by an explicit setting. An Instance started by `emutest` does not take them (ADR 0039).
