@@ -12,7 +12,8 @@ import (
 )
 
 // TestLaunchFailureCleansUp: an Instance that fails to launch reports the
-// error, calls release once, and removes the data dir it created (#863).
+// error, calls release once, and removes the Test data dir it created
+// (#863).
 func TestLaunchFailureCleansUp(t *testing.T) {
 	cfg := testConfig([]string{"no-such-service"}, nil)
 	released := 0
@@ -48,9 +49,9 @@ func TestNewReportsLaunchError(t *testing.T) {
 	}
 }
 
-// TestNewFailureLeavesNoTempDir: a failed New removes the temporary data
+// TestNewFailureRemovesItsTestDataDir: a failed New removes the Test data
 // dir it created (#820).
-func TestNewFailureLeavesNoTempDir(t *testing.T) {
+func TestNewFailureRemovesItsTestDataDir(t *testing.T) {
 	// No sweep: it would contact a runtime, and with the temp dir
 	// redirected it would skip real Abandoned Instances for the process.
 	saved := processSweep
