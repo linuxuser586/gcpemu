@@ -37,6 +37,7 @@ func (f *holdLB) ForwardingRuleIPs(ctx context.Context, project string) []string
 func newResetService(t *testing.T, lb *holdLB) *Service {
 	t.Helper()
 	cfg := config.Defaults()
+	cfg.Ports[config.AllPorts] = 0
 	authority, err := ca.Load(t.TempDir(), "test")
 	if err != nil {
 		t.Fatal(err)

@@ -78,9 +78,9 @@ func startHeld(t *testing.T, path string, hold func(probeTx) bool) (*Service, ht
 	st := newHoldStore(bolt, hold)
 	clk := clock.NewOffset(clock.Real{})
 	cfg := config.Defaults()
+	cfg.Ports[config.AllPorts] = 0
 	cfg.IAMMode = config.IAMOff
 	cfg.Bind = "127.0.0.1"
-	cfg.Ports = map[string]int{"pubsub": 0}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	env := &emu.Env{
 		Config: &cfg, Store: st, Clock: clk, IDs: emu.NewIDs(false), Log: log,

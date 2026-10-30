@@ -56,6 +56,7 @@ func openServiceClock(t *testing.T, path string) (*Service, http.Handler, *clock
 		t.Fatal(err)
 	}
 	cfg := config.Defaults()
+	cfg.Ports[config.AllPorts] = 0
 	cfg.IAMMode = config.IAMOff
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	env := &emu.Env{
