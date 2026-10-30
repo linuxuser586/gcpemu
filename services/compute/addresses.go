@@ -256,7 +256,7 @@ func (s *Service) allocRegionalInternal(tx store.Tx, project, region string, a *
 // holder: internal Addresses, the Self address, internal forwarding
 // rules' addresses (holder the rule's path) and, when its container
 // network allocates from the subnetwork's range, the addresses compute
-// allocated on it (Managed containers, the Edge relay, the host
+// allocated on it (Managed containers, the Edge relay, the Host
 // attachment). No internal address is taken from them.
 func heldOn(tx store.Tx, sp string, sn *computev1.Subnetwork) map[uint32]string {
 	p, region, _ := pathParts(sp)

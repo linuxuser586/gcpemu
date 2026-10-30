@@ -132,7 +132,7 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 			f.IPAddress = o.IPAddress
 		}
 	}
-	picked, err := s.resolveFRAddress(ctx, sc, path, f, internal)
+	literal, err := s.resolveFRAddress(ctx, sc, path, f, internal)
 	if err != nil {
 		return err
 	}
@@ -143,18 +143,19 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 			return apierr.InvalidArgument("Invalid value for field 'resource.IPAddress': '%s'. Specified IP address is in-use and would result in a conflict.", f.IPAddress).WithLegacy("invalid")
 		}
 	}
-	// A regional internal rule's named address must be free on its
+	// A regional internal rule's literal IP must be free on its
 	// subnetwork: compute checks and records it (#823), as it recorded an
 	// ephemeral one when picking it.
-	if internal && sc.region != "" && !picked {
+	if internal && sc.region != "" && literal {
 		return s.cmp.HoldRuleIP(ctx, compute.RuleIP{Rule: path, Subnetwork: f.Subnetwork, IP: f.IPAddress})
 	}
 	return nil
 }
 
 // resolveFRAddress turns IPAddress into a literal IP, allocating an
-// ephemeral one when it is empty (picked).
-func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f *computev1.ForwardingRule, internal bool) (picked bool, err error) {
+// ephemeral one when it is empty. literal reports that IPAddress was given
+// as an IP.
+func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f *computev1.ForwardingRule, internal bool) (literal bool, err error) {
 	ref := strings.TrimSpace(f.IPAddress)
 	if ref == "" {
 		// The callback runs inside compute's store transaction: no store
@@ -169,14 +170,14 @@ func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f
 			return false, err
 		}
 		f.IPAddress = ip
-		return true, nil
+		return false, nil
 	}
 	if ip := net.ParseIP(ref); ip != nil {
 		if ip.To4() == nil {
 			return false, errInvalid("resource.IPAddress", ref, "IPv6 forwarding rules are not supported by the emulator.")
 		}
 		f.IPAddress = ip.String()
-		return false, nil
+		return true, nil
 	}
 	ap, err := canonRef(sc, "addresses", ref, "resource.IPAddress")
 	if err != nil {
