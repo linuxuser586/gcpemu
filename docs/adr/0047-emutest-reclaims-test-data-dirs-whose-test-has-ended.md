@@ -11,5 +11,5 @@ A test process that dies (`^C`, `go test -timeout`, a killed CI job) runs no cle
 ## Consequences
 
 - The owner lock file is a contract between test processes, including ones built from older and newer versions of `emutest`. Changing its name or locking scheme leaves the other version's leftovers unreclaimed until the OS clears the temp dir.
-- `WithDataDir(dir)` takes no lock, so its dirs are never swept, because its caller owns their lifetime. Instances that the `gcpemu` CLI starts, an agent's included, are left to `gcpemu prune`.
+- `WithDataDir(dir)` takes no lock, so its dirs are never swept, because its caller owns their lifetime. Instances that the `gcpemu` CLI starts, an agent's included, are left to `gcpemu prune`, except one whose data dir was in the OS temp dir and has been deleted: no one can restart it, so the sweep reclaims it with the Abandoned Instance IDs of tests.
 - An interrupted run's resources stay on the host until the next test process that starts an Instance, which pays for the sweep once. A failed sweep is logged and never fails that test.

@@ -1148,7 +1148,8 @@ inst.Setenv(t) // or the client env vars (STORAGE_EMULATOR_HOST, …) for this t
 ```
 
 To share one Instance across a package's tests, start it in `TestMain` with `emutest.New` and
-stop it with `Close`, which also removes its temporary data dir:
+stop it with `Close`, which also removes its temporary data dir (unless its containers could not be
+removed; the next test process reclaims them then):
 
 ```go
 var inst *emutest.Instance

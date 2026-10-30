@@ -171,8 +171,9 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 	return i, nil
 }
 
-// Close stops the Instance and removes its temporary data dir. Calling it
-// again returns the first call's error.
+// Close stops the Instance and removes its temporary data dir, unless its
+// containers could not be removed; the next test process reclaims them
+// then. Calling it again returns the first call's error.
 func (i *Instance) Close(ctx context.Context) error {
 	i.closeOnce.Do(func() {
 		err := i.in.Shutdown(ctx)
