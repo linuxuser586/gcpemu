@@ -716,7 +716,7 @@ runtime; give the subnetwork a range that doesn't overlap, and everything else k
 
 | Runtime | VLAN (8021q) support |
 | --- | --- |
-| Docker Desktop | supported (4.96.2) |
+| Docker Desktop | supported (4.97.0) |
 | Colima | supported (0.10.3) |
 | OrbStack | supported (2.2.5) |
 | Podman machine | supported (6.1.4) |

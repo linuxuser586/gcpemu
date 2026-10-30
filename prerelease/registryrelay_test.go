@@ -61,12 +61,13 @@ func pushPull(t *testing.T, ctx context.Context, c *clients, rt, ref string) {
 const registryPort = "4561"
 
 // containerizedRegistryStep is macOS step 9: the release's image as a
-// Containerized Instance with Artifact Registry, its registry port
-// published at the same host port, then containerizedRegistry.
+// Containerized Instance with Artifact Registry, its API gateway and
+// registry ports published at the same host ports, as `gcpemu env` in
+// the container prints them, then containerizedRegistry.
 func containerizedRegistryStep(t *testing.T, ctx context.Context, rt string) {
 	requireTools(t, "docker", "gcloud")
 	image := releaseImage(t)
-	hosttest.RunEmulator(t, container, image, "", containerArgs(t, rt, registryPort), "--services", "iam,ar")
+	hosttest.RunEmulator(t, container, image, "4562", containerArgs(t, rt, registryPort), "--services", "iam,ar")
 	containerizedRegistry(t, ctx, rt)
 }
 
