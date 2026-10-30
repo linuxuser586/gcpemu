@@ -3,6 +3,8 @@ package gke
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -551,10 +553,7 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 		ports = []runtime.Port{{HostIP: loopback.Host, HostPort: rec.Int.APIHostPort, ContainerPort: 443}}
 	}
 	args = append(args, serverDisables(hostLB)...)
-	files := []runtime.File{
-		{Name: strings.TrimPrefix(webhookDir, "/") + "/authn.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authn")},
-		{Name: strings.TrimPrefix(webhookDir, "/") + "/authz.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authz")},
-	}
+	files := serverFiles(hooks)
 	var id string
 	// start creates and starts the server, with extIP its fixed address on
 	// the external network, if it has one.
@@ -581,13 +580,12 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 		if err != nil {
 			return err
 		}
-		if err := d.rt.CopyTo(ctx, id, "/", files); err != nil {
-			return err
+		datastore := staged
+		if again {
+			datastore = ""
 		}
-		if staged != "" && !again {
-			if err := writeDatastore(ctx, d.rt, id, staged); err != nil {
-				return err
-			}
+		if err := prepareServer(ctx, d.rt, id, datastore, files); err != nil {
+			return err
 		}
 		err = d.rt.StartContainer(ctx, id)
 		if runtime.IsAddressInUse(err) {
@@ -653,7 +651,15 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 	if err != nil {
 		return err
 	}
-	if err := awaitServer(ctx, d.rt, id, func() bool { return kc.ready(ctx) }); err != nil {
+	// The readiness checks dial the private address; a Public endpoint
+	// is checked by name, as its clients connect (#886).
+	var checkCert func(context.Context) error
+	if extIP != "" {
+		checkCert = func(ctx context.Context) error {
+			return checkServedName(ctx, d.np.DialContext, net.JoinHostPort(dial, "443"), creds.CA, extIP)
+		}
+	}
+	if err := awaitReady(ctx, d.rt, id, func() bool { return kc.ready(ctx) }, checkCert); err != nil {
 		return err
 	}
 	rt := s.rtFor(key)
@@ -759,6 +765,83 @@ func awaitServer(ctx context.Context, rt *runtime.Manager, id string, ready func
 	}
 	logs, _ := rt.Logs(context.Background(), id, 20)
 	return fmt.Errorf("control plane did not become ready: %w\n%s", err, logs)
+}
+
+// serverFiles are the files copied into a Cluster server before each
+// start: the webhook kubeconfigs, calling hooks, and an empty serving
+// certificate store. k3s reads an empty store as no certificate and
+// issues one for the current --tls-san from its first handshake, where a
+// stored one is served for a moment after /readyz without the addresses
+// added since (#886, ADR 0051). The cluster CA is kept.
+func serverFiles(hooks string) []runtime.File {
+	return []runtime.File{
+		{Name: strings.TrimPrefix(webhookDir, "/") + "/authn.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authn")},
+		{Name: strings.TrimPrefix(webhookDir, "/") + "/authz.yaml", Mode: 0o600, Data: webhookKubeconfig(hooks + "/authz")},
+		{Name: strings.TrimPrefix(k3sDataDir, "/") + "/server/tls/dynamic-cert.json", Mode: 0o600},
+	}
+}
+
+// prepareServer writes into the created Cluster server id the staged
+// datastore, if any, and then files: after the datastore, whose server/
+// directory holds the snapshot's serving certificate (#886).
+func prepareServer(ctx context.Context, rt *runtime.Manager, id, staged string, files []runtime.File) error {
+	if staged != "" {
+		if err := writeDatastore(ctx, rt, id, staged); err != nil {
+			return err
+		}
+	}
+	return rt.CopyTo(ctx, id, "/", files)
+}
+
+// awaitReady is awaitServer for ready and then, unless checkCert is nil (a
+// cluster without a Public endpoint), for checkCert to report the served
+// certificate names the Public endpoint (#886). When the wait runs out
+// on the certificate, the error says what it names.
+func awaitReady(ctx context.Context, rt *runtime.Manager, id string, ready func() bool, checkCert func(context.Context) error) error {
+	var certErr error
+	err := awaitServer(ctx, rt, id, func() bool {
+		if !ready() {
+			certErr = nil
+			return false
+		}
+		if checkCert == nil {
+			return true
+		}
+		certErr = checkCert(ctx)
+		return certErr == nil
+	})
+	var exited *serverExitedError
+	if err != nil && certErr != nil && !errors.As(err, &exited) {
+		return fmt.Errorf("control plane did not become ready: %w", certErr)
+	}
+	return err
+}
+
+// checkServedName completes a TLS handshake with the server at addr, dialed
+// with dial, verifying its certificate against the cluster CA for name.
+func checkServedName(ctx context.Context, dial func(ctx context.Context, network, addr string) (net.Conn, error), addr string, ca []byte, name string) error {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(ca) {
+		return errors.New("invalid cluster CA")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := dial(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	err = tls.Client(conn, &tls.Config{RootCAs: pool, ServerName: name, MinVersion: tls.VersionTLS12}).HandshakeContext(ctx)
+	var host x509.HostnameError
+	if errors.As(err, &host) {
+		var names []string
+		names = append(names, host.Certificate.DNSNames...)
+		for _, ip := range host.Certificate.IPAddresses {
+			names = append(names, ip.String())
+		}
+		return fmt.Errorf("the Cluster server's certificate does not name the Public endpoint %s; it names %s", name, strings.Join(names, ", "))
+	}
+	return err
 }
 
 // waitAdmin waits for k3s to write its admin kubeconfig and parses it.
