@@ -105,8 +105,10 @@ func testConfig(svcs []string, opts []Option) config.Config {
 // launch starts an Instance from cfg and waits until it is ready; release
 // is called once it stops. With no data dir in cfg, it runs in a temporary
 // one it removes then.
-func launch(ctx context.Context, cfg *config.Config, release func()) (i *Instance, err error) {
-	i = &Instance{release: release}
+func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instance, err error) {
+	// Not the named result: a failed launch returns nil, but must still
+	// clean up the Instance it built (#863).
+	i := &Instance{release: release}
 	defer func() {
 		if err != nil {
 			i.cleanup()
