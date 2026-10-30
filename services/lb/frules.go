@@ -132,7 +132,8 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 			f.IPAddress = o.IPAddress
 		}
 	}
-	if err := s.resolveFRAddress(ctx, sc, path, f, internal); err != nil {
+	picked, err := s.resolveFRAddress(ctx, sc, path, f, internal)
+	if err != nil {
 		return err
 	}
 	// IP:port must be unique among forwarding rules of the same scope.
@@ -142,12 +143,18 @@ func prepareForwardingRule(ctx context.Context, s *Service, sc scope, path strin
 			return apierr.InvalidArgument("Invalid value for field 'resource.IPAddress': '%s'. Specified IP address is in-use and would result in a conflict.", f.IPAddress).WithLegacy("invalid")
 		}
 	}
+	// A regional internal rule's named address must be free on its
+	// subnetwork: compute checks and records it (#823), as it recorded an
+	// ephemeral one when picking it.
+	if internal && sc.region != "" && !picked {
+		return s.cmp.HoldRuleIP(ctx, compute.RuleIP{Rule: path, Subnetwork: f.Subnetwork, IP: f.IPAddress})
+	}
 	return nil
 }
 
 // resolveFRAddress turns IPAddress into a literal IP, allocating an
-// ephemeral one when it is empty.
-func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f *computev1.ForwardingRule, internal bool) error {
+// ephemeral one when it is empty (picked).
+func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f *computev1.ForwardingRule, internal bool) (picked bool, err error) {
 	ref := strings.TrimSpace(f.IPAddress)
 	if ref == "" {
 		// The callback runs inside compute's store transaction: no store
@@ -159,28 +166,28 @@ func (s *Service) resolveFRAddress(ctx context.Context, sc scope, path string, f
 		inUse := func(ip string) bool { return used[ip] }
 		ip, err := s.cmp.EphemeralIP(ctx, sc.project, sc.region, internal, f.Subnetwork, path, inUse)
 		if err != nil {
-			return err
+			return false, err
 		}
 		f.IPAddress = ip
-		return nil
+		return true, nil
 	}
 	if ip := net.ParseIP(ref); ip != nil {
 		if ip.To4() == nil {
-			return errInvalid("resource.IPAddress", ref, "IPv6 forwarding rules are not supported by the emulator.")
+			return false, errInvalid("resource.IPAddress", ref, "IPv6 forwarding rules are not supported by the emulator.")
 		}
 		f.IPAddress = ip.String()
-		return nil
+		return false, nil
 	}
 	ap, err := canonRef(sc, "addresses", ref, "resource.IPAddress")
 	if err != nil {
-		return err
+		return false, err
 	}
 	a, err := s.cmp.Address(ctx, ap)
 	if err != nil {
-		return errInvalid("resource.IPAddress", ref, "The referenced address resource cannot be found.")
+		return false, errInvalid("resource.IPAddress", ref, "The referenced address resource cannot be found.")
 	}
 	f.IPAddress = a.Address
-	return nil
+	return false, nil
 }
 
 // syncAddressUsers records which forwarding rules use the reserved

@@ -2,6 +2,7 @@ package lb_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	computev1 "google.golang.org/api/compute/v1"
@@ -100,5 +101,49 @@ func TestRuleIPsResyncedAtStart(t *testing.T) {
 	e.do(reserve(e, "a", gone.IPAddress, ""))
 	if _, err := reserve(e, "b", kept.IPAddress, ""); errReason(err) != "ipInUseByAnotherResource" {
 		t.Errorf("reserving the kept rule's address %s: %v; want ipInUseByAnotherResource", kept.IPAddress, err)
+	}
+}
+
+// An internal forwarding rule naming an IP outside its subnetwork's range
+// is invalid; one naming another rule's address is refused (#823).
+func TestLiteralRuleIPChecked(t *testing.T) {
+	e := start(t)
+	internalLB(e)
+	_, err := e.c.ForwardingRules.Insert(proj, "us-central1", internalRule("out", "10.41.0.5", "8080")).Do()
+	if code, r := apiErr(err); code != 400 || r != "invalid" || !strings.Contains(err.Error(), "resource.IPAddress") {
+		t.Errorf("outside the range: %v; want invalid on resource.IPAddress", err)
+	}
+	e.do(e.c.ForwardingRules.Insert(proj, "us-central1", internalRule("first", "10.40.0.10", "8080")).Do())
+	if _, err := e.c.ForwardingRules.Insert(proj, "us-central1", internalRule("second", "10.40.0.10", "9090")).Do(); errReason(err) != "ipInUseByAnotherResource" {
+		t.Errorf("another rule's address: %v; want ipInUseByAnotherResource", err)
+	}
+	if _, err := reserve(e, "a", "10.40.0.10", ""); errReason(err) != "ipInUseByAnotherResource" {
+		t.Errorf("reserving a literal rule address: %v; want ipInUseByAnotherResource", err)
+	}
+	e.do(e.c.ForwardingRules.Patch(proj, "us-central1", "first", &computev1.ForwardingRule{Description: "kept"}).Do())
+	e.do(e.c.ForwardingRules.Delete(proj, "us-central1", "first").Do())
+	e.do(e.c.ForwardingRules.Insert(proj, "us-central1", internalRule("second", "10.40.0.10", "9090")).Do())
+}
+
+// An internal forwarding rule may name a reserved, unused internal
+// Address's IP, which then lists it as a user; a second rule may share a
+// SHARED_LOADBALANCER_VIP but not a GCE_ENDPOINT Address (#823).
+func TestLiteralRuleIPOnAddress(t *testing.T) {
+	e := start(t)
+	c := e.c
+	internalLB(e)
+	e.do(reserve(e, "ep", "10.40.0.20", "GCE_ENDPOINT"))
+	e.do(reserve(e, "vip", "10.40.0.21", "SHARED_LOADBALANCER_VIP"))
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", internalRule("ep1", "10.40.0.20", "8080")).Do())
+	if a, err := c.Addresses.Get(proj, "us-central1", "ep").Do(); err != nil || a.Status != "IN_USE" || len(a.Users) != 1 {
+		t.Fatalf("Address ep = %+v, %v; want IN_USE by ep1", a, err)
+	}
+	if _, err := c.ForwardingRules.Insert(proj, "us-central1", internalRule("ep2", "10.40.0.20", "9090")).Do(); errReason(err) != "ipInUseByAnotherResource" {
+		t.Errorf("a second rule on a GCE_ENDPOINT Address: %v; want ipInUseByAnotherResource", err)
+	}
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", internalRule("vip1", "10.40.0.21", "8080")).Do())
+	e.do(c.ForwardingRules.Insert(proj, "us-central1", internalRule("vip2", "10.40.0.21", "9090")).Do())
+	if a, err := c.Addresses.Get(proj, "us-central1", "vip").Do(); err != nil || len(a.Users) != 2 {
+		t.Errorf("Address vip = %+v, %v; want two users", a, err)
 	}
 }

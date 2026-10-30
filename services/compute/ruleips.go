@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	computev1 "google.golang.org/api/compute/v1"
 
@@ -101,6 +102,38 @@ func ruleIPs(tx store.Tx, sp string) map[uint32]string {
 // deleted or no longer holds an address of its own.
 func (s *Service) ReleaseRuleIP(ctx context.Context, path string) error {
 	return s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsRuleIPs, relPath(path)) })
+}
+
+// HoldRuleIP checks the address an internal forwarding rule names, and
+// records it in the same transaction. It is refused (invalid on
+// resource.IPAddress) outside the subnetwork's range or on one of GCP's
+// reserved addresses, and (ipInUseByAnotherResource) when another
+// resource holds it on the subnetwork (heldOn). An internal Address's IP
+// is the exception, as in GCP: a rule may take it while the Address has
+// no other users or is a SHARED_LOADBALANCER_VIP, and records nothing.
+func (s *Service) HoldRuleIP(ctx context.Context, r RuleIP) error {
+	rule := relPath(r.Rule)
+	return s.env.Store.Update(func(tx store.Tx) error {
+		sp, sn, err := ruleSubnetwork(tx, rule, r.Subnetwork)
+		if err != nil {
+			return err
+		}
+		c, _ := parseCIDR(sn.IpCidrRange, true)
+		ip, ok := parseIP(r.IP)
+		if !ok || !c.usable(ip) {
+			return errInvalidField("resource.IPAddress", r.IP, "The specified IP address is not within the subnetwork range or is reserved.")
+		}
+		if a := addressOn(tx, sp, r.IP); a != nil {
+			if a.Purpose != "SHARED_LOADBALANCER_VIP" && slices.ContainsFunc(a.Users, func(u string) bool { return relPath(u) != rule }) {
+				return errIPInUse(r.IP)
+			}
+			return tx.Delete(nsRuleIPs, rule)
+		}
+		if h := heldOn(tx, sp, sn)[ip]; h != "" && h != rule {
+			return errIPInUse(r.IP)
+		}
+		return recordRuleIP(tx, r)
+	})
 }
 
 // RecordRuleIP records an internal forwarding rule's address as the
