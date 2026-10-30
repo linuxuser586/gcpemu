@@ -27,7 +27,7 @@ func holdHostLoopback(deadline time.Time) (release func(), err error) {
 	return acquireHostLock(hostLockFile, deadline)
 }
 
-// errLockHeld is acquireLock reaching its deadline with every file held.
+// errLockHeld is a lock that another holder has.
 var errLockHeld = errors.New("still held")
 
 // acquireHostLock takes an exclusive OS lock on path, which the OS
@@ -46,28 +46,11 @@ func acquireHostLock(path string, deadline time.Time) (release func(), err error
 // with errLockHeld. The caller keeps release reachable until it calls it:
 // a dropped release lets the collector close the file, dropping the lock.
 func acquireLock(paths []string, deadline time.Time) (release func(), err error) {
-	files := make([]*os.File, 0, len(paths))
-	defer func() {
-		for _, f := range files {
-			f.Close()
-		}
-	}()
-	for _, p := range paths {
-		f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o600)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, f)
-	}
 	for {
-		for i, f := range files {
-			ok, err := tryLock(f)
-			if err != nil {
-				return nil, fmt.Errorf("locking %s: %w", paths[i], err)
-			}
-			if ok {
-				files = append(files[:i], files[i+1:]...) // kept open: closing drops the lock
-				return func() { _ = unlock(f); _ = f.Close() }, nil
+		for _, p := range paths {
+			release, err := lockNow(p, os.O_CREATE)
+			if !errors.Is(err, errLockHeld) {
+				return release, err
 			}
 		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
@@ -75,4 +58,33 @@ func acquireLock(paths []string, deadline time.Time) (release func(), err error)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// lockNow takes an exclusive OS lock on path without waiting, opening it
+// with the extra flags (os.O_CREATE to create it). It fails with
+// errLockHeld while another holder has it, and when path was removed or
+// replaced before the lock was taken, since a lock on the old file guards
+// nothing.
+func lockNow(path string, flag int) (release func(), err error) {
+	f, err := os.OpenFile(path, os.O_RDWR|flag, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	ok, err := tryLock(f)
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("locking %s: %w", path, err)
+	}
+	release = func() { _ = unlock(f); _ = f.Close() }
+	if !ok {
+		f.Close()
+		return nil, errLockHeld
+	}
+	locked, err := f.Stat()
+	now, serr := os.Stat(path)
+	if err != nil || serr != nil || !os.SameFile(locked, now) {
+		release()
+		return nil, errLockHeld
+	}
+	return release, nil
 }

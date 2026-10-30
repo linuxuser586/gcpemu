@@ -12,20 +12,26 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
-// Abandoned is an Abandoned Instance ID: one that still tags containers,
-// networks or volumes but that no data dir holds, so no future Instance
-// reclaims them (#192).
-type Abandoned struct {
+// Tagged is an Instance ID with the containers, networks and volumes it
+// tags on the runtime.
+type Tagged struct {
 	ID string
-	// Unverified: none of its objects records its data dir (LabelDir), so
-	// only the dirs under StateHome were searched for one holding the ID;
-	// a --data-dir Instance elsewhere may still own it.
-	Unverified bool
 	// Dirs are the data dirs its objects record.
 	Dirs       []string
 	Containers []runtime.Container
 	Networks   []runtime.Network
 	Volumes    []runtime.Volume
+}
+
+// Abandoned is an Abandoned Instance ID: one that still tags containers,
+// networks or volumes but that no data dir holds, so no future Instance
+// reclaims them (#192).
+type Abandoned struct {
+	Tagged
+	// Unverified: none of its objects records its data dir (LabelDir), so
+	// only the dirs under StateHome were searched for one holding the ID;
+	// a --data-dir Instance elsewhere may still own it.
+	Unverified bool
 }
 
 // FindAbandoned returns the Abandoned Instance IDs on the runtime, sorted.
@@ -34,6 +40,31 @@ type Abandoned struct {
 // under stateHome does. A dir that looks missing may be on an unmounted
 // disk or inside a container, so callers confirm before pruning.
 func FindAbandoned(ctx context.Context, cl *runtime.Client, stateHome string) ([]Abandoned, error) {
+	tagged, err := FindTagged(ctx, cl)
+	if err != nil {
+		return nil, err
+	}
+	held := map[string]bool{}
+	// Glob fails only on a malformed pattern.
+	idFiles, _ := filepath.Glob(filepath.Join(stateHome, "*", IDFile))
+	for _, f := range idFiles {
+		held[readID(filepath.Dir(f))] = true
+	}
+	var out []Abandoned
+	for _, a := range tagged {
+		running := slices.ContainsFunc(a.Containers, func(c runtime.Container) bool { return c.Running })
+		if running || held[a.ID] || slices.ContainsFunc(a.Dirs, func(d string) bool { return readID(d) == a.ID }) {
+			continue
+		}
+		out = append(out, Abandoned{Tagged: a, Unverified: len(a.Dirs) == 0})
+	}
+	return out, nil
+}
+
+// FindTagged returns every Instance ID that tags containers, networks or
+// volumes on the runtime, sorted. Unlike FindAbandoned it keeps the IDs
+// that are still live, so the caller decides which to Prune.
+func FindTagged(ctx context.Context, cl *runtime.Client) ([]Tagged, error) {
 	sel := map[string]string{runtime.LabelInstance: ""}
 	cs, err := cl.ListContainers(ctx, sel)
 	if err != nil {
@@ -47,28 +78,22 @@ func FindAbandoned(ctx context.Context, cl *runtime.Client, stateHome string) ([
 	if err != nil {
 		return nil, err
 	}
-	byID := map[string]*Abandoned{}
-	running := map[string]bool{}
-	labelled := map[string]bool{}
-	get := func(l map[string]string) *Abandoned {
+	byID := map[string]*Tagged{}
+	get := func(l map[string]string) *Tagged {
 		id := l[runtime.LabelInstance]
 		a := byID[id]
 		if a == nil {
-			a = &Abandoned{ID: id}
+			a = &Tagged{ID: id}
 			byID[id] = a
 		}
-		if d := l[runtime.LabelDir]; d != "" {
-			labelled[id] = true
-			if !slices.Contains(a.Dirs, d) {
-				a.Dirs = append(a.Dirs, d)
-			}
+		if d := l[runtime.LabelDir]; d != "" && !slices.Contains(a.Dirs, d) {
+			a.Dirs = append(a.Dirs, d)
 		}
 		return a
 	}
 	for _, c := range cs {
 		a := get(c.Labels)
 		a.Containers = append(a.Containers, c)
-		running[a.ID] = running[a.ID] || c.Running
 	}
 	for _, n := range nets {
 		a := get(n.Labels)
@@ -78,19 +103,11 @@ func FindAbandoned(ctx context.Context, cl *runtime.Client, stateHome string) ([
 		a := get(v.Labels)
 		a.Volumes = append(a.Volumes, v)
 	}
-
-	held := map[string]bool{}
-	// Glob fails only on a malformed pattern.
-	idFiles, _ := filepath.Glob(filepath.Join(stateHome, "*", IDFile))
-	for _, f := range idFiles {
-		held[readID(filepath.Dir(f))] = true
-	}
-	var out []Abandoned
+	var out []Tagged
 	for id, a := range byID {
-		if id == "" || running[id] || held[id] || slices.ContainsFunc(a.Dirs, func(d string) bool { return readID(d) == id }) {
+		if id == "" {
 			continue
 		}
-		a.Unverified = !labelled[id]
 		sort.Strings(a.Dirs)
 		out = append(out, *a)
 	}
@@ -109,7 +126,7 @@ func readID(dir string) string {
 
 // Prune removes the ID's containers, then its networks, then its volumes,
 // in the order an Instance cleans up after itself.
-func (a Abandoned) Prune(ctx context.Context, cl *runtime.Client) error {
+func (a Tagged) Prune(ctx context.Context, cl *runtime.Client) error {
 	var errs []error
 	for _, c := range a.Containers {
 		if err := cl.RemoveContainer(ctx, c.ID, true); err != nil {

@@ -1148,7 +1148,8 @@ inst.Setenv(t) // or the client env vars (STORAGE_EMULATOR_HOST, …) for this t
 ```
 
 To share one Instance across a package's tests, start it in `TestMain` with `emutest.New` and
-stop it with `Close`, which also removes its temporary data dir:
+stop it with `Close`, which also removes its temporary data dir (unless its containers could not be
+removed; the next test process reclaims them then):
 
 ```go
 var inst *emutest.Instance
@@ -1179,6 +1180,13 @@ Options, for `Start` and `New`:
 | `WithDeterministic()` | A Deterministic Instance (see above) |
 | `WithConsole()` | Serves the Web console |
 | `WithSQLHostClients()` | Cloud SQL host clients on loopback (below) |
+
+A test run that is interrupted (`^C`, `go test -timeout`, a killed CI job) runs no cleanups, so its
+Instances' containers, networks and volumes stay behind. The first Instance of the next test
+process that starts one reclaims them, along with the Ephemeral and `WithTestDataDir` dirs that
+held them. A test holds a lock on a file in its dir until its Instance's resources are removed, so
+only the dirs of tests that have ended are reclaimed. `WithDataDir` dirs never are; `gcpemu prune`
+removes what their Instances leave. A failed reclaim is logged and never fails the test.
 
 Set `GCPEMU_TEST_LOG=1` to see the emulator's logs. `RequireRuntime(t)` skips a test without a
 container runtime; GKE tests call `HoldClusterSlot(t)` to limit how many clusters run at once
