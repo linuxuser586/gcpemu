@@ -33,7 +33,7 @@ var (
 // Instance is a running test emulator.
 type Instance struct {
 	in        *instance.Instance
-	ownedDir  string // the temp data dir Close removes, "" with WithDataDir
+	ownedDir  string // the Test data dir Close removes, "" with WithDataDir
 	dropOwner func() // drops ownedDir's owner lock, nil when none is held
 	release   func() // drops the host loopback lock, nil when none is held
 	closeOnce sync.Once
@@ -65,7 +65,7 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 // New launches an Instance running svcs (plus their dependencies) that
 // lives until Close, for sharing one Instance across a package's tests
 // from TestMain. ctx bounds the start only. Unless WithDataDir is given,
-// the Instance keeps its files in a temporary directory that Close
+// the Instance keeps its files in a Test data dir of its own that Close
 // removes. Set GCPEMU_TEST_LOG=1 to see emulator logs.
 func New(ctx context.Context, svcs []string, opts ...Option) (*Instance, error) {
 	deadline, _ := ctx.Deadline()
@@ -120,8 +120,8 @@ func testConfig(svcs []string, opts []Option) config.Config {
 }
 
 // launch starts an Instance from cfg and waits until it is ready; release
-// is called once it stops. With no data dir in cfg, it runs in a temporary
-// one it removes then.
+// is called once it stops. With no data dir in cfg, it runs in a Test data
+// dir of its own that it removes then.
 func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instance, err error) {
 	// Not the named result: a failed launch returns nil, but must still
 	// clean up the Instance it built (#863).
@@ -178,9 +178,9 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 	return i, nil
 }
 
-// Close stops the Instance and removes its temporary data dir, unless its
-// containers could not be removed; the next test process reclaims them
-// then. Calling it again returns the first call's error.
+// Close stops the Instance and removes the Test data dir of its own, if
+// it has one, unless its containers, networks or volumes could not be
+// removed; the next test process reclaims them then. Calling it again returns the first call's error.
 func (i *Instance) Close(ctx context.Context) error {
 	i.closeOnce.Do(func() {
 		err := i.shutdown(ctx, i.in)
