@@ -12,5 +12,5 @@ A cluster's Public endpoint must be in the certificate it serves from the moment
 ## Consequences
 
 - Every start of the Cluster server, the #840 restarts included, issues a new serving key under the same CA.
-- The handshake is the guarantee, not the empty file: if a later k3s brings the race back, starts fail with an ERROR that names the Public endpoint and the names the certificate does cover, rather than going RUNNING with the wrong certificate.
+- The handshake is the guarantee, not the empty file: if a later k3s brings the race back, starts fail with an ERROR that names the Public endpoint and the names the certificate does cover, rather than going RUNNING with the wrong certificate. A server watcher restart that fails this way counts toward the exit limit, and its cluster ends DEGRADED (ADR 0045).
 - The same holds for every `--tls-san` address, `--gke-bind`'s included, though only the Public endpoint is checked.

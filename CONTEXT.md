@@ -45,7 +45,7 @@ A named address at which an Instance serves clients, such as a Service's own por
 _Avoid_: endpoint (unqualified)
 
 **Public endpoint**:
-The address at which a GKE cluster that is not private serves its Kubernetes API outside its VPC, as GKE's `publicEndpoint` reports it. From the moment the cluster is RUNNING, the certificate it serves covers it, on every start. A cluster keeps it across starts, a State snapshot restore included, while the address is still free on the External network, and otherwise gets a new one.
+The address at which a GKE cluster that is not private serves its Kubernetes API outside its VPC, as GKE's `publicEndpoint` reports it. From the moment the cluster is RUNNING, the certificate it serves names it, and its address on the External network when the VM relay serves it, on every start. A cluster keeps it across starts, a State snapshot restore included, while the address is still free on the External network, and otherwise gets a new one.
 _Avoid_: endpoint (unqualified), external IP
 
 **Endpoint override**:
@@ -99,7 +99,7 @@ A Managed container that stopped or was started again without the Instance doing
 _Avoid_: crashed container, dead container
 
 **Cluster server**:
-The Managed container that runs a GKE cluster's Kubernetes API server and its Datastore. When it exits, the Instance starts it again, until it has exited too often in a short time; the cluster is then DEGRADED.
+The Managed container that runs a GKE cluster's Kubernetes API server and its Datastore. When it exits, the Instance starts it again, until it has exited or failed to start again too often in a short time; the cluster is then DEGRADED.
 _Avoid_: control plane (collides with Control plane), master
 
 **Sidecar agent**:
