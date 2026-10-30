@@ -103,11 +103,11 @@ func TestLaunchFailureKeepsGivenDataDir(t *testing.T) {
 	}
 }
 
-// TestLaunchFailureKeepsDirOfLeftResources: a launch that fails after its
+// TestLaunchFailureKeepsTestDataDirWhenResourcesRemain: a launch that fails after its
 // Instance was created, and whose containers, networks or volumes cannot
 // be removed, keeps its Test data dir, owner lock released, for the next
 // sweep, as Close does (ADR 0047, #877).
-func TestLaunchFailureKeepsDirOfLeftResources(t *testing.T) {
+func TestLaunchFailureKeepsTestDataDirWhenResourcesRemain(t *testing.T) {
 	savedShutdown, savedRemove := shutdownInstance, removeInstanceResources
 	shutdownInstance = func(ctx context.Context, in *instance.Instance) error {
 		return errors.Join(in.Shutdown(ctx), errors.New("container left"))

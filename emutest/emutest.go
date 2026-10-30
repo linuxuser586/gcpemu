@@ -190,11 +190,11 @@ func (i *Instance) Close(ctx context.Context) error {
 	return i.closeErr
 }
 
-// shutdown shuts in, i's emulator, down. If that fails and the containers,
-// networks or volumes it leaves cannot be removed, i gives up its
-// temporary data dir, so cleanup leaves it on disk: the dir still holds
-// the Instance ID, and the next sweep removes what is left (ADR 0047).
-// Close and a failed launch both stop this way.
+// shutdown stops in, i's emulator. If that fails and the containers,
+// networks or volumes it leaves cannot be removed, i gives up its Test
+// data dir, so cleanup leaves it on disk: the dir still holds the
+// Instance ID, and the next sweep removes what is left (ADR 0047). Close
+// and a failed launch both stop this way.
 func (i *Instance) shutdown(ctx context.Context, in *instance.Instance) error {
 	err := shutdownInstance(ctx, in)
 	if err != nil && i.ownedDir != "" && removeInstanceResources(i.ownedDir) != nil {
@@ -204,7 +204,7 @@ func (i *Instance) shutdown(ctx context.Context, in *instance.Instance) error {
 }
 
 // cleanup drops the host loopback lock and the owner lock, then removes
-// the temporary data dir, if i still owns one: shutdown gives up the dir
+// the Test data dir, if i still owns one: shutdown gives up the dir
 // of an Instance whose containers, networks or volumes remain, and with
 // WithDataDir i owns none.
 func (i *Instance) cleanup() error {
