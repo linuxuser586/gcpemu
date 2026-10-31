@@ -22,8 +22,8 @@ func (g *Gateway) SetAdminToken(tok string) { g.adminToken = tok }
 
 // adminGuarded reports whether path needs the Admin token. Liveness and
 // readiness stay open so that probes need no secret; the GKE hooks under
-// /container/_emu/ have their own per-cluster secret. Only these requests
-// keep their cookies, where the token may travel (#888).
+// /container/_emu/ have their own per-cluster secret. It looks at the path
+// alone; see adminRequest for which requests keep their cookies.
 func adminGuarded(r *http.Request) bool {
 	p := r.URL.Path
 	switch {
@@ -33,6 +33,27 @@ func adminGuarded(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// adminRequest reports whether r is an Admin API or Web console request,
+// the only requests that keep their cookies, where the token may travel
+// (#888): an Admin-guarded path on a hostname Host mode does not serve. Host
+// mode's hostnames serve only public APIs (#890).
+func (g *Gateway) adminRequest(r *http.Request) bool {
+	return adminGuarded(r) && !g.publicHost(r.Host)
+}
+
+// publicHost reports whether host, with or without a port, is one of the
+// hostnames Host mode serves (see Hosts).
+func (g *Gateway) publicHost(host string) bool {
+	host = hostOnly(host)
+	if host == PathHost {
+		return true
+	}
+	g.mu.RLock()
+	_, ok := g.hosts[host]
+	g.mu.RUnlock()
+	return ok
 }
 
 // checkAdmin enforces the Admin token on guarded paths and reports
