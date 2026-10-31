@@ -1593,7 +1593,7 @@ task conformance                  # compare mode: = go test -tags conformance ./
 GCPEMU_CONFORMANCE_PROJECT=my-sandbox task conformance:record   # record mode, real GCP
 ```
 
-- **Compare mode** (the default; CI runs it on `ubuntu-24.04` and `ubuntu-24.04-arm`) runs each
+- **Compare mode** (the default; CI runs it on `ubuntu-26.04` and `ubuntu-26.04-arm`) runs each
   test against an in-process Instance behind the Escape guard, with no credentials, and compares
   every response with the test's Recording. Any difference is a Mismatch and fails the test with
   the field's JSON path. A test with no Recording skips and says to run `task conformance:record`.
