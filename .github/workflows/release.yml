@@ -18,7 +18,7 @@ permissions: {}
 
 jobs:
   release:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       id-token: write
@@ -128,7 +128,7 @@ jobs:
       # Each leg reports on its own; the image job runs only if both pass.
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -158,7 +158,7 @@ jobs:
   # only copies files.
   image:
     needs: image-check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -222,7 +222,7 @@ jobs:
   # release that fails publishes nothing.
   echo-dist:
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -244,7 +244,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -271,7 +271,7 @@ jobs:
   # to, can't pull from ghcr.io.
   echo-image:
     needs: echo-image-check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       id-token: write

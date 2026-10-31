@@ -17,6 +17,13 @@ outputs:
 runs:
   using: composite
   steps:
+    # #899: Ubuntu 26.04 runners don't apply the image's /etc/sysctl.conf
+    # (actions/runner-images#15108), so inotify stays at the kernel's 128
+    # instances and k3s nodes fail with "too many open files". These are
+    # the image's own values; remove this once the image applies them.
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: sudo sysctl -w fs.inotify.max_user_instances=1280 fs.inotify.max_user_watches=655360
     - uses: actions/setup-go@v7
       id: go
       with:
