@@ -22,7 +22,7 @@ import (
 	"github.com/linuxuser586/gcpemu/services/compute"
 )
 
-const probeImage = "rancher/k3s:v1.36.5-k3s1"
+const probeImage = "rancher/k3s:v1.37.1-k3s1"
 
 // workload starts a container holding ip on net, as a Managed container
 // would (aliased on a Translated network), with its default route via the

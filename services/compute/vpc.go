@@ -344,7 +344,7 @@ func selfAddr(tx store.Tx, sp string) (uint32, bool) {
 
 // aliasProbeImage runs the probe that checks that Managed containers can
 // be given NET_ADMIN to alias Declared addresses (it has sh and ip).
-const aliasProbeImage = "busybox:1.37"
+const aliasProbeImage = "busybox:1.38"
 
 // canAlias reports why Managed containers cannot alias Declared addresses
 // onto their interfaces, or nil when they can: it starts a container with

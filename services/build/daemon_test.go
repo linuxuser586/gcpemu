@@ -16,7 +16,7 @@ import (
 
 // dockerImage is the image of the test steps that use docker, the Build
 // daemon's own, which has the docker CLI.
-const dockerImage = "docker:29.9.0-dind"
+const dockerImage = "docker:29.9.2-dind"
 
 // dockerStep is a step running a shell script with the docker CLI.
 func dockerStep(id, script string) *cloudbuildpb.BuildStep {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"go.yaml.in/yaml/v3"
 	computev1 "google.golang.org/api/compute/v1"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"

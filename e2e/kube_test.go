@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // kube is a minimal Kubernetes API client (server-side apply) with the

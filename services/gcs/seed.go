@@ -18,8 +18,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.yaml.in/yaml/v3"
 	storage "google.golang.org/api/storage/v1"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"

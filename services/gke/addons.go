@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 )

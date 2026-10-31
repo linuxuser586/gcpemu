@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"

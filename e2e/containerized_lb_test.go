@@ -85,7 +85,7 @@ func TestContainerizedForwardingRules(t *testing.T) {
 		if err != nil || len(ls.Listeners) == 0 {
 			t.Fatalf("listeners: %d, %v", resp.StatusCode, err)
 		}
-		hosttest.Docker(t, "run", "--rm", "--network", "container:"+name+"-socket", "busybox:1.37",
+		hosttest.Docker(t, "run", "--rm", "--network", "container:"+name+"-socket", "busybox:1.38",
 			"sh", "-c", "wget -S -O /dev/null http://"+ls.Listeners[0].Listener+"/ 2>&1 | grep -q 'HTTP/'")
 
 		lb.rule("c")

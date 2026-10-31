@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 )

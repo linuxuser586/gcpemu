@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"

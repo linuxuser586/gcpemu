@@ -38,12 +38,12 @@ import (
 	"time"
 
 	"github.com/bufbuild/protocompile"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/genproto/googleapis/api/annotations"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
-	"gopkg.in/yaml.v3"
 )
 
 type config struct {

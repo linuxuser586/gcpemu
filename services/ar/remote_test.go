@@ -10,10 +10,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/services/ar"
 )

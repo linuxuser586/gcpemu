@@ -26,7 +26,7 @@ import (
 
 	"cloud.google.com/go/iam"
 	"cloud.google.com/go/storage"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func pemKey(f *fakeIAM) []byte {

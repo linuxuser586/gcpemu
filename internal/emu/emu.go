@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/grpc"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/clock"

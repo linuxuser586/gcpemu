@@ -30,12 +30,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	mdns "github.com/miekg/dns"
+	"go.yaml.in/yaml/v3"
 	computev1 "google.golang.org/api/compute/v1"
 	dnsv1 "google.golang.org/api/dns/v1"
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/agent"

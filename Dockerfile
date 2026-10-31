@@ -11,7 +11,7 @@
 # zsh and PowerShell on every host (Git Bash needs MSYS_NO_PATHCONV=1):
 #
 #   docker run -v /var/run/docker.sock:/var/run/docker.sock \
-#     --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
+#     --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.38 stat -c %g /s)" \
 #     -p 4562:4562 ... IMAGE
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 
