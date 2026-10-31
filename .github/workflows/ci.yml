@@ -8,7 +8,7 @@ jobs:
   # Docs-only changes skip every job below except adr rather than the whole
   # workflow, so ci-ok still reports and a docs-only PR can merge.
   changes:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       pull-requests: read
@@ -30,7 +30,7 @@ jobs:
   # ones included, where ADRs land. Its own job, so a clash fails here
   # alone and the test jobs still run.
   adr:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -69,7 +69,7 @@ jobs:
     if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
     strategy:
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -100,7 +100,7 @@ jobs:
   vm-relay:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 75
     env:
       GCPEMU_VM_RELAY: "1"
@@ -123,7 +123,7 @@ jobs:
   console:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
       run:
@@ -157,7 +157,7 @@ jobs:
   console-e2e:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -241,7 +241,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
@@ -287,7 +287,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -313,7 +313,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
@@ -328,7 +328,7 @@ jobs:
       # ADR 0025: the IF-007/IF-008 clients run from host toolchains.
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.15"
       # #766: the Linux arm64 SDK bundles no Python, so gcloud runs on this
       # one, and sign-url needs its cryptography library.
       - name: cryptography for gcloud on arm64
@@ -373,7 +373,7 @@ jobs:
       # runner's passwordless sudo. The Pre-release host checks run it on
       # macOS and Windows.
       - name: Resolver routes
-        if: matrix.runner == 'ubuntu-24.04'
+        if: matrix.runner == 'ubuntu-26.04'
         env:
           GCPEMU_RESOLVER_TESTS: "1"
         run: |
@@ -388,7 +388,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
         provider: [google, google-beta]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
@@ -424,7 +424,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 80
     steps:
@@ -456,7 +456,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
@@ -476,7 +476,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     permissions:
@@ -547,7 +547,7 @@ jobs:
 
   action-artifacts:
     needs: action
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -619,7 +619,7 @@ jobs:
       - uses: actions/setup-python@v7
         if: runner.os == 'Windows'
         with:
-          python-version: "3.13"
+          python-version: "3.15"
       - name: cryptography for gcloud on Windows
         if: runner.os == 'Windows'
         run: |
@@ -684,7 +684,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -714,7 +714,7 @@ jobs:
   ci-ok:
     if: always()
     needs: [changes, adr, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, kube-conformance, conformance, action, action-artifacts, platforms]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - env:
           NEEDS: ${{ toJSON(needs) }}
