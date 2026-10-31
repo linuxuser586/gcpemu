@@ -376,7 +376,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Cookies are the Web console's and any proxy's in front of it, never
 	// a public API's credential: only the Admin token guard reads them, so
 	// they go no further, least of all to a forwarded backend (#888).
-	if !adminGuarded(r) {
+	if !g.adminRequest(r) {
 		r.Header.Del("Cookie")
 	}
 	name, answered := g.delegation(w, r)
@@ -413,6 +413,13 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if d := g.restDelegated(r); d != nil {
 		d.rest.ServeHTTP(w, r)
+		return
+	}
+	// PathHost, like every Host mode hostname, serves only public APIs, so
+	// never the Admin API or the Web console (#890).
+	if p := r.URL.Path; hostOnly(r.Host) == PathHost &&
+		(p == "/_emu" || strings.HasPrefix(p, "/_emu/") || p == "/console" || strings.HasPrefix(p, "/console/")) {
+		apierr.Write(w, apierr.NotFound("Not Found"))
 		return
 	}
 	if !g.checkAdmin(w, r) {

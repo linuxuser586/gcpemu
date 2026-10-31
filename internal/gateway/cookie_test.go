@@ -91,3 +91,69 @@ func TestLinkedRequestLosesCookies(t *testing.T) {
 		t.Errorf("served %v with Cookie %q, want served with none (%d %s)", served, cookie, w.Code, w.Body)
 	}
 }
+
+// A request on a Delegated API's host is a public API request whatever its
+// path: /_emu/ there reaches the External emulator without the console's
+// cookies and without the Admin token check (#890).
+func TestDelegatedHostLosesCookies(t *testing.T) {
+	g := New(&emu.Env{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler)}, nil)
+	g.SetAdminToken("secret")
+	var cookie []string
+	served := false
+	ext := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		served, cookie = true, r.Header.Values("Cookie")
+	}))
+	defer ext.Close()
+	if err := g.Delegate("firestore", ext.Listener.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "http://firestore.googleapis.com/_emu/v1/anything", nil)
+	r.Header.Set("Cookie", consoleCookies)
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, r)
+	if !served || len(cookie) != 0 {
+		t.Errorf("served %v with Cookie %q, want served with none (%d %s)", served, cookie, w.Code, w.Body)
+	}
+}
+
+// A request on an in-process Service's host is a public API request
+// whatever its path: /console/obj, an object in a bucket named console,
+// reaches Cloud Storage without the console's cookies and without needing
+// the Admin token (#890).
+func TestServiceHostLosesCookies(t *testing.T) {
+	g := New(&emu.Env{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler)}, nil)
+	g.SetAdminToken("secret")
+	var cookie []string
+	served := false
+	g.Router("gcs").Mount("storage", []string{"storage.googleapis.com"}, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		served, cookie = true, r.Header.Values("Cookie")
+	}))
+	r := httptest.NewRequest(http.MethodGet, "http://storage.googleapis.com/console/obj", nil)
+	r.Header.Set("Cookie", consoleCookies)
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, r)
+	if !served || len(cookie) != 0 {
+		t.Errorf("served %v with Cookie %q, want served with none (%d %s)", served, cookie, w.Code, w.Body)
+	}
+}
+
+// www.googleapis.com serves only public APIs: its /_emu/ and /console
+// paths answer Not Found, even with the Admin token cookie, and never reach
+// the Admin API or the Web console (#890).
+func TestPathHostServesNoAdmin(t *testing.T) {
+	g := New(&emu.Env{Config: &config.Config{}, Log: slog.New(slog.DiscardHandler)}, nil)
+	g.SetAdminToken("secret")
+	served := false
+	g.HandleAdmin(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
+	g.HandleConsole(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }))
+	for _, path := range []string{"/_emu/v1/reset", "/_emu/v1/health", "/console", "/console/"} {
+		served = false
+		r := httptest.NewRequest(http.MethodGet, "http://"+PathHost+path, nil)
+		r.Header.Set("Cookie", consoleCookies)
+		w := httptest.NewRecorder()
+		g.ServeHTTP(w, r)
+		if served || w.Code != http.StatusNotFound {
+			t.Errorf("%s: served %v, %d %s, want Not Found", path, served, w.Code, w.Body)
+		}
+	}
+}
