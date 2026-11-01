@@ -155,7 +155,7 @@ A client inside a VM runtime's VM but outside the Instance's networks, such as t
 _Avoid_: daemon client, in-VM client
 
 **VM runtime**:
-A container runtime whose networks live inside a virtual machine the host cannot route into, e.g. Docker Desktop, Colima, OrbStack or Podman machine on macOS, Docker Desktop or Podman machine on Windows, and Docker Desktop on Linux.
+A container runtime whose networks live inside a virtual machine the host cannot route into. On Windows and macOS every container runtime is one, e.g. Docker Desktop, Colima, OrbStack or Podman machine; on Linux, one whose Bridge gateway the host cannot bind, e.g. Docker Desktop on Linux.
 
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
@@ -166,7 +166,7 @@ The Managed container that gives VM-side clients the registry of an Instance on 
 _Avoid_: registry proxy, registry forwarder
 
 **Bridge gateway**:
-The host's side of a container runtime's bridge network: the address the host would hold on that network. When the host cannot bind it, the network lives in a VM, so the runtime is a VM runtime and an Instance on the host uses the VM relay.
+The host's side of a container runtime's bridge network: the address the host would hold on that network. On Linux, when the host cannot bind it, the network lives in a VM, so the runtime is a VM runtime and an Instance on the host uses the VM relay. On Windows and macOS it says nothing, since another adapter on the host can hold the same address.
 _Avoid_: gateway (unqualified)
 
 **Loopback alias**:

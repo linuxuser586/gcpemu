@@ -101,7 +101,7 @@ func TestRefuseHostModeOnVMRelay(t *testing.T) {
 	} {
 		t.Setenv(vmrelay.Env, tc.env)
 		probe := func() (hostModeRuntime, bool) {
-			return hostModeRuntime{Relay: vmrelay.Decide(false, tc.gateway)}, true
+			return hostModeRuntime{Relay: vmrelay.Decide("linux", false, tc.gateway)}, true
 		}
 		err := refuseHostMode(&config.Config{HostMode: true}, "linux", probe)
 		if tc.reason == "" {

@@ -62,22 +62,29 @@ func (d Decision) String() string {
 
 // Decide chooses: never when the emulator runs in a container (ADR 0003),
 // since it is already on every network; otherwise as GCPEMU_VM_RELAY says;
-// otherwise when the services network's gateway cannot be bound on the
-// host, which is how a VM runtime shows.
-func Decide(inContainer bool, gateway string) Decision {
+// otherwise on a VM runtime. On a goos other than Linux every runtime is
+// one (ADR 0056); on Linux it is one when the services network's gateway
+// cannot be bound on the host. Elsewhere a host adapter can hold the
+// gateway's address, as WSL's does, so a bind proves nothing (#913).
+func Decide(goos string, inContainer bool, gateway string) Decision {
 	if inContainer {
 		return Decision{Reason: "the emulator runs in a container"}
 	}
 	vm := true
-	if l, err := net.Listen("tcp", net.JoinHostPort(gateway, "0")); err == nil {
-		l.Close()
-		vm = false
+	if goos == "linux" {
+		if l, err := net.Listen("tcp", net.JoinHostPort(gateway, "0")); err == nil {
+			l.Close()
+			vm = false
+		}
 	}
 	switch strings.ToLower(os.Getenv(Env)) {
 	case "1", "true", "on":
 		return Decision{On: true, VM: vm, Forced: true, Reason: "forced by " + Env}
 	case "0", "false", "off":
 		return Decision{VM: vm, Forced: true, Reason: "disabled by " + Env}
+	}
+	if goos != "linux" {
+		return Decision{On: true, VM: true, Reason: goos + " runs container runtimes in a VM"}
 	}
 	if vm {
 		return Decision{On: true, VM: true, Reason: "gateway " + gateway + " not bindable"}
