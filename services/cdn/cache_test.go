@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -923,7 +924,7 @@ func TestCompression(t *testing.T) {
 			w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", tc.accept))
 			h := w.Header()
 			if h.Get("Content-Encoding") != tc.want || h.Get("Etag") != `W/"t"` || h.Get("Vary") != "Accept-Encoding" ||
-				h.Get("Content-Length") != "" || h.Get("Accept-Ranges") != "" || w.Body.Len() >= len(text) {
+				h.Get("Content-Length") != "" || h.Get("Accept-Ranges") != "none" || w.Body.Len() >= len(text) {
 				t.Fatalf("%q #%d: headers %v len %d", tc.accept, i, h, w.Body.Len())
 			}
 			r, err := decoders[tc.want](w.Body)
@@ -941,10 +942,160 @@ func TestCompression(t *testing.T) {
 			t.Fatalf("%q: identity %v", accept, w.Header())
 		}
 	}
+	// Answered from the cache, a response that will be compressed ignores
+	// Range and If-Range (ADR 0054); one that won't still gets its range.
 	for _, accept := range []string{"gzip", "br"} {
-		w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", accept, "Range", "bytes=0-4"))
-		if w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
-			t.Fatalf("%s: range compressed", accept)
+		w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", accept, "Range", "bytes=0-4", "If-Range", `"t"`))
+		r, err := decoders[accept](w.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := io.ReadAll(r); w.Code != 200 || w.Header().Get("Content-Encoding") != accept || string(got) != text {
+			t.Fatalf("%s: range on compressed hit: %d %v", accept, w.Code, w.Header())
+		}
+	}
+	if w, _ := do(c, b, o, get("http://h/t", "Range", "bytes=0-4")); w.Code != 206 || w.Body.String() != "hello" {
+		t.Fatalf("identity range: %d %q", w.Code, w.Body.String())
+	}
+	// Passed through from an origin that answers the range itself.
+	ranged := &origin{serve: func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeContent(w, r, "", time.Time{}, strings.NewReader(text))
+	}}
+	pb := svc(UseOriginHeaders)
+	pb.CompressionMode = "AUTOMATIC"
+	w, st := do(c, pb, ranged, get("http://h/p", "Accept-Encoding", "gzip", "Range", "bytes=0-4"))
+	if st != StatusUncacheable || w.Code != 206 || w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
+		t.Fatalf("pass-through range: %s %d %v", st, w.Code, w.Header())
+	}
+}
+
+// TestCompressionLength checks AUTOMATIC compresses only responses with a
+// Content-Length from 1 KiB to 10 MiB, as GCP does.
+func TestCompressionLength(t *testing.T) {
+	c, _ := newCache(t, "", 0)
+	pass := svc(UseOriginHeaders)
+	pass.CompressionMode = "AUTOMATIC"
+	for size, want := range map[int]bool{1023: false, 1024: true, 10 << 20: true, 10<<20 + 1: false} {
+		body := strings.Repeat("a", size)
+		o := &origin{serve: static(200, body, "Content-Type", "text/plain", "Cache-Control", "no-store",
+			"Content-Length", strconv.Itoa(size), "Accept-Ranges", "bytes")}
+		w, _ := do(c, pass, o, get("http://h/len", "Accept-Encoding", "gzip"))
+		if got := w.Header().Get("Content-Encoding") == "gzip"; got != want {
+			t.Errorf("%d bytes: compressed %v, want %v", size, got, want)
+		}
+		if ar := w.Header().Values("Accept-Ranges"); want && (len(ar) != 1 || ar[0] != "none" || w.Header().Get("Content-Length") != "") {
+			t.Errorf("%d bytes: Accept-Ranges %q, Content-Length %q", size, ar, w.Header().Get("Content-Length"))
+		}
+	}
+	// Streamed with no Content-Length: passed through uncompressed, but
+	// answered from the cache (whose length is known) it is compressed.
+	text := strings.Repeat("hello world ", 200)
+	o := &origin{serve: chunked(text, "Content-Type", "text/html", "Cache-Control", "no-store")}
+	if w, _ := do(c, pass, o, get("http://h/s", "Accept-Encoding", "gzip")); w.Header().Get("Content-Encoding") != "" || w.Body.String() != text {
+		t.Fatalf("streamed pass-through: %v", w.Header())
+	}
+	cached := svc(ForceCacheAll)
+	cached.CompressionMode = "AUTOMATIC"
+	o = &origin{serve: chunked(text, "Content-Type", "text/html")}
+	if w, _ := do(c, cached, o, get("http://h/s", "Accept-Encoding", "gzip")); w.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("streamed then cached: %v", w.Header())
+	}
+}
+
+// TestCompressionTypes checks AUTOMATIC compresses GCP's compressible
+// content types, exact and patterned, and nothing else; and never HEAD.
+func TestCompressionTypes(t *testing.T) {
+	c, _ := newCache(t, "", 0)
+	b := svc(UseOriginHeaders)
+	b.CompressionMode = "AUTOMATIC"
+	body := strings.Repeat("hello world ", 200)
+	for ct, want := range map[string]bool{
+		"application/vnd.api+json":            true,
+		"application/atom+xml; charset=utf-8": true,
+		"application/vnd.apple.mpegURL":       true,
+		"application/x-mpegurl":               true,
+		"application/csv":                     true,
+		"application/x-protobuf":              true,
+		"font/eot":                            true,
+		"image/vnd.microsoft.icon":            true,
+		"TEXT/CSS":                            true,
+		"image/png":                           false,
+		"application/octet-stream":            false,
+		"video/mp4":                           false,
+		"application/jsonx":                   false,
+		"":                                    false,
+	} {
+		hdr := []string{"Cache-Control", "no-store", "Content-Length", strconv.Itoa(len(body))}
+		if ct != "" {
+			hdr = append(hdr, "Content-Type", ct)
+		}
+		w, _ := do(c, b, &origin{serve: static(200, body, hdr...)}, get("http://h/ct", "Accept-Encoding", "gzip"))
+		if got := w.Header().Get("Content-Encoding") == "gzip"; got != want {
+			t.Errorf("%q: compressed %v, want %v", ct, got, want)
+		}
+	}
+	// Answered from the cache, an object without a type isn't given one.
+	untyped := &origin{serve: static(200, body, "Cache-Control", "max-age=60")}
+	for i := range 2 {
+		w, _ := do(c, b, untyped, get("http://h/untyped", "Accept-Encoding", "gzip"))
+		if h := w.Header(); h.Get("Content-Encoding") != "" || h.Get("Content-Type") != "" || w.Body.String() != body {
+			t.Fatalf("untyped #%d: %v", i, h)
+		}
+	}
+	o := &origin{serve: static(200, body, "Content-Type", "text/html", "Cache-Control", "max-age=60",
+		"Content-Length", strconv.Itoa(len(body)))}
+	for _, want := range []string{StatusMiss, StatusHit} {
+		if want == StatusHit {
+			do(c, b, o, get("http://h/head"))
+		}
+		r := httptest.NewRequest(http.MethodHead, "http://h/head", nil)
+		r.Header.Set("Accept-Encoding", "gzip")
+		if w, st := do(c, b, o, r); st != want || w.Header().Get("Content-Encoding") != "" {
+			t.Fatalf("HEAD: %s %v", st, w.Header())
+		}
+	}
+}
+
+// TestCompressionRanges checks that a response answered from the cache
+// ignores Range when it will be compressed, and only then (ADR 0054).
+func TestCompressionRanges(t *testing.T) {
+	c, clk := newCache(t, "", 0)
+	b := svc(UseOriginHeaders)
+	b.CompressionMode = "AUTOMATIC"
+	text := strings.Repeat("hello world ", 200)
+	o := &origin{serve: func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "max-age=10")
+		w.Header().Set("Etag", `"v"`)
+		if r.Header.Get("If-None-Match") == `"v"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Write([]byte(text))
+	}}
+	for _, want := range []string{StatusMiss, StatusRevalidated} {
+		w, st := do(c, b, o, get("http://h/r", "Accept-Encoding", "gzip", "Range", "bytes=0-4"))
+		zr, err := gzip.NewReader(w.Body)
+		if err != nil {
+			t.Fatalf("%s: %d %v: %v", want, w.Code, w.Header(), err)
+		}
+		if got, _ := io.ReadAll(zr); st != want || w.Code != 200 || string(got) != text {
+			t.Fatalf("%s: got %s %d", want, st, w.Code)
+		}
+		clk.Advance(11 * time.Second)
+	}
+	for _, tc := range []struct{ path, ct, body string }{
+		{"/png", "image/png", text},
+		{"/small", "text/html", "hello world"},
+	} {
+		o := &origin{serve: static(200, tc.body, "Content-Type", tc.ct, "Cache-Control", "max-age=60")}
+		for _, want := range []string{StatusMiss, StatusHit} {
+			w, st := do(c, b, o, get("http://h"+tc.path, "Accept-Encoding", "gzip", "Range", "bytes=0-4"))
+			if st != want || w.Code != 206 || w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
+				t.Fatalf("%s %s: got %s %d %v", tc.path, want, st, w.Code, w.Header())
+			}
 		}
 	}
 }

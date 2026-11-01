@@ -451,8 +451,9 @@ func (c *Cache) store(q *request, fw *fillWriter) (*entry, error) {
 }
 
 // serveEntry writes e to w, answering Range and conditional requests from
-// the cached object. It returns false (writing nothing) when the body is
-// no longer readable.
+// the cached object, except that a response w will compress ignores Range
+// (ADR 0054). It returns false (writing nothing) when the body is no
+// longer readable.
 func (c *Cache) serveEntry(w http.ResponseWriter, r *http.Request, e *entry, m *entryMeta, age int64, withAge bool) bool {
 	rd, closeFn, err := c.st.open(e)
 	if err != nil {
@@ -471,7 +472,16 @@ func (c *Cache) serveEntry(w http.ResponseWriter, r *http.Request, e *entry, m *
 	if withAge {
 		h.Set("Age", strconv.FormatInt(age, 10))
 	}
+	h.Set("Content-Length", strconv.FormatInt(m.Size, 10))
 	if m.Status == http.StatusOK {
+		if _, ok := h["Content-Type"]; !ok {
+			h["Content-Type"] = nil // as the origin sent it: ServeContent mustn't sniff one
+		}
+		if cw, ok := w.(*compressWriter); ok && cw.willCompress(http.StatusOK, h) {
+			r = r.Clone(r.Context())
+			r.Header.Del("Range")
+			r.Header.Del("If-Range")
+		}
 		var mod time.Time
 		if lm := m.Header.Get("Last-Modified"); lm != "" {
 			mod, _ = http.ParseTime(lm)
@@ -479,7 +489,6 @@ func (c *Cache) serveEntry(w http.ResponseWriter, r *http.Request, e *entry, m *
 		http.ServeContent(w, r, "", mod, rd)
 		return true
 	}
-	h.Set("Content-Length", strconv.FormatInt(m.Size, 10))
 	w.WriteHeader(m.Status)
 	if r.Method != http.MethodHead {
 		io.Copy(w, rd)
