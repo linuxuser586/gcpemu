@@ -501,24 +501,35 @@ func TestRecreateOnStall(t *testing.T) {
 	}
 }
 
+// TestDecide: on Linux the gateway probe decides; on Windows and macOS
+// every runtime is a VM runtime, even when another host adapter holds the
+// gateway's address, as WSL's does (#913). 127.0.0.1 stands in for such an
+// address.
 func TestDecide(t *testing.T) {
 	for _, tc := range []struct {
+		goos        string
 		env         string
 		inContainer bool
 		gateway     string
 		on, vm      bool
 		reason      string
 	}{
-		{"", false, "127.0.0.1", false, false, "gateway 127.0.0.1 bindable"},
-		{"", false, "192.0.2.1", true, true, "gateway 192.0.2.1 not bindable"},
-		{"1", false, "127.0.0.1", true, false, "forced by GCPEMU_VM_RELAY"},
-		{"1", false, "192.0.2.1", true, true, "forced by GCPEMU_VM_RELAY"},
-		{"0", false, "192.0.2.1", false, true, "disabled by GCPEMU_VM_RELAY"},
-		{"1", true, "192.0.2.1", false, false, "the emulator runs in a container"},
+		{"linux", "", false, "127.0.0.1", false, false, "gateway 127.0.0.1 bindable"},
+		{"linux", "", false, "192.0.2.1", true, true, "gateway 192.0.2.1 not bindable"},
+		{"linux", "1", false, "127.0.0.1", true, false, "forced by GCPEMU_VM_RELAY"},
+		{"linux", "1", false, "192.0.2.1", true, true, "forced by GCPEMU_VM_RELAY"},
+		{"linux", "0", false, "192.0.2.1", false, true, "disabled by GCPEMU_VM_RELAY"},
+		{"linux", "1", true, "192.0.2.1", false, false, "the emulator runs in a container"},
+		{"windows", "", false, "127.0.0.1", true, true, "windows runs container runtimes in a VM"},
+		{"darwin", "", false, "127.0.0.1", true, true, "darwin runs container runtimes in a VM"},
+		{"windows", "", false, "", true, true, "windows runs container runtimes in a VM"},
+		{"windows", "1", false, "127.0.0.1", true, true, "forced by GCPEMU_VM_RELAY"},
+		{"darwin", "0", false, "127.0.0.1", false, true, "disabled by GCPEMU_VM_RELAY"},
+		{"windows", "", true, "127.0.0.1", false, false, "the emulator runs in a container"},
 	} {
 		t.Setenv(Env, tc.env)
-		if d := Decide(tc.inContainer, tc.gateway); d.On != tc.on || d.VM != tc.vm || d.Reason != tc.reason {
-			t.Errorf("Decide(%v, %s) with %s=%q = %+v, want on=%v vm=%v %q", tc.inContainer, tc.gateway, Env, tc.env, d, tc.on, tc.vm, tc.reason)
+		if d := Decide(tc.goos, tc.inContainer, tc.gateway); d.On != tc.on || d.VM != tc.vm || d.Reason != tc.reason {
+			t.Errorf("Decide(%s, %v, %s) with %s=%q = %+v, want on=%v vm=%v %q", tc.goos, tc.inContainer, tc.gateway, Env, tc.env, d, tc.on, tc.vm, tc.reason)
 		}
 	}
 }

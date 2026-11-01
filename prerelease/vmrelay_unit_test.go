@@ -12,8 +12,8 @@ import (
 
 func TestRelayProbedOn(t *testing.T) {
 	const others = "[ok  ] container runtime: Docker Desktop (chosen by Docker context \"desktop-linux\")\n"
-	if err := relayProbedOn(others + "[ok  ] VM relay: on (gateway 172.17.0.1 not bindable)\n"); err != nil {
-		t.Errorf("probed on: %v", err)
+	if err := relayProbedOn(others + "[ok  ] VM relay: on (windows runs container runtimes in a VM)\n"); err != nil {
+		t.Errorf("on: %v", err)
 	}
 	for name, line := range map[string]string{
 		"off":          "[ok  ] VM relay: off (gateway 172.17.0.1 bindable)\n",

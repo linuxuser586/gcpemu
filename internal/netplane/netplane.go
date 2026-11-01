@@ -15,6 +15,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,7 +92,7 @@ func (p *Plane) servicesLocked(ctx context.Context) (Net, error) {
 		p.svc = &n
 	}
 	if p.decision == nil {
-		d := vmrelay.Decide(p.rt.Self() != "", p.svc.Gateway)
+		d := vmrelay.Decide(goruntime.GOOS, p.rt.Self() != "", p.svc.Gateway)
 		p.decision = &d
 		p.log.Info("VM relay "+d.String(), "gateway", p.svc.Gateway)
 	}

@@ -27,7 +27,7 @@
 // Instance is on the host, gcpemu.exe, with dns on port 53 (ADR 0026), so
 // `task prerelease` builds it there too. Next, the VM relay check: with
 // GCPEMU_VM_RELAY cleared, gcpemu doctor on the host must report the
-// relay on by the bridge-gateway probe, and the VM relay's own tests,
+// relay on, not forced (ADR 0056), and the VM relay's own tests,
 // which CI runs only on Linux with the relay forced, must all pass
 // against the runtime. Then the Registry relay check: an Instance on the
 // host with Artifact Registry, to and from which the runtime's own docker
