@@ -1,0 +1,82 @@
+# TEMPORARY (#900): diagnoses why the Ingress data path never reaches the
+# GKE pod on Ubuntu 26.04 runners. Never merged to main.
+name: diag-900
+on:
+  push:
+    branches: [fix/900-*]
+
+jobs:
+  ingress:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, ubuntu-26.04-arm, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      GCPEMU_VM_RELAY: "1"
+      GCPEMU_TEST_LOG: "1"
+      OUT: ${{ github.workspace }}/diag
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - name: Host before
+        run: |
+          mkdir -p "$OUT/host"; cd "$OUT/host"
+          k=$(uname -r)
+          uname -a > uname.txt
+          cat /etc/os-release > os-release.txt
+          lsmod | sort > lsmod-before.txt
+          sudo cat /etc/modprobe.d/*.conf /usr/lib/modprobe.d/*.conf > modprobe-d.txt 2>&1 || true
+          ls /etc/modules-load.d /usr/lib/modules-load.d > modules-load-d.txt 2>&1 || true
+          find /lib/modules/$k -path '*netfilter*' -name '*.ko*' | sort > netfilter-ko.txt
+          grep -E 'netfilter|nf_|nft_|iptable|xt_' /lib/modules/$k/modules.builtin > builtin.txt || true
+          for m in iptable_nat iptable_filter ip_tables nft_chain_nat nft_compat nf_tables nfnetlink nf_nat br_netfilter xt_MASQUERADE xt_conntrack xt_physdev nft-expr-counter nfnetlink-subsys-11 nft-chain-2-nat; do
+            echo "== $m"; modinfo -n "$m" 2>&1; sudo modprobe -n -v "$m" 2>&1
+          done > modinfo.txt
+          dpkg -l 'linux-*' | grep ^ii > linux-pkgs.txt
+          docker version > docker-version.txt 2>&1
+          docker info > docker-info.txt 2>&1
+          iptables -V > iptables-v.txt 2>&1; update-alternatives --display iptables >> iptables-v.txt 2>&1 || true
+          sudo iptables-save > iptables-save-before.txt 2>&1
+          sudo nft list ruleset > nft-before.txt 2>&1
+          sysctl net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables > sysctl.txt 2>&1 || true
+      - name: TestGKEIngressAndGateway with snapshots
+        run: |
+          snap() {
+            d="$OUT/snap/$(date +%H%M%S)"; mkdir -p "$d"
+            docker ps --format '{{.ID}} {{.Names}} {{.Image}}' > "$d/ps.txt"
+            sudo iptables-save > "$d/host-iptables.txt" 2>&1
+            sudo nft list ruleset > "$d/host-nft.txt" 2>&1
+            lsmod | sort > "$d/lsmod.txt"
+            while read -r id name image; do
+              {
+                echo "## $image"; docker inspect -f '{{json .Config.Labels}}' "$id"
+                for c in 'ip -br addr' 'ip route' 'ip rule'; do echo "## $c"; docker exec "$id" $c 2>&1; done
+                for b in iptables-save /bin/aux/iptables-save iptables-legacy-save iptables-nft-save /bin/aux/iptables-legacy-save /bin/aux/iptables-nft-save; do
+                  echo "## $b"; docker exec "$id" $b 2>&1 | head -2000
+                done
+                echo "## nft"; docker exec "$id" nft list ruleset 2>&1 | head -2000
+              } > "$d/$name.txt" 2>&1
+            done < "$d/ps.txt"
+          }
+          go test -c -o lb.test ./services/lb
+          (cd services/lb && ../../lb.test -test.run '^TestGKEIngressAndGateway$' -test.v -test.count=1 -test.timeout 30m) > "$OUT/test.log" 2>&1 &
+          pid=$!
+          while kill -0 $pid 2>/dev/null; do sleep 45; snap; done
+          wait $pid; rc=$?
+          tail -100 "$OUT/test.log"
+          exit $rc
+      - name: Host after
+        if: always()
+        run: |
+          cd "$OUT/host"
+          lsmod | sort > lsmod-after.txt
+          diff lsmod-before.txt lsmod-after.txt > lsmod-diff.txt || true
+          sudo dmesg > dmesg.txt 2>&1 || true
+          sudo journalctl -u docker --no-pager > docker-journal.txt 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: diag-900-${{ matrix.os }}
+          path: diag
