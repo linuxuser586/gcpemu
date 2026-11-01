@@ -259,7 +259,7 @@ var encPools = map[string]*sync.Pool{
 }
 
 func newCompressWriter(w http.ResponseWriter, r *http.Request) *compressWriter {
-	if r.Method != http.MethodGet || r.Header.Get("Range") != "" {
+	if r.Method != http.MethodGet {
 		return nil
 	}
 	coding := pickCoding(r.Header.Values("Accept-Encoding"))
@@ -306,19 +306,45 @@ func zeroWeight(params string) bool {
 	return false
 }
 
+// compressibleTypes are the media types GCP compresses by exact match,
+// lowercased; compressible also matches its patterns.
+var compressibleTypes = map[string]bool{
+	"application/x-javascript": true, "application/x-sdch-dictionary": true, "application/javascript": true,
+	"application/xml": true, "application/csv": true, "application/json": true, "application/json+protobuf": true,
+	"application/signed-exchange": true, "application/vnd.apple.mpegurl": true, "application/wasm": true,
+	"application/x-plist": true, "application/x-protobuffer": true, "application/x-protobuf": true,
+	"application/x-nacl": true, "application/x-pnacl": true, "font/ttf": true, "font/otf": true, "font/eot": true,
+	"image/svg+xml": true, "image/pwg-raster": true, "image/x-icon": true, "image/vnd.microsoft.icon": true,
+	"video/vnd.mpeg.dash.mpd": true, "audio/mpegurl": true, "application/dash+xml": true,
+	"application/vnd.ms-sstr+xml": true,
+}
+
+// compressible reports whether GCP compresses content type ct: one of
+// compressibleTypes, or text/*, application/*+json, application/*+xml or
+// application/*mpegURL, ignoring case and parameters.
 func compressible(ct string) bool {
 	mt, _, _ := strings.Cut(ct, ";")
 	mt = strings.ToLower(strings.TrimSpace(mt))
-	if strings.HasPrefix(mt, "text/") {
+	if compressibleTypes[mt] || strings.HasPrefix(mt, "text/") {
 		return true
 	}
-	switch mt {
-	case "application/javascript", "application/x-javascript", "application/json", "application/xml",
-		"application/xhtml+xml", "application/rss+xml", "application/atom+xml", "application/manifest+json",
-		"application/ld+json", "application/wasm", "image/svg+xml", "image/x-icon", "font/ttf", "font/otf":
-		return true
-	}
-	return false
+	sub, ok := strings.CutPrefix(mt, "application/")
+	return ok && (strings.HasSuffix(sub, "+json") || strings.HasSuffix(sub, "+xml") || strings.HasSuffix(sub, "mpegurl"))
+}
+
+// GCP compresses only responses whose Content-Length is in this range.
+const (
+	minCompressed = 1 << 10
+	maxCompressed = 10 << 20
+)
+
+// compresses reports whether AUTOMATIC compression applies to a response
+// with this status and header, whichever coding the client accepts.
+func compresses(code int, h http.Header) bool {
+	cl, err := strconv.ParseInt(h.Get("Content-Length"), 10, 64)
+	return code == http.StatusOK && err == nil && cl >= minCompressed && cl <= maxCompressed &&
+		h.Get("Content-Encoding") == "" && compressible(h.Get("Content-Type")) &&
+		!parseCacheControl(h.Values("Cache-Control")).noTransform
 }
 
 func (c *compressWriter) WriteHeader(code int) {
@@ -328,12 +354,10 @@ func (c *compressWriter) WriteHeader(code int) {
 	}
 	c.decided = true
 	h := c.Header()
-	cl, clErr := strconv.ParseInt(h.Get("Content-Length"), 10, 64)
-	if code == http.StatusOK && h.Get("Content-Encoding") == "" && compressible(h.Get("Content-Type")) &&
-		!parseCacheControl(h.Values("Cache-Control")).noTransform && (clErr != nil || cl >= 1024) {
+	if compresses(code, h) {
 		h.Set("Content-Encoding", c.coding)
 		h.Del("Content-Length")
-		h.Del("Accept-Ranges")
+		h.Set("Accept-Ranges", "none")
 		h.Add("Vary", "Accept-Encoding")
 		if et := h.Get("Etag"); et != "" && !strings.HasPrefix(et, "W/") {
 			h.Set("Etag", "W/"+et)

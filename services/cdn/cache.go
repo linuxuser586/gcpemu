@@ -472,6 +472,16 @@ func (c *Cache) serveEntry(w http.ResponseWriter, r *http.Request, e *entry, m *
 		h.Set("Age", strconv.FormatInt(age, 10))
 	}
 	if m.Status == http.StatusOK {
+		if _, ok := h["Content-Type"]; !ok {
+			h["Content-Type"] = nil // as the origin sent it: ServeContent mustn't sniff one
+		}
+		h.Set("Content-Length", strconv.FormatInt(m.Size, 10))
+		if _, ok := w.(*compressWriter); ok && compresses(m.Status, h) {
+			// A compressed response is the whole object (ADR 0054).
+			r = r.Clone(r.Context())
+			r.Header.Del("Range")
+			r.Header.Del("If-Range")
+		}
 		var mod time.Time
 		if lm := m.Header.Get("Last-Modified"); lm != "" {
 			mod, _ = http.ParseTime(lm)
