@@ -175,7 +175,12 @@ func (e *edge) add(ctx context.Context, fe *frontend) (string, error) {
 	}
 	ip := e.alias[fe.key]
 	if ip == "" {
-		ip = e.allocAliasLocked(fe.ip)
+		// The VM relay joins the lb network too (#900).
+		var held map[string]bool
+		if rt, err := e.env().Containers.Runtime(ctx); err == nil {
+			held, _ = rt.NetworkAddrs(ctx, e.netName)
+		}
+		ip = e.allocAliasLocked(fe.ip, held)
 		e.alias[fe.key] = ip
 	}
 	addr := net.JoinHostPort(ip, strconv.Itoa(fe.port))
@@ -204,14 +209,18 @@ func (e *edge) remove(key string) {
 }
 
 // allocAliasLocked picks an address for a forwarding rule IP: the same
-// alias for every port of one IP, allocated from the top of the subnet.
-func (e *edge) allocAliasLocked(frIP string) string {
+// alias for every port of one IP, allocated from the top of the subnet
+// and skipping the addresses containers hold on the lb network (held).
+func (e *edge) allocAliasLocked(frIP string, held map[string]bool) string {
 	for key, ip := range e.alias {
 		if h, _, _ := net.SplitHostPort(key); h == frIP {
 			return ip
 		}
 	}
 	used := map[string]bool{e.ip: true}
+	for ip := range held {
+		used[ip] = true
+	}
 	for _, ip := range e.alias {
 		used[ip] = true
 	}

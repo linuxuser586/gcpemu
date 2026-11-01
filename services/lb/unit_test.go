@@ -277,3 +277,29 @@ func TestWildcardLocalFilter(t *testing.T) {
 		}
 	}
 }
+
+// #900: an alias the Edge relay takes for a forwarding rule must not be an
+// address another container holds on the lb network. The VM relay joins
+// that network at its highest free address, and once the Edge also held
+// it, the relay's connections to the Edge came from one of the Edge's own
+// addresses and the kernel dropped them.
+func TestEdgeAliasSkipsHeldAddresses(t *testing.T) {
+	_, subnet, _ := net.ParseCIDR("172.20.0.0/16")
+	e := &edge{ip: "172.20.0.2", subnet: subnet, alias: map[string]string{}}
+	held := map[string]bool{"172.20.0.2": true, "172.20.255.253": true}
+	var got []string
+	for _, fr := range []string{"34.120.0.1", "34.120.0.2", "34.120.0.3"} {
+		ip := e.allocAliasLocked(fr, held)
+		e.alias[net.JoinHostPort(fr, "80")] = ip
+		got = append(got, ip)
+	}
+	want := []string{"172.20.255.254", "172.20.255.252", "172.20.255.251"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("aliases %v, want %v", got, want)
+		}
+	}
+	if ip := e.allocAliasLocked("34.120.0.2", held); ip != "172.20.255.252" {
+		t.Errorf("second alias of 34.120.0.2 = %s, want its first, 172.20.255.252", ip)
+	}
+}
