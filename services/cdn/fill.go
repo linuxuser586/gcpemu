@@ -238,7 +238,7 @@ func maxObjectSize(h http.Header) int64 {
 
 // compressWriter implements compressionMode AUTOMATIC: Brotli or gzip for
 // clients that accept them (Brotli preferred, as GCP does), on compressible,
-// not yet encoded 200 responses.
+// not yet encoded 200 responses with a Content-Length from 1 KiB to 10 MiB.
 type compressWriter struct {
 	http.ResponseWriter
 	coding  string
@@ -338,9 +338,9 @@ const (
 	maxCompressed = 10 << 20
 )
 
-// compresses reports whether AUTOMATIC compression applies to a response
-// with this status and header, whichever coding the client accepts.
-func compresses(code int, h http.Header) bool {
+// willCompress reports whether c compresses a response with this status
+// and header.
+func (c *compressWriter) willCompress(code int, h http.Header) bool {
 	cl, err := strconv.ParseInt(h.Get("Content-Length"), 10, 64)
 	return code == http.StatusOK && err == nil && cl >= minCompressed && cl <= maxCompressed &&
 		h.Get("Content-Encoding") == "" && compressible(h.Get("Content-Type")) &&
@@ -354,7 +354,7 @@ func (c *compressWriter) WriteHeader(code int) {
 	}
 	c.decided = true
 	h := c.Header()
-	if compresses(code, h) {
+	if c.willCompress(code, h) {
 		h.Set("Content-Encoding", c.coding)
 		h.Del("Content-Length")
 		h.Set("Accept-Ranges", "none")

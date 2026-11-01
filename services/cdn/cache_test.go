@@ -985,8 +985,8 @@ func TestCompressionLength(t *testing.T) {
 		if got := w.Header().Get("Content-Encoding") == "gzip"; got != want {
 			t.Errorf("%d bytes: compressed %v, want %v", size, got, want)
 		}
-		if ar := w.Header().Values("Accept-Ranges"); want && (len(ar) != 1 || ar[0] != "none") {
-			t.Errorf("%d bytes: Accept-Ranges %q", size, ar)
+		if ar := w.Header().Values("Accept-Ranges"); want && (len(ar) != 1 || ar[0] != "none" || w.Header().Get("Content-Length") != "") {
+			t.Errorf("%d bytes: Accept-Ranges %q, Content-Length %q", size, ar, w.Header().Get("Content-Length"))
 		}
 	}
 	// Streamed with no Content-Length: passed through uncompressed, but
@@ -1044,12 +1044,59 @@ func TestCompressionTypes(t *testing.T) {
 			t.Fatalf("untyped #%d: %v", i, h)
 		}
 	}
-	o := &origin{serve: static(200, body, "Content-Type", "text/html", "Cache-Control", "max-age=60")}
-	do(c, b, o, get("http://h/head"))
-	r := httptest.NewRequest(http.MethodHead, "http://h/head", nil)
-	r.Header.Set("Accept-Encoding", "gzip")
-	if w, st := do(c, b, o, r); st != StatusHit || w.Header().Get("Content-Encoding") != "" {
-		t.Fatalf("HEAD: %s %v", st, w.Header())
+	o := &origin{serve: static(200, body, "Content-Type", "text/html", "Cache-Control", "max-age=60",
+		"Content-Length", strconv.Itoa(len(body)))}
+	for _, want := range []string{StatusMiss, StatusHit} {
+		if want == StatusHit {
+			do(c, b, o, get("http://h/head"))
+		}
+		r := httptest.NewRequest(http.MethodHead, "http://h/head", nil)
+		r.Header.Set("Accept-Encoding", "gzip")
+		if w, st := do(c, b, o, r); st != want || w.Header().Get("Content-Encoding") != "" {
+			t.Fatalf("HEAD: %s %v", st, w.Header())
+		}
+	}
+}
+
+// TestCompressionRanges checks that a response answered from the cache
+// ignores Range when it will be compressed, and only then (ADR 0054).
+func TestCompressionRanges(t *testing.T) {
+	c, clk := newCache(t, "", 0)
+	b := svc(UseOriginHeaders)
+	b.CompressionMode = "AUTOMATIC"
+	text := strings.Repeat("hello world ", 200)
+	o := &origin{serve: func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "max-age=10")
+		w.Header().Set("Etag", `"v"`)
+		if r.Header.Get("If-None-Match") == `"v"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Write([]byte(text))
+	}}
+	for _, want := range []string{StatusMiss, StatusRevalidated} {
+		w, st := do(c, b, o, get("http://h/r", "Accept-Encoding", "gzip", "Range", "bytes=0-4"))
+		zr, err := gzip.NewReader(w.Body)
+		if err != nil {
+			t.Fatalf("%s: %d %v: %v", want, w.Code, w.Header(), err)
+		}
+		if got, _ := io.ReadAll(zr); st != want || w.Code != 200 || string(got) != text {
+			t.Fatalf("%s: got %s %d", want, st, w.Code)
+		}
+		clk.Advance(11 * time.Second)
+	}
+	for _, tc := range []struct{ path, ct, body string }{
+		{"/png", "image/png", text},
+		{"/small", "text/html", "hello world"},
+	} {
+		o := &origin{serve: static(200, tc.body, "Content-Type", tc.ct, "Cache-Control", "max-age=60")}
+		for _, want := range []string{StatusMiss, StatusHit} {
+			w, st := do(c, b, o, get("http://h"+tc.path, "Accept-Encoding", "gzip", "Range", "bytes=0-4"))
+			if st != want || w.Code != 206 || w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
+				t.Fatalf("%s %s: got %s %d %v", tc.path, want, st, w.Code, w.Header())
+			}
+		}
 	}
 }
 
