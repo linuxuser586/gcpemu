@@ -143,7 +143,7 @@ function granted(principal: string, key: string, perms: string[]) {
 async function record(request: Request, path: string) {
   const url = new URL(request.url)
   const text = request.method === 'GET' ? '' : await request.text()
-  let body: unknown = undefined
+  let body: unknown
   try {
     body = text ? JSON.parse(text) : undefined
   } catch {

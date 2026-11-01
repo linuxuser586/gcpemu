@@ -87,7 +87,7 @@ function checks(v: Fields, ctx: z.RefinementCtx) {
   const issue = (path: keyof Fields, message: string) =>
     ctx.addIssue({ code: 'custom', path: [path], message })
   if (v.delivery === 'push') {
-    let ok = false
+    let ok: boolean
     try {
       const u = new URL(v.pushEndpoint)
       ok = (u.protocol === 'http:' || u.protocol === 'https:') && !!u.host

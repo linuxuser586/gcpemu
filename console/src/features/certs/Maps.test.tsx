@@ -293,7 +293,7 @@ it('adds a hostname entry with global certificates, as the API checks it', async
   // Only global certificates can serve a map.
   const certificates = screen.getByRole('group', { name: 'Certificates' })
   expect(within(certificates).getAllByRole('checkbox')).toHaveLength(2)
-  await user.click(within(certificates).getByRole('checkbox', { name: /other/ }))
+  await user.click(await within(certificates).findByRole('checkbox', { name: /other/ }))
   await user.clear(screen.getByLabelText('Hostname'))
   await user.type(screen.getByLabelText('Hostname'), 'API.example.com.')
   await user.click(screen.getByRole('button', { name: 'Create' }))
@@ -333,7 +333,7 @@ it('edits an entry’s certificates and labels from the map’s page, with an up
   expect(screen.queryByLabelText('Hostname')).not.toBeInTheDocument()
   const certificates = screen.getByRole('group', { name: 'Certificates' })
   expect(within(certificates).getByRole('checkbox', { name: /self/ })).toBeChecked()
-  await user.click(within(certificates).getByRole('checkbox', { name: /other/ }))
+  await user.click(await within(certificates).findByRole('checkbox', { name: /other/ }))
   await user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(router.state.location.pathname).toBe('/certs/locations/global/certificateMaps/main'),

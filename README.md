@@ -197,7 +197,7 @@ the default principal until you pick another user or service account in the head
 principal switcher, so the views show what IAM allows that principal (try it with
 `--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` a `gcpemu` command leaves it off unless `--console`
 is passed. `task build` builds it when
-`pnpm` is on PATH (Node.js 24); without it the binary serves a "console not built" page.
+`pnpm` is on PATH (Node.js 26); without it the binary serves a "console not built" page.
 It works behind an authenticating reverse proxy on the same origin, such as oauth2-proxy, since
 its requests carry the proxy's session cookie; the API gateway drops cookies from public API
 requests (`docs/adr/0052-the-api-gateway-drops-cookies-from-public-api-requests.md`). A proxy on
@@ -1779,7 +1779,7 @@ The tasks in `Taskfile.yml` need Task 3.54 or later, from any shell (brew, winge
 Windows. `task race` needs a C compiler for cgo.
 
 The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` embeds its
-`dist/`. With Node.js 24 and pnpm:
+`dist/`. With Node.js 26 and pnpm:
 
 ```sh
 bin/gcpemu start                       # in one terminal

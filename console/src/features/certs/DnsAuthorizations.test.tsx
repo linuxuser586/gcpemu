@@ -120,7 +120,7 @@ it('shows the record a DNS authorization asks for, with a link that creates it',
   expect(record).toHaveTextContent('0b5e.4.authorize.certificatemanager.goog.')
   expect(await within(record).findByText('Does not resolve (NXDOMAIN)')).toBeInTheDocument()
   expect(screen.getByLabelText('DNS authorization details')).toHaveTextContent('team=web')
-  await user.click(within(record).getByRole('link', { name: 'Create the CNAME record' }))
+  await user.click(await within(record).findByRole('link', { name: 'Create the CNAME record' }))
   await waitFor(() =>
     expect(router.state.location.pathname).toBe('/dns/zones/example/rrsets/create'),
   )
