@@ -913,21 +913,18 @@ func TestCompression(t *testing.T) {
 		{"gzip", "gzip"},
 		{"br;q=0, gzip", "gzip"},
 		{"br", "br"},
-		{"*", ""},
+		{"br;q=0.0, gzip", "gzip"},
+		{"gzip, br;Q=0", "gzip"},
+		{"br;x=1;q=0.000, gzip", "gzip"},
+		{"gzip, br, br;q=0", "gzip"},
+		{"br;q=0.1, gzip;q=1", "br"},
 	} {
 		for i := range 2 {
 			w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", tc.accept))
-			if w.Header().Get("Content-Encoding") != tc.want {
-				t.Fatalf("%q #%d: encoding %v", tc.accept, i, w.Header())
-			}
-			if tc.want == "" {
-				if w.Body.String() != text {
-					t.Fatalf("%q #%d: identity body changed", tc.accept, i)
-				}
-				continue
-			}
-			if w.Header().Get("Etag") != `W/"t"` || w.Body.Len() >= len(text) {
-				t.Fatalf("%q #%d: etag %q len %d", tc.accept, i, w.Header().Get("Etag"), w.Body.Len())
+			h := w.Header()
+			if h.Get("Content-Encoding") != tc.want || h.Get("Etag") != `W/"t"` || h.Get("Vary") != "Accept-Encoding" ||
+				h.Get("Content-Length") != "" || h.Get("Accept-Ranges") != "" || w.Body.Len() >= len(text) {
+				t.Fatalf("%q #%d: headers %v len %d", tc.accept, i, h, w.Body.Len())
 			}
 			r, err := decoders[tc.want](w.Body)
 			if err != nil {
@@ -938,12 +935,14 @@ func TestCompression(t *testing.T) {
 			}
 		}
 	}
-	w, _ := do(c, b, o, get("http://h/t"))
-	if w.Header().Get("Content-Encoding") != "" || w.Body.String() != text {
-		t.Fatalf("identity: %v", w.Header())
+	for _, accept := range []string{"", "*", "br;q=0, gzip;q=0.0"} {
+		w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", accept))
+		if w.Header().Get("Content-Encoding") != "" || w.Body.String() != text {
+			t.Fatalf("%q: identity %v", accept, w.Header())
+		}
 	}
 	for _, accept := range []string{"gzip", "br"} {
-		w, _ = do(c, b, o, get("http://h/t", "Accept-Encoding", accept, "Range", "bytes=0-4"))
+		w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", accept, "Range", "bytes=0-4"))
 		if w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
 			t.Fatalf("%s: range compressed", accept)
 		}
