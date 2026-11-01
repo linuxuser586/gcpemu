@@ -24,8 +24,8 @@ import (
 // SDK library versions the universe probes and the flows install into the
 // compat cache.
 var (
-	pythonPins = []string{"google-auth==2.62.0", "google-cloud-storage==3.17.0", "google-cloud-pubsub==2.42.0"}
-	nodePins   = []string{"@google-cloud/pubsub@6.3.0", "@google-cloud/storage@8.4.0"}
+	pythonPins = []string{"google-auth==2.62.0", "google-cloud-storage==3.17.1", "google-cloud-pubsub==2.43.0"}
+	nodePins   = []string{"@google-cloud/pubsub@6.3.2", "@google-cloud/storage@8.4.0"}
 )
 
 // pinDir is the cache directory for a set of pinned packages.
