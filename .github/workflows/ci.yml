@@ -100,9 +100,7 @@ jobs:
   vm-relay:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # #900: on Ubuntu 26.04 runners the Ingress data path never reaches the
-    # GKE pod (TestGKEIngressAndGateway). Move to ubuntu-26.04 with its fix.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 75
     env:
       GCPEMU_VM_RELAY: "1"

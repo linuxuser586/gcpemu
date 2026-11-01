@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,12 +72,15 @@ type edge struct {
 	token   string
 	ingress net.Listener
 	inAddr  string            // ingress address on the services network
-	alias   map[string]string // frontend key → alias IP
-	byAlias map[string]string // alias ip:port → frontend key
-	ports   map[string]int    // frontend key → port
-	routes  []edgeagent.Route
-	pods    []*net.IPNet
-	nets    map[string]bool
+	alias   map[string]string // frontend key → Edge alias
+	// resMu guards reserved, the distinct Edge aliases (ReservedAddrs).
+	resMu    sync.Mutex
+	reserved []string
+	byAlias  map[string]string // alias ip:port → frontend key
+	ports    map[string]int    // frontend key → port
+	routes   []edgeagent.Route
+	pods     []*net.IPNet
+	nets     map[string]bool
 	// subnets holds the subnetwork networks the edge joined, by network
 	// name; on those not Translated it holds an address compute allocated
 	// for it.
@@ -175,8 +179,19 @@ func (e *edge) add(ctx context.Context, fe *frontend) (string, error) {
 	}
 	ip := e.alias[fe.key]
 	if ip == "" {
-		ip = e.allocAliasLocked(fe.ip)
-		e.alias[fe.key] = ip
+		// An Edge alias skips the addresses containers hold on the lb
+		// network, the VM relay's above all (#900). Without them it could
+		// take one, so it falls back to a high port instead.
+		rt, err := e.env().Containers.Runtime(ctx)
+		if err != nil {
+			return "", err
+		}
+		held, err := rt.NetworkAddrs(ctx, e.netName)
+		if err != nil {
+			return "", fmt.Errorf("addresses on %s: %w", e.netName, err)
+		}
+		ip = e.allocAliasLocked(fe.ip, held)
+		e.setAliasLocked(fe.key, ip)
 	}
 	addr := net.JoinHostPort(ip, strconv.Itoa(fe.port))
 	e.byAlias[addr] = fe.key
@@ -196,22 +211,66 @@ func (e *edge) remove(key string) {
 		return
 	}
 	delete(e.byAlias, net.JoinHostPort(ip, strconv.Itoa(e.ports[key])))
-	delete(e.alias, key)
+	e.dropAliasLocked(key)
 	delete(e.ports, key)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = e.pushLocked(ctx)
 }
 
-// allocAliasLocked picks an address for a forwarding rule IP: the same
-// alias for every port of one IP, allocated from the top of the subnet.
-func (e *edge) allocAliasLocked(frIP string) string {
+// setAliasLocked maps frontend key to Edge alias ip, and dropAliasLocked
+// unmaps it; both keep reserved, the Edge aliases ReservedAddrs returns,
+// in step.
+func (e *edge) setAliasLocked(key, ip string) {
+	e.alias[key] = ip
+	e.reserveLocked()
+}
+
+func (e *edge) dropAliasLocked(key string) {
+	delete(e.alias, key)
+	e.reserveLocked()
+}
+
+func (e *edge) reserveLocked() {
+	seen := map[string]bool{}
+	var ips []string
+	for _, ip := range e.alias {
+		if !seen[ip] {
+			seen[ip] = true
+			ips = append(ips, ip)
+		}
+	}
+	e.resMu.Lock()
+	e.reserved = ips
+	e.resMu.Unlock()
+}
+
+var _ emu.AddressReserver = (*Service)(nil)
+
+// ReservedAddrs implements emu.AddressReserver: the live Edge aliases, so
+// that a container joining the lb network after them, such as a VM relay
+// recreated (ADR 0050), does not take one (#900). The runtime asks while
+// the Edge relay holds e.mu (a join), so this reads only resMu.
+func (s *Service) ReservedAddrs() []string {
+	e := s.dp.edge
+	e.resMu.Lock()
+	defer e.resMu.Unlock()
+	return slices.Clone(e.reserved)
+}
+
+// allocAliasLocked picks the Edge alias for a forwarding rule IP: the same
+// one for every port of the IP, allocated from the top of the subnet and
+// skipping the addresses containers hold on the lb network (held).
+func (e *edge) allocAliasLocked(frIP string, held map[string]bool) string {
 	for key, ip := range e.alias {
 		if h, _, _ := net.SplitHostPort(key); h == frIP {
 			return ip
 		}
 	}
 	used := map[string]bool{e.ip: true}
+	for ip := range held {
+		used[ip] = true
+	}
 	for _, ip := range e.alias {
 		used[ip] = true
 	}
