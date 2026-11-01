@@ -25,6 +25,7 @@ require (
 	cloud.google.com/go/storage v1.70.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Microsoft/go-winio v0.6.4
+	github.com/andybalholm/brotli v1.2.7
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-containerregistry v0.22.1

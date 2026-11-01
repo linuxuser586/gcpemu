@@ -80,3 +80,27 @@ func BenchmarkHitParallel(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkCompressedHit compares the CPU cost of compressionMode AUTOMATIC
+// per encoding on a cache hit for a 16 KiB text object.
+func BenchmarkCompressedHit(b *testing.B) {
+	c, _ := newCache(b, "", 0)
+	be := svc(CacheAllStatic)
+	be.CompressionMode = "AUTOMATIC"
+	o := &origin{serve: static(200, strings.Repeat("hello world ", 16<<10/12), "Content-Type", "text/css", "Etag", `"x"`)}
+	if _, st := do(c, be, o, get("http://h/site.css?v=1")); st != StatusMiss {
+		b.Fatalf("prime: %s", st)
+	}
+	for _, enc := range []string{"gzip", "br"} {
+		b.Run(enc, func(b *testing.B) {
+			r := get("http://h/site.css?v=1", "Accept-Encoding", enc)
+			b.ReportAllocs()
+			for b.Loop() {
+				w := httptest.NewRecorder()
+				if c.Serve(w, r, be, o) != StatusHit || w.Header().Get("Content-Encoding") != enc {
+					b.Fatalf("not a %s hit: %v", enc, w.Header())
+				}
+			}
+		})
+	}
+}

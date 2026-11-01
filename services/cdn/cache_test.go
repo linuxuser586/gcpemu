@@ -1,6 +1,7 @@
 package cdn
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	compute "google.golang.org/api/compute/v1"
 )
 
@@ -902,22 +904,49 @@ func TestCompression(t *testing.T) {
 	b.CompressionMode = "AUTOMATIC"
 	text := strings.Repeat("hello world ", 200)
 	o := &origin{serve: static(200, text, "Content-Type", "text/html", "Etag", `"t"`)}
-	for i := range 2 {
-		w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", "gzip, br"))
-		if w.Header().Get("Content-Encoding") != "gzip" || w.Header().Get("Etag") != `W/"t"` {
-			t.Fatalf("%d: headers %v", i, w.Header())
-		}
-		if w.Body.Len() >= len(text) {
-			t.Fatalf("not compressed")
+	decoders := map[string]func(io.Reader) (io.Reader, error){
+		"gzip": func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) },
+		"br":   func(r io.Reader) (io.Reader, error) { return brotli.NewReader(r), nil },
+	}
+	for _, tc := range []struct{ accept, want string }{
+		{"gzip, br", "br"},
+		{"gzip", "gzip"},
+		{"br;q=0, gzip", "gzip"},
+		{"br", "br"},
+		{"*", ""},
+	} {
+		for i := range 2 {
+			w, _ := do(c, b, o, get("http://h/t", "Accept-Encoding", tc.accept))
+			if w.Header().Get("Content-Encoding") != tc.want {
+				t.Fatalf("%q #%d: encoding %v", tc.accept, i, w.Header())
+			}
+			if tc.want == "" {
+				if w.Body.String() != text {
+					t.Fatalf("%q #%d: identity body changed", tc.accept, i)
+				}
+				continue
+			}
+			if w.Header().Get("Etag") != `W/"t"` || w.Body.Len() >= len(text) {
+				t.Fatalf("%q #%d: etag %q len %d", tc.accept, i, w.Header().Get("Etag"), w.Body.Len())
+			}
+			r, err := decoders[tc.want](w.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := io.ReadAll(r); err != nil || string(got) != text {
+				t.Fatalf("%q #%d: decode %v", tc.accept, i, err)
+			}
 		}
 	}
 	w, _ := do(c, b, o, get("http://h/t"))
 	if w.Header().Get("Content-Encoding") != "" || w.Body.String() != text {
 		t.Fatalf("identity: %v", w.Header())
 	}
-	w, _ = do(c, b, o, get("http://h/t", "Accept-Encoding", "gzip", "Range", "bytes=0-4"))
-	if w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
-		t.Fatalf("range compressed")
+	for _, accept := range []string{"gzip", "br"} {
+		w, _ = do(c, b, o, get("http://h/t", "Accept-Encoding", accept, "Range", "bytes=0-4"))
+		if w.Header().Get("Content-Encoding") != "" || w.Body.String() != "hello" {
+			t.Fatalf("%s: range compressed", accept)
+		}
 	}
 }
 
