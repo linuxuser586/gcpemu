@@ -59,13 +59,15 @@ jobs:
                   echo "## $b"; docker exec "$id" $b 2>&1 | head -2000
                 done
                 echo "## nft"; docker exec "$id" nft list ruleset 2>&1 | head -2000
+                case $name in *-cp) echo "## nodes"; docker exec "$id" kubectl get nodes -o wide 2>&1
+                  docker exec "$id" kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.spec.podCIDR}{"\n"}{end}' 2>&1;; esac
               } > "$d/$name.txt" 2>&1
             done < "$d/ps.txt"
           )
           go test -c -o lb.test ./services/lb
           (cd services/lb && ../../lb.test -test.run '^TestGKEIngressAndGateway$' -test.v -test.count=1 -test.timeout 30m) > "$OUT/test.log" 2>&1 &
           pid=$!
-          while kill -0 $pid 2>/dev/null; do sleep 45; snap; done
+          while kill -0 $pid 2>/dev/null; do sleep 20; snap; done
           rc=0; wait $pid || rc=$?
           tail -100 "$OUT/test.log"
           exit $rc

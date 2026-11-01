@@ -38,10 +38,12 @@ func (s *Service) PodRoutes(ctx context.Context) []PodRoute {
 	for _, key := range keys {
 		kc, err := s.kube(key)
 		if err != nil {
+			s.env.Log.Warn("DIAG900 PodRoutes: kube", "key", key, "err", err)
 			continue
 		}
 		rec, err := s.loadKey(key)
 		if err != nil {
+			s.env.Log.Warn("DIAG900 PodRoutes: loadKey", "key", key, "err", err)
 			continue
 		}
 		ips := map[string]string{}
@@ -50,16 +52,19 @@ func (s *Service) PodRoutes(ctx context.Context) []PodRoute {
 		}
 		var nodes kubeList[kubeNode]
 		if err := kc.get(ctx, "/api/v1/nodes", &nodes); err != nil {
+			s.env.Log.Warn("DIAG900 PodRoutes: nodes", "key", key, "err", err)
 			continue
 		}
 		name := ref{Project: rec.Int.Project, Location: rec.Int.Location, Cluster: rec.Int.Name}.clusterName()
 		for _, n := range nodes.Items {
 			if n.Spec.PodCIDR == "" || ips[n.Metadata.Name] == "" {
+				s.env.Log.Warn("DIAG900 PodRoutes: skip node", "node", n.Metadata.Name, "podCIDR", n.Spec.PodCIDR, "ips", fmt.Sprint(ips))
 				continue
 			}
 			out = append(out, PodRoute{Cluster: name, Node: n.Metadata.Name, CIDR: n.Spec.PodCIDR, Via: ips[n.Metadata.Name], Subnetwork: rec.Int.Subnetwork})
 		}
 	}
+	s.env.Log.Warn("DIAG900 PodRoutes", "clusters", len(keys), "routes", fmt.Sprint(out))
 	return out
 }
 
