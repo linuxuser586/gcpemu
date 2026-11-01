@@ -142,7 +142,7 @@ tasks:
         if: command -v pnpm
       - cmd: >-
           echo "warning: pnpm not found; embedding the Web console placeholder
-          (install Node.js 24 and pnpm for the real console)" >&2
+          (install Node.js 26 and pnpm for the real console)" >&2
         if: "! command -v pnpm"
         silent: true
       - go build -trimpath -ldflags '{{.LDFLAGS}}' -o bin/gcpemu{{exeExt}} ./cmd/gcpemu

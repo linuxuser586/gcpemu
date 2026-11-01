@@ -14,7 +14,7 @@ configure({ asyncUtilTimeout: 3000 })
 
 export const server = setupServer(...handlers)
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => {
   cleanup()
   server.resetHandlers()
