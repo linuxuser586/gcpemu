@@ -1570,7 +1570,7 @@ unless the guard refuses `pubsub.gcpemu.invalid`. The other clients run without 
 either stay on loopback or reach the internet on purpose.
 
 The `java` subtests (IF-008) build a Maven project in `compat/sdk/java/`, pinned to one
-`libraries-bom`, with `java` (JDK 21) and `mvn` from `PATH`. They create a bucket, write, read,
+`libraries-bom`, with `java` (JDK 25) and `mvn` from `PATH`. They create a bucket, write, read,
 list and delete a binary object with the Cloud Storage library, and publish a message with an
 attribute that the Pub/Sub library's streaming-pull `Subscriber` receives and acks. The probe's
 JVM runs behind the Escape guard through `JAVA_TOOL_OPTIONS`, since the JVM ignores

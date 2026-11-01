@@ -292,11 +292,11 @@ func query(t *testing.T, cfg *pgx.ConnConfig, via string) {
 
 // authProxySHA256 pins the Cloud SQL Auth Proxy v2 by platform.
 var authProxySHA256 = map[string]string{
-	"linux/amd64": "a38fe97690a27490e60a7945a8a178186ff9464abb81fe2bc652a3f773443387",
-	"linux/arm64": "38a61b2d55ac5e0b3924561696f599003b50100baedbfe4730a0410713f3e2cd",
+	"linux/amd64": "39ed2abcaa073c3b4714585e36a904e2b1d92218c5e07c18224fb73ef4bedde5",
+	"linux/arm64": "8ba6ebca26cb2249b8d623fd3736d72e4b57e52bb19738515e936a01201833e5",
 }
 
-const authProxyVersion = "v2.26.0"
+const authProxyVersion = "v2.27.0"
 
 // authProxy downloads the pinned Auth Proxy for the host into the cache
 // directory (once), verifying its checksum.

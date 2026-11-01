@@ -543,7 +543,7 @@ func TestClients(t *testing.T) {
 		if out, err := login.CombinedOutput(); err != nil {
 			t.Fatalf("crane auth login: %v\n%s", err, out)
 		}
-		if out, err := e.try(t, crane, "copy", "--insecure", "docker.io/library/busybox:1.36.1", repo+"/base:v1"); err != nil {
+		if out, err := e.try(t, crane, "copy", "--insecure", "docker.io/library/busybox:1.38", repo+"/base:v1"); err != nil {
 			t.Skipf("crane copy from Docker Hub (needs the internet): %v\n%s", err, out)
 		}
 		e.run(t, crane, "copy", "--insecure", repo+"/base:v1", repo+"/copy:v1") // cross-repo mount

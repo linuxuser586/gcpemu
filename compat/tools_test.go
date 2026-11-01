@@ -35,12 +35,12 @@ type pinned struct {
 var tools = map[string]pinned{
 	"helm": {
 		url: map[string]string{
-			"linux/amd64": "https://get.helm.sh/helm-v3.21.0-linux-amd64.tar.gz",
-			"linux/arm64": "https://get.helm.sh/helm-v3.21.0-linux-arm64.tar.gz",
+			"linux/amd64": "https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz",
+			"linux/arm64": "https://get.helm.sh/helm-v4.3.1-linux-arm64.tar.gz",
 		},
 		sha256: map[string]string{
-			"linux/amd64": "0093eb572e3d2380f094df162ddb525e219249de88957afe24cfbb19632acd36",
-			"linux/arm64": "8de5a0c9a47431e59fd560e91e0779c8cf9316c383da7efb84128a4c339ecb2d",
+			"linux/amd64": "0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b",
+			"linux/arm64": "8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88",
 		},
 		member: "helm",
 	},
@@ -84,12 +84,12 @@ var tools = map[string]pinned{
 	},
 	"cloud-sql-proxy": {
 		url: map[string]string{
-			"linux/amd64": "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.26.0/cloud-sql-proxy.linux.amd64",
-			"linux/arm64": "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.26.0/cloud-sql-proxy.linux.arm64",
+			"linux/amd64": "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.27.0/cloud-sql-proxy.linux.amd64",
+			"linux/arm64": "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.27.0/cloud-sql-proxy.linux.arm64",
 		},
 		sha256: map[string]string{
-			"linux/amd64": "a38fe97690a27490e60a7945a8a178186ff9464abb81fe2bc652a3f773443387",
-			"linux/arm64": "38a61b2d55ac5e0b3924561696f599003b50100baedbfe4730a0410713f3e2cd",
+			"linux/amd64": "39ed2abcaa073c3b4714585e36a904e2b1d92218c5e07c18224fb73ef4bedde5",
+			"linux/arm64": "8ba6ebca26cb2249b8d623fd3736d72e4b57e52bb19738515e936a01201833e5",
 		},
 	},
 }

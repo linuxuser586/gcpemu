@@ -58,7 +58,7 @@
 //
 // The java subtests (#602) build the Maven project in sdk/java, whose
 // Storage and Pub/Sub library versions libraries-bom pins, with java and
-// mvn from PATH (JDK 21), and skip when either is missing. Maven resolves
+// mvn from PATH (JDK 25), and skip when either is missing. Maven resolves
 // into ~/.m2; the probe's JVM then runs behind the Escape guard through
 // JAVA_TOOL_OPTIONS. It creates a bucket, writes and reads a binary object
 // byte for byte, lists and deletes it, and publishes a message with an

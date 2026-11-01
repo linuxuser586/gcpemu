@@ -345,7 +345,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
       # Not setup-java's cache: it fails while no pom.xml exists.
       - uses: actions/cache@v6
         with:
@@ -633,7 +633,7 @@ jobs:
         if: runner.os == 'Windows'
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
       # os.UserCacheDir on Windows is %LocalAppData%.
       - uses: actions/cache@v6
         if: runner.os == 'Windows'

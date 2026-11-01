@@ -215,19 +215,19 @@ func (k *kube) logs(ns, selector string) string {
 // not published to Istio's chart repositories.
 
 // istioVersion is the pinned Istio release (charts and images).
-const istioVersion = "1.31.1"
+const istioVersion = "1.31.3"
 
 // helmVersion is the pinned Helm release; helmSHA256 its archive checksums.
-const helmVersion = "v3.21.0"
+const helmVersion = "v4.3.1"
 
 var helmSHA256 = map[string]string{
-	"linux-amd64":  "0093eb572e3d2380f094df162ddb525e219249de88957afe24cfbb19632acd36",
-	"linux-arm64":  "8de5a0c9a47431e59fd560e91e0779c8cf9316c383da7efb84128a4c339ecb2d",
-	"darwin-amd64": "8bc0c1f85f8738cc3cda4a2cc73047145bcdcb1f4d9cdcc29073037bfb22fa2e",
-	"darwin-arm64": "68bfbdc022c543a2a022597b20298216877e98abe6e4a345d3ecf114d79cae5f",
+	"linux-amd64":  "0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b",
+	"linux-arm64":  "8cf8f66ecbc252ac8f7f06cca68aba88508ddfde3a6a34feb1678ad1694b4f88",
+	"darwin-amd64": "34bec4eba761ba5c16d1965ee6b8f5b0abe5993974a802274e2a4f0418893d89",
+	"darwin-arm64": "6b4e61c8cd27d99e5a801e63ff25dd5c70b36875c2cd659d3e9ce6b76fc23198",
 	// Windows archives are .zip.
-	"windows-amd64": "3ea6b8383e6c0b7ce45d06a5746313b8e9225edd88d42f4f64582ff3792d7b55",
-	"windows-arm64": "90d8c87e07267e6c71e678c9e33dd11cc121789c823ccc380de9d1dd521c8cba",
+	"windows-amd64": "fcfd7b796dcf0f225abc40b5636a3b01f55f3de2fb1dfb18475df94e62c14112",
+	"windows-arm64": "373edaae86db70342ef39b014e2e7764ea8f9cff08714843daa5e55b5ee492f2",
 }
 
 // helm downloads the pinned helm for the host into the cache directory
