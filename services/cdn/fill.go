@@ -2,11 +2,14 @@ package cdn
 
 import (
 	"compress/gzip"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/andybalholm/brotli"
 )
 
 // fill modes, decided when the origin writes its header.
@@ -233,30 +236,71 @@ func maxObjectSize(h http.Header) int64 {
 	return maxObjectNoRanges
 }
 
-// compressWriter implements compressionMode AUTOMATIC: gzip for clients
-// that accept it, on compressible, not yet encoded 200 responses.
+// compressWriter implements compressionMode AUTOMATIC: Brotli or gzip for
+// clients that accept them (Brotli preferred, as GCP does), on compressible,
+// not yet encoded 200 responses.
 type compressWriter struct {
 	http.ResponseWriter
-	gz      *gzip.Writer
+	coding  string
+	zw      encoder
 	decided bool
 }
 
-var gzPool = sync.Pool{New: func() any { gz, _ := gzip.NewWriterLevel(nil, gzip.DefaultCompression); return gz }}
-
-func newCompressWriter(w http.ResponseWriter, r *http.Request) *compressWriter {
-	if r.Method != http.MethodGet || r.Header.Get("Range") != "" || !acceptsGzip(r.Header.Values("Accept-Encoding")) {
-		return nil
-	}
-	return &compressWriter{ResponseWriter: w}
+// encoder is the part of gzip.Writer and brotli.Writer compressWriter uses.
+type encoder interface {
+	io.WriteCloser
+	Flush() error
+	Reset(io.Writer)
 }
 
-func acceptsGzip(vals []string) bool {
+var encPools = map[string]*sync.Pool{
+	"br":   {New: func() any { return brotli.NewWriterLevel(nil, brotli.DefaultCompression) }},
+	"gzip": {New: func() any { gz, _ := gzip.NewWriterLevel(nil, gzip.DefaultCompression); return gz }},
+}
+
+func newCompressWriter(w http.ResponseWriter, r *http.Request) *compressWriter {
+	if r.Method != http.MethodGet || r.Header.Get("Range") != "" {
+		return nil
+	}
+	coding := pickCoding(r.Header.Values("Accept-Encoding"))
+	if coding == "" {
+		return nil
+	}
+	return &compressWriter{ResponseWriter: w, coding: coding}
+}
+
+// pickCoding returns "br" if the client accepts it, else "gzip" if it
+// accepts that, else "". A zero weight refuses a coding, and a refusal wins
+// over an acceptance of the same coding; "*" and other weights are ignored.
+func pickCoding(vals []string) string {
+	accepted, refused := map[string]bool{}, map[string]bool{}
 	for _, line := range vals {
 		for _, v := range strings.Split(line, ",") {
-			name, q, _ := strings.Cut(strings.TrimSpace(v), ";")
-			if strings.EqualFold(strings.TrimSpace(name), "gzip") {
-				return strings.ReplaceAll(strings.TrimSpace(q), " ", "") != "q=0"
+			name, params, _ := strings.Cut(v, ";")
+			name = strings.ToLower(strings.TrimSpace(name))
+			if zeroWeight(params) {
+				refused[name] = true
+			} else {
+				accepted[name] = true
 			}
+		}
+	}
+	for _, coding := range []string{"br", "gzip"} {
+		if accepted[coding] && !refused[coding] {
+			return coding
+		}
+	}
+	return ""
+}
+
+// zeroWeight reports whether an Accept-Encoding member's parameters carry a
+// q of zero in any spelling RFC 9110 allows (q=0, Q=0.0, q=0.000).
+func zeroWeight(params string) bool {
+	for _, p := range strings.Split(params, ";") {
+		k, v, _ := strings.Cut(p, "=")
+		if strings.EqualFold(strings.TrimSpace(k), "q") {
+			q, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+			return err == nil && q == 0
 		}
 	}
 	return false
@@ -287,16 +331,16 @@ func (c *compressWriter) WriteHeader(code int) {
 	cl, clErr := strconv.ParseInt(h.Get("Content-Length"), 10, 64)
 	if code == http.StatusOK && h.Get("Content-Encoding") == "" && compressible(h.Get("Content-Type")) &&
 		!parseCacheControl(h.Values("Cache-Control")).noTransform && (clErr != nil || cl >= 1024) {
-		h.Set("Content-Encoding", "gzip")
+		h.Set("Content-Encoding", c.coding)
 		h.Del("Content-Length")
 		h.Del("Accept-Ranges")
 		h.Add("Vary", "Accept-Encoding")
 		if et := h.Get("Etag"); et != "" && !strings.HasPrefix(et, "W/") {
 			h.Set("Etag", "W/"+et)
 		}
-		gz := gzPool.Get().(*gzip.Writer)
-		gz.Reset(c.ResponseWriter)
-		c.gz = gz
+		zw := encPools[c.coding].Get().(encoder)
+		zw.Reset(c.ResponseWriter)
+		c.zw = zw
 	}
 	c.ResponseWriter.WriteHeader(code)
 }
@@ -305,26 +349,26 @@ func (c *compressWriter) Write(b []byte) (int, error) {
 	if !c.decided {
 		c.WriteHeader(http.StatusOK)
 	}
-	if c.gz != nil {
-		return c.gz.Write(b)
+	if c.zw != nil {
+		return c.zw.Write(b)
 	}
 	return c.ResponseWriter.Write(b)
 }
 
 func (c *compressWriter) Flush() {
-	if c.gz != nil {
-		c.gz.Flush()
+	if c.zw != nil {
+		c.zw.Flush()
 	}
 	if fl, ok := c.ResponseWriter.(http.Flusher); ok {
 		fl.Flush()
 	}
 }
 
-// Close finishes the gzip stream.
+// Close finishes the compressed stream.
 func (c *compressWriter) Close() {
-	if c.gz != nil {
-		c.gz.Close()
-		gzPool.Put(c.gz)
-		c.gz = nil
+	if c.zw != nil {
+		c.zw.Close()
+		encPools[c.coding].Put(c.zw)
+		c.zw = nil
 	}
 }
