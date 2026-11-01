@@ -32,7 +32,7 @@ func TestPublicEndpointMoves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cl.EnsureImage(ctx, "busybox:1.37", false); err != nil {
+	if err := cl.EnsureImage(ctx, "busybox:1.38", false); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
@@ -120,7 +120,7 @@ func TestPublicEndpointMoves(t *testing.T) {
 	var holder string
 	restart(func() {
 		id, err := cl.CreateContainer(ctx, runtime.ContainerSpec{
-			Name: fmt.Sprintf("gcpemu-test-holder-%d", rand.Uint32()), Image: "busybox:1.37", Entrypoint: []string{"sleep", "600"},
+			Name: fmt.Sprintf("gcpemu-test-holder-%d", rand.Uint32()), Image: "busybox:1.38", Entrypoint: []string{"sleep", "600"},
 			Networks: []runtime.Attachment{{Network: extName, IP: moved}},
 		})
 		if err != nil {

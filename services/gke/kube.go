@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // A small hand-rolled Kubernetes API client: the emulator talks to each

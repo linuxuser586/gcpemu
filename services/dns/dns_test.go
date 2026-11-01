@@ -12,10 +12,10 @@ import (
 	"time"
 
 	mdns "github.com/miekg/dns"
+	"go.yaml.in/yaml/v3"
 	dnsv1 "google.golang.org/api/dns/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/config"

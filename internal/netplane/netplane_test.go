@@ -59,7 +59,7 @@ func TestServicesNetwork(t *testing.T) {
 	} else if r := p.Relay(); r == nil || !strings.HasPrefix(addr, r.IP()+":") {
 		t.Fatalf("relay %s: endpoint at %s, not on the relay", d, addr)
 	}
-	const img = "rancher/k3s:v1.36.5-k3s1"
+	const img = "rancher/k3s:v1.37.1-k3s1"
 	if err := m.EnsureImage(ctx, img, false); err != nil {
 		t.Fatal(err)
 	}

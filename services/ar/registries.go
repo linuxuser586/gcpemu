@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"sort"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Node registry configuration for GKE (FR-AR-005, FR-GKE-006).

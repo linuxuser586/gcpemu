@@ -37,7 +37,7 @@ import (
 // agent it finds from an earlier one.
 
 // agentImage runs the Build agent.
-const agentImage = "busybox:1.37"
+const agentImage = "busybox:1.38"
 
 // agentReady bounds how long a started agent may take to serve.
 const agentReady = 30 * time.Second

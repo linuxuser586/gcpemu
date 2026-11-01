@@ -43,7 +43,7 @@ func TestNodeAddressHeld(t *testing.T) {
 	hold := func(sn emu.SubnetNet, ip string) error {
 		name := fmt.Sprintf("gcpemu-test-holder-%d", rand.Uint32())
 		id, err := cl.CreateContainer(ctx, runtime.ContainerSpec{
-			Name: name, Image: "busybox:1.37", Entrypoint: []string{"sleep", "600"},
+			Name: name, Image: "busybox:1.38", Entrypoint: []string{"sleep", "600"},
 			Networks: []runtime.Attachment{{Network: sn.Name, IP: ip}},
 		})
 		if err != nil {
@@ -62,7 +62,7 @@ func TestNodeAddressHeld(t *testing.T) {
 		mu.Unlock()
 		return nil
 	}
-	if err := cl.EnsureImage(ctx, "busybox:1.37", false); err != nil {
+	if err := cl.EnsureImage(ctx, "busybox:1.38", false); err != nil {
 		t.Fatal(err)
 	}
 

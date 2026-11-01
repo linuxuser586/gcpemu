@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"

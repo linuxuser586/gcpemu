@@ -24,7 +24,7 @@ async function startBuild(request: APIRequestContext, project: string, lines: nu
       steps: [
         {
           id: 'count',
-          name: 'busybox:1.37',
+          name: 'busybox:1.38',
           entrypoint: 'sh',
           args: ['-c', `for i in $(seq 1 ${lines}); do echo line $i; sleep 1; done`],
         },

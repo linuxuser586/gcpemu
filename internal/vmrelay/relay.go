@@ -30,7 +30,7 @@ import (
 
 // Image runs the relay agent (any image works: the agent is a static
 // binary).
-const Image = "busybox:1.37"
+const Image = "busybox:1.38"
 
 // Env forces the relay on ("1") or off ("0").
 const Env = "GCPEMU_VM_RELAY"

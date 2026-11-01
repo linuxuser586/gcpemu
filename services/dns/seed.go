@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
 	dnsv1 "google.golang.org/api/dns/v1"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"

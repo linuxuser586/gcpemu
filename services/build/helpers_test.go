@@ -25,7 +25,7 @@ import (
 const testProject = "build-proj"
 
 // busybox is the image the test Builds' steps run.
-const busybox = "busybox:1.37"
+const busybox = "busybox:1.38"
 
 // env is a started emulator with a Cloud Build gRPC client.
 type env struct {

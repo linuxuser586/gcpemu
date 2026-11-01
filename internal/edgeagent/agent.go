@@ -55,7 +55,7 @@ const (
 
 // Image is the image lb-edge and the LAN relay containers run the
 // Sidecar agent in.
-const Image = "rancher/k3s:v1.36.5-k3s1"
+const Image = "rancher/k3s:v1.37.1-k3s1"
 
 func init() {
 	agent.Register(EdgeAgentName, runEdgeAgent)

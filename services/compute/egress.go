@@ -42,7 +42,7 @@ import (
 // connection change.
 
 // natImage runs the NAT egress proxy (it has iptables, ip and conntrack).
-const natImage = "rancher/k3s:v1.36.5-k3s1"
+const natImage = "rancher/k3s:v1.37.1-k3s1"
 
 // Images lists the container images the compute service launches, by role
 // (pinned by tag; digests are pinned at release).

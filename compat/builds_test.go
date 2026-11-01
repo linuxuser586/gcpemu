@@ -26,12 +26,12 @@ import (
 func testBuilds(t *testing.T, e *emulator, g string) {
 	src := longTempDir(t)
 	_ = os.WriteFile(filepath.Join(src, "hello.txt"), []byte("from the source\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(src, "Dockerfile"), []byte("FROM busybox:1.37\nCOPY hello.txt /\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(src, "Dockerfile"), []byte("FROM busybox:1.38\nCOPY hello.txt /\n"), 0o644)
 	e.run(t, g, "artifacts", "repositories", "create", "compat-builds", "--repository-format=docker", "--location=us-central1")
 
 	t.Run("submit--config", func(t *testing.T) {
 		config := filepath.Join(t.TempDir(), "cloudbuild.yaml")
-		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  id: greet\n  args: [cat, hello.txt]\noptions:\n  logging: NONE\n"), 0o644)
+		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.38\n  id: greet\n  args: [cat, hello.txt]\noptions:\n  logging: NONE\n"), 0o644)
 		out := e.run(t, g, "builds", "submit", "--config", config, "--format=value(id,logsBucket)", src)
 		fields := strings.Fields(out)
 		if len(fields) < 2 {
@@ -43,7 +43,7 @@ func testBuilds(t *testing.T, e *emulator, g string) {
 		contains(t, "the Build log", log, `Step #0 - "greet": from the source`)
 		contains(t, "the Build log", log, "DONE")
 
-		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  args: [sh, -c, 'exit 3']\noptions:\n  logging: NONE\n"), 0o644)
+		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.38\n  args: [sh, -c, 'exit 3']\noptions:\n  logging: NONE\n"), 0o644)
 		if out, err := e.try(t, g, "builds", "submit", "--config", config, src); err == nil {
 			t.Fatalf("builds submit of a failing Build exited 0:\n%s", out)
 		}
@@ -67,7 +67,7 @@ func testBuilds(t *testing.T, e *emulator, g string) {
 
 	t.Run("cancel+list", func(t *testing.T) {
 		config := filepath.Join(t.TempDir(), "cloudbuild.yaml")
-		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  args: [sleep, '600']\n"), 0o644)
+		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.38\n  args: [sleep, '600']\n"), 0o644)
 		id := submitAsync(t, e, g, "--config", config, "--no-source")
 		e.run(t, g, "builds", "cancel", id)
 		if status := waitBuild(t, e, g, id); status != "CANCELLED" {
@@ -97,7 +97,7 @@ build:
       bucket: compat-trigger-src
       object: src.tgz
   steps:
-  - name: busybox:1.37
+  - name: busybox:1.38
     entrypoint: sh
     args: [-c, 'test "$(cat hello.txt)" = "from the trigger source" && echo $_GREETING $TRIGGER_NAME']
 `), 0o644)
@@ -208,9 +208,9 @@ func TestHostMode(t *testing.T) {
 	t.Run("gcloud/builds", func(t *testing.T) {
 		src := longTempDir(t)
 		_ = os.WriteFile(filepath.Join(src, "hello.txt"), []byte("from the source\n"), 0o644)
-		_ = os.WriteFile(filepath.Join(src, "Dockerfile"), []byte("FROM busybox:1.37\nCOPY hello.txt /\n"), 0o644)
+		_ = os.WriteFile(filepath.Join(src, "Dockerfile"), []byte("FROM busybox:1.38\nCOPY hello.txt /\n"), 0o644)
 		config := filepath.Join(t.TempDir(), "cloudbuild.yaml")
-		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.37\n  id: greet\n  args: [cat, hello.txt]\n"), 0o644)
+		_ = os.WriteFile(config, []byte("steps:\n- name: busybox:1.38\n  id: greet\n  args: [cat, hello.txt]\n"), 0o644)
 		out := e.run(t, g, "builds", "submit", "--config", config, src)
 		contains(t, "the streamed log", out, `Step #0 - "greet": from the source`)
 		contains(t, "the streamed log", out, "SUCCESS")

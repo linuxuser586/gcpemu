@@ -8,11 +8,11 @@ import (
 	"slices"
 
 	"cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"

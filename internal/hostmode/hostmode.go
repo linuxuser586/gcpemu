@@ -56,7 +56,7 @@ import (
 
 // Image runs the host-mode agent (any image works: the agent is a static
 // binary). Pinned by tag; digest pinning is a release task.
-const Image = "busybox:1.37"
+const Image = "busybox:1.38"
 
 // ErrLinuxOnly is why host mode is refused off Linux.
 var ErrLinuxOnly = errors.New("host mode is Linux-only: the host cannot reach container IPs inside a VM runtime; point clients at the emulator with `eval \"$(gcpemu env)\"` instead")

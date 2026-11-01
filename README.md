@@ -837,7 +837,7 @@ serves the metadata server as the step's Build's service account on `:80` and pr
 Registry over plain HTTP on `:5000` with that account's token.
 
 Every step gets `/var/run/docker.sock` of the Build daemon (ADR 0016), one privileged
-Docker-in-Docker container per Instance (`docker:29.9.0-dind`) started with the first Build, so
+Docker-in-Docker container per Instance (`docker:29.9.2-dind`) started with the first Build, so
 `gcr.io/cloud-builders/docker` and `docker` steps build, run and push images unmodified, and
 `docker run --network=cloudbuild` reaches containers started earlier by name. Unlike on GCP, the
 steps themselves are not on `cloudbuild`, so a step reaches such a container only from another
@@ -1317,14 +1317,14 @@ socket's group:
 ```sh
 docker run -d --name gcpemu -p 4562:4562 -p 4443:4443 -p 8085:8085 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
+  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.38 stat -c %g /s)" \
   linuxuser586/gcpemu:0 start --ephemeral
 ```
 
 ```powershell
 docker run -d --name gcpemu -p 4562:4562 -p 4443:4443 -p 8085:8085 `
   -v /var/run/docker.sock:/var/run/docker.sock `
-  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" `
+  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.38 stat -c %g /s)" `
   linuxuser586/gcpemu:0 start --ephemeral
 ```
 
@@ -1369,14 +1369,14 @@ container and host ports:
 ```sh
 docker run -d --name gcpemu -p 127.0.0.1:4562:4562 -p 127.0.0.1:20000-20019:20000-20019 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" \
+  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.38 stat -c %g /s)" \
   linuxuser586/gcpemu:0 start --ephemeral --port-range 20000-20019
 ```
 
 ```powershell
 docker run -d --name gcpemu -p 127.0.0.1:4562:4562 -p 127.0.0.1:20000-20019:20000-20019 `
   -v /var/run/docker.sock:/var/run/docker.sock `
-  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.37 stat -c %g /s)" `
+  --group-add "$(docker run --rm -v /var/run/docker.sock:/s busybox:1.38 stat -c %g /s)" `
   linuxuser586/gcpemu:0 start --ephemeral --port-range 20000-20019
 ```
 

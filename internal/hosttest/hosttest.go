@@ -55,7 +55,7 @@ func SocketArgs(t testing.TB) []string {
 	t.Helper()
 	const sock = "/var/run/docker.sock"
 	mount := []string{"-v", sock + ":" + sock, "--security-opt", "label=disable"}
-	out, err := exec.Command("docker", append(append([]string{"run", "--rm"}, mount...), "busybox:1.37", "stat", "-c", "%g", sock)...).CombinedOutput()
+	out, err := exec.Command("docker", append(append([]string{"run", "--rm"}, mount...), "busybox:1.38", "stat", "-c", "%g", sock)...).CombinedOutput()
 	if err != nil {
 		t.Skipf("containers cannot mount the Docker socket %s: %v\n%s", sock, err, out)
 	}

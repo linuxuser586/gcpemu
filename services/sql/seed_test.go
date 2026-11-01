@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/store"

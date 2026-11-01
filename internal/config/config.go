@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // IAM enforcement modes (FR-IAM-004).

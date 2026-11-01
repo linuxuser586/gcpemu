@@ -46,7 +46,7 @@ func build(ctx context.Context, project, bucket string) (*cloudbuildpb.Build, er
 		ProjectId: project,
 		Build: &cloudbuildpb.Build{
 			Steps: []*cloudbuildpb.BuildStep{{
-				Name:       "busybox:1.37",
+				Name:       "busybox:1.38",
 				Entrypoint: "sh",
 				Args:       []string{"-c", "echo from go > out.txt"},
 			}},

@@ -218,7 +218,7 @@ On a VM runtime the runtime's own `docker push` runs inside its VM, and reaches 
 host only through the Registry relay (ADR 0043). CI has no VM runtime, so check 8 is the only push
 through one. It starts an Ephemeral Instance with IAM and Artifact Registry on the host, creates a
 Docker repository with `gcloud`, waits until `gcpemu doctor` reports the Registry relay running,
-then tags `busybox:1.37` as `$GCPEMU_REGISTRY/us-central1-docker.pkg.dev/prerelease/relay/busybox`,
+then tags `busybox:1.38` as `$GCPEMU_REGISTRY/us-central1-docker.pkg.dev/prerelease/relay/busybox`,
 pushes it, removes it and pulls it back with the runtime's own `docker`. A doctor line that reports
 the relay skipped or failed fails the check. On Podman machine it pushes and pulls with
 `podman push --tls-verify=false` instead, as Podman sends `localhost` registries HTTPS. Docker

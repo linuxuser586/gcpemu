@@ -5,7 +5,7 @@
 # head of master.
 googleapis:
   # googleapis/googleapis commit the .proto files are read from.
-  commit: 462426382d347da63e69da7b02d908df2c26ecbe
+  commit: 3d42ca0ca56658a8ddae0571ebbe99faf044a440
   files:
     - google/cloud/certificatemanager/v1/certificate_manager.proto
     - google/cloud/location/locations.proto

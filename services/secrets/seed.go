@@ -9,8 +9,8 @@ import (
 	"slices"
 
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/locations"
 	"github.com/linuxuser586/gcpemu/internal/store"

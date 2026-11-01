@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v3"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"

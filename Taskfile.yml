@@ -323,7 +323,7 @@ tasks:
       vars: [IMAGE]
     vars:
       TIMEOUT: 120
-      BUSYBOX: busybox:1.37
+      BUSYBOX: busybox:1.38
     env:
       IMAGE: "{{.IMAGE}}"
     cmds:

@@ -13,7 +13,7 @@ import (
 )
 
 // relayImage is what the Registry relay check pushes and pulls.
-const relayImage = "busybox:1.37"
+const relayImage = "busybox:1.38"
 
 // registryRelay is step 8 of both suites: the runtime's own push and pull
 // of $GCPEMU_REGISTRY/... reach an Instance on the host through the
