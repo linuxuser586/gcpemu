@@ -352,8 +352,10 @@ type ADCKeyer interface {
 
 // AddressReserver is implemented by services whose stored resources record
 // container addresses and ask for them again when their containers are
-// recreated (a Cloud SQL instance's public and private IP). Containers
-// started without a fixed address never take one of them.
+// recreated (a Cloud SQL instance's public and private IP), or whose
+// containers hold addresses the runtime cannot see (the Edge relay's Edge
+// aliases, ADR 0053). Containers started without a fixed address never
+// take one of them.
 type AddressReserver interface {
 	ReservedAddrs() []string
 }

@@ -118,6 +118,10 @@ _Avoid_: NAT config (unqualified), NAT (unqualified, when the configuration is m
 The Managed container that relays clients to the load balancer's Data plane on forwarding rule ports the emulator cannot bind itself, serves external forwarding rule addresses to VPC workloads, and relays the Data plane to backends the host cannot route to, such as GKE pods.
 _Avoid_: edge (unqualified), LB proxy
 
+**Edge alias**:
+An address on the load balancer's container network that the Edge relay holds for one forwarding rule IP and serves its ports on. No container joining that network takes it.
+_Avoid_: alias (unqualified), listener address
+
 **Infrastructure address**:
 An address on a subnetwork that an Instance's own Managed container holds only while workloads there need it, such as the Edge relay's address on a GKE cluster's subnetwork. No resource can reserve or take it, but it never keeps the subnetwork from being deleted: the container leaves instead (ADR 0032).
 _Avoid_: releasable address, edge address

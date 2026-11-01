@@ -113,7 +113,8 @@ func (c *Client) SetMemberAddr(addr func(network string) string) {
 // SetReserved has AttachSelf and AttachMember skip the addresses reserved
 // returns: those stored resources record and ask for again when their
 // containers are recreated (Manager.Reserved), such as a Cloud SQL
-// instance's Public IP (ADR 0035).
+// instance's Public IP (ADR 0035), and those a container holds without
+// the runtime knowing, such as the Edge relay's Edge aliases (ADR 0053).
 func (c *Client) SetReserved(reserved func() []string) {
 	c.memberMu.Lock()
 	defer c.memberMu.Unlock()

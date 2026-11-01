@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -278,11 +280,11 @@ func TestWildcardLocalFilter(t *testing.T) {
 	}
 }
 
-// #900: an alias the Edge relay takes for a forwarding rule must not be an
-// address another container holds on the lb network. The VM relay joins
-// that network at its highest free address, and once the Edge also held
-// it, the relay's connections to the Edge came from one of the Edge's own
-// addresses and the kernel dropped them.
+// TestEdgeAliasSkipsHeldAddresses: an Edge alias is never an address a
+// container holds on the load balancer's network. The VM relay joins it at
+// its highest free address, and once the Edge relay also held it, the
+// relay's connections to the Edge relay came from one of its own addresses
+// and the kernel dropped them (#900).
 func TestEdgeAliasSkipsHeldAddresses(t *testing.T) {
 	_, subnet, _ := net.ParseCIDR("172.20.0.0/16")
 	e := &edge{ip: "172.20.0.2", subnet: subnet, alias: map[string]string{}}
@@ -296,10 +298,34 @@ func TestEdgeAliasSkipsHeldAddresses(t *testing.T) {
 	want := []string{"172.20.255.254", "172.20.255.252", "172.20.255.251"}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("aliases %v, want %v", got, want)
+			t.Fatalf("Edge aliases %v, want %v", got, want)
 		}
 	}
 	if ip := e.allocAliasLocked("34.120.0.2", held); ip != "172.20.255.252" {
-		t.Errorf("second alias of 34.120.0.2 = %s, want its first, 172.20.255.252", ip)
+		t.Errorf("second Edge alias of 34.120.0.2 = %s, want its first, 172.20.255.252", ip)
+	}
+}
+
+// TestEdgeAliasesAreReserved: the lb service reserves its live Edge
+// aliases (emu.AddressReserver), so a VM relay that joins the network
+// after them, such as one recreated (ADR 0050), skips them too (#900).
+func TestEdgeAliasesAreReserved(t *testing.T) {
+	s := &Service{}
+	s.dp = &dataplane{s: s}
+	e := &edge{d: s.dp, alias: map[string]string{}}
+	s.dp.edge = e
+	var _ emu.AddressReserver = s
+	e.setAliasLocked("34.120.0.1:80", "172.20.255.254")
+	e.setAliasLocked("34.120.0.1:443", "172.20.255.254")
+	e.setAliasLocked("34.120.0.2:80", "172.20.255.252")
+	got := s.ReservedAddrs()
+	sort.Strings(got)
+	if want := []string{"172.20.255.252", "172.20.255.254"}; !slices.Equal(got, want) {
+		t.Fatalf("ReservedAddrs() = %v, want %v", got, want)
+	}
+	e.dropAliasLocked("34.120.0.1:80")
+	e.dropAliasLocked("34.120.0.2:80")
+	if got, want := s.ReservedAddrs(), []string{"172.20.255.254"}; !slices.Equal(got, want) {
+		t.Fatalf("after removing two forwarding rule ports, ReservedAddrs() = %v, want %v", got, want)
 	}
 }
