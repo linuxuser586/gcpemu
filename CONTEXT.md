@@ -252,11 +252,11 @@ The address a Containerized Instance's own container holds on a network it joins
 _Avoid_: Instance address (a Compute Engine instance's address), emulator IP
 
 **Abandoned Instance ID**:
-An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, or that only a Test data dir whose test has ended holds, so no future Instance will reclaim them.
+An Instance ID that still tags containers, networks or volumes on the host but that no data directory holds, or that only a Test data dir whose test has ended holds, even while its containers run, so no future Instance will reclaim them.
 _Avoid_: orphan, dead instance
 
 **Test data dir**:
-A data directory that a test owns until the test ends, or until the test's process ends if that comes first. The owner is the outermost test that names the directory; its subtests share it. Once either has ended, no Instance of that test will start in it again, even if the directory is still there. A later test that names the same path owns it anew, along with whatever Instance it still holds. It may hold a Persistent Instance that the test restarts, or the Ephemeral Instance of a test that names no data directory. An Instance that a test process shares across its tests, from `TestMain`, has a Test data dir that the process owns. A data directory a test hands to an Instance that should outlive the test is not one (ADR 0047).
+A data directory that a test owns until the test ends, or until the test's process ends if that comes first. The owner is the outermost test that names the directory; its subtests share it. Once either has ended, no Instance of that test will start in it again, even if the directory is still there. A later test that names the same path owns it anew, along with whatever Instance it still holds. It may hold a Persistent Instance that the test restarts, the Ephemeral Instance of a test that names no data directory, or an Instance the test starts with the `gcpemu` CLI. An Instance that a test process shares across its tests, from `TestMain`, has a Test data dir that the process owns. A data directory a test hands to an Instance that should outlive the test is not one (ADR 0047).
 _Avoid_: temp dir, scratch dir
 
 **Emulator clock**:
