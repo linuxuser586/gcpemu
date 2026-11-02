@@ -620,12 +620,22 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.stopped {
+		return // the routers stop with the lb
+	}
 	if e.id == "" && (len(prs) == 0 || len(serve) == 0 && !e.d.hasNEGEndpoints()) {
 		e.routePublicLocked(cctx, "", pub)
 		return
 	}
+	if e.id == "" {
+		// Starting the Edge relay can take as long as an image pull: the
+		// addresses are unreachable until it serves them.
+		e.routePublicLocked(cctx, "", pub)
+	}
 	if err := e.ensureLocked(cctx); err != nil {
 		e.env().Log.Warn("lb: edge relay unavailable", "err", err)
+		// It is not running, so routes via it, if any, are dead.
+		e.routePublicLocked(cctx, "", pub)
 		return
 	}
 	vpcSvc, _ := e.env().Lookup("compute")

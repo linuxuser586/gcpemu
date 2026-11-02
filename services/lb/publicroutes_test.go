@@ -6,11 +6,13 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/linuxuser586/gcpemu/internal/edgeagent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/services/gke"
 )
 
@@ -152,4 +154,53 @@ func TestPublicRoutesUnreachableWhileNotServed(t *testing.T) {
 	if gk.requests() != 2 || ce.requests() != 2 {
 		t.Fatalf("gke %d, compute %d requests, want 2: the routes and their removal", gk.requests(), ce.requests())
 	}
+}
+
+// failingContainers is a container runtime that cannot be reached; start
+// runs as the edge asks for it.
+type failingContainers struct {
+	emu.Containers
+	start func()
+}
+
+func (c failingContainers) Runtime(context.Context) (*runtime.Manager, error) {
+	c.start()
+	return nil, errors.New("runtime socket not ready")
+}
+
+// TestPublicRoutesUnreachableWhileEdgeRelayStarts: before the edge starts
+// the Edge relay, which can take as long as an image pull, the routers
+// already hold unreachable routes for the forwarding rule addresses, and
+// they keep them when the start fails; while the lb is stopping, a failed
+// start sends nothing (ADR 0055).
+func TestPublicRoutesUnreachableWhileEdgeRelayStarts(t *testing.T) {
+	ctx := context.Background()
+	e, gk, ce := newRoutedEdge(t)
+	var atStart []string
+	e.env().Containers = failingContainers{start: func() {
+		via, ips := ce.routes()
+		atStart = append(atStart, via+" "+strings.Join(ips, " "))
+	}}
+	e.d.s.podRoutes = func(context.Context) []gke.PodRoute {
+		return []gke.PodRoute{{Cluster: "c", Node: "n", CIDR: "10.4.0.0/24", Via: "10.0.0.3", Subnetwork: "s"}}
+	}
+	fe := &frontend{key: "34.120.0.1:443", ip: "34.120.0.1", port: 443}
+	e.d.cfg.Store(&config{
+		fronts: map[string]*frontend{fe.key: fe},
+		public: map[string]bool{fe.ip: true},
+	})
+	e.syncRoutes(ctx)
+	if len(atStart) != 1 || atStart[0] != " 34.120.0.1" {
+		t.Fatalf("compute's routes as the Edge relay started: %q, want unreachable 34.120.0.1", atStart)
+	}
+	wantRoutes(t, "", []string{"34.120.0.1"}, gk, ce)
+
+	e.stopped = true
+	fe2 := &frontend{key: "34.120.0.2:443", ip: "34.120.0.2", port: 443}
+	e.d.cfg.Store(&config{
+		fronts: map[string]*frontend{fe.key: fe, fe2.key: fe2},
+		public: map[string]bool{fe.ip: true, fe2.ip: true},
+	})
+	e.syncRoutes(ctx)
+	wantRoutes(t, "", []string{"34.120.0.1"}, gk, ce)
 }
