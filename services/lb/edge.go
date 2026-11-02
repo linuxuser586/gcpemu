@@ -45,7 +45,9 @@ import (
 // whose containers egress over the external network (GKE nodes with
 // external IPs, the NAT egress proxies) route those addresses via the
 // edge (emu.PublicRouter), so the client the backends see is the node or
-// the NAT, as on GCP.
+// the NAT, as on GCP. While the edge does not serve them, the routes make
+// them unreachable instead, so their traffic never leaves for the
+// internet (ADR 0055).
 
 // Images lists the container images the lb service launches (pinned by
 // tag; digests are pinned at release).
@@ -87,7 +89,8 @@ type edge struct {
 	subnets map[string]emu.SubnetNet
 	// public are the external forwarding rule addresses and ports the
 	// edge serves on the external network, where it holds extIP; routed
-	// is the last route set the PublicRouters accepted ("" for none).
+	// is the last route set the PublicRouters accepted ("" for none,
+	// routedUnknown when they may hold any).
 	public  []edgeagent.Listener
 	extIP   string
 	routed  string
@@ -362,8 +365,7 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 		if c, err := rt.InspectContainer(ctx, e.id); err == nil && c.Running {
 			return nil
 		}
-		e.id, e.pushed, e.extIP = "", "", ""
-		e.nets = map[string]bool{}
+		e.forgetContainerLocked()
 	}
 	if _, err := e.ingressLocked(); err != nil {
 		return err
@@ -462,6 +464,15 @@ func (e *edge) ensureLocked(ctx context.Context) error {
 	}
 	e.env().Log.Info("lb: edge container started", "container", name, "ip", e.ip)
 	return nil
+}
+
+// forgetContainerLocked drops what the edge knew of its container, once
+// it is gone. What the PublicRouters hold is unknown then too, so the
+// next pass sends its routes even via the same address (#912).
+func (e *edge) forgetContainerLocked() {
+	e.id, e.pushed, e.extIP = "", "", ""
+	e.nets = map[string]bool{}
+	e.routed = routedUnknown
 }
 
 // ingressLocked starts the ingress that edge-relayed connections arrive on
@@ -599,15 +610,18 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	if ctx.Err() != nil {
 		return // stopped, or the routes were read before a Reset
 	}
-	var pub []edgeagent.Listener
-	if len(prs) > 0 {
-		// Only GKE nodes are VPC workloads that call load balancers.
-		pub = e.d.publicFrontends()
+	// The routes cover every external forwarding rule, served or not
+	// (ADR 0055); the edge serves them only for pods, as only GKE nodes
+	// are VPC workloads that call load balancers.
+	pub := e.d.publicFrontends()
+	serve := pub
+	if len(prs) == 0 {
+		serve = nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.id == "" && (len(prs) == 0 || len(pub) == 0 && !e.d.hasNEGEndpoints()) {
-		e.routePublicLocked(cctx, nil)
+	if e.id == "" && (len(prs) == 0 || len(serve) == 0 && !e.d.hasNEGEndpoints()) {
+		e.routePublicLocked(cctx, false, pub)
 		return
 	}
 	if err := e.ensureLocked(cctx); err != nil {
@@ -647,28 +661,29 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].CIDR < routes[j].CIDR })
 	e.routes, e.pods = routes, pods
-	if len(pub) > 0 {
+	if len(serve) > 0 {
 		if err := e.joinExternalLocked(cctx, rt); err != nil {
 			e.env().Log.Warn("lb: attaching edge to the external network", "err", err)
-			pub = nil
+			serve = nil
 		}
 	}
-	e.public = pub
+	e.public = serve
 	if err := e.pushLocked(cctx); err != nil {
+		// The routes via the edge stay: they fail with "no route to
+		// host" rather than leak, and the next pass repairs them.
 		e.env().Log.Warn("lb: programming edge routes", "err", err)
 		return
 	}
-	e.routePublicLocked(cctx, pub)
+	e.routePublicLocked(cctx, len(serve) > 0, pub)
 }
 
-// publicFrontends returns the listening external IPv4 forwarding rules.
+// publicFrontends returns the external IPv4 forwarding rules, whether or
+// not a listener serves them yet.
 func (d *dataplane) publicFrontends() []edgeagent.Listener {
 	cfg := d.cfg.Load()
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	var out []edgeagent.Listener
-	for key, fe := range cfg.fronts {
-		if cfg.public[fe.ip] && d.listeners[key] != nil && net.ParseIP(fe.ip).To4() != nil {
+	for _, fe := range cfg.fronts {
+		if cfg.public[fe.ip] && net.ParseIP(fe.ip).To4() != nil {
 			out = append(out, edgeagent.Listener{IP: fe.ip, Port: fe.port})
 		}
 	}
@@ -708,19 +723,21 @@ func (e *edge) joinExternalLocked(ctx context.Context, rt *runtime.Manager) erro
 }
 
 // routePublicLocked asks the PublicRouters to route the addresses of pub
-// via the edge, or to remove the routes when pub is empty.
-func (e *edge) routePublicLocked(ctx context.Context, pub []edgeagent.Listener) {
+// via the edge while it serves them on the external network, to make
+// them unreachable while it does not, or to remove the routes when pub is
+// empty (ADR 0055).
+func (e *edge) routePublicLocked(ctx context.Context, served bool, pub []edgeagent.Listener) {
 	via, ips := "", []string(nil)
-	if len(pub) > 0 {
+	if served {
 		via = e.extIP
-		for _, l := range pub {
-			if len(ips) == 0 || ips[len(ips)-1] != l.IP {
-				ips = append(ips, l.IP)
-			}
+	}
+	for _, l := range pub {
+		if len(ips) == 0 || ips[len(ips)-1] != l.IP {
+			ips = append(ips, l.IP)
 		}
 	}
 	want := ""
-	if via != "" {
+	if len(ips) > 0 {
 		want = via + " " + strings.Join(ips, " ")
 	}
 	if want == e.routed {
@@ -739,10 +756,18 @@ func (e *edge) routePublicLocked(ctx context.Context, pub []edgeagent.Listener) 
 			}
 		}
 	}
-	if ok {
-		e.routed = want
+	if !ok {
+		// The routers store a request before applying it, so one that
+		// failed may hold routes neither old nor new: send the next
+		// pass's again whatever it is (#912).
+		want = routedUnknown
 	}
+	e.routed = want
 }
+
+// routedUnknown is the edge's routed when the PublicRouters' routes are
+// unknown; it matches no route set, so the next pass sends its own.
+const routedUnknown = "?"
 
 // edgeIPOwner owns the edge's addresses in compute's allocations.
 const edgeIPOwner = "lb-edge"
@@ -879,8 +904,8 @@ func (e *edge) retireIdle(ctx context.Context, now time.Time) {
 	}
 	e.releaseLocked(ctx)
 	e.env().Log.Info("lb: idle edge container removed")
-	e.id, e.ip, e.pushed, e.extIP = "", "", "", ""
-	e.nets = map[string]bool{}
+	e.forgetContainerLocked()
+	e.ip = ""
 	e.routes, e.pods = nil, nil
 	e.idleSince = time.Time{}
 }
