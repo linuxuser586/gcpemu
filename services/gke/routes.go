@@ -63,20 +63,16 @@ func (s *Service) PodRoutes(ctx context.Context) []PodRoute {
 	return out
 }
 
-// RoutePublic implements emu.PublicRouter: nodes with external IPs route
-// the load balancer's forwarding rule addresses via the Edge relay, so
-// pods reach load balancers by their public address with the node's
-// address as the client, as on GCP (#187). Private nodes reach them
-// through Cloud NAT instead (compute).
-func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) error {
-	s.pubMu.Lock()
-	s.pubVia, s.pubIPs = via, append([]string(nil), ips...)
-	s.pubMu.Unlock()
+// RoutePublic implements emu.PublicRouter: nodes with external IPs hold
+// the Public routes of each sender: the load balancer's forwarding rule
+// addresses via the Edge relay, so pods reach load balancers by their
+// public address with the node's address as the client, as on GCP
+// (#187), and compute's External address pools and the reserved
+// external addresses outside them unreachable (ADR 0059).
+// Private nodes reach them through Cloud NAT instead (compute).
+func (s *Service) RoutePublic(ctx context.Context, from string, r emu.PublicRoutes) error {
+	s.pub.Set(from, r)
 	if s.env.Containers == nil {
-		return nil
-	}
-	d, err := s.deps(ctx)
-	if err != nil {
 		return nil
 	}
 	s.mu.Lock()
@@ -85,6 +81,15 @@ func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) err
 		keys = append(keys, k)
 	}
 	s.mu.Unlock()
+	if len(keys) == 0 {
+		// Compute sends its routes at start, before any cluster is
+		// back: it need not reach the runtime for none.
+		return nil
+	}
+	d, err := s.deps(ctx)
+	if err != nil {
+		return nil
+	}
 	sort.Strings(keys)
 	var errs []error
 	for _, key := range keys {
@@ -110,19 +115,13 @@ func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) err
 	return errors.Join(errs...)
 }
 
-// routesPublic reports whether there are public routes to program, via
-// the Edge relay or unreachable (ADR 0055).
-func (s *Service) routesPublic() bool {
-	s.pubMu.Lock()
-	defer s.pubMu.Unlock()
-	return len(s.pubIPs) > 0
-}
+// routesPublic reports whether there are Public routes to program, via
+// the Edge relay or unreachable (ADR 0055, ADR 0059).
+func (s *Service) routesPublic() bool { return !s.pub.Empty() }
 
-// routePublic programs the current public routes into a node container.
+// routePublic programs the current Public routes into a node container.
 func (s *Service) routePublic(ctx context.Context, d *deps, name string) error {
-	s.pubMu.Lock()
-	script := emu.PublicRoutesScript(s.pubVia, s.pubIPs)
-	s.pubMu.Unlock()
+	script := s.pub.Script()
 	res, err := d.rt.Exec(ctx, name, []string{"sh", "-c", script}, nil)
 	if err == nil && res.ExitCode != 0 {
 		err = fmt.Errorf("exit %d: %s%s", res.ExitCode, res.Stdout, res.Stderr)

@@ -52,10 +52,13 @@ func (r *fakeRouter) routes() (string, []string) {
 	return r.via, r.ips
 }
 
-func (r *fakeRouter) RoutePublic(_ context.Context, via string, ips []string) error {
+func (r *fakeRouter) RoutePublic(_ context.Context, from string, pr emu.PublicRoutes) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.via, r.ips = via, append([]string(nil), ips...)
+	if from != emu.PublicRoutesFromLB {
+		return errors.New("routes from " + from)
+	}
+	r.via, r.ips = pr.Via, append([]string(nil), pr.Dests...)
 	r.calls++
 	if r.fail {
 		return errors.New("context deadline exceeded")

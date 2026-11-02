@@ -68,11 +68,13 @@ type Service struct {
 	// egress holds the NAT egress proxies by VPC network path.
 	egMu   sync.Mutex
 	egress map[string]*egressProxy
-	// pubVia and pubIPs are the load balancer's public routes
-	// (RoutePublic), programmed into every NAT egress proxy.
-	pubMu  sync.Mutex
-	pubVia string
-	pubIPs []string
+	// pub holds the Public routes (RoutePublic) programmed into every
+	// NAT egress proxy; unreachSent is compute's own set the
+	// PublicRouters last accepted ("" for unknown), sent under unreachMu
+	// (routeUnreachable).
+	pub         emu.PublicRouteTable
+	unreachMu   sync.Mutex
+	unreachSent string
 
 	// chkMu guards the extensions other services register: checkers,
 	// igResolvers and releasers.
@@ -130,12 +132,14 @@ func (s *Service) Register(r emu.Router) error {
 	return nil
 }
 
-// Start fails operations interrupted by a previous run. Container networks
-// and the NAT egress proxy are (re)created lazily when workloads ask for
-// them, except those of subnetworks with Offered ports, which are served
-// again in the background.
+// Start fails operations interrupted by a previous run and sends its
+// Public routes (ADR 0059). Container networks and the NAT egress proxy
+// are (re)created lazily when workloads ask for them, except those of
+// subnetworks with Offered ports, which are served again in the
+// background.
 func (s *Service) Start(ctx context.Context) error {
 	s.recoverOps()
+	s.routeUnreachable(ctx)
 	rctx, cancel := context.WithCancel(context.Background())
 	s.restoring.Add(1)
 	go func() {
@@ -209,6 +213,10 @@ func (s *Service) Reset(ctx context.Context) error {
 	}
 	return err
 }
+
+// ResetDone implements emu.ResetFinisher: the reserved addresses are gone
+// with the Store, and with them their Public routes (ADR 0059).
+func (s *Service) ResetDone() { s.routeUnreachable(context.Background()) }
 
 // EnvVars implements emu.EnvVarer. gcloud's compute client has BASE_URL
 // https://compute.googleapis.com/compute/v1/ and uses an override with a

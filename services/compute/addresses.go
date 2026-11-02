@@ -126,12 +126,13 @@ func (s *Service) insertAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Id = s.env.IDs.Uint64()
 	op, err := s.startOp(r.Context(), opSpec{project: p, scope: scope, opType: "insert", target: path, targetID: a.Id},
-		func(ctx context.Context) error { return s.createAddress(p, scope, path, global, &a) })
+		func(ctx context.Context) error { return s.createAddress(ctx, p, scope, path, global, &a) })
 	reply(w, op, err)
 }
 
-// createAddress validates, allocates and stores an address.
-func (s *Service) createAddress(project, scope, path string, global bool, a *computev1.Address) error {
+// createAddress validates, allocates and stores an address, and sends
+// compute's Public routes, which cover it when it is external (ADR 0059).
+func (s *Service) createAddress(ctx context.Context, project, scope, path string, global bool, a *computev1.Address) error {
 	if a.AddressType == "" {
 		a.AddressType = "EXTERNAL"
 	}
@@ -139,7 +140,7 @@ func (s *Service) createAddress(project, scope, path string, global bool, a *com
 	if !global {
 		region = scope[len("regions/"):]
 	}
-	return s.env.Store.Update(func(tx store.Tx) error {
+	err := s.env.Store.Update(func(tx store.Tx) error {
 		if err := s.prepareAddress(tx, project, scope, path, global, a, false); err != nil {
 			return err
 		}
@@ -154,6 +155,10 @@ func (s *Service) createAddress(project, scope, path string, global bool, a *com
 		a.Users = nil
 		return store.PutJSON(tx, addrNS(global), path, a)
 	})
+	if err == nil {
+		s.routeUnreachable(ctx)
+	}
+	return err
 }
 
 // prepareAddress validates a and allocates its IP (dry runs skip external
@@ -497,13 +502,21 @@ func (s *Service) deleteAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _, _ := pathParts(path)
 	op, err := s.startOp(r.Context(), opSpec{project: p, scope: scope, opType: "delete", target: path, targetID: a.Id},
-		func(ctx context.Context) error {
-			if err := s.addressInUse(ctx, path, a); err != nil {
-				return err
-			}
-			return s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(addrNS(global), path) })
-		})
+		func(ctx context.Context) error { return s.removeAddress(ctx, path, global, a) })
 	reply(w, op, err)
+}
+
+// removeAddress deletes an address no resource uses, and its Public route
+// if it had one (ADR 0059).
+func (s *Service) removeAddress(ctx context.Context, path string, global bool, a *computev1.Address) error {
+	if err := s.addressInUse(ctx, path, a); err != nil {
+		return err
+	}
+	if err := s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(addrNS(global), path) }); err != nil {
+		return err
+	}
+	s.routeUnreachable(ctx)
+	return nil
 }
 
 // addressInUse refuses deleting an address used by a NAT, a load balancer

@@ -977,6 +977,13 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	name := nodeContainer(d, c, node.Name)
 	if !recreate {
 		if ct, err := d.rt.InspectContainer(ctx, name); err == nil && ct.Running {
+			// A node that outlived the emulator holds the Public routes
+			// of its last run, or none from before ADR 0059.
+			if node.ExternalIP != "" && s.routesPublic() {
+				if err := s.routePublic(ctx, d, name); err != nil {
+					s.env.Log.Warn("gke: node's Public routes not programmed; public addresses may leave for the internet", "node", node.Name, "err", err)
+				}
+			}
 			return nil
 		}
 	}
@@ -1133,7 +1140,7 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 	// there or has already set the routes read here.
 	if extIP != "" && s.routesPublic() {
 		if err := s.routePublic(ctx, d, name); err != nil {
-			s.env.Log.Warn("gke: node cannot reach load balancers by public address", "node", node.Name, "err", err)
+			s.env.Log.Warn("gke: node's Public routes not programmed; public addresses may leave for the internet", "node", node.Name, "err", err)
 		}
 	}
 	return nil
