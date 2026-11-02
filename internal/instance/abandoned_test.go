@@ -15,14 +15,16 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
-// fakeRuntime serves the parts of the Docker API that FindAbandoned and
-// Prune use, and records what was removed, in order.
+// fakeRuntime serves the parts of the Docker API that FindAbandoned,
+// Prune and Shutdown use, and records what was removed, in order.
 type fakeRuntime struct {
 	mu         sync.Mutex
 	containers map[string]fakeObj
 	networks   map[string]fakeObj
 	volumes    map[string]fakeObj
 	removed    []string
+	// failRemove names the objects whose removal fails, as kind:name.
+	failRemove map[string]bool
 }
 
 type fakeObj struct {
@@ -55,6 +57,11 @@ func (f *fakeRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		if _, ok := objs[name]; !ok {
 			w.WriteHeader(404)
+			return
+		}
+		if f.failRemove[kind+":"+name] {
+			w.WriteHeader(500)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "removal failed"})
 			return
 		}
 		delete(objs, name)

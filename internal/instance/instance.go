@@ -709,7 +709,13 @@ func (in *Instance) Done() <-chan struct{} { return in.done }
 
 // Shutdown stops services in reverse order, closes the store and removes
 // runtime files (FR-CORE-006).
-func (in *Instance) Shutdown(ctx context.Context) error {
+func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx, false) }
+
+// shutdown is Shutdown. When logErrs, it also logs each error, such as a
+// container it could not remove, before Done closes: a shutdown the admin
+// API requested has no caller to return them to, and the process may exit
+// as soon as Done closes (#920).
+func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
 	var errs []error
 	in.shutdownOnce.Do(func() {
 		for i := len(in.services) - 1; i >= 0; i-- {
@@ -735,6 +741,11 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 		}
 		if in.tmpDir != "" {
 			_ = os.RemoveAll(in.tmpDir)
+		}
+		if logErrs {
+			for _, err := range leafErrors(errors.Join(errs...)) {
+				in.Env.Log.Warn("cleaning up on shutdown", "err", err)
+			}
 		}
 		close(in.done)
 	})
@@ -771,6 +782,23 @@ func (in *Instance) RequestShutdown() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = in.Shutdown(ctx)
+		_ = in.shutdown(ctx, true)
 	}()
+}
+
+// leafErrors flattens err, and every multi-error (Unwrap() []error) in it,
+// into the errors they hold.
+func leafErrors(err error) []error {
+	if err == nil {
+		return nil
+	}
+	j, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return []error{err}
+	}
+	var out []error
+	for _, e := range j.Unwrap() {
+		out = append(out, leafErrors(e)...)
+	}
+	return out
 }
