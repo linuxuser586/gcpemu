@@ -344,3 +344,50 @@ func TestPinnedNetworkProbeRemovedOnError(t *testing.T) {
 		})
 	}
 }
+
+// TestInspectNetworkBridge: Bridge is the host interface the runtime puts
+// the network on. Docker reports it as com.docker.network.bridge.name, or
+// names it br- and the first 12 characters of the network ID. Podman's
+// compatible API reports neither, only its libpod endpoint's
+// network_interface, e.g. podman0 (#915).
+func TestInspectNetworkBridge(t *testing.T) {
+	const id = "1a2b3c4d5e6f7a8b9c0d"
+	for _, tc := range []struct {
+		name, compat, libpod, want string
+	}{
+		{"Docker default bridge", `{"Id":"` + id + `","Name":"bridge","Options":{"com.docker.network.bridge.name":"docker0"},"IPAM":{"Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}}`, "", "docker0"},
+		{"Docker user network", `{"Id":"` + id + `","Name":"n","IPAM":{"Config":[{"Subnet":"172.18.0.0/16","Gateway":"172.18.0.1"}]}}`, "", "br-1a2b3c4d5e6f"},
+		{"Podman", `{"Id":"` + id + `","Name":"n","Options":{},"IPAM":{"Config":[{"Subnet":"10.89.0.0/24","Gateway":"10.89.0.1"}]}}`, `{"name":"n","id":"` + id + `","driver":"bridge","network_interface":"podman1"}`, "podman1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/libpod/networks/"+id+"/json") && tc.libpod != "":
+					_, _ = io.WriteString(w, tc.libpod)
+				case strings.Contains(r.URL.Path, "/libpod/"):
+					http.Error(w, `{"message":"page not found"}`, http.StatusNotFound)
+				case strings.HasSuffix(r.URL.Path, "/networks/n"), strings.HasSuffix(r.URL.Path, "/networks/bridge"):
+					_, _ = io.WriteString(w, tc.compat)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := "n"
+			if strings.Contains(tc.compat, `"bridge"`) {
+				name = "bridge"
+			}
+			n, err := cl.InspectNetwork(context.Background(), name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n.Bridge != tc.want {
+				t.Errorf("Bridge = %q, want %q", n.Bridge, tc.want)
+			}
+		})
+	}
+}

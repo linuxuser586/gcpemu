@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -87,6 +88,9 @@ type Client struct {
 	// starts records the containers the client started (Disrupted).
 	startsMu sync.Mutex
 	starts   map[string]start // by container ID
+	// noLibpod: the runtime has no libpod API, so is not Podman
+	// (InspectNetwork).
+	noLibpod atomic.Bool
 }
 
 // start is a container's name and start time as the client last started it.
@@ -605,6 +609,18 @@ func (c *Client) InspectNetwork(ctx context.Context, name string) (Network, erro
 			n.Subnet, n.Gateway = cfg.Subnet, cfg.Gateway
 			break
 		}
+	}
+	if n.Bridge == "" && !c.noLibpod.Load() {
+		// Podman's compatible API omits the bridge; its own reports it
+		// (#915).
+		var lp struct {
+			Interface string `json:"network_interface"`
+		}
+		err := c.do(ctx, http.MethodGet, "/libpod/networks/"+url.PathEscape(v.ID)+"/json", nil, nil, &lp)
+		if errors.Is(err, ErrNotFound) {
+			c.noLibpod.Store(true)
+		}
+		n.Bridge = lp.Interface
 	}
 	if n.Bridge == "" && len(v.ID) >= 12 {
 		n.Bridge = "br-" + v.ID[:12]

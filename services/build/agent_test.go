@@ -75,7 +75,7 @@ func TestClientsReachTheInstance(t *testing.T) {
 			t.Setenv(vmrelay.Env, relay)
 			e := start(t)
 			if relay == "0" && emutestx.VMRuntime(t, e.inst) {
-				t.Skip("the VM relay is forced off on a VM runtime, so the host cannot bind the services network's gateway")
+				t.Skip("the VM relay is forced off on a VM runtime, so the host cannot reach the services network")
 			}
 			sa := e.serviceAccount("builder")
 			bucket := "clients-" + relay

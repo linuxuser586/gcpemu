@@ -3,7 +3,11 @@ package instance
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,8 +30,8 @@ func TestStartRegistryRelay(t *testing.T) {
 	}
 	docker := &runtime.Manager{Client: cl, Info: runtime.Info{Name: "docker"}}
 	podman := &runtime.Manager{Client: cl, Info: runtime.Info{Name: "podman"}}
-	vm := vmrelay.Decision{On: true, VM: true, Reason: "gateway not bindable"}
-	bindable := vmrelay.Decision{Reason: "gateway bindable"}
+	vm := vmrelay.Decision{On: true, VM: true, Reason: "runtime OS Docker Desktop"}
+	hostBridge := vmrelay.Decision{Reason: "gateway 172.17.0.1 is held by docker0"}
 
 	tests := []struct {
 		name      string
@@ -47,9 +51,9 @@ func TestStartRegistryRelay(t *testing.T) {
 		{name: "no registry", rt: docker, probe: vm, want: RegistryRelayOff, reason: "Artifact Registry is not running"},
 		{name: "no runtime", rtErr: emu.NoRuntime(errors.New("no socket")), registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayOff, connected: true, reason: "no container runtime"},
 		{name: "runtime error", rtErr: errors.New("timeout"), registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayFailed, connected: true, reason: "timeout"},
-		{name: "Docker on Linux", rt: docker, registry: "127.0.0.1:4561", probe: bindable, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback"},
+		{name: "Docker on Linux", rt: docker, registry: "127.0.0.1:4561", probe: hostBridge, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback"},
 		{name: "VM relay disabled", rt: docker, registry: "127.0.0.1:4561", probe: vmrelay.Decision{VM: true, Forced: true, Reason: "disabled by GCPEMU_VM_RELAY"}, want: RegistryRelayOff, connected: true, reason: "disabled by GCPEMU_VM_RELAY"},
-		{name: "netplane decides otherwise", rt: docker, registry: "127.0.0.1:4561", probe: vm, plane: &bindable, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback"},
+		{name: "netplane decides otherwise", rt: docker, registry: "127.0.0.1:4561", probe: vm, plane: &hostBridge, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback"},
 		{name: "port taken in the VM", rt: docker, registry: "127.0.0.1:4561", probe: vm, startErr: registryrelay.ErrPortTaken, want: RegistryRelaySkipped, connected: true, started: true, reason: "127.0.0.1:4561 is taken"},
 		{name: "start fails", rt: docker, registry: "127.0.0.1:4561", probe: vm, startErr: errors.New("boom"), want: RegistryRelayFailed, connected: true, started: true, reason: "boom"},
 		{name: "Podman machine", rt: podman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
@@ -160,6 +164,58 @@ func TestStartRegistryRelayContainerized(t *testing.T) {
 			}
 			if tt.podman && !strings.Contains(st.Podman, "localhost:4561") {
 				t.Errorf("podman step = %q; want the registry's port", st.Podman)
+			}
+		})
+	}
+}
+
+// TestDefaultRelayProbe: the Registry relay's early probe decides with the
+// default bridge network's name and the runtime's Info as well as its
+// gateway (ADR 0058). Docker Engine and Docker Desktop on one Linux host
+// both report docker0 at 172.17.0.1, which the host holds on docker0:
+// Engine's networks are on the host, so the probe is off, while Desktop's
+// are in its VM, so it is on (#915). Without a default bridge network a
+// Linux probe is off, as the host-mode probe's is, and doctor says it
+// cannot tell; elsewhere every runtime is a VM runtime.
+func TestDefaultRelayProbe(t *testing.T) {
+	engine := runtime.Info{Name: "docker", OS: "Ubuntu 24.04 LTS"}
+	holder := func(a netip.Addr) ([]string, error) {
+		if a.String() == "172.17.0.1" {
+			return []string{"docker0"}, nil
+		}
+		return nil, nil
+	}
+	t.Setenv(vmrelay.Env, "")
+	for _, tc := range []struct {
+		name   string
+		goos   string
+		info   runtime.Info
+		bridge bool // the runtime has a default bridge network
+		on     bool
+		reason string
+	}{
+		{"Docker Engine", "linux", engine, true, false, "held by docker0"},
+		{"Docker Desktop", "linux", runtime.Info{Name: "docker", OS: "Docker Desktop"}, true, true, "Docker Desktop"},
+		{"no default bridge", "linux", engine, false, false, "no default bridge network"},
+		{"Docker Desktop without a default bridge", "linux", runtime.Info{Name: "docker", OS: "Docker Desktop"}, false, true, "Docker Desktop"},
+		{"no default bridge on macOS", "darwin", engine, false, true, "darwin runs container runtimes in a VM"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !tc.bridge || !strings.HasSuffix(r.URL.Path, "/networks/bridge") {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = io.WriteString(w, `{"Id":"0123456789abcdef","Name":"bridge","Options":{"com.docker.network.bridge.name":"docker0"},"IPAM":{"Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}}`)
+			}))
+			defer srv.Close()
+			cl, err := runtime.New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := defaultRelayProbe(tc.goos, holder)(context.Background(), &runtime.Manager{Client: cl, Info: tc.info})
+			if d.On != tc.on || !strings.Contains(d.Reason, tc.reason) {
+				t.Errorf("%+v, want on=%v and %q", d, tc.on, tc.reason)
 			}
 		})
 	}

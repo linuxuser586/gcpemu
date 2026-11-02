@@ -74,9 +74,9 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			// for a relay container there.
 			hostRuntime := false
 			if hasRuntime {
-				vm, known := checkVMRelay(cmd.Context(), out, cl)
-				hostRuntime = known && !vm && cl.Self() == ""
 				info, infoErr := cl.Info(cmd.Context())
+				vm, known := checkVMRelay(cmd.Context(), out, cl, info)
+				hostRuntime = known && !vm && cl.Self() == ""
 				if cl.Self() != "" && infoErr != nil {
 					fmt.Fprintf(out, "[--  ] VM runtime: undetermined (cannot read the runtime's info: %v)\n", infoErr)
 				} else if cl.Self() != "" {
@@ -436,17 +436,17 @@ func checkPlatform(report func(bool, string, string), goos, goarch string) {
 // checkVMRelay prints whether an Instance started now uses the VM relay
 // (ADR 0005), and why. Its services network does not exist before it
 // starts, so the runtime's default bridge network stands in for it; only
-// Linux probes it (ADR 0056). It reports whether the runtime is a VM
-// runtime, if that was determined.
-func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) (vm, known bool) {
+// Linux looks at it, and at what info says of the runtime (ADRs 0056,
+// 0058). It reports whether the runtime is a VM runtime, if that was
+// determined.
+func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client, info emuruntime.Info) (vm, known bool) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	gw := vmrelay.DefaultGateway(ctx, cl)
-	if gw == "" && runtime.GOOS == "linux" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
+	d, ok := vmrelay.DecideDefault(ctx, runtime.GOOS, cl.Self() != "", cl, info, vmrelay.HostHolder)
+	if !ok && runtime.GOOS == "linux" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
 		fmt.Fprintln(out, "[--  ] VM relay: undetermined (no default bridge network to probe)")
 		return false, false
 	}
-	d := vmrelay.Decide(runtime.GOOS, cl.Self() != "", gw)
 	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", d)
 	return d.VM, true
 }
