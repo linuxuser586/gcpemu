@@ -38,6 +38,12 @@ func (r *fakeRouter) setFail(fail bool) {
 	r.fail = fail
 }
 
+func (r *fakeRouter) requests() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
 func (r *fakeRouter) routes() (string, []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -89,15 +95,14 @@ func wantRoutes(t *testing.T, via string, ips []string, routers ...*fakeRouter) 
 func TestPublicRoutesRetriedAfterError(t *testing.T) {
 	ctx := context.Background()
 	e, gk, ce := newRoutedEdge(t)
-	e.extIP = "172.18.0.9"
 	pub := []edgeagent.Listener{{IP: "34.120.0.1", Port: 80}, {IP: "34.120.0.1", Port: 443}}
-	e.routePublicLocked(ctx, true, pub)
+	e.routePublicLocked(ctx, "172.18.0.9", pub)
 	wantRoutes(t, "172.18.0.9", []string{"34.120.0.1"}, gk, ce)
 
 	ce.setFail(true)
-	e.routePublicLocked(ctx, true, nil)
+	e.routePublicLocked(ctx, "172.18.0.9", nil)
 	ce.setFail(false)
-	e.routePublicLocked(ctx, true, pub)
+	e.routePublicLocked(ctx, "172.18.0.9", pub)
 	wantRoutes(t, "172.18.0.9", []string{"34.120.0.1"}, gk, ce)
 }
 
@@ -108,19 +113,17 @@ func TestPublicRoutesRetriedAfterError(t *testing.T) {
 func TestPublicRoutesResentAfterEdgeRecreated(t *testing.T) {
 	ctx := context.Background()
 	e, gk, ce := newRoutedEdge(t)
-	e.extIP = "172.18.0.9"
 	pub := []edgeagent.Listener{{IP: "34.120.0.1", Port: 80}}
-	e.routePublicLocked(ctx, true, pub)
-	e.routePublicLocked(ctx, true, pub)
-	if gk.calls != 1 || ce.calls != 1 {
-		t.Fatalf("unchanged routes sent again: gke %d, compute %d requests, want 1", gk.calls, ce.calls)
+	e.routePublicLocked(ctx, "172.18.0.9", pub)
+	e.routePublicLocked(ctx, "172.18.0.9", pub)
+	if gk.requests() != 1 || ce.requests() != 1 {
+		t.Fatalf("unchanged routes sent again: gke %d, compute %d requests, want 1", gk.requests(), ce.requests())
 	}
 
 	e.forgetContainerLocked()
-	e.extIP = "172.18.0.9"
-	e.routePublicLocked(ctx, true, pub)
-	if gk.calls != 2 || ce.calls != 2 {
-		t.Fatalf("after the edge was recreated: gke %d, compute %d requests, want 2", gk.calls, ce.calls)
+	e.routePublicLocked(ctx, "172.18.0.9", pub)
+	if gk.requests() != 2 || ce.requests() != 2 {
+		t.Fatalf("after the edge was recreated: gke %d, compute %d requests, want 2", gk.requests(), ce.requests())
 	}
 	wantRoutes(t, "172.18.0.9", []string{"34.120.0.1"}, gk, ce)
 }
@@ -146,7 +149,7 @@ func TestPublicRoutesUnreachableWhileNotServed(t *testing.T) {
 	e.d.cfg.Store(&config{})
 	e.syncRoutes(ctx)
 	wantRoutes(t, "", nil, gk, ce)
-	if gk.calls != 2 || ce.calls != 2 {
-		t.Fatalf("gke %d, compute %d requests, want 2: the routes and their removal", gk.calls, ce.calls)
+	if gk.requests() != 2 || ce.requests() != 2 {
+		t.Fatalf("gke %d, compute %d requests, want 2: the routes and their removal", gk.requests(), ce.requests())
 	}
 }

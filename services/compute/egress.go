@@ -527,11 +527,11 @@ func (s *Service) natRules(g *egressProxy, nets []*vpcNet) (string, error) {
 			for _, in := range internal {
 				fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s -j RETURN\n", c.cidr, in)
 			}
-			// The load balancer is emulated, not the internet.
-			if pubVia != "" {
-				for _, ip := range pubIPs {
-					fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s/32 -j RETURN\n", c.cidr, ip)
-				}
+			// The load balancer is emulated, not the internet: its
+			// addresses take their routes, via the Edge relay or
+			// unreachable (ADR 0055).
+			for _, ip := range pubIPs {
+				fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -d %s/32 -j RETURN\n", c.cidr, ip)
 			}
 			fmt.Fprintf(&b, "-A GCPEMU-PRE -s %s -p tcp -j REDIRECT --to-ports %d\n", c.cidr, natSinkPort)
 		}

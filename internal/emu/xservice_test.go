@@ -135,6 +135,12 @@ func TestPublicRoutesScript(t *testing.T) {
 		}
 		return calls
 	}
+	wantCalls := func(t *testing.T, label string, got, want []string) {
+		t.Helper()
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s, calls:\n%s\nwant:\n%s", label, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
 	got := run(t, "172.18.0.9", []string{"34.120.0.1", "34.120.0.2"},
 		`34.120.0.1 via 172.18.0.8 dev eth1 proto 245\n34.120.0.7 via 172.18.0.8 dev eth1 proto 245\n`)
 	want := []string{
@@ -142,9 +148,7 @@ func TestPublicRoutesScript(t *testing.T) {
 		"route replace 34.120.0.1/32 via 172.18.0.9 proto 245",
 		"route replace 34.120.0.2/32 via 172.18.0.9 proto 245",
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	wantCalls(t, "via", got, want)
 	// An empty via rejects the addresses (ADR 0055): replacing the route
 	// via the edge leaves no gap for traffic to leave by the default route.
 	got = run(t, "", []string{"34.120.0.1"},
@@ -153,9 +157,7 @@ func TestPublicRoutesScript(t *testing.T) {
 		"route del 34.120.0.7 proto 245",
 		"route replace unreachable 34.120.0.1/32 proto 245",
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("empty via, calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	wantCalls(t, "empty via", got, want)
 	// No addresses removes every tagged route, unreachable or via.
 	got = run(t, "", nil,
 		`unreachable 34.120.0.1 proto 245\n34.120.0.2 via 172.18.0.8 dev eth1 proto 245\n`)
@@ -163,9 +165,7 @@ func TestPublicRoutesScript(t *testing.T) {
 		"route del 34.120.0.1 proto 245",
 		"route del 34.120.0.2 proto 245",
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("no addresses, calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-	}
+	wantCalls(t, "no addresses", got, want)
 }
 
 // TestPublicRoutesScriptKernel runs the script in a network namespace of

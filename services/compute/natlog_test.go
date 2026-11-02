@@ -279,6 +279,19 @@ func TestNatRulesPublicRoutes(t *testing.T) {
 	if !strings.Contains(r, route) || exempt < 0 || redirect < exempt {
 		t.Fatalf("public routes:\n%s", r)
 	}
+	// While the Edge relay does not serve them, the addresses are
+	// unreachable, and still not the sink's: the client fails at once
+	// rather than being recorded as internet egress (ADR 0055).
+	if err := s.RoutePublic(context.Background(), "", []string{"34.120.0.5"}); err != nil {
+		t.Fatal(err)
+	}
+	r = rules()
+	route = "ip route replace unreachable 34.120.0.5/32 proto 245\n"
+	exempt = strings.Index(r, "-A GCPEMU-PRE -s 10.0.0.0/24 -d 34.120.0.5/32 -j RETURN\n")
+	redirect = strings.Index(r, "-A GCPEMU-PRE -s 10.0.0.0/24 -p tcp -j REDIRECT")
+	if !strings.Contains(r, route) || exempt < 0 || redirect < exempt {
+		t.Fatalf("unreachable public routes:\n%s", r)
+	}
 	if err := s.RoutePublic(context.Background(), "", nil); err != nil {
 		t.Fatal(err)
 	}

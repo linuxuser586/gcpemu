@@ -45,9 +45,9 @@ import (
 // whose containers egress over the external network (GKE nodes with
 // external IPs, the NAT egress proxies) route those addresses via the
 // edge (emu.PublicRouter), so the client the backends see is the node or
-// the NAT, as on GCP. While the edge does not serve them, the routes make
-// them unreachable instead, so their traffic never leaves for the
-// internet (ADR 0055).
+// the NAT, as on GCP. While the Edge relay does not serve them, the
+// routes make them unreachable instead, so their traffic never leaves
+// for the internet (ADR 0055).
 
 // Images lists the container images the lb service launches (pinned by
 // tag; digests are pinned at release).
@@ -611,8 +611,8 @@ func (e *edge) syncRoutes(ctx context.Context) {
 		return // stopped, or the routes were read before a Reset
 	}
 	// The routes cover every external forwarding rule, served or not
-	// (ADR 0055); the edge serves them only for pods, as only GKE nodes
-	// are VPC workloads that call load balancers.
+	// (ADR 0055); the Edge relay serves them only for pods, as only GKE
+	// nodes are VPC workloads that call load balancers.
 	pub := e.d.publicFrontends()
 	serve := pub
 	if len(prs) == 0 {
@@ -621,7 +621,7 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.id == "" && (len(prs) == 0 || len(serve) == 0 && !e.d.hasNEGEndpoints()) {
-		e.routePublicLocked(cctx, false, pub)
+		e.routePublicLocked(cctx, "", pub)
 		return
 	}
 	if err := e.ensureLocked(cctx); err != nil {
@@ -669,12 +669,16 @@ func (e *edge) syncRoutes(ctx context.Context) {
 	}
 	e.public = serve
 	if err := e.pushLocked(cctx); err != nil {
-		// The routes via the edge stay: they fail with "no route to
-		// host" rather than leak, and the next pass repairs them.
+		// The routes via the Edge relay stay: they fail with "no route
+		// to host" rather than leak, and the next pass repairs them.
 		e.env().Log.Warn("lb: programming edge routes", "err", err)
 		return
 	}
-	e.routePublicLocked(cctx, len(serve) > 0, pub)
+	via := ""
+	if len(serve) > 0 {
+		via = e.extIP
+	}
+	e.routePublicLocked(cctx, via, pub)
 }
 
 // publicFrontends returns the external IPv4 forwarding rules, whether or
@@ -723,14 +727,11 @@ func (e *edge) joinExternalLocked(ctx context.Context, rt *runtime.Manager) erro
 }
 
 // routePublicLocked asks the PublicRouters to route the addresses of pub
-// via the edge while it serves them on the external network, to make
-// them unreachable while it does not, or to remove the routes when pub is
-// empty (ADR 0055).
-func (e *edge) routePublicLocked(ctx context.Context, served bool, pub []edgeagent.Listener) {
-	via, ips := "", []string(nil)
-	if served {
-		via = e.extIP
-	}
+// via via, the Edge relay's address on the external network while it
+// serves them there, to make them unreachable when via is empty, or to
+// remove the routes when pub is empty (ADR 0055).
+func (e *edge) routePublicLocked(ctx context.Context, via string, pub []edgeagent.Listener) {
+	var ips []string
 	for _, l := range pub {
 		if len(ips) == 0 || ips[len(ips)-1] != l.IP {
 			ips = append(ips, l.IP)
