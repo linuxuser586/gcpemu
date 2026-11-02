@@ -501,36 +501,56 @@ func TestRecreateOnStall(t *testing.T) {
 	}
 }
 
-// TestDecide: on Linux the gateway probe decides; on Windows and macOS
-// every runtime is a VM runtime, even when another host adapter holds the
-// gateway's address, as WSL's does (#913). 127.0.0.1 stands in for such an
-// address.
+// TestDecide: on Linux a runtime is a VM runtime when it says it is
+// Docker Desktop or rootless, or when its bridge for the network does not
+// hold the network's gateway on the host: another interface holding it
+// (a VPN, libvirt's virbr0, a second runtime's docker0) proves nothing
+// (#915). GCPEMU_VM_RELAY forces either way and VM is still reported. On
+// Windows and macOS every runtime is a VM runtime, even when a host
+// adapter holds the gateway, as WSL's does (#913).
 func TestDecide(t *testing.T) {
+	engine := runtime.Info{Name: "docker", OS: "Ubuntu 24.04 LTS"}
+	desktop := runtime.Info{Name: "docker", OS: "Docker Desktop"}
+	rootless := runtime.Info{Name: "podman", OS: "fedora", Rootless: true}
+	docker0 := runtime.Network{Bridge: "docker0", Gateway: "172.17.0.1"}
+	br := runtime.Network{Bridge: "br-1a2b3c4d5e6f", Gateway: "192.168.122.1"}
+	host := Holder(func(a netip.Addr) (string, error) {
+		return map[string]string{"172.17.0.1": "docker0", "192.168.122.1": "virbr0"}[a.String()], nil
+	})
 	for _, tc := range []struct {
+		name        string
 		goos        string
-		env         string
 		inContainer bool
-		gateway     string
-		on, vm      bool
+		info        runtime.Info
+		net         runtime.Network
+		vm          bool
 		reason      string
 	}{
-		{"linux", "", false, "127.0.0.1", false, false, "gateway 127.0.0.1 bindable"},
-		{"linux", "", false, "192.0.2.1", true, true, "gateway 192.0.2.1 not bindable"},
-		{"linux", "1", false, "127.0.0.1", true, false, "forced by GCPEMU_VM_RELAY"},
-		{"linux", "1", false, "192.0.2.1", true, true, "forced by GCPEMU_VM_RELAY"},
-		{"linux", "0", false, "192.0.2.1", false, true, "disabled by GCPEMU_VM_RELAY"},
-		{"linux", "1", true, "192.0.2.1", false, false, "the emulator runs in a container"},
-		{"windows", "", false, "127.0.0.1", true, true, "windows runs container runtimes in a VM"},
-		{"darwin", "", false, "127.0.0.1", true, true, "darwin runs container runtimes in a VM"},
-		{"windows", "", false, "", true, true, "windows runs container runtimes in a VM"},
-		{"windows", "1", false, "127.0.0.1", true, true, "forced by GCPEMU_VM_RELAY"},
-		{"darwin", "0", false, "127.0.0.1", false, true, "disabled by GCPEMU_VM_RELAY"},
-		{"windows", "", true, "127.0.0.1", false, false, "the emulator runs in a container"},
+		{"Docker Desktop", "linux", false, desktop, docker0, true, "runtime OS Docker Desktop"},
+		{"rootless", "linux", false, rootless, runtime.Network{Bridge: "podman0", Gateway: "10.88.0.1"}, true, "rootless runtime"},
+		{"own bridge", "linux", false, engine, docker0, false, "gateway 172.17.0.1 is held by docker0"},
+		{"other interface", "linux", false, engine, br, true, "gateway 192.168.122.1 is held by virbr0, not the runtime's bridge br-1a2b3c4d5e6f"},
+		{"no interface", "linux", false, engine, runtime.Network{Bridge: "br-0123456789ab", Gateway: "192.0.2.1"}, true, "gateway 192.0.2.1 is not held on the host"},
+		{"windows", "windows", false, engine, docker0, true, "windows runs container runtimes in a VM"},
+		{"darwin", "darwin", false, engine, docker0, true, "darwin runs container runtimes in a VM"},
+		{"windows without a network", "windows", false, engine, runtime.Network{}, true, "windows runs container runtimes in a VM"},
 	} {
-		t.Setenv(Env, tc.env)
-		if d := Decide(tc.goos, tc.inContainer, tc.gateway); d.On != tc.on || d.VM != tc.vm || d.Reason != tc.reason {
-			t.Errorf("Decide(%s, %v, %s) with %s=%q = %+v, want on=%v vm=%v %q", tc.goos, tc.inContainer, tc.gateway, Env, tc.env, d, tc.on, tc.vm, tc.reason)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			for _, env := range []struct{ value, reason string }{
+				{"", tc.reason}, {"1", "forced by GCPEMU_VM_RELAY"}, {"0", "disabled by GCPEMU_VM_RELAY"},
+			} {
+				t.Setenv(Env, env.value)
+				on := env.value == "1" || env.value == "" && tc.vm
+				d := Decide(tc.goos, tc.inContainer, tc.info, tc.net, host)
+				if d.On != on || d.VM != tc.vm || d.Forced != (env.value != "") || d.Reason != env.reason {
+					t.Errorf("%s=%q: %+v, want on=%v vm=%v %q", Env, env.value, d, on, tc.vm, env.reason)
+				}
+			}
+			t.Setenv(Env, "1")
+			if d := Decide(tc.goos, true, tc.info, tc.net, host); d.On || d.VM || d.Reason != "the emulator runs in a container" {
+				t.Errorf("in a container: %+v", d)
+			}
+		})
 	}
 }
 

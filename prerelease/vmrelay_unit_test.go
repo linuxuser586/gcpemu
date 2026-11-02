@@ -16,7 +16,7 @@ func TestRelayProbedOn(t *testing.T) {
 		t.Errorf("on: %v", err)
 	}
 	for name, line := range map[string]string{
-		"off":          "[ok  ] VM relay: off (gateway 172.17.0.1 bindable)\n",
+		"off":          "[ok  ] VM relay: off (gateway 172.17.0.1 is held by docker0)\n",
 		"forced":       "[ok  ] VM relay: on (forced by GCPEMU_VM_RELAY)\n",
 		"undetermined": "[--  ] VM relay: undetermined (no default bridge network to probe)\n",
 		"missing":      "",

@@ -113,6 +113,16 @@ type registryRelayDeps struct {
 	log   *slog.Logger
 }
 
+// defaultRelayProbe is registryRelayDeps.probe on goos: the VM relay
+// decision with the runtime's default bridge network standing in for the
+// services network, as in gcpemu doctor.
+func defaultRelayProbe(goos string, holder vmrelay.Holder) func(context.Context, *runtime.Manager) vmrelay.Decision {
+	return func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision {
+		d, _ := vmrelay.DecideDefault(ctx, goos, false, rt.Client, rt.Info, holder)
+		return d
+	}
+}
+
 // startRegistryRelay starts the Registry relay if the Instance needs one
 // and reports what happened. It asks for the registry first, so that an
 // Instance without one never connects to the runtime for it.
@@ -212,9 +222,7 @@ func (in *Instance) startRegistryRelay() {
 			containerized: func(rt *runtime.Manager) bool {
 				return rt.Self() != ""
 			},
-			probe: func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision {
-				return vmrelay.Decide(goruntime.GOOS, false, vmrelay.DefaultGateway(ctx, rt.Client))
-			},
+			probe: defaultRelayProbe(goruntime.GOOS, vmrelay.HostHolder),
 			target: func(ctx context.Context) (string, vmrelay.Decision, error) {
 				plane, err := in.containers.Netplane(ctx)
 				if err != nil {

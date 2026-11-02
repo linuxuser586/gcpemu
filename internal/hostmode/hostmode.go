@@ -85,9 +85,9 @@ func UnsupportedVM(d runtime.VMDecision) error {
 }
 
 // ErrVMRelay is why an emulator on the host refuses host mode when its VM
-// relay is on because the services network's gateway cannot be bound: its GOOS is
-// linux, but the runtime keeps container networks in a VM the host cannot
-// route to, as Docker Desktop on Linux does (#560).
+// relay is on because the runtime is a VM runtime: its GOOS is linux, but
+// the runtime keeps container networks where the host cannot route to
+// them, as Docker Desktop on Linux does (#560).
 var ErrVMRelay = errors.New("host mode needs a host that can route to container networks, and this host cannot on its VM runtime")
 
 // UnsupportedRelay reports why host mode cannot run with the VM relay

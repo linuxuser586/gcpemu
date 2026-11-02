@@ -270,8 +270,8 @@ type hostModeRuntime struct {
 
 // refuseHostMode fails when cfg asks for host mode on an OS other than
 // Linux (#175), or on Linux in a Containerized Instance on a VM runtime
-// (#492) or on the host with the VM relay on because the services
-// network's gateway cannot be bound (#560), before anything starts. probe returns the runtime's
+// (#492) or on the host with the VM relay on because the runtime is a VM
+// runtime (#560), before anything starts. probe returns the runtime's
 // decisions, or false when the runtime cannot be reached; host mode then
 // fails later, saying it needs a container runtime, as it would anyway.
 func refuseHostMode(cfg *config.Config, goos string, probe func() (hostModeRuntime, bool)) error {
@@ -298,8 +298,8 @@ func refuseHostMode(cfg *config.Config, goos string, probe func() (hostModeRunti
 // whether this Instance is a Containerized Instance on a VM runtime and
 // whether it uses the VM relay, or reports false when the runtime cannot
 // be reached within a few seconds. The services network does not exist
-// yet, so the default bridge network's gateway stands in for the services
-// network's gateway, as in gcpemu doctor; without one the relay is
+// yet, so the default bridge network stands in for the services network,
+// as in gcpemu doctor; without one the relay is
 // decided off. A variable for tests.
 var hostModeProbe = func(setting string) (hostModeRuntime, bool) {
 	cl, err := runtime.Detect()
@@ -314,8 +314,8 @@ var hostModeProbe = func(setting string) (hostModeRuntime, bool) {
 	}
 	r := hostModeRuntime{VM: runtime.DecideVM(setting, cl.Self() != "", info)}
 	if cl.Self() == "" {
-		if gw := vmrelay.DefaultGateway(ctx, cl); gw != "" {
-			r.Relay = vmrelay.Decide(goruntime.GOOS, false, gw)
+		if d, ok := vmrelay.DecideDefault(ctx, goruntime.GOOS, false, cl, info, vmrelay.HostHolder); ok {
+			r.Relay = d
 		}
 	}
 	return r, true

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -82,26 +83,32 @@ func TestRefuseHostModeOnVMRuntime(t *testing.T) {
 }
 
 // An emulator on the host whose VM relay is on because the services
-// network's gateway cannot be bound is on a VM runtime too, as Docker Desktop on
+// network's gateway is not held by its bridge is on a VM runtime too, as Docker Desktop on
 // Linux shows: the host cannot route to the host-mode container (#560).
 // A relay forced on by GCPEMU_VM_RELAY (Linux CI, where the host routes)
 // or off is no reason to refuse.
 func TestRefuseHostModeOnVMRelay(t *testing.T) {
-	const unbindable, bindable = "192.0.2.1", "127.0.0.1" // TEST-NET-1 is on no host interface
+	const unheld, held = "192.0.2.1", "172.17.0.1"
+	holder := func(a netip.Addr) (string, error) {
+		if a.String() == held {
+			return "docker0", nil
+		}
+		return "", nil
+	}
 	for _, tc := range []struct {
 		name    string
 		env     string
 		gateway string
 		reason  string // "" when host mode is accepted
 	}{
-		{name: "not bindable", gateway: unbindable, reason: "gateway 192.0.2.1 not bindable"},
-		{name: "forced on", env: "1", gateway: unbindable},
-		{name: "forced off", env: "0", gateway: unbindable},
-		{name: "off", gateway: bindable},
+		{name: "not held", gateway: unheld, reason: "gateway 192.0.2.1 is not held on the host"},
+		{name: "forced on", env: "1", gateway: unheld},
+		{name: "forced off", env: "0", gateway: unheld},
+		{name: "off", gateway: held},
 	} {
 		t.Setenv(vmrelay.Env, tc.env)
 		probe := func() (hostModeRuntime, bool) {
-			return hostModeRuntime{Relay: vmrelay.Decide("linux", false, tc.gateway)}, true
+			return hostModeRuntime{Relay: vmrelay.Decide("linux", false, runtime.Info{Name: "docker"}, runtime.Network{Bridge: "docker0", Gateway: tc.gateway}, holder)}, true
 		}
 		err := refuseHostMode(&config.Config{HostMode: true}, "linux", probe)
 		if tc.reason == "" {

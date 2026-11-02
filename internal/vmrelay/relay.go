@@ -1,7 +1,7 @@
 // Package vmrelay implements the VM relay (ADR 0005). On a VM runtime
 // (Docker Desktop, Colima, OrbStack, Podman machine) the container
 // networks live inside a virtual machine: the host can neither route to
-// container IPs nor bind the services network's gateway. The relay is a
+// container IPs nor hold the services network's gateway. The relay is a
 // Managed container joined to every network the Instance uses, which
 // publishes one control port on the host's 127.0.0.1. The emulator keeps
 // one yamux session on it, over which it dials container addresses, and
@@ -38,17 +38,17 @@ const Env = "GCPEMU_VM_RELAY"
 // Decision says whether an Instance uses the relay, and why.
 type Decision struct {
 	On bool
-	// VM: the gateway cannot be bound, so the runtime runs in a VM, whose
-	// host network is not the host's.
+	// VM: the runtime is a VM runtime, whose networks the host cannot
+	// route into.
 	VM bool
-	// Forced: GCPEMU_VM_RELAY decided On, not the gateway probe.
+	// Forced: GCPEMU_VM_RELAY decided On, not the runtime.
 	Forced bool
 	Reason string
 }
 
-// Unroutable reports whether the relay is on because the services
-// network's gateway cannot be bound, rather than forced: the host then
-// cannot route to container networks, which live in the runtime's VM.
+// Unroutable reports whether the relay is on because the runtime is a VM
+// runtime, rather than forced: the host then cannot route to container
+// networks, which live in the runtime's VM.
 func (d Decision) Unroutable() bool {
 	return d.On && !d.Forced
 }
@@ -60,22 +60,46 @@ func (d Decision) String() string {
 	return "off (" + d.Reason + ")"
 }
 
+// Holder names the host interface that holds addr, or "" when none does.
+type Holder func(addr netip.Addr) (string, error)
+
+// HostHolder looks addr up among the host's interfaces.
+func HostHolder(addr netip.Addr) (string, error) {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	for _, ifc := range ifs {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if p, ok := a.(*net.IPNet); ok {
+				if ip, ok := netip.AddrFromSlice(p.IP); ok && ip.Unmap() == addr {
+					return ifc.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
 // Decide chooses: never when the emulator runs in a container (ADR 0003),
 // since it is already on every network; otherwise as GCPEMU_VM_RELAY says;
 // otherwise on a VM runtime. On a goos other than Linux every runtime is
-// one (ADR 0056); on Linux it is one when the services network's gateway
-// cannot be bound on the host. Elsewhere a host adapter can hold the
-// gateway's address, as WSL's does, so a bind proves nothing (#913).
-func Decide(goos string, inContainer bool, gateway string) Decision {
+// one (ADR 0056). On Linux it is one when it says it is Docker Desktop or
+// rootless, or when the bridge it reports for network n does not hold n's
+// gateway on the host, as holder finds it (ADR 0058): a bind would pass
+// on any adapter holding the address, e.g. a VPN, libvirt's virbr0 or
+// another runtime's docker0 (#915).
+func Decide(goos string, inContainer bool, info runtime.Info, n runtime.Network, holder Holder) Decision {
 	if inContainer {
 		return Decision{Reason: "the emulator runs in a container"}
 	}
-	vm := true
+	vm, why := true, goos+" runs container runtimes in a VM"
 	if goos == "linux" {
-		if l, err := net.Listen("tcp", net.JoinHostPort(gateway, "0")); err == nil {
-			l.Close()
-			vm = false
-		}
+		vm, why = linuxVM(info, n, holder)
 	}
 	switch strings.ToLower(os.Getenv(Env)) {
 	case "1", "true", "on":
@@ -83,25 +107,52 @@ func Decide(goos string, inContainer bool, gateway string) Decision {
 	case "0", "false", "off":
 		return Decision{VM: vm, Forced: true, Reason: "disabled by " + Env}
 	}
-	if goos != "linux" {
-		return Decision{On: true, VM: true, Reason: goos + " runs container runtimes in a VM"}
-	}
-	if vm {
-		return Decision{On: true, VM: true, Reason: "gateway " + gateway + " not bindable"}
-	}
-	return Decision{Reason: "gateway " + gateway + " bindable"}
+	return Decision{On: vm, VM: vm, Reason: why}
 }
 
-// DefaultGateway is the gateway of the runtime's default bridge network,
-// which stands in for the services network's gateway before the Instance
-// creates it, or "" when there is none.
-func DefaultGateway(ctx context.Context, cl *runtime.Client) string {
+// linuxVM reports whether a Linux runtime is a VM runtime for network n,
+// and why.
+func linuxVM(info runtime.Info, n runtime.Network, holder Holder) (bool, string) {
+	switch {
+	case strings.Contains(info.OS, "Docker Desktop"):
+		return true, "runtime OS " + info.OS
+	case info.Rootless:
+		return true, "rootless runtime"
+	}
+	gw, err := netip.ParseAddr(n.Gateway)
+	if err != nil {
+		return true, "the network has no gateway"
+	}
+	name, err := holder(gw)
+	switch {
+	case err != nil:
+		return true, "cannot read the host's interfaces: " + err.Error()
+	case name == "":
+		return true, "gateway " + n.Gateway + " is not held on the host"
+	case name != n.Bridge:
+		return true, "gateway " + n.Gateway + " is held by " + name + ", not the runtime's bridge " + n.Bridge
+	}
+	return false, "gateway " + n.Gateway + " is held by " + name
+}
+
+// DefaultNetwork is the runtime's default bridge network, which stands in
+// for the services network before the Instance creates it; ok is false
+// when there is none.
+func DefaultNetwork(ctx context.Context, cl *runtime.Client) (n runtime.Network, ok bool) {
 	for _, name := range []string{"bridge", "podman"} {
 		if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
-			return n.Gateway
+			return n, true
 		}
 	}
-	return ""
+	return runtime.Network{}, false
+}
+
+// DecideDefault decides as Decide does, with the runtime's default bridge
+// network standing in for the services network; ok is false when there
+// is none, and the decision then has no network to go by.
+func DecideDefault(ctx context.Context, goos string, inContainer bool, cl *runtime.Client, info runtime.Info, holder Holder) (d Decision, ok bool) {
+	n, ok := DefaultNetwork(ctx, cl)
+	return Decide(goos, inContainer, info, n, holder), ok
 }
 
 // Options configure Start.

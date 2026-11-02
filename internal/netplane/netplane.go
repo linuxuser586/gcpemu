@@ -92,9 +92,9 @@ func (p *Plane) servicesLocked(ctx context.Context) (Net, error) {
 		p.svc = &n
 	}
 	if p.decision == nil {
-		d := vmrelay.Decide(goruntime.GOOS, p.rt.Self() != "", p.svc.Gateway)
+		d := vmrelay.Decide(goruntime.GOOS, p.rt.Self() != "", p.rt.Info, runtime.Network{Bridge: p.svc.Bridge, Gateway: p.svc.Gateway}, vmrelay.HostHolder)
 		p.decision = &d
-		p.log.Info("VM relay "+d.String(), "gateway", p.svc.Gateway)
+		p.log.Info("VM relay "+d.String(), "gateway", p.svc.Gateway, "bridge", p.svc.Bridge)
 	}
 	if p.decision.On && p.relay == nil {
 		if err := p.startRelayLocked(ctx); err != nil {
