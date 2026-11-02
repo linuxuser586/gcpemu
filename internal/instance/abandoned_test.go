@@ -221,3 +221,63 @@ func TestFindTagged(t *testing.T) {
 		t.Errorf("tagged[2] = %+v; want two with both volumes and sorted dirs", a)
 	}
 }
+
+// testDataDir makes a Test data dir at dir holding id, with an owner lock
+// file that nothing holds.
+func testDataDir(t *testing.T, dir, id string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{IDFile: id, OwnerLockFile: ""} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// fakeClient serves f as a runtime for the length of t.
+func fakeClient(t *testing.T, f *fakeRuntime) *runtime.Client {
+	t.Helper()
+	srv := httptest.NewServer(f)
+	t.Cleanup(srv.Close)
+	cl, err := runtime.New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cl
+}
+
+// TestFindAbandonedEndedTest is #914: an ID that only Test data dirs whose
+// owner lock is free hold is Abandoned, even while a container runs; one
+// whose owner lock is held is not.
+func TestFindAbandonedEndedTest(t *testing.T) {
+	root := t.TempDir()
+	ended := testDataDir(t, filepath.Join(root, "ended"), "ended")
+	owned := testDataDir(t, filepath.Join(root, "owned"), "owned")
+	release, err := HoldOwnerLock(owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	cl := fakeClient(t, &fakeRuntime{
+		containers: map[string]fakeObj{
+			"c-ended": {labels: labelled("ended", ended), running: true},
+			"c-owned": {labels: labelled("owned", owned), running: true},
+		},
+		networks: map[string]fakeObj{"n-owned": {labels: labelled("owned", owned)}},
+		volumes:  map[string]fakeObj{"v-ended": {labels: labelled("ended", ended)}},
+	})
+
+	abandoned, err := FindAbandoned(context.Background(), cl, filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(abandoned) != 1 {
+		t.Fatalf("abandoned = %+v; want only ended", abandoned)
+	}
+	if a := abandoned[0]; a.ID != "ended" || !slices.Equal(a.EndedTestDirs, []string{ended}) || a.Unverified || len(a.Containers) != 1 || len(a.Volumes) != 1 {
+		t.Errorf("abandoned[0] = %+v; want ended, an ended test in %s, with its container and volume", a, ended)
+	}
+}

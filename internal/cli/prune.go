@@ -21,10 +21,11 @@ func (o *rootOpts) pruneCmd() *cobra.Command {
 	var yes bool
 	c := &cobra.Command{
 		Use:   "prune",
-		Short: "Remove containers, networks and volumes of gcpemu instances whose data dir is gone",
+		Short: "Remove containers, networks and volumes of gcpemu instances whose data dir is gone or whose test has ended",
 		Long: "Remove the containers, networks and volumes that still carry the ID of a gcpemu instance whose data dir " +
 			"no longer holds it (an Abandoned Instance ID), e.g. after the data dir was deleted or a run crashed. " +
-			"IDs with a running container are never touched. It lists everything first and asks before removing anything.",
+			"IDs with a running container are never touched, except those of a test data dir whose test has ended: " +
+			"their instance is stopped and the dir removed too. It lists everything first and asks before removing anything.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, err := emuruntime.Detect()
@@ -37,7 +38,7 @@ func (o *rootOpts) pruneCmd() *cobra.Command {
 				return err
 			}
 			return runPrune(cmd.OutOrStdout(), cmd.InOrStdin(), yes, found, func(a instance.Abandoned) error {
-				return a.Prune(ctx, cl)
+				return a.Reclaim(ctx, cl)
 			})
 		},
 	}
@@ -52,8 +53,10 @@ func runPrune(out io.Writer, in io.Reader, yes bool, found []instance.Abandoned,
 		return nil
 	}
 	for _, a := range found {
-		fmt.Fprintf(out, "Instance ID %s%s\n", a.ID, unverifiedNote(a))
-		if len(a.Dirs) > 0 {
+		fmt.Fprintf(out, "Instance ID %s%s\n", a.ID, abandonedNote(a))
+		if len(a.EndedTestDirs) > 0 {
+			fmt.Fprintf(out, "  Test data dir: %s (its test has ended; removed too)\n", strings.Join(a.EndedTestDirs, ", "))
+		} else if len(a.Dirs) > 0 {
 			fmt.Fprintf(out, "  data dir:   %s (no longer holds this ID)\n", strings.Join(a.Dirs, ", "))
 		}
 		printNames(out, "containers: ", "", a.Containers, func(c emuruntime.Container) string { return c.Name })
@@ -78,8 +81,12 @@ func runPrune(out io.Writer, in io.Reader, yes bool, found []instance.Abandoned,
 	return errors.Join(errs...)
 }
 
-// unverifiedNote explains an unverified Abandoned Instance ID.
-func unverifiedNote(a instance.Abandoned) string {
+// abandonedNote explains an unverified Abandoned Instance ID, or one
+// that only ended tests hold.
+func abandonedNote(a instance.Abandoned) string {
+	if len(a.EndedTestDirs) > 0 {
+		return " (ended test)"
+	}
 	if !a.Unverified {
 		return ""
 	}

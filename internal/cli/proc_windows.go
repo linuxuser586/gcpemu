@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"os"
 	"syscall"
 
@@ -18,25 +17,6 @@ func detachAttrs() []*syscall.SysProcAttr {
 		{CreationFlags: flags | windows.CREATE_BREAKAWAY_FROM_JOB, HideWindow: true},
 		{CreationFlags: flags, HideWindow: true},
 	}
-}
-
-// stillActive is the exit code GetExitCodeProcess reports for a process
-// that has not exited (STILL_ACTIVE).
-const stillActive = 259
-
-// processAlive reports whether a process with pid exists.
-func processAlive(pid int) bool {
-	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		// Another user's process exists but cannot be opened.
-		return errors.Is(err, windows.ERROR_ACCESS_DENIED)
-	}
-	defer windows.CloseHandle(h)
-	var code uint32
-	if err := windows.GetExitCodeProcess(h, &code); err != nil {
-		return true
-	}
-	return code == stillActive
 }
 
 // freeGiB returns the free space, in GiB, available to the user on the

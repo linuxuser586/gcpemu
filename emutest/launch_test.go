@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/linuxuser586/gcpemu/internal/filelock"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -128,7 +129,7 @@ func TestLaunchFailureKeepsTestDataDirWhenResourcesRemain(t *testing.T) {
 	if _, err := os.Stat(cfg.DataDir); err != nil {
 		t.Fatalf("data dir not kept: %v", err)
 	}
-	unlock, err := lockNow(filepath.Join(cfg.DataDir, ownerLockFile), 0)
+	unlock, err := filelock.TryLock(filepath.Join(cfg.DataDir, instance.OwnerLockFile), 0)
 	if err != nil {
 		t.Fatalf("owner lock of the kept dir still held: %v", err)
 	}

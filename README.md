@@ -664,7 +664,10 @@ holding Postgres and Kubernetes state are kept so resources survive a restart. W
 is deleted, or a run crashes and never starts again, nothing reclaims its objects: `gcpemu doctor`
 warns about such abandoned Instance IDs, and `gcpemu prune` lists their containers, networks and
 volumes and removes them once you confirm (`--yes` skips the question). An ID with a running
-container is never touched.
+container is never touched, except one that only test data dirs whose test has ended hold (a
+test's data dir, which it locks while it runs): `doctor` labels it "(ended test)", and `prune`
+stops its `gcpemu` process if one is left, removes its objects even while they run, and deletes the
+dir.
 
 GKE nodes run k3s, which needs the cpuset cgroup controller. A rootless Podman machine (the
 `podman machine init` default) doesn't give containers one, so GKE needs a rootful Podman machine:

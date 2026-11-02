@@ -14,10 +14,14 @@ var abandonedIDs = []instance.Abandoned{
 		Networks:   []runtime.Network{{ID: "n1", Name: "gcpemu-aaa111-vpc"}, {ID: "n2", Name: "gcpemu-aaa111-psa"}},
 		Volumes:    []runtime.Volume{{Name: "gcpemu-aaa111-pgdata"}}}},
 	{Tagged: instance.Tagged{ID: "bbb222", Networks: []runtime.Network{{ID: "n3", Name: "gcpemu-bbb222-vpc"}}}, Unverified: true},
+	{Tagged: instance.Tagged{ID: "ccc333", Dirs: []string{"/tmp/gcpemu-test-1"},
+		Containers: []runtime.Container{{ID: "c2", Name: "gcpemu-ccc333-gfe", Running: true}}},
+		EndedTestDirs: []string{"/tmp/gcpemu-test-1"}},
 }
 
 // doctor WARNs about each Abandoned Instance ID with its counts, marks
-// legacy ones unverified and points to `gcpemu prune` (#192).
+// legacy ones unverified and ended tests as such, and points to `gcpemu
+// prune` (#192, #914).
 func TestCheckAbandoned(t *testing.T) {
 	var out strings.Builder
 	checkAbandoned(&out, abandonedIDs, nil)
@@ -25,6 +29,7 @@ func TestCheckAbandoned(t *testing.T) {
 	for _, want := range []string{
 		"[WARN] abandoned Instance ID aaa111: 1 container(s), 2 network(s), 1 volume(s)",
 		"[WARN] abandoned Instance ID bbb222: 0 container(s), 1 network(s), 0 volume(s) (unverified",
+		"[WARN] abandoned Instance ID ccc333: 1 container(s), 0 network(s), 0 volume(s) (ended test)",
 		"gcpemu prune",
 	} {
 		if !strings.Contains(s, want) {
@@ -38,8 +43,8 @@ func TestCheckAbandoned(t *testing.T) {
 	}
 }
 
-// prune lists what it removes, volumes on their own line, and removes
-// nothing unless confirmed.
+// prune lists what it removes, volumes on their own line, ended tests'
+// dirs as removed too, and removes nothing unless confirmed.
 func TestPrune(t *testing.T) {
 	for _, tc := range []struct {
 		name, input string
@@ -56,7 +61,7 @@ func TestPrune(t *testing.T) {
 			return nil
 		})
 		s := out.String()
-		if tc.pruned != (len(got) == 2) || tc.pruned != (err == nil) {
+		if tc.pruned != (len(got) == len(abandonedIDs)) || tc.pruned != (err == nil) {
 			t.Errorf("%s: pruned %v, err %v", tc.name, got, err)
 		}
 		for _, want := range []string{
@@ -65,6 +70,8 @@ func TestPrune(t *testing.T) {
 			"volumes:    gcpemu-aaa111-pgdata (their data is lost)",
 			"data dir:   /gone/default",
 			"unverified",
+			"Instance ID ccc333 (ended test)",
+			"Test data dir: /tmp/gcpemu-test-1 (its test has ended; removed too)",
 		} {
 			if !strings.Contains(s, want) {
 				t.Errorf("%s: missing %q in:\n%s", tc.name, want, s)

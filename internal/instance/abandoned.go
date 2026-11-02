@@ -24,36 +24,57 @@ type Tagged struct {
 }
 
 // Abandoned is an Abandoned Instance ID: one that still tags containers,
-// networks or volumes but that no data dir holds, so no future Instance
-// reclaims them (#192).
+// networks or volumes but that no data dir holds, or that only Test data
+// dirs whose test has ended hold, so no future Instance reclaims them
+// (#192, #914).
 type Abandoned struct {
 	Tagged
 	// Unverified: none of its objects records its data dir (LabelDir), so
 	// only the dirs under StateHome were searched for one holding the ID;
 	// a --data-dir Instance elsewhere may still own it.
 	Unverified bool
+	// EndedTestDirs are the Test data dirs whose test has ended that hold
+	// the ID; Reclaim removes them too. Its containers may still run.
+	EndedTestDirs []string
 }
 
 // FindAbandoned returns the Abandoned Instance IDs on the runtime, sorted.
-// An ID is never Abandoned while any of its containers runs, while a dir
-// its objects record holds it in its instance-id file, or while a dir
-// under stateHome does. A dir that looks missing may be on an unmounted
-// disk or inside a container, so callers confirm before pruning.
+// An ID that a dir its objects record, or a dir under stateHome, holds in
+// its instance-id file is Abandoned only when every such dir is a Test
+// data dir whose owner lock is free: its test has ended, even if its
+// containers still run (ADR 0057). Any other ID is never Abandoned while
+// any of its containers runs. A dir that looks missing may be on an
+// unmounted disk or inside a container, so callers confirm before
+// pruning.
 func FindAbandoned(ctx context.Context, cl *runtime.Client, stateHome string) ([]Abandoned, error) {
 	tagged, err := FindTagged(ctx, cl)
 	if err != nil {
 		return nil, err
 	}
-	held := map[string]bool{}
+	holders := map[string][]string{}
 	// Glob fails only on a malformed pattern.
 	idFiles, _ := filepath.Glob(filepath.Join(stateHome, "*", IDFile))
 	for _, f := range idFiles {
-		held[readID(filepath.Dir(f))] = true
+		dir := filepath.Dir(f)
+		holders[readID(dir)] = append(holders[readID(dir)], dir)
 	}
 	var out []Abandoned
 	for _, a := range tagged {
-		running := slices.ContainsFunc(a.Containers, func(c runtime.Container) bool { return c.Running })
-		if running || held[a.ID] || slices.ContainsFunc(a.Dirs, func(d string) bool { return readID(d) == a.ID }) {
+		held := holders[a.ID]
+		for _, d := range a.Dirs {
+			if readID(d) == a.ID && !slices.Contains(held, d) {
+				held = append(held, d)
+			}
+		}
+		if len(held) > 0 {
+			if slices.ContainsFunc(held, func(d string) bool { return !testEnded(d) }) {
+				continue
+			}
+			sort.Strings(held)
+			out = append(out, Abandoned{Tagged: a, EndedTestDirs: held})
+			continue
+		}
+		if slices.ContainsFunc(a.Containers, func(c runtime.Container) bool { return c.Running }) {
 			continue
 		}
 		out = append(out, Abandoned{Tagged: a, Unverified: len(a.Dirs) == 0})
@@ -113,6 +134,20 @@ func FindTagged(ctx context.Context, cl *runtime.Client) ([]Tagged, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// findTagged returns what the Instance ID id tags on the runtime.
+func findTagged(ctx context.Context, cl *runtime.Client, id string) (Tagged, error) {
+	tagged, err := FindTagged(ctx, cl)
+	if err != nil {
+		return Tagged{}, err
+	}
+	for _, a := range tagged {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return Tagged{ID: id}, nil
 }
 
 // readID returns the Instance ID that dir holds, or "".
