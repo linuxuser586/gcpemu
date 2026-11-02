@@ -110,11 +110,12 @@ func (s *Service) RoutePublic(ctx context.Context, via string, ips []string) err
 	return errors.Join(errs...)
 }
 
-// routesPublic reports whether there are public routes to program.
+// routesPublic reports whether there are public routes to program, via
+// the Edge relay or unreachable (ADR 0055).
 func (s *Service) routesPublic() bool {
 	s.pubMu.Lock()
 	defer s.pubMu.Unlock()
-	return s.pubVia != ""
+	return len(s.pubIPs) > 0
 }
 
 // routePublic programs the current public routes into a node container.

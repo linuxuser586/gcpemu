@@ -135,6 +135,12 @@ func TestPublicRoutesScript(t *testing.T) {
 		}
 		return calls
 	}
+	wantCalls := func(t *testing.T, label string, got, want []string) {
+		t.Helper()
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s, calls:\n%s\nwant:\n%s", label, strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	}
 	got := run(t, "172.18.0.9", []string{"34.120.0.1", "34.120.0.2"},
 		`34.120.0.1 via 172.18.0.8 dev eth1 proto 245\n34.120.0.7 via 172.18.0.8 dev eth1 proto 245\n`)
 	want := []string{
@@ -142,11 +148,61 @@ func TestPublicRoutesScript(t *testing.T) {
 		"route replace 34.120.0.1/32 via 172.18.0.9 proto 245",
 		"route replace 34.120.0.2/32 via 172.18.0.9 proto 245",
 	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	wantCalls(t, "via", got, want)
+	// An empty via rejects the addresses (ADR 0055): replacing the route
+	// via the edge leaves no gap for traffic to leave by the default route.
+	got = run(t, "", []string{"34.120.0.1"},
+		`34.120.0.1 via 172.18.0.8 dev eth1 proto 245\nunreachable 34.120.0.7 proto 245\n`)
+	want = []string{
+		"route del 34.120.0.7 proto 245",
+		"route replace unreachable 34.120.0.1/32 proto 245",
 	}
-	got = run(t, "", []string{"34.120.0.1"}, `34.120.0.1 via 172.18.0.8 dev eth1 proto 245\n`)
-	if strings.Join(got, "\n") != "route del 34.120.0.1 proto 245" {
-		t.Errorf("empty via: %q", got)
+	wantCalls(t, "empty via", got, want)
+	// No addresses removes every tagged route, unreachable or via.
+	got = run(t, "", nil,
+		`unreachable 34.120.0.1 proto 245\n34.120.0.2 via 172.18.0.8 dev eth1 proto 245\n`)
+	want = []string{
+		"route del 34.120.0.1 proto 245",
+		"route del 34.120.0.2 proto 245",
+	}
+	wantCalls(t, "no addresses", got, want)
+}
+
+// TestPublicRoutesScriptKernel runs the script in a network namespace of
+// its own, where the kernel shows that switching an address between a
+// route via the edge and an unreachable route leaves exactly one route
+// for it, and that no addresses removes both kinds (ADR 0055).
+func TestPublicRoutesScriptKernel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("network namespaces are Linux-only")
+	}
+	ns := func(script string) (string, error) {
+		out, err := exec.Command("unshare", "-rn", "sh", "-ec",
+			"ip link set lo up\nip route add 172.18.0.0/16 dev lo\n"+script+"ip -4 route show proto 245\n").CombinedOutput()
+		return string(out), err
+	}
+	if out, err := ns(""); err != nil {
+		t.Skipf("no unprivileged network namespace: %v: %s", err, out)
+	}
+	ips := []string{"34.120.0.1", "34.120.0.2"}
+	for _, tc := range []struct {
+		name, script, want string
+	}{
+		{"via", PublicRoutesScript("172.18.0.9", ips),
+			"34.120.0.1 via 172.18.0.9 dev lo \n34.120.0.2 via 172.18.0.9 dev lo \n"},
+		{"via then unreachable", PublicRoutesScript("172.18.0.9", ips) + PublicRoutesScript("", ips[:1]),
+			"unreachable 34.120.0.1 \n"},
+		{"unreachable then via", PublicRoutesScript("", ips) + PublicRoutesScript("172.18.0.9", ips[1:]),
+			"34.120.0.2 via 172.18.0.9 dev lo \n"},
+		{"removed", PublicRoutesScript("172.18.0.9", ips[:1]) + PublicRoutesScript("", ips[1:]) + PublicRoutesScript("", nil),
+			""},
+	} {
+		out, err := ns(tc.script)
+		if err != nil {
+			t.Fatalf("%s: %v: %s", tc.name, err, out)
+		}
+		if out != tc.want {
+			t.Errorf("%s: routes:\n%q\nwant:\n%q", tc.name, out, tc.want)
+		}
 	}
 }

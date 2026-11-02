@@ -114,6 +114,10 @@ _Avoid_: egress gateway, NAT gateway
 One Cloud NAT configuration on a Cloud Router, as GCP names it: which subnetwork ranges it translates and with which NAT IPs. The NAT egress proxy carries out what the NAT gateways of a VPC network say.
 _Avoid_: NAT config (unqualified), NAT (unqualified, when the configuration is meant)
 
+**Offline sink**:
+Where the NAT egress proxy sends VPC workloads' TCP connections bound for the internet while the Instance is offline, recording each one as an egress attempt rather than letting it leave. Addresses the emulator serves itself, such as forwarding rule addresses, never reach it.
+_Avoid_: NAT sink, egress sink
+
 **Edge relay**:
 The Managed container that relays clients to the load balancer's Data plane on forwarding rule ports the emulator cannot bind itself, serves external forwarding rule addresses to VPC workloads, and relays the Data plane to backends the host cannot route to, such as GKE pods.
 _Avoid_: edge (unqualified), LB proxy
@@ -121,6 +125,10 @@ _Avoid_: edge (unqualified), LB proxy
 **Edge alias**:
 An address on the load balancer's container network that the Edge relay holds for one forwarding rule IP and serves its ports on. No container joining that network takes it.
 _Avoid_: alias (unqualified), listener address
+
+**Public route**:
+A route that a NAT egress proxy, or a GKE node with an external IP, holds for an external forwarding rule's address while the forwarding rule exists: via the Edge relay while it serves the address, unreachable otherwise. Traffic to the address never leaves for the internet (ADR 0055).
+_Avoid_: LB route, host route (unqualified)
 
 **Infrastructure address**:
 An address on a subnetwork that an Instance's own Managed container holds only while workloads there need it, such as the Edge relay's address on a GKE cluster's subnetwork. No resource can reserve or take it, but it never keeps the subnetwork from being deleted: the container leaves instead (ADR 0032).

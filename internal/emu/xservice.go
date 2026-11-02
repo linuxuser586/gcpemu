@@ -413,8 +413,11 @@ func (n SubnetNet) AliasError(runtime, out string, err error) error {
 // gateway is the host, which cannot serve the load balancer's forwarding
 // rule addresses, so the load balancer has its Edge relay serve them on
 // the external network at via and asks for host routes to ips via it
-// (#187). An empty via removes the routes. Implementations apply the
-// routes to containers they start later, too.
+// (#187). An empty via, while the Edge relay does not serve ips, asks
+// for unreachable routes to them instead, so that traffic for them never
+// leaves for the internet, where they belong to someone else (ADR 0055).
+// Empty ips removes the routes. Implementations apply the routes to
+// containers they start later, too.
 type PublicRouter interface {
 	RoutePublic(ctx context.Context, via string, ips []string) error
 }
@@ -425,16 +428,19 @@ const PublicRouteProto = 245
 
 // PublicRoutesScript returns idempotent sh commands (iproute2) that make
 // the host routes to ips via via the only routes tagged PublicRouteProto.
-// An empty via removes them all.
+// An empty via makes them unreachable routes instead, and empty ips
+// removes them all (see PublicRouter).
 func PublicRoutesScript(via string, ips []string) string {
-	if via == "" {
-		ips = nil
-	}
 	want := strings.Join(ips, " ")
 	var b strings.Builder
-	fmt.Fprintf(&b, "for r in $(ip -4 route show proto %d | awk '{print $1}'); do case \" %s \" in *\" $r \"*) ;; *) ip route del \"$r\" proto %d ;; esac; done\n", PublicRouteProto, want, PublicRouteProto)
+	// An unreachable route is listed by its type first.
+	fmt.Fprintf(&b, "for r in $(ip -4 route show proto %d | awk '{print ($1 == \"unreachable\" ? $2 : $1)}'); do case \" %s \" in *\" $r \"*) ;; *) ip route del \"$r\" proto %d ;; esac; done\n", PublicRouteProto, want, PublicRouteProto)
 	for _, ip := range ips {
-		fmt.Fprintf(&b, "ip route replace %s/32 via %s proto %d\n", ip, via, PublicRouteProto)
+		if via == "" {
+			fmt.Fprintf(&b, "ip route replace unreachable %s/32 proto %d\n", ip, PublicRouteProto)
+		} else {
+			fmt.Fprintf(&b, "ip route replace %s/32 via %s proto %d\n", ip, via, PublicRouteProto)
+		}
 	}
 	return b.String()
 }
