@@ -155,7 +155,7 @@ A client inside a VM runtime's VM but outside the Instance's networks, such as t
 _Avoid_: daemon client, in-VM client
 
 **VM runtime**:
-A container runtime whose networks live inside a virtual machine the host cannot route into. On Windows and macOS every container runtime is one, e.g. Docker Desktop, Colima, OrbStack or Podman machine; on Linux, one whose Bridge gateway the host cannot bind, e.g. Docker Desktop on Linux.
+A container runtime whose networks the host cannot route into: those that live inside a virtual machine, and, on Linux, rootless runtimes, whose networks live in their own network namespace. On Windows and macOS every container runtime is one, e.g. Docker Desktop, Colima, OrbStack or Podman machine; on Linux, one that reports itself as Docker Desktop or rootless, or whose Bridge gateway is not held by the bridge it reports, e.g. Docker Desktop on Linux or rootless Podman.
 
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
@@ -166,7 +166,7 @@ The Managed container that gives VM-side clients the registry of an Instance on 
 _Avoid_: registry proxy, registry forwarder
 
 **Bridge gateway**:
-The host's side of a container runtime's bridge network: the address the host would hold on that network. On Linux, when the host cannot bind it, the network lives in a VM, so the runtime is a VM runtime and an Instance on the host uses the VM relay. On Windows and macOS it says nothing, since another adapter on the host can hold the same address.
+The host's side of a container runtime's bridge network: the address the host would hold on that network. On Linux, only the bridge the runtime reports for that network holding it shows the network is on the host; when another adapter, such as a VPN, libvirt or a second runtime's bridge, holds it, or none does, the runtime is a VM runtime and an Instance on the host uses the VM relay. On Windows and macOS it says nothing, since no runtime makes its bridges on the host.
 _Avoid_: gateway (unqualified)
 
 **Loopback alias**:

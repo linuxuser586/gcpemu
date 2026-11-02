@@ -14,4 +14,4 @@ ADR 0005 chose the VM relay with a probe: an Instance on the host is on a VM run
 
 - The VM relay's reason on these hosts names the OS, as in `on (windows runs container runtimes in a VM)`, not a gateway. Doctor no longer reports the relay as undetermined there when the runtime has no default bridge network.
 - Pre-release check 7 requires the relay to be on and not forced, not on because of the probe.
-- On Linux, a host adapter holding a services network's gateway can still mislead the probe. #915 tracks that.
+- On Linux, a host adapter holding a services network's gateway can still mislead the probe. #915 tracks that, and ADR 0058 replaces the probe there.
