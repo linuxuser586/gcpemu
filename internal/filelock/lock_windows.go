@@ -1,4 +1,4 @@
-package emutest
+package filelock
 
 import (
 	"errors"

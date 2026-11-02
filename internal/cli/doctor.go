@@ -1371,7 +1371,7 @@ func checkAbandoned(out io.Writer, found []instance.Abandoned, err error) {
 	}
 	for _, a := range found {
 		fmt.Fprintf(out, "[WARN] abandoned Instance ID %s: %d container(s), %d network(s), %d volume(s)%s\n",
-			a.ID, len(a.Containers), len(a.Networks), len(a.Volumes), unverifiedNote(a))
+			a.ID, len(a.Containers), len(a.Networks), len(a.Volumes), abandonedNote(a))
 	}
 	fmt.Fprintln(out, "       fix: `gcpemu prune` lists and removes them; their networks can push new instances onto fallback ranges")
 }

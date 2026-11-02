@@ -97,7 +97,7 @@ func removeAtEnd(t testing.TB, dir string) {
 	if _, loaded := cleanupRegistered.LoadOrStore(key, true); loaded {
 		return
 	}
-	release, err := holdOwnerLock(dir)
+	release, err := instance.HoldOwnerLock(dir)
 	if err != nil {
 		cleanupRegistered.Delete(key)
 		t.Fatalf("emutest: %v", err)

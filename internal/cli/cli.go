@@ -484,7 +484,7 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 			// that scripts can start a new instance right away.
 			for i := 0; i < 600; i++ {
 				_, err := os.Stat(pidFile)
-				if os.IsNotExist(err) && (pid <= 0 || !processAlive(pid)) {
+				if os.IsNotExist(err) && (pid <= 0 || !instance.ProcessAlive(pid)) {
 					fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q stopped\n", cfg.Instance)
 					return nil
 				}

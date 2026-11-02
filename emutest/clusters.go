@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/filelock"
 )
 
 // ClusterOpTimeout is how long tests wait for a GKE cluster operation. It
@@ -50,8 +52,8 @@ func HoldClusterSlot(t testing.TB) {
 	for i := range paths {
 		paths[i] = filepath.Join(os.TempDir(), fmt.Sprintf("gcpemu-test-cluster-%d.lock", i))
 	}
-	release, err := acquireLock(paths, testDeadline(t))
-	if errors.Is(err, errLockHeld) {
+	release, err := filelock.Acquire(paths, testDeadline(t))
+	if errors.Is(err, filelock.ErrHeld) {
 		err = fmt.Errorf("all %d cluster slots are still held by other tests (%s sets how many)", n, ClusterSlotsEnv)
 	}
 	if err != nil {

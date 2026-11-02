@@ -1,6 +1,6 @@
 //go:build unix
 
-package emutest
+package filelock
 
 import (
 	"errors"
