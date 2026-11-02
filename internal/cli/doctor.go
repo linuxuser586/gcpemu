@@ -435,17 +435,18 @@ func checkPlatform(report func(bool, string, string), goos, goarch string) {
 
 // checkVMRelay prints whether an Instance started now uses the VM relay
 // (ADR 0005), and why. Its services network does not exist before it
-// starts, so the runtime's default bridge network stands in for it. It
-// reports whether the runtime is a VM runtime, if that was determined.
+// starts, so the runtime's default bridge network stands in for it; only
+// Linux probes it (ADR 0056). It reports whether the runtime is a VM
+// runtime, if that was determined.
 func checkVMRelay(ctx context.Context, out io.Writer, cl *emuruntime.Client) (vm, known bool) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	gw := vmrelay.DefaultGateway(ctx, cl)
-	if gw == "" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
+	if gw == "" && runtime.GOOS == "linux" && cl.Self() == "" && os.Getenv(vmrelay.Env) == "" {
 		fmt.Fprintln(out, "[--  ] VM relay: undetermined (no default bridge network to probe)")
 		return false, false
 	}
-	d := vmrelay.Decide(cl.Self() != "", gw)
+	d := vmrelay.Decide(runtime.GOOS, cl.Self() != "", gw)
 	fmt.Fprintf(out, "[ok  ] VM relay: %s\n", d)
 	return d.VM, true
 }

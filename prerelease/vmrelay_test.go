@@ -16,7 +16,7 @@ import (
 // vmRelay is step 7 of both suites: the VM relay's own tests, which CI
 // runs only on Linux with GCPEMU_VM_RELAY forcing the relay on (#653).
 // With GCPEMU_VM_RELAY cleared, gcpemu on the host must decide the relay
-// is on by the bridge-gateway probe, as a user's Instance would, and
+// is on, not forced, as a user's Instance would (ADR 0056), and
 // every test of the package must pass against the runtime: a skip means
 // it didn't run.
 func vmRelay(t *testing.T, ctx context.Context) {
@@ -31,8 +31,8 @@ func vmRelay(t *testing.T, ctx context.Context) {
 	}
 }
 
-// relayProbedOn reports why doctor's output doesn't say the VM relay is on
-// by the bridge-gateway probe, or nil when it does.
+// relayProbedOn reports why doctor's output doesn't say the VM relay is on,
+// not forced, or nil when it does.
 func relayProbedOn(doctorOut string) error {
 	for line := range strings.Lines(doctorOut) {
 		status, d, ok := strings.Cut(strings.TrimSpace(line), "VM relay: ")
@@ -40,7 +40,7 @@ func relayProbedOn(doctorOut string) error {
 			continue
 		}
 		if status != "[ok  ] " || !strings.HasPrefix(d, "on (") || strings.Contains(d, "forced") {
-			return fmt.Errorf("gcpemu doctor reports the VM relay %s, not on by the bridge-gateway probe:\n%s", d, doctorOut)
+			return fmt.Errorf("gcpemu doctor reports the VM relay %s, not on and unforced:\n%s", d, doctorOut)
 		}
 		return nil
 	}

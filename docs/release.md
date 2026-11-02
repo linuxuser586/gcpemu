@@ -208,8 +208,9 @@ routing domains are gone.
 
 CI runs the VM relay's own tests (`internal/vmrelay`) only on Linux, where `GCPEMU_VM_RELAY=1`
 forces the relay on. Check 7 runs them on each runtime, where the relay is really used (#653).
-With `GCPEMU_VM_RELAY` cleared, `gcpemu doctor` on the host must report the VM relay as on because
-the bridge gateway isn't bindable: off, undetermined or forced fails the check. Then every test in the
+With `GCPEMU_VM_RELAY` cleared, `gcpemu doctor` on the host must report the VM relay as on, and not
+forced, since every container runtime on macOS and Windows is a VM runtime (ADR 0056): off,
+undetermined or forced fails the check. Then every test in the
 package runs with `go test` against the runtime, and any failure or skip fails the check.
 
 ### Registry relay (macOS and Windows)

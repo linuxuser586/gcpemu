@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -212,7 +213,7 @@ func (in *Instance) startRegistryRelay() {
 				return rt.Self() != ""
 			},
 			probe: func(ctx context.Context, rt *runtime.Manager) vmrelay.Decision {
-				return vmrelay.Decide(false, vmrelay.DefaultGateway(ctx, rt.Client))
+				return vmrelay.Decide(goruntime.GOOS, false, vmrelay.DefaultGateway(ctx, rt.Client))
 			},
 			target: func(ctx context.Context) (string, vmrelay.Decision, error) {
 				plane, err := in.containers.Netplane(ctx)

@@ -315,7 +315,7 @@ var hostModeProbe = func(setting string) (hostModeRuntime, bool) {
 	r := hostModeRuntime{VM: runtime.DecideVM(setting, cl.Self() != "", info)}
 	if cl.Self() == "" {
 		if gw := vmrelay.DefaultGateway(ctx, cl); gw != "" {
-			r.Relay = vmrelay.Decide(false, gw)
+			r.Relay = vmrelay.Decide(goruntime.GOOS, false, gw)
 		}
 	}
 	return r, true
