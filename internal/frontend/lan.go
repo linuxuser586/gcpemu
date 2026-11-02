@@ -172,6 +172,11 @@ func (f *Frontend) serveLAN(srv *http.Server, l net.Listener, mode string, addrs
 	f.lan = append(f.lan, srv)
 	f.lanAddrs = append(f.lanAddrs, addrs...)
 	sort.Strings(f.lanAddrs)
+	// Log before publishing the endpoint, so whoever sees it also sees
+	// the exposure logged.
+	for _, a := range addrs {
+		f.env.Log.Info("Google front end exposed", "address", a, "mode", mode)
+	}
 	f.env.Endpoints.Set(LANEndpoint, strings.Join(f.lanAddrs, ","))
 	f.mu.Unlock()
 	go func() {
@@ -179,9 +184,6 @@ func (f *Frontend) serveLAN(srv *http.Server, l net.Listener, mode string, addrs
 			f.env.Log.Error("Google front end stopped on --gfe-bind address", "address", l.Addr().String(), "err", err)
 		}
 	}()
-	for _, a := range addrs {
-		f.env.Log.Info("Google front end exposed", "address", a, "mode", mode)
-	}
 	return true
 }
 
