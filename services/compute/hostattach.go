@@ -380,8 +380,10 @@ func (s *Service) restoreOffers(ctx context.Context) {
 func (s *Service) Snapshot(ctx context.Context, dir string) error { return nil }
 
 // Restore implements emu.Snapshotter: Reset withdrew the Offered ports,
-// and those of the snapshot are served again.
+// and those of the snapshot are served again; the snapshot's reserved
+// addresses get their Public routes (ADR 0059).
 func (s *Service) Restore(ctx context.Context, dir string) error {
+	s.routeUnreachable(ctx)
 	s.restoreOffers(ctx)
 	return nil
 }

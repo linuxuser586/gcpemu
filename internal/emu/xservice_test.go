@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -112,7 +113,7 @@ func TestPublicRoutesScript(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
-	run := func(t *testing.T, via string, ips []string, existing string) []string {
+	run := func(t *testing.T, existing string, sets ...PublicRoutes) []string {
 		t.Helper()
 		dir := t.TempDir()
 		log := filepath.Join(dir, "log")
@@ -121,7 +122,7 @@ func TestPublicRoutesScript(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "ip"), []byte(stub), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command("sh", "-c", PublicRoutesScript(via, ips))
+		cmd := exec.Command("sh", "-c", PublicRoutesScript(sets...))
 		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("script: %v: %s", err, out)
@@ -141,8 +142,8 @@ func TestPublicRoutesScript(t *testing.T) {
 			t.Errorf("%s, calls:\n%s\nwant:\n%s", label, strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 	}
-	got := run(t, "172.18.0.9", []string{"34.120.0.1", "34.120.0.2"},
-		`34.120.0.1 via 172.18.0.8 dev eth1 proto 245\n34.120.0.7 via 172.18.0.8 dev eth1 proto 245\n`)
+	got := run(t, `34.120.0.1 via 172.18.0.8 dev eth1 proto 245\n34.120.0.7 via 172.18.0.8 dev eth1 proto 245\n`,
+		PublicRoutes{Via: "172.18.0.9", Dests: []string{"34.120.0.1", "34.120.0.2"}})
 	want := []string{
 		"route del 34.120.0.7 proto 245",
 		"route replace 34.120.0.1/32 via 172.18.0.9 proto 245",
@@ -151,21 +152,76 @@ func TestPublicRoutesScript(t *testing.T) {
 	wantCalls(t, "via", got, want)
 	// An empty via rejects the addresses (ADR 0055): replacing the route
 	// via the edge leaves no gap for traffic to leave by the default route.
-	got = run(t, "", []string{"34.120.0.1"},
-		`34.120.0.1 via 172.18.0.8 dev eth1 proto 245\nunreachable 34.120.0.7 proto 245\n`)
+	got = run(t, `34.120.0.1 via 172.18.0.8 dev eth1 proto 245\nunreachable 34.120.0.7 proto 245\n`,
+		PublicRoutes{Dests: []string{"34.120.0.1"}})
 	want = []string{
 		"route del 34.120.0.7 proto 245",
 		"route replace unreachable 34.120.0.1/32 proto 245",
 	}
 	wantCalls(t, "empty via", got, want)
 	// No addresses removes every tagged route, unreachable or via.
-	got = run(t, "", nil,
-		`unreachable 34.120.0.1 proto 245\n34.120.0.2 via 172.18.0.8 dev eth1 proto 245\n`)
+	got = run(t, `unreachable 34.120.0.1 proto 245\n34.120.0.2 via 172.18.0.8 dev eth1 proto 245\n`)
 	want = []string{
 		"route del 34.120.0.1 proto 245",
 		"route del 34.120.0.2 proto 245",
 	}
 	wantCalls(t, "no addresses", got, want)
+	// Two senders' sets (ADR 0059): the pools are CIDRs, listed as such,
+	// and a stale route of either set is removed while the other set's
+	// stay. An address the relay serves stays routed via it even when
+	// another set has it unreachable.
+	got = run(t, `unreachable 34.16.0.0/12 proto 245\nunreachable 198.51.100.7 proto 245\n34.120.0.1 via 172.18.0.8 dev eth1 proto 245\n34.120.0.9 via 172.18.0.8 dev eth1 proto 245\n`,
+		PublicRoutes{Via: "172.18.0.9", Dests: []string{"34.120.0.1", "198.51.100.5"}},
+		PublicRoutes{Dests: []string{"34.16.0.0/12", "34.120.0.0/14", "198.51.100.5"}})
+	want = []string{
+		"route del 198.51.100.7 proto 245",
+		"route del 34.120.0.9 proto 245",
+		"route replace 34.120.0.1/32 via 172.18.0.9 proto 245",
+		"route replace 198.51.100.5/32 via 172.18.0.9 proto 245",
+		"route replace unreachable 34.16.0.0/12 proto 245",
+		"route replace unreachable 34.120.0.0/14 proto 245",
+	}
+	wantCalls(t, "two sets", got, want)
+}
+
+// TestPublicRouteTable: each sender replaces only its own set, an empty
+// set removes it, and the merged script and destinations do not depend
+// on the order the senders came in (ADR 0059).
+func TestPublicRouteTable(t *testing.T) {
+	var a, b PublicRouteTable
+	if !a.Empty() || a.Script() != PublicRoutesScript() {
+		t.Fatalf("zero table: empty %v, script:\n%s", a.Empty(), a.Script())
+	}
+	lb := PublicRoutes{Via: "172.18.0.9", Dests: []string{"34.120.0.1"}}
+	pools := PublicRoutes{Dests: []string{"34.16.0.0/12", "34.120.0.0/14"}}
+	a.Set("lb", lb)
+	a.Set("compute", pools)
+	b.Set("compute", pools)
+	b.Set("lb", lb)
+	if a.Script() != b.Script() {
+		t.Errorf("script depends on order:\n%s\nvs\n%s", a.Script(), b.Script())
+	}
+	want := []string{"34.16.0.0/12", "34.120.0.0/14", "34.120.0.1/32"}
+	if got := a.Dests(); !slices.Equal(got, want) {
+		t.Errorf("Dests = %v, want %v", got, want)
+	}
+	// The load balancer removing its routes leaves compute's.
+	a.Set("lb", PublicRoutes{Via: "172.18.0.9"})
+	if got := a.Dests(); !slices.Equal(got, want[:2]) || a.Empty() {
+		t.Errorf("after lb removal, Dests = %v", got)
+	}
+	if want := PublicRoutesScript(pools); a.Script() != want {
+		t.Errorf("after lb removal, script:\n%s\nwant:\n%s", a.Script(), want)
+	}
+	// The table keeps its own copy of a set.
+	pools.Dests[0] = "10.0.0.0/8"
+	if got := a.Dests(); got[0] != "34.16.0.0/12" {
+		t.Errorf("Set kept the caller's slice: %v", got)
+	}
+	a.Set("compute", PublicRoutes{})
+	if !a.Empty() {
+		t.Errorf("not empty after both senders removed their routes")
+	}
 }
 
 // TestPublicRoutesScriptKernel runs the script in a network namespace of
@@ -185,17 +241,26 @@ func TestPublicRoutesScriptKernel(t *testing.T) {
 		t.Skipf("no unprivileged network namespace: %v: %s", err, out)
 	}
 	ips := []string{"34.120.0.1", "34.120.0.2"}
+	pools := []string{"34.16.0.0/12", "34.120.0.0/14"}
+	via := func(d ...string) PublicRoutes { return PublicRoutes{Via: "172.18.0.9", Dests: d} }
+	unreachable := func(d ...string) PublicRoutes { return PublicRoutes{Dests: d} }
 	for _, tc := range []struct {
 		name, script, want string
 	}{
-		{"via", PublicRoutesScript("172.18.0.9", ips),
+		{"via", PublicRoutesScript(via(ips...)),
 			"34.120.0.1 via 172.18.0.9 dev lo \n34.120.0.2 via 172.18.0.9 dev lo \n"},
-		{"via then unreachable", PublicRoutesScript("172.18.0.9", ips) + PublicRoutesScript("", ips[:1]),
+		{"via then unreachable", PublicRoutesScript(via(ips...)) + PublicRoutesScript(unreachable(ips[:1]...)),
 			"unreachable 34.120.0.1 \n"},
-		{"unreachable then via", PublicRoutesScript("", ips) + PublicRoutesScript("172.18.0.9", ips[1:]),
+		{"unreachable then via", PublicRoutesScript(unreachable(ips...)) + PublicRoutesScript(via(ips[1:]...)),
 			"34.120.0.2 via 172.18.0.9 dev lo \n"},
-		{"removed", PublicRoutesScript("172.18.0.9", ips[:1]) + PublicRoutesScript("", ips[1:]) + PublicRoutesScript("", nil),
+		{"removed", PublicRoutesScript(via(ips[:1]...)) + PublicRoutesScript(unreachable(ips[1:]...)) + PublicRoutesScript(),
 			""},
+		// The pools hold behind the relay's /32, and the load balancer
+		// removing its routes leaves them (ADR 0059).
+		{"pools and relay", PublicRoutesScript(via(ips[:1]...), unreachable(pools...)),
+			"unreachable 34.16.0.0/12 \nunreachable 34.120.0.0/14 \n34.120.0.1 via 172.18.0.9 dev lo \n"},
+		{"pools after relay removed", PublicRoutesScript(via(ips[:1]...), unreachable(pools...)) + PublicRoutesScript(unreachable(pools...)),
+			"unreachable 34.16.0.0/12 \nunreachable 34.120.0.0/14 \n"},
 	} {
 		out, err := ns(tc.script)
 		if err != nil {

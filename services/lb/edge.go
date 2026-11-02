@@ -761,7 +761,7 @@ func (e *edge) routePublicLocked(ctx context.Context, via string, pub []edgeagen
 			continue
 		}
 		if r, isRouter := svc.(emu.PublicRouter); isRouter {
-			if err := r.RoutePublic(ctx, via, ips); err != nil {
+			if err := r.RoutePublic(ctx, emu.PublicRoutesFromLB, emu.PublicRoutes{Via: via, Dests: ips}); err != nil {
 				e.env().Log.Warn("lb: routing forwarding rule addresses via the edge", "service", name, "err", err)
 				ok = false
 			}

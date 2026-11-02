@@ -131,11 +131,9 @@ type Service struct {
 	// calls the watch of a Cluster server makes (serverwatch.go).
 	serverWait    func(ctx context.Context, id string) error
 	serverRestart func(ctx context.Context, key string) (string, error)
-	// pubVia and pubIPs are the load balancer's public routes
-	// (RoutePublic), programmed into nodes with external IPs.
-	pubMu  sync.Mutex
-	pubVia string
-	pubIPs []string
+	// pub holds the Public routes (RoutePublic), programmed into nodes
+	// with external IPs.
+	pub emu.PublicRouteTable
 	// loops maps cluster key/namespace/name to the loopback address a
 	// LoadBalancer Service holds on a VM runtime (lbservices.go), and
 	// publishedHost is the address LoadBalancer Services' Published ports

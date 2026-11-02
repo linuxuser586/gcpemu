@@ -7,10 +7,12 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/project"
@@ -409,37 +411,143 @@ func (n SubnetNet) AliasError(runtime, out string, err error) error {
 
 // PublicRouter is implemented by services whose Managed containers send
 // traffic for public addresses over the external network: GKE nodes with
-// external IPs, and the NAT egress proxies. The external network's
-// gateway is the host, which cannot serve the load balancer's forwarding
-// rule addresses, so the load balancer has its Edge relay serve them on
-// the external network at via and asks for host routes to ips via it
-// (#187). An empty via, while the Edge relay does not serve ips, asks
-// for unreachable routes to them instead, so that traffic for them never
-// leaves for the internet, where they belong to someone else (ADR 0055).
-// Empty ips removes the routes. Implementations apply the routes to
-// containers they start later, too.
+// external IPs, and the NAT egress proxies. They hold Public routes for
+// addresses the emulator hands out as public, so that traffic for them
+// never leaves for the internet, where they belong to someone else.
+//
+// Two senders ask for them, each replacing only its own set (from): the
+// load balancer for its forwarding rule addresses, via its Edge relay on
+// the external network while the relay serves them there (#187) and
+// unreachable otherwise (ADR 0055); and compute, for the External
+// address pools and the reserved external addresses outside them,
+// always unreachable (ADR 0059). An empty set removes the sender's
+// routes. Implementations apply the routes to containers they start
+// later, too.
 type PublicRouter interface {
-	RoutePublic(ctx context.Context, via string, ips []string) error
+	RoutePublic(ctx context.Context, from string, r PublicRoutes) error
+}
+
+// The senders of Public routes (PublicRouter).
+const (
+	PublicRoutesFromLB      = "lb"
+	PublicRoutesFromCompute = "compute"
+)
+
+// PublicRoutes is one sender's set of Public routes: Dests, each an
+// address (a /32) or a CIDR, via Via, or unreachable when Via is empty.
+type PublicRoutes struct {
+	Via   string
+	Dests []string
+}
+
+// PublicRouteTable holds the sets of Public routes a PublicRouter was
+// asked for, by sender. The zero value is empty and ready to use.
+type PublicRouteTable struct {
+	mu   sync.Mutex
+	sets map[string]PublicRoutes
+}
+
+// Set replaces the set of sender from.
+func (t *PublicRouteTable) Set(from string, r PublicRoutes) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sets == nil {
+		t.sets = map[string]PublicRoutes{}
+	}
+	if len(r.Dests) == 0 {
+		delete(t.sets, from)
+		return
+	}
+	t.sets[from] = PublicRoutes{Via: r.Via, Dests: slices.Clone(r.Dests)}
+}
+
+// Empty reports whether no sender has Public routes.
+func (t *PublicRouteTable) Empty() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.sets) == 0
+}
+
+// Script returns PublicRoutesScript of every sender's set.
+func (t *PublicRouteTable) Script() string {
+	return PublicRoutesScript(t.all()...)
+}
+
+// Dests returns the destinations of every sender's routes as CIDRs, in
+// the order Script programs them.
+func (t *PublicRouteTable) Dests() []string {
+	var out []string
+	for _, r := range mergePublicRoutes(t.all()) {
+		out = append(out, r.dest)
+	}
+	return out
+}
+
+// all returns the sets by sender name, so that a script for the same
+// sets is the same.
+func (t *PublicRouteTable) all() []PublicRoutes {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	names := slices.Sorted(maps.Keys(t.sets))
+	out := make([]PublicRoutes, 0, len(names))
+	for _, n := range names {
+		out = append(out, t.sets[n])
+	}
+	return out
 }
 
 // PublicRouteProto tags the routes PublicRoutesScript programs, so that a
 // later script finds and removes the stale ones.
 const PublicRouteProto = 245
 
+// publicRoute is one route of merged sets: dest is a CIDR.
+type publicRoute struct {
+	dest, via string
+}
+
+// mergePublicRoutes merges sets into one route per destination. Where
+// sets disagree, a route via a relay wins over an unreachable one: an
+// address a relay serves must stay reachable (ADR 0059).
+func mergePublicRoutes(sets []PublicRoutes) []publicRoute {
+	var out []publicRoute
+	at := map[string]int{}
+	for _, r := range sets {
+		for _, d := range r.Dests {
+			if !strings.Contains(d, "/") {
+				d += "/32"
+			}
+			if i, ok := at[d]; ok {
+				if out[i].via == "" {
+					out[i].via = r.Via
+				}
+				continue
+			}
+			at[d] = len(out)
+			out = append(out, publicRoute{dest: d, via: r.Via})
+		}
+	}
+	return out
+}
+
 // PublicRoutesScript returns idempotent sh commands (iproute2) that make
-// the host routes to ips via via the only routes tagged PublicRouteProto.
-// An empty via makes them unreachable routes instead, and empty ips
-// removes them all (see PublicRouter).
-func PublicRoutesScript(via string, ips []string) string {
-	want := strings.Join(ips, " ")
+// the routes of sets the only routes tagged PublicRouteProto: removing
+// those of no set, so that no sender's routes are lost to another's
+// update. No sets removes them all (see PublicRouter).
+func PublicRoutesScript(sets ...PublicRoutes) string {
+	routes := mergePublicRoutes(sets)
+	want := make([]string, 0, len(routes))
+	for _, r := range routes {
+		// ip lists a /32 route by its address alone.
+		want = append(want, strings.TrimSuffix(r.dest, "/32"))
+	}
 	var b strings.Builder
 	// An unreachable route is listed by its type first.
-	fmt.Fprintf(&b, "for r in $(ip -4 route show proto %d | awk '{print ($1 == \"unreachable\" ? $2 : $1)}'); do case \" %s \" in *\" $r \"*) ;; *) ip route del \"$r\" proto %d ;; esac; done\n", PublicRouteProto, want, PublicRouteProto)
-	for _, ip := range ips {
-		if via == "" {
-			fmt.Fprintf(&b, "ip route replace unreachable %s/32 proto %d\n", ip, PublicRouteProto)
+	fmt.Fprintf(&b, "for r in $(ip -4 route show proto %d | awk '{print ($1 == \"unreachable\" ? $2 : $1)}'); do case \" %s \" in *\" $r \"*) ;; *) ip route del \"$r\" proto %d ;; esac; done\n", PublicRouteProto, strings.Join(want, " "), PublicRouteProto)
+	for _, r := range routes {
+		if r.via == "" {
+			fmt.Fprintf(&b, "ip route replace unreachable %s proto %d\n", r.dest, PublicRouteProto)
 		} else {
-			fmt.Fprintf(&b, "ip route replace %s/32 via %s proto %d\n", ip, via, PublicRouteProto)
+			fmt.Fprintf(&b, "ip route replace %s via %s proto %d\n", r.dest, r.via, PublicRouteProto)
 		}
 	}
 	return b.String()

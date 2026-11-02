@@ -269,7 +269,7 @@ func TestNatRulesPublicRoutes(t *testing.T) {
 		}
 		return r
 	}
-	if err := s.RoutePublic(context.Background(), "172.22.0.9", []string{"34.120.0.5"}); err != nil {
+	if err := s.RoutePublic(context.Background(), emu.PublicRoutesFromLB, emu.PublicRoutes{Via: "172.22.0.9", Dests: []string{"34.120.0.5"}}); err != nil {
 		t.Fatal(err)
 	}
 	r := rules()
@@ -282,7 +282,7 @@ func TestNatRulesPublicRoutes(t *testing.T) {
 	// While the Edge relay does not serve them, the addresses are
 	// unreachable, and still not the sink's: the client fails at once
 	// rather than being recorded as internet egress (ADR 0055).
-	if err := s.RoutePublic(context.Background(), "", []string{"34.120.0.5"}); err != nil {
+	if err := s.RoutePublic(context.Background(), emu.PublicRoutesFromLB, emu.PublicRoutes{Dests: []string{"34.120.0.5"}}); err != nil {
 		t.Fatal(err)
 	}
 	r = rules()
@@ -292,7 +292,7 @@ func TestNatRulesPublicRoutes(t *testing.T) {
 	if !strings.Contains(r, route) || exempt < 0 || redirect < exempt {
 		t.Fatalf("unreachable public routes:\n%s", r)
 	}
-	if err := s.RoutePublic(context.Background(), "", nil); err != nil {
+	if err := s.RoutePublic(context.Background(), emu.PublicRoutesFromLB, emu.PublicRoutes{}); err != nil {
 		t.Fatal(err)
 	}
 	if r := rules(); strings.Contains(r, "34.120.0.5") || !strings.Contains(r, "proto 245 | awk") {
