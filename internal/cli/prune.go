@@ -37,7 +37,7 @@ func (o *rootOpts) pruneCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runPrune(cmd.OutOrStdout(), cmd.InOrStdin(), yes, found, func(a instance.Abandoned) error {
+			return runPrune(cmd.OutOrStdout(), cmd.InOrStdin(), yes, found, func(a instance.Abandoned) (bool, error) {
 				return a.Reclaim(ctx, cl)
 			})
 		},
@@ -46,15 +46,17 @@ func (o *rootOpts) pruneCmd() *cobra.Command {
 	return c
 }
 
-// runPrune lists found, asks unless yes, and prunes each ID.
-func runPrune(out io.Writer, in io.Reader, yes bool, found []instance.Abandoned, prune func(instance.Abandoned) error) error {
+// runPrune lists found, asks unless yes, and prunes each ID. prune
+// reports false for an ID it kept: between the listing and the prune a
+// test came to own its Test data dir again, or another reclaim took it.
+func runPrune(out io.Writer, in io.Reader, yes bool, found []instance.Abandoned, prune func(instance.Abandoned) (bool, error)) error {
 	if len(found) == 0 {
 		fmt.Fprintln(out, "nothing to prune: no abandoned Instance IDs")
 		return nil
 	}
 	for _, a := range found {
 		fmt.Fprintf(out, "Instance ID %s%s\n", a.ID, abandonedNote(a))
-		if len(a.EndedTestDirs) > 0 {
+		if a.EndedTest() {
 			fmt.Fprintf(out, "  Test data dir: %s (its test has ended; removed too)\n", strings.Join(a.EndedTestDirs, ", "))
 		} else if len(a.Dirs) > 0 {
 			fmt.Fprintf(out, "  data dir:   %s (no longer holds this ID)\n", strings.Join(a.Dirs, ", "))
@@ -72,8 +74,13 @@ func runPrune(out io.Writer, in io.Reader, yes bool, found []instance.Abandoned,
 	}
 	var errs []error
 	for _, a := range found {
-		if err := prune(a); err != nil {
+		pruned, err := prune(a)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("instance ID %s: %w", a.ID, err))
+			continue
+		}
+		if !pruned {
+			fmt.Fprintf(out, "kept Instance ID %s: its Test data dir is owned again, or another reclaim has it\n", a.ID)
 			continue
 		}
 		fmt.Fprintf(out, "removed Instance ID %s\n", a.ID)
@@ -84,7 +91,7 @@ func runPrune(out io.Writer, in io.Reader, yes bool, found []instance.Abandoned,
 // abandonedNote explains an unverified Abandoned Instance ID, or one
 // that only ended tests hold.
 func abandonedNote(a instance.Abandoned) string {
-	if len(a.EndedTestDirs) > 0 {
+	if a.EndedTest() {
 		return " (ended test)"
 	}
 	if !a.Unverified {

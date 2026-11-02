@@ -44,7 +44,8 @@ func TestCheckAbandoned(t *testing.T) {
 }
 
 // prune lists what it removes, volumes on their own line, ended tests'
-// dirs as removed too, and removes nothing unless confirmed.
+// dirs as removed too, and removes nothing unless confirmed; an ID it
+// finds owned again is reported kept.
 func TestPrune(t *testing.T) {
 	for _, tc := range []struct {
 		name, input string
@@ -56,9 +57,9 @@ func TestPrune(t *testing.T) {
 	} {
 		var out strings.Builder
 		var got []string
-		err := runPrune(&out, strings.NewReader(tc.input), tc.yes, abandonedIDs, func(a instance.Abandoned) error {
+		err := runPrune(&out, strings.NewReader(tc.input), tc.yes, abandonedIDs, func(a instance.Abandoned) (bool, error) {
 			got = append(got, a.ID)
-			return nil
+			return a.ID != "ccc333", nil // a test owns ccc333's dir again
 		})
 		s := out.String()
 		if tc.pruned != (len(got) == len(abandonedIDs)) || tc.pruned != (err == nil) {
@@ -75,6 +76,11 @@ func TestPrune(t *testing.T) {
 		} {
 			if !strings.Contains(s, want) {
 				t.Errorf("%s: missing %q in:\n%s", tc.name, want, s)
+			}
+		}
+		for id, want := range map[string]bool{"removed Instance ID aaa111": true, "kept Instance ID ccc333: its Test data dir is owned again": true, "removed Instance ID ccc333": false} {
+			if tc.pruned && strings.Contains(s, id) != want {
+				t.Errorf("%s: %q shown = %v, want %v:\n%s", tc.name, id, !want, want, s)
 			}
 		}
 		if strings.Contains(s, "[y/N]") == tc.yes {

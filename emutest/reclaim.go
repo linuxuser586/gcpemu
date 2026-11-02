@@ -61,7 +61,7 @@ func sweep(ctx context.Context, cl *runtime.Client, logf logFunc) {
 	}
 	for _, a := range tagged {
 		for _, dir := range a.Dirs {
-			if err := instance.ReclaimEnded(ctx, cl, a, dir); err != nil {
+			if _, err := instance.ReclaimEnded(ctx, cl, a, dir); err != nil {
 				logf("emutest: reclaiming Instance %s of an ended test: %v", a.ID, err)
 			}
 		}
@@ -73,7 +73,7 @@ func sweep(ctx context.Context, cl *runtime.Client, logf logFunc) {
 	}
 	for _, a := range abandoned {
 		// Ended Test data dirs were reclaimed above, or still fail to be.
-		if a.Unverified || len(a.EndedTestDirs) > 0 || !allInTempDir(a.Dirs) {
+		if a.Unverified || a.EndedTest() || !allInTempDir(a.Dirs) {
 			continue
 		}
 		if err := a.Prune(ctx, cl); err != nil {

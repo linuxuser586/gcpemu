@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -117,20 +118,29 @@ func assertReclaimed(t *testing.T, f *fakeRuntime, a Abandoned) {
 
 // TestReclaimEndedTest is #914: reclaiming an ended test removes its
 // objects, running container included, and its dir, after which it is no
-// longer Abandoned; two reclaims at once both succeed.
+// longer Abandoned; two reclaims at once both succeed, and only one
+// reports reclaiming it.
 func TestReclaimEndedTest(t *testing.T) {
 	f, a := endedTest(t)
 	cl := fakeClient(t, f)
 	ctx := context.Background()
 	var wg sync.WaitGroup
+	var reclaimed atomic.Int32
 	for range 2 {
 		wg.Go(func() {
-			if err := a.Reclaim(ctx, cl); err != nil {
+			ok, err := a.Reclaim(ctx, cl)
+			if err != nil {
 				t.Errorf("Reclaim: %v", err)
+			}
+			if ok {
+				reclaimed.Add(1)
 			}
 		})
 	}
 	wg.Wait()
+	if n := reclaimed.Load(); n != 1 {
+		t.Errorf("%d reclaims reported reclaiming it, want 1", n)
+	}
 	assertReclaimed(t, f, a)
 	if again, err := FindAbandoned(ctx, cl, filepath.Join(t.TempDir(), "state")); err != nil || len(again) != 0 {
 		t.Errorf("after the reclaim: %+v, %v", again, err)
@@ -164,8 +174,8 @@ func TestReclaimStopsInstanceProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := a.Reclaim(context.Background(), fakeClient(t, f)); err != nil {
-		t.Fatal(err)
+	if ok, err := a.Reclaim(context.Background(), fakeClient(t, f)); err != nil || !ok {
+		t.Fatalf("Reclaim = %v, %v; want reclaimed", ok, err)
 	}
 	if want := []string{"POST /_emu/v1/shutdown tok removed:0"}; !slices.Equal(asked, want) {
 		t.Errorf("asked %q; want %q", asked, want)
@@ -192,8 +202,8 @@ func TestReclaimKillsOnlyGcpemu(t *testing.T) {
 		t.Run(tc.exe, func(t *testing.T) {
 			f, a := endedTest(t)
 			s := startSleeper(t, a.EndedTestDirs[0], tc.exe)
-			if err := a.Reclaim(context.Background(), fakeClient(t, f)); err != nil {
-				t.Fatal(err)
+			if ok, err := a.Reclaim(context.Background(), fakeClient(t, f)); err != nil || !ok {
+				t.Fatalf("Reclaim = %v, %v; want reclaimed", ok, err)
 			}
 			if s.alive() == tc.killed {
 				t.Errorf("process of %q alive after the reclaim: %v, want %v", tc.exe, !tc.killed, !tc.killed)

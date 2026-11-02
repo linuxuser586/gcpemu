@@ -38,6 +38,10 @@ type Abandoned struct {
 	EndedTestDirs []string
 }
 
+// EndedTest reports whether only Test data dirs whose test has ended hold
+// the ID.
+func (a Abandoned) EndedTest() bool { return len(a.EndedTestDirs) > 0 }
+
 // FindAbandoned returns the Abandoned Instance IDs on the runtime, sorted.
 // An ID that a dir its objects record, or a dir under stateHome, holds in
 // its instance-id file is Abandoned only when every such dir is a Test
@@ -56,7 +60,8 @@ func FindAbandoned(ctx context.Context, cl *runtime.Client, stateHome string) ([
 	idFiles, _ := filepath.Glob(filepath.Join(stateHome, "*", IDFile))
 	for _, f := range idFiles {
 		dir := filepath.Dir(f)
-		holders[readID(dir)] = append(holders[readID(dir)], dir)
+		id := readID(dir)
+		holders[id] = append(holders[id], dir)
 	}
 	var out []Abandoned
 	for _, a := range tagged {
@@ -136,8 +141,8 @@ func FindTagged(ctx context.Context, cl *runtime.Client) ([]Tagged, error) {
 	return out, nil
 }
 
-// findTagged returns what the Instance ID id tags on the runtime.
-func findTagged(ctx context.Context, cl *runtime.Client, id string) (Tagged, error) {
+// taggedByID returns what the Instance ID id tags on the runtime.
+func taggedByID(ctx context.Context, cl *runtime.Client, id string) (Tagged, error) {
 	tagged, err := FindTagged(ctx, cl)
 	if err != nil {
 		return Tagged{}, err

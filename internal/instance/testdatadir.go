@@ -97,10 +97,16 @@ func lockOwnerFile(dir string, deadline time.Time) (release func(), err error) {
 	}
 }
 
+// lockOwnerNow takes the lock on dir's existing owner lock file without
+// waiting, failing with filelock.ErrHeld while a test holds it.
+func lockOwnerNow(dir string) (release func(), err error) {
+	return filelock.TryLock(filepath.Join(dir, OwnerLockFile), 0)
+}
+
 // testEnded reports whether dir is a Test data dir whose test has ended:
 // its owner lock file exists and nothing holds the lock.
 func testEnded(dir string) bool {
-	release, err := filelock.TryLock(filepath.Join(dir, OwnerLockFile), 0)
+	release, err := lockOwnerNow(dir)
 	if err != nil {
 		return false
 	}
@@ -109,60 +115,63 @@ func testEnded(dir string) bool {
 }
 
 // Reclaim removes a's containers, networks and volumes, and its ended
-// Test data dirs as ReclaimEnded does.
-func (a Abandoned) Reclaim(ctx context.Context, cl *runtime.Client) error {
-	if len(a.EndedTestDirs) == 0 {
-		return a.Prune(ctx, cl)
+// Test data dirs as ReclaimEnded does. It reports false when it removed
+// nothing because a test owns the dirs again or another reclaim has them.
+func (a Abandoned) Reclaim(ctx context.Context, cl *runtime.Client) (reclaimed bool, err error) {
+	if !a.EndedTest() {
+		return true, a.Prune(ctx, cl)
 	}
 	var errs []error
 	for _, dir := range a.EndedTestDirs {
-		errs = append(errs, ReclaimEnded(ctx, cl, a.Tagged, dir))
+		ok, err := ReclaimEnded(ctx, cl, a.Tagged, dir)
+		reclaimed = reclaimed || ok
+		errs = append(errs, err)
 	}
-	return errors.Join(errs...)
+	return reclaimed, errors.Join(errs...)
 }
 
 // ReclaimEnded prunes a and removes dir if dir is a Test data dir holding
 // a's ID whose test has ended, which taking its owner lock proves. An
 // Instance process that still serves dir is stopped first. Any other dir
-// is left alone.
-func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string) error {
+// is left alone, and reclaimed is false.
+func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string) (reclaimed bool, err error) {
 	if readID(dir) != a.ID {
-		return nil
+		return false, nil
 	}
-	release, err := filelock.TryLock(filepath.Join(dir, OwnerLockFile), 0)
+	release, err := lockOwnerNow(dir)
 	if errors.Is(err, filelock.ErrHeld) || errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	release = sync.OnceFunc(release)
 	defer release()
 	// Another reclaim may have reclaimed it before this one took the lock.
 	if readID(dir) != a.ID {
-		return nil
+		return false, nil
 	}
 	if stopProcess(ctx, dir, a.ID) {
 		// The Instance may have changed its objects before it stopped.
-		if a, err = findTagged(ctx, cl, a.ID); err != nil {
-			return err
+		if a, err = taggedByID(ctx, cl, a.ID); err != nil {
+			return false, err
 		}
 	}
 	if err := a.Prune(ctx, cl); err != nil {
-		return err // the dir still holds the ID, so a later reclaim tries again
+		return false, err // the dir still holds the ID, so a later reclaim tries again
 	}
 	// The ID goes first, so that no other reclaim takes the dir for this
 	// Instance's. Windows cannot remove the open lock file, so the dir is
 	// removed once more after the release.
 	if err := os.Remove(filepath.Join(dir, IDFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return false, err
 	}
 	err = os.RemoveAll(dir)
 	release()
 	if err != nil {
-		return os.RemoveAll(dir)
+		return true, os.RemoveAll(dir)
 	}
-	return nil
+	return true, nil
 }
 
 // How long stopProcess waits for a process to exit once asked to stop,
