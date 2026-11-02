@@ -83,17 +83,18 @@ func TestRefuseHostModeOnVMRuntime(t *testing.T) {
 }
 
 // An emulator on the host whose VM relay is on because the services
-// network's gateway is not held by its bridge is on a VM runtime too, as Docker Desktop on
-// Linux shows: the host cannot route to the host-mode container (#560).
+// network's Bridge gateway is not held by its bridge is on a VM runtime
+// too, as Docker Desktop on Linux shows: the host cannot route to the
+// host-mode container (#560).
 // A relay forced on by GCPEMU_VM_RELAY (Linux CI, where the host routes)
 // or off is no reason to refuse.
 func TestRefuseHostModeOnVMRelay(t *testing.T) {
 	const unheld, held = "192.0.2.1", "172.17.0.1"
-	holder := func(a netip.Addr) (string, error) {
+	holder := func(a netip.Addr) ([]string, error) {
 		if a.String() == held {
-			return "docker0", nil
+			return []string{"docker0"}, nil
 		}
-		return "", nil
+		return nil, nil
 	}
 	for _, tc := range []struct {
 		name    string

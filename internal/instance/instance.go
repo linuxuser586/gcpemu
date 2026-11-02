@@ -299,8 +299,8 @@ func refuseHostMode(cfg *config.Config, goos string, probe func() (hostModeRunti
 // whether it uses the VM relay, or reports false when the runtime cannot
 // be reached within a few seconds. The services network does not exist
 // yet, so the default bridge network stands in for the services network,
-// as in gcpemu doctor; without one the relay is
-// decided off. A variable for tests.
+// as in gcpemu doctor; without one the relay is decided off. A variable
+// for tests.
 var hostModeProbe = func(setting string) (hostModeRuntime, bool) {
 	cl, err := runtime.Detect()
 	if err != nil {

@@ -513,9 +513,10 @@ func TestDecide(t *testing.T) {
 	desktop := runtime.Info{Name: "docker", OS: "Docker Desktop"}
 	rootless := runtime.Info{Name: "podman", OS: "fedora", Rootless: true}
 	docker0 := runtime.Network{Bridge: "docker0", Gateway: "172.17.0.1"}
-	br := runtime.Network{Bridge: "br-1a2b3c4d5e6f", Gateway: "192.168.122.1"}
-	host := Holder(func(a netip.Addr) (string, error) {
-		return map[string]string{"172.17.0.1": "docker0", "192.168.122.1": "virbr0"}[a.String()], nil
+	virbrHeld := runtime.Network{Bridge: "br-1a2b3c4d5e6f", Gateway: "192.168.122.1"}
+	sharedHeld := runtime.Network{Bridge: "br-0f0e0d0c0b0a", Gateway: "10.8.0.1"}
+	holder := Holder(func(a netip.Addr) ([]string, error) {
+		return map[string][]string{"172.17.0.1": {"docker0"}, "192.168.122.1": {"virbr0"}, "10.8.0.1": {"tun0", "br-0f0e0d0c0b0a"}}[a.String()], nil
 	})
 	for _, tc := range []struct {
 		name        string
@@ -529,7 +530,9 @@ func TestDecide(t *testing.T) {
 		{"Docker Desktop", "linux", false, desktop, docker0, true, "runtime OS Docker Desktop"},
 		{"rootless", "linux", false, rootless, runtime.Network{Bridge: "podman0", Gateway: "10.88.0.1"}, true, "rootless runtime"},
 		{"own bridge", "linux", false, engine, docker0, false, "gateway 172.17.0.1 is held by docker0"},
-		{"other interface", "linux", false, engine, br, true, "gateway 192.168.122.1 is held by virbr0, not the runtime's bridge br-1a2b3c4d5e6f"},
+		{"Docker Desktop in lower case", "linux", false, runtime.Info{OS: "docker desktop"}, docker0, true, "runtime OS docker desktop"},
+		{"own bridge beside another interface", "linux", false, engine, sharedHeld, false, "gateway 10.8.0.1 is held by br-0f0e0d0c0b0a"},
+		{"other interface", "linux", false, engine, virbrHeld, true, "gateway 192.168.122.1 is held by virbr0, not the runtime's bridge br-1a2b3c4d5e6f"},
 		{"no interface", "linux", false, engine, runtime.Network{Bridge: "br-0123456789ab", Gateway: "192.0.2.1"}, true, "gateway 192.0.2.1 is not held on the host"},
 		{"windows", "windows", false, engine, docker0, true, "windows runs container runtimes in a VM"},
 		{"darwin", "darwin", false, engine, docker0, true, "darwin runs container runtimes in a VM"},
@@ -541,13 +544,13 @@ func TestDecide(t *testing.T) {
 			} {
 				t.Setenv(Env, env.value)
 				on := env.value == "1" || env.value == "" && tc.vm
-				d := Decide(tc.goos, tc.inContainer, tc.info, tc.net, host)
+				d := Decide(tc.goos, tc.inContainer, tc.info, tc.net, holder)
 				if d.On != on || d.VM != tc.vm || d.Forced != (env.value != "") || d.Reason != env.reason {
 					t.Errorf("%s=%q: %+v, want on=%v vm=%v %q", Env, env.value, d, on, tc.vm, env.reason)
 				}
 			}
 			t.Setenv(Env, "1")
-			if d := Decide(tc.goos, true, tc.info, tc.net, host); d.On || d.VM || d.Reason != "the emulator runs in a container" {
+			if d := Decide(tc.goos, true, tc.info, tc.net, holder); d.On || d.VM || d.Reason != "the emulator runs in a container" {
 				t.Errorf("in a container: %+v", d)
 			}
 		})

@@ -174,42 +174,49 @@ func TestStartRegistryRelayContainerized(t *testing.T) {
 // gateway (ADR 0058). Docker Engine and Docker Desktop on one Linux host
 // both report docker0 at 172.17.0.1, which the host holds on docker0:
 // Engine's networks are on the host, so the probe is off, while Desktop's
-// are in its VM, so it is on (#915).
+// are in its VM, so it is on (#915). Without a default bridge network a
+// Linux probe is off, as the host-mode probe's is, and doctor says it
+// cannot tell; elsewhere every runtime is a VM runtime.
 func TestDefaultRelayProbe(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/networks/bridge") {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = io.WriteString(w, `{"Id":"0123456789abcdef","Name":"bridge","Options":{"com.docker.network.bridge.name":"docker0"},"IPAM":{"Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}}`)
-	}))
-	defer srv.Close()
-	cl, err := runtime.New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	holder := func(a netip.Addr) (string, error) {
+	engine := runtime.Info{Name: "docker", OS: "Ubuntu 24.04 LTS"}
+	holder := func(a netip.Addr) ([]string, error) {
 		if a.String() == "172.17.0.1" {
-			return "docker0", nil
+			return []string{"docker0"}, nil
 		}
-		return "", nil
+		return nil, nil
 	}
 	t.Setenv(vmrelay.Env, "")
-	probe := defaultRelayProbe("linux", holder)
 	for _, tc := range []struct {
-		name string
-		info runtime.Info
-		on   bool
+		name   string
+		goos   string
+		info   runtime.Info
+		bridge bool // the runtime has a default bridge network
+		on     bool
+		reason string
 	}{
-		{"Docker Engine", runtime.Info{Name: "docker", OS: "Ubuntu 24.04 LTS"}, false},
-		{"Docker Desktop", runtime.Info{Name: "docker", OS: "Docker Desktop"}, true},
+		{"Docker Engine", "linux", engine, true, false, "held by docker0"},
+		{"Docker Desktop", "linux", runtime.Info{Name: "docker", OS: "Docker Desktop"}, true, true, "Docker Desktop"},
+		{"no default bridge", "linux", engine, false, false, "no default bridge network"},
+		{"Docker Desktop without a default bridge", "linux", runtime.Info{Name: "docker", OS: "Docker Desktop"}, false, true, "Docker Desktop"},
+		{"no default bridge on macOS", "darwin", engine, false, true, "darwin runs container runtimes in a VM"},
 	} {
-		d := probe(context.Background(), &runtime.Manager{Client: cl, Info: tc.info})
-		if d.On != tc.on || d.VM != tc.on {
-			t.Errorf("%s: %+v, want on=%v", tc.name, d, tc.on)
-		}
-		if !tc.on && !strings.Contains(d.Reason, "docker0") {
-			t.Errorf("%s: reason %q names no bridge", tc.name, d.Reason)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !tc.bridge || !strings.HasSuffix(r.URL.Path, "/networks/bridge") {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = io.WriteString(w, `{"Id":"0123456789abcdef","Name":"bridge","Options":{"com.docker.network.bridge.name":"docker0"},"IPAM":{"Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}}`)
+			}))
+			defer srv.Close()
+			cl, err := runtime.New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := defaultRelayProbe(tc.goos, holder)(context.Background(), &runtime.Manager{Client: cl, Info: tc.info})
+			if d.On != tc.on || !strings.Contains(d.Reason, tc.reason) {
+				t.Errorf("%+v, want on=%v and %q", d, tc.on, tc.reason)
+			}
+		})
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,15 +61,17 @@ func (d Decision) String() string {
 	return "off (" + d.Reason + ")"
 }
 
-// Holder names the host interface that holds addr, or "" when none does.
-type Holder func(addr netip.Addr) (string, error)
+// Holder names the host interfaces that hold addr, none when no interface
+// does.
+type Holder func(addr netip.Addr) ([]string, error)
 
 // HostHolder looks addr up among the host's interfaces.
-func HostHolder(addr netip.Addr) (string, error) {
+func HostHolder(addr netip.Addr) ([]string, error) {
 	ifs, err := net.Interfaces()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
+	var names []string
 	for _, ifc := range ifs {
 		addrs, err := ifc.Addrs()
 		if err != nil {
@@ -77,12 +80,12 @@ func HostHolder(addr netip.Addr) (string, error) {
 		for _, a := range addrs {
 			if p, ok := a.(*net.IPNet); ok {
 				if ip, ok := netip.AddrFromSlice(p.IP); ok && ip.Unmap() == addr {
-					return ifc.Name, nil
+					names = append(names, ifc.Name)
 				}
 			}
 		}
 	}
-	return "", nil
+	return names, nil
 }
 
 // Decide chooses: never when the emulator runs in a container (ADR 0003),
@@ -113,32 +116,41 @@ func Decide(goos string, inContainer bool, info runtime.Info, n runtime.Network,
 // linuxVM reports whether a Linux runtime is a VM runtime for network n,
 // and why.
 func linuxVM(info runtime.Info, n runtime.Network, holder Holder) (bool, string) {
-	switch {
-	case strings.Contains(info.OS, "Docker Desktop"):
-		return true, "runtime OS " + info.OS
-	case info.Rootless:
-		return true, "rootless runtime"
+	if vm, why := reportsVM(info); vm {
+		return true, why
 	}
 	gw, err := netip.ParseAddr(n.Gateway)
 	if err != nil {
 		return true, "the network has no gateway"
 	}
-	name, err := holder(gw)
+	names, err := holder(gw)
 	switch {
 	case err != nil:
 		return true, "cannot read the host's interfaces: " + err.Error()
-	case name == "":
+	case len(names) == 0:
 		return true, "gateway " + n.Gateway + " is not held on the host"
-	case name != n.Bridge:
-		return true, "gateway " + n.Gateway + " is held by " + name + ", not the runtime's bridge " + n.Bridge
+	case !slices.Contains(names, n.Bridge):
+		return true, "gateway " + n.Gateway + " is held by " + strings.Join(names, ", ") + ", not the runtime's bridge " + n.Bridge
 	}
-	return false, "gateway " + n.Gateway + " is held by " + name
+	return false, "gateway " + n.Gateway + " is held by " + n.Bridge
 }
 
-// DefaultNetwork is the runtime's default bridge network, which stands in
+// reportsVM reports whether a Linux runtime says it is a VM runtime, and
+// why.
+func reportsVM(info runtime.Info) (bool, string) {
+	switch {
+	case strings.Contains(strings.ToLower(info.OS), "docker desktop"):
+		return true, "runtime OS " + info.OS
+	case info.Rootless:
+		return true, "rootless runtime"
+	}
+	return false, ""
+}
+
+// defaultNetwork is the runtime's default bridge network, which stands in
 // for the services network before the Instance creates it; ok is false
 // when there is none.
-func DefaultNetwork(ctx context.Context, cl *runtime.Client) (n runtime.Network, ok bool) {
+func defaultNetwork(ctx context.Context, cl *runtime.Client) (n runtime.Network, ok bool) {
 	for _, name := range []string{"bridge", "podman"} {
 		if n, err := cl.InspectNetwork(ctx, name); err == nil && n.Gateway != "" {
 			return n, true
@@ -149,10 +161,15 @@ func DefaultNetwork(ctx context.Context, cl *runtime.Client) (n runtime.Network,
 
 // DecideDefault decides as Decide does, with the runtime's default bridge
 // network standing in for the services network; ok is false when there
-// is none, and the decision then has no network to go by.
+// is none. On Linux the relay is then off unless forced or the runtime
+// says it is a VM runtime, since no network shows it is one.
 func DecideDefault(ctx context.Context, goos string, inContainer bool, cl *runtime.Client, info runtime.Info, holder Holder) (d Decision, ok bool) {
-	n, ok := DefaultNetwork(ctx, cl)
-	return Decide(goos, inContainer, info, n, holder), ok
+	n, ok := defaultNetwork(ctx, cl)
+	d = Decide(goos, inContainer, info, n, holder)
+	if vm, _ := reportsVM(info); !ok && goos == "linux" && d.Unroutable() && !vm {
+		d = Decision{Reason: "no default bridge network to probe"}
+	}
+	return d, ok
 }
 
 // Options configure Start.
