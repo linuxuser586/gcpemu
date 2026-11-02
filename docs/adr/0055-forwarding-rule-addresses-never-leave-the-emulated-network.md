@@ -14,4 +14,4 @@ VPC workloads reach an external forwarding rule by its own address through route
 - The addresses come from the load balancer's configuration on every pass, whether or not a listener serves them yet or any GKE cluster reports pod routes.
 - When the Edge relay is not running, or cannot be started, the Public routes are unreachable; they are made so before it starts, which can take as long as an image pull. When it runs but cannot be updated, the routes via it stay: it may still serve them, a route via an address no container holds fails with "no route to host" and does not leak, and the next pass repairs it.
 - With the Offline sink on, the NAT egress proxy leaves forwarding rule addresses to their Public routes, so a client of an unreachable one fails at once rather than being recorded as internet egress.
-- A reserved external address without a forwarding rule is not covered: traffic to it still goes to the internet.
+- A reserved external address without a forwarding rule is not covered: traffic to it still goes to the internet. (Superseded by ADR 0059 (#917): the External address pools and reserved external addresses are unreachable.)
