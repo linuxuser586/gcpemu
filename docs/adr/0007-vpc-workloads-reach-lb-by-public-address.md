@@ -4,6 +4,8 @@ Note (#527): the "Cloud NAT egress gateways" and "NAT gateway" below are the con
 
 Note (#912): routes for a forwarding rule's address are no longer removed while the Edge relay cannot serve it; they become `unreachable` until it can (ADR 0055).
 
+Note (#917): Cloud SQL public IPs are no longer in the external address pools, and the pools are now routed `unreachable` rather than via the Edge relay; forwarding rule addresses keep their routes via it (ADR 0059).
+
 The emulated DNS answered a forwarding rule's IP with the listener that serves it on the host, usually `127.0.0.x`. Pods got the same answer, dialled their own loopback and were refused, so nothing in a cluster could call a public host behind the load balancer. That rules out third-party OIDC clients that must fetch a discovery document from the issuer URL, and webhooks to the app's own host (#187).
 
 We decided that VPC workloads use the forwarding rule's own address, as on GCP. The DNS answers a query that carries a VPC network (GKE node DNS relays tag theirs) with the external forwarding rule's IP unmapped. The Edge relay joins the external network, holds every external forwarding rule IP on its loopback and relays their ports to the Data plane with PROXY v2, like its other listeners. Services whose Managed containers send public traffic over the external network implement `emu.PublicRouter` and add host routes for those IPs via the Edge relay. Today these are GKE nodes with external IPs and the Cloud NAT egress gateways. Private nodes therefore reach the load balancer only while a Cloud NAT covers them, and backends see the node's or the NAT's address, as they would on GCP. Host clients are unaffected. Internal forwarding rules keep today's mapping.

@@ -115,7 +115,7 @@ One Cloud NAT configuration on a Cloud Router, as GCP names it: which subnetwork
 _Avoid_: NAT config (unqualified), NAT (unqualified, when the configuration is meant)
 
 **Offline sink**:
-Where the NAT egress proxy sends VPC workloads' TCP connections bound for the internet while the Instance is offline, recording each one as an egress attempt rather than letting it leave. Addresses the emulator serves itself, such as forwarding rule addresses, never reach it.
+Where the NAT egress proxy sends VPC workloads' TCP connections bound for the internet while the Instance is offline, recording each one as an egress attempt rather than letting it leave. Addresses that have a Public route, such as forwarding rule addresses and the External address pools, never reach it.
 _Avoid_: NAT sink, egress sink
 
 **Edge relay**:
@@ -127,8 +127,12 @@ An address on the load balancer's container network that the Edge relay holds fo
 _Avoid_: alias (unqualified), listener address
 
 **Public route**:
-A route that a NAT egress proxy, or a GKE node with an external IP, holds for an external forwarding rule's address while the forwarding rule exists: via the Edge relay while it serves the address, unreachable otherwise. Traffic to the address never leaves for the internet (ADR 0055).
+A route that a NAT egress proxy, or a GKE node with an external IP, holds so that traffic to an address the emulator hands out as public never leaves for the internet. An external forwarding rule's address is routed via the Edge relay while it serves the address, and unreachable otherwise; every other address in the External address pools, and every reserved external address outside them, is unreachable (ADRs 0055, 0059). Clients on the host are not covered.
 _Avoid_: LB route, host route (unqualified)
+
+**External address pool**:
+A range of public addresses from which the emulator hands out external addresses, as GCP does: `34.16.0.0/12` for regional addresses and NAT IPs, `34.120.0.0/14` for global ones. The emulator treats every address in them as its own, whether or not a resource holds it; real hosts at those addresses are out of reach of VPC workloads. Public IPs, Public endpoints and GKE nodes' external IPs are not in them: they are addresses on the External network.
+_Avoid_: external range, IP pool (unqualified)
 
 **Infrastructure address**:
 An address on a subnetwork that an Instance's own Managed container holds only while workloads there need it, such as the Edge relay's address on a GKE cluster's subnetwork. No resource can reserve or take it, but it never keeps the subnetwork from being deleted: the container leaves instead (ADR 0032).
