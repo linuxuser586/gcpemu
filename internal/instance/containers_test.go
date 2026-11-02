@@ -1,12 +1,14 @@
 package instance
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -183,5 +185,67 @@ func TestReadyReportsDisruptedContainers(t *testing.T) {
 	body := ready(http.StatusServiceUnavailable)
 	if !strings.Contains(body, `"containers"`) || !strings.Contains(body, stopped+" (exited)") || !strings.Contains(body, restarted+" (restarted)") {
 		t.Fatalf("ready with disrupted containers = %s", body)
+	}
+}
+
+// TestRequestedShutdownLogsCleanupErrors is #920: a shutdown the admin API
+// requests logs each container, network or volume it could not remove,
+// and still removes the rest; one with nothing to report logs nothing.
+func TestRequestedShutdownLogsCleanupErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail map[string]bool
+	}{
+		{"removal fails", map[string]bool{"containers:c-stuck": true}},
+		{"removal succeeds", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.DataDir = t.TempDir()
+			cfg.Services = []string{"dns"}
+			cfg.Ports[config.AllPorts] = 0
+			cfg.Ephemeral = true
+			var log bytes.Buffer
+			in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, &log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f := &fakeRuntime{
+				containers: map[string]fakeObj{"c-stuck": {labels: labelled(in.ID, "")}, "c-ok": {labels: labelled(in.ID, "")}},
+				networks:   map[string]fakeObj{"n-ok": {labels: labelled(in.ID, "")}},
+				volumes:    map[string]fakeObj{"v-ok": {labels: labelled(in.ID, "")}},
+				failRemove: tc.fail,
+			}
+			in.containers.rt = &runtime.Manager{Client: fakeClient(t, f), InstanceID: in.ID, Instance: cfg.Instance, Log: in.Env.Log}
+			log.Reset()
+
+			in.RequestShutdown()
+
+			// The line is written before Done closes, as the process may
+			// exit then.
+			select {
+			case <-in.Done():
+			case <-time.After(30 * time.Second):
+				t.Fatal("the Instance did not stop")
+			}
+			f.mu.Lock()
+			removed := slices.Clone(f.removed)
+			f.mu.Unlock()
+			for _, o := range []string{"containers:c-ok", "networks:n-ok", "volumes:v-ok"} {
+				if !slices.Contains(removed, o) {
+					t.Errorf("removed %v; want %s among them", removed, o)
+				}
+			}
+			got := log.String()
+			if tc.fail == nil {
+				if strings.Contains(got, "level=WARN") || strings.Contains(got, "level=ERROR") {
+					t.Errorf("log = %q; want no warnings", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "level=WARN") || !strings.Contains(got, "c-stuck") {
+				t.Errorf("log = %q; want a warning naming c-stuck", got)
+			}
+		})
 	}
 }
