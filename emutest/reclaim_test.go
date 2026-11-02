@@ -298,7 +298,8 @@ func TestSweepReclaimsDeletedTempDir(t *testing.T) {
 }
 
 // TestSweepOncePerProcess: the sweep looks for a runtime once, does
-// nothing without one, and logs a failure instead of failing.
+// nothing without one, and logs a failure instead of failing, to stderr
+// as well.
 func TestSweepOncePerProcess(t *testing.T) {
 	detects := 0
 	s := &sweeper{detect: func() (*runtime.Client, error) {
@@ -316,10 +317,15 @@ func TestSweepOncePerProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logged []string
-	s = &sweeper{detect: func() (*runtime.Client, error) { return broken, nil }}
+	var stderr strings.Builder
+	s = &sweeper{detect: func() (*runtime.Client, error) { return broken, nil }, stderr: &stderr}
 	s.run(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) })
 	if len(logged) != 1 || !strings.HasPrefix(logged[0], "emutest: ") {
 		t.Errorf("a failed sweep logged %q, want one emutest error", logged)
+	}
+	// #914: the test's log shows only when it fails or runs with -v.
+	if len(logged) == 1 && stderr.String() != logged[0]+"\n" {
+		t.Errorf("a failed sweep wrote %q to stderr, want %q on a line", stderr.String(), logged[0])
 	}
 }
 

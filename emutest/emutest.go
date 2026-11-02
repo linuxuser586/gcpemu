@@ -136,7 +136,7 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 			return nil, err
 		}
 		i.ownedDir = cfg.DataDir
-		if i.dropOwner, err = holdOwnerLock(cfg.DataDir); err != nil {
+		if i.dropOwner, err = instance.HoldOwnerLock(cfg.DataDir); err != nil {
 			return nil, err
 		}
 	}
