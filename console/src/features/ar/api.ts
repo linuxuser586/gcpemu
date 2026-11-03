@@ -239,7 +239,7 @@ export const createRepository = async (
   waitOperation<Repository>(
     await gcpFetch<Operation>(
       `${API}/${path(locationName(project, location))}/repositories?${new URLSearchParams({ repositoryId: id })}`,
-      { method: 'POST', ...json(body) },
+      { method: 'POST', repeatable: true, ...json(body) },
     ),
   )
 
@@ -298,6 +298,7 @@ export const createTag = (r: RepoRef, image: string, tag: string, digest: string
     `${API}/${path(packageName(r, image))}/tags?${new URLSearchParams({ tagId: tag })}`,
     {
       method: 'POST',
+      repeatable: true,
       ...json({ version: versionName(r, image, digest) }),
     },
   )

@@ -1,6 +1,15 @@
 import { formatLabels, labelsError, parseLabels } from '@/lib/labels'
 
-import { applyMerge, isObj, mergeDiff, relPath, text, type Coll, type Resource } from './api'
+import {
+  applyMerge,
+  isObj,
+  mergeDiff,
+  relPath,
+  text,
+  type Coll,
+  type Resource,
+  type SetMethod,
+} from './api'
 
 // The create and edit forms of every load-balancing kind (FR-UI-011),
 // declared as the API fields they edit. A field reads its value out of a
@@ -94,7 +103,7 @@ export interface KindSpec {
    * setters are the set* method of each API field, in the order they are
    * sent, for a kind edited by set* methods instead of patch.
    */
-  setters?: Readonly<Record<string, string>>
+  setters?: Readonly<Record<string, SetMethod>>
 }
 
 // ---- paths ----
@@ -371,7 +380,7 @@ export const setValues = (spec: KindSpec, cur: Obj) => (body: Obj, prev: Values)
 
 /** SetCall is one set* method call: setBackendService and its body. */
 export interface SetCall {
-  method: string
+  method: SetMethod
   body: Obj
 }
 

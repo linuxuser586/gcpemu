@@ -13,10 +13,48 @@ import { forgetToken, tokenFor } from './tokens'
 /** origin is where the console was served from: the API gateway. */
 export const origin = () => globalThis.location.origin
 
-/** send fetches through the global fetch, mapping failures to ApiError. */
-export async function send(input: Request): Promise<Response> {
+/**
+ * RESEND_MS are the waits before each re-send: the first two of
+ * react-query's default retryDelay, which the queries use.
+ */
+const RESEND_MS = [1000, 2000]
+
+/** RESENT_METHODS are the methods safe to send again without an opt-in. */
+const RESENT_METHODS = new Set(['PUT', 'PATCH', 'DELETE'])
+
+/**
+ * mayResend reports whether req, if it gets no response, is safe to send
+ * again (ADR 0062). repeatable is the opt-in of a POST that its API
+ * function declares safe to repeat; any other method ignores it. A GET is
+ * left to the queries' own retry, and a method not named here is sent once.
+ */
+function mayResend(req: Request, repeatable: boolean): boolean {
+  return RESENT_METHODS.has(req.method) || (req.method === 'POST' && repeatable)
+}
+
+/**
+ * resending fetches req through the global fetch and, when it gets no
+ * response and mayResend allows, sends it again after 1 s and then 2 s.
+ * It throws the last attempt's error as fetch did: a Request's body is
+ * read once, so every attempt sends a clone.
+ */
+export async function resending(req: Request, repeatable = false): Promise<Response> {
+  if (!mayResend(req, repeatable)) return globalThis.fetch(req)
+  for (const wait of RESEND_MS) {
+    try {
+      return await globalThis.fetch(req.clone())
+    } catch (e) {
+      if (req.signal.aborted) throw e
+    }
+    await new Promise((resolve) => setTimeout(resolve, wait))
+  }
+  return globalThis.fetch(req)
+}
+
+/** send fetches through resending, mapping failures to ApiError. */
+export async function send(input: Request, repeatable = false): Promise<Response> {
   try {
-    return await globalThis.fetch(input)
+    return await resending(input, repeatable)
   } catch (e) {
     throw networkError(e)
   }
@@ -28,7 +66,25 @@ export interface GcpInit extends RequestInit {
    * sends no credentials, so the request runs as the Default principal.
    */
   principal?: string
+  /**
+   * repeatable declares a POST safe to send twice, so one that got no
+   * response is re-sent (ADR 0062): a create whose resource name the
+   * client chooses, or a custom method whose second call changes nothing.
+   */
+  repeatable?: boolean
 }
+
+/** JsonWrite is a write a feature's request helper sends with a JSON body. */
+export interface JsonWrite extends Pick<GcpInit, 'repeatable'> {
+  method: string
+  body?: unknown
+}
+
+/** jsonInit is gcpFetch's init for w, its body encoded as JSON. */
+export const jsonInit = ({ body, ...rest }: JsonWrite): GcpInit => ({
+  ...rest,
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
 
 /**
  * sendAs sends a public API request as the chosen Principal. A request
@@ -37,10 +93,11 @@ export interface GcpInit extends RequestInit {
  * dropped it), it mints a fresh one and tries once more.
  */
 export async function sendAs(path: string, init: GcpInit = {}): Promise<Response> {
-  const { principal = usePrefs.getState().principal, ...rest } = init
+  const { principal = usePrefs.getState().principal, repeatable, ...rest } = init
   const headers = new Headers(rest.headers)
   const url = new URL(path, origin())
-  const go = () => send(new Request(url, { ...rest, headers, credentials: 'same-origin' }))
+  const go = () =>
+    send(new Request(url, { ...rest, headers, credentials: 'same-origin' }), repeatable)
   if (!principal || headers.has('Authorization')) return go()
   headers.set('Authorization', `Bearer ${await tokenFor(principal)}`)
   const res = await go()

@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap } from '@/api/admin'
+import { admin, repeatable, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 import { POLL_MS } from '@/api/queries'
 
@@ -42,7 +42,9 @@ export const faultsQuery = () =>
     refetchInterval: (q) => (q.state.data?.some(canFire) ? POLL_MS : false),
   })
 
-export const addFault = (rule: FaultRule) => unwrap(admin.POST('/_emu/v1/faults', { body: rule }))
+/** addFault adds rule; one that names its own id is safe to send twice. */
+export const addFault = (rule: FaultRule) =>
+  unwrap(admin.POST('/_emu/v1/faults', { body: rule, ...(rule.id ? repeatable : {}) }))
 
 export const setFaultDisabled = (id: string, disabled: boolean) =>
   unwrap(admin.PATCH('/_emu/v1/faults/{id}', { params: { path: { id } }, body: { disabled } }))

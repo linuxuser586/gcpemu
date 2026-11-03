@@ -1,9 +1,9 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap } from '@/api/admin'
+import { admin, repeatable, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 import { ApiError } from '@/api/errors'
-import { gcpFetch } from '@/api/fetch'
+import { gcpFetch, jsonInit, type JsonWrite } from '@/api/fetch'
 
 // The Load Balancer view's reads and writes: the load-balancing
 // collections of compute v1 (FR-LB-001), global and regional, and two
@@ -239,11 +239,7 @@ export interface Operation {
   error?: { errors?: { code?: string; message?: string }[] }
 }
 
-const send = <T>(path: string, method: string, body?: unknown) =>
-  gcpFetch<T>(API + path, {
-    method,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+const send = <T>(path: string, w: JsonWrite) => gcpFetch<T>(API + path, jsonInit(w))
 
 /**
  * waitOperation resolves once op is DONE, or rejects with its error.
@@ -252,7 +248,10 @@ const send = <T>(path: string, method: string, body?: unknown) =>
 export async function waitOperation(op: Operation): Promise<Operation> {
   let cur = op
   while (cur.status !== 'DONE') {
-    cur = await send<Operation>(`${relPath(cur.selfLink)}/wait`, 'POST')
+    cur = await send<Operation>(`${relPath(cur.selfLink)}/wait`, {
+      method: 'POST',
+      repeatable: true,
+    })
   }
   const message = cur.error?.errors?.find((e) => e.message)?.message
   if (message)
@@ -260,8 +259,7 @@ export async function waitOperation(op: Operation): Promise<Operation> {
   return cur
 }
 
-const write = async (path: string, method: string, body?: unknown) =>
-  waitOperation(await send<Operation>(path, method, body))
+const write = async (path: string, w: JsonWrite) => waitOperation(await send<Operation>(path, w))
 
 type Aggregated = { items?: Record<string, Record<string, Resource[] | undefined>> }
 
@@ -280,16 +278,23 @@ export async function listKind(project: string, coll: Coll): Promise<Resource[]>
 export const getResource = (r: Ref) => gcpFetch<Resource>(API + resourcePath(r))
 
 export const insertResource = (project: string, region: string, coll: Coll, body: unknown) =>
-  write(`${scopePath(project, region)}/${coll}`, 'POST', body)
+  write(`${scopePath(project, region)}/${coll}`, { method: 'POST', body, repeatable: true })
 
 /** patchResource sends a JSON merge patch (patch() of every kind). */
-export const patchResource = (r: Ref, body: unknown) => write(resourcePath(r), 'PATCH', body)
+export const patchResource = (r: Ref, body: unknown) =>
+  write(resourcePath(r), { method: 'PATCH', body })
+
+/**
+ * SetMethod names a set* method. Each is safe to send twice (ADR 0062), so
+ * setResource re-sends one that got no response.
+ */
+export type SetMethod = `set${string}`
 
 /** setResource calls one of a resource's set* methods, e.g. setBackendService. */
-export const setResource = (r: Ref, method: string, body: unknown) =>
-  write(`${resourcePath(r)}/${method}`, 'POST', body)
+export const setResource = (r: Ref, method: SetMethod, body: unknown) =>
+  write(`${resourcePath(r)}/${method}`, { method: 'POST', body, repeatable: true })
 
-export const deleteResource = (r: Ref) => write(resourcePath(r), 'DELETE')
+export const deleteResource = (r: Ref) => write(resourcePath(r), { method: 'DELETE' })
 
 export interface HealthStatus {
   ipAddress?: string
@@ -310,7 +315,8 @@ export const getHealth = async (r: Ref, group: string) =>
   ).healthStatus ?? []
 
 /** route asks which route and backend of a stored URL map serve a request. */
-export const route = (body: LbRouteRequest) => unwrap(admin.POST('/_emu/v1/lb/route', { body }))
+export const route = (body: LbRouteRequest) =>
+  unwrap(admin.POST('/_emu/v1/lb/route', { body, ...repeatable }))
 
 // ---- merge patch ----
 

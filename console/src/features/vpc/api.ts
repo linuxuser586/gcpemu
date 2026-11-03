@@ -2,7 +2,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { admin, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
-import { gcpFetch } from '@/api/fetch'
+import { gcpFetch, jsonInit, type JsonWrite } from '@/api/fetch'
 
 import { waitOperation as waitLong, type Operation as LongOperation } from '../certs/api'
 import { relPath, waitOperation, type Operation, type Resource } from '../lb/api'
@@ -183,13 +183,8 @@ export async function aggregated<K extends string, T>(project: string, coll: K):
   return Object.values(res.items ?? {}).flatMap((s) => s[coll] ?? [])
 }
 
-const write = async (path: string, method: string, body?: unknown) =>
-  waitOperation(
-    await gcpFetch<Operation>(API + path, {
-      method,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    }),
-  )
+const write = async (path: string, w: JsonWrite) =>
+  waitOperation(await gcpFetch<Operation>(API + path, jsonInit(w)))
 
 // ---- networks ----
 
@@ -200,16 +195,17 @@ export const listNetworks = async (project: string) =>
 export const getNetwork = (r: NetworkRef) => gcpFetch<Network>(API + networkPath(r))
 
 export const insertNetwork = (project: string, body: unknown) =>
-  write(`projects/${project}/global/networks`, 'POST', body)
+  write(`projects/${project}/global/networks`, { method: 'POST', body, repeatable: true })
 
 /** patchNetwork sends a JSON merge patch. */
-export const patchNetwork = (r: NetworkRef, body: unknown) => write(networkPath(r), 'PATCH', body)
+export const patchNetwork = (r: NetworkRef, body: unknown) =>
+  write(networkPath(r), { method: 'PATCH', body })
 
-export const deleteNetwork = (r: NetworkRef) => write(networkPath(r), 'DELETE')
+export const deleteNetwork = (r: NetworkRef) => write(networkPath(r), { method: 'DELETE' })
 
 /** switchToCustomMode turns an auto mode network into a custom mode one, for good. */
 export const switchToCustomMode = (r: NetworkRef) =>
-  write(`${networkPath(r)}/switchToCustomMode`, 'POST')
+  write(`${networkPath(r)}/switchToCustomMode`, { method: 'POST' })
 
 // ---- subnetworks ----
 
@@ -219,18 +215,27 @@ export const listSubnetworks = (project: string) =>
 export const getSubnetwork = (r: SubnetRef) => gcpFetch<Subnetwork>(API + subnetPath(r))
 
 export const insertSubnetwork = (project: string, region: string, body: unknown) =>
-  write(`projects/${project}/regions/${region}/subnetworks`, 'POST', body)
+  write(`projects/${project}/regions/${region}/subnetworks`, {
+    method: 'POST',
+    body,
+    repeatable: true,
+  })
 
 /** patchSubnetwork sends a JSON merge patch, which must carry the fingerprint. */
-export const patchSubnetwork = (r: SubnetRef, body: unknown) => write(subnetPath(r), 'PATCH', body)
+export const patchSubnetwork = (r: SubnetRef, body: unknown) =>
+  write(subnetPath(r), { method: 'PATCH', body })
 
-export const deleteSubnetwork = (r: SubnetRef) => write(subnetPath(r), 'DELETE')
+export const deleteSubnetwork = (r: SubnetRef) => write(subnetPath(r), { method: 'DELETE' })
 
 export const expandIpCidrRange = (r: SubnetRef, ipCidrRange: string) =>
-  write(`${subnetPath(r)}/expandIpCidrRange`, 'POST', { ipCidrRange })
+  write(`${subnetPath(r)}/expandIpCidrRange`, { method: 'POST', body: { ipCidrRange } })
 
 export const setPrivateIpGoogleAccess = (r: SubnetRef, privateIpGoogleAccess: boolean) =>
-  write(`${subnetPath(r)}/setPrivateIpGoogleAccess`, 'POST', { privateIpGoogleAccess })
+  write(`${subnetPath(r)}/setPrivateIpGoogleAccess`, {
+    method: 'POST',
+    body: { privateIpGoogleAccess },
+    repeatable: true,
+  })
 
 // ---- firewall rules ----
 
@@ -245,14 +250,14 @@ export const getFirewall = (project: string, name: string) =>
   gcpFetch<Firewall>(API + firewallPath(project, name))
 
 export const insertFirewall = (project: string, body: unknown) =>
-  write(`projects/${project}/global/firewalls`, 'POST', body)
+  write(`projects/${project}/global/firewalls`, { method: 'POST', body, repeatable: true })
 
 /** patchFirewall sends a JSON merge patch: allowed replaces denied, and denied allowed. */
 export const patchFirewall = (project: string, name: string, body: unknown) =>
-  write(firewallPath(project, name), 'PATCH', body)
+  write(firewallPath(project, name), { method: 'PATCH', body })
 
 export const deleteFirewall = (project: string, name: string) =>
-  write(firewallPath(project, name), 'DELETE')
+  write(firewallPath(project, name), { method: 'DELETE' })
 
 // ---- routes ----
 
@@ -266,24 +271,28 @@ export const getRoute = (project: string, name: string) =>
   gcpFetch<Route>(API + routePath(project, name))
 
 export const insertRoute = (project: string, body: unknown) =>
-  write(`projects/${project}/global/routes`, 'POST', body)
+  write(`projects/${project}/global/routes`, { method: 'POST', body, repeatable: true })
 
 /** deleteRoute deletes a route; routes are immutable, so there is no patch. */
 export const deleteRoute = (project: string, name: string) =>
-  write(routePath(project, name), 'DELETE')
+  write(routePath(project, name), { method: 'DELETE' })
 
 // ---- peerings ----
 
 /** addPeering peers network r with peering's network. */
 export const addPeering = (r: NetworkRef, networkPeering: NetworkPeering) =>
-  write(`${networkPath(r)}/addPeering`, 'POST', { networkPeering })
+  write(`${networkPath(r)}/addPeering`, {
+    method: 'POST',
+    body: { networkPeering },
+    repeatable: true,
+  })
 
 /** updatePeering changes a peering's route exchange; the peer network cannot change. */
 export const updatePeering = (r: NetworkRef, networkPeering: NetworkPeering) =>
-  write(`${networkPath(r)}/updatePeering`, 'PATCH', { networkPeering })
+  write(`${networkPath(r)}/updatePeering`, { method: 'PATCH', body: { networkPeering } })
 
 export const removePeering = (r: NetworkRef, name: string) =>
-  write(`${networkPath(r)}/removePeering`, 'POST', { name })
+  write(`${networkPath(r)}/removePeering`, { method: 'POST', body: { name } })
 
 // ---- private services access ----
 
@@ -307,6 +316,7 @@ export const createConnection = (r: NetworkRef, reservedPeeringRanges: string[])
   waitConnection(
     gcpFetch<LongOperation>(CONNECTIONS, {
       method: 'POST',
+      repeatable: true,
       body: JSON.stringify({ network: networkPath(r), reservedPeeringRanges }),
     }),
   )
@@ -377,16 +387,21 @@ export const getAddress = (r: AddressRef) => gcpFetch<Address>(API + addressPath
 
 /** insertAddress reserves an address in region, or a global one for "". */
 export const insertAddress = (project: string, region: string, body: unknown) =>
-  write(addressesPath(project, region), 'POST', body)
+  write(addressesPath(project, region), { method: 'POST', body, repeatable: true })
 
-export const deleteAddress = (r: AddressRef) => write(addressPath(r), 'DELETE')
+export const deleteAddress = (r: AddressRef) => write(addressPath(r), { method: 'DELETE' })
 
 /** setAddressLabels replaces an address's labels; the fingerprint must be its current one. */
 export const setAddressLabels = (
   r: AddressRef,
   labels: Record<string, string>,
   labelFingerprint?: string,
-) => write(`${addressPath(r)}/setLabels`, 'POST', { labels, labelFingerprint })
+) =>
+  write(`${addressPath(r)}/setLabels`, {
+    method: 'POST',
+    body: { labels, labelFingerprint },
+    repeatable: true,
+  })
 
 // ---- queries ----
 

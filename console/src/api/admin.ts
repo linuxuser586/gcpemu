@@ -2,7 +2,7 @@ import createClient from 'openapi-fetch'
 
 import type { components, paths } from './admin.gen'
 import { networkError, toApiError } from './errors'
-import { origin } from './fetch'
+import { origin, resending } from './fetch'
 
 export type Info = components['schemas']['Info']
 export type Readiness = components['schemas']['Readiness']
@@ -19,8 +19,9 @@ export type SubscriptionStats = components['schemas']['SubscriptionStats']
 /** admin is a typed client for the /_emu/v1 admin API. */
 export const admin = createClient<paths>({
   baseUrl: origin(),
-  // Resolved per call: tests swap the global fetch after this module loads.
-  fetch: (req) => globalThis.fetch(req),
+  // resending resolves the global fetch per call: tests swap it after this
+  // module loads. It re-sends a write that got no response (ADR 0062).
+  fetch: (req) => resending(req),
   // Beyond loopback the admin API needs the admin token cookie (FR-UI-009).
   credentials: 'same-origin',
 })
@@ -30,6 +31,12 @@ admin.use({
     return networkError(error)
   },
 })
+
+/**
+ * repeatable is the request option of an admin POST safe to send twice,
+ * so one that got no response is re-sent too (ADR 0062).
+ */
+export const repeatable = { fetch: (req: Request) => resending(req, true) }
 
 interface FetchResult<T> {
   data?: T

@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiError } from '@/api/errors'
-import { gcpFetch, gcpText } from '@/api/fetch'
+import { gcpFetch, gcpText, jsonInit, type JsonWrite } from '@/api/fetch'
 import { POLL_MS } from '@/api/queries'
 
 // The GKE view's reads and writes: the container v1 API for clusters,
@@ -157,36 +157,50 @@ export const listClusters = async (project: string) =>
 
 export const getCluster = (r: ClusterRef) => gcpFetch<Cluster>(API + clusterName(r))
 
-const post = <T>(path: string, body: unknown, method = 'POST') =>
-  gcpFetch<T>(API + path, { method, body: JSON.stringify(body) })
+const send = <T>(path: string, w: JsonWrite) => gcpFetch<T>(API + path, jsonInit(w))
 
 export const createCluster = (project: string, location: string, body: unknown) =>
-  post<ContainerOperation>(`${parentName(project, location)}/clusters`, body)
+  send<ContainerOperation>(`${parentName(project, location)}/clusters`, {
+    method: 'POST',
+    body,
+    repeatable: true,
+  })
 
 export const updateCluster = (r: ClusterRef, body: unknown) =>
-  post<ContainerOperation>(clusterName(r), body, 'PUT')
+  send<ContainerOperation>(clusterName(r), { method: 'PUT', body })
 
 export const setResourceLabels = (
   r: ClusterRef,
   resourceLabels: Record<string, string>,
   labelFingerprint?: string,
 ) =>
-  post<ContainerOperation>(`${clusterName(r)}:setResourceLabels`, {
-    resourceLabels,
-    labelFingerprint,
+  send<ContainerOperation>(`${clusterName(r)}:setResourceLabels`, {
+    method: 'POST',
+    body: {
+      resourceLabels,
+      labelFingerprint,
+    },
   })
 
 export const deleteCluster = (r: ClusterRef) =>
   gcpFetch<ContainerOperation>(API + clusterName(r), { method: 'DELETE' })
 
 export const createNodePool = (r: ClusterRef, body: unknown) =>
-  post<ContainerOperation>(`${clusterName(r)}/nodePools`, body)
+  send<ContainerOperation>(`${clusterName(r)}/nodePools`, {
+    method: 'POST',
+    body,
+    repeatable: true,
+  })
 
 export const updateNodePool = (r: ClusterRef, pool: string, body: unknown) =>
-  post<ContainerOperation>(poolName(r, pool), body, 'PUT')
+  send<ContainerOperation>(poolName(r, pool), { method: 'PUT', body })
 
 export const setNodePoolSize = (r: ClusterRef, pool: string, nodeCount: number) =>
-  post<ContainerOperation>(`${poolName(r, pool)}:setSize`, { nodeCount })
+  send<ContainerOperation>(`${poolName(r, pool)}:setSize`, {
+    method: 'POST',
+    body: { nodeCount },
+    repeatable: true,
+  })
 
 export const deleteNodePool = (r: ClusterRef, pool: string) =>
   gcpFetch<ContainerOperation>(API + poolName(r, pool), { method: 'DELETE' })

@@ -8,6 +8,7 @@
 !/console/dist/.keep
 /console/test-results/
 /console/playwright-report/
+/console/*.tsbuildinfo
 /compat/sdk/java/target/
 /compat/kube-conformance-results/
 /dist-echo/

@@ -64,7 +64,7 @@ export async function signedUrl(r: SignRequest, protocol = 'http:') {
   const { query, toSign } = await stringToSign(r)
   const res = await gcpFetch<{ keyId: string; signedBlob: string }>(
     `/iamcredentials/v1/projects/-/serviceAccounts/${encodeURIComponent(r.serviceAccount)}:signBlob`,
-    { method: 'POST', body: JSON.stringify({ payload: base64(toSign) }) },
+    { method: 'POST', repeatable: true, body: JSON.stringify({ payload: base64(toSign) }) },
   )
   const signature = hex(Uint8Array.from(atob(res.signedBlob), (c) => c.charCodeAt(0)))
   return `${protocol}//${r.host}${resourcePath(r.bucket, r.object)}?${query}&X-Goog-Signature=${signature}`

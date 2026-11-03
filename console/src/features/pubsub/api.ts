@@ -194,7 +194,11 @@ export const pull = async (project: string, sub: string, max: number) =>
   ).receivedMessages ?? []
 
 export const acknowledge = (project: string, sub: string, ackIds: string[]) =>
-  gcpFetch<void>(`${subPath(project, sub)}:acknowledge`, { method: 'POST', ...json({ ackIds }) })
+  gcpFetch<void>(`${subPath(project, sub)}:acknowledge`, {
+    method: 'POST',
+    repeatable: true,
+    ...json({ ackIds }),
+  })
 
 /** nack returns leased messages to the subscription for redelivery now. */
 export const nack = (project: string, sub: string, ackIds: string[]) =>

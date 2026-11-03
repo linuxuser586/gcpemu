@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap } from '@/api/admin'
+import { admin, repeatable, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 import { gcpFetch } from '@/api/fetch'
 
@@ -74,7 +74,7 @@ export const invalidate = async (urlMap: Ref, rule: CacheInvalidationRule) =>
   )
 
 /** purge clears the whole cache (`gcpemu cdn purge`, FR-CDN-008). */
-export const purge = () => unwrap(admin.POST('/_emu/v1/cdn/purge'))
+export const purge = () => unwrap(admin.POST('/_emu/v1/cdn/purge', repeatable))
 
 /** serviceRefs are the backend services and buckets a URL map routes to. */
 export function serviceRefs(map: Resource): string[] {

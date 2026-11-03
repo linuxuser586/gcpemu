@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap } from '@/api/admin'
+import { admin, repeatable, unwrap } from '@/api/admin'
 import type { components, paths } from '@/api/admin.gen'
 import { POLL_MS } from '@/api/queries'
 
@@ -65,7 +65,7 @@ export const discoveredQuery = () =>
   })
 
 export const identify = (address: string) =>
-  unwrap(admin.POST('/_emu/v1/links/identify', { body: { address } }))
+  unwrap(admin.POST('/_emu/v1/links/identify', { body: { address }, ...repeatable }))
 
 /** pair asks the Instance at address to pair, and waits for it to approve. */
 export const pair = (body: { address: string; fingerprint: string; name?: string }) =>

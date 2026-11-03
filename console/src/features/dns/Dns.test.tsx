@@ -458,6 +458,26 @@ it('deletes a zone after its record sets', async () => {
   expect(sent('DELETE', /managedZones\/internal$/)).toHaveLength(1)
 })
 
+it('re-sends only the zone delete when it gets no response (ADR 0062)', async () => {
+  let cancelled = 0
+  server.use(
+    // The first DELETE never reaches the fake, as when Chromium cancels it.
+    http.delete('*/dns/v1/projects/:p/managedZones/internal', () => {
+      if (cancelled++ === 0) return HttpResponse.error()
+    }),
+  )
+  const user = userEvent.setup()
+  const { router } = renderApp(`/dns/zones/internal/overview?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Delete zone' }))
+  await user.click(
+    within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete zone' }),
+  )
+  await waitFor(() => expect(router.state.location.pathname).toBe('/dns'))
+  expect(cancelled).toBe(2)
+  expect(sent('POST', /internal\/changes$/)).toHaveLength(1)
+  expect(sent('DELETE', /managedZones\/internal$/)).toHaveLength(1)
+})
+
 it('resolves a name from the host or a bound network in the query box', async () => {
   const user = userEvent.setup()
   const { router } = renderApp(`/dns/query?project=${P}`)
