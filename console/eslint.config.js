@@ -52,9 +52,9 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         {
-          selector: "CallExpression[callee.property.name='goto']",
+          selector: 'CallExpression[callee.property.name=/^(goto|reload)$/]',
           message:
-            "Use goto from './fixtures': it tries again a navigation Chromium cancelled because the host's network changed (#939).",
+            "Use goto or reload from './fixtures': they try again a navigation Chromium cancelled because the host's network changed (#939).",
         },
       ],
     },

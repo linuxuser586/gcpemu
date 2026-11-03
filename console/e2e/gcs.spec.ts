@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 
 // The Cloud Storage view (SRS 4.8.3, FR-UI-011) against the Instance's
 // gcs, pubsub and iam Services. Each attempt has its own Project, so a
@@ -124,7 +124,7 @@ test('Cloud Storage: upload, browse, download, generations and a signed URL', as
   ).toBe(true)
 
   // Browse by prefix.
-  await page.reload()
+  await reload(page)
   await objectsTable(page).getByRole('link', { name: 'docs/', exact: true }).click()
   await expect(page).toHaveURL(/prefix=docs%2F/)
   await objectsTable(page).getByRole('link', { name: 'a/', exact: true }).click()

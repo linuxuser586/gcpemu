@@ -1,4 +1,4 @@
-import { expect, goto, projectId, test } from './fixtures'
+import { expect, goto, projectId, reload, test } from './fixtures'
 
 // The Principal switcher (FR-UI-004) against the Instance's gateway. Other
 // tests share the Instance, so it stays at the audit IAM enforcement
@@ -43,6 +43,6 @@ test('Principal switcher: the console acts as the chosen service account', async
 
   // The choice is per browser: it survives a reload but not the link.
   expect(new URL(page.url()).search).toBe(`?project=${id}`)
-  await page.reload()
+  await reload(page)
   await expect(page.getByRole('button', { name: 'Acting as' })).toHaveText(new RegExp(email))
 })

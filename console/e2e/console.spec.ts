@@ -1,4 +1,4 @@
-import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 import { SERVICES } from '../src/lib/services'
 
 // The paths the console may call: its own bundle, the admin API and public
@@ -12,7 +12,7 @@ test.describe('FR-UI-002 serving', () => {
 
     await goto(page, '/console/pubsub?project=deep-link-project')
     await expect(page.getByRole('heading', { name: 'Pub/Sub' })).toBeVisible()
-    await page.reload()
+    await reload(page)
     await expect(page).toHaveURL(/\/console\/pubsub\?project=deep-link-project$/)
     await expect(page.getByRole('heading', { name: 'Pub/Sub' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Project' })).toContainText('deep-link-project')
@@ -231,7 +231,7 @@ test('FR-UI-012 Operations: live status, duration and the resulting resource or 
   await page.getByLabel('Status').selectOption('failed')
   await expect(page).toHaveURL(/[?&]status=failed\b/)
   await expect(ops).toHaveCount(1)
-  await page.reload()
+  await reload(page)
   await expect(ops).toHaveCount(1)
   await expect(ops).toContainText('already exists')
 })

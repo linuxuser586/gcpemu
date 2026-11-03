@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 
 // The VPC network view (SRS 4.8.3, FR-UI-011) against the Instance's
 // compute Service: a custom mode network and a subnetwork, a network's
@@ -126,7 +126,7 @@ test('VPC network: a subnetwork’s container network', async ({
 
   // Asking for its Host address realises it, as a Managed container would.
   await request.get(`/_emu/v1/host/address?subnetwork=${encodeURIComponent(sp)}`)
-  await page.reload()
+  await reload(page)
   const details = panel.getByLabel('Container network details')
   await expect(details).toContainText('Declared range10.43.0.0/24')
   await expect(details).toContainText(/gcpemu-.*-vpc-main-apps-/)
@@ -318,7 +318,7 @@ test('VPC network: peer two networks; allocate a private services access range a
   await compute(request, 'POST', `projects/${id}/global/networks/hub/addPeering`, {
     networkPeering: { name: 'hub-to-main', network: `projects/${id}/global/networks/main` },
   })
-  await page.reload()
+  await reload(page)
   await expect(peering).toContainText('ACTIVE')
   await expect(peering).not.toContainText('INACTIVE')
 

@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 
 import type { Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, goto, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, reload, test } from './fixtures'
 
 // The request check every view test ends with (#234): a request the
 // browser cancels when a navigation unloads its page is still checked,
@@ -108,6 +108,29 @@ test('a navigation that fails any other way is not tried again', async ({ page }
   expect(tries).toBe(1)
 })
 
+// cancelledOnce is page with the browser's own abort of its first
+// navigation by method reported as the host's network change.
+function cancelledOnce(page: Page, method: 'goto' | 'reload'): Page {
+  let first = true
+  return new Proxy(page, {
+    get(target, prop) {
+      if (prop === method) {
+        return (...args: unknown[]) => {
+          const cancelled = first
+          first = false
+          return (target[method] as (...a: unknown[]) => Promise<unknown>)
+            .apply(target, args)
+            .catch((err: unknown) => {
+              throw cancelled ? networkChanged() : err
+            })
+        }
+      }
+      const v: unknown = Reflect.get(target, prop, target)
+      return typeof v === 'function' ? (v as () => unknown).bind(target) : v
+    },
+  })
+}
+
 test('a navigation tried again lands, though the cancelled one’s error page loads after it failed', async ({
   page,
 }) => {
@@ -115,23 +138,32 @@ test('a navigation tried again lands, though the cancelled one’s error page lo
   await page.route(`${origin}/next`, (route) =>
     tries++ === 0 ? route.abort('internetdisconnected') : route.continue(),
   )
-  // The browser's own abort, reported as the host's network change.
-  const cancelled = new Proxy(page, {
-    get(target, prop) {
-      if (prop === 'goto') {
-        return (...args: Parameters<Page['goto']>) => {
-          const first = tries === 0
-          // eslint-disable-next-line no-restricted-syntax -- the page the helper drives
-          return target.goto(...args).catch((err: unknown) => {
-            throw first ? networkChanged() : err
-          })
-        }
-      }
-      const v: unknown = Reflect.get(target, prop, target)
-      return typeof v === 'function' ? (v as () => unknown).bind(target) : v
-    },
-  })
-  await goto(cancelled, `${origin}/next`)
+  await goto(cancelledOnce(page, 'goto'), `${origin}/next`)
   await expect(page).toHaveURL(`${origin}/next`)
   expect(tries).toBe(2)
+})
+
+test('a reload the host’s network change cancelled is tried again once, on the page it reloaded', async ({
+  page,
+}) => {
+  await goto(page, `${origin}/next`)
+  let tries = 0
+  await page.route(`${origin}/next`, (route) =>
+    tries++ === 0 ? route.abort('internetdisconnected') : route.continue(),
+  )
+  await reload(cancelledOnce(page, 'reload'))
+  await expect(page).toHaveURL(`${origin}/next`)
+  await expect(page.locator('body')).toHaveText('next')
+  expect(tries).toBe(2)
+})
+
+test('a reload that fails any other way is not tried again', async ({ page }) => {
+  await goto(page, `${origin}/next`)
+  let tries = 0
+  await page.route(`${origin}/next`, (route) => {
+    tries++
+    return route.abort('connectionrefused')
+  })
+  await expect(reload(page)).rejects.toThrow()
+  expect(tries).toBe(1)
 })

@@ -55,16 +55,25 @@ export function projectId(prefix: string, browserName: string): string {
  * cancels the navigation because the host's network changed (#939).
  */
 export async function goto(page: Page, ...args: Parameters<Page['goto']>) {
+  return tryAgainOnNetworkChange(page, () => page.goto(...args))
+}
+
+/** reload reloads page as page.reload does, trying again once as goto does. */
+export async function reload(page: Page, ...args: Parameters<Page['reload']>) {
+  return tryAgainOnNetworkChange(page, () => page.reload(...args))
+}
+
+async function tryAgainOnNetworkChange<T>(page: Page, navigate: () => Promise<T>): Promise<T> {
   try {
-    return await page.goto(...args)
+    return await navigate()
   } catch (err) {
     if (!(err instanceof Error) || !/\bnet::ERR_NETWORK_CHANGED\b/.test(err.message)) throw err
     // Chromium commits its error page for the cancelled navigation after
-    // page.goto has failed, and that interrupts a navigation started first.
+    // the navigation has failed, and that interrupts one started first.
     // A browser that shows no error page lets the wait time out.
     await page
       .waitForURL(/^chrome-error:/, { waitUntil: 'commit', timeout: 5_000 })
       .catch(() => undefined)
-    return page.goto(...args)
+    return navigate()
   }
 }

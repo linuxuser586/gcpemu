@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, goto, projectId, test } from './fixtures'
+import { expect, goto, projectId, reload, test } from './fixtures'
 
 // The Load Balancer view (SRS 4.8.3, FR-UI-011) against a real Instance:
 // a load balancer built with the forms, its local listener, the route
@@ -305,7 +305,7 @@ test('Load Balancer traffic: a live trace of each request, filtered by path', as
   await page.getByLabel('Path').fill('/old')
   await expect(rows).toHaveCount(1)
   await expect(page).toHaveURL(/[?&]path=%2Fold/)
-  await page.reload()
+  await reload(page)
   await expect(page.getByLabel('Path')).toHaveValue('/old')
   await expect(rows).toHaveCount(1)
   await page.getByLabel('Host').fill('nowhere.test')

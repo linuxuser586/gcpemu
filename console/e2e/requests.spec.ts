@@ -1,4 +1,4 @@
-import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 import { startInstance, type Instance } from './instance'
 
 // FR-UI-013: the Request log keeps only its last 2000 entries, and on the
@@ -69,7 +69,7 @@ test('tails the Request log live, filters it and expands a request to its bodies
   await expect(page).toHaveURL(
     (url) => url.searchParams.get('method') === 'patch' && !url.searchParams.has('status'),
   )
-  await page.reload()
+  await reload(page)
   await expect(page.getByRole('searchbox', { name: 'Method' })).toHaveValue('patch')
   await expect(rows).toHaveCount(1)
 

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 
 // The Certificate Manager view (SRS 4.8.3, FR-LB-004) against the
 // Instance's certs, dns and lb Services: a self-managed certificate is
@@ -246,7 +246,7 @@ test('Certificate Manager: a server TLS policy verifies an HTTPS proxy’s clien
     sslCertificates: ['global/sslCertificates/self'],
     serverTlsPolicy: `${scope}/locations/global/serverTlsPolicies/partners`,
   })
-  await page.reload()
+  await reload(page)
   await expect(page.getByTestId('tls-proxy')).toContainText('partner-https')
 
   // Edit: clients without a valid certificate are let through after all.
