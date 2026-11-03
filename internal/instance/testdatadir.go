@@ -174,6 +174,22 @@ func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string)
 	return true, nil
 }
 
+// ReclaimEndedDir reclaims dir as ReclaimEnded does, for the Instance ID
+// that dir holds and whatever it tags on the runtime, so it also serves a
+// dir that no object records, such as one whose Instance made none
+// (#921). A dir that holds no ID is left alone.
+func ReclaimEndedDir(ctx context.Context, cl *runtime.Client, dir string) (reclaimed bool, err error) {
+	id := readID(dir)
+	if id == "" {
+		return false, nil
+	}
+	a, err := taggedByID(ctx, cl, id)
+	if err != nil {
+		return false, err
+	}
+	return ReclaimEnded(ctx, cl, a, dir)
+}
+
 // How long stopProcess waits for a process to exit once asked to stop,
 // and once killed.
 const (

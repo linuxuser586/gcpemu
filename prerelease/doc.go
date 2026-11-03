@@ -37,6 +37,11 @@
 // which needs no Registry relay (#835): on Windows the container of the
 // first checks, on macOS one of the release's image of its own.
 //
+// The Instances the checks start on the host run in Test data dirs
+// (ADR 0057) under gcpemu-prerelease in the OS temp dir. A check's cleanup
+// reclaims its Instance's dir when gcpemu stop fails, and a run starts by
+// reclaiming the dirs of ended tests, such as those a killed run left.
+//
 // TestResolverRoutes is the same check on Linux, without the GKE Service,
 // for CI: it runs only with GCPEMU_RESOLVER_TESTS=1.
 //

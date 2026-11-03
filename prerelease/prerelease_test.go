@@ -69,6 +69,7 @@ func TestHostChecks(t *testing.T) {
 	if len(rts) == 0 {
 		t.Skipf("no runtime to check on %s: name VM runtimes' docker contexts in RUNTIMES", goruntime.GOOS)
 	}
+	reclaimEndedTests(t, rts)
 	suite := hostInstanceChecks
 	if goruntime.GOOS == "windows" {
 		suite = containerizedChecks
@@ -134,6 +135,9 @@ func setup(t *testing.T, rt string) (done func()) {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv(fakeGcpemuEnv) != "" {
+		os.Exit(fakeGcpemu(os.Args[1:]))
+	}
 	summary.commit = commit()
 	summary.versions = map[string]string{}
 	summary.notes = map[string]string{}

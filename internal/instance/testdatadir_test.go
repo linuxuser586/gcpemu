@@ -212,3 +212,41 @@ func TestReclaimKillsOnlyGcpemu(t *testing.T) {
 		})
 	}
 }
+
+// TestReclaimEndedDir is #921: an ended Test data dir is reclaimed by the
+// ID it holds, with its process and that ID's objects, even when no
+// object records the dir; a dir a test still owns is left alone.
+func TestReclaimEndedDir(t *testing.T) {
+	f, a := endedTest(t)
+	dir := a.EndedTestDirs[0]
+	// The objects record another dir, as when none records this one.
+	for _, objs := range []map[string]fakeObj{f.containers, f.networks, f.volumes} {
+		for name, o := range objs {
+			o.labels = labelled("ended", "")
+			objs[name] = o
+		}
+	}
+	s := startSleeper(t, dir, "gcpemu")
+	cl := fakeClient(t, f)
+
+	owned := testDataDir(t, filepath.Join(t.TempDir(), "owned"), "owned")
+	release, err := HoldOwnerLock(owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if ok, err := ReclaimEndedDir(context.Background(), cl, owned); err != nil || ok {
+		t.Errorf("ReclaimEndedDir(owned) = %v, %v; want left alone", ok, err)
+	}
+	if _, err := os.Stat(owned); err != nil {
+		t.Errorf("owned dir after ReclaimEndedDir: %v", err)
+	}
+
+	if ok, err := ReclaimEndedDir(context.Background(), cl, dir); err != nil || !ok {
+		t.Fatalf("ReclaimEndedDir = %v, %v; want reclaimed", ok, err)
+	}
+	if s.alive() {
+		t.Error("Instance process still runs after the reclaim")
+	}
+	assertReclaimed(t, f, a)
+}

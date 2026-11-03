@@ -5,6 +5,7 @@ package prerelease
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
+	"github.com/linuxuser586/gcpemu/internal/instance"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // gcpemuBin is the binary `task build` makes, which the macOS checks and
@@ -71,30 +74,166 @@ func doctor(t *testing.T) string {
 	return string(out)
 }
 
-// hostInstance is an Ephemeral Instance of gcpemuBin, detached, in a data
-// directory of its own, named name unless that is "".
-type hostInstance struct{ dir, name string }
+// testDirRoot holds the Test data dirs (ADR 0057) of the Instances the
+// checks start with gcpemuBin, so that a run finds those a killed run
+// left behind (#921).
+var testDirRoot = filepath.Join(os.TempDir(), "gcpemu-prerelease")
+
+// detectRuntime returns a client for the runtime of the current docker
+// context; tests fake it.
+var detectRuntime = runtime.Detect
+
+// hostInstance is an Ephemeral Instance of gcpemuBin, detached, in a Test
+// data dir of its own under testDirRoot, named name unless that is "".
+type hostInstance struct {
+	dir, name string
+	// release lets go of the dir's owner lock.
+	release func()
+}
+
+// newHostInstance makes a Test data dir for an Instance named name and
+// takes its owner lock, which end lets go of. The lock is not inherited
+// by gcpemuBin's processes, so it ends with the test's.
+func newHostInstance(name string) (*hostInstance, error) {
+	if err := os.MkdirAll(testDirRoot, 0o700); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(testDirRoot, "data-")
+	if err != nil {
+		return nil, err
+	}
+	release, err := instance.HoldOwnerLock(dir)
+	if err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
+	return &hostInstance{dir: dir, name: name, release: release}, nil
+}
 
 // startHost starts an Ephemeral Instance running services, with every
 // listener on a free port unless ports (--port values) say otherwise, and
-// stops it at cleanup.
+// ends it at cleanup.
 func startHost(t *testing.T, ctx context.Context, name, services string, ports ...string) *hostInstance {
 	t.Helper()
-	h := &hostInstance{dir: filepath.Join(t.TempDir(), "data"), name: name}
+	h, err := newHostInstance(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := h.end(ctx); err != nil {
+			t.Error(err)
+		}
+	})
 	args := []string{"start", "--detach", "--ephemeral", "--services", services, "--wait-timeout", "300s"}
 	for _, p := range append([]string{"0"}, ports...) {
 		args = append(args, "--port", p)
 	}
-	out, err := h.gcpemu(ctx, args...)
-	t.Cleanup(func() {
-		if out, err := h.gcpemu(context.Background(), "stop"); err != nil {
-			t.Errorf("gcpemu stop: %v\n%s", err, out)
-		}
-	})
-	if err != nil {
+	if out, err := h.gcpemu(ctx, args...); err != nil {
 		t.Fatalf("gcpemu start: %v\n%s", err, out)
 	}
 	return h
+}
+
+// end stops the Instance with gcpemu stop, then lets go of the dir's
+// owner lock and reclaims the dir as the next run would: a process still
+// running is killed if it is gcpemu, and the Instance's containers,
+// networks and volumes and the dir are removed, so that none outlives the
+// check even when stop fails (#921). A dir the reclaim keeps, because it
+// holds no Instance ID, is removed too.
+func (h *hostInstance) end(ctx context.Context) error {
+	var errs []error
+	if out, err := h.gcpemu(ctx, "stop"); err != nil {
+		errs = append(errs, fmt.Errorf("gcpemu stop: %w\n%s", err, out))
+	}
+	// The reclaim takes the lock itself, which proves the test has ended; a
+	// reclaim in another process that takes it first does the same.
+	h.release()
+	cl, err := detectRuntime()
+	if err == nil {
+		_, err = instance.ReclaimEndedDir(ctx, cl, h.dir)
+	}
+	if err != nil {
+		// The dir keeps the Instance ID, so the next run reclaims it.
+		return errors.Join(append(errs, fmt.Errorf("reclaiming %s: %w", h.dir, err))...)
+	}
+	_ = os.RemoveAll(h.dir)
+	return errors.Join(errs...)
+}
+
+// reclaimEndedTests is the run-start reclaim (ADR 0057): before the
+// first check it reclaims the Instances of ended tests on each runtime in
+// rts, those that a killed run left behind among them.
+func reclaimEndedTests(t *testing.T, rts []string) {
+	t.Helper()
+	// Detection reads the docker context from the environment; the
+	// caller's comes back after.
+	for _, k := range []string{"DOCKER_HOST", "DOCKER_CONTEXT"} {
+		if v, ok := os.LookupEnv(k); ok {
+			defer os.Setenv(k, v)
+		} else {
+			defer os.Unsetenv(k)
+		}
+	}
+	cls := make([]*runtime.Client, len(rts))
+	for i, rt := range rts {
+		os.Setenv("DOCKER_HOST", "")
+		os.Setenv("DOCKER_CONTEXT", rt)
+		cls[i], _ = detectRuntime()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := reclaimEnded(ctx, testDirRoot, cls); err != nil {
+		t.Logf("reclaiming the Instances of ended tests: %v", err)
+	}
+}
+
+// reclaimEnded reclaims every Test data dir whose test has ended that an
+// object on one of cls records, then each under root that none records,
+// such as one whose Instance made no object (#921). A nil client is a
+// runtime that did not answer; while there is one, or a runtime fails to
+// list its objects, the dirs that no object records are kept: their
+// objects may be there, and only their dir records whose they are.
+func reclaimEnded(ctx context.Context, root string, cls []*runtime.Client) error {
+	var errs []error
+	recorded := map[string]bool{}
+	complete := len(cls) > 0
+	for _, cl := range cls {
+		if cl == nil {
+			complete = false
+			continue
+		}
+		tagged, err := instance.FindTagged(ctx, cl)
+		if err != nil {
+			errs = append(errs, err)
+			complete = false
+			continue
+		}
+		for _, a := range tagged {
+			recorded[a.ID] = true
+			for _, dir := range a.Dirs {
+				if _, err := instance.ReclaimEnded(ctx, cl, a, dir); err != nil {
+					errs = append(errs, fmt.Errorf("Instance %s in %s: %w", a.ID, dir, err))
+				}
+			}
+		}
+	}
+	if !complete {
+		return errors.Join(errs...)
+	}
+	// Glob fails only on a malformed pattern.
+	dirs, _ := filepath.Glob(filepath.Join(root, "*"))
+	for _, dir := range dirs {
+		id, _ := os.ReadFile(filepath.Join(dir, instance.IDFile))
+		if recorded[string(id)] {
+			continue // a reclaim above failed, or its test still runs
+		}
+		if _, err := instance.ReclaimEndedDir(ctx, cls[0], dir); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", dir, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // flags select this Instance.
