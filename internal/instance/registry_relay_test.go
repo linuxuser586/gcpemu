@@ -62,7 +62,7 @@ func TestStartRegistryRelay(t *testing.T) {
 		{name: "start fails", rt: docker, registry: "127.0.0.1:4561", probe: vm, startErr: errors.New("boom"), want: RegistryRelayFailed, connected: true, started: true, reason: "boom"},
 		{name: "Podman machine", goos: "darwin", rt: podman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true, podman: "podman machine ssh"},
 		{name: "rootless Podman machine", goos: "darwin", rt: rootlessPodman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true, podman: "podman machine ssh"},
-		{name: "rootless Podman on Linux", rt: rootlessPodman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayOff, connected: true, reason: "rootless Podman pushes and pulls from the host's network namespace", podman: "~/.config/containers/registries.conf"},
+		{name: "rootless Podman on Linux", rt: rootlessPodman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayOff, connected: true, reason: "rootless Podman pushes and pulls in the host's network namespace", podman: "~/.config/containers/registries.conf"},
 		{name: "rootful Podman on Linux", rt: podman, registry: "127.0.0.1:4561", probe: hostBridge, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback", podman: "/etc/containers/registries.conf"},
 		{name: "rootless Docker on Linux", rt: rootlessDocker, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
 	}

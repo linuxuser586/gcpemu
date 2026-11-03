@@ -201,7 +201,7 @@ func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayS
 func vmSideOff(goos string, info runtime.Info, d vmrelay.Decision) (reason string, host bool) {
 	switch {
 	case goos == "linux" && info.Name == "podman" && info.Rootless:
-		return "rootless Podman pushes and pulls from the host's network namespace, where the registry's loopback endpoint already reaches it", true
+		return "rootless Podman pushes and pulls in the host's network namespace, where the registry's loopback endpoint already reaches it", true
 	case !d.VM:
 		return "the runtime's daemon shares the host's loopback", true
 	case !d.On:
