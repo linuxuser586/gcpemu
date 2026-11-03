@@ -75,6 +75,7 @@ function stubPage(...results: (Error | 'ok')[]) {
       const r = results.shift()
       return r === 'ok' ? Promise.resolve(null) : Promise.reject(r ?? new Error('no more'))
     },
+    waitForURL: () => Promise.resolve(),
   } as unknown as Page
   return { page, calls }
 }
@@ -105,4 +106,32 @@ test('a navigation that fails any other way is not tried again', async ({ page }
   })
   await expect(goto(page, `${origin}/refused`)).rejects.toThrow()
   expect(tries).toBe(1)
+})
+
+test('a navigation tried again lands, though the cancelled one’s error page loads after it failed', async ({
+  page,
+}) => {
+  let tries = 0
+  await page.route(`${origin}/next`, (route) =>
+    tries++ === 0 ? route.abort('internetdisconnected') : route.continue(),
+  )
+  // The browser's own abort, reported as the host's network change.
+  const cancelled = new Proxy(page, {
+    get(target, prop) {
+      if (prop === 'goto') {
+        return (...args: Parameters<Page['goto']>) => {
+          const first = tries === 0
+          // eslint-disable-next-line no-restricted-syntax -- the page the helper drives
+          return target.goto(...args).catch((err: unknown) => {
+            throw first ? networkChanged() : err
+          })
+        }
+      }
+      const v: unknown = Reflect.get(target, prop, target)
+      return typeof v === 'function' ? (v as () => unknown).bind(target) : v
+    },
+  })
+  await goto(cancelled, `${origin}/next`)
+  await expect(page).toHaveURL(`${origin}/next`)
+  expect(tries).toBe(2)
 })

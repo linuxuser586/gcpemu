@@ -59,6 +59,12 @@ export async function goto(page: Page, ...args: Parameters<Page['goto']>) {
     return await page.goto(...args)
   } catch (err) {
     if (!(err instanceof Error) || !/\bnet::ERR_NETWORK_CHANGED\b/.test(err.message)) throw err
+    // Chromium commits its error page for the cancelled navigation after
+    // page.goto has failed, and that interrupts a navigation started first.
+    // A browser that shows no error page lets the wait time out.
+    await page
+      .waitForURL(/^chrome-error:/, { waitUntil: 'commit', timeout: 5_000 })
+      .catch(() => undefined)
     return page.goto(...args)
   }
 }
