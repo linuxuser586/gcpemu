@@ -3,7 +3,7 @@ import { queryOptions } from '@tanstack/react-query'
 import { admin, repeatable, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 import { ApiError } from '@/api/errors'
-import { gcpFetch, type Repeatable } from '@/api/fetch'
+import { gcpFetch, jsonInit, type JsonWrite } from '@/api/fetch'
 
 // The Load Balancer view's reads and writes: the load-balancing
 // collections of compute v1 (FR-LB-001), global and regional, and two
@@ -239,12 +239,7 @@ export interface Operation {
   error?: { errors?: { code?: string; message?: string }[] }
 }
 
-const send = <T>(path: string, method: string, body?: unknown, opts?: Repeatable) =>
-  gcpFetch<T>(API + path, {
-    method,
-    ...opts,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+const send = <T>(path: string, w: JsonWrite) => gcpFetch<T>(API + path, jsonInit(w))
 
 /**
  * waitOperation resolves once op is DONE, or rejects with its error.
@@ -253,7 +248,8 @@ const send = <T>(path: string, method: string, body?: unknown, opts?: Repeatable
 export async function waitOperation(op: Operation): Promise<Operation> {
   let cur = op
   while (cur.status !== 'DONE') {
-    cur = await send<Operation>(`${relPath(cur.selfLink)}/wait`, 'POST', undefined, {
+    cur = await send<Operation>(`${relPath(cur.selfLink)}/wait`, {
+      method: 'POST',
       repeatable: true,
     })
   }
@@ -263,8 +259,7 @@ export async function waitOperation(op: Operation): Promise<Operation> {
   return cur
 }
 
-const write = async (path: string, method: string, body?: unknown, opts?: Repeatable) =>
-  waitOperation(await send<Operation>(path, method, body, opts))
+const write = async (path: string, w: JsonWrite) => waitOperation(await send<Operation>(path, w))
 
 type Aggregated = { items?: Record<string, Record<string, Resource[] | undefined>> }
 
@@ -283,16 +278,17 @@ export async function listKind(project: string, coll: Coll): Promise<Resource[]>
 export const getResource = (r: Ref) => gcpFetch<Resource>(API + resourcePath(r))
 
 export const insertResource = (project: string, region: string, coll: Coll, body: unknown) =>
-  write(`${scopePath(project, region)}/${coll}`, 'POST', body, { repeatable: true })
+  write(`${scopePath(project, region)}/${coll}`, { method: 'POST', body, repeatable: true })
 
 /** patchResource sends a JSON merge patch (patch() of every kind). */
-export const patchResource = (r: Ref, body: unknown) => write(resourcePath(r), 'PATCH', body)
+export const patchResource = (r: Ref, body: unknown) =>
+  write(resourcePath(r), { method: 'PATCH', body })
 
 /** setResource calls one of a resource's set* methods, e.g. setBackendService. */
 export const setResource = (r: Ref, method: string, body: unknown) =>
-  write(`${resourcePath(r)}/${method}`, 'POST', body, { repeatable: true })
+  write(`${resourcePath(r)}/${method}`, { method: 'POST', body, repeatable: true })
 
-export const deleteResource = (r: Ref) => write(resourcePath(r), 'DELETE')
+export const deleteResource = (r: Ref) => write(resourcePath(r), { method: 'DELETE' })
 
 export interface HealthStatus {
   ipAddress?: string

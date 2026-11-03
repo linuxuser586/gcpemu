@@ -74,8 +74,17 @@ export interface GcpInit extends RequestInit {
   repeatable?: boolean
 }
 
-/** Repeatable is the opt-in a request helper passes on to gcpFetch. */
-export type Repeatable = Pick<GcpInit, 'repeatable'>
+/** JsonWrite is a write a feature's request helper sends with a JSON body. */
+export interface JsonWrite extends Pick<GcpInit, 'repeatable'> {
+  method: string
+  body?: unknown
+}
+
+/** jsonInit is gcpFetch's init for w, its body encoded as JSON. */
+export const jsonInit = ({ body, ...rest }: JsonWrite): GcpInit => ({
+  ...rest,
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
 
 /**
  * sendAs sends a public API request as the chosen Principal. A request

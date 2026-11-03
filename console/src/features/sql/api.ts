@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiError } from '@/api/errors'
-import { gcpFetch, type Repeatable } from '@/api/fetch'
+import { gcpFetch, jsonInit, type JsonWrite } from '@/api/fetch'
 
 // The Cloud SQL view's reads and writes, all through sqladmin v1:
 // instances, databases, users, flags, backup runs, Operations and
@@ -192,12 +192,7 @@ export function displayState(i: DatabaseInstance): string {
 export const ipOf = (i: DatabaseInstance | undefined, type: string) =>
   i?.ipAddresses?.find((a) => a.type === type)?.ipAddress
 
-const send = <T>(path: string, method: string, body?: unknown, opts?: Repeatable) =>
-  gcpFetch<T>(API + path, {
-    method,
-    ...opts,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+const send = <T>(path: string, w: JsonWrite) => gcpFetch<T>(API + path, jsonInit(w))
 
 export const listInstances = async (project: string) =>
   (await gcpFetch<{ items?: DatabaseInstance[] }>(`${API}projects/${project}/instances`)).items ??
@@ -206,15 +201,16 @@ export const listInstances = async (project: string) =>
 export const getInstance = (r: InstanceRef) => gcpFetch<DatabaseInstance>(API + instanceName(r))
 
 export const insertInstance = (project: string, body: unknown) =>
-  send<SqlOperation>(`projects/${project}/instances`, 'POST', body, { repeatable: true })
+  send<SqlOperation>(`projects/${project}/instances`, { method: 'POST', body, repeatable: true })
 
 export const patchInstance = (r: InstanceRef, body: unknown) =>
-  send<SqlOperation>(instanceName(r), 'PATCH', body)
+  send<SqlOperation>(instanceName(r), { method: 'PATCH', body })
 
-export const deleteInstance = (r: InstanceRef) => send<SqlOperation>(instanceName(r), 'DELETE')
+export const deleteInstance = (r: InstanceRef) =>
+  send<SqlOperation>(instanceName(r), { method: 'DELETE' })
 
 export const restartInstance = (r: InstanceRef) =>
-  send<SqlOperation>(`${instanceName(r)}/restart`, 'POST')
+  send<SqlOperation>(`${instanceName(r)}/restart`, { method: 'POST' })
 
 /** setActivation starts (ALWAYS) or stops (NEVER) an instance. */
 export const setActivation = (r: InstanceRef, activationPolicy: 'ALWAYS' | 'NEVER') =>
@@ -224,45 +220,54 @@ export const listDatabases = async (r: InstanceRef) =>
   (await gcpFetch<{ items?: Database[] }>(`${API}${instanceName(r)}/databases`)).items ?? []
 
 export const insertDatabase = (r: InstanceRef, body: unknown) =>
-  send<SqlOperation>(`${instanceName(r)}/databases`, 'POST', body, { repeatable: true })
+  send<SqlOperation>(`${instanceName(r)}/databases`, { method: 'POST', body, repeatable: true })
 
 export const patchDatabase = (r: InstanceRef, db: string, body: unknown) =>
-  send<SqlOperation>(`${instanceName(r)}/databases/${encodeURIComponent(db)}`, 'PATCH', body)
+  send<SqlOperation>(`${instanceName(r)}/databases/${encodeURIComponent(db)}`, {
+    method: 'PATCH',
+    body,
+  })
 
 export const deleteDatabase = (r: InstanceRef, db: string) =>
-  send<SqlOperation>(`${instanceName(r)}/databases/${encodeURIComponent(db)}`, 'DELETE')
+  send<SqlOperation>(`${instanceName(r)}/databases/${encodeURIComponent(db)}`, { method: 'DELETE' })
 
 export const listUsers = async (r: InstanceRef) =>
   (await gcpFetch<{ items?: User[] }>(`${API}${instanceName(r)}/users`)).items ?? []
 
 export const insertUser = (r: InstanceRef, body: unknown) =>
-  send<SqlOperation>(`${instanceName(r)}/users`, 'POST', body, { repeatable: true })
+  send<SqlOperation>(`${instanceName(r)}/users`, { method: 'POST', body, repeatable: true })
 
 const userQuery = (name: string) => `?${new URLSearchParams({ name })}`
 
 export const updateUser = (r: InstanceRef, name: string, body: unknown) =>
-  send<SqlOperation>(`${instanceName(r)}/users${userQuery(name)}`, 'PUT', body)
+  send<SqlOperation>(`${instanceName(r)}/users${userQuery(name)}`, { method: 'PUT', body })
 
 export const deleteUser = (r: InstanceRef, name: string) =>
-  send<SqlOperation>(`${instanceName(r)}/users${userQuery(name)}`, 'DELETE')
+  send<SqlOperation>(`${instanceName(r)}/users${userQuery(name)}`, { method: 'DELETE' })
 
 export const listBackupRuns = async (r: InstanceRef) =>
   (await gcpFetch<{ items?: BackupRun[] }>(`${API}${instanceName(r)}/backupRuns`)).items ?? []
 
 export const insertBackupRun = (r: InstanceRef, description: string) =>
-  send<SqlOperation>(`${instanceName(r)}/backupRuns`, 'POST', description ? { description } : {})
+  send<SqlOperation>(`${instanceName(r)}/backupRuns`, {
+    method: 'POST',
+    body: description ? { description } : {},
+  })
 
 export const deleteBackupRun = (r: InstanceRef, id: string) =>
-  send<SqlOperation>(`${instanceName(r)}/backupRuns/${id}`, 'DELETE')
+  send<SqlOperation>(`${instanceName(r)}/backupRuns/${id}`, { method: 'DELETE' })
 
 /** restoreBackup restores a backup run of instance from onto r. */
 export const restoreBackup = (r: InstanceRef, backupRunId: string, instance: string) =>
-  send<SqlOperation>(`${instanceName(r)}/restoreBackup`, 'POST', {
-    restoreBackupContext: { backupRunId, instanceId: instance, project: r.project },
+  send<SqlOperation>(`${instanceName(r)}/restoreBackup`, {
+    method: 'POST',
+    body: {
+      restoreBackupContext: { backupRunId, instanceId: instance, project: r.project },
+    },
   })
 
 export const executeSql = (r: InstanceRef, body: ExecuteSqlPayload) =>
-  send<ExecuteSqlResponse>(`${instanceName(r)}/executeSql`, 'POST', body)
+  send<ExecuteSqlResponse>(`${instanceName(r)}/executeSql`, { method: 'POST', body })
 
 /** OP_POLL_MS is how often waitOperation checks an Operation. */
 export const OP_POLL_MS = 500

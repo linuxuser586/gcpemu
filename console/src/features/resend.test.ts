@@ -180,15 +180,19 @@ async function attempts(call: () => Promise<unknown>): Promise<number> {
   void call()
     .catch(() => undefined)
     .finally(() => (settled = true))
-  // Step the clock until the call settles: some, such as signedUrl, await
-  // real async work (crypto.subtle) before their first request.
-  for (let i = 0; !settled && i < 50; i++) await vi.advanceTimersByTimeAsync(500)
-  expect(settled).toBe(true)
+  // Step the clock until the call settles, letting the real event loop run
+  // between steps: some calls, such as signedUrl, await real async work
+  // (crypto.subtle) before their first request. The test's timeout bounds it.
+  while (!settled) {
+    await vi.advanceTimersByTimeAsync(500)
+    await new Promise((resolve) => setImmediate(resolve))
+  }
   return sent
 }
 
 describe('which POSTs are re-sent', () => {
-  beforeEach(() => vi.useFakeTimers())
+  // setImmediate stays real, for attempts to yield to the event loop.
+  beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }))
   afterEach(() => vi.useRealTimers())
 
   it.each(Object.entries(REPEATABLE))('re-sends %s', async (_, call) => {

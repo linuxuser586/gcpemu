@@ -2,7 +2,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { admin, unwrap, type RequestEntry } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
-import { gcpFetch, type Repeatable } from '@/api/fetch'
+import { gcpFetch, jsonInit, type JsonWrite } from '@/api/fetch'
 
 import { lastSeg, relPath, waitOperation, type Operation, type Resource } from '../lb/api'
 import { aggregated, type Subnetwork } from '../vpc/api'
@@ -86,22 +86,17 @@ export const listRouters = (project: string) => aggregated<'routers', Router>(pr
 
 export const getRouter = (r: RouterRef) => gcpFetch<Router>(API + routerPath(r))
 
-const write = async (path: string, method: string, body?: unknown, opts?: Repeatable) =>
-  waitOperation(
-    await gcpFetch<Operation>(API + path, {
-      method,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      ...opts,
-    }),
-  )
+const write = async (path: string, w: JsonWrite) =>
+  waitOperation(await gcpFetch<Operation>(API + path, jsonInit(w)))
 
 export const insertRouter = (project: string, region: string, body: unknown) =>
-  write(`projects/${project}/regions/${region}/routers`, 'POST', body, { repeatable: true })
+  write(`projects/${project}/regions/${region}/routers`, { method: 'POST', body, repeatable: true })
 
 /** patchRouter sends a JSON merge patch; nats replaces the list. */
-export const patchRouter = (r: RouterRef, body: unknown) => write(routerPath(r), 'PATCH', body)
+export const patchRouter = (r: RouterRef, body: unknown) =>
+  write(routerPath(r), { method: 'PATCH', body })
 
-export const deleteRouter = (r: RouterRef) => write(routerPath(r), 'DELETE')
+export const deleteRouter = (r: RouterRef) => write(routerPath(r), { method: 'DELETE' })
 
 /** withNat is the router's nats with nat added, or replacing the one named was. */
 export function withNat(router: Router, nat: RouterNat, was?: string): RouterNat[] {
