@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import type { APIRequestContext, Page, Request } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { clipboardText, expect, projectId, test } from './fixtures'
 
 // The Artifact Registry view (SRS 4.8.3, FR-UI-011) against the
 // Instance's ar Service: images are pushed to its registry with the OCI
@@ -226,7 +226,7 @@ test('Artifact Registry: pushed images, their digests and per-arch manifests', a
   if (browserName === 'chromium') {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await page.getByRole('button', { name: `Copy pull command of ${short(index.digest)}` }).click()
-    const command = await page.evaluate(() => navigator.clipboard.readText())
+    const command = await clipboardText(page)
     expect(command).toMatch(new RegExp(`^docker pull \\S+/${name}/app:v1$`))
     expect(await reg.pullStatus(command.slice('docker pull '.length))).toBe(200)
   }

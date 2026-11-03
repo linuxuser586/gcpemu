@@ -1,4 +1,4 @@
-import { test as base, expect, type Request } from '@playwright/test'
+import { test as base, expect, type Page, type Request } from '@playwright/test'
 
 // The requests a page had answered. In Chromium, headerValue and
 // response wait forever on a request the browser cancelled, as a
@@ -43,6 +43,16 @@ export async function expectConsoleRequests(
       expect(auth, r.url()).toBeNull()
     }
   }
+}
+
+/**
+ * clipboardText reads the clipboard with LF line endings. Chromium on
+ * Windows writes CRLF whatever the page gave it (#961); CI runs on Linux,
+ * so a test that reads the clipboard directly fails only on Windows.
+ */
+export async function clipboardText(page: Page): Promise<string> {
+  const text = await page.evaluate(() => navigator.clipboard.readText())
+  return text.replaceAll('\r\n', '\n')
 }
 
 /** projectId returns a Project ID unique to the test's browser. */

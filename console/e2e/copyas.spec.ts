@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { clipboardText, expect, expectConsoleRequests, projectId, test } from './fixtures'
 
 // Copy as (FR-UI-015) against a real Instance: each resource's dialog
 // shows the gcloud command, curl request and OpenTofu block, and the curl
@@ -118,9 +118,7 @@ test('Copy as: a Pub/Sub subscription as gcloud, curl and OpenTofu', async ({
     )
     await dialog.getByRole('button', { name: 'Copy' }).click()
     await expect(dialog.getByRole('button', { name: 'Copied' })).toBeVisible()
-    // Windows' clipboard reads back with CRLF line endings.
-    const clip = await page.evaluate(() => navigator.clipboard.readText())
-    expect(clip.replaceAll('\r\n', '\n')).toBe(copied.tofu)
+    expect(await clipboardText(page)).toBe(copied.tofu)
     await dialog.getByRole('button', { name: 'Close' }).click()
   }
 
