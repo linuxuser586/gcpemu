@@ -25,11 +25,16 @@ async function publish(page: Page, body: string, attributes: string, orderingKey
   await dialog.getByRole('button', { name: 'Done' }).click()
 }
 
-/** localTime is t as a datetime-local input's value, in the browser's time zone. */
+/**
+ * localTime is t as a datetime-local input's value, in the browser's time
+ * zone. The input leaves out :00 seconds, and fill fails on a value that
+ * does not read back the same.
+ */
 function localTime(t: Date): string {
   const d = new Date(t)
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  return d.toISOString().slice(0, 19)
+  const value = d.toISOString().slice(0, 19)
+  return value.endsWith(':00') ? value.slice(0, 16) : value
 }
 
 /** put creates the Pub/Sub resource at path through the public REST API. */
