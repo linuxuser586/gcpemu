@@ -751,7 +751,8 @@ func TestReportBuildDaemon(t *testing.T) {
 // doctor reports a running Instance's Registry relay (ADR 0043): passing
 // while it runs, with Podman machine's step, and failing with the fix when
 // it was skipped or failed. A Containerized Instance's is off, with
-// Podman machine's step too (#835).
+// Podman machine's step too (#835), and so is Podman's on a Linux host,
+// with the host's step (#923).
 func TestReportRegistryRelay(t *testing.T) {
 	for _, tc := range []struct {
 		body  string
@@ -761,13 +762,14 @@ func TestReportRegistryRelay(t *testing.T) {
 		lines string // printed besides report
 	}{
 		{`{"state":"running","listen":"127.0.0.1:4561"}`, []bool{true}, "reach the registry at 127.0.0.1:4561 inside the runtime's VM", "", ""},
-		{`{"state":"running","listen":"127.0.0.1:4561","podman":"run podman push --tls-verify=false"}`, []bool{true}, "127.0.0.1:4561", "", "[WARN] Podman machine pushes to the registry over HTTPS by default"},
+		{`{"state":"running","listen":"127.0.0.1:4561","podman":"run podman push --tls-verify=false"}`, []bool{true}, "127.0.0.1:4561", "", "[WARN] Podman pushes to the registry over HTTPS by default"},
 		{`{"state":"skipped","reason":"127.0.0.1:4561 is taken inside the runtime's VM","fix":"stop whatever listens"}`, []bool{false}, "can't reach the registry", "stop whatever listens", ""},
 		{`{"state":"failed","reason":"boom"}`, []bool{false}, "failed to start, so the runtime's own docker push can't reach the registry: boom", "log", ""},
 		{`{"state":"off","reason":"the runtime's daemon shares the host's loopback"}`, nil, "", "", "[--  ] Registry relay: off (the runtime's daemon shares the host's loopback)"},
 		{`{"state":"starting"}`, nil, "", "", "[--  ] Registry relay: starting"},
 		{`{"state":"off","reason":"a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561)"}`, nil, "", "", "[--  ] Registry relay: off (a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561))"},
-		{`{"state":"off","reason":"a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561)","podman":"run podman push --tls-verify=false"}`, nil, "", "", "(-p 127.0.0.1:4561:4561))\n[WARN] Podman machine pushes to the registry over HTTPS by default\n       fix: run podman push --tls-verify=false"},
+		{`{"state":"off","reason":"a Containerized Instance's Published registry port 4561 reaches VM-side clients when published at the same host port (-p 127.0.0.1:4561:4561)","podman":"run podman push --tls-verify=false"}`, nil, "", "", "(-p 127.0.0.1:4561:4561))\n[WARN] Podman pushes to the registry over HTTPS by default\n       fix: run podman push --tls-verify=false"},
+		{`{"state":"off","reason":"rootless Podman pushes and pulls from the host's network namespace, where the registry's loopback endpoint already reaches it","podman":"add it to ~/.config/containers/registries.conf"}`, nil, "", "", "[--  ] Registry relay: off (rootless Podman pushes and pulls from the host's network namespace, where the registry's loopback endpoint already reaches it)\n[WARN] Podman pushes to the registry over HTTPS by default\n       fix: add it to ~/.config/containers/registries.conf"},
 	} {
 		var oks []bool
 		var whats, fixes []string

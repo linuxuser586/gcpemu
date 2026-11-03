@@ -79,7 +79,7 @@ func containerizedRegistry(t *testing.T, ctx context.Context, rt string) {
 	out, _ := exec.CommandContext(ctx, "docker", "exec", container, "/gcpemu", "doctor").CombinedOutput()
 	want := []string{"[--  ] Registry relay: off (a Containerized Instance's Published registry port " + registryPort}
 	if tableRow(rt) == "Podman machine" {
-		want = append(want, "[WARN] Podman machine pushes to the registry over HTTPS by default")
+		want = append(want, "[WARN] Podman pushes to the registry over HTTPS by default")
 	}
 	requireDoctor(t, string(out), want...)
 	c := containerClients(t)

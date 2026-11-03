@@ -30,11 +30,14 @@ func TestStartRegistryRelay(t *testing.T) {
 	}
 	docker := &runtime.Manager{Client: cl, Info: runtime.Info{Name: "docker"}}
 	podman := &runtime.Manager{Client: cl, Info: runtime.Info{Name: "podman"}}
+	rootlessPodman := &runtime.Manager{Client: cl, Info: runtime.Info{Name: "podman", Rootless: true}}
+	rootlessDocker := &runtime.Manager{Client: cl, Info: runtime.Info{Name: "docker", Rootless: true}}
 	vm := vmrelay.Decision{On: true, VM: true, Reason: "runtime OS Docker Desktop"}
 	hostBridge := vmrelay.Decision{Reason: "gateway 172.17.0.1 is held by docker0"}
 
 	tests := []struct {
 		name      string
+		goos      string // "" for linux
 		rt        *runtime.Manager
 		rtErr     error
 		registry  string
@@ -45,6 +48,7 @@ func TestStartRegistryRelay(t *testing.T) {
 		connected bool
 		started   bool
 		reason    string // in Reason
+		podman    string // in the Podman step; "" for none
 	}{
 		{name: "VM runtime", rt: docker, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
 		{name: "moved registry port", rt: docker, registry: "127.0.0.1:5000", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
@@ -56,7 +60,11 @@ func TestStartRegistryRelay(t *testing.T) {
 		{name: "netplane decides otherwise", rt: docker, registry: "127.0.0.1:4561", probe: vm, plane: &hostBridge, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback"},
 		{name: "port taken in the VM", rt: docker, registry: "127.0.0.1:4561", probe: vm, startErr: registryrelay.ErrPortTaken, want: RegistryRelaySkipped, connected: true, started: true, reason: "127.0.0.1:4561 is taken"},
 		{name: "start fails", rt: docker, registry: "127.0.0.1:4561", probe: vm, startErr: errors.New("boom"), want: RegistryRelayFailed, connected: true, started: true, reason: "boom"},
-		{name: "Podman machine", rt: podman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
+		{name: "Podman machine", goos: "darwin", rt: podman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true, podman: "podman machine ssh"},
+		{name: "rootless Podman machine", goos: "darwin", rt: rootlessPodman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true, podman: "podman machine ssh"},
+		{name: "rootless Podman on Linux", rt: rootlessPodman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayOff, connected: true, reason: "rootless Podman pushes and pulls from the host's network namespace", podman: "~/.config/containers/registries.conf"},
+		{name: "rootful Podman on Linux", rt: podman, registry: "127.0.0.1:4561", probe: hostBridge, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback", podman: "/etc/containers/registries.conf"},
+		{name: "rootless Docker on Linux", rt: rootlessDocker, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -64,9 +72,14 @@ func TestStartRegistryRelay(t *testing.T) {
 			if tt.plane != nil {
 				plane = *tt.plane
 			}
+			goos := tt.goos
+			if goos == "" {
+				goos = "linux"
+			}
 			connected := false
 			var got *registryrelay.Options
 			st := startRegistryRelay(context.Background(), registryRelayDeps{
+				goos:     goos,
 				registry: func() string { return tt.registry },
 				runtime: func(context.Context) (*runtime.Manager, error) {
 					connected = true
@@ -90,6 +103,12 @@ func TestStartRegistryRelay(t *testing.T) {
 			if connected != tt.connected {
 				t.Errorf("connected to the runtime = %v; want %v", connected, tt.connected)
 			}
+			if (st.Podman != "") != (tt.podman != "") || !strings.Contains(st.Podman, tt.podman) {
+				t.Errorf("podman step = %q; want one with %q", st.Podman, tt.podman)
+			}
+			if tt.podman != "" && (!strings.Contains(st.Podman, "localhost:4561") || strings.Contains(st.Podman, "podman machine") != (goos != "linux")) {
+				t.Errorf("podman step = %q; want the registry's port, and podman machine only off Linux", st.Podman)
+			}
 			if (got != nil) != tt.started {
 				t.Fatalf("started = %v; want %v", got != nil, tt.started)
 			}
@@ -102,9 +121,6 @@ func TestStartRegistryRelay(t *testing.T) {
 			}
 			if got.Target != "10.89.0.2:4561" || port != strconv.Itoa(got.Port) {
 				t.Errorf("started with %+v; want the registry's port and the services-network target", *got)
-			}
-			if (st.Podman != "") != (tt.rt == podman) {
-				t.Errorf("podman step = %q; want one only on Podman", st.Podman)
 			}
 			if tt.want == RegistryRelaySkipped && st.Fix == "" {
 				t.Error("a skipped relay has no fix")
