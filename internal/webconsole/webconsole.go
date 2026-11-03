@@ -5,26 +5,31 @@
 package webconsole
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"io/fs"
 	"net/http"
 	"path"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 )
 
 // Prefix is the path the console is served under.
 const Prefix = "/console/"
-
-// csp allows the console to load only its own bundle and call only the
-// gateway it was served from.
-const csp = "default-src 'self'"
 
 // Handler serves fsys (the bundle, with index.html at its root) under
 // Prefix. /console redirects to /console/; hashed files under assets/ are
 // cached for good, index.html never is; any other path that is not a file
 // gets index.html, so that deep links survive a reload.
 func Handler(fsys fs.FS) http.Handler {
+	// Without an index.html there is no inline script to allow.
+	index, _ := fs.ReadFile(fsys, "index.html")
+	csp := policy(index)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -91,4 +96,50 @@ func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) 
 	}
 	http.ServeContent(w, r, name, time.Time{}, rs)
 	return true
+}
+
+// policy is the CSP for a console whose index.html is index: it may load
+// only its own bundle and call only the API gateway it was served from. Each
+// inline script in index, the boot script that reloads a page whose files
+// failed to load (ADR 0063), is allowed by its hash, so that the policy
+// cannot drift from the file it is sent with.
+func policy(index []byte) string {
+	var hashes []string
+	z := html.NewTokenizer(bytes.NewReader(index))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			break
+		}
+		if tt != html.StartTagToken {
+			continue
+		}
+		t := z.Token()
+		if t.DataAtom != atom.Script || hasAttr(t, "src") {
+			continue
+		}
+		// A script's text is raw: the tokenizer neither unescapes it nor
+		// ends it before </script>.
+		var body []byte
+		if z.Next() == html.TextToken {
+			body = z.Text()
+		}
+		sum := sha256.Sum256(body)
+		hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	const base = "default-src 'self'"
+	if len(hashes) == 0 {
+		return base
+	}
+	return base + "; script-src 'self' " + strings.Join(hashes, " ")
+}
+
+// hasAttr reports whether t has an attribute named key.
+func hasAttr(t html.Token, key string) bool {
+	for _, a := range t.Attr {
+		if a.Key == key {
+			return true
+		}
+	}
+	return false
 }
