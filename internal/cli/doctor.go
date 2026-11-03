@@ -561,10 +561,10 @@ func reportRegistryRelay(out io.Writer, report func(bool, string, string), body 
 			fmt.Fprintf(out, "[--  ] Registry relay: off (%s)\n", v.Reason)
 		}
 	}
-	// A Containerized Instance on Podman machine has the step with its
-	// relay off (#835).
+	// A Containerized Instance on Podman machine (#835) and Podman on a
+	// Linux host have the step with the relay off.
 	if v.Podman != "" && (v.State == instance.RegistryRelayRunning || v.State == instance.RegistryRelayOff) {
-		fmt.Fprintf(out, "[WARN] Podman machine pushes to the registry over HTTPS by default\n       fix: %s\n", v.Podman)
+		fmt.Fprintf(out, "[WARN] Podman pushes to the registry over HTTPS by default\n       fix: %s\n", v.Podman)
 	}
 }
 

@@ -50,8 +50,8 @@ type RegistryRelayStatus struct {
 	Listen string `json:"listen,omitempty"`
 	// Fix is what the user can do when it is skipped.
 	Fix string `json:"fix,omitempty"`
-	// Podman is the step Podman machine users take, as Podman does not
-	// treat localhost registries as insecure.
+	// Podman is the step Podman users take, as Podman does not treat
+	// localhost registries as insecure.
 	Podman string `json:"podman,omitempty"`
 }
 
@@ -95,6 +95,8 @@ func (r *registryRelay) stop() {
 // registryRelayDeps is what a Registry relay start needs from the
 // Instance.
 type registryRelayDeps struct {
+	// goos is the host's operating system.
+	goos string
 	// registry is the registry's host endpoint, "" when it isn't running.
 	registry func() string
 	// runtime connects to the container runtime.
@@ -152,8 +154,17 @@ func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayS
 		}
 		return st
 	}
-	if off := vmSideOff(d.probe(ctx, rt)); off != "" {
-		return RegistryRelayStatus{State: RegistryRelayOff, Reason: off}
+	// off is the status when VM-side clients need no Registry relay; a
+	// Linux Podman the host's loopback reaches takes the host-side step.
+	off := func(reason string, host bool) RegistryRelayStatus {
+		st := RegistryRelayStatus{State: RegistryRelayOff, Reason: reason}
+		if host && d.goos == "linux" && rt.Info.Name == "podman" {
+			st.Podman = podmanHostStep(ps, rt.Info.Rootless)
+		}
+		return st
+	}
+	if reason, host := vmSideOff(d.goos, rt.Info, d.probe(ctx, rt)); reason != "" {
+		return off(reason, host)
 	}
 	listen := net.JoinHostPort("127.0.0.1", ps)
 	st := RegistryRelayStatus{Listen: listen}
@@ -165,8 +176,8 @@ func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayS
 		st.State, st.Reason = RegistryRelayFailed, "the registry on the services network: "+err.Error()
 		return st
 	}
-	if off := vmSideOff(dec); off != "" {
-		return RegistryRelayStatus{State: RegistryRelayOff, Reason: off}
+	if reason, host := vmSideOff(d.goos, rt.Info, dec); reason != "" {
+		return off(reason, host)
 	}
 	err = d.start(ctx, rt, registryrelay.Options{Port: port, Target: target, Log: d.log})
 	switch {
@@ -181,23 +192,38 @@ func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayS
 	return st
 }
 
-// vmSideOff says why VM-side clients need no Registry relay under the VM
-// relay decision d, or "" when they need one: only a runtime in a VM,
-// with the VM relay on, does.
-func vmSideOff(d vmrelay.Decision) string {
+// vmSideOff says why VM-side clients need no Registry relay on goos with
+// the runtime info under the VM relay decision d, or "" when they need
+// one: only a runtime in a VM, with the VM relay on, does. Rootless
+// Podman on Linux is a VM runtime but pushes and pulls in the host's
+// network namespace (ADR 0043). host says the host's loopback reaches
+// VM-side clients.
+func vmSideOff(goos string, info runtime.Info, d vmrelay.Decision) (reason string, host bool) {
 	switch {
+	case goos == "linux" && info.Name == "podman" && info.Rootless:
+		return "rootless Podman pushes and pulls in the host's network namespace, where the registry's loopback endpoint already reaches it", true
 	case !d.VM:
-		return "the runtime's daemon shares the host's loopback"
+		return "the runtime's daemon shares the host's loopback", true
 	case !d.On:
-		return "the VM relay is " + d.String()
+		return "the VM relay is " + d.String(), false
 	}
-	return ""
+	return "", false
 }
 
 // podmanStep is what Podman machine users do to push to the registry at
 // port: Podman sends localhost registries HTTPS unless told otherwise.
 func podmanStep(port string) string {
 	return fmt.Sprintf("run `podman push --tls-verify=false ...`, or add `[[registry]]` with `location = \"localhost:%s\"` and `insecure = true` to /etc/containers/registries.conf in the machine (`podman machine ssh`)", port)
+}
+
+// podmanHostStep is podmanStep for Podman on a Linux host, whose
+// registries.conf is the user's when rootless.
+func podmanHostStep(port string, rootless bool) string {
+	conf := "/etc/containers/registries.conf"
+	if rootless {
+		conf = "~/.config/containers/registries.conf"
+	}
+	return fmt.Sprintf("run `podman push --tls-verify=false ...`, or add `[[registry]]` with `location = \"localhost:%s\"` and `insecure = true` to %s", port, conf)
 }
 
 // startRegistryRelay starts the Registry relay in the background (Start,
@@ -217,6 +243,7 @@ func (in *Instance) startRegistryRelay() {
 		defer r.run.Unlock()
 		log := in.Env.Log.With("component", "registryrelay")
 		st := startRegistryRelay(r.ctx, registryRelayDeps{
+			goos:     goruntime.GOOS,
 			registry: func() string { return in.Env.Endpoints.Get("ar") },
 			runtime:  in.containers.Runtime,
 			containerized: func(rt *runtime.Manager) bool {
@@ -252,10 +279,10 @@ func (in *Instance) startRegistryRelay() {
 		default:
 			log.Debug("no Registry relay: " + st.Reason)
 		}
-		// A Containerized Instance on Podman machine has the step with
-		// its relay off (#835).
+		// A Containerized Instance on Podman machine (#835) and Podman on
+		// a Linux host have the step with the relay off.
 		if st.Podman != "" && (st.State == RegistryRelayRunning || st.State == RegistryRelayOff) {
-			log.Warn("Podman machine pushes to the registry over HTTPS by default; " + st.Podman)
+			log.Warn("Podman pushes to the registry over HTTPS by default; " + st.Podman)
 		}
 	})
 }

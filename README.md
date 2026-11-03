@@ -713,7 +713,10 @@ Podman sends `localhost` registries HTTPS, so on Podman machine push with
 `podman push --tls-verify=false`, or add `[[registry]]` with `location = "localhost:4561"` and
 `insecure = true` to `/etc/containers/registries.conf` inside the machine (`podman machine ssh`).
 That goes for an Instance on the host and a Containerized Instance alike, and `gcpemu doctor`
-prints that step.
+prints that step. Podman on a Linux host needs no Registry relay, rootless too, as it pushes and
+pulls in the host's network namespace; there, add the `[[registry]]` entry to
+`~/.config/containers/registries.conf` (rootless) or `/etc/containers/registries.conf` (rootful)
+instead, and an Instance on the host prints that step.
 
 When a subnetwork's range overlaps another network on the host, its container network runs on a
 free range instead and keeps the subnetwork's addresses on a VLAN of each container's interface
