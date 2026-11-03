@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiError } from '@/api/errors'
-import { gcpFetch, gcpText } from '@/api/fetch'
+import { gcpFetch, gcpText, type Repeatable } from '@/api/fetch'
 import { POLL_MS } from '@/api/queries'
 
 // The GKE view's reads and writes: the container v1 API for clusters,
@@ -157,11 +157,13 @@ export const listClusters = async (project: string) =>
 
 export const getCluster = (r: ClusterRef) => gcpFetch<Cluster>(API + clusterName(r))
 
-const post = <T>(path: string, body: unknown, method = 'POST') =>
-  gcpFetch<T>(API + path, { method, body: JSON.stringify(body) })
+const post = <T>(path: string, body: unknown, method = 'POST', opts?: Repeatable) =>
+  gcpFetch<T>(API + path, { method, body: JSON.stringify(body), ...opts })
 
 export const createCluster = (project: string, location: string, body: unknown) =>
-  post<ContainerOperation>(`${parentName(project, location)}/clusters`, body)
+  post<ContainerOperation>(`${parentName(project, location)}/clusters`, body, 'POST', {
+    repeatable: true,
+  })
 
 export const updateCluster = (r: ClusterRef, body: unknown) =>
   post<ContainerOperation>(clusterName(r), body, 'PUT')
@@ -180,13 +182,15 @@ export const deleteCluster = (r: ClusterRef) =>
   gcpFetch<ContainerOperation>(API + clusterName(r), { method: 'DELETE' })
 
 export const createNodePool = (r: ClusterRef, body: unknown) =>
-  post<ContainerOperation>(`${clusterName(r)}/nodePools`, body)
+  post<ContainerOperation>(`${clusterName(r)}/nodePools`, body, 'POST', { repeatable: true })
 
 export const updateNodePool = (r: ClusterRef, pool: string, body: unknown) =>
   post<ContainerOperation>(poolName(r, pool), body, 'PUT')
 
 export const setNodePoolSize = (r: ClusterRef, pool: string, nodeCount: number) =>
-  post<ContainerOperation>(`${poolName(r, pool)}:setSize`, { nodeCount })
+  post<ContainerOperation>(`${poolName(r, pool)}:setSize`, { nodeCount }, 'POST', {
+    repeatable: true,
+  })
 
 export const deleteNodePool = (r: ClusterRef, pool: string) =>
   gcpFetch<ContainerOperation>(API + poolName(r, pool), { method: 'DELETE' })

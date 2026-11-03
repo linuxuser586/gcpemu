@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap } from '@/api/admin'
+import { admin, repeatable, unwrap } from '@/api/admin'
 import { ApiError, shouldRetry } from '@/api/errors'
 import { gcpFetch, gcpText } from '@/api/fetch'
 import { POLL_MS } from '@/api/queries'
@@ -282,7 +282,7 @@ export const buildQuery = (r: BuildRef) =>
 const json = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body) })
 
 export const cancelBuild = (r: BuildRef) =>
-  gcpFetch<Build>(`${API}/${buildName(r)}:cancel`, json({}))
+  gcpFetch<Build>(`${API}/${buildName(r)}:cancel`, { ...json({}), repeatable: true })
 
 /** retryBuild starts a new Build from the one named; its Operation carries it. */
 export const retryBuild = (r: BuildRef) =>
@@ -334,4 +334,4 @@ export const daemonQuery = () =>
     refetchInterval: POLL_MS,
   })
 
-export const pruneDaemon = () => unwrap(admin.POST('/_emu/v1/build/daemon/prune'))
+export const pruneDaemon = () => unwrap(admin.POST('/_emu/v1/build/daemon/prune', repeatable))

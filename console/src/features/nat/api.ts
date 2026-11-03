@@ -2,7 +2,7 @@ import { queryOptions } from '@tanstack/react-query'
 
 import { admin, unwrap, type RequestEntry } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
-import { gcpFetch } from '@/api/fetch'
+import { gcpFetch, type Repeatable } from '@/api/fetch'
 
 import { lastSeg, relPath, waitOperation, type Operation, type Resource } from '../lb/api'
 import { aggregated, type Subnetwork } from '../vpc/api'
@@ -86,16 +86,17 @@ export const listRouters = (project: string) => aggregated<'routers', Router>(pr
 
 export const getRouter = (r: RouterRef) => gcpFetch<Router>(API + routerPath(r))
 
-const write = async (path: string, method: string, body?: unknown) =>
+const write = async (path: string, method: string, body?: unknown, opts?: Repeatable) =>
   waitOperation(
     await gcpFetch<Operation>(API + path, {
       method,
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...opts,
     }),
   )
 
 export const insertRouter = (project: string, region: string, body: unknown) =>
-  write(`projects/${project}/regions/${region}/routers`, 'POST', body)
+  write(`projects/${project}/regions/${region}/routers`, 'POST', body, { repeatable: true })
 
 /** patchRouter sends a JSON merge patch; nats replaces the list. */
 export const patchRouter = (r: RouterRef, body: unknown) => write(routerPath(r), 'PATCH', body)

@@ -152,7 +152,7 @@ export const secretQuery = (r: SecretRef) =>
 export const createSecret = (project: string, location: string, id: string, body: unknown) =>
   gcpFetch<Secret>(
     `${API}/${parent(project, location)}/secrets?${new URLSearchParams({ secretId: id })}`,
-    { method: 'POST', ...json(body) },
+    { method: 'POST', repeatable: true, ...json(body) },
   )
 
 /** patchSecret sends secrets.patch with updateMask naming the fields to change. */

@@ -130,7 +130,11 @@ export const listBuckets = async (project: string) => {
 export const getBucket = (bucket: string) => gcpFetch<Bucket>(bucketPath(bucket))
 
 export const createBucket = (project: string, body: unknown) =>
-  gcpFetch<Bucket>(`${API}?${new URLSearchParams({ project })}`, { method: 'POST', ...json(body) })
+  gcpFetch<Bucket>(`${API}?${new URLSearchParams({ project })}`, {
+    method: 'POST',
+    repeatable: true,
+    ...json(body),
+  })
 
 export const patchBucket = (bucket: string, body: unknown) =>
   gcpFetch<Bucket>(bucketPath(bucket), { method: 'PATCH', ...json(body) })

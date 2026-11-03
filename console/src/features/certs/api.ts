@@ -497,7 +497,7 @@ const create = async <T>(
   waitOperation<T>(
     await gcpFetch<Operation>(
       `${API}/${path(parent)}/${coll}?${new URLSearchParams({ [idParam]: id })}`,
-      { method: 'POST', ...json(body) },
+      { method: 'POST', repeatable: true, ...json(body) },
     ),
   )
 

@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
-import { admin, unwrap } from '@/api/admin'
+import { admin, repeatable, unwrap } from '@/api/admin'
 import type { components } from '@/api/admin.gen'
 
 // The State view's reads and writes (FR-UI-017), all on the admin API:
@@ -19,15 +19,20 @@ export const snapshotsQuery = () =>
   })
 
 export const saveSnapshot = (body: { name: string }) =>
-  unwrap(admin.POST('/_emu/v1/snapshots', { body }))
+  unwrap(admin.POST('/_emu/v1/snapshots', { body, ...repeatable }))
 
 export const restoreSnapshot = (name: string) =>
-  unwrap(admin.POST('/_emu/v1/snapshots/{name}/restore', { params: { path: { name } } }))
+  unwrap(
+    admin.POST('/_emu/v1/snapshots/{name}/restore', {
+      params: { path: { name } },
+      ...repeatable,
+    }),
+  )
 
 export const deleteSnapshot = (name: string) =>
   unwrap(admin.DELETE('/_emu/v1/snapshots/{name}', { params: { path: { name } } }))
 
-export const resetInstance = () => unwrap(admin.POST('/_emu/v1/reset'))
+export const resetInstance = () => unwrap(admin.POST('/_emu/v1/reset', repeatable))
 
 /** applySeed uploads a seed file's YAML, which the Instance applies idempotently. */
 export const applySeed = (yaml: string) =>
@@ -36,6 +41,7 @@ export const applySeed = (yaml: string) =>
       body: yaml,
       bodySerializer: (b) => b ?? '',
       headers: { 'Content-Type': 'application/yaml' },
+      ...repeatable,
     }),
   )
 

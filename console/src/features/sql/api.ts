@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query'
 
 import { ApiError } from '@/api/errors'
-import { gcpFetch } from '@/api/fetch'
+import { gcpFetch, type Repeatable } from '@/api/fetch'
 
 // The Cloud SQL view's reads and writes, all through sqladmin v1:
 // instances, databases, users, flags, backup runs, Operations and
@@ -192,9 +192,10 @@ export function displayState(i: DatabaseInstance): string {
 export const ipOf = (i: DatabaseInstance | undefined, type: string) =>
   i?.ipAddresses?.find((a) => a.type === type)?.ipAddress
 
-const send = <T>(path: string, method: string, body?: unknown) =>
+const send = <T>(path: string, method: string, body?: unknown, opts?: Repeatable) =>
   gcpFetch<T>(API + path, {
     method,
+    ...opts,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 
@@ -205,7 +206,7 @@ export const listInstances = async (project: string) =>
 export const getInstance = (r: InstanceRef) => gcpFetch<DatabaseInstance>(API + instanceName(r))
 
 export const insertInstance = (project: string, body: unknown) =>
-  send<SqlOperation>(`projects/${project}/instances`, 'POST', body)
+  send<SqlOperation>(`projects/${project}/instances`, 'POST', body, { repeatable: true })
 
 export const patchInstance = (r: InstanceRef, body: unknown) =>
   send<SqlOperation>(instanceName(r), 'PATCH', body)
@@ -223,7 +224,7 @@ export const listDatabases = async (r: InstanceRef) =>
   (await gcpFetch<{ items?: Database[] }>(`${API}${instanceName(r)}/databases`)).items ?? []
 
 export const insertDatabase = (r: InstanceRef, body: unknown) =>
-  send<SqlOperation>(`${instanceName(r)}/databases`, 'POST', body)
+  send<SqlOperation>(`${instanceName(r)}/databases`, 'POST', body, { repeatable: true })
 
 export const patchDatabase = (r: InstanceRef, db: string, body: unknown) =>
   send<SqlOperation>(`${instanceName(r)}/databases/${encodeURIComponent(db)}`, 'PATCH', body)
@@ -235,7 +236,7 @@ export const listUsers = async (r: InstanceRef) =>
   (await gcpFetch<{ items?: User[] }>(`${API}${instanceName(r)}/users`)).items ?? []
 
 export const insertUser = (r: InstanceRef, body: unknown) =>
-  send<SqlOperation>(`${instanceName(r)}/users`, 'POST', body)
+  send<SqlOperation>(`${instanceName(r)}/users`, 'POST', body, { repeatable: true })
 
 const userQuery = (name: string) => `?${new URLSearchParams({ name })}`
 

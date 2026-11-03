@@ -189,6 +189,7 @@ export const serviceAccountQuery = (project: string, email: string) =>
 export const createServiceAccount = (project: string, body: unknown) =>
   gcpFetch<ServiceAccount>(`${IAM}/projects/${enc(project)}/serviceAccounts`, {
     method: 'POST',
+    repeatable: true,
     ...json(body),
   })
 
@@ -203,6 +204,7 @@ export const deleteServiceAccount = (project: string, email: string) =>
 export const setAccountDisabled = (project: string, email: string, disabled: boolean) =>
   gcpFetch<void>(`${saPath(project, email)}:${disabled ? 'disable' : 'enable'}`, {
     method: 'POST',
+    repeatable: true,
     ...json({}),
   })
 
@@ -233,6 +235,7 @@ export const createKey = (project: string, email: string) =>
 export const uploadKey = (project: string, email: string, pem: string) =>
   gcpFetch<ServiceAccountKey>(`${saPath(project, email)}/keys:upload`, {
     method: 'POST',
+    repeatable: true,
     ...json({ publicKeyData: encodeBase64(pem) }),
   })
 
@@ -242,6 +245,7 @@ export const deleteKey = (project: string, email: string, key: string) =>
 export const setKeyDisabled = (project: string, email: string, key: string, disabled: boolean) =>
   gcpFetch<void>(`${saPath(project, email)}/keys/${enc(key)}:${disabled ? 'disable' : 'enable'}`, {
     method: 'POST',
+    repeatable: true,
     ...json({}),
   })
 
@@ -318,6 +322,7 @@ export const customRoleQuery = (project: string, id: string) =>
 export const createRole = (project: string, roleId: string, role: unknown) =>
   gcpFetch<Role>(`${IAM}/projects/${enc(project)}/roles`, {
     method: 'POST',
+    repeatable: true,
     ...json({ roleId, role }),
   })
 
@@ -616,6 +621,7 @@ export async function testPermissions(
     case 'get':
       res = await gcpFetch(`${base}:testIamPermissions`, {
         method: 'POST',
+        repeatable: true,
         headers,
         ...json({ permissions }),
       })
@@ -623,6 +629,7 @@ export async function testPermissions(
     case 'compute':
       res = await gcpFetch(`${base}/testIamPermissions`, {
         method: 'POST',
+        repeatable: true,
         headers,
         ...json({ permissions }),
       })

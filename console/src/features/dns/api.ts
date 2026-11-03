@@ -176,7 +176,11 @@ export const zoneQuery = (r: ZoneRef) =>
   })
 
 export const createZone = (project: string, body: unknown) =>
-  gcpFetch<ManagedZone>(`${projectPath(project)}/managedZones`, { method: 'POST', ...json(body) })
+  gcpFetch<ManagedZone>(`${projectPath(project)}/managedZones`, {
+    method: 'POST',
+    repeatable: true,
+    ...json(body),
+  })
 
 /** patchZone sends managedZones.patch: the fields in body are replaced. */
 export const patchZone = (r: ZoneRef, body: unknown) =>
