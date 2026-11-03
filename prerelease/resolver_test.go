@@ -4,7 +4,9 @@ package prerelease
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -13,11 +15,14 @@ import (
 	"regexp"
 	goruntime "runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
+	"github.com/linuxuser586/gcpemu/internal/instance"
 )
 
 // resolverTestsEnv turns on TestResolverRoutes, the Linux CI check.
@@ -78,7 +83,8 @@ func resolverRoutes(t *testing.T, ctx context.Context, withService bool) {
 	if goruntime.GOOS == "windows" {
 		// NRPT can't name a port (ADR 0026).
 		if err := port53Free(); err != nil {
-			t.Skipf("port 53 is in use on the host (ICS, Hyper-V or WSL's DNS proxy may hold it), and NRPT sends queries there: %v", err)
+			// The run-start reclaim stopped the Instances of ended tests.
+			t.Skip(port53InUse(err, dataDirs()))
 		}
 		ports = append(ports, "dns=53")
 	} else {
@@ -153,6 +159,38 @@ func port53Free() error {
 		return err
 	}
 	return p.Close()
+}
+
+// port53InUse is why step 6 skips when port 53 is in use with err: the
+// gcpemu Instance among the data dirs dirs whose dns endpoint holds it,
+// if one does (#921).
+func port53InUse(err error, dirs []string) string {
+	for _, dir := range dirs {
+		var eps map[string]string
+		b, _ := os.ReadFile(filepath.Join(dir, instance.EndpointsFile))
+		if json.Unmarshal(b, &eps) != nil {
+			continue
+		}
+		if _, port, _ := net.SplitHostPort(eps["dns"]); port != "53" {
+			continue
+		}
+		b, _ = os.ReadFile(filepath.Join(dir, instance.PIDFile))
+		if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid <= 0 || !instance.ProcessAlive(pid) {
+			continue
+		}
+		id, _ := os.ReadFile(filepath.Join(dir, instance.IDFile))
+		return fmt.Sprintf("port 53 is in use on the host by gcpemu Instance %s, data dir %s, and NRPT sends queries there: stop it with `gcpemu stop --data-dir %s`: %v", id, dir, dir, err)
+	}
+	return fmt.Sprintf("port 53 is in use on the host (ICS, Hyper-V or WSL's DNS proxy may hold it), and NRPT sends queries there: %v", err)
+}
+
+// dataDirs are the data dirs a gcpemu Instance on this host may run in:
+// the checks' Test data dirs and the Instances' default dirs.
+func dataDirs() []string {
+	// Glob fails only on a malformed pattern.
+	tests, _ := filepath.Glob(filepath.Join(testDirRoot, "*"))
+	defaults, _ := filepath.Glob(filepath.Join(config.StateHome(), "*"))
+	return append(tests, defaults...)
 }
 
 // ownerRE matches resolverPlan's refusal in internal/cli/dns.go.
