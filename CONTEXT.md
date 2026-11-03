@@ -163,7 +163,7 @@ A client on the host that reaches an Instance's Data plane at a loopback address
 _Avoid_: local client
 
 **VM-side client**:
-A client inside a VM runtime's VM but outside the Instance's networks, such as the runtime's daemon pushing or pulling images. The host's loopback addresses don't reach it.
+A client of a VM runtime, outside the Instance's networks, that the host's loopback addresses don't reach, such as the runtime's daemon pushing or pulling images inside its VM, or rootless Docker's daemon in its own network namespace. Rootless Podman on Linux has none: its clients run in the host's network namespace.
 _Avoid_: daemon client, in-VM client
 
 **VM runtime**:
