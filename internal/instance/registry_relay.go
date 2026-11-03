@@ -168,7 +168,13 @@ func startRegistryRelay(ctx context.Context, d registryRelayDeps) RegistryRelayS
 	}
 	listen := net.JoinHostPort("127.0.0.1", ps)
 	st := RegistryRelayStatus{Listen: listen}
-	if rt.Info.Name == "podman" {
+	// On Linux a Podman reaches here when the host cannot route to its
+	// bridge (ADR 0058), not because it runs in a machine, so it takes the
+	// host-side step.
+	switch {
+	case rt.Info.Name == "podman" && d.goos == "linux":
+		st.Podman = podmanHostStep(ps, rt.Info.Rootless)
+	case rt.Info.Name == "podman":
 		st.Podman = podmanStep(ps)
 	}
 	target, dec, err := d.target(ctx)
@@ -279,8 +285,9 @@ func (in *Instance) startRegistryRelay() {
 		default:
 			log.Debug("no Registry relay: " + st.Reason)
 		}
-		// A Containerized Instance on Podman machine (#835) and Podman on
-		// a Linux host have the step with the relay off.
+		// A Containerized Instance on Podman machine (#835) has the step
+		// with the relay off; Podman on a Linux host has it with the relay
+		// off, or running when the host cannot route to its bridge (#934).
 		if st.Podman != "" && (st.State == RegistryRelayRunning || st.State == RegistryRelayOff) {
 			log.Warn("Podman pushes to the registry over HTTPS by default; " + st.Podman)
 		}

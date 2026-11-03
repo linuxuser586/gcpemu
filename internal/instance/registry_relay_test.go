@@ -65,6 +65,7 @@ func TestStartRegistryRelay(t *testing.T) {
 		{name: "rootless Podman on Linux", rt: rootlessPodman, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayOff, connected: true, reason: "rootless Podman pushes and pulls in the host's network namespace", podman: "~/.config/containers/registries.conf"},
 		{name: "rootful Podman on Linux", rt: podman, registry: "127.0.0.1:4561", probe: hostBridge, want: RegistryRelayOff, connected: true, reason: "shares the host's loopback", podman: "/etc/containers/registries.conf"},
 		{name: "rootless Docker on Linux", rt: rootlessDocker, registry: "127.0.0.1:4561", probe: vm, want: RegistryRelayRunning, connected: true, started: true},
+		{name: "rootful Podman on Linux, gateway not held by its bridge", rt: podman, registry: "127.0.0.1:4561", probe: vmrelay.Decision{On: true, VM: true, Reason: "gateway 10.88.0.1 is held by tun0, not the runtime's bridge podman0"}, want: RegistryRelayRunning, connected: true, started: true, podman: "/etc/containers/registries.conf"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
