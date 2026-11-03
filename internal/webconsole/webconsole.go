@@ -27,6 +27,7 @@ const Prefix = "/console/"
 // cached for good, index.html never is; any other path that is not a file
 // gets index.html, so that deep links survive a reload.
 func Handler(fsys fs.FS) http.Handler {
+	// Without an index.html there is no inline script to allow.
 	index, _ := fs.ReadFile(fsys, "index.html")
 	csp := policy(index)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +99,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) 
 }
 
 // policy is the CSP for a console whose index.html is index: it may load
-// only its own bundle and call only the gateway it was served from. Each
+// only its own bundle and call only the API gateway it was served from. Each
 // inline script in index, the boot script that reloads a page whose files
 // failed to load (ADR 0063), is allowed by its hash, so that the policy
 // cannot drift from the file it is sent with.
@@ -126,12 +127,14 @@ func policy(index []byte) string {
 		sum := sha256.Sum256(body)
 		hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
 	}
+	const base = "default-src 'self'"
 	if len(hashes) == 0 {
-		return "default-src 'self'"
+		return base
 	}
-	return "default-src 'self'; script-src 'self' " + strings.Join(hashes, " ")
+	return base + "; script-src 'self' " + strings.Join(hashes, " ")
 }
 
+// hasAttr reports whether t has an attribute named key.
 func hasAttr(t html.Token, key string) bool {
 	for _, a := range t.Attr {
 		if a.Key == key {
