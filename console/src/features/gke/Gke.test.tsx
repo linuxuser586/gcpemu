@@ -743,6 +743,8 @@ it('lists workloads of every kind in a namespace', async () => {
   )
   renderApp(`${base}/workloads?project=${P}&namespace=kube-system`)
   const table = await screen.findByRole('table', { name: 'Workloads' })
+  // The table shows as soon as any kind's list answers; wait for both.
+  await waitFor(() => expect(within(table).getAllByTestId('workload')).toHaveLength(2))
   const [dns, lb] = within(table).getAllByTestId('workload')
   expect(dns).toHaveTextContent('Deployment')
   expect(within(dns!).getByText('OK')).toBeInTheDocument()
