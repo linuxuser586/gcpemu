@@ -190,6 +190,7 @@ it('lists instances, filtering by region and name in the URL', async () => {
   await waitFor(() => expect(router.state.location.search).toContain('location=europe-west1'))
   await waitFor(() => expect(rows()).toHaveLength(1))
   await user.clear(screen.getByLabelText('Region'))
+  // Else the next count could pass on the Region filter.
   await waitFor(() => expect(rows()).toHaveLength(2))
   await user.type(screen.getByLabelText('Filter'), 'mai')
   await waitFor(() => expect(rows()).toHaveLength(1))

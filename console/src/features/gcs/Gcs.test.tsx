@@ -209,6 +209,7 @@ it('lists buckets, filtering by location and name in the URL', async () => {
   await waitFor(() => expect(router.state.location.search).toContain('location=europe'))
   await waitFor(() => expect(rows()).toHaveLength(1))
   await user.clear(screen.getByLabelText('Location'))
+  // Else the next count could pass on the Location filter.
   await waitFor(() => expect(rows()).toHaveLength(2))
   await user.type(screen.getByLabelText('Filter'), 'pho')
   await waitFor(() => expect(rows()).toHaveLength(1))

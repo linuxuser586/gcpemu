@@ -153,6 +153,7 @@ it('lists clusters, filtering by location and name in the URL', async () => {
   await waitFor(() => expect(router.state.location.search).toContain('location=us-central1'))
   await waitFor(() => expect(rows()).toHaveLength(1))
   await user.clear(screen.getByLabelText('Location'))
+  // Else the next count could pass on the Location filter.
   await waitFor(() => expect(rows()).toHaveLength(2))
   await user.type(screen.getByLabelText('Filter'), 'bat')
   await waitFor(() => expect(rows()).toHaveLength(1))
