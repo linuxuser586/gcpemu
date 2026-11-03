@@ -284,8 +284,14 @@ export const insertResource = (project: string, region: string, coll: Coll, body
 export const patchResource = (r: Ref, body: unknown) =>
   write(resourcePath(r), { method: 'PATCH', body })
 
+/**
+ * SetMethod names a set* method. Each is safe to send twice (ADR 0062), so
+ * setResource re-sends one that got no response.
+ */
+export type SetMethod = `set${string}`
+
 /** setResource calls one of a resource's set* methods, e.g. setBackendService. */
-export const setResource = (r: Ref, method: string, body: unknown) =>
+export const setResource = (r: Ref, method: SetMethod, body: unknown) =>
   write(`${resourcePath(r)}/${method}`, { method: 'POST', body, repeatable: true })
 
 export const deleteResource = (r: Ref) => write(resourcePath(r), { method: 'DELETE' })

@@ -159,6 +159,11 @@ const ONCE: Record<string, () => Promise<unknown>> = {
   'OAuth2 revoke': () => revokeToken('t'),
 }
 
+/** setResource opts in, so its type admits only set* methods. Never run. */
+export const onlySetMethods = () =>
+  // @ts-expect-error addSignedUrlKey is no set* method.
+  lb.setResource(lbRef, 'addSignedUrlKey', {})
+
 /**
  * attempts calls call with the first two requests failing with no
  * response, and counts how often its first request was sent.
