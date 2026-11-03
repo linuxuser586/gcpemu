@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Cloud Storage view (SRS 4.8.3, FR-UI-011) against the Instance's
 // gcs, pubsub and iam Services. Each attempt has its own Project, so a
@@ -21,7 +21,7 @@ test('Cloud Storage: a bucket’s lifecycle with the API’s validation messages
 }, testInfo) => {
   const id = projectId(`e2e-gcsb${testInfo.retry}`, browserName)
   const name = `${id}-life`
-  await page.goto(`/console/gcs?project=${id}`)
+  await goto(page, `/console/gcs?project=${id}`)
   await expect(page.getByText('No buckets in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create bucket' }).click()
 
@@ -88,7 +88,7 @@ test('Cloud Storage: upload, browse, download, generations and a signed URL', as
       })
     ).ok(),
   ).toBe(true)
-  await page.goto(`/console/gcs/b/${bucket}?project=${id}`)
+  await goto(page, `/console/gcs/b/${bucket}?project=${id}`)
   await expect(page.getByText('No objects here yet.')).toBeVisible()
 
   // Upload with the file chooser.
@@ -174,7 +174,7 @@ test('Cloud Storage: upload, browse, download, generations and a signed URL', as
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await page.getByRole('button', { name: 'Delete object' }).click()
   await expect(page).toHaveURL(new RegExp(`/console/gcs/b/${bucket}\\?project=${id}$`))
-  await page.goto(`/console/gcs/b/${bucket}/o/notes.txt?project=${id}`)
+  await goto(page, `/console/gcs/b/${bucket}/o/notes.txt?project=${id}`)
   await expect(page.getByText(/no live version/)).toBeVisible()
   await expect(gens).toHaveCount(2)
   const oldest = (await gens.nth(1).locator('td').first().textContent())!
@@ -220,7 +220,7 @@ test('Cloud Storage: notifications to a Pub/Sub topic', async ({
   expect((await request.post(`/storage/v1/b?project=${id}`, { data: { name: bucket } })).ok()).toBe(
     true,
   )
-  await page.goto(`/console/gcs/b/${bucket}/notifications?project=${id}`)
+  await goto(page, `/console/gcs/b/${bucket}/notifications?project=${id}`)
   await expect(page.getByText('This bucket sends no notifications.')).toBeVisible()
   await page.getByRole('link', { name: 'Create notification' }).click()
 

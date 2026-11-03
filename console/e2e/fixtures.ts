@@ -1,4 +1,4 @@
-import { test as base, expect, type Request } from '@playwright/test'
+import { test as base, expect, type Page, type Request } from '@playwright/test'
 
 // The requests a page had answered. In Chromium, headerValue and
 // response wait forever on a request the browser cancelled, as a
@@ -48,4 +48,17 @@ export async function expectConsoleRequests(
 /** projectId returns a Project ID unique to the test's browser. */
 export function projectId(prefix: string, browserName: string): string {
   return `${prefix}-${browserName}`.slice(0, 30)
+}
+
+/**
+ * goto navigates page as page.goto does, trying again once when Chromium
+ * cancels the navigation because the host's network changed (#939).
+ */
+export async function goto(page: Page, ...args: Parameters<Page['goto']>) {
+  try {
+    return await page.goto(...args)
+  } catch (err) {
+    if (!(err instanceof Error) || !/\bnet::ERR_NETWORK_CHANGED\b/.test(err.message)) throw err
+    return page.goto(...args)
+  }
 }

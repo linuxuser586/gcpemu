@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 import { startInstance, type Instance } from './instance'
 
 // Rotate CA in the Certificate Manager view: the Instance CA is replaced
@@ -66,7 +66,7 @@ test('Certificate Manager: Rotate CA re-issues a Google-managed certificate', as
     },
   })
 
-  await page.goto(`${inst.url}/console/certs/locations/global/certificates/managed?project=${id}`)
+  await goto(page, `${inst.url}/console/certs/locations/global/certificates/managed?project=${id}`)
   await expect(page.getByLabel('Certificate details')).toContainText('ACTIVE')
   const pem = page.getByLabel('PEM certificate')
   await expect(pem).toContainText('BEGIN CERTIFICATE')

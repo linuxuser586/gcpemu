@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Certificate Manager view (SRS 4.8.3, FR-LB-004) against the
 // Instance's certs, dns and lb Services: a self-managed certificate is
@@ -72,7 +72,7 @@ test('Certificate Manager: upload a certificate, and follow a managed one’s au
 }, testInfo) => {
   const id = projectId(`e2e-cm${testInfo.retry}`, browserName)
   const domain = `${id}.e2e.test`
-  await page.goto(`/console/certs?project=${id}`)
+  await goto(page, `/console/certs?project=${id}`)
   await expect(page.getByText('No certificates in this Project yet.')).toBeVisible()
 
   // A self-managed certificate, its certificate and key picked from files.
@@ -122,7 +122,7 @@ test('Certificate Manager: upload a certificate, and follow a managed one’s au
   await expect(page).toHaveURL(new RegExp(`/console/dns/zones/e2e\\?project=${id}$`))
 
   // Back on the certificate, it becomes ACTIVE.
-  await page.goto(`/console/certs/locations/global/certificates/managed?project=${id}`)
+  await goto(page, `/console/certs/locations/global/certificates/managed?project=${id}`)
   await expect(page.getByLabel('Certificate details')).toContainText('ACTIVE', {
     timeout: 15_000,
   })
@@ -143,7 +143,7 @@ test('Certificate Manager: a certificate map serves an HTTPS proxy made in the L
   const scope = `projects/${id}`
 
   // A self-managed certificate, and a URL map for the proxy.
-  await page.goto(`/console/certs/create?project=${id}`)
+  await goto(page, `/console/certs/create?project=${id}`)
   await page.getByLabel('Name').fill('uploaded')
   await page.getByLabel('Certificate file').setInputFiles(testdata('self-cert.pem'))
   await page.getByLabel('Private key file').setInputFiles(testdata('self-key.pem'))
@@ -176,7 +176,7 @@ test('Certificate Manager: a certificate map serves an HTTPS proxy made in the L
   )
 
   // An HTTPS proxy that serves the map, made in the Load Balancer view.
-  await page.goto(`/console/lb/create/targetHttpsProxies?project=${id}`)
+  await goto(page, `/console/lb/create/targetHttpsProxies?project=${id}`)
   await page.getByLabel('Name').fill('web-https')
   await page.getByLabel('URL map').selectOption({ label: 'web-map' })
   await page.getByLabel('Certificate map').selectOption({ label: 'main' })
@@ -213,7 +213,7 @@ test('Certificate Manager: a server TLS policy verifies an HTTPS proxy’s clien
   await createTrustConfig(page.request, id, 'corp')
 
   // A server TLS policy that rejects clients the trust config does not verify.
-  await page.goto(`/console/certs?project=${id}`)
+  await goto(page, `/console/certs?project=${id}`)
   await page.getByRole('link', { name: 'TLS policies' }).click()
   await expect(page.getByText('No server TLS policies in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create server TLS policy' }).click()
@@ -306,7 +306,7 @@ test('Certificate Manager: a DNS authorization, a trust config and an issuance c
   }
 
   // A DNS authorization, with the record it asks for, which no zone has yet.
-  await page.goto(`/console/certs?project=${id}`)
+  await goto(page, `/console/certs?project=${id}`)
   await page.getByRole('link', { name: 'DNS authorizations' }).click()
   await expect(page.getByText('No DNS authorizations in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create DNS authorization' }).click()
@@ -321,7 +321,7 @@ test('Certificate Manager: a DNS authorization, a trust config and an issuance c
   await expect(record).toContainText(/Does not resolve/)
 
   // A trust config whose trust anchor is read from a file, then edited.
-  await page.goto(`/console/certs/trustConfigs?project=${id}`)
+  await goto(page, `/console/certs/trustConfigs?project=${id}`)
   await page.getByRole('link', { name: 'Create trust config' }).click()
   await page.getByLabel('Name').fill('corp')
   await page.getByLabel('Read trust anchor 1 from a file').setInputFiles(testdata('self-cert.pem'))
@@ -344,7 +344,7 @@ test('Certificate Manager: a DNS authorization, a trust config and an issuance c
   await expect(page.getByTestId('trust-certificate')).toHaveCount(2)
 
   // A certificate issuance config.
-  await page.goto(`/console/certs/issuanceConfigs?project=${id}`)
+  await goto(page, `/console/certs/issuanceConfigs?project=${id}`)
   await page.getByRole('link', { name: 'Create certificate issuance config' }).click()
   await page.getByLabel('Name').fill('web')
   await page.getByLabel('CA pool').fill(`projects/${id}/locations/us-central1/caPools/web`)
@@ -358,11 +358,11 @@ test('Certificate Manager: a DNS authorization, a trust config and an issuance c
   await confirmDelete('certificate issuance config')
   await expect(page).toHaveURL(new RegExp(`/console/certs/issuanceConfigs\\?project=${id}$`))
   await expect(page.getByText('No certificate issuance configs in this Project yet.')).toBeVisible()
-  await page.goto(`/console/certs/locations/global/trustConfigs/corp?project=${id}`)
+  await goto(page, `/console/certs/locations/global/trustConfigs/corp?project=${id}`)
   await confirmDelete('trust config')
   await expect(page).toHaveURL(new RegExp(`/console/certs/trustConfigs\\?project=${id}$`))
   await expect(page.getByText('No trust configs in this Project yet.')).toBeVisible()
-  await page.goto(`/console/certs/locations/global/dnsAuthorizations/www?project=${id}`)
+  await goto(page, `/console/certs/locations/global/dnsAuthorizations/www?project=${id}`)
   await confirmDelete('DNS authorization')
   await expect(page).toHaveURL(new RegExp(`/console/certs/dnsAuthorizations\\?project=${id}$`))
   await expect(page.getByText('No DNS authorizations in this Project yet.')).toBeVisible()

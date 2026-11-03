@@ -1,4 +1,4 @@
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 import { SERVICES } from '../src/lib/services'
 
 // The paths the console may call: its own bundle, the admin API and public
@@ -7,10 +7,10 @@ const allowed = /^\/(console\/|_emu\/v1\/|[a-z]+\/v\d[a-z0-9]*\/)/
 
 test.describe('FR-UI-002 serving', () => {
   test('/console redirects and deep links survive a hard reload', async ({ page }) => {
-    await page.goto('/console?project=deep-link-project')
+    await goto(page, '/console?project=deep-link-project')
     await expect(page).toHaveURL(/\/console\/\?project=deep-link-project$/)
 
-    await page.goto('/console/pubsub?project=deep-link-project')
+    await goto(page, '/console/pubsub?project=deep-link-project')
     await expect(page.getByRole('heading', { name: 'Pub/Sub' })).toBeVisible()
     await page.reload()
     await expect(page).toHaveURL(/\/console\/pubsub\?project=deep-link-project$/)
@@ -43,7 +43,7 @@ test('FR-UI-001, 003, 004: works offline and calls only public APIs and /_emu/v1
   await page.route('**/*', (route) =>
     new URL(route.request().url()).origin === origin ? route.continue() : route.abort(),
   )
-  await page.goto('/console/')
+  await goto(page, '/console/')
   await expect(page.getByTestId('ready-gcs')).toContainText('Ready')
   await page.getByRole('button', { name: 'Project' }).click()
   await expect(page.getByText('Projects on this Instance')).toBeVisible()
@@ -72,7 +72,7 @@ test.describe('FR-UI-005 project switcher', () => {
       true,
     )
 
-    await page.goto('/console/')
+    await goto(page, '/console/')
     await page.getByRole('button', { name: 'Project' }).click()
     await page.getByRole('list', { name: 'Projects' }).getByRole('button', { name: id }).click()
     await expect(page).toHaveURL(new RegExp(`\\?project=${id}$`))
@@ -89,7 +89,7 @@ test.describe('FR-UI-005 project switcher', () => {
     browserName,
   }) => {
     const id = projectId('e2e-unknown', browserName)
-    await page.goto('/console/')
+    await goto(page, '/console/')
     await page.getByRole('button', { name: 'Project' }).click()
     await expect(page.getByText('Projects on this Instance')).toBeVisible()
     await page.getByLabel('Project ID').fill(id)
@@ -106,7 +106,7 @@ test.describe('FR-UI-005 project switcher', () => {
 
 test('FR-UI-010 dashboard', async ({ page, request, context, browserName }) => {
   const id = projectId('e2e-dash', browserName)
-  await page.goto('/console/')
+  await goto(page, '/console/')
   for (const svc of ['iam', 'gcs', 'pubsub']) {
     await expect(page.getByTestId(`ready-${svc}`)).toContainText('Ready')
   }
@@ -147,7 +147,7 @@ test('FR-UI-006: a bucket created through the public API shows up within 1 s', a
   const id = projectId('e2e-live', browserName)
   const name = `${id}-bucket`
   const stream = page.waitForResponse((r) => new URL(r.url()).pathname === '/_emu/v1/events')
-  await page.goto(`/console/gcs?project=${id}`)
+  await goto(page, `/console/gcs?project=${id}`)
   expect((await stream).headers()['content-type']).toBe('text/event-stream')
   await expect(page.getByText('No buckets in this Project yet.')).toBeVisible()
 
@@ -183,7 +183,7 @@ test('a deep link to a disabled Service says how to enable it', async ({ page, r
   const info = (await (await request.get('/_emu/v1/info')).json()) as { services: string[] }
   const off = SERVICES.find((s) => !info.services.includes(s.id))?.id
   test.skip(!off, 'every Service is enabled')
-  await page.goto(`/console/${off}/anything?project=whatever-project`)
+  await goto(page, `/console/${off}/anything?project=whatever-project`)
   await expect(
     page.getByRole('heading', { name: `Service ${off} is not enabled on this Instance` }),
   ).toBeVisible()
@@ -196,7 +196,7 @@ test('FR-UI-012 Operations: live status, duration and the resulting resource or 
   browserName,
 }) => {
   const id = projectId('e2e-ops', browserName)
-  await page.goto(`/console/operations?project=${id}`)
+  await goto(page, `/console/operations?project=${id}`)
   await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible()
   await expect(page.getByText('No Operations yet.')).toBeVisible()
 

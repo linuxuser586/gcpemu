@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Cloud SQL view (SRS 4.8.3, FR-UI-011) against real PostgreSQL
 // servers. Instances need a container runtime, so the tests that create
@@ -23,7 +23,7 @@ test('Cloud SQL: the create form shows the API’s validation messages', async (
   browserName,
 }) => {
   const id = projectId('e2e-sqlform', browserName)
-  await page.goto(`/console/sql?project=${id}`)
+  await goto(page, `/console/sql?project=${id}`)
   await expect(page.getByText('No instances in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create instance' }).click()
 
@@ -66,7 +66,7 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   const state = (s: string) => expect(heading.getByText(s, { exact: true }))
 
   // Create (FR-SQL-001) with the form, a flag and the Data API on.
-  await page.goto(`/console/sql/create?project=${id}`)
+  await goto(page, `/console/sql/create?project=${id}`)
   await page.getByLabel('Instance ID').fill(name)
   await page.getByLabel('Database version').selectOption('POSTGRES_17')
   await page.getByLabel('Password of the postgres user').fill('rootpw')
@@ -196,7 +196,9 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   await tab(page, 'Users').click()
   await page.getByRole('button', { name: 'Delete user reader' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete user' }).click()
-  await expect(page.getByTestId('user').filter({ hasText: 'reader' })).toHaveCount(0)
+  await expect(page.getByTestId('user').filter({ hasText: 'reader' })).toHaveCount(0, {
+    timeout: 60_000,
+  })
   await tab(page, 'Databases').click()
   await page.getByRole('button', { name: 'Delete database app' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete database' }).click()

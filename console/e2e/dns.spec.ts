@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Cloud DNS view (SRS 4.8.3, FR-UI-011) against the Instance's dns
 // Service and its DNS server. Each attempt has its own Project and DNS
@@ -22,7 +22,7 @@ test('Cloud DNS: a zone’s record sets through changes, and the query box', asy
 }, testInfo) => {
   const id = projectId(`e2e-dns${testInfo.retry}`, browserName)
   const domain = `${id}.test.`
-  await page.goto(`/console/dns?project=${id}`)
+  await goto(page, `/console/dns?project=${id}`)
   await expect(page.getByText('No managed zones in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create zone' }).click()
 
@@ -77,7 +77,7 @@ test('Cloud DNS: a zone’s record sets through changes, and the query box', asy
   await expect(response.getByRole('table', { name: 'Answer' })).not.toContainText('192.0.2.10')
 
   // The change history has the zone's creation and both edits.
-  await page.goto(`/console/dns/zones/app/changes?project=${id}`)
+  await goto(page, `/console/dns/zones/app/changes?project=${id}`)
   await expect(page.getByTestId('change')).toHaveCount(3)
   await expect(page.getByTestId('change').first()).toContainText('+ www.')
   await expect(page.getByTestId('change').first()).toContainText('192.0.2.21')
@@ -98,7 +98,7 @@ test('Cloud DNS: a private zone answers only on its networks', async ({
   const id = projectId(`e2e-dnsp${testInfo.retry}`, browserName)
   const domain = `${id}.internal.`
   const network = `projects/${id}/global/networks/vpc-e2e`
-  await page.goto(`/console/dns/create?project=${id}`)
+  await goto(page, `/console/dns/create?project=${id}`)
   await page.getByLabel('Zone name').fill('corp')
   await page.getByLabel('DNS name').fill(domain)
   await page.getByLabel('Visibility').selectOption('private')
@@ -116,7 +116,8 @@ test('Cloud DNS: a private zone answers only on its networks', async ({
   await expect(page.getByRole('list', { name: 'Network bindings' })).toContainText('vpc-e2e')
 
   // From the bound network the zone answers; from the host it is unseen.
-  await page.goto(
+  await goto(
+    page,
     `/console/dns/query?project=${id}&name=db.${domain}&type=A&network=${encodeURIComponent(network)}`,
   )
   const response = page.getByRole('region', { name: 'DNS response' })

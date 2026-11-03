@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Secret Manager view (SRS 4.8.3, FR-UI-011) against the Instance's
 // secrets and pubsub Services. Each attempt has its own Project, so a
@@ -18,7 +18,7 @@ test('Secret Manager: a secret’s lifecycle, its versions and their values', as
   requests,
 }, testInfo) => {
   const id = projectId(`e2e-sm${testInfo.retry}`, browserName)
-  await page.goto(`/console/secrets?project=${id}`)
+  await goto(page, `/console/secrets?project=${id}`)
   await expect(page.getByText('No global secrets in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create secret' }).click()
 
@@ -91,7 +91,7 @@ test('Secret Manager: regional secrets live in their location', async ({
   browserName,
 }, testInfo) => {
   const id = projectId(`e2e-smr${testInfo.retry}`, browserName)
-  await page.goto(`/console/secrets?project=${id}`)
+  await goto(page, `/console/secrets?project=${id}`)
   await page.getByLabel('Location').selectOption('us-central1')
   await expect(page.getByText('No secrets in us-central1 yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create secret' }).click()

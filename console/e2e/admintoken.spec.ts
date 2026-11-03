@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { expect, test } from './fixtures'
+import { expect, goto, test } from './fixtures'
 
 // FR-UI-009: beyond loopback the console needs the admin token. This file
 // runs its own Instance bound to 0.0.0.0 and opens the console URL it
@@ -73,7 +73,7 @@ test('FR-UI-009: the printed console URL opens the console beyond loopback', asy
   expect((await request.get(`${origin}/_emu/v1/ready`)).status()).toBe(200)
 
   const events = page.waitForResponse((r) => new URL(r.url()).pathname === '/_emu/v1/events')
-  await page.goto(consoleURL)
+  await goto(page, consoleURL)
   // The token is swapped for a cookie and dropped from the address bar.
   await expect(page).toHaveURL(`${origin}/console/`)
   await expect(page.getByTestId('ready-gcs')).toContainText('Ready')

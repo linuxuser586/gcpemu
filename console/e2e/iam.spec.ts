@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The IAM view (SRS 4.8.3, FR-UI-011) against the Instance's iam and gcs
 // Services. Each attempt has its own Project, so a retry does not meet the
@@ -30,7 +30,7 @@ test('IAM: a service account’s lifecycle, its keys, a grant and the policy sim
     true,
   )
 
-  await page.goto(`/console/iam/serviceAccounts?project=${id}`)
+  await goto(page, `/console/iam/serviceAccounts?project=${id}`)
   await expect(page.getByText('No service accounts in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create service account' }).click()
   await page.getByLabel('Service account ID').fill('Runner')
@@ -132,7 +132,7 @@ test('IAM: a custom role’s lifecycle and the IAM enforcement level', async ({
   browserName,
 }, testInfo) => {
   const id = projectId(`e2e-iamr${testInfo.retry}`, browserName)
-  await page.goto(`/console/iam/roles?project=${id}`)
+  await goto(page, `/console/iam/roles?project=${id}`)
   await expect(page.getByText('No custom roles in this Project yet.')).toBeVisible()
   await expect(
     page.getByRole('table', { name: 'Predefined roles' }).getByText('roles/storage.admin'),
@@ -212,7 +212,7 @@ test('IAM: the audit view lists denied calls and grants the smallest role', asyn
     }),
   )
 
-  await page.goto(`/console/iam/audit?project=${id}`)
+  await goto(page, `/console/iam/audit?project=${id}`)
   await expect(page.getByRole('heading', { name: 'IAM audit' })).toBeVisible()
   const publish = page.getByTestId('denial').filter({ hasText: 'pubsub.topics.publish' })
   await expect(publish).toContainText(who)

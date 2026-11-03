@@ -1,7 +1,7 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, goto, projectId, test } from './fixtures'
 
 // The console behind an authenticating reverse proxy on its own origin,
 // as oauth2-proxy puts it (#888): the proxy sends a request without its
@@ -74,7 +74,7 @@ test('Authenticating proxy: every console request carries its session cookie', a
   await context.addCookies([{ name: SESSION, value: 'signed-in', url: proxyURL }])
 
   // Choose the Project in the Project dialog, then list its buckets.
-  await page.goto(`${proxyURL}/console/`)
+  await goto(page, `${proxyURL}/console/`)
   await page.getByRole('button', { name: 'Project' }).click()
   await page.getByRole('list', { name: 'Projects' }).getByRole('button', { name: id }).click()
   await expect(page).toHaveURL(new RegExp(`\\?project=${id}$`))
@@ -94,7 +94,7 @@ test('Authenticating proxy: every console request carries its session cookie', a
   await expect(page.getByRole('link', { name: bucket })).toBeVisible()
 
   // The policy simulator mints a token and revokes it after.
-  await page.goto(`${proxyURL}/console/iam/simulator?project=${id}`)
+  await goto(page, `${proxyURL}/console/iam/simulator?project=${id}`)
   await page.getByLabel('Principal').fill(`serviceAccount:${email}`)
   await page.getByLabel('Resource type').selectOption('bucket')
   await page.getByLabel('Bucket').fill(bucket)

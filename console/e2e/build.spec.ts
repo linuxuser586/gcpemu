@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Cloud Build view (SRS 4.8.3, FR-UI-011) against the Instance's
 // build Service. Cloud Build is ready only with a container runtime, so
@@ -49,7 +49,7 @@ test('Cloud Build: a Build’s live step log, final status, cancel and retry', a
   // The logUrl lands on the Build, in its Project.
   const b = await startBuild(request, id, 6)
   const url = new URL(b.logUrl)
-  await page.goto(url.pathname)
+  await goto(page, url.pathname)
   await expect(page).toHaveURL(new RegExp(`/builds/${b.id}\\?project=${id}`))
   await expect(page.getByRole('heading', { name: b.id })).toBeVisible()
 
@@ -76,7 +76,7 @@ test('Cloud Build: a Build’s live step log, final status, cancel and retry', a
   const rows = page.getByRole('table', { name: 'Builds' }).getByTestId('build')
   await expect(rows.filter({ hasText: b.id })).toContainText('SUCCESS')
   await expect(rows.filter({ hasText: retried })).toContainText('CANCELLED')
-  await page.goto(`/console/requests?project=${id}`)
+  await goto(page, `/console/requests?project=${id}`)
   await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'Cloud Build' })
   const logged = page.getByRole('table', { name: 'Requests' }).getByTestId('request')
   await expect(logged.filter({ hasText: ':retry' })).toHaveCount(1)
@@ -94,7 +94,7 @@ test('Cloud Build: tabs by keyboard, Build triggers and pruning the Build daemon
   test.skip(!(await hasBuild(request)), 'needs Cloud Build and a container runtime')
   test.setTimeout(120_000)
   const id = projectId('e2e-cb-tabs', browserName)
-  await page.goto(`/console/build?project=${id}`)
+  await goto(page, `/console/build?project=${id}`)
   await expect(page.getByText('No Builds in global yet.')).toBeVisible()
 
   const tabs = page.getByRole('navigation', { name: 'Cloud Build' })
@@ -119,7 +119,7 @@ test('Cloud Build: tabs by keyboard, Build triggers and pruning the Build daemon
   await expect(page.getByText(/^Pruned the Build daemon: freed /)).toBeVisible({ timeout: 90_000 })
   await expect(details).toContainText('Running')
 
-  await page.goto(`/console/requests`)
+  await goto(page, `/console/requests`)
   await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'Cloud Build' })
   await expect(
     page

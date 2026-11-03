@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The GKE view (SRS 4.8.3, FR-UI-011) against real k3s clusters. The
 // Instance runs gke on Linux (emulator.ts); clusters need a container
@@ -29,7 +29,7 @@ test('GKE: the create form shows the API’s validation messages', async ({
 }) => {
   test.skip(!(await runtime(request)).gke, 'GKE runs on Linux only')
   const id = projectId('e2e-gkeform', browserName)
-  await page.goto(`/console/gke?project=${id}`)
+  await goto(page, `/console/gke?project=${id}`)
   await expect(page.getByText('No clusters in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create cluster' }).click()
 
@@ -65,7 +65,7 @@ test('GKE: a cluster’s lifecycle, Kubernetes objects and actions', async ({
   const gateway = `/connectgateway/v1/projects/${id}/locations/${ZONE}/gkeMemberships/${name}`
 
   // Create (FR-GKE-001) with the form.
-  await page.goto(`/console/gke/create?project=${id}`)
+  await goto(page, `/console/gke/create?project=${id}`)
   await page.getByLabel('Name').fill(name)
   await page.getByLabel('Location', { exact: true }).fill(ZONE)
   await page.getByLabel('Nodes in the default pool').fill('1')
