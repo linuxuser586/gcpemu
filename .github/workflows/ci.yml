@@ -223,6 +223,28 @@ jobs:
           cat "$RUNNER_TEMP/container-events.log"
           sudo dmesg | grep -iE 'oom|killed process' || true
           free -m
+      # #943: ADR 0017 wants an issue for every flake, and a pass on retry
+      # leaves the job green, so name each one on the run. This only reports,
+      # hence continue-on-error. The JSON report is missing if the suite never ran.
+      - name: Tests that passed only on retry
+        if: success() || failure()
+        continue-on-error: true
+        working-directory: console
+        run: |
+          test -f playwright-results.json || exit 0
+          flaky=$(jq -c '[.. | .specs? // empty | .[] | . as $spec | .tests[] | select(.status == "flaky")
+            | {browser: .projectName, file: "console/e2e/\($spec.file)", line: $spec.line, title: $spec.title}]' playwright-results.json)
+          test "$flaky" != '[]' || exit 0
+          # A workflow command's message escapes %, CR and LF.
+          jq -r '.[] | "::warning file=\(.file),line=\(.line),title=Flaky (\(.browser))::\(.title
+            | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"))"' <<<"$flaky"
+          {
+            echo '### Tests that passed only on retry'
+            echo
+            echo '| Browser | File | Title |'
+            echo '| --- | --- | --- |'
+            jq -r '.[] | "| \(.browser) | \(.file):\(.line) | \(.title | gsub("\\|"; "\\|")) |"' <<<"$flaky"
+          } >> "$GITHUB_STEP_SUMMARY"
       # #477: also upload when a test was flaky. Under retain-on-failure
       # Playwright keeps a trace only for an attempt that failed, so a trace
       # in a passing job means a test passed on retry.

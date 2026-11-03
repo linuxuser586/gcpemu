@@ -9,7 +9,11 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  // CI's console-e2e job reads the JSON report to name the tests that passed
+  // only on retry. It sits outside test-results, which Playwright empties.
+  reporter: process.env.CI
+    ? [['list'], ['html', { open: 'never' }], ['json', { outputFile: 'playwright-results.json' }]]
+    : 'list',
   use: {
     baseURL: process.env.GCPEMU_E2E_URL,
     // CI's console-e2e job uploads the report when a trace.zip is left in
