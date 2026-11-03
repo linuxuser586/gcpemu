@@ -5,16 +5,10 @@
 version: "3"
 
 vars:
-  # Evaluated once, before the console build rewrites
-  # console/dist/index.html. `task release VERSION=v1.2.3` overrides it.
+  # `task release VERSION=v1.2.3` overrides it.
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   LDFLAGS: -s -w -X github.com/linuxuser586/gcpemu/internal/instance.Version={{.VERSION}}
-  # FR-UI-001: the Web console is embedded from console/dist. Building it
-  # overwrites the committed placeholder console/dist/index.html, which is
-  # put back once the binaries are built, or when the build fails.
-  CONSOLE_PLACEHOLDER: console/dist/index.html
-  RESTORE_PLACEHOLDER: git checkout -- {{.CONSOLE_PLACEHOLDER}} 2>/dev/null || true
 
 tasks:
   # #541: a bare `task` lists the tasks rather than building.
@@ -136,8 +130,6 @@ tasks:
     env:
       CGO_ENABLED: "0"
     cmds:
-      - defer: "{{.RESTORE_PLACEHOLDER}}"
-        silent: true
       - task: console
         if: command -v pnpm
       - cmd: >-
@@ -169,7 +161,7 @@ tasks:
       - go build -trimpath -ldflags '{{.LDFLAGS}}' -o bin/gcpemu-linux-{{.ARCH}} ./cmd/gcpemu
 
   console:
-    desc: Build the Web console bundle into console/dist (needs pnpm)
+    desc: Build the Web console bundle into console/dist/bundle (needs pnpm)
     dir: console
     cmds:
       - pnpm install --frozen-lockfile
@@ -468,19 +460,13 @@ tasks:
     desc: Build the release binaries into dist/, with the Web console (VERSION=vX.Y.Z)
     deps: [console]
     preconditions:
-      # The placeholder's marker is gone once the console is built
-      # (console/embed.go); read and case are builtins, unlike grep.
-      - sh: |
-          while IFS= read -r line; do
-            case $line in *'content="placeholder"'*) exit 1 ;; esac
-          done < {{.CONSOLE_PLACEHOLDER}}
-        msg: "release: the Web console bundle is not built"
+      # ADR 0060: console/embed.go embeds the bundle only when it is there.
+      - sh: test -f console/dist/bundle/index.html
+        msg: "release: the Web console bundle is not built (console/dist/bundle/index.html is missing)"
     cmds:
-      - defer: "{{.RESTORE_PLACEHOLDER}}"
-        silent: true
       - task: cross
 
-  # The release builds with whatever console/dist holds (Node-free CI).
+  # The release builds with whatever console/dist/bundle holds (Node-free CI).
   cross:
     desc: Build static binaries for every supported OS/arch into dist/
     cmds:
