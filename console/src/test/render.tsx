@@ -13,6 +13,11 @@ export function renderApp(path = '/') {
     queries: { ...queryClient.getDefaultOptions().queries, retry: false },
   })
   const router = createMemoryRouter(routes(queryClient), { initialEntries: [path] })
+  // A navigation lands later than whatever started it. The delay makes a test
+  // that reads too early fail every run, not once in a while on a slow runner.
+  const navigate = router.navigate.bind(router)
+  router.navigate = ((...args: Parameters<typeof navigate>) =>
+    new Promise((resolve) => setTimeout(() => resolve(navigate(...args)), 30))) as typeof navigate
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />

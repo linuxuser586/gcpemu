@@ -626,8 +626,8 @@ it('lists service accounts, filters them and undeletes one by unique ID', async 
   expect(rows[1]).toHaveTextContent('Disabled')
 
   await user.type(screen.getByLabelText('Filter'), 'web')
-  expect(router.state.location.search).toContain('q=web')
-  expect(within(table).getAllByTestId('service-account')).toHaveLength(1)
+  await waitFor(() => expect(router.state.location.search).toContain('q=web'))
+  await waitFor(() => expect(within(table).getAllByTestId('service-account')).toHaveLength(1))
 
   await user.click(screen.getByRole('button', { name: 'Undelete' }))
   const dialog = await screen.findByRole('dialog')
@@ -827,7 +827,9 @@ it('edits, deletes and undeletes a custom role', async () => {
   const { router } = renderApp(`/iam/customRoles/bucketReader?project=${P}`)
   expect(await screen.findByLabelText('Role details')).toHaveTextContent('Bucket reader')
   await user.click(screen.getByRole('link', { name: 'Edit role' }))
-  await user.type(await screen.findByLabelText('Permissions'), '\nstorage.objects.get')
+  // The role's page labels its list Permissions too: only the form has a textbox.
+  const permissions = await screen.findByRole('textbox', { name: 'Permissions' })
+  await user.type(permissions, '\nstorage.objects.get')
   await user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(router.state.location.pathname).toBe('/iam/customRoles/bucketReader'))
   const [patch] = sent('PATCH', /roles\/bucketReader$/)
@@ -869,7 +871,9 @@ it('simulates a Principal’s permissions on the Project and on a bucket', async
   expect(rows[0]).toHaveTextContent('Granted')
   expect(rows[1]).toHaveTextContent('Denied')
   expect(screen.getByText(/holds 1 of 2 permissions/)).toBeInTheDocument()
-  expect(router.state.location.search).toContain('principal=user%3Aalice%40example.com')
+  await waitFor(() =>
+    expect(router.state.location.search).toContain('principal=user%3Aalice%40example.com'),
+  )
 
   // The token is minted for the Principal, used for testIamPermissions
   // alone, and revoked.

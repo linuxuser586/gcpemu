@@ -204,14 +204,14 @@ it('lists topics with their subscriptions and filters them in the URL', async ()
 
   await user.type(screen.getByLabelText('Filter'), 'dlq')
   await waitFor(() => expect(within(table).getAllByTestId('topic')).toHaveLength(1))
-  expect(router.state.location.search).toContain('q=dlq')
+  await waitFor(() => expect(router.state.location.search).toContain('q=dlq'))
 })
 
 it('lists subscriptions with backlog, oldest unacked age and dead-letter counts', async () => {
   const user = userEvent.setup()
   const { router } = renderApp(`/pubsub?project=${P}`)
   await user.click(await screen.findByRole('link', { name: 'Subscriptions' }))
-  expect(router.state.location.pathname).toBe('/pubsub/subscriptions')
+  await waitFor(() => expect(router.state.location.pathname).toBe('/pubsub/subscriptions'))
   const table = await screen.findByRole('table', { name: 'Subscriptions' })
   // The fake lists them as created; the API sorts them by name.
   const [worker, push] = within(table).getAllByTestId('subscription')

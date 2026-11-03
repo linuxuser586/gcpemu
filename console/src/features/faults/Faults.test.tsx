@@ -136,7 +136,7 @@ it('filters by Service and text, keeping the filters in the URL', async () => {
   await waitFor(() => expect(rows()).toHaveLength(3))
   await user.type(screen.getByLabelText('Filter'), 'publish')
   await waitFor(() => expect(rows().map((r) => r.dataset.id)).toEqual(['flaky-publish']))
-  expect(router.state.location.search).toBe('?q=publish')
+  await waitFor(() => expect(router.state.location.search).toBe('?q=publish'))
 })
 
 it('adds a rule from the form', async () => {

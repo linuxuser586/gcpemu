@@ -13,7 +13,7 @@ it('lists Projects and puts the chosen one in the URL', async () => {
   await user.click(await screen.findByRole('button', { name: 'Project' }))
   const list = await screen.findByRole('list', { name: 'Projects' })
   await user.click(within(list).getByRole('button', { name: 'beta-project' }))
-  expect(router.state.location.search).toBe('?project=beta-project')
+  await waitFor(() => expect(router.state.location.search).toBe('?project=beta-project'))
   // The switcher re-renders once the navigation lands.
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Project' })).toHaveTextContent('beta-project'),
@@ -32,7 +32,7 @@ it('accepts an unknown Project ID as "not yet created" and creates nothing', asy
   await user.type(screen.getByLabelText('Project ID'), 'new-project')
   expect(screen.getByText(/is not yet created/)).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Open' }))
-  expect(router.state.location.search).toBe('?project=new-project')
+  await waitFor(() => expect(router.state.location.search).toBe('?project=new-project'))
   expect(await screen.findByText('not yet created')).toBeInTheDocument()
   expect(writes).toEqual([])
 })
@@ -93,7 +93,7 @@ it('lists the Delegated Projects apart, each naming its Linked Instance', async 
   const item = within(delegated).getByRole('button', { name: /team-shared/ })
   expect(item).toHaveTextContent('office')
   await user.click(item)
-  expect(router.state.location.search).toBe('?project=team-shared')
+  await waitFor(() => expect(router.state.location.search).toBe('?project=team-shared'))
   // A Delegated Project exists on its Linked Instance, never "not yet created" here.
   expect(await screen.findByText('via office')).toBeInTheDocument()
   expect(screen.queryByText('not yet created')).not.toBeInTheDocument()

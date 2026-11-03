@@ -169,12 +169,12 @@ it('lists global secrets, switches to a region and filters by name in the URL', 
   expect(within(table).getByText('team=web')).toBeInTheDocument()
 
   await user.type(screen.getByLabelText('Filter'), 'api')
-  expect(router.state.location.search).toContain('q=api')
-  expect(within(table).getAllByTestId('secret')).toHaveLength(1)
+  await waitFor(() => expect(router.state.location.search).toContain('q=api'))
+  await waitFor(() => expect(within(table).getAllByTestId('secret')).toHaveLength(1))
 
   await user.clear(screen.getByLabelText('Filter'))
   await user.selectOptions(await screen.findByLabelText('Location'), 'us-central1')
-  expect(router.state.location.search).toContain('location=us-central1')
+  await waitFor(() => expect(router.state.location.search).toContain('location=us-central1'))
   expect(await screen.findByText('app-db')).toBeInTheDocument()
   expect(screen.getByText('Regional (us-central1)')).toBeInTheDocument()
 })
