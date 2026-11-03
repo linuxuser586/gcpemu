@@ -3,4 +3,5 @@ node_modules
 pnpm-lock.yaml
 src/api/admin.gen.ts
 playwright-report
+playwright-results.json
 test-results
