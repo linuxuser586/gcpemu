@@ -11,6 +11,8 @@ On a VM runtime, `docker push` and `podman push` are done by the runtime's daemo
 
 ## Consequences
 
+- Rootless Podman on Linux is a VM runtime (ADR 0058) but needs no Registry relay (#923). It pushes and pulls in the host's network namespace, where the registry's loopback endpoint already reaches it, and its host-network containers share that namespace, so a Registry relay could only collide with the Instance's own listener. The Registry relay reports itself off there, and still prints the Podman step, for the host's `registries.conf`. Rootless Docker keeps the Registry relay: its daemon runs in RootlessKit's network namespace, whose loopback is not the host's.
+
 - An Instance on the host that runs Artifact Registry no longer waits for a Service to need containers before it connects to the runtime: once its Services have started it connects in the background and, on a VM runtime, starts the VM relay and the Registry relay. It decides with the VM relay's own decision, so the two never disagree. Reset removes the Registry relay with the VM relay and starts both again. Start and readiness don't wait for them. emutest's Instances don't, so tests that push from the host start no containers.
 - OrbStack and Colima forward a host-network container's port to the host, and whichever side binds first holds it. The Instance binds its host registry listeners before starting the Registry relay, and removes a leftover Registry relay before binding.
 - Podman doesn't treat `localhost` as insecure, so Podman machine users need `podman push --tls-verify=false` or a `registries.conf` entry inside the machine. The Instance prints the step but never edits the VM.

@@ -13,5 +13,5 @@ ADR 0056 kept the gateway probe on Linux: an Instance on the host is on a VM run
 ## Consequences
 
 - Recognising a runtime by what it reports only ever turns the relay on. An unknown runtime still gets the interface check.
-- Rootless runtimes count as VM runtimes, as the bind probe already made them. Whether they need the Registry relay is a separate question.
+- Rootless runtimes count as VM runtimes, as the bind probe already made them. Rootless Docker still needs the Registry relay; rootless Podman does not (ADR 0043, #923).
 - `runtime.InspectNetwork` reports Podman's real bridge name, so host mode names the right interface too.
