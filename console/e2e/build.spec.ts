@@ -78,8 +78,14 @@ test('Cloud Build: a Build’s live step log, final status, cancel and retry', a
   await expect(rows.filter({ hasText: retried })).toContainText('CANCELLED')
   await page.goto(`/console/requests?project=${id}`)
   await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'Cloud Build' })
+  // The table renders only the rows near its viewport, and it lists every
+  // Project, so the filters leave just the entry each check looks for.
+  await page.getByRole('searchbox', { name: 'Resource' }).fill(id)
+  const methodFilter = page.getByRole('searchbox', { name: 'Method' })
   const logged = page.getByRole('table', { name: 'Requests' }).getByTestId('request')
+  await methodFilter.fill(':retry')
   await expect(logged.filter({ hasText: ':retry' })).toHaveCount(1)
+  await methodFilter.fill(':cancel')
   await expect(logged.filter({ hasText: ':cancel' })).toHaveCount(1)
 
   await expectConsoleRequests(requests, { allowed })
@@ -121,6 +127,8 @@ test('Cloud Build: tabs by keyboard, Build triggers and pruning the Build daemon
 
   await page.goto(`/console/requests`)
   await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'Cloud Build' })
+  // Later requests could push the entry past the rows the table renders.
+  await page.getByRole('searchbox', { name: 'Method' }).fill('prune')
   await expect(
     page
       .getByRole('table', { name: 'Requests' })
