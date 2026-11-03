@@ -15,7 +15,8 @@ export default defineConfig({
     alias: { '@': path.resolve(import.meta.dirname, 'src') },
   },
   build: {
-    outDir: 'dist',
+    // ADR 0060: the bundle never shares a directory with a committed file.
+    outDir: 'dist/bundle',
     emptyOutDir: true,
     // The budget that matters is FR-UI-020's (scripts/check-bundle-size.ts).
     chunkSizeWarningLimit: 1500,

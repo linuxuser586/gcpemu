@@ -1,11 +1,11 @@
 // FR-UI-020: the console adds at most 3 MB, gzip-compressed, to the
-// binary. Measures every file `pnpm build` wrote to dist/.
+// binary. Measures every file `pnpm build` wrote to dist/bundle/.
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { gzipSync } from 'node:zlib'
 
 const LIMIT = 3 * 1024 * 1024
-const dist = path.resolve(import.meta.dirname, '../dist')
+const dist = path.resolve(import.meta.dirname, '../dist/bundle')
 
 let total = 0
 for (const entry of readdirSync(dist, { recursive: true, withFileTypes: true })) {

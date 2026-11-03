@@ -5,7 +5,7 @@
 /gcpemu
 /console/node_modules/
 /console/dist/*
-!/console/dist/index.html
+!/console/dist/.keep
 /console/test-results/
 /console/playwright-report/
 /compat/sdk/java/target/
