@@ -70,7 +70,11 @@ func (s *Service) insertDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db := newDatabase(project, inst, d.Name, d.Charset, d.Collation)
-	op := s.newOp(r.Context(), project, inst, "CREATE_DATABASE")
+	op, err := s.claimOp(r.Context(), project, inst, "CREATE_DATABASE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
 		return s.createDatabase(ctx, project, inst, db)
 	}))
@@ -163,7 +167,11 @@ func (s *Service) patchDatabase(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errInvalid("The charset, collation and name of a PostgreSQL database cannot be changed."))
 		return
 	}
-	op := s.newOp(r.Context(), project, inst, "UPDATE_DATABASE")
+	op, err := s.claimOp(r.Context(), project, inst, "UPDATE_DATABASE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(context.Context) error { return nil }))
 }
 
@@ -182,7 +190,11 @@ func (s *Service) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	op := s.newOp(r.Context(), project, inst, "DELETE_DATABASE")
+	op, err := s.claimOp(r.Context(), project, inst, "DELETE_DATABASE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
 		if _, err := s.execSQL(ctx, project, inst, "postgres", "", "DROP DATABASE IF EXISTS "+quoteIdent(name)+" WITH (FORCE);"); err != nil {
 			return err

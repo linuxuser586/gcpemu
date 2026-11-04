@@ -23,6 +23,7 @@ import {
   NAME,
   nameMessage,
   patchInstance,
+  waitOperation,
   type AclEntry,
   type DatabaseInstance,
   type Flag,
@@ -545,12 +546,12 @@ function EditInstanceForm({
     mutationFn: async (body: Body) => {
       if (Object.keys(obj(body.settings)).length === 0 && Object.keys(body).length === 1)
         return false
-      await patchInstance(instanceRef, body)
+      await waitOperation(instanceRef.project, await patchInstance(instanceRef, body))
       return true
     },
     onSuccess: (changed) => {
       void qc.invalidateQueries({ queryKey: ['sql'] })
-      toast.success(changed ? `Updating instance ${instance.name}.` : 'Nothing to change.')
+      toast.success(changed ? `Updated instance ${instance.name}.` : 'Nothing to change.')
       back()
     },
   })

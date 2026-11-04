@@ -23,6 +23,7 @@ import {
   isStopped,
   restartInstance,
   setActivation,
+  waitOperation,
   type DatabaseInstance,
 } from './api'
 import { instanceRecipe } from './copy'
@@ -55,16 +56,16 @@ export function InstancePage() {
     toast.success(message)
   }
   const start = useMutation({
-    mutationFn: () => setActivation(ref, 'ALWAYS'),
-    onSuccess: done(`Starting instance ${ref.instance}.`),
+    mutationFn: async () => waitOperation(ref.project, await setActivation(ref, 'ALWAYS')),
+    onSuccess: done(`Started instance ${ref.instance}.`),
   })
   const stop = useMutation({
-    mutationFn: () => setActivation(ref, 'NEVER'),
-    onSuccess: done(`Stopping instance ${ref.instance}.`),
+    mutationFn: async () => waitOperation(ref.project, await setActivation(ref, 'NEVER')),
+    onSuccess: done(`Stopped instance ${ref.instance}.`),
   })
   const restart = useMutation({
-    mutationFn: () => restartInstance(ref),
-    onSuccess: done(`Restarting instance ${ref.instance}.`),
+    mutationFn: async () => waitOperation(ref.project, await restartInstance(ref)),
+    onSuccess: done(`Restarted instance ${ref.instance}.`),
   })
   const del = useMutation({
     mutationFn: () => deleteInstance(ref),
@@ -74,7 +75,10 @@ export function InstancePage() {
     },
   })
   const base = instancePath(ref.instance)
-  const busy = !i || BUSY.has(i.state ?? '')
+  // An action's Operation can change what the page shows before it is DONE:
+  // Stop stores its policy at once, so Start would appear while Stop runs.
+  const acting = start.isPending || stop.isPending || restart.isPending
+  const busy = !i || BUSY.has(i.state ?? '') || acting
 
   return (
     <div className="flex flex-col gap-6">

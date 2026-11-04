@@ -258,7 +258,11 @@ func (s *Service) updateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := r.PathValue("project")
-	op := s.newOp(r.Context(), project, b.Run.Instance, "UPDATE_BACKUP")
+	op, err := s.claimBackupOp(r.Context(), project, b, "UPDATE_BACKUP")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(_ context.Context) error {
 		return s.updateBackupRecord(project, b.owner(), b.Run.Id, func(b *backupRecord) {
 			if setDesc {
@@ -277,5 +281,10 @@ func (s *Service) deleteBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	writeJSON(w, r, s.deleteBackupOp(r.Context(), r.PathValue("project"), b))
+	op, err := s.deleteBackupOp(r.Context(), r.PathValue("project"), b)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	writeJSON(w, r, op)
 }
