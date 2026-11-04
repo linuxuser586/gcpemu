@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 
 import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
@@ -255,6 +255,64 @@ it('lists versions with aliases, reveals a value and changes version states', as
     within(await screen.findByRole('dialog')).getByRole('button', { name: 'Destroy version' }),
   )
   await waitFor(() => expect(sent('POST', /versions\/1:destroy$/)).toHaveLength(1))
+})
+
+/** download opens the dialog of version 2 holding data and saves its value. */
+async function download(data: string) {
+  const user = userEvent.setup()
+  const createObjectURL = vi.fn((_: Blob) => 'blob:secret')
+  URL.createObjectURL = createObjectURL
+  URL.revokeObjectURL = vi.fn()
+  let name = ''
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    name = this.download
+  })
+  versions['db-password']![0]!.data = data
+  renderApp(`/secrets/secrets/db-password?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'View value of version 2' }))
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByLabelText('Secret value')
+  await user.click(within(dialog).getByRole('button', { name: 'Download' }))
+  await waitFor(() => expect(click).toHaveBeenCalled())
+  click.mockRestore()
+  const blob = createObjectURL.mock.calls[0]![0]
+  return { name, type: blob.type, bytes: [...new Uint8Array(await blob.arrayBuffer())] }
+}
+
+it('downloads a line-feed value byte for byte, named after its Secret version', async () => {
+  expect(await download('YQpiCg==')).toEqual({
+    name: 'db-password-2',
+    type: 'application/octet-stream',
+    bytes: [0x61, 0x0a, 0x62, 0x0a],
+  })
+})
+
+it.each([
+  ['keeps a leading byte order mark', '77u/YQ==', [0xef, 0xbb, 0xbf, 0x61]],
+  ['saves a payload that is not UTF-8 as its bytes', '//4A', [0xff, 0xfe, 0x00]],
+])('download %s', async (_, data, bytes) => {
+  expect((await download(data)).bytes).toEqual(bytes)
+})
+
+it('offers no download until the payload has loaded', async () => {
+  const user = userEvent.setup()
+  let release = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  server.use(
+    http.all(/versions\/2:access$/, async () => {
+      await held
+      return HttpResponse.json({ payload: { data: 'YQ==' } })
+    }),
+  )
+  renderApp(`/secrets/secrets/db-password?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'View value of version 2' }))
+  const dialog = await screen.findByRole('dialog')
+  const button = within(dialog).getByRole('button', { name: 'Download' })
+  expect(button).toBeDisabled()
+  release()
+  await waitFor(() => expect(button).toBeEnabled())
 })
 
 it('adds a version from the dialog', async () => {

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, Eye, EyeOff, Plus } from 'lucide-react'
+import { Copy, Download, Eye, EyeOff, Plus } from 'lucide-react'
 import { useId, useState } from 'react'
 
 import { errorMessage } from '@/api/errors'
@@ -29,11 +29,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 
 import { formatSeconds, time } from '../gcs/format'
+import { downloadBlob } from '../gke/kubeconfig'
 import {
   accessVersion,
   addVersion,
   changeVersion,
   decodePayload,
+  payloadBytes,
   seconds,
   versionId,
   versionsQuery,
@@ -263,7 +265,9 @@ function AddVersion({ r }: { r: SecretRef }) {
 
 /**
  * ViewValue accesses a version's payload when opened and shows it masked
- * until revealed; payloads that are not UTF-8 are shown as base64.
+ * until revealed; payloads that are not UTF-8 are shown as base64. Download
+ * saves the exact bytes, which Copy can't: the browser may change the line
+ * endings of what it puts on the clipboard (#964).
  */
 function ViewValue({ r, version }: { r: SecretRef; version: string }) {
   const [open, setOpen] = useState(false)
@@ -287,6 +291,11 @@ function ViewValue({ r, version }: { r: SecretRef; version: string }) {
       toast.error('The clipboard is not available here; reveal the value to copy it.')
     }
   }
+  const download = () =>
+    downloadBlob(
+      `${r.secret}-${version}`,
+      new Blob([payloadBytes(data)], { type: 'application/octet-stream' }),
+    )
   return (
     <Dialog
       open={open}
@@ -331,6 +340,10 @@ function ViewValue({ r, version }: { r: SecretRef; version: string }) {
           <Button variant="outline" disabled={!query.data} onClick={() => void copy()}>
             <Copy aria-hidden />
             {copied ? 'Copied' : 'Copy'}
+          </Button>
+          <Button variant="outline" disabled={!query.data} onClick={download}>
+            <Download aria-hidden />
+            Download
           </Button>
         </DialogFooter>
       </DialogContent>
