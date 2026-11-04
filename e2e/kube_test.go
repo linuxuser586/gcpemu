@@ -610,7 +610,8 @@ func installIstioCharts(t *testing.T, k *kube, releases ...[]string) {
 			"--kubeconfig", k.file, "--wait", "--timeout", "8m"}, rel[2:]...)
 		out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
 		if err != nil {
-			t.Fatalf("helm install %s: %v\n%s\n%s", rel[0], err, tail(string(out), 40), k.diagnose("istio-system", "app=istiod"))
+			// No selector: the release that timed out may not be istiod's.
+			t.Fatalf("helm install %s: %v\n%s\n%s", rel[0], err, tail(string(out), 40), k.diagnose("istio-system", ""))
 		}
 	}
 }
