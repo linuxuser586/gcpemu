@@ -241,7 +241,7 @@ func istioInjection(t *testing.T, k *kube) {
 		"metadata": map[string]any{"name": "mesh", "labels": map[string]string{"istio-injection": "enabled"}}})
 	k.apply(deployment("mesh", "web", 1, map[string]any{"name": "web", "image": pauseImage}))
 	hosttest.Eventually(t, 5*time.Minute, "injected deployment ready", func() bool { return k.deploymentReady("mesh", "web") },
-		func() string { return k.logs("mesh", "app=web") })
+		func() string { return k.diagnose("mesh", "app=web") })
 
 	pods := k.pods("mesh", "app=web")
 	if len(pods) != 1 {
