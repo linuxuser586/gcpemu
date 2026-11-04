@@ -192,15 +192,22 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   await expect(details).not.toContainText('team=e2e')
   await expect(details).toContainText('work_mem=16384')
 
-  // Delete a user, a database, then the instance.
+  // Delete a user, a database, then the Cloud SQL instance. Stop, Start,
+  // Restart and Edit pass above before their Operations finish, so a delete
+  // can wait behind them for the Cloud SQL instance's lock, with its dialog
+  // open and its row still listed.
   await tab(page, 'Users').click()
   await page.getByRole('button', { name: 'Delete user reader' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete user' }).click()
-  await expect(page.getByTestId('user').filter({ hasText: 'reader' })).toHaveCount(0)
+  await expect(page.getByTestId('user').filter({ hasText: 'reader' })).toHaveCount(0, {
+    timeout: 60_000,
+  })
   await tab(page, 'Databases').click()
   await page.getByRole('button', { name: 'Delete database app' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete database' }).click()
-  await expect(page.getByTestId('database').filter({ hasText: 'app' })).toHaveCount(0)
+  await expect(page.getByTestId('database').filter({ hasText: 'app' })).toHaveCount(0, {
+    timeout: 60_000,
+  })
 
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete instance' }).click()
