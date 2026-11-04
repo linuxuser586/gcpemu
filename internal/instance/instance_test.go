@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +42,33 @@ func (f *fakeSvc) Register(r emu.Router) error {
 func (f *fakeSvc) Start(context.Context) error { f.started = true; return nil }
 func (f *fakeSvc) Stop(context.Context) error  { f.stopped = true; return nil }
 func (f *fakeSvc) Ready() error                { return nil }
+
+// TestEndpointsFileWrittenAfterPIDFile is #990: endpoints.json is what
+// tells clients an Instance is up, so the PID file exists by then. If
+// not, `gcpemu stop` has no process to wait for and returns while the
+// Instance still writes to its data directory. A directory in the PID
+// file's place fails Start, and endpoints.json must not exist by then.
+func TestEndpointsFileWrittenAfterPIDFile(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.Services = []string{"dns"}
+	cfg.Ports["gateway"] = 0
+	in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return &fakeSvc{} }}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = in.Shutdown(context.Background()) })
+	pidFile := filepath.Join(in.Dir, PIDFile)
+	if err := os.MkdirAll(filepath.Join(pidFile, "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Start(context.Background()); err == nil {
+		t.Fatal("Start wrote the PID file over a directory")
+	}
+	if _, err := os.Stat(filepath.Join(in.Dir, EndpointsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("endpoints.json written with no PID file: stat err = %v", err)
+	}
+}
 
 func TestInstanceLifecycle(t *testing.T) {
 	cfg := config.Defaults()
