@@ -323,6 +323,11 @@ func (a *relayAgent) withdraw(name string) {
 // enough to walk past an excluded port range, which Windows reserves 100
 // ports at a time. It is even, so the last attempt has TCP pick and its
 // error names the port and the UDP bind that failed.
+//
+// For the agent, excluded port ranges only arise in tests on Windows
+// hosts: a real relay binds in the VM relay container, never on Windows,
+// but tests run the agent on the host. So walking past them is not a
+// user-facing case, and not dead code either: those tests need it (#459).
 const udpPairAttempts = 256
 
 // listenPair listens on addr over TCP and, withUDP, over UDP on the port
