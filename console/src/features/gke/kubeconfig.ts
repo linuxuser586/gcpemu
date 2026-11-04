@@ -41,7 +41,12 @@ current-context: ${q(name)}
 
 /** downloadText saves text as a file through the browser. */
 export function downloadText(filename: string, text: string, type = 'application/yaml') {
-  const url = URL.createObjectURL(new Blob([text], { type }))
+  downloadBlob(filename, new Blob([text], { type }))
+}
+
+/** downloadBlob saves blob as a file through the browser. */
+export function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   a.download = filename

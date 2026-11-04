@@ -93,13 +93,16 @@ export function encodePayload(text: string): string {
   return btoa(bin)
 }
 
+/** payloadBytes is SecretPayload.data as the payload's exact bytes. */
+export const payloadBytes = (data: string) => Uint8Array.from(atob(data), (c) => c.charCodeAt(0))
+
 /**
  * decodePayload reads SecretPayload.data: the text when it is UTF-8,
- * otherwise undefined (show the base64).
+ * otherwise undefined (show the base64). The text is for showing, as it
+ * loses a leading byte order mark; payloadBytes keeps every byte.
  */
 export function decodePayload(data: string): string | undefined {
-  const bin = atob(data)
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
+  const bytes = payloadBytes(data)
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   } catch {
