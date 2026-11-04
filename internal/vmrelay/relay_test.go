@@ -149,7 +149,12 @@ func TestDialThroughRelay(t *testing.T) {
 
 func TestInwardThroughRelay(t *testing.T) {
 	gw, dns := echoTCP(t), echoUDP(t)
-	r := startInProcess(t, map[string]string{"gateway": gw, "dns": dns})
+	a, held := heldAgent(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := startOn(t, l, a, map[string]string{"gateway": gw, "dns": dns})
 	ctx := context.Background()
 	addr, err := r.Listen(ctx, "gateway", "127.0.0.1:0", false)
 	if err != nil {
@@ -166,7 +171,7 @@ func TestInwardThroughRelay(t *testing.T) {
 		t.Fatalf("answer %q", got)
 	}
 
-	daddr, err := r.Listen(ctx, "dns", "127.0.0.1:0", true)
+	daddr, err := r.Listen(ctx, "dns", held, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +215,31 @@ func heldPair(t *testing.T) (net.Listener, net.PacketConn) {
 	}
 	t.Fatal(err)
 	return nil, nil
+}
+
+// heldAgent returns an agent and the address of a pair from heldPair. The
+// agent binds that address to the held sockets and binds any other for
+// real, so a test can Listen on the pair without the kernel picking one
+// (#1007). The sockets are handed over each time: listen is idempotent per
+// name, so a test that listens on the address once gets them once.
+func heldAgent(t *testing.T) (*relayAgent, string) {
+	t.Helper()
+	l, pc := heldPair(t)
+	held := l.Addr().String()
+	a := newRelayAgent()
+	a.listenTCP = func(network, addr string) (net.Listener, error) {
+		if addr == held {
+			return l, nil
+		}
+		return net.Listen(network, addr)
+	}
+	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
+		if addr == held {
+			return pc, nil
+		}
+		return net.ListenPacket(network, addr)
+	}
+	return a, held
 }
 
 // TestInwardUDPTwinRefused: on Windows the UDP twin of every port TCP
@@ -268,22 +298,7 @@ func TestInwardUDPTwinRefused(t *testing.T) {
 // one the relay listens on. The test holds the pair until the relay binds
 // it, so no other process can take the port in between (#643).
 func TestInwardKeepsFreePort(t *testing.T) {
-	l, pc := heldPair(t)
-	want := l.Addr().String()
-
-	a := newRelayAgent()
-	a.listenTCP = func(network, addr string) (net.Listener, error) {
-		if addr == want {
-			return l, nil
-		}
-		return net.Listen(network, addr)
-	}
-	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
-		if addr == want {
-			return pc, nil
-		}
-		return net.ListenPacket(network, addr)
-	}
+	a, want := heldAgent(t)
 	ctl, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -742,14 +757,14 @@ func TestInwardDuringReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &gatedListener{Listener: inner}
-	a := newRelayAgent()
+	a, held := heldAgent(t)
 	r := startOn(t, l, a, map[string]string{"gateway": gw, "dns": dns})
 	ctx := context.Background()
 	addr, err := r.Listen(ctx, "gateway", "127.0.0.1:0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	daddr, err := r.Listen(ctx, "dns", "127.0.0.1:0", true)
+	daddr, err := r.Listen(ctx, "dns", held, true)
 	if err != nil {
 		t.Fatal(err)
 	}
