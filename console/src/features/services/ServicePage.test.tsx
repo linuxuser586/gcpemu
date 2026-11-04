@@ -31,7 +31,7 @@ it('lists only enabled Services in the sidebar, carrying the view state', async 
     'Cloud Storage',
   ])
   await user.click(within(nav).getByRole('link', { name: 'Cloud Storage' }))
-  expect(router.state.location.pathname).toBe('/gcs')
+  await waitFor(() => expect(router.state.location.pathname).toBe('/gcs'))
   expect(router.state.location.search).toBe('?project=alpha-project&location=us-east1&q=logs')
   // The page re-renders as its queries settle; look the heading up afresh.
   await waitFor(() =>

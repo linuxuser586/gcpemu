@@ -150,11 +150,13 @@ it('lists clusters, filtering by location and name in the URL', async () => {
   expect(rows()).toHaveLength(2)
   expect(screen.getByText('PROVISIONING')).toBeInTheDocument()
   await user.type(screen.getByLabelText('Location'), 'us-central1')
-  expect(rows()).toHaveLength(1)
-  expect(router.state.location.search).toContain('location=us-central1')
+  await waitFor(() => expect(router.state.location.search).toContain('location=us-central1'))
+  await waitFor(() => expect(rows()).toHaveLength(1))
   await user.clear(screen.getByLabelText('Location'))
+  // Else the next count could pass on the Location filter.
+  await waitFor(() => expect(rows()).toHaveLength(2))
   await user.type(screen.getByLabelText('Filter'), 'bat')
-  expect(rows()).toHaveLength(1)
+  await waitFor(() => expect(rows()).toHaveLength(1))
   expect(screen.getByRole('link', { name: 'batch' })).toBeInTheDocument()
 })
 

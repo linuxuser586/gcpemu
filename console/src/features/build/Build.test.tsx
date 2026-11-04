@@ -198,7 +198,7 @@ it('lists a location’s Builds with status, duration, source, trigger and servi
   await user.clear(screen.getByLabelText('Location'))
   await user.type(screen.getByLabelText('Location'), 'us-central1')
   await user.click(screen.getByRole('button', { name: 'Show' }))
-  expect(router.state.location.search).toContain('location=us-central1')
+  await waitFor(() => expect(router.state.location.search).toContain('location=us-central1'))
   expect(await screen.findByText('b-regional')).toBeInTheDocument()
 })
 
@@ -218,7 +218,7 @@ it('opens a Build from its logUrl with its steps’ status, timing and logs', as
   const log = await screen.findByLabelText('Build log')
   await waitFor(() => expect(log).toHaveTextContent('DONE'))
   await user.click(within(steps[0]!).getByRole('button', { name: 'Show the log of step 0' }))
-  expect(router.state.location.search).toContain('step=0')
+  await waitFor(() => expect(router.state.location.search).toContain('step=0'))
   await waitFor(() =>
     expect(screen.getByLabelText('Log of step 0')).toHaveTextContent(/^compiled$/),
   )

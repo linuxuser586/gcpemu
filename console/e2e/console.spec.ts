@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 import { SERVICES } from '../src/lib/services'
 
@@ -21,8 +23,15 @@ test.describe('FR-UI-002 serving', () => {
   test('caching and CSP headers', async ({ request }) => {
     const index = await request.get('/console/')
     expect(index.headers()['cache-control']).toBe('no-cache')
-    expect(index.headers()['content-security-policy']).toBe("default-src 'self'")
-    const asset = /\/console\/(assets\/[^"]+\.js)/.exec(await index.text())?.[1]
+    const html = await index.text()
+    // ADR 0063: the boot script, and nothing else inline, is allowed by its hash.
+    const boot = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1]
+    expect(boot).toBeTruthy()
+    const hash = createHash('sha256').update(boot!).digest('base64')
+    expect(index.headers()['content-security-policy']).toBe(
+      `default-src 'self'; script-src 'self' 'sha256-${hash}'`,
+    )
+    const asset = /\/console\/(assets\/[^"]+\.js)/.exec(html)?.[1]
     expect(asset).toBeTruthy()
     const js = await request.get(`/console/${asset}`)
     expect(js.headers()['cache-control']).toBe('public, max-age=31536000, immutable')

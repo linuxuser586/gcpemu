@@ -26,15 +26,14 @@ async function publish(page: Page, body: string, attributes: string, orderingKey
 }
 
 /**
- * localTime is t as a datetime-local input's value, in the browser's time
- * zone. The input leaves out :00 seconds, and fill fails on a value that
- * does not read back the same.
+ * localTime is t as a datetime-local input's value, in the browser's time zone.
+ * It leaves out :00 seconds, as the input does: fill reads the value back and
+ * rejects it as malformed if it differs (#952).
  */
 function localTime(t: Date): string {
   const d = new Date(t)
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
-  const value = d.toISOString().slice(0, 19)
-  return value.endsWith(':00') ? value.slice(0, 16) : value
+  return d.toISOString().slice(0, 19).replace(/:00$/, '')
 }
 
 /** put creates the Pub/Sub resource at path through the public REST API. */
