@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -187,27 +189,37 @@ func TestInwardThroughRelay(t *testing.T) {
 	}
 }
 
-// TestInwardUDPTwinRefused: on Windows the UDP twin of every port TCP
-// picks can sit in one excluded port range, since the kernel picks nearby
-// ports (#459). The relay still finds a port both protocols hold. The
-// port UDP picks is one the test holds until the relay binds it, so no
-// other process or excluded port range can refuse the relay's TCP bind
-// (#982).
-func TestInwardUDPTwinRefused(t *testing.T) {
-	var (
-		heldTCP net.Listener
-		heldUDP net.PacketConn
-		err     error
-	)
-	for i := range udpPairAttempts {
-		if heldTCP, heldUDP, err = newRelayAgent().listenPair("127.0.0.1:0", true, i%2 == 0); err == nil {
-			break
+// heldPair holds a TCP and UDP port pair until the test ends. It asks for
+// random ports, not ports the kernel picks: Windows picks consecutive
+// ports for each protocol, which can both sit in the other protocol's
+// excluded port range, so every kernel-picked pair can be refused (#982).
+func heldPair(t *testing.T) (net.Listener, net.PacketConn) {
+	t.Helper()
+	var err error
+	for range udpPairAttempts {
+		var (
+			l  net.Listener
+			pc net.PacketConn
+		)
+		port := 1024 + rand.IntN(65536-1024)
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		if l, pc, err = newRelayAgent().listenPair(addr, true, false); err == nil {
+			t.Cleanup(func() { l.Close(); pc.Close() })
+			return l, pc
 		}
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { heldTCP.Close(); heldUDP.Close() })
+	t.Fatal(err)
+	return nil, nil
+}
+
+// TestInwardUDPTwinRefused: on Windows the UDP twin of every port TCP
+// picks can sit in one excluded port range, since the kernel picks
+// consecutive ports (#459). The relay still finds a port both protocols
+// hold. The port UDP picks is one the test holds until the relay binds
+// it, so no other process or excluded port range can refuse the relay's
+// TCP bind (#982).
+func TestInwardUDPTwinRefused(t *testing.T) {
+	heldTCP, heldUDP := heldPair(t)
 	want := heldTCP.Addr().String()
 
 	a := newRelayAgent()
@@ -256,20 +268,7 @@ func TestInwardUDPTwinRefused(t *testing.T) {
 // one the relay listens on. The test holds the pair until the relay binds
 // it, so no other process can take the port in between (#643).
 func TestInwardKeepsFreePort(t *testing.T) {
-	var (
-		l   net.Listener
-		pc  net.PacketConn
-		err error
-	)
-	for i := range udpPairAttempts {
-		if l, pc, err = newRelayAgent().listenPair("127.0.0.1:0", true, i%2 == 0); err == nil {
-			break
-		}
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { l.Close(); pc.Close() })
+	l, pc := heldPair(t)
 	want := l.Addr().String()
 
 	a := newRelayAgent()
