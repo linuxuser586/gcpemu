@@ -1,7 +1,8 @@
 // Package hosttest holds helpers for tests that drive gcpemu from the host
 // through the docker CLI and the clients' environment, for gcpemu's own
 // tests only: the Containerized Instance tests and the Pre-release host
-// checks.
+// checks. Eventually and Kube also serve the tests in services/gke, to say
+// what a cluster's pods were doing when a wait times out.
 package hosttest
 
 import (

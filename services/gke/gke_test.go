@@ -26,6 +26,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emutestx"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	gcpproject "github.com/linuxuser586/gcpemu/internal/project"
 )
 
@@ -146,13 +147,22 @@ func (e *env) mustKube(method, path string, body any, out any) {
 
 func eventually(t *testing.T, timeout time.Duration, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out after %v waiting for %s", timeout, what)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	hosttest.Eventually(t, timeout, what, cond, nil)
+}
+
+// diagnose reports on pods matching selector when a wait times out. Unlike
+// e.kube, a failed read goes in the report rather than ending the test.
+func (e *env) diagnose(ns, selector string) func() string {
+	return func() string { return e.api().Diagnose(ns, selector) }
+}
+
+// diagnosePod is diagnose for one pod by name, as runPod sets no labels.
+func (e *env) diagnosePod(ns, name string) func() string {
+	return func() string { return e.api().DiagnosePod(ns, name) }
+}
+
+func (e *env) api() hosttest.Kube {
+	return hosttest.Kube{Endpoint: "https://" + e.c.Endpoint, Client: e.adm}
 }
 
 // adminClient builds an HTTP client from the emulator's kubeconfig endpoint.
@@ -616,9 +626,9 @@ echo "R google=$g kube=$k"; sleep 1; done`
 		}, nil)
 	}
 	for name, want := range map[string]string{"apis-real": "R google=10.9.9.10 kube=Y", "apis-emulated": "R google=169.254.169.254 kube=Y"} {
-		eventually(t, 60*time.Second, name+" logging "+want, func() bool {
+		hosttest.Eventually(t, 60*time.Second, name+" logging "+want, func() bool {
 			return strings.Contains(e.podLogs("default", name), want)
-		})
+		}, e.diagnosePod("default", name))
 	}
 }
 
@@ -650,10 +660,10 @@ b=N; nslookup db.other.internal 2>&1 | grep -q 10.8.8.8 && b=Y
 k=N; nslookup kubernetes.default.svc.cluster.local 2>&1 | grep -q 'Address.*[0-9]' && k=Y
 echo "R corp=$a other=$b kube=$k"; sleep 1; done`)
 	var line string
-	eventually(t, 60*time.Second, "private zone resolution from a pod", func() bool {
+	hosttest.Eventually(t, 60*time.Second, "private zone resolution from a pod", func() bool {
 		line = e.podLogs("default", "dns")
 		return strings.Contains(line, "R corp=Y")
-	})
+	}, e.diagnosePod("default", "dns"))
 	if !strings.Contains(line, "other=N") || !strings.Contains(line, "kube=Y") {
 		t.Fatalf("pod DNS: %s", line)
 	}
@@ -694,7 +704,7 @@ func testNEG(t *testing.T, e *env) {
 		}
 		return out.Items
 	}
-	eventually(t, 60*time.Second, "NEG with one endpoint", func() bool { return len(negEndpoints()) == 1 })
+	hosttest.Eventually(t, 60*time.Second, "NEG with one endpoint", func() bool { return len(negEndpoints()) == 1 }, e.diagnose("default", "app=web"))
 	var neg map[string]any
 	gw(t, e.inst, "GET", "/compute/v1/projects/"+project+"/zones/"+zone+"/networkEndpointGroups/web-neg", nil, &neg)
 	if neg["networkEndpointType"] != "GCE_VM_IP_PORT" {
@@ -781,9 +791,9 @@ func testPrivateEgress(t *testing.T, inst *emutest.Instance, cm *container.Clust
 	adm, pool := adminClient(t, inst, parent+"/clusters/priv")
 	e := &env{t: t, inst: inst, cm: cm, c: c, ca: pool, adm: adm}
 	e.runPod("default", "egress", "default", `while true; do if wget -q -T 3 -O /dev/null http://example.com/ 2>/dev/null; then echo EGRESS-OK; else echo EGRESS-BLOCKED; fi; sleep 1; done`)
-	eventually(t, 60*time.Second, "egress blocked without NAT", func() bool {
+	hosttest.Eventually(t, 60*time.Second, "egress blocked without NAT", func() bool {
 		return strings.Contains(e.podLogs("default", "egress"), "EGRESS-BLOCKED")
-	})
+	}, e.diagnosePod("default", "egress"))
 	// Configure Cloud NAT for the region (FR-NAT-001/002, FR-INT-009).
 	router := map[string]any{
 		"name": "nat-router", "network": "projects/" + project + "/global/networks/default",

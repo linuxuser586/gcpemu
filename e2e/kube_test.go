@@ -24,12 +24,13 @@ import (
 	"path"
 	"path/filepath"
 	goruntime "runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 )
 
 // kube is a minimal Kubernetes API client (server-side apply) with the
@@ -193,183 +194,16 @@ func (k *kube) podIPs(ns, selector string) []string {
 	return out
 }
 
-// logs returns the last lines of the first pod matching selector (for
+// api reads the cluster for failure diagnostics.
+func (k *kube) api() hosttest.Kube { return hosttest.Kube{Endpoint: k.endpoint, Client: k.hc} }
+
+// logs returns the last lines of the pods matching selector (for failure
+// diagnostics).
+func (k *kube) logs(ns, selector string) string { return k.api().Logs(ns, selector) }
+
+// diagnose returns what explains pods matching selector not being ready (for
 // failure diagnostics).
-func (k *kube) logs(ns, selector string) string {
-	var l struct {
-		Items []struct{ Metadata struct{ Name string } }
-	}
-	k.get("/api/v1/namespaces/"+ns+"/pods?labelSelector="+url.QueryEscape(selector), &l)
-	var out strings.Builder
-	for _, p := range l.Items {
-		code, b := k.do(http.MethodGet, "/api/v1/namespaces/"+ns+"/pods/"+p.Metadata.Name+"/log?tailLines=40", "", nil, nil)
-		if code != http.StatusOK {
-			b = fmt.Appendf(nil, "log: %d %s", code, b)
-		}
-		fmt.Fprintf(&out, "--- %s\n%s\n", p.Metadata.Name, b)
-	}
-	return out.String()
-}
-
-// diagnose returns what explains pods matching selector not being ready:
-// their status, the nodes, the namespace's recent events and the logs (for
-// failure diagnostics). Logs alone say nothing of a pod that never ran (#966).
-func (k *kube) diagnose(ns, selector string) string {
-	return k.podStatus(ns, selector) + k.nodeStatus() + k.events(ns) + k.logs(ns, selector)
-}
-
-// condition is a pod or node condition.
-type condition struct{ Type, Status, Reason, Message string }
-
-func (c condition) String() string {
-	return strings.TrimSpace(c.Type + "=" + c.Status + " " + reasoned(c.Reason, c.Message))
-}
-
-// reasoned joins an API object's reason and message, either of which may be
-// empty.
-func reasoned(reason, message string) string {
-	if reason == "" || message == "" {
-		return reason + message
-	}
-	return reason + ": " + message
-}
-
-// containerState is a container's state, its one key being waiting, running
-// or terminated.
-type containerState map[string]struct {
-	Reason, Message string
-	ExitCode        int
-}
-
-func (s containerState) String() string {
-	var out []string
-	for kind, v := range s {
-		line := strings.TrimSpace(kind + " " + reasoned(v.Reason, v.Message))
-		if kind == "terminated" {
-			line += fmt.Sprintf(" exit %d", v.ExitCode)
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, " ")
-}
-
-// containerStatus is a container's entry in a pod's status.
-type containerStatus struct {
-	Name             string
-	RestartCount     int
-	State, LastState containerState
-}
-
-func (c containerStatus) String() string {
-	line := fmt.Sprintf("%s restarts=%d %s", c.Name, c.RestartCount, c.State)
-	if len(c.LastState) > 0 {
-		line += fmt.Sprintf(", last %s", c.LastState)
-	}
-	return line
-}
-
-// podStatus returns each matching pod's phase, node, unmet conditions and
-// container states.
-func (k *kube) podStatus(ns, selector string) string {
-	var l struct {
-		Items []struct {
-			Metadata struct{ Name string }
-			Spec     struct{ NodeName string }
-			Status   struct {
-				Phase, Reason, Message                   string
-				Conditions                               []condition
-				InitContainerStatuses, ContainerStatuses []containerStatus
-			}
-		}
-	}
-	path := "/api/v1/namespaces/" + ns + "/pods?labelSelector=" + url.QueryEscape(selector)
-	if code, b := k.do(http.MethodGet, path, "", nil, &l); code != http.StatusOK {
-		return fmt.Sprintf("pods: %d %s\n", code, b)
-	}
-	var out strings.Builder
-	fmt.Fprintf(&out, "pods %s %s:\n", ns, selector)
-	for _, p := range l.Items {
-		line := fmt.Sprintf("%s phase=%s node=%s %s", p.Metadata.Name, p.Status.Phase, p.Spec.NodeName, reasoned(p.Status.Reason, p.Status.Message))
-		fmt.Fprintf(&out, "  %s\n", strings.TrimSpace(line))
-		for _, c := range p.Status.Conditions {
-			if c.Status != "True" {
-				fmt.Fprintf(&out, "    %s\n", c)
-			}
-		}
-		for _, c := range slices.Concat(p.Status.InitContainerStatuses, p.Status.ContainerStatuses) {
-			fmt.Fprintf(&out, "    %s\n", c)
-		}
-	}
-	return out.String()
-}
-
-// nodeStatus returns each node's readiness, its other conditions that are
-// true, such as DiskPressure, and its taints.
-func (k *kube) nodeStatus() string {
-	var l struct {
-		Items []struct {
-			Metadata struct{ Name string }
-			Spec     struct {
-				Taints []struct{ Key, Effect string }
-			}
-			Status struct{ Conditions []condition }
-		}
-	}
-	if code, b := k.do(http.MethodGet, "/api/v1/nodes", "", nil, &l); code != http.StatusOK {
-		return fmt.Sprintf("nodes: %d %s\n", code, b)
-	}
-	var out strings.Builder
-	out.WriteString("nodes:\n")
-	for _, n := range l.Items {
-		line := []string{n.Metadata.Name}
-		for _, c := range n.Status.Conditions {
-			if c.Type == "Ready" || c.Status != "False" {
-				line = append(line, c.String())
-			}
-		}
-		var taints []string
-		for _, t := range n.Spec.Taints {
-			taints = append(taints, t.Key+":"+t.Effect)
-		}
-		if len(taints) > 0 {
-			line = append(line, "taints=["+strings.Join(taints, " ")+"]")
-		}
-		fmt.Fprintf(&out, "  %s\n", strings.Join(line, " "))
-	}
-	return out.String()
-}
-
-// events returns the namespace's last 30 events, oldest first.
-func (k *kube) events(ns string) string {
-	type event struct {
-		Type, Reason, Message    string
-		Count                    int
-		LastTimestamp, EventTime time.Time
-		InvolvedObject           struct{ Kind, Name string }
-	}
-	var l struct{ Items []event }
-	if code, b := k.do(http.MethodGet, "/api/v1/namespaces/"+ns+"/events", "", nil, &l); code != http.StatusOK {
-		return fmt.Sprintf("events: %d %s\n", code, b)
-	}
-	// An event carries one of the two times, by the API that recorded it.
-	at := func(e event) time.Time {
-		if e.LastTimestamp.IsZero() {
-			return e.EventTime
-		}
-		return e.LastTimestamp
-	}
-	slices.SortFunc(l.Items, func(a, b event) int { return at(a).Compare(at(b)) })
-	var out strings.Builder
-	fmt.Fprintf(&out, "events %s:\n", ns)
-	for _, e := range l.Items[max(0, len(l.Items)-30):] {
-		count := ""
-		if e.Count > 1 {
-			count = fmt.Sprintf(" x%d", e.Count)
-		}
-		fmt.Fprintf(&out, "  %s %s %s %s/%s%s: %s\n", at(e).UTC().Format(time.TimeOnly), e.Type, e.Reason, e.InvolvedObject.Kind, e.InvolvedObject.Name, count, e.Message)
-	}
-	return out.String()
-}
+func (k *kube) diagnose(ns, selector string) string { return k.api().Diagnose(ns, selector) }
 
 // ---- Istio ----
 
