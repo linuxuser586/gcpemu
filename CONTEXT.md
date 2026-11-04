@@ -573,7 +573,7 @@ The section of the Certificate Manager view that lists Server TLS policies, Back
 _Avoid_: using it for a single resource
 
 **Cloud SQL instance**:
-A Cloud SQL database server resource. Always write it in full so it is not confused with an Instance.
+A Cloud SQL database server resource. Always write it in full so it is not confused with an Instance. The Web console shows one as STOPPED once its activation policy is saved as `NEVER`: STOPPED says what was asked for, not that the database server has stopped, and the Operation that stops it may still be running.
 _Avoid_: instance (unqualified)
 
 **Public IP**:
