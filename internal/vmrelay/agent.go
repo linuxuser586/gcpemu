@@ -327,7 +327,9 @@ func (a *relayAgent) withdraw(name string) {
 // For the agent, excluded port ranges only arise in tests on Windows
 // hosts: a real relay binds in the VM relay container, never on Windows,
 // but tests run the agent on the host. So walking past them is not a
-// user-facing case, and not dead code either: those tests need it (#459).
+// user-facing case, and no test needs it to get past a real range: a test
+// that binds a pair holds one, and only tests whose hooks refuse binds
+// reach the walk (#1007). Whether the walk stays is #1008.
 const udpPairAttempts = 256
 
 // listenPair listens on addr over TCP and, withUDP, over UDP on the port
