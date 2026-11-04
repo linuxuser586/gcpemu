@@ -50,6 +50,8 @@ func fakeGcpemu(mode string) {
 			}
 			resp.Body.Close()
 		}
+	case "sleep": // an Instance's process, until it is killed
+		time.Sleep(time.Minute)
 	case "touch": // a command `gcpemu run` runs
 		_ = os.WriteFile(os.Getenv("GCPEMU_TEST_MARKER"), nil, 0o600)
 	case "env": // a command `gcpemu run` runs, recording its environment

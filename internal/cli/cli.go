@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -463,6 +462,10 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop a running instance",
+		Long: "Stop a running instance. Success means its process has exited and stop confirmed it, so\n" +
+			"nothing will write to its data dir again. stop never kills the process. A Containerized\n" +
+			"Instance is still asked to shut down, but this host cannot watch its process, so stop\n" +
+			"exits non-zero and says the exit is unconfirmed.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
@@ -472,19 +475,18 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pidFile := filepath.Join(cfg.InstanceDir(), instance.PIDFile)
-			pid := 0
-			if b, err := os.ReadFile(pidFile); err == nil {
-				pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
-			}
-			if _, _, err := c.do(http.MethodPost, "/_emu/v1/shutdown"); err != nil {
+			reached, err := instance.AskShutdown(c.do, instance.ReadID(cfg.InstanceDir()), 0)
+			if err != nil {
 				return err
 			}
-			// Done once the PID file is gone and the process has exited, so
-			// that scripts can start a new instance right away.
+			if !reached.Watchable() {
+				return fmt.Errorf("gcpemu instance %q accepted the shutdown, but its exit is unconfirmed: this host cannot watch its process, as for a Containerized Instance", cfg.Instance)
+			}
+			// Done once the process has exited, so that nothing writes to the
+			// data dir again and scripts can start a new instance right away
+			// (ADR 0064).
 			for i := 0; i < 600; i++ {
-				_, err := os.Stat(pidFile)
-				if os.IsNotExist(err) && (pid <= 0 || !instance.ProcessAlive(pid)) {
+				if !instance.ProcessAlive(reached.Pid) {
 					fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q stopped\n", cfg.Instance)
 					return nil
 				}

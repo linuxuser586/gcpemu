@@ -48,6 +48,7 @@ export function defaultFake(): Fake {
       instance: 'default',
       id: 'a1b2c3d4e5f6',
       pid: 4242,
+      pidNamespace: 'linux',
       version: 'v1.2.3',
       dir: '/home/dev/.local/state/gcpemu/default',
       ephemeral: false,

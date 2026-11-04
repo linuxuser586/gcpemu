@@ -1298,6 +1298,8 @@ export interface components {
             instance: string;
             id: string;
             pid: number;
+            /** @description The space pid belongs to. Another process can watch pid only from the same one, which `gcpemu stop` checks; a Containerized Instance has its own. */
+            pidNamespace: string;
             version: string;
             /** @description Instance data directory. */
             dir: string;

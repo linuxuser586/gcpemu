@@ -1669,11 +1669,14 @@ components:
         granted: { type: boolean, description: "The Principal now holds the permission on the resource, and no deny policy refuses it." }
     Info:
       type: object
-      required: [instance, id, pid, version, dir, ephemeral, iamMode, strictProjects, console, services, endpoints, runtime]
+      required: [instance, id, pid, pidNamespace, version, dir, ephemeral, iamMode, strictProjects, console, services, endpoints, runtime]
       properties:
         instance: { type: string }
         id: { type: string }
         pid: { type: integer }
+        pidNamespace:
+          type: string
+          description: The space pid belongs to. Another process can watch pid only from the same one, which `gcpemu stop` checks; a Containerized Instance has its own.
         version: { type: string }
         dir: { type: string, description: Instance data directory. }
         ephemeral: { type: boolean }

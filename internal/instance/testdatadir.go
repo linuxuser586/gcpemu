@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -135,7 +136,7 @@ func (a Abandoned) Reclaim(ctx context.Context, cl *runtime.Client) (reclaimed b
 // Instance process that still serves dir is stopped first. Any other dir
 // is left alone, and reclaimed is false.
 func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string) (reclaimed bool, err error) {
-	if readID(dir) != a.ID {
+	if ReadID(dir) != a.ID {
 		return false, nil
 	}
 	release, err := lockOwnerNow(dir)
@@ -148,7 +149,7 @@ func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string)
 	release = sync.OnceFunc(release)
 	defer release()
 	// Another reclaim may have reclaimed it before this one took the lock.
-	if readID(dir) != a.ID {
+	if ReadID(dir) != a.ID {
 		return false, nil
 	}
 	if stopProcess(ctx, dir, a.ID) {
@@ -179,7 +180,7 @@ func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string)
 // dir that no object records, such as one whose Instance made none
 // (#921). A dir that holds no ID is left alone.
 func ReclaimEndedDir(ctx context.Context, cl *runtime.Client, dir string) (reclaimed bool, err error) {
-	id := readID(dir)
+	id := ReadID(dir)
 	if id == "" {
 		return false, nil
 	}
@@ -236,35 +237,72 @@ func askShutdown(dir, id string, pid int) bool {
 	}
 	token, _ := os.ReadFile(filepath.Join(dir, AdminTokenFile))
 	c := &http.Client{Timeout: 10 * time.Second}
-	call := func(method, path string) (*http.Response, error) {
+	_, err = AskShutdown(func(method, path string) (int, []byte, error) {
 		req, err := http.NewRequest(method, "http://"+emu.Dialable(eps["gateway"])+path, nil)
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		if t := strings.TrimSpace(string(token)); t != "" {
 			req.Header.Set(gateway.AdminTokenHeader, t)
 		}
-		return c.Do(req)
-	}
-	resp, err := call(http.MethodGet, "/_emu/v1/info")
+		resp, err := c.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		return resp.StatusCode, body, err
+	}, id, pid)
+	return err == nil
+}
+
+// Reached is the Instance that accepted a shutdown, as it reported itself.
+type Reached struct {
+	ID           string `json:"id"`
+	Pid          int    `json:"pid"`
+	PIDNamespace string `json:"pidNamespace"`
+}
+
+// Watchable reports whether this process can tell when the Instance's
+// process exits. A Containerized Instance's pid means nothing here: it may
+// be missing or name an unrelated process (ADR 0064). So does the pid of
+// an Instance too old to report its namespace.
+func (r Reached) Watchable() bool {
+	return r.Pid > 0 && r.PIDNamespace != "" && r.PIDNamespace == PIDNamespace()
+}
+
+// AskShutdown asks the Instance that call reaches to shut down, if it is
+// the Instance id, unless id is "", and in process pid, unless pid is 0.
+// The Instance says which one it is because the files in a data dir may
+// be a crashed Instance's: their port may have another Instance on it, and
+// their pid may be dead. call makes an Admin API request, returning the
+// status and body.
+func AskShutdown(call func(method, path string) (int, []byte, error), id string, pid int) (Reached, error) {
+	var r Reached
+	code, b, err := call(http.MethodGet, "/_emu/v1/info")
 	if err != nil {
-		return false
+		return r, err
 	}
-	var info struct {
-		ID  string
-		Pid int
+	if code != http.StatusOK {
+		return r, fmt.Errorf("the gateway did not say which Instance it serves: %d %s", code, b)
 	}
-	err = json.NewDecoder(resp.Body).Decode(&info)
-	resp.Body.Close()
-	if err != nil || info.ID != id || info.Pid != pid {
-		return false // another Instance took the port
+	if err := json.Unmarshal(b, &r); err != nil {
+		return r, err
 	}
-	resp, err = call(http.MethodPost, "/_emu/v1/shutdown")
+	if id != "" && r.ID != id {
+		return r, fmt.Errorf("the gateway serves Instance %s, not %s: another Instance took the port", r.ID, id)
+	}
+	if pid != 0 && r.Pid != pid {
+		return r, fmt.Errorf("the gateway serves process %d, not %d: another Instance took the port", r.Pid, pid)
+	}
+	code, b, err = call(http.MethodPost, "/_emu/v1/shutdown")
 	if err != nil {
-		return false
+		return r, err
 	}
-	resp.Body.Close()
-	return resp.StatusCode < 300
+	if code >= 300 {
+		return r, fmt.Errorf("the Instance refused to shut down: %d %s", code, b)
+	}
+	return r, nil
 }
 
 // exited waits up to wait for the process pid to exit, and reports

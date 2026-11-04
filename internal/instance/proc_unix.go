@@ -3,6 +3,7 @@
 package instance
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,7 +14,20 @@ import (
 
 // ProcessAlive reports whether a process with pid exists.
 func ProcessAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	err := syscall.Kill(pid, 0)
+	// Another user's process exists but cannot be signalled.
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// PIDNamespace names the space this process's pids belong to: another
+// process can watch a pid only from the same one. Linux has one per
+// container; every other OS has one, its own.
+func PIDNamespace() string {
+	if runtime.GOOS != "linux" {
+		return runtime.GOOS
+	}
+	ns, _ := os.Readlink("/proc/self/ns/pid")
+	return ns
 }
 
 // exePath returns the path of the executable that the process pid runs.
