@@ -189,14 +189,39 @@ func TestInwardThroughRelay(t *testing.T) {
 
 // TestInwardUDPTwinRefused: on Windows the UDP twin of every port TCP
 // picks can sit in one excluded port range, since the kernel picks nearby
-// ports (#459). The relay still finds a port both protocols hold.
+// ports (#459). The relay still finds a port both protocols hold. The
+// port UDP picks is one the test holds until the relay binds it, so no
+// other process or excluded port range can refuse the relay's TCP bind
+// (#982).
 func TestInwardUDPTwinRefused(t *testing.T) {
-	a := newRelayAgent()
-	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
-		if _, port, _ := net.SplitHostPort(addr); port != "0" {
-			return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: forbidden by its access permissions")}
+	var (
+		heldTCP net.Listener
+		heldUDP net.PacketConn
+		err     error
+	)
+	for i := range udpPairAttempts {
+		if heldTCP, heldUDP, err = newRelayAgent().listenPair("127.0.0.1:0", true, i%2 == 0); err == nil {
+			break
 		}
-		return net.ListenPacket(network, addr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { heldTCP.Close(); heldUDP.Close() })
+	want := heldTCP.Addr().String()
+
+	a := newRelayAgent()
+	a.listenTCP = func(network, addr string) (net.Listener, error) {
+		if addr == want {
+			return heldTCP, nil
+		}
+		return net.Listen(network, addr)
+	}
+	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
+		if _, port, _ := net.SplitHostPort(addr); port == "0" {
+			return heldUDP, nil
+		}
+		return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: forbidden by its access permissions")}
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -204,8 +229,8 @@ func TestInwardUDPTwinRefused(t *testing.T) {
 	}
 	r := startOn(t, l, a, map[string]string{"dns": echoUDP(t)})
 	daddr, err := r.Listen(context.Background(), "dns", "127.0.0.1:0", true)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || daddr != want {
+		t.Fatalf("listen = %q, %v; want %q", daddr, err, want)
 	}
 	c, err := net.Dial("tcp", daddr)
 	if err != nil {
