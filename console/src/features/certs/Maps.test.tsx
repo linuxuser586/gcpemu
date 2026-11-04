@@ -329,9 +329,10 @@ it('edits an entry’s certificates and labels from the map’s page, with an up
   const user = userEvent.setup()
   const { router } = renderApp(`/certs/locations/global/certificateMaps/main?project=${P}`)
   await user.click(await screen.findByRole('link', { name: 'Edit entry www' }))
-  expect(await screen.findByText('www.example.com')).toBeInTheDocument()
+  // The map's page shows the hostname too: only the group says the form is up.
+  const certificates = await screen.findByRole('group', { name: 'Certificates' })
+  expect(screen.getByText('www.example.com')).toBeInTheDocument()
   expect(screen.queryByLabelText('Hostname')).not.toBeInTheDocument()
-  const certificates = screen.getByRole('group', { name: 'Certificates' })
   expect(within(certificates).getByRole('checkbox', { name: /self/ })).toBeChecked()
   await user.click(await within(certificates).findByRole('checkbox', { name: /other/ }))
   await user.click(screen.getByRole('button', { name: 'Save' }))

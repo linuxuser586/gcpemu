@@ -207,8 +207,8 @@ it('lists every location’s certificates with scope, type, domains, state and e
   expect(sent('GET', /locations\/-\/certificates$/)).toHaveLength(1)
 
   await user.type(screen.getByLabelText('Filter'), 'lb')
-  expect(router.state.location.search).toContain('q=lb')
-  expect(within(table).getAllByTestId('certificate')).toHaveLength(1)
+  await waitFor(() => expect(router.state.location.search).toContain('q=lb'))
+  await waitFor(() => expect(within(table).getAllByTestId('certificate')).toHaveLength(1))
   await user.click(within(table).getByRole('link', { name: 'lb-auth' }))
   await waitFor(() =>
     expect(router.state.location.pathname).toBe(

@@ -177,12 +177,12 @@ it('lists repositories in every location, then one, and filters by name in the U
   ])
 
   await user.type(screen.getByLabelText('Filter'), 'hub')
-  expect(router.state.location.search).toContain('q=hub')
-  expect(within(table).getAllByTestId('repository')).toHaveLength(1)
+  await waitFor(() => expect(router.state.location.search).toContain('q=hub'))
+  await waitFor(() => expect(within(table).getAllByTestId('repository')).toHaveLength(1))
 
   await user.clear(screen.getByLabelText('Filter'))
   await user.selectOptions(screen.getByLabelText('Location'), 'us-central1')
-  expect(router.state.location.search).toContain('location=us-central1')
+  await waitFor(() => expect(router.state.location.search).toContain('location=us-central1'))
   await waitFor(() =>
     expect(screen.getAllByTestId('repository').map((r) => r.textContent)).toEqual([
       expect.stringContaining('images'),

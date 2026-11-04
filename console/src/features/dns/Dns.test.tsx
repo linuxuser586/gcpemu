@@ -224,8 +224,8 @@ it('lists zones with their visibility and network bindings, filtered in the URL'
   expect(rows[1]).toHaveTextContent('vpc-a')
 
   await user.type(screen.getByLabelText('Filter'), 'corp')
-  expect(router.state.location.search).toContain('q=corp')
-  expect(within(table).getAllByTestId('zone')).toHaveLength(1)
+  await waitFor(() => expect(router.state.location.search).toContain('q=corp'))
+  await waitFor(() => expect(within(table).getAllByTestId('zone')).toHaveLength(1))
 })
 
 it('creates a private zone with the API’s validation messages and network bindings', async () => {

@@ -96,7 +96,7 @@ it('filters by Service, status and text, keeping the filters in the URL', async 
   await waitFor(() => expect(rows()).toHaveLength(3))
   await user.type(screen.getByLabelText('Filter'), 'vpc-')
   await waitFor(() => expect(rows()).toHaveLength(2))
-  expect(router.state.location.search).toBe('?q=vpc-')
+  await waitFor(() => expect(router.state.location.search).toBe('?q=vpc-'))
   await user.type(screen.getByLabelText('Filter'), 'zzz')
   expect(await screen.findByText('No Operations match the filters.')).toBeInTheDocument()
 })
