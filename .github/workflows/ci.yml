@@ -367,6 +367,10 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -429,6 +433,11 @@ jobs:
         run: |
           task build
           go test -tags prerelease ./prerelease -run '^(TestResolverRoutes|TestAddresses|TestRoutesOwner|TestPort53InUse|TestHostEndReclaimsWhenStopFails|TestHostChildDoesNotHoldOwnerLock|TestRunStartReclaim|TestRunStartReclaimKeepsUnrecorded)$' -count=1 -timeout 15m -v
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.1 / IF-001: apply → plan (no diff) → destroy of every supported
   # resource type, with each provider at its current and previous minor.
@@ -446,6 +455,10 @@ jobs:
       GCPEMU_TOFU_PROVIDERS: ${{ matrix.provider }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -465,6 +478,11 @@ jobs:
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
       - name: OpenTofu acceptance (SRS 11.1)
         run: task tofu
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.1 Kubernetes conformance: Sonobuoy quick mode on a Standard
   # cluster at each supported minor's newest patch.
@@ -479,6 +497,10 @@ jobs:
     timeout-minutes: 80
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -497,6 +519,11 @@ jobs:
           name: kube-conformance-${{ matrix.runner }}
           path: compat/kube-conformance-results/
           if-no-files-found: ignore
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.1 / ADR 0023: the emulator against the committed Recordings,
   # with no credentials.
@@ -511,12 +538,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
           version: 3.54.0
       - name: Conformance suite (SRS 11.1)
         run: task conformance
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # FR-CI-001/002: the setup-gcpemu action, with this commit's binary
   # served as release v0.0.0-selftest.
