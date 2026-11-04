@@ -37,12 +37,25 @@ func TestPublicEndpointMoves(t *testing.T) {
 	}
 	dir := t.TempDir()
 	inst := startPersistent(t, dir)
-	m := &runtime.Manager{Client: cl, InstanceID: inst.Internal().ID}
+	m := &runtime.Manager{Client: cl, InstanceID: inst.Internal().ID, Dir: dir}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		_ = m.Cleanup(ctx, true)
 	})
+	extName := m.Name("ext")
+	// The External network starts outside every range the runtime allocates
+	// from, so that the runtime can't pick that range again when the
+	// Instance recreates the network, for it or for a network of a parallel
+	// package (#958).
+	o2, o3 := 18+rand.IntN(2), rand.IntN(256)
+	subnet := fmt.Sprintf("198.%d.%d.0/24", o2, o3)
+	if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{
+		Name: extName, Subnet: subnet, Gateway: fmt.Sprintf("198.%d.%d.1", o2, o3),
+		Labels: m.Labels("core", "ext", "network"),
+	}); err != nil {
+		t.Fatalf("creating the External network on %s: %v", subnet, err)
+	}
 	running := true
 	defer func() {
 		if running {
@@ -61,7 +74,6 @@ func TestPublicEndpointMoves(t *testing.T) {
 		inst = startPersistent(t, dir)
 		running = true
 	}
-	extName := m.Name("ext")
 
 	cm := newClient(t, inst)
 	op, err := cm.CreateCluster(ctx, &containerpb.CreateClusterRequest{Parent: parent, Cluster: &containerpb.Cluster{
@@ -88,21 +100,12 @@ func TestPublicEndpointMoves(t *testing.T) {
 	}
 	checkServes(t, c2, first)
 
-	// The external network moves to another range: its old subnet is held
-	// by another network when the Instance creates it again.
+	// The External network moves to another range: the Instance creates it
+	// again on a range the runtime picks, which can't be the old one.
 	restart(func() {
-		n, err := cl.InspectNetwork(ctx, extName)
-		if err != nil {
-			t.Fatal(err)
-		}
 		if err := cl.RemoveNetwork(ctx, extName); err != nil {
 			t.Fatal(err)
 		}
-		blocker := fmt.Sprintf("gcpemu-test-blocker-%d", rand.Uint32())
-		if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: blocker, Subnet: n.Subnet}); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), blocker) })
 	})
 	c3 := waitRunning(t, inst, name)
 	moved := serverExternalIP(t, cl, inst.Internal().ID, extName)
