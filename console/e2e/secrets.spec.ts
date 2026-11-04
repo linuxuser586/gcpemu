@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+
 import type { Page } from '@playwright/test'
 
 import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
@@ -82,6 +84,40 @@ test('Secret Manager: a secret’s lifecycle, its versions and their values', as
   await page.getByRole('dialog').getByRole('button', { name: 'Delete secret' }).click()
   await expect(page).toHaveURL(new RegExp(`/console/secrets\\?project=${id}$`))
   await expect(page.getByText('No global secrets in this Project yet.')).toBeVisible()
+
+  await expectConsoleRequests(requests, { allowed })
+})
+
+test('Secret Manager: a Secret version downloads with its exact bytes', async ({
+  page,
+  browserName,
+  request,
+  requests,
+}, testInfo) => {
+  const id = projectId(`e2e-smd${testInfo.retry}`, browserName)
+  // Not UTF-8, with a NUL and a CRLF. The Add version form stores only UTF-8
+  // and is the console's own encoder, so the API sets up what the file holds.
+  const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x0d, 0x0a])
+  const secretsPath = `/secretmanager/v1/projects/${id}/secrets`
+  const created = await request.post(`${secretsPath}?secretId=blob`, {
+    data: { replication: { automatic: {} } },
+  })
+  expect(created.ok(), await created.text()).toBe(true)
+  const added = await request.post(`${secretsPath}/blob:addVersion`, {
+    data: { payload: { data: bytes.toString('base64') } },
+  })
+  expect(added.ok(), await added.text()).toBe(true)
+
+  await goto(page, `/console/secrets/secrets/blob?project=${id}`)
+  await versionRow(page, '1').getByRole('button', { name: 'View value of version 1' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByLabel('Secret value')).toBeVisible()
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    dialog.getByRole('button', { name: 'Download' }).click(),
+  ])
+  expect(download.suggestedFilename()).toBe('blob-1')
+  expect(await readFile(await download.path())).toEqual(bytes)
 
   await expectConsoleRequests(requests, { allowed })
 })
