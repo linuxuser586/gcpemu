@@ -901,3 +901,51 @@ func TestEnvVarsBoundToAllInterfaces(t *testing.T) {
 		})
 	}
 }
+
+// neverReadySvc is a service that never becomes ready. waiting closes the
+// first time it is asked.
+type neverReadySvc struct {
+	fakeSvc
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (s *neverReadySvc) Ready() error {
+	s.once.Do(func() { close(s.waiting) })
+	return errors.New("never ready")
+}
+
+// TestWaitReadyEndsAtShutdown is #1000: an Instance that shuts down while
+// WaitReady waits can never become ready, so WaitReady says so at once
+// instead of waiting for its context to end.
+func TestWaitReadyEndsAtShutdown(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Ephemeral = true
+	cfg.DataDir = t.TempDir()
+	cfg.Services = []string{"dns"}
+	cfg.Ports["gateway"] = 0
+	svc := &neverReadySvc{waiting: make(chan struct{})}
+	in, err := New(&cfg, map[string]Factory{"dns": func(*emu.Env) emu.Service { return svc }}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := in.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- in.WaitReady(ctx) }()
+	<-svc.waiting
+	if err := in.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waited:
+		if !errors.Is(err, ErrShutDown) {
+			t.Errorf("WaitReady: %v, want ErrShutDown", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("WaitReady still waiting 10s after the Instance shut down")
+	}
+}
