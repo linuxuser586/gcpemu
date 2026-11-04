@@ -31,7 +31,7 @@ type Real struct{}
 
 func (Real) Now() time.Time { return time.Now().UTC() }
 
-// Offset is a real clock that can be advanced for lifecycle/TTL tests.
+// Offset is a clock that can be advanced, over a real or fake base.
 type Offset struct {
 	mu     sync.RWMutex
 	offset time.Duration
