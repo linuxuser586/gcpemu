@@ -1,0 +1,20 @@
+name: Report free disk space
+description: >-
+  Prints free space on the root filesystem and on the one holding the
+  container runtime's storage, if that differs (#993). Without these
+  numbers a run that exhausts the disk shows only downstream errors. Use
+  it with continue-on-error: a report never fails a job.
+inputs:
+  label:
+    description: When this report was taken, such as "start" or "end".
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        LABEL: ${{ inputs.label }}
+      run: |
+        echo "disk at $LABEL of $GITHUB_JOB:"
+        root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null) || root=
+        df -h / ${root:+"$root"} | awk '!seen[$1]++' || true
