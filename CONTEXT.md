@@ -247,6 +247,10 @@ An Instance whose state disappears when it stops.
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
 
+**Clean stop**:
+A stop in which the Instance completes its own shutdown and its process exits, even if it could not remove everything it made and says so in its log. An Instance that is killed or crashes has not stopped cleanly (ADR 0064).
+_Avoid_: graceful stop
+
 **Data directory**:
 The directory an Instance holds its certificate authority and Instance ID in, and a Persistent Instance its state. Every Instance has one; an Ephemeral Instance keeps no state there.
 _Avoid_: instance dir
