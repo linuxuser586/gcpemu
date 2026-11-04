@@ -55,6 +55,7 @@ func newAdmin(in *Instance) http.Handler {
 			"instance":       in.Config.Instance,
 			"id":             in.ID,
 			"pid":            os.Getpid(),
+			"pidScope":       PIDScope(),
 			"version":        Version,
 			"dir":            in.Dir,
 			"ephemeral":      in.Config.Ephemeral,

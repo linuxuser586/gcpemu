@@ -25,6 +25,10 @@ func ProcessAlive(pid int) bool {
 	return code == stillActive
 }
 
+// PIDScope is an opaque value that says where this process's pids mean
+// something: another process can watch a pid only from an equal scope.
+func PIDScope() string { return "windows" }
+
 // exePath returns the path of the executable that the process pid runs.
 func exePath(pid int) (string, error) {
 	h, err := openProcess(pid)

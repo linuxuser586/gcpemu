@@ -1298,6 +1298,8 @@ export interface components {
             instance: string;
             id: string;
             pid: number;
+            /** @description An opaque value that says where pid means something. Another process can watch pid only from an equal scope, which `gcpemu stop` checks; a Containerized Instance has its own. Compare it, do not parse it. */
+            pidScope: string;
             version: string;
             /** @description Instance data directory. */
             dir: string;

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -135,7 +136,7 @@ func (a Abandoned) Reclaim(ctx context.Context, cl *runtime.Client) (reclaimed b
 // Instance process that still serves dir is stopped first. Any other dir
 // is left alone, and reclaimed is false.
 func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string) (reclaimed bool, err error) {
-	if readID(dir) != a.ID {
+	if ReadID(dir) != a.ID {
 		return false, nil
 	}
 	release, err := lockOwnerNow(dir)
@@ -148,7 +149,7 @@ func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string)
 	release = sync.OnceFunc(release)
 	defer release()
 	// Another reclaim may have reclaimed it before this one took the lock.
-	if readID(dir) != a.ID {
+	if ReadID(dir) != a.ID {
 		return false, nil
 	}
 	if stopProcess(ctx, dir, a.ID) {
@@ -179,7 +180,7 @@ func ReclaimEnded(ctx context.Context, cl *runtime.Client, a Tagged, dir string)
 // dir that no object records, such as one whose Instance made none
 // (#921). A dir that holds no ID is left alone.
 func ReclaimEndedDir(ctx context.Context, cl *runtime.Client, dir string) (reclaimed bool, err error) {
-	id := readID(dir)
+	id := ReadID(dir)
 	if id == "" {
 		return false, nil
 	}
@@ -212,7 +213,7 @@ func stopProcess(ctx context.Context, dir, id string) bool {
 	if pid <= 0 || pid == os.Getpid() || !ProcessAlive(pid) {
 		return false
 	}
-	if askShutdown(dir, id, pid) && exited(ctx, pid, stopWait) {
+	if askDirShutdown(dir, id, pid) && exited(ctx, pid, stopWait) {
 		return true
 	}
 	if exe, err := exePath(pid); err != nil || !isGcpemu(exe) {
@@ -225,10 +226,10 @@ func stopProcess(ctx context.Context, dir, id string) bool {
 	return true
 }
 
-// askShutdown asks the Instance on the gateway in dir's endpoints to shut
+// askDirShutdown asks the Instance on the gateway in dir's endpoints to shut
 // down, with dir's Admin token, if it is the Instance id in process pid.
 // It reports whether the Instance accepted.
-func askShutdown(dir, id string, pid int) bool {
+func askDirShutdown(dir, id string, pid int) bool {
 	var eps map[string]string
 	b, err := os.ReadFile(filepath.Join(dir, EndpointsFile))
 	if err != nil || json.Unmarshal(b, &eps) != nil || eps["gateway"] == "" {
@@ -236,35 +237,23 @@ func askShutdown(dir, id string, pid int) bool {
 	}
 	token, _ := os.ReadFile(filepath.Join(dir, AdminTokenFile))
 	c := &http.Client{Timeout: 10 * time.Second}
-	call := func(method, path string) (*http.Response, error) {
+	_, err = AskShutdown(func(method, path string) (int, []byte, error) {
 		req, err := http.NewRequest(method, "http://"+emu.Dialable(eps["gateway"])+path, nil)
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
 		if t := strings.TrimSpace(string(token)); t != "" {
 			req.Header.Set(gateway.AdminTokenHeader, t)
 		}
-		return c.Do(req)
-	}
-	resp, err := call(http.MethodGet, "/_emu/v1/info")
-	if err != nil {
-		return false
-	}
-	var info struct {
-		ID  string
-		Pid int
-	}
-	err = json.NewDecoder(resp.Body).Decode(&info)
-	resp.Body.Close()
-	if err != nil || info.ID != id || info.Pid != pid {
-		return false // another Instance took the port
-	}
-	resp, err = call(http.MethodPost, "/_emu/v1/shutdown")
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode < 300
+		resp, err := c.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		return resp.StatusCode, body, err
+	}, id, pid)
+	return err == nil
 }
 
 // exited waits up to wait for the process pid to exit, and reports
