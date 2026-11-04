@@ -284,16 +284,16 @@ func AskShutdown(call func(method, path string) (int, []byte, error), id string,
 		return r, err
 	}
 	if code != http.StatusOK {
-		return r, fmt.Errorf("the gateway did not say which Instance it serves: %d %s", code, b)
+		return r, fmt.Errorf("the API gateway did not say which Instance it serves: %d %s", code, b)
 	}
 	if err := json.Unmarshal(b, &r); err != nil {
 		return r, err
 	}
 	if id != "" && r.ID != id {
-		return r, fmt.Errorf("the gateway serves Instance %s, not %s: another Instance took the port", r.ID, id)
+		return r, fmt.Errorf("the API gateway serves Instance %s, not %s: another Instance took the port", r.ID, id)
 	}
 	if pid != 0 && r.Pid != pid {
-		return r, fmt.Errorf("the gateway serves process %d, not %d: another Instance took the port", r.Pid, pid)
+		return r, fmt.Errorf("the API gateway serves process %d, not %d: another Instance took the port", r.Pid, pid)
 	}
 	code, b, err = call(http.MethodPost, "/_emu/v1/shutdown")
 	if err != nil {

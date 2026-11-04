@@ -21,13 +21,18 @@ func ProcessAlive(pid int) bool {
 
 // PIDNamespace names the space this process's pids belong to: another
 // process can watch a pid only from the same one. Linux has one per
-// container; every other OS has one, its own.
+// container, and every kernel's first one reads the same, so the boot ID
+// tells apart those of a host and a VM. Every other OS has one, its own.
 func PIDNamespace() string {
 	if runtime.GOOS != "linux" {
 		return runtime.GOOS
 	}
-	ns, _ := os.Readlink("/proc/self/ns/pid")
-	return ns
+	ns, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		return ""
+	}
+	boot, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	return ns + " " + strings.TrimSpace(string(boot))
 }
 
 // exePath returns the path of the executable that the process pid runs.

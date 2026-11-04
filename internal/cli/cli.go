@@ -464,7 +464,7 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 		Short: "Stop a running instance",
 		Long: "Stop a running instance. Success means its process has exited and stop confirmed it, so\n" +
 			"nothing will write to its data dir again. stop never kills the process. A Containerized\n" +
-			"Instance is still asked to shut down, but this host cannot watch its process, so stop\n" +
+			"Instance is still asked to shut down, but the host cannot watch its process, so stop\n" +
 			"exits non-zero and says the exit is unconfirmed.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
