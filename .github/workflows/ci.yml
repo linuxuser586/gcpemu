@@ -106,6 +106,10 @@ jobs:
       GCPEMU_VM_RELAY: "1"
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - run: go test -count=1 -timeout 45m ./internal/vmrelay ./internal/netplane ./services/build ./services/sql ./services/compute ./services/nat ./services/lb ./services/gke
       - uses: google-github-actions/setup-gcloud@v3
@@ -117,6 +121,11 @@ jobs:
           key: gcpemu-compat-${{ runner.arch }}-${{ hashFiles('compat/tools_test.go', 'compat/universe_test.go') }}
       - name: gcloud container, kubectl, Helm and builds (SRS 7.1)
         run: go test -tags compat ./compat -run 'TestClients/gcloud/(container\+kubectl\+helm|builds)' -count=1 -timeout 25m -v
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # FR-UI-001/020: the Web console's lint, types, unit tests, build and
   # bundle budget, and admin API types generated from openapi.yaml.
@@ -270,6 +279,10 @@ jobs:
       GCPEMU_NET_TESTS: "1"
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -299,6 +312,11 @@ jobs:
           task echo:image-check IMAGE=gcpemu-echo:check
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.4: v1.0 is accepted when an Autopilot cluster from OpenTofu passes
   # Kubernetes conformance at each supported minor, scales a Deployment past
@@ -314,6 +332,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -327,6 +349,11 @@ jobs:
           restore-keys: gcpemu-e2e-autopilot-${{ runner.arch }}-
       - name: Autopilot acceptance (SRS 11.4)
         run: task autopilot
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 7.1: real clients against a detached instance.
   compat:
@@ -340,6 +367,10 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -402,6 +433,11 @@ jobs:
         run: |
           task build
           go test -tags prerelease ./prerelease -run '^(TestResolverRoutes|TestAddresses|TestRoutesOwner|TestPort53InUse|TestHostEndReclaimsWhenStopFails|TestHostChildDoesNotHoldOwnerLock|TestRunStartReclaim|TestRunStartReclaimKeepsUnrecorded)$' -count=1 -timeout 15m -v
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.1 / IF-001: apply → plan (no diff) → destroy of every supported
   # resource type, with each provider at its current and previous minor.
@@ -419,6 +455,10 @@ jobs:
       GCPEMU_TOFU_PROVIDERS: ${{ matrix.provider }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -438,6 +478,11 @@ jobs:
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
       - name: OpenTofu acceptance (SRS 11.1)
         run: task tofu
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.1 Kubernetes conformance: Sonobuoy quick mode on a Standard
   # cluster at each supported minor's newest patch.
@@ -452,6 +497,10 @@ jobs:
     timeout-minutes: 80
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -470,6 +519,11 @@ jobs:
           name: kube-conformance-${{ matrix.runner }}
           path: compat/kube-conformance-results/
           if-no-files-found: ignore
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.1 / ADR 0023: the emulator against the committed Recordings,
   # with no credentials.
@@ -484,12 +538,21 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
           version: 3.54.0
       - name: Conformance suite (SRS 11.1)
         run: task conformance
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # FR-CI-001/002: the setup-gcpemu action, with this commit's binary
   # served as release v0.0.0-selftest.
