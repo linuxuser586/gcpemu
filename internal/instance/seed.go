@@ -52,6 +52,7 @@ func (in *Instance) seeding(ctx context.Context, apply func(context.Context) err
 	return in.unlessStopping(apply(ctx))
 }
 
+// applySeedData is ApplySeedData, without regard for a shutdown.
 func (in *Instance) applySeedData(ctx context.Context, b []byte, base string) error {
 	var doc map[string]yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {

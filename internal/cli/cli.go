@@ -253,8 +253,9 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 			_ = in.Shutdown(context.Background())
 			return err
 		}
+		// Leaving things behind does not make it any less a Clean stop.
 		if err := shutdown(in); err != nil {
-			return err
+			in.Env.Log.Warn("cleaning up on shutdown", "err", err)
 		}
 		in.Env.Log.Info("stopped before it was ready")
 		return instance.ErrShutDown

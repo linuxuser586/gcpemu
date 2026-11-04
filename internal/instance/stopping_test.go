@@ -50,18 +50,18 @@ func (s *stoppingSvc) ApplySeed(ctx context.Context, _ *yaml.Node, _ string) err
 	return s.seed(ctx)
 }
 
-// startStopping returns a started Instance running svc.
-func startStopping(t *testing.T, svc *stoppingSvc) *Instance {
+// startSvc returns a started Instance running svc.
+func startSvc(t *testing.T, svc *stoppingSvc) *Instance {
 	t.Helper()
-	in := newStopping(t, svc)
+	in := newSvc(t, svc)
 	if err := in.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return in
 }
 
-// newStopping returns an Instance running svc, not yet started.
-func newStopping(t *testing.T, svc *stoppingSvc) *Instance {
+// newSvc returns an Instance running svc, not yet started.
+func newSvc(t *testing.T, svc *stoppingSvc) *Instance {
 	t.Helper()
 	svc.stopping, svc.release = make(chan struct{}), make(chan struct{})
 	cfg := config.Defaults()
@@ -107,7 +107,7 @@ func TestWaitReadyDuringShutdown(t *testing.T) {
 	for name, ready := range map[string]error{"ready": nil, "not ready": errors.New("not ready")} {
 		t.Run(name, func(t *testing.T) {
 			svc := &stoppingSvc{ready: ready}
-			in := startStopping(t, svc)
+			in := startSvc(t, svc)
 			beginShutdown(t, in, svc)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 			defer cancel()
@@ -123,7 +123,7 @@ func TestWaitReadyDuringShutdown(t *testing.T) {
 // shutdown begins, not when its deadline does.
 func TestWaitReadyEndsWhenShutdownBegins(t *testing.T) {
 	svc := &stoppingSvc{ready: errors.New("not ready")}
-	in := startStopping(t, svc)
+	in := startSvc(t, svc)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	waited := make(chan error, 1)
@@ -141,7 +141,7 @@ func TestWaitReadyEndsWhenShutdownBegins(t *testing.T) {
 
 // TestWaitReadyWithNoStop: a readiness timeout with no stop stays one.
 func TestWaitReadyWithNoStop(t *testing.T) {
-	in := startStopping(t, &stoppingSvc{ready: errors.New("not ready")})
+	in := startSvc(t, &stoppingSvc{ready: errors.New("not ready")})
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	err := in.WaitReady(ctx)
@@ -162,7 +162,7 @@ func TestSeedingEndsWhenShutdownBegins(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
-	in := startStopping(t, svc)
+	in := startSvc(t, svc)
 	seeded := make(chan error, 1)
 	go func() { seeded <- in.ApplySeedData(context.Background(), seedDoc, t.TempDir()) }()
 	<-seeding
@@ -189,7 +189,7 @@ func TestAStopWinsOverSeeding(t *testing.T) {
 				beginShutdown(t, in, svc)
 				return result
 			}
-			in = startStopping(t, svc)
+			in = startSvc(t, svc)
 			path := filepath.Join(t.TempDir(), "seed.yaml")
 			if err := os.WriteFile(path, seedDoc, 0o600); err != nil {
 				t.Fatal(err)
@@ -205,7 +205,7 @@ func TestAStopWinsOverSeeding(t *testing.T) {
 	}
 	t.Run("an unreadable seed file", func(t *testing.T) {
 		svc := &stoppingSvc{}
-		in := startStopping(t, svc)
+		in := startSvc(t, svc)
 		beginShutdown(t, in, svc)
 		if err := in.ApplySeed(context.Background(), filepath.Join(t.TempDir(), "absent")); !errors.Is(err, ErrShutDown) {
 			t.Errorf("ApplySeed: %v, want ErrShutDown", err)
@@ -217,7 +217,7 @@ func TestAStopWinsOverSeeding(t *testing.T) {
 // are, a deadline included.
 func TestSeedingWithNoStop(t *testing.T) {
 	bad := errors.New("bad zone")
-	in := startStopping(t, &stoppingSvc{seed: func(ctx context.Context) error {
+	in := startSvc(t, &stoppingSvc{seed: func(ctx context.Context) error {
 		if _, ok := ctx.Deadline(); !ok {
 			return bad
 		}
@@ -235,8 +235,8 @@ func TestSeedingWithNoStop(t *testing.T) {
 }
 
 // TestSeedUploadDuringAStop is #1009: POST /_emu/v1/seed shares Seeding's
-// code, so a seed in progress is cut off and fails, saying why, and a
-// seed sent to a stopping Instance is refused.
+// code, so Seeding in progress is cut off and fails, saying why, and a Seed
+// file sent to a stopping Instance is refused.
 func TestSeedUploadDuringAStop(t *testing.T) {
 	seeding := make(chan struct{})
 	var once sync.Once
@@ -245,7 +245,7 @@ func TestSeedUploadDuringAStop(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
-	in := startStopping(t, svc)
+	in := startSvc(t, svc)
 	url := "http://" + in.Env.Endpoints.Get("gateway") + "/_emu/v1/seed"
 	post := func() (int, string) {
 		resp, err := http.Post(url, "application/yaml", bytes.NewReader(seedDoc))
@@ -269,13 +269,13 @@ func TestSeedUploadDuringAStop(t *testing.T) {
 	select {
 	case got = <-cut:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the seed still running 10s after shutdown began")
+		t.Fatal("still Seeding 10s after shutdown began")
 	}
 	if got.code != http.StatusServiceUnavailable || !strings.Contains(got.body, ErrShutDown.Error()) {
-		t.Errorf("seed in progress = %d %s", got.code, got.body)
+		t.Errorf("Seeding in progress = %d %s", got.code, got.body)
 	}
 	if code, body := post(); code != http.StatusServiceUnavailable || !strings.Contains(body, ErrShutDown.Error()) {
-		t.Errorf("seed sent during the stop = %d %s", code, body)
+		t.Errorf("Seed file sent during the stop = %d %s", code, body)
 	}
 }
 
@@ -289,7 +289,7 @@ func TestStartDuringShutdown(t *testing.T) {
 		// Start can no longer write its runtime files.
 		return os.MkdirAll(filepath.Join(in.Dir, EndpointsFile, "taken"), 0o700)
 	}
-	in = newStopping(t, svc)
+	in = newSvc(t, svc)
 	if err := in.Start(context.Background()); !errors.Is(err, ErrShutDown) {
 		t.Errorf("Start: %v, want ErrShutDown", err)
 	}
@@ -300,7 +300,7 @@ func TestStartFailsWithNoStop(t *testing.T) {
 	var in *Instance
 	svc := &stoppingSvc{}
 	svc.start = func() error { return os.MkdirAll(filepath.Join(in.Dir, EndpointsFile, "taken"), 0o700) }
-	in = newStopping(t, svc)
+	in = newSvc(t, svc)
 	if err := in.Start(context.Background()); err == nil || errors.Is(err, ErrShutDown) {
 		t.Errorf("Start: %v, want its own failure", err)
 	}

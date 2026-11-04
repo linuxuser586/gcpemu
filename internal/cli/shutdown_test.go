@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -40,14 +41,20 @@ func stoppedWhileWaiting(t *testing.T) map[string]instance.Factory {
 	t.Helper()
 	return map[string]instance.Factory{"gcs": func(env *emu.Env) emu.Service {
 		return &waitedSvc{notReadySvc: notReadySvc{stopped: &atomic.Bool{}}, waited: func() {
-			resp, err := http.Post("http://"+env.Endpoints.Get("gateway")+"/_emu/v1/shutdown", "", nil)
-			if err != nil {
+			if err := postShutdown(env); err != nil {
 				t.Errorf("shutdown: %v", err)
-				return
 			}
-			resp.Body.Close()
 		}}
 	}}
+}
+
+// postShutdown asks env's Instance to shut down, as `gcpemu stop` does.
+func postShutdown(env *emu.Env) error {
+	resp, err := http.Post("http://"+env.Endpoints.Get("gateway")+"/_emu/v1/shutdown", "", nil)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
 }
 
 // waitTimeout is what these tests give an Instance to become ready.
@@ -135,6 +142,7 @@ type seedingSvc struct {
 	env       *emu.Env
 	ready     error
 	seed      func(ctx context.Context) error
+	stopErr   error
 	stopBegun chan struct{} // closed when shutdown reaches Stop
 }
 
@@ -142,7 +150,7 @@ func (s *seedingSvc) Ready() error { return s.ready }
 
 func (s *seedingSvc) Stop(ctx context.Context) error {
 	close(s.stopBegun)
-	return s.notReadySvc.Stop(ctx)
+	return errors.Join(s.notReadySvc.Stop(ctx), s.stopErr)
 }
 
 func (s *seedingSvc) ApplySeed(ctx context.Context, _ *yaml.Node, _ string) error {
@@ -152,16 +160,14 @@ func (s *seedingSvc) ApplySeed(ctx context.Context, _ *yaml.Node, _ string) erro
 // requestShutdown asks s's Instance to shut down, as `gcpemu stop` does, and
 // returns once its shutdown has begun.
 func (s *seedingSvc) requestShutdown() error {
-	resp, err := http.Post("http://"+s.env.Endpoints.Get("gateway")+"/_emu/v1/shutdown", "", nil)
-	if err != nil {
+	if err := postShutdown(s.env); err != nil {
 		return err
 	}
-	resp.Body.Close()
 	<-s.stopBegun
 	return nil
 }
 
-// seedingFactories is factories for s.
+// seedingFactories makes s ready to run and returns factories for it.
 func seedingFactories(s *seedingSvc) map[string]instance.Factory {
 	s.stopped, s.stopBegun = &atomic.Bool{}, make(chan struct{})
 	return map[string]instance.Factory{"gcs": func(env *emu.Env) emu.Service { s.env = env; return s }}
@@ -192,8 +198,16 @@ func seedFile(t *testing.T) string {
 	return path
 }
 
-// seedingConfig is an Ephemeral Instance's config that Seeds from seedFile.
+// seedingConfig is hostConfig, Seeding from seedFile.
 func seedingConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := hostConfig(t)
+	cfg.Seed = seedFile(t)
+	return cfg
+}
+
+// hostConfig is an Ephemeral Instance's config running gcs.
+func hostConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Ephemeral = true
@@ -201,7 +215,6 @@ func seedingConfig(t *testing.T) *config.Config {
 	cfg.Services = []string{"gcs"}
 	cfg.Ports["gateway"] = 0
 	cfg.WaitTimeout = waitTimeout
-	cfg.Seed = seedFile(t)
 	return &cfg
 }
 
@@ -222,7 +235,7 @@ func TestHostStoppedDuringSeeding(t *testing.T) {
 	for stopName, stop := range stops {
 		for endName, end := range ends {
 			for _, mustBeReady := range []bool{false, true} {
-				t.Run(stopName+"/"+endName, func(t *testing.T) {
+				t.Run(fmt.Sprintf("%s/%s/mustBeReady=%v", stopName, endName, mustBeReady), func(t *testing.T) {
 					ctx, cancel := context.WithCancel(context.Background())
 					defer cancel()
 					s := &seedingSvc{}
@@ -238,20 +251,58 @@ func TestHostStoppedDuringSeeding(t *testing.T) {
 					_, err := o.host(ctx, seedingConfig(t), &logs, false, mustBeReady)
 					promptly(t, start)
 					if !errors.Is(err, instance.ErrShutDown) {
-						t.Fatalf("mustBeReady %v: %v, want ErrShutDown", mustBeReady, err)
+						t.Fatalf("host: %v, want ErrShutDown", err)
 					}
 					if strings.Contains(err.Error(), "seed:") {
-						t.Errorf("mustBeReady %v: reported as a Seeding failure: %v", mustBeReady, err)
+						t.Errorf("reported as a Seeding failure: %v", err)
 					}
 					if !s.stopped.Load() {
-						t.Errorf("mustBeReady %v: the Instance kept running", mustBeReady)
+						t.Error("the Instance kept running")
 					}
 					if l := logs.String(); strings.Contains(l, "msg=ready") || strings.Contains(l, "not ready") {
-						t.Errorf("mustBeReady %v: logged as ready or not ready:\n%s", mustBeReady, l)
+						t.Errorf("logged as ready or not ready:\n%s", l)
 					}
 				})
 			}
 		}
+	}
+}
+
+// TestHostStopCoincidesWithSeedDeadline is #1009: when the seed deadline and
+// a stop coincide, the result is a stop.
+func TestHostStopCoincidesWithSeedDeadline(t *testing.T) {
+	s := &seedingSvc{}
+	s.seed = func(ctx context.Context) error {
+		deadline, _ := ctx.Deadline()
+		if err := s.requestShutdown(); err != nil {
+			return err
+		}
+		time.Sleep(time.Until(deadline))
+		return context.DeadlineExceeded
+	}
+	o := &rootOpts{factories: seedingFactories(s)}
+	cfg := seedingConfig(t)
+	cfg.WaitTimeout = 200 * time.Millisecond
+	_, err := o.host(context.Background(), cfg, &bytes.Buffer{}, false, true)
+	if !errors.Is(err, instance.ErrShutDown) || strings.Contains(err.Error(), "seed:") {
+		t.Errorf("host: %v, want ErrShutDown", err)
+	}
+}
+
+// TestHostStopThatLeavesThingsBehind is #1009: a stop that could not remove
+// everything is still a Clean stop (ADR 0064). It says so in the log.
+func TestHostStopThatLeavesThingsBehind(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &seedingSvc{stopErr: errors.New("container still there")}
+	s.seed = func(ctx context.Context) error { cancel(); <-ctx.Done(); return ctx.Err() }
+	o := &rootOpts{factories: seedingFactories(s)}
+	var logs bytes.Buffer
+	if _, err := o.host(ctx, seedingConfig(t), &logs, false, false); !errors.Is(err, instance.ErrShutDown) {
+		t.Errorf("host: %v, want ErrShutDown", err)
+	}
+	if !strings.Contains(logs.String(), "container still there") {
+		t.Errorf("not logged:\n%s", logs.String())
 	}
 }
 
@@ -298,8 +349,7 @@ func (s failingStartSvc) Start(context.Context) error {
 func TestHostInterruptedWhileStartFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cfg := seedingConfig(t)
-	cfg.Seed = ""
+	cfg := hostConfig(t)
 	stopped := &atomic.Bool{}
 	o := &rootOpts{factories: map[string]instance.Factory{"gcs": func(*emu.Env) emu.Service {
 		return failingStartSvc{notReadySvc: notReadySvc{stopped: stopped}, dir: cfg.InstanceDir(), interrupt: cancel}
@@ -327,18 +377,14 @@ func (s *slowStopSvc) Stop(ctx context.Context) error {
 // TestHostDeadlinePassesDuringShutdown is #1009: the wait deadline passing
 // while shutdown is in progress is a stop, not a readiness failure.
 func TestHostDeadlinePassesDuringShutdown(t *testing.T) {
-	cfg := seedingConfig(t)
-	cfg.Seed = ""
+	cfg := hostConfig(t)
 	cfg.WaitTimeout = 500 * time.Millisecond
 	stopped := &atomic.Bool{}
 	o := &rootOpts{factories: map[string]instance.Factory{"gcs": func(env *emu.Env) emu.Service {
 		return &slowStopSvc{stopFor: 3 * cfg.WaitTimeout, waitedSvc: waitedSvc{notReadySvc: notReadySvc{stopped: stopped}, waited: func() {
-			resp, err := http.Post("http://"+env.Endpoints.Get("gateway")+"/_emu/v1/shutdown", "", nil)
-			if err != nil {
+			if err := postShutdown(env); err != nil {
 				t.Errorf("shutdown: %v", err)
-				return
 			}
-			resp.Body.Close()
 		}}}
 	}}}
 	var logs bytes.Buffer

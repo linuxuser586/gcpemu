@@ -48,8 +48,9 @@ type Factory func(env *emu.Env) emu.Service
 // Version is set at build time.
 var Version = "dev"
 
-// ErrShutDown means the Instance shut down before it was ready.
-var ErrShutDown = errors.New("Instance shut down before it was ready")
+// ErrShutDown means shutdown has begun, so what was asked of the Instance
+// will not happen: it will not become ready, or Seeding will not finish.
+var ErrShutDown = errors.New("Instance shut down")
 
 // Files written in the instance directory.
 const (
@@ -89,7 +90,7 @@ type Instance struct {
 	adcMu        sync.Mutex         // serialises serveADCKey
 	stateMu      sync.Mutex         // serialises Reset and State snapshots
 	shutdownOnce sync.Once
-	// stopping ends when shutdown begins, which is well before done closes:
+	// stopping is cancelled when shutdown begins, well before done closes:
 	// shutdown goes on to remove containers.
 	stopping  context.Context
 	beginStop context.CancelFunc
@@ -391,6 +392,7 @@ func (in *Instance) unlessStopping(err error) error {
 	return err
 }
 
+// start is Start, without regard for a shutdown.
 func (in *Instance) start(ctx context.Context) error {
 	// The gateway listens first: every leaf the Instance CA issues names
 	// the CRL on its port (ADR 0046), so the CA learns it before anything
@@ -662,9 +664,6 @@ func (in *Instance) WaitReady(ctx context.Context) error {
 		case <-in.stopping.Done():
 			return ErrShutDown
 		case <-ctx.Done():
-			if in.stopping.Err() != nil {
-				return ErrShutDown
-			}
 			var names []string
 			for n, err := range in.Readiness() {
 				if err != nil {
@@ -672,7 +671,7 @@ func (in *Instance) WaitReady(ctx context.Context) error {
 				}
 			}
 			sort.Strings(names)
-			return fmt.Errorf("services not ready: %v", names)
+			return in.unlessStopping(fmt.Errorf("services not ready: %v", names))
 		case <-t.C:
 		}
 	}

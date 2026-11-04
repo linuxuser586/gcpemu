@@ -136,7 +136,8 @@ func (s *Service) lock(project, name string) *hiddenWork {
 	return s.hide(project, name, mu)
 }
 
-// lockCtx is lock, giving up when ctx ends.
+// lockCtx is lock, giving up when ctx ends. A sync.Mutex offers no wait that
+// can end, so it polls.
 func (s *Service) lockCtx(ctx context.Context, project, name string) (*hiddenWork, error) {
 	mu := s.instanceMutex(project, name)
 	for !mu.TryLock() {
