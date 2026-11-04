@@ -47,10 +47,12 @@ func openService(t *testing.T, path string) (*Service, http.Handler, func()) {
 	return svc, h, closeFn
 }
 
-// openServiceClock is openService with an advanceable clock.
+// openServiceClock is openService with an advanceable Emulator clock. Its
+// handlers bypass the gateway, so no request steps the clock and only Advance
+// moves it: message ages do not depend on how fast the test runs (#959).
 func openServiceClock(t *testing.T, path string) (*Service, http.Handler, *clock.Offset, func()) {
 	t.Helper()
-	clk := clock.NewOffset(clock.Real{})
+	clk := clock.NewOffset(clock.NewFake())
 	st, err := store.OpenBolt(path)
 	if err != nil {
 		t.Fatal(err)
