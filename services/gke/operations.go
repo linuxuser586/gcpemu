@@ -50,9 +50,12 @@ func (s *Service) startOp(ctx context.Context, r ref, typ containerpb.Operation_
 
 // runOp is startOp for an operation whose name already holds the cluster's
 // operation lock if lock is set. The lock is released when the operation
-// ends or fails to start. A nil work is an operation with no data-plane
-// part; in a Deterministic Instance with no Operation latency it finishes
-// before runOp returns, so the response is DONE (ADR 0020).
+// ends or fails to start, before it shows DONE, so a client that sees DONE
+// can go straight on. A State snapshot save that takes the lock in between
+// starts again, as the DONE write changes the Store. A nil work is an
+// operation with no data-plane part; in a Deterministic Instance with no
+// Operation latency it finishes before runOp returns, so the response is
+// DONE (ADR 0020).
 func (s *Service) runOp(r ref, name string, typ containerpb.Operation_Type, target string, lock bool, work workFunc) (*containerpb.Operation, error) {
 	op := &containerpb.Operation{
 		Name:          name,
@@ -78,8 +81,8 @@ func (s *Service) runOp(r ref, name string, typ containerpb.Operation_Type, targ
 	if work == nil {
 		if s.env.Config.Deterministic && s.env.Config.LRO("gke") <= 0 {
 			defer g.wg.Done()
-			s.finishOp(g.ctx, r.Project, name, nil)
 			s.unlock(r, lock, name)
+			s.finishOp(g.ctx, r.Project, name, nil)
 			return s.getOp(r.Project, name)
 		}
 		work = func(context.Context) error { return nil }
@@ -102,8 +105,8 @@ func (s *Service) runOp(r ref, name string, typ containerpb.Operation_Type, targ
 		if err != nil {
 			s.env.Log.Warn("gke operation failed", "operation", name, "type", typ.String(), "target", target, "err", err)
 		}
-		s.finishOp(ctx, r.Project, name, err)
 		s.unlock(r, lock, name)
+		s.finishOp(ctx, r.Project, name, err)
 		s.mu.Lock()
 		delete(s.opCancel, name)
 		s.mu.Unlock()

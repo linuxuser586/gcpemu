@@ -402,6 +402,10 @@ _Avoid_: LRO, job, task
 **Operation latency**:
 How long an Operation takes before it completes, configured per Service ID (`gke=20s`, `lb=5s`), with `*` for every Service. The API names `container` and `sqladmin` still work as aliases for `gke` and `sql`. Operations complete instantly unless it is set.
 
+**Operation lock**:
+A cluster accepts one mutating Operation at a time. A second one fails while the first is running. A State snapshot save takes the same lock, but it isn't an Operation a client can see.
+_Avoid_: busy, cluster lock
+
 **Project**:
 A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects. Only a request handled by a Service counts as a reference. Choosing a Project in the Web console only scopes what is shown and creates nothing.
 

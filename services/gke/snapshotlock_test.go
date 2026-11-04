@@ -3,6 +3,7 @@ package gke
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +113,52 @@ func TestMutateRealOperationNoWait(t *testing.T) {
 	// A wait would poll at least once, every 500ms.
 	if d := time.Since(start); d >= 500*time.Millisecond {
 		t.Errorf("waited %v", d)
+	}
+}
+
+// pausingStore pauses after each write commits, holding open any gap
+// between a stored change and what its caller does next.
+type pausingStore struct{ store.Store }
+
+func (p pausingStore) Update(fn func(store.Tx) error) error {
+	err := p.Store.Update(fn)
+	time.Sleep(50 * time.Millisecond)
+	return err
+}
+
+// Once an Operation shows DONE its Operation lock is free, so a client
+// that polls and goes straight on is not told it is still running (#974).
+func TestOperationDoneFreesLock(t *testing.T) {
+	tests := []struct {
+		name    string
+		service func(*testing.T) *Service
+	}{
+		{"background", newUnitService},
+		{"deterministic", newDeterministicService},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := tt.service(t)
+			putLockCluster(t, s)
+			s.env.Store = pausingStore{s.env.Store}
+			first := make(chan error, 1)
+			go func() { first <- setLabels(context.Background(), s) }()
+			deadline := time.Now().Add(10 * time.Second)
+			for !slices.ContainsFunc(s.listOps("lock-project", "-"), func(op *containerpb.Operation) bool {
+				return op.Status == containerpb.Operation_DONE
+			}) {
+				if time.Now().After(deadline) {
+					t.Fatal("no operation finished")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if err := setLabels(context.Background(), s); err != nil {
+				t.Errorf("next call after DONE: %v", err)
+			}
+			if err := <-first; err != nil {
+				t.Errorf("first call: %v", err)
+			}
+		})
 	}
 }
 
