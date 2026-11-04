@@ -100,7 +100,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) 
 
 // policy is the CSP for a console whose index.html is index: it may load
 // only its own bundle and call only the API gateway it was served from. Each
-// inline script in index, the boot script that reloads a page whose files
+// inline script in index, the boot script that recovers a page whose files
 // failed to load (ADR 0063), is allowed by its hash, so that the policy
 // cannot drift from the file it is sent with.
 func policy(index []byte) string {
