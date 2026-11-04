@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { bytes } from '@/features/cdn/api'
+import { downloadText } from '@/lib/download'
 import { serviceName } from '@/lib/services'
 import { toast } from '@/lib/toast'
 
@@ -169,18 +170,6 @@ function Reset() {
   )
 }
 
-/** download saves text as a file through a temporary link. */
-function download(text: string, name: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/yaml' }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  document.body.append(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
 function Seed() {
   const id = useId()
   const [yaml, setYaml] = useState('')
@@ -196,7 +185,7 @@ function Seed() {
   })
   const exp = useMutation({
     mutationFn: exportSeed,
-    onSuccess: (text) => download(text, 'seed.yaml'),
+    onSuccess: (text) => downloadText('seed.yaml', text, 'application/yaml'),
   })
   return (
     <Card>
