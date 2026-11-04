@@ -214,7 +214,7 @@ The port a GKE `LoadBalancer` Service or a forwarding rule declares, as opposed 
 _Avoid_: service port, rule port (unqualified)
 
 **Excluded port range**:
-A range of ports that Windows reserves for Hyper-V, WSL and others, which no process on the host can bind. Windows has no privileged ports, so a port it refuses is in one of these ranges. A forwarding rule or Kubernetes Service on such a port is unavailable to host clients; the Edge relay is never used for it, since its host port would hit the same reservation (ADR 0015).
+A range of ports that Windows reserves for one protocol, TCP or UDP, for Hyper-V, WSL and others. No process on the host can bind a port in it over that protocol, though the same port can be free over the other. Windows has no privileged ports, so a port it refuses is in one of these ranges. A forwarding rule or Kubernetes Service on such a port is unavailable to host clients; the Edge relay is never used for it, since its host port would hit the same reservation (ADR 0015).
 _Avoid_: reserved port, privileged port (on Windows)
 
 **State snapshot**:

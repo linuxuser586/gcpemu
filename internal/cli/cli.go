@@ -212,6 +212,9 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	defer stop()
 	// FR-CI-003: fail fast in CI.
 	in, err := o.host(ctx, cfg, logOut, os.Getenv("GCPEMU_DETACHED") != "1", os.Getenv("CI") == "true")
+	if errors.Is(err, instance.ErrShutDown) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -219,15 +222,22 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	case <-ctx.Done():
 	case <-in.Done():
 	}
-	sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer scancel()
-	return in.Shutdown(sctx)
+	return shutdown(in)
+}
+
+// shutdown shuts in down, allowing it 30s.
+func shutdown(in *instance.Instance) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return in.Shutdown(ctx)
 }
 
 // host starts an Instance in this process and waits, up to the wait
 // timeout, until it is ready, Seeding included. printToken prints how to
 // reach the Admin API. Unless mustBeReady, an Instance that does not
-// become ready keeps running. On error the Instance is shut down.
+// become ready keeps running. On error the Instance is shut down; the
+// error is instance.ErrShutDown if a shutdown request or ctx ending ended
+// the wait.
 func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Writer, printToken, mustBeReady bool) (*instance.Instance, error) {
 	in, err := instance.New(cfg, o.factories, logOut)
 	if err != nil {
@@ -267,6 +277,13 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 	wctx, cancel := context.WithDeadline(ctx, deadline)
 	err = in.WaitReady(wctx)
 	cancel()
+	if err != nil && (errors.Is(err, instance.ErrShutDown) || ctx.Err() != nil) {
+		if err := shutdown(in); err != nil {
+			return nil, err
+		}
+		in.Env.Log.Info("stopped before it was ready")
+		return nil, instance.ErrShutDown
+	}
 	if err != nil {
 		in.Env.Log.Error("not ready", "err", err)
 		if mustBeReady {
@@ -330,6 +347,9 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-exited:
+			if err == nil { // only a stopped Instance exits cleanly
+				return fmt.Errorf("instance %q: %w", cfg.Instance, instance.ErrShutDown)
+			}
 			return fmt.Errorf("emulator exited during startup (%v):\n%s\nfull log: %s", err, logTail(logPath, logStart, 20), logPath)
 		case <-time.After(100 * time.Millisecond):
 		}

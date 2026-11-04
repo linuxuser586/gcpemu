@@ -240,14 +240,21 @@ func TestSupervisorCancelled(t *testing.T) {
 // watched is a Cluster server container that a test kills, as an exit
 // or as a stop the Service makes on purpose.
 type watched struct {
-	killed   chan struct{}
-	once     sync.Once
 	mu       sync.Mutex
+	killed   chan struct{}
+	dead     bool // killed is closed; the next restart makes a new one
 	restarts int
 	fail     error // returned by each restart when set
 }
 
-func (w *watched) kill() { w.once.Do(func() { close(w.killed) }) }
+func (w *watched) kill() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.dead {
+		w.dead = true
+		close(w.killed)
+	}
+}
 
 func (w *watched) restarted() int {
 	w.mu.Lock()
@@ -293,7 +300,7 @@ func watchTestServer(t *testing.T, s *Service, w *watched) string {
 		if w.fail != nil {
 			return "", w.fail
 		}
-		w.killed, w.once = make(chan struct{}), sync.Once{}
+		w.killed, w.dead = make(chan struct{}), false
 		return "cp-new", nil
 	}
 	s.rtFor(key).setServer("cp1")

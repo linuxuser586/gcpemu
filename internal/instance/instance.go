@@ -48,6 +48,9 @@ type Factory func(env *emu.Env) emu.Service
 // Version is set at build time.
 var Version = "dev"
 
+// ErrShutDown means the Instance shut down before it was ready.
+var ErrShutDown = errors.New("Instance shut down before it was ready")
+
 // Files written in the instance directory.
 const (
 	EndpointsFile = "endpoints.json"
@@ -511,12 +514,15 @@ func (in *Instance) AdminToken() string { return in.adminToken }
 // ConsoleServed reports whether the gateway serves the Web console.
 func (in *Instance) ConsoleServed() bool { return in.consoleServed }
 
+// writeRuntimeFiles writes the PID file, then endpoints.json, which is what
+// tells clients the Instance is up: `gcpemu stop` waits for the process
+// that the PID file names, so that file has to be there first (#990).
 func (in *Instance) writeRuntimeFiles() error {
-	b, _ := json.MarshalIndent(in.Env.Endpoints.All(), "", "  ")
-	if err := writeAtomic(filepath.Join(in.Dir, EndpointsFile), b); err != nil {
+	if err := writeAtomic(filepath.Join(in.Dir, PIDFile), []byte(strconv.Itoa(os.Getpid()))); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(in.Dir, PIDFile), []byte(strconv.Itoa(os.Getpid())))
+	b, _ := json.MarshalIndent(in.Env.Endpoints.All(), "", "  ")
+	return writeAtomic(filepath.Join(in.Dir, EndpointsFile), b)
 }
 
 func writeAtomic(path string, b []byte) error {
@@ -621,11 +627,18 @@ func (in *Instance) Ready() bool {
 	return true
 }
 
-// WaitReady blocks until all services are ready or ctx ends.
+// WaitReady blocks until all services are ready or ctx ends. It returns
+// ErrShutDown once the Instance has shut down, as it can no longer become
+// ready.
 func (in *Instance) WaitReady(ctx context.Context) error {
 	t := time.NewTicker(50 * time.Millisecond)
 	defer t.Stop()
 	for {
+		select {
+		case <-in.done:
+			return ErrShutDown
+		default:
+		}
 		if in.Ready() {
 			return nil
 		}
