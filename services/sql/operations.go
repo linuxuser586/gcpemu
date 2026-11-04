@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -20,7 +21,8 @@ import (
 
 // Operations (FR-CORE-023): sqladmin has its own Operation resource
 // (sql#operation) with status PENDING → RUNNING → DONE and an error list.
-// Data-plane work for one instance is serialized by the instance lock.
+// Data-plane work for one Cloud SQL instance is serialized by its mutex, and
+// a client gets one Operation at a time on it (oplock.go).
 
 // newOp returns a PENDING operation on an instance.
 func (s *Service) newOp(ctx context.Context, project, instance, opType string) *sqladmin.Operation {
@@ -49,17 +51,23 @@ func (s *Service) saveOp(op *sqladmin.Operation) {
 	})
 }
 
-// runOp records op and runs fn under the instance lock, on the background
+// runOp records op and runs fn under the Cloud SQL instance's mutex, on the background
 // context. With async=false and instant LRO latency the work is done
 // before the response, which is returned DONE; otherwise op is returned
 // PENDING and completes in the background. Work that Reset stops records
-// nothing more (#306).
+// nothing more (#306). op's Operation lock is released before op shows
+// DONE, so a client that sees DONE can start the next Operation at once.
 func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.Context) error) *sqladmin.Operation {
 	s.saveOp(op)
 	latency := s.env.Config.LRO("sql")
 	exec := func(ctx context.Context) *sqladmin.Operation {
-		mu := s.lock(op.TargetProject, op.TargetId)
-		defer mu.Unlock()
+		mu := s.instanceMutex(op.TargetProject, op.TargetId)
+		mu.Lock()
+		release := sync.OnceFunc(func() {
+			mu.Unlock()
+			s.releaseOp(op)
+		})
+		defer release()
 		start := time.Now()
 		op.Status, op.StartTime = "RUNNING", s.now()
 		s.saveOp(op)
@@ -70,6 +78,7 @@ func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.
 			case <-ctx.Done():
 			}
 		}
+		release()
 		if wasReset(ctx) {
 			return op
 		}
@@ -79,6 +88,7 @@ func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.
 	if !async && latency == 0 {
 		g := s.track()
 		if g == nil {
+			s.releaseOp(op)
 			s.finishOp(op, errStopped)
 			return op
 		}
@@ -87,6 +97,7 @@ func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.
 	}
 	cp := *op
 	if !s.goBackground(func(ctx context.Context) { exec(ctx) }) {
+		s.releaseOp(op)
 		s.finishOp(op, errStopped)
 		return op
 	}

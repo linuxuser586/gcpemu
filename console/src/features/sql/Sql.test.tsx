@@ -7,7 +7,14 @@ import { fake } from '@/test/handlers'
 import { renderApp } from '@/test/render'
 import { server } from '@/test/setup'
 
-import type { BackupRun, Database, DatabaseInstance, ExecuteSqlResponse, User } from './api'
+import {
+  OP_POLL_MS,
+  type BackupRun,
+  type Database,
+  type DatabaseInstance,
+  type ExecuteSqlResponse,
+  type User,
+} from './api'
 import { databaseRecipe, instanceRecipe, userRecipe } from './copy'
 
 const P = 'alpha-project'
@@ -309,6 +316,110 @@ it('stops, starts and restarts an instance', async () => {
   await user.click((await screen.findAllByRole('button', { name: 'Start' })).at(-1)!)
   await waitFor(() => expect(requests).toHaveLength(1))
   expect(requests[0]!.body).toEqual({ settings: { activationPolicy: 'ALWAYS' } })
+})
+
+/** runningOperation makes an Operation show RUNNING until finish is called. */
+function runningOperation() {
+  let done = false
+  server.use(
+    http.get(`${API}/operations/:op`, ({ params }) =>
+      HttpResponse.json({ ...op('X'), name: params.op, status: done ? 'DONE' : 'RUNNING' }),
+    ),
+  )
+  return () => {
+    done = true
+  }
+}
+
+const running = (type: string) => HttpResponse.json({ ...op(type), status: 'RUNNING' })
+
+it('keeps a restart pending until its Operation is DONE', async () => {
+  const finish = runningOperation()
+  server.use(http.post(`${API}/instances/main/restart`, () => running('RESTART')))
+  const user = userEvent.setup()
+  renderApp(`${base}?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Restart' }))
+  const dialog = await screen.findByRole('dialog')
+  await user.click(within(dialog).getByRole('button', { name: 'Restart instance' }))
+  await new Promise((r) => setTimeout(r, OP_POLL_MS + 200))
+  expect(dialog).toBeInTheDocument()
+  finish()
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+})
+
+it('keeps Start pending until its Operation is DONE', async () => {
+  const finish = runningOperation()
+  state.instances[0] = instance({ settings: { ...instance().settings, activationPolicy: 'NEVER' } })
+  let patches = 0
+  server.use(
+    http.patch(`${API}/instances/main`, () => {
+      patches++
+      return running('UPDATE')
+    }),
+  )
+  const user = userEvent.setup()
+  renderApp(`${base}?project=${P}`)
+  const start = (await screen.findAllByRole('button', { name: 'Start' })).at(-1)!
+  await user.click(start)
+  await waitFor(() => expect(start).toBeDisabled())
+  await user.click(start)
+  expect(patches).toBe(1)
+  finish()
+  await waitFor(() => expect(start).toBeEnabled())
+})
+
+it('offers no action while the page’s own Operation runs', async () => {
+  const finish = runningOperation()
+  server.use(
+    http.patch(`${API}/instances/main`, () => {
+      // Cloud SQL stores the policy at once, before the container stops.
+      state.instances[0] = instance({
+        settings: { ...instance().settings, activationPolicy: 'NEVER' },
+      })
+      return running('UPDATE')
+    }),
+  )
+  const user = userEvent.setup()
+  const { queryClient } = renderApp(`${base}?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Stop' }))
+  await user.click(
+    within(await screen.findByRole('dialog')).getByRole('button', { name: 'Stop instance' }),
+  )
+  await waitFor(() => expect(state.instances[0]!.settings?.activationPolicy).toBe('NEVER'))
+  await queryClient.invalidateQueries({ queryKey: ['sql'] })
+  const start = (await screen.findAllByRole('button', { name: 'Start', hidden: true })).at(-1)!
+  expect(start).toBeDisabled()
+  finish()
+  await waitFor(() => expect(start).toBeEnabled())
+})
+
+it('stays on the edit form until the patch’s Operation is DONE', async () => {
+  const finish = runningOperation()
+  server.use(http.patch(`${API}/instances/main`, () => running('UPDATE')))
+  const user = userEvent.setup()
+  const { router } = renderApp(`${base}/edit?project=${P}`)
+  await user.click(await screen.findByLabelText('Deletion protection'))
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await new Promise((r) => setTimeout(r, OP_POLL_MS + 200))
+  expect(router.state.location.pathname).toBe(`${base}/edit`)
+  finish()
+  await waitFor(() => expect(router.state.location.pathname).toBe(base))
+})
+
+it('shows that another Operation is running on the instance', async () => {
+  const message = 'Operation failed because another operation was already in progress.'
+  server.use(
+    http.post(`${API}/instances/main/restart`, () =>
+      HttpResponse.json({ error: { code: 409, status: 'ABORTED', message } }, { status: 409 }),
+    ),
+  )
+  const user = userEvent.setup()
+  renderApp(`${base}?project=${P}`)
+  await user.click(await screen.findByRole('button', { name: 'Restart' }))
+  await user.click(
+    within(await screen.findByRole('dialog')).getByRole('button', { name: 'Restart instance' }),
+  )
+  expect(await screen.findByText(message)).toBeInTheDocument()
 })
 
 it('edits an instance with a patch of what changed', async () => {

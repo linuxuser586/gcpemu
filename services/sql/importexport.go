@@ -161,7 +161,11 @@ func (s *Service) exportInstance(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errInvalid("database %q does not exist.", db))
 		return
 	}
-	op := s.newOp(r.Context(), project, name, "EXPORT")
+	op, err := s.claimOp(r.Context(), project, name, "EXPORT")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	op.ExportContext = ec
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		var out string
@@ -233,7 +237,11 @@ func (s *Service) importInstance(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	op := s.newOp(r.Context(), project, name, "IMPORT")
+	op, err := s.claimOp(r.Context(), project, name, "IMPORT")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	op.ImportContext = ic
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		data, err := s.readObject(ctx, rec, ic.Uri)

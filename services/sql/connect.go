@@ -193,7 +193,11 @@ func (s *Service) insertSslCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := sslCertOf(certP, project, inst)
-	op := s.newOp(r.Context(), project, inst, "CREATE_CLIENT_CERTIFICATE")
+	op, err := s.claimOp(r.Context(), project, inst, "CREATE_CLIENT_CERTIFICATE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	op = s.runOp(op, false, func(context.Context) error {
 		return s.env.Store.Update(func(tx store.Tx) error {
 			return store.PutJSON(tx, nsSSLCerts, childKey(project, inst, c.Sha1Fingerprint), c)
@@ -254,7 +258,11 @@ func (s *Service) deleteSslCert(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, apierr.NotFound("The SSL certificate does not exist.").WithLegacy("sslCertificateDoesNotExist"))
 		return
 	}
-	op := s.newOp(r.Context(), project, inst, "DELETE_CLIENT_CERTIFICATE")
+	op, err := s.claimOp(r.Context(), project, inst, "DELETE_CLIENT_CERTIFICATE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(context.Context) error {
 		return s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsSSLCerts, childKey(project, inst, fp)) })
 	}))
@@ -268,7 +276,11 @@ func (s *Service) resetSslConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, inst := rec.Instance.Project, rec.Instance.Name
-	op := s.newOp(r.Context(), project, inst, "RESET_SSL_CONFIG")
+	op, err := s.claimOp(r.Context(), project, inst, "RESET_SSL_CONFIG")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(context.Context) error {
 		return s.env.Store.Update(func(tx store.Tx) error {
 			var keys []string

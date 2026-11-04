@@ -169,6 +169,7 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	}
 	name := in.Name
 	op := s.newOp(ctx, project, name, opType)
+	s.takeOp(op)
 	return s.runOp(op, true, func(ctx context.Context) error {
 		if in.Settings.ActivationPolicy != "NEVER" || after != nil {
 			var files []runtime.File
@@ -377,10 +378,16 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 			return
 		}
 	}
+	op, err := s.claimOp(ctx, project, name, "UPDATE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	nrec := *rec
 	nrec.Instance = &next
 	if newIP.PrivateNetwork != "" && rec.PrivateIP == "" {
 		if err := s.allocatePrivateIP(ctx, &nrec); err != nil {
+			s.releaseOp(op)
 			apierr.Write(w, err)
 			return
 		}
@@ -397,13 +404,13 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 		nrec.HostPort, nrec.PublicIP, nrec.LoopIP, nrec.AppliedFlags = latest.HostPort, latest.PublicIP, latest.LoopIP, latest.AppliedFlags
 		return store.PutJSON(tx, nsInstances, instKey(project, name), &nrec)
 	}); err != nil {
+		s.releaseOp(op)
 		apierr.Write(w, err)
 		return
 	}
 
 	failed := cur.State == "FAILED"
 	needsWork := oldAct != newAct || (newAct != "NEVER" && (netChanged || flagsChanged || failed))
-	op := s.newOp(ctx, project, name, "UPDATE")
 	op = s.runOp(op, needsWork, func(ctx context.Context) error {
 		switch {
 		case newAct == "NEVER" && oldAct != "NEVER":
@@ -482,20 +489,41 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 	// Retained backups.
 	var toDelete *instanceRecord
 	var deletedAt string
-	err := s.env.Store.Update(func(tx store.Tx) error {
+	now := s.env.Clock.Now().UTC()
+	// validate runs before the Operation lock, so a bad request gets its own
+	// error during another Operation, and again in the write that uses it.
+	validate := func(tx store.Tx) (*instanceRecord, error) {
 		rec, ok := getInstance(tx, project, name)
 		if !ok {
-			return errInstanceNotFound()
+			return nil, errInstanceNotFound()
 		}
 		if rec.Instance.Settings != nil && rec.Instance.Settings.DeletionProtectionEnabled {
-			return errInvalid("The instance is protected from deletion. Disable deletion protection on the instance and try again.")
+			return nil, errInvalid("The instance is protected from deletion. Disable deletion protection on the instance and try again.")
 		}
 		if rec.Instance.State == "PENDING_DELETE" {
-			return errInProgress()
+			return nil, errInProgress()
 		}
-		now := s.env.Clock.Now().UTC()
 		var err error
 		if final, err = finalBackupOf(r.URL.Query(), rec, now); err != nil {
+			return nil, err
+		}
+		return rec, nil
+	}
+	if err := s.env.Store.View(func(tx store.Tx) error {
+		_, err := validate(tx)
+		return err
+	}); err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	op, err := s.claimOp(ctx, project, name, "DELETE")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	err = s.env.Store.Update(func(tx store.Tx) error {
+		rec, err := validate(tx)
+		if err != nil {
 			return err
 		}
 		deletedAt = now.Format(time.RFC3339Nano)
@@ -504,10 +532,10 @@ func (s *Service) deleteInstance(w http.ResponseWriter, r *http.Request) {
 		return store.PutJSON(tx, nsInstances, instKey(project, name), rec)
 	})
 	if err != nil {
+		s.releaseOp(op)
 		apierr.Write(w, err)
 		return
 	}
-	op := s.newOp(ctx, project, name, "DELETE")
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		if final != nil {
 			if err := s.takeFinalBackup(ctx, toDelete, final); err != nil {
@@ -542,7 +570,11 @@ func (s *Service) restartInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	op := s.newOp(ctx, project, name, "RESTART")
+	op, err := s.claimOp(ctx, project, name, "RESTART")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		if err := s.restartContainer(ctx, project, name); err != nil {
 			return err

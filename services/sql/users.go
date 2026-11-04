@@ -180,7 +180,11 @@ func (s *Service) insertUser(w http.ResponseWriter, r *http.Request) {
 	ur := &userRecord{User: newUser(project, inst, u.Name, typ), Password: u.Password}
 	ur.User.DatabaseRoles = dedupe(u.DatabaseRoles)
 	ur.User.Etag = etagOf(ur.User)
-	op := s.newOp(r.Context(), project, inst, "CREATE_USER")
+	op, err := s.claimOp(r.Context(), project, inst, "CREATE_USER")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
 		return s.createUser(ctx, project, inst, ur)
 	}))
@@ -262,7 +266,11 @@ func (s *Service) updateUser(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	op := s.newOp(r.Context(), project, inst, "UPDATE_USER")
+	op, err := s.claimOp(r.Context(), project, inst, "UPDATE_USER")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
 		if body.PasswordPolicy != nil {
 			ur.User.PasswordPolicy = body.PasswordPolicy
@@ -346,7 +354,11 @@ func (s *Service) deleteUser(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	op := s.newOp(r.Context(), project, inst, "DELETE_USER")
+	op, err := s.claimOp(r.Context(), project, inst, "DELETE_USER")
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, false, func(ctx context.Context) error {
 		if _, err := s.execSQL(ctx, project, inst, "postgres", "", "DROP ROLE IF EXISTS "+quoteIdent(name)+";"); err != nil {
 			return err

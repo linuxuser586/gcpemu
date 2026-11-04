@@ -12,5 +12,5 @@ On Linux, Chromium cancels requests in flight with `net::ERR_NETWORK_CHANGED` wh
 ## Consequences
 
 - A `POST` that is neither a create named by the client nor a checked idempotent method fails on the first network error, as before. A `POST` can opt in only after a test shows what a second call does.
-- When the first request did land, a re-sent create shows "already exists", a re-sent delete shows "not found", and a write guarded by a fingerprint or etag shows a conflict, even though the change was made.
+- When the first request did land, a re-sent create shows "already exists", a re-sent delete shows "not found", and a write guarded by a fingerprint or etag shows a conflict, even though the change was made. On Cloud SQL, a re-sent write can also show that another Operation is in progress when that Operation is its own first request.
 - A submit that cannot reach the emulator at all reports it about 3 s later than before.

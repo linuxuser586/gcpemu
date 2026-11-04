@@ -15,6 +15,23 @@ async function reachable(request: APIRequestContext) {
   return !!info.runtime?.reachable
 }
 
+/**
+ * operationsDone waits until no Operation runs on a Cloud SQL instance.
+ * Cloud SQL refuses a request during another Operation, and a Cloud SQL
+ * instance shows RUNNABLE, or a backup SUCCESSFUL, before its Operation is
+ * DONE.
+ */
+async function operationsDone(request: APIRequestContext, project: string, instance: string) {
+  await expect(async () => {
+    const res = await request.get(
+      `/sqladmin/v1/projects/${project}/operations?instance=${instance}`,
+    )
+    expect(res.ok()).toBe(true)
+    const { items = [] } = (await res.json()) as { items?: { status: string }[] }
+    expect(items.filter((o) => o.status !== 'DONE')).toEqual([])
+  }).toPass({ timeout: 2 * 60_000 })
+}
+
 const tab = (page: Page, name: string) =>
   page.getByRole('navigation', { name: 'Instance' }).getByRole('link', { name, exact: true })
 
@@ -78,6 +95,7 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   await expect(page).toHaveURL(new RegExp(`/console/sql/instances/${name}\\?project=${id}$`))
   await expect(heading).toContainText(name)
   await state('RUNNABLE').toBeVisible({ timeout: 2 * 60_000 })
+  await operationsDone(request, id, name)
 
   // Connection name and strings.
   const connection = `${id}:us-central1:${name}`
@@ -150,6 +168,7 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   await page.getByRole('dialog').getByRole('button', { name: 'Create' }).click()
   const backup = page.getByTestId('backup').filter({ hasText: 'before' })
   await expect(backup).toContainText('SUCCESSFUL', { timeout: 60_000 })
+  await operationsDone(request, id, name)
 
   await tab(page, 'Query').click()
   await page.getByLabel('Database').selectOption('app')
@@ -170,8 +189,9 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
     await run.click()
     await expect(results).toContainText('SELECT 2', { timeout: 2000 })
   }).toPass({ timeout: 2 * 60_000 })
+  await operationsDone(request, id, name)
 
-  // Stop, start and restart.
+  // Stop, start and restart. Each action waits for its Operation.
   await page.getByRole('button', { name: 'Stop', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Stop instance' }).click()
   await state('STOPPED').toBeVisible({ timeout: 60_000 })
@@ -192,10 +212,7 @@ test('Cloud SQL: an instance’s lifecycle, query runner and backups', async ({
   await expect(details).not.toContainText('team=e2e')
   await expect(details).toContainText('work_mem=16384')
 
-  // Delete a user, a database, then the Cloud SQL instance. Stop, Start,
-  // Restart and Edit pass above before their Operations finish, so a delete
-  // can wait behind them for the Cloud SQL instance's lock, with its dialog
-  // open and its row still listed.
+  // Delete a user, a database, then the Cloud SQL instance.
   await tab(page, 'Users').click()
   await page.getByRole('button', { name: 'Delete user reader' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete user' }).click()

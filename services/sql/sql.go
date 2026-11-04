@@ -46,6 +46,11 @@ type Service struct {
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex
 
+	// opMu guards busy and hidden, the Operation lock (oplock.go).
+	opMu   sync.Mutex
+	busy   map[string]string // "P/I" → the running Operation's name
+	hidden map[string]bool   // "P/I" → work that isn't an Operation runs
+
 	portMu sync.Mutex
 
 	// loopMu guards exposed and the allocation of loopback addresses.
@@ -75,7 +80,7 @@ type Service struct {
 
 // New returns the service.
 func New(env *emu.Env) emu.Service {
-	s := &Service{env: env, locks: map[string]*sync.Mutex{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases,
+	s := &Service{env: env, locks: map[string]*sync.Mutex{}, busy: map[string]string{}, hidden: map[string]bool{}, exposed: map[string][]*netplane.Exposed{}, aliases: loopback.Aliases,
 		lan: map[string]*instanceLAN{}, routers: map[string]*connectRouter{}, inUse: map[string]int{}}
 	s.mux = s.routes()
 	s.bg = newBackground()
@@ -333,19 +338,6 @@ func (s *Service) HostAddrs() map[string]string {
 		return nil
 	})
 	return out
-}
-
-// lock returns the held per-instance mutex serializing data-plane work.
-func (s *Service) lock(project, name string) *sync.Mutex {
-	s.locksMu.Lock()
-	mu, ok := s.locks[instKey(project, name)]
-	if !ok {
-		mu = &sync.Mutex{}
-		s.locks[instKey(project, name)] = mu
-	}
-	s.locksMu.Unlock()
-	mu.Lock()
-	return mu
 }
 
 // goBackground runs fn on the background context. It reports false, and
