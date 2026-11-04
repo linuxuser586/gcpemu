@@ -475,18 +475,22 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			reached, err := instance.AskShutdown(c.do, instance.ReadID(cfg.InstanceDir()), 0)
+			stopping, err := instance.AskShutdown(c.do, instance.ReadID(cfg.InstanceDir()), 0)
 			if err != nil {
 				return err
 			}
-			if !reached.Watchable() {
-				return fmt.Errorf("gcpemu instance %q accepted the shutdown, but its exit is unconfirmed: this host cannot watch its process, as for a Containerized Instance", cfg.Instance)
+			if !stopping.Watchable() {
+				why := "its process cannot be watched from here, as for a Containerized Instance"
+				if stopping.PIDScope == "" {
+					why = "this Instance doesn't say whether its process can be watched; upgrade or restart it"
+				}
+				return fmt.Errorf("gcpemu instance %q accepted the shutdown, but its exit is unconfirmed: %s", cfg.Instance, why)
 			}
 			// Done once the process has exited, so that nothing writes to the
 			// data dir again and scripts can start a new instance right away
 			// (ADR 0064).
 			for i := 0; i < 600; i++ {
-				if !instance.ProcessAlive(reached.Pid) {
+				if !instance.ProcessAlive(stopping.Pid) {
 					fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q stopped\n", cfg.Instance)
 					return nil
 				}

@@ -213,7 +213,7 @@ func stopProcess(ctx context.Context, dir, id string) bool {
 	if pid <= 0 || pid == os.Getpid() || !ProcessAlive(pid) {
 		return false
 	}
-	if askShutdown(dir, id, pid) && exited(ctx, pid, stopWait) {
+	if askDirShutdown(dir, id, pid) && exited(ctx, pid, stopWait) {
 		return true
 	}
 	if exe, err := exePath(pid); err != nil || !isGcpemu(exe) {
@@ -226,10 +226,10 @@ func stopProcess(ctx context.Context, dir, id string) bool {
 	return true
 }
 
-// askShutdown asks the Instance on the gateway in dir's endpoints to shut
+// askDirShutdown asks the Instance on the gateway in dir's endpoints to shut
 // down, with dir's Admin token, if it is the Instance id in process pid.
 // It reports whether the Instance accepted.
-func askShutdown(dir, id string, pid int) bool {
+func askDirShutdown(dir, id string, pid int) bool {
 	var eps map[string]string
 	b, err := os.ReadFile(filepath.Join(dir, EndpointsFile))
 	if err != nil || json.Unmarshal(b, &eps) != nil || eps["gateway"] == "" {
@@ -254,55 +254,6 @@ func askShutdown(dir, id string, pid int) bool {
 		return resp.StatusCode, body, err
 	}, id, pid)
 	return err == nil
-}
-
-// Reached is the Instance that accepted a shutdown, as it reported itself.
-type Reached struct {
-	ID           string `json:"id"`
-	Pid          int    `json:"pid"`
-	PIDNamespace string `json:"pidNamespace"`
-}
-
-// Watchable reports whether this process can tell when the Instance's
-// process exits. A Containerized Instance's pid means nothing here: it may
-// be missing or name an unrelated process (ADR 0064). So does the pid of
-// an Instance too old to report its namespace.
-func (r Reached) Watchable() bool {
-	return r.Pid > 0 && r.PIDNamespace != "" && r.PIDNamespace == PIDNamespace()
-}
-
-// AskShutdown asks the Instance that call reaches to shut down, if it is
-// the Instance id, unless id is "", and in process pid, unless pid is 0.
-// The Instance says which one it is because the files in a data dir may
-// be a crashed Instance's: their port may have another Instance on it, and
-// their pid may be dead. call makes an Admin API request, returning the
-// status and body.
-func AskShutdown(call func(method, path string) (int, []byte, error), id string, pid int) (Reached, error) {
-	var r Reached
-	code, b, err := call(http.MethodGet, "/_emu/v1/info")
-	if err != nil {
-		return r, err
-	}
-	if code != http.StatusOK {
-		return r, fmt.Errorf("the API gateway did not say which Instance it serves: %d %s", code, b)
-	}
-	if err := json.Unmarshal(b, &r); err != nil {
-		return r, err
-	}
-	if id != "" && r.ID != id {
-		return r, fmt.Errorf("the API gateway serves Instance %s, not %s: another Instance took the port", r.ID, id)
-	}
-	if pid != 0 && r.Pid != pid {
-		return r, fmt.Errorf("the API gateway serves process %d, not %d: another Instance took the port", r.Pid, pid)
-	}
-	code, b, err = call(http.MethodPost, "/_emu/v1/shutdown")
-	if err != nil {
-		return r, err
-	}
-	if code >= 300 {
-		return r, fmt.Errorf("the Instance refused to shut down: %d %s", code, b)
-	}
-	return r, nil
 }
 
 // exited waits up to wait for the process pid to exit, and reports

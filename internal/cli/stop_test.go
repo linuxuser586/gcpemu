@@ -94,8 +94,8 @@ func stop(dir string) (string, error) {
 }
 
 // infoBody is an /_emu/v1/info body for the Instance "want".
-func infoBody(pid int, pidNamespace string) string {
-	return fmt.Sprintf(`{"id":"want","pid":%d,"pidNamespace":%q}`, pid, pidNamespace)
+func infoBody(pid int, pidScope string) string {
+	return fmt.Sprintf(`{"id":"want","pid":%d,"pidScope":%q}`, pid, pidScope)
 }
 
 // TestStopWaitsForTheInstanceItReached is #998: stop waits for the process
@@ -111,7 +111,7 @@ func TestStopWaitsForTheInstanceItReached(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			proc := fakeProcess(t)
 			var killed atomic.Bool
-			g := newStopGateway(t, infoBody(proc.Process.Pid, instance.PIDNamespace()), func() {
+			g := newStopGateway(t, infoBody(proc.Process.Pid, instance.PIDScope()), func() {
 				time.AfterFunc(300*time.Millisecond, func() {
 					killed.Store(true)
 					_ = proc.Process.Kill()
@@ -137,16 +137,23 @@ func TestStopWaitsForTheInstanceItReached(t *testing.T) {
 // exit is unconfirmed, without taking the pid, here a live process, for
 // the Instance's.
 func TestStopUnconfirmed(t *testing.T) {
-	for name, info := range map[string]string{
-		"another PID namespace": infoBody(os.Getpid(), "pid:[1]"),
-		"no PID namespace":      fmt.Sprintf(`{"id":"want","pid":%d}`, os.Getpid()),
-		"no pid":                infoBody(0, instance.PIDNamespace()),
+	for name, tc := range map[string]struct{ info, why string }{
+		"another PID scope": {infoBody(os.Getpid(), "pid:[1] boot"), "Containerized Instance"},
+		// stop runs in the container, and ends with it (#998).
+		"its own PID 1": {infoBody(1, instance.PIDScope()), "Containerized Instance"},
+		"no pid":        {infoBody(0, instance.PIDScope()), "Containerized Instance"},
+		// An Instance too old to report one may be on this host or not.
+		"no PID scope": {fmt.Sprintf(`{"id":"want","pid":%d}`, os.Getpid()), "upgrade or restart it"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			g := newStopGateway(t, info, nil)
+			g := newStopGateway(t, tc.info, nil)
+			start := time.Now()
 			out, err := stop(g.dir)
-			if err == nil || !strings.Contains(err.Error(), "unconfirmed") {
-				t.Errorf("stop = %v; want an error saying the exit is unconfirmed", err)
+			if err == nil || !strings.Contains(err.Error(), "unconfirmed") || !strings.Contains(err.Error(), tc.why) {
+				t.Errorf("stop = %v; want an error saying the exit is unconfirmed, and %q", err, tc.why)
+			}
+			if d := time.Since(start); d > 10*time.Second {
+				t.Errorf("stop took %v; want no wait for a process it cannot watch", d)
 			}
 			if strings.Contains(out, "stopped") {
 				t.Errorf("stop printed %q; want no claim that it stopped", out)
@@ -180,7 +187,7 @@ func TestStopRefused(t *testing.T) {
 				http.Error(w, "bad token", http.StatusUnauthorized)
 				return
 			}
-			_, _ = io.WriteString(w, infoBody(os.Getpid(), instance.PIDNamespace()))
+			_, _ = io.WriteString(w, infoBody(os.Getpid(), instance.PIDScope()))
 		}))
 		defer srv.Close()
 		dir := t.TempDir()

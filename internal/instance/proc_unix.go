@@ -19,11 +19,12 @@ func ProcessAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// PIDNamespace names the space this process's pids belong to: another
-// process can watch a pid only from the same one. Linux has one per
-// container, and every kernel's first one reads the same, so the boot ID
-// tells apart those of a host and a VM. Every other OS has one, its own.
-func PIDNamespace() string {
+// PIDScope is an opaque value that says where this process's pids mean
+// something: another process can watch a pid only from an equal scope.
+// Linux has a PID namespace per container, and every kernel's first one
+// reads the same, so the boot ID tells apart those of a host and a VM.
+// Every other OS has one scope, its own.
+func PIDScope() string {
 	if runtime.GOOS != "linux" {
 		return runtime.GOOS
 	}
