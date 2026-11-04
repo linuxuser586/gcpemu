@@ -479,6 +479,10 @@ func logTail(path string, start int64, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// stopTimeout is how long `gcpemu stop` waits for an Instance to exit. It
+// never kills the process: a stop that gives up leaves it running.
+var stopTimeout = 60 * time.Second
+
 func (o *rootOpts) stopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
@@ -502,15 +506,20 @@ func (o *rootOpts) stopCmd() *cobra.Command {
 			}
 			// Done once the PID file is gone and the process has exited, so
 			// that scripts can start a new instance right away.
-			for i := 0; i < 600; i++ {
+			for deadline := time.Now().Add(stopTimeout); ; time.Sleep(100 * time.Millisecond) {
 				_, err := os.Stat(pidFile)
-				if os.IsNotExist(err) && (pid <= 0 || !instance.ProcessAlive(pid)) {
+				alive := pid > 0 && instance.ProcessAlive(pid)
+				if os.IsNotExist(err) && !alive {
 					fmt.Fprintf(cmd.OutOrStdout(), "gcpemu instance %q stopped\n", cfg.Instance)
 					return nil
 				}
-				time.Sleep(100 * time.Millisecond)
+				if time.Now().After(deadline) {
+					if alive {
+						return fmt.Errorf("timed out after %s waiting for shutdown: PID %d is still running", stopTimeout, pid)
+					}
+					return fmt.Errorf("timed out after %s waiting for shutdown: %s remains", stopTimeout, pidFile)
+				}
 			}
-			return errors.New("timed out waiting for shutdown")
 		},
 	}
 }
