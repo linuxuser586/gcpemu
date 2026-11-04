@@ -46,6 +46,20 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    files: ['e2e/**'],
+    ignores: ['e2e/fixtures.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.property.name=/^(goto|reload)$/]',
+          message:
+            "Use goto or reload from './fixtures': they try again a navigation Chromium cancelled because the host's network changed (#939).",
+        },
+      ],
+    },
+  },
+  {
     // Some plugins ship no types.
     files: ['eslint.config.js'],
     extends: [tseslint.configs.disableTypeChecked],

@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, goto, projectId, test } from './fixtures'
 
 // The Cloud CDN view (SRS 4.8.3, FR-UI-011) against a real Instance: an
 // origin added with the form, traffic through a load balancer in front of
@@ -37,7 +37,7 @@ test('Cloud CDN: the cache settings form shows the API’s validation messages',
     name: 'assets',
     bucketName: `cdn-form-${browserName}`,
   })
-  await page.goto(`/console/cdn?project=${id}`)
+  await goto(page, `/console/cdn?project=${id}`)
   await expect(page.getByText('No origins in this Project yet')).toBeVisible()
   await page.getByRole('link', { name: 'Add origin' }).click()
   await page.getByLabel('Backend').selectOption({ label: 'assets (backend bucket)' })
@@ -144,7 +144,7 @@ test('Cloud CDN: traffic, hit ratio, cached entries, invalidation and purge', as
   }
 
   // Add the bucket as an origin with the form.
-  await page.goto(`/console/cdn/add?project=${id}`)
+  await goto(page, `/console/cdn/add?project=${id}`)
   await page.getByLabel('Backend').selectOption({ label: 'static (backend bucket)' })
   await page.getByRole('button', { name: 'Add origin' }).click()
   await expect(page).toHaveURL(new RegExp(`/console/cdn/global/backendBuckets/static\\?`), {
@@ -167,7 +167,7 @@ test('Cloud CDN: traffic, hit ratio, cached entries, invalidation and purge', as
   await expect(traffic).not.toContainText('Misses0')
 
   // The list shows the origin with its entry and hit ratio.
-  await page.goto(`/console/cdn?project=${id}`)
+  await goto(page, `/console/cdn?project=${id}`)
   const row = page.getByTestId('origin')
   await expect(row).toContainText('static')
   await expect(row).toContainText('%')
@@ -188,7 +188,7 @@ test('Cloud CDN: traffic, hit ratio, cached entries, invalidation and purge', as
     await get()
     await expect(entries).toHaveCount(1, { timeout: 3_000 })
   }).toPass({ timeout: 30_000 })
-  await page.goto(`/console/cdn?project=${id}`)
+  await goto(page, `/console/cdn?project=${id}`)
   await page.getByRole('button', { name: 'Purge all' }).click()
   await page.getByRole('button', { name: 'Purge cache' }).click()
   await expect(page.getByText(/^Purged \d+ cached entr(y|ies)\.$/)).toBeVisible()

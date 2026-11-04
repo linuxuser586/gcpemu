@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { clipboardText, expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { clipboardText, expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // Copy as (FR-UI-015) against a real Instance: each resource's dialog
 // shows the gcloud command, curl request and OpenTofu block, and the curl
@@ -84,7 +84,7 @@ test('Copy as: a Pub/Sub subscription as gcloud, curl and OpenTofu', async ({
   expect(created.ok()).toBe(true)
   const before = (await created.json()) as Record<string, unknown>
 
-  await page.goto(`/console/pubsub/subscriptions/worker?project=${id}`)
+  await goto(page, `/console/pubsub/subscriptions/worker?project=${id}`)
   const copied = await copyAs(page, 'subscription')
   expect(copied.gcloud).toBe(
     [
@@ -232,7 +232,7 @@ for (const c of CASES) {
     await expect.poll(async () => (await read()).status(), { timeout: 15_000 }).toBe(200)
     const before = (await (await read()).json()) as unknown
 
-    await page.goto(c.page(id))
+    await goto(page, c.page(id))
     const copied = await copyAs(page, c.what)
     expect(copied.gcloud).toMatch(/^gcloud /)
     expect(copied.gcloud).toContain(`--project=${id}`)

@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, goto, projectId, reload, test } from './fixtures'
 
 // The Load Balancer view (SRS 4.8.3, FR-UI-011) against a real Instance:
 // a load balancer built with the forms, its local listener, the route
@@ -25,7 +25,7 @@ async function compute(request: APIRequestContext, path: string, data: unknown) 
 
 /** create fills a kind's create form with fill and submits it. */
 async function create(page: Page, id: string, coll: string, fill: () => Promise<void>) {
-  await page.goto(`/console/lb/create/${coll}?project=${id}`)
+  await goto(page, `/console/lb/create/${coll}?project=${id}`)
   await fill()
   await page.getByRole('button', { name: 'Create' }).click()
   await expect(page).toHaveURL(new RegExp(`/console/lb/global/${coll}/`), { timeout: 15_000 })
@@ -36,7 +36,7 @@ test('Load Balancer: the create forms show the API’s validation messages', asy
   browserName,
 }) => {
   const id = projectId('e2e-lbform', browserName)
-  await page.goto(`/console/lb?project=${id}`)
+  await goto(page, `/console/lb?project=${id}`)
   await expect(page.getByText('No forwarding rules in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Health checks' }).click()
   await page.getByRole('link', { name: 'Create health check' }).click()
@@ -69,7 +69,7 @@ test('Load Balancer: the create forms show the API’s validation messages', asy
   expect(body.httpHealthCheck).toBeUndefined()
 
   // The API rejects what the form cannot know is wrong.
-  await page.goto(`/console/lb/create/forwardingRules?project=${id}`)
+  await goto(page, `/console/lb/create/forwardingRules?project=${id}`)
   await page.getByLabel('Name').fill('web')
   await page.getByLabel('Port').fill('9999')
   await page.getByRole('button', { name: 'Create' }).click()
@@ -159,12 +159,12 @@ test('Load Balancer: build a load balancer, test URLs and edit its URL map', asy
   const listener = page.getByRole('region', { name: 'Local listener' })
   await expect(listener.getByText(/^127\.0\.0\.\d+:\d+$/)).toBeVisible()
   await expect(listener.getByText(/^curl http:\/\/127\.0\.0\.\d+:\d+\/$/)).toBeVisible()
-  await page.goto(`/console/lb?project=${id}`)
+  await goto(page, `/console/lb?project=${id}`)
   await expect(page.getByTestId('resource')).toContainText(/127\.0\.0\.\d+:\d+/)
   await expect(page.getByTestId('resource')).toContainText(':8080')
 
   // Test a URL: the route and backend that would serve it.
-  await page.goto(`/console/lb/global/urlMaps/web-map?project=${id}`)
+  await goto(page, `/console/lb/global/urlMaps/web-map?project=${id}`)
   const url = page.getByLabel('URL', { exact: true })
   const result = page.getByRole('status', { name: 'Route' })
   await url.fill('http://app.example.test/api/users?page=2')
@@ -197,7 +197,7 @@ test('Load Balancer: build a load balancer, test URLs and edit its URL map', asy
   await page.getByRole('button', { name: 'Delete URL map' }).click()
   await expect(page.getByText(/is already being used by/)).toBeVisible()
   await page.keyboard.press('Escape')
-  await page.goto(`/console/lb/global/forwardingRules/web?project=${id}`)
+  await goto(page, `/console/lb/global/forwardingRules/web?project=${id}`)
   await page.getByRole('button', { name: 'Delete' }).click()
   await page.getByRole('button', { name: 'Delete forwarding rule' }).click()
   await expect(page.getByText('No forwarding rules in this Project yet.')).toBeVisible({
@@ -270,7 +270,7 @@ test('Load Balancer traffic: a live trace of each request, filtered by path', as
     expect(listener).not.toBe('')
   }).toPass()
 
-  await page.goto(`/console/lb?project=${id}`)
+  await goto(page, `/console/lb?project=${id}`)
   await page.getByRole('link', { name: 'Traffic' }).click()
   await expect(page.getByText(/No requests to this Project/)).toBeVisible()
 
@@ -305,7 +305,7 @@ test('Load Balancer traffic: a live trace of each request, filtered by path', as
   await page.getByLabel('Path').fill('/old')
   await expect(rows).toHaveCount(1)
   await expect(page).toHaveURL(/[?&]path=%2Fold/)
-  await page.reload()
+  await reload(page)
   await expect(page.getByLabel('Path')).toHaveValue('/old')
   await expect(rows).toHaveCount(1)
   await page.getByLabel('Host').fill('nowhere.test')

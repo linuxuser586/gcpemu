@@ -1,6 +1,6 @@
 import type { Page, Request } from '@playwright/test'
 
-import { expect, projectId, test } from './fixtures'
+import { expect, goto, projectId, test } from './fixtures'
 
 // ADR 0063: a page whose own script or stylesheet failed to load reloads
 // itself, at most twice, and says so if every attempt failed. Aborting
@@ -39,7 +39,7 @@ test('a bundle that fails its first load is reloaded, keeping the loader redirec
   const id = projectId('e2e-boot', browserName)
   const violations = cspViolations(page)
   await abort(page, bundle, 1)
-  await page.goto(`/console/build/projects/${id}/locations/global/builds/b-1`)
+  await goto(page, `/console/build/projects/${id}/locations/global/builds/b-1`)
   await expect(page).toHaveURL(new RegExp(`/builds/b-1\\?project=${id}$`))
   await expect(page.getByRole('navigation', { name: 'Services' })).toBeVisible()
   expect(documents(requests)).toHaveLength(2)
@@ -51,7 +51,7 @@ test('a bundle that never loads ends in a message after two reloads', async ({
   requests,
 }) => {
   await abort(page, bundle)
-  await page.goto('/console/pubsub?project=p1')
+  await goto(page, '/console/pubsub?project=p1')
   await expect(page.locator('#root')).toHaveText(
     /The Web console couldn’t load its files from the emulator\. Reload to try again\./,
     { timeout: 10_000 },
@@ -74,7 +74,7 @@ test('without sessionStorage, a bundle that never loads is reloaded once', async
     })
   })
   await abort(page, bundle)
-  await page.goto('/console/pubsub?project=p1')
+  await goto(page, '/console/pubsub?project=p1')
   await expect(page.locator('#root')).toHaveText(/couldn’t load its files/, { timeout: 10_000 })
   await page.waitForTimeout(2_500)
   expect(documents(requests)).toHaveLength(2)
@@ -82,7 +82,7 @@ test('without sessionStorage, a bundle that never loads is reloaded once', async
 
 test('a stylesheet that fails its first load is reloaded', async ({ page, requests }) => {
   await abort(page, stylesheet, 1)
-  await page.goto('/console/pubsub?project=p1')
+  await goto(page, '/console/pubsub?project=p1')
   await expect.poll(() => documents(requests).length).toBe(2)
   await expect(page.getByRole('heading', { name: 'Pub/Sub' })).toBeVisible()
   expect(
@@ -96,7 +96,7 @@ test('a failed image or fetch does not reload the page', async ({ page, requests
   const violations = cspViolations(page)
   await abort(page, /\/console\/(favicon\.svg|missing\.png)$/)
   await abort(page, /\/_emu\/v1\/info$/, 1)
-  await page.goto('/console/pubsub?project=p1')
+  await goto(page, '/console/pubsub?project=p1')
   await expect(page.getByRole('heading', { name: 'Pub/Sub' })).toBeVisible()
   const failed = await page.evaluate(
     () =>

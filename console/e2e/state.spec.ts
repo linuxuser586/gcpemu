@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 
-import { expect, expectConsoleRequests, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, test } from './fixtures'
 import { startInstance, type Instance } from './instance'
 
 // FR-UI-017: restoring a State snapshot and a Reset change all of an
@@ -38,7 +38,7 @@ test.describe('FR-UI-017 State snapshots, Reset and seed files', () => {
       ).status(),
     ).toBe(200)
 
-    await page.goto(`${inst.url}/console/`)
+    await goto(page, `${inst.url}/console/`)
     await page
       .getByRole('navigation', { name: 'Services' })
       .getByRole('link', { name: 'State' })
@@ -79,7 +79,7 @@ test.describe('FR-UI-017 State snapshots, Reset and seed files', () => {
   })
 
   test('imports and exports a seed file', async ({ page, request }) => {
-    await page.goto(`${inst.url}/console/state`)
+    await goto(page, `${inst.url}/console/state`)
     const form = page.getByRole('form', { name: 'Import seed file' })
     const yaml = form.getByRole('textbox', { name: 'YAML' })
 
@@ -124,7 +124,7 @@ test.describe('FR-UI-017 State snapshots, Reset and seed files', () => {
   })
 
   test('resets the Instance, keeping State snapshots', async ({ page, request }) => {
-    await page.goto(`${inst.url}/console/state`)
+    await goto(page, `${inst.url}/console/state`)
     await page.getByRole('button', { name: 'Reset Instance' }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Reset' }).click()
     await expect(page.getByText('Reset the Instance.')).toBeVisible()

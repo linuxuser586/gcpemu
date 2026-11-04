@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
 
 // The VPC network view (SRS 4.8.3, FR-UI-011) against the Instance's
 // compute Service: a custom mode network and a subnetwork, a network's
@@ -20,7 +20,7 @@ test('VPC network: create, edit and delete a network and a subnetwork', async ({
   // Six compute Operations of 2 s each (--lro-latency), and the pages between them.
   test.setTimeout(2 * 60_000)
   const id = projectId(`e2e-vpc${testInfo.retry}`, browserName)
-  await page.goto(`/console/compute?project=${id}`)
+  await goto(page, `/console/compute?project=${id}`)
   await expect(page.getByRole('heading', { name: 'VPC network' })).toBeVisible()
 
   // Create a custom mode network; the form checks what the API checks.
@@ -120,20 +120,20 @@ test('VPC network: a subnetwork’s container network', async ({
   })
 
   // None until something uses the subnetwork.
-  await page.goto(`/console/compute/regions/us-central1/subnetworks/apps?project=${id}`)
+  await goto(page, `/console/compute/regions/us-central1/subnetworks/apps?project=${id}`)
   const panel = page.getByRole('region', { name: 'Container network' })
   await expect(panel).toContainText('No container network yet')
 
   // Asking for its Host address realises it, as a Managed container would.
   await request.get(`/_emu/v1/host/address?subnetwork=${encodeURIComponent(sp)}`)
-  await page.reload()
+  await reload(page)
   const details = panel.getByLabel('Container network details')
   await expect(details).toContainText('Declared range10.43.0.0/24')
   await expect(details).toContainText(/gcpemu-.*-vpc-main-apps-/)
   await expect(details).toContainText('Gateway address10.43.0.1')
 
   // Its network sums it up.
-  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  await goto(page, `/console/compute/global/networks/main?project=${id}`)
   const row = page
     .getByRole('table', { name: 'Container networks' })
     .getByTestId('container-network')
@@ -158,7 +158,7 @@ test('VPC network: create, edit and delete a firewall rule, create and delete a 
     name: 'main',
     autoCreateSubnetworks: false,
   })
-  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  await goto(page, `/console/compute/global/networks/main?project=${id}`)
   await expect(page.getByText('Recorded: stored and returned, not enforced')).toBeVisible()
   const defaultRoute = page.getByRole('table', { name: 'Routes' }).getByTestId('route')
   await expect(defaultRoute).toContainText('System-generated')
@@ -234,7 +234,7 @@ test('VPC network: reserve and release a regional external and a global address'
   // Four compute Operations of 2 s each (--lro-latency), and the pages between them.
   test.setTimeout(2 * 60_000)
   const id = projectId(`e2e-vpcip${testInfo.retry}`, browserName)
-  await page.goto(`/console/compute/addresses?project=${id}`)
+  await goto(page, `/console/compute/addresses?project=${id}`)
   await expect(page.getByText('No reserved addresses in this Project yet.')).toBeVisible()
 
   // Reserve a regional external address; the form checks what the API checks.
@@ -254,7 +254,7 @@ test('VPC network: reserve and release a regional external and a global address'
   await expect(details).toContainText(/34\.(1[6-9]|2\d|3[01])\./)
 
   // Reserve a global one.
-  await page.goto(`/console/compute/create-address?project=${id}`)
+  await goto(page, `/console/compute/create-address?project=${id}`)
   await page.getByLabel('Name').fill('lb-ip')
   await page.getByLabel('Scope').selectOption('global')
   await page.getByRole('button', { name: 'Reserve' }).click()
@@ -266,7 +266,7 @@ test('VPC network: reserve and release a regional external and a global address'
   await expect(details).toContainText(/34\.12[0-3]\./)
 
   // Both are listed.
-  await page.goto(`/console/compute/addresses?project=${id}`)
+  await goto(page, `/console/compute/addresses?project=${id}`)
   const rows = page.getByRole('table', { name: 'IP addresses' }).getByTestId('address')
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText('lb-ip')
@@ -301,7 +301,7 @@ test('VPC network: peer two networks; allocate a private services access range a
       autoCreateSubnetworks: false,
     })
   }
-  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  await goto(page, `/console/compute/global/networks/main?project=${id}`)
   await expect(page.getByText('No peerings in this network.')).toBeVisible()
 
   // Peer main with hub; it is active once hub peers back.
@@ -318,7 +318,7 @@ test('VPC network: peer two networks; allocate a private services access range a
   await compute(request, 'POST', `projects/${id}/global/networks/hub/addPeering`, {
     networkPeering: { name: 'hub-to-main', network: `projects/${id}/global/networks/main` },
   })
-  await page.reload()
+  await reload(page)
   await expect(peering).toContainText('ACTIVE')
   await expect(peering).not.toContainText('INACTIVE')
 
@@ -339,7 +339,7 @@ test('VPC network: peer two networks; allocate a private services access range a
   await expect(page.getByLabel('Address details')).toContainText('VPC_PEERING')
 
   // Connect the network over it.
-  await page.goto(`/console/compute/global/networks/main?project=${id}`)
+  await goto(page, `/console/compute/global/networks/main?project=${id}`)
   const range = page.getByRole('table', { name: 'Allocated ranges' }).getByTestId('allocation')
   await expect(range).toContainText('/16')
   await expect(range).toContainText('Not connected')

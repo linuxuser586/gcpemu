@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Pub/Sub view (SRS 4.8.3, FR-UI-011) against the Instance's pubsub
 // Service. Each test and attempt has its own Project, so a retry does not
@@ -43,7 +43,7 @@ async function put(request: APIRequestContext, path: string, data: unknown) {
 
 test('Pub/Sub: topics and subscriptions', async ({ page, browserName, requests }, testInfo) => {
   const id = projectId(`e2e-pst${testInfo.retry}`, browserName)
-  await page.goto(`/console/pubsub?project=${id}`)
+  await goto(page, `/console/pubsub?project=${id}`)
   await expect(page.getByText('No topics in this Project yet.')).toBeVisible()
 
   // Topics: the form's validation, then two topics.
@@ -122,7 +122,7 @@ test('Pub/Sub: publish, peek, pull and ack', async ({
   await put(request, `projects/${id}/subscriptions/orders-worker`, { topic })
 
   // Publish two messages with attributes and an ordering key.
-  await page.goto(`/console/pubsub/topics/orders?project=${id}`)
+  await goto(page, `/console/pubsub/topics/orders?project=${id}`)
   await publish(page, 'first', 'kind=new', 'cust-1')
   await publish(page, 'second', 'kind=paid', 'cust-1')
   const row = page.getByTestId('subscription').filter({ hasText: 'orders-worker' })
@@ -166,7 +166,7 @@ test('Pub/Sub: purge and seek', async ({ page, request, browserName, requests },
   expect(res.ok()).toBe(true)
 
   // Purge acks them; seeking back replays the retained messages.
-  await page.goto(`/console/pubsub/subscriptions/orders-worker?project=${id}`)
+  await goto(page, `/console/pubsub/subscriptions/orders-worker?project=${id}`)
   await expect(tile(page, 'Unacked messages')).toHaveText('2')
   await page.getByRole('button', { name: 'Purge messages' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Purge messages' }).click()
@@ -201,7 +201,7 @@ test('Pub/Sub: a message peeked at too often is dead-lettered', async ({
   })
   expect(res.ok()).toBe(true)
 
-  await page.goto(`/console/pubsub/subscriptions/jobs-worker?project=${id}`)
+  await goto(page, `/console/pubsub/subscriptions/jobs-worker?project=${id}`)
   await expect(tile(page, 'Unacked messages')).toHaveText('1')
   for (let attempt = 1; attempt <= 5; attempt++) {
     await page.getByRole('button', { name: 'Peek' }).click()

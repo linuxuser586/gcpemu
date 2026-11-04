@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, reload, test } from './fixtures'
 
 // FR-UI-016: Fault rules are the Instance's and every browser shares one
 // Instance, so each test's rule matches only requests for a bucket named
@@ -36,7 +36,7 @@ test.describe('FR-UI-016 fault rules', () => {
     ids.push(id)
     expect(await bucketStatus(request, bucket)).toBe(404)
 
-    await page.goto('/console/')
+    await goto(page, '/console/')
     await page
       .getByRole('navigation', { name: 'Services' })
       .getByRole('link', { name: 'Fault rules' })
@@ -67,7 +67,7 @@ test.describe('FR-UI-016 fault rules', () => {
     await expect(page.getByText(`Disabled rule ${id}.`)).toBeVisible()
     await expect(toggle).not.toBeChecked()
     expect(await bucketStatus(request, bucket)).toBe(404)
-    await page.reload()
+    await reload(page)
     await expect(toggle).not.toBeChecked()
     await expect(row.getByLabel('2 hits')).toBeVisible()
 
@@ -95,7 +95,7 @@ test.describe('FR-UI-016 fault rules', () => {
     const bucket = `fault-json-${browserName}`
     ids.push(id)
 
-    await page.goto('/console/faults/create')
+    await goto(page, '/console/faults/create')
     await page.getByRole('tab', { name: 'JSON' }).click()
     const body = page.getByLabel('Request body')
     await body.fill(JSON.stringify({ id, method: '(', code: 'ABORTED' }))

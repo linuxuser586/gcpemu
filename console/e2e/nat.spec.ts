@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test'
 
-import { expect, expectConsoleRequests, projectId, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, projectId, test } from './fixtures'
 
 // The Cloud NAT view (SRS 4.8.3, FR-UI-011) against the Instance's
 // compute and nat Services. nat runs on Linux only (emulator.ts): its
@@ -71,7 +71,7 @@ test('Cloud NAT: a router’s NAT gateways, their coverage and the offline sink'
     })
   }
 
-  await page.goto(`/console/nat?project=${id}`)
+  await goto(page, `/console/nat?project=${id}`)
   await expect(page.getByText('No Cloud Routers in this Project yet')).toBeVisible()
   await sinkOn(page)
 
@@ -173,7 +173,7 @@ test('Cloud NAT: a private cluster’s egress in the translation log', async ({
   expect(created.status(), await created.text()).toBe(200)
 
   // A NAT for the default network's us-central1 subnetwork, from the console.
-  await page.goto(`/console/nat/create?project=${id}`)
+  await goto(page, `/console/nat/create?project=${id}`)
   await page.getByLabel('Name').fill('egress')
   await page.getByLabel('Network').fill('default')
   await page.getByRole('button', { name: 'Create' }).click()
@@ -182,7 +182,7 @@ test('Cloud NAT: a private cluster’s egress in the translation log', async ({
   await page.getByLabel('Name').fill('nat')
   await page.getByRole('button', { name: 'Add' }).click()
   await expect(page).toHaveURL(/\/routers\/egress\/nats\/nat\?/)
-  await page.goto(`/console/nat?project=${id}`)
+  await goto(page, `/console/nat?project=${id}`)
   await sinkOn(page)
 
   // Once the cluster runs, a pod's requests leave through the NAT.
@@ -216,7 +216,7 @@ test('Cloud NAT: a private cluster’s egress in the translation log', async ({
   })
   expect(pod.status(), await pod.text()).toBe(201)
 
-  await page.goto(`/console/nat/regions/us-central1/routers/egress/nats/nat?project=${id}`)
+  await goto(page, `/console/nat/regions/us-central1/routers/egress/nats/nat?project=${id}`)
   // The node has NAT ports (as has the control plane, on the same subnetwork).
   await expect(
     page.getByRole('table', { name: 'Port usage' }).getByTestId('mapping').filter({
@@ -236,7 +236,7 @@ test('Cloud NAT: a private cluster’s egress in the translation log', async ({
   await expect(page.getByLabel(/^Connection /)).toContainText('GET / HTTP/1.1')
 
   // The Project's translation log has them too, filtered by the URL.
-  await page.goto(`/console/nat/translations?project=${id}&dst=192.0.2.1&outcome=OFFLINE_SINK`)
+  await goto(page, `/console/nat/translations?project=${id}&dst=192.0.2.1&outcome=OFFLINE_SINK`)
   await expect(page.getByTestId('connection').first()).toContainText('egress/nat')
 
   const deleted = await request.delete(cluster)

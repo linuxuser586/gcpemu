@@ -1,4 +1,4 @@
-import { expect, expectConsoleRequests, test } from './fixtures'
+import { expect, expectConsoleRequests, goto, test } from './fixtures'
 import { startInstance, type Instance } from './instance'
 
 // #622: two Instances of their own per browser, a laptop and an office,
@@ -38,7 +38,7 @@ test.describe('#622 Links, Delegated Projects and Pairing requests', () => {
   })
 
   test('pairs two Instances, approved on the other side', async ({ page, context, requests }) => {
-    await page.goto(`${laptop.url}/console/links`)
+    await goto(page, `${laptop.url}/console/links`)
     await expect(page.getByRole('heading', { name: 'Links', level: 1 })).toBeVisible()
     await expect(page.getByText(/No links yet/)).toBeVisible()
     const found = page.getByRole('table', { name: 'Discovered Instances' })
@@ -48,7 +48,7 @@ test.describe('#622 Links, Delegated Projects and Pairing requests', () => {
     await expect(dialog.getByRole('status')).toContainText('Waiting for office@')
 
     const other = await context.newPage()
-    await other.goto(`${office.url}/console/links`)
+    await goto(other, `${office.url}/console/links`)
     const waiting = other.getByRole('table', { name: 'Pairing requests' })
     await waiting.getByRole('button', { name: /^Approve / }).click()
     await other.getByRole('dialog').getByRole('button', { name: 'Approve' }).click()
@@ -79,13 +79,13 @@ test.describe('#622 Links, Delegated Projects and Pairing requests', () => {
     ).toBe(200)
 
     const other = await context.newPage()
-    await other.goto(`${office.url}/console/links`)
+    await goto(other, `${office.url}/console/links`)
     const form = other.getByRole('form', { name: 'Share a Project' })
     await form.getByRole('textbox', { name: 'Project ID' }).fill(project)
     await form.getByRole('button', { name: 'Share' }).click()
     await expect(other.getByText(`Shared ${project} with every link.`)).toBeVisible()
 
-    await page.goto(`${laptop.url}/console/links`)
+    await goto(page, `${laptop.url}/console/links`)
     const sharedByIt = page
       .getByRole('region', { name: 'Link office' })
       .getByRole('list', { name: 'Shared by office' })
@@ -114,7 +114,7 @@ test.describe('#622 Links, Delegated Projects and Pairing requests', () => {
 
   test('shows the Projects of an unreachable Linked Instance as unavailable', async ({ page }) => {
     await office.stop()
-    await page.goto(`${laptop.url}/console/links?project=${project}`)
+    await goto(page, `${laptop.url}/console/links?project=${project}`)
     const link = page.getByRole('region', { name: 'Link office' })
     await expect(link.getByText('unreachable', { exact: true })).toBeVisible()
     const row = page.getByRole('table', { name: 'Delegated Projects' }).getByRole('row', {

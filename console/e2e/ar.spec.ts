@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import type { APIRequestContext, Page, Request } from '@playwright/test'
 
-import { clipboardText, expect, projectId, test } from './fixtures'
+import { clipboardText, expect, goto, projectId, test } from './fixtures'
 
 // The Artifact Registry view (SRS 4.8.3, FR-UI-011) against the
 // Instance's ar Service: images are pushed to its registry with the OCI
@@ -151,7 +151,7 @@ test('Artifact Registry: create, edit and delete a repository', async ({
   requests,
 }, testInfo) => {
   const id = projectId(`e2e-arr${testInfo.retry}`, browserName)
-  await page.goto(`/console/ar?project=${id}`)
+  await goto(page, `/console/ar?project=${id}`)
   await expect(page.getByText('No repositories in this Project yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Create repository' }).click()
 
@@ -203,7 +203,7 @@ test('Artifact Registry: pushed images, their digests and per-arch manifests', a
 }, testInfo) => {
   const id = projectId(`e2e-ari${testInfo.retry}`, browserName)
   const name = await createRepository(request, id)
-  await page.goto(repoURL(id))
+  await goto(page, repoURL(id))
   await expect(page.getByText('No images yet')).toBeVisible()
 
   // Push a multi-arch image and a nested single-arch one; the view updates live.
@@ -244,7 +244,7 @@ test('Artifact Registry: add, move and delete tags of a per-arch manifest', asyn
   const name = await createRepository(request, id)
   const reg = await Registry.open(request)
   const { arm64, index } = await pushApp(reg, name)
-  await page.goto(repoURL(id, 'app'))
+  await goto(page, repoURL(id, 'app'))
 
   // Tag the arm64 manifest from its digest page; its pull command works.
   await page.getByRole('link', { name: short(index.digest) }).click()
@@ -281,7 +281,7 @@ test('Artifact Registry: delete a tagged digest', async ({
   const name = await createRepository(request, id)
   const reg = await Registry.open(request)
   const svc = await reg.image(`${name}/team/svc`, 'amd64', 'stable')
-  await page.goto(repoURL(id, 'team/svc'))
+  await goto(page, repoURL(id, 'team/svc'))
 
   // Its tag goes with it.
   await digestRow(page, svc.digest)
