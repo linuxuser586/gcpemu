@@ -272,10 +272,10 @@ A data directory that a test owns until the test ends, or until the test's proce
 _Avoid_: temp dir, scratch dir
 
 **Emulator clock**:
-The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
+The time an Instance believes it is. It can be advanced, but never rewound while the Instance runs, to trigger time-driven behaviour. A restart drops any advance. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
 
 **Deterministic Instance**:
-An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it. It covers local Projects only, never Delegated Projects.
+An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it. It covers runs that start empty and local Projects only, never a run continuing from saved state or Delegated Projects.
 _Avoid_: deterministic mode
 
 **Fault rule**:
