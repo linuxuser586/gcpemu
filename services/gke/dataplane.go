@@ -44,6 +44,9 @@ const (
 	registryPort  = 5000
 	webhookDir    = "/etc/gcpemu"
 	nodeReadyWait = 3 * time.Minute
+	// nodeDetailWait bounds reading what the nodes that missed
+	// nodeReadyWait were doing.
+	nodeDetailWait = 10 * time.Second
 	// adminWait bounds the wait for k3s to write its admin kubeconfig,
 	// and apiReadyWait the wait after it for the API server to be ready.
 	adminWait    = 2 * time.Minute
@@ -1341,7 +1344,8 @@ func (s *Service) waitNodes(ctx context.Context, key, pool string) error {
 // has exited (rt, when set, inspects the node containers), with the exit
 // code and the tail of its logs, read before anything removes the
 // container. The node is not recreated: that would hide why it died
-// (#230).
+// (#230). At the deadline the error says what each missing node was doing
+// (nodeWaitDetail).
 func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.Manager) error {
 	kc, err := s.kube(key)
 	if err != nil {
@@ -1349,7 +1353,8 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 	}
 	var missing []string
 	var died error
-	polled := false
+	var c *containerpb.Cluster
+	polls := nodePolls{ever: map[string]bool{}}
 	err = waitFor(ctx, nodeReadyWait, func() (bool, error) {
 		rec, err := s.loadKey(key)
 		if err != nil {
@@ -1357,18 +1362,22 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 		}
 		var list kubeList[kubeNode]
 		if err := kc.get(ctx, "/api/v1/nodes", &list); err != nil {
-			if polled && ctx.Err() != nil {
+			if polls.last != nil && ctx.Err() != nil {
 				// The deadline cut off this request: keep missing from
 				// the last poll that succeeded, not every node (#355).
 				return false, ctx.Err()
 			}
 			list.Items = nil // every node is missing; still check for deaths
+			polls.err = err
 		} else {
-			polled = true
+			polls.last, polls.err = map[string]*kubeNode{}, nil
 		}
 		ready := map[string]bool{}
-		for _, n := range list.Items {
+		for i := range list.Items {
+			n := &list.Items[i]
 			ready[n.Metadata.Name] = n.ready()
+			polls.last[n.Metadata.Name] = n
+			polls.ever[n.Metadata.Name] = true
 		}
 		missing = missing[:0]
 		for _, n := range rec.Int.Nodes {
@@ -1377,7 +1386,7 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 			}
 		}
 		if rt != nil {
-			c := rec.cluster()
+			c = rec.cluster()
 			for _, n := range missing {
 				if died = nodeExited(ctx, rt, nodeContainerName(rt, c, n), n); died != nil {
 					return false, died
@@ -1390,9 +1399,57 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 		return died
 	}
 	if err != nil {
-		return fmt.Errorf("nodes %v did not become ready: %w", missing, err)
+		var detail string
+		if errors.Is(err, context.DeadlineExceeded) {
+			detail = nodeWaitDetail(ctx, rt, c, missing, &polls)
+		}
+		return fmt.Errorf("nodes %v did not become ready: %w%s", missing, err, detail)
 	}
 	return nil
+}
+
+// nodePolls is what awaitNodes has learned of the nodes from the API server.
+type nodePolls struct {
+	last map[string]*kubeNode // as of the last poll that succeeded, nil before one has
+	ever map[string]bool      // every node a poll has listed
+	err  error                // of the last poll, if it failed
+}
+
+// describe says what the polls show of node n.
+func (p *nodePolls) describe(n string) string {
+	kn, listed := p.last[n]
+	switch {
+	case p.last == nil:
+		return "unknown, the API server never listed nodes"
+	case listed && kn.ready():
+		return "Ready when the API server last listed nodes"
+	case listed:
+		return "registered, not Ready: " + strings.Join(kn.notReadyReasons(), "; ")
+	case p.ever[n]:
+		return "registered, but the API server no longer lists it"
+	}
+	return "not registered with the API server"
+}
+
+// nodeWaitDetail says what each node still missing at the deadline was
+// doing, from polls and the tail of its logs, read before anything removes
+// the container (#971).
+func nodeWaitDetail(ctx context.Context, rt *runtime.Manager, c *containerpb.Cluster, missing []string, polls *nodePolls) string {
+	// The caller's deadline may be what ran out.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeDetailWait)
+	defer cancel()
+	var b strings.Builder
+	for _, n := range missing {
+		logs := "(logs unavailable: no container runtime)"
+		if rt != nil {
+			logs = rt.LogTail(ctx, runtime.Container{Name: nodeContainerName(rt, c, n)}, 30)
+		}
+		fmt.Fprintf(&b, "\nnode %s: %s\n%s", n, polls.describe(n), logs)
+	}
+	if polls.err != nil {
+		fmt.Fprintf(&b, "\nlast request for the nodes failed: %v", polls.err)
+	}
+	return b.String()
 }
 
 // nodeExited returns an error naming node's exit code and the tail of
