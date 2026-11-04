@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/instance"
 )
 
 // TestMain lets the test binary stand in for the gcpemu that `start
@@ -27,7 +29,8 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// fakeGcpemu is the detached child. "exit" fails at startup. "starting"
+// fakeGcpemu is the detached child. "exit" fails at startup. "stopped"
+// exits cleanly, as one stopped during startup does. "starting"
 // publishes the gateway in GCPEMU_TEST_GATEWAY and never becomes ready.
 // It lives until it is signalled or, on Windows (no signals), the test
 // closes that gateway, so it no longer holds the log open when the test's
@@ -81,6 +84,17 @@ func TestDetachFailureReasons(t *testing.T) {
 	}
 	cmd := &cobra.Command{}
 	cmd.SetOut(io.Discard)
+
+	// #1000: the child exits cleanly when stopped during startup. `start
+	// --detach` still fails, as no Instance is ready, but not as a crash.
+	t.Run("stopped", func(t *testing.T) {
+		cfg := cfgFor(t)
+		fake(t, "stopped", cfg.DataDir)
+		err := startDetached(cmd, cfg)
+		if !errors.Is(err, instance.ErrShutDown) || strings.Contains(err.Error(), "<nil>") {
+			t.Errorf("err: %v, want ErrShutDown", err)
+		}
+	})
 
 	t.Run("exit", func(t *testing.T) {
 		cfg := cfgFor(t)

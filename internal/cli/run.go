@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -99,9 +98,7 @@ func (o *rootOpts) runCommand(cmd *cobra.Command, cfg *config.Config, child *exe
 		return err
 	}
 	teardown := func() {
-		sctx, scancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer scancel()
-		if err := in.Shutdown(sctx); err != nil {
+		if err := shutdown(in); err != nil {
 			fmt.Fprintf(stderr, "gcpemu: warning: tearing down instance %q: %v\n", cfg.Instance, err)
 		}
 	}

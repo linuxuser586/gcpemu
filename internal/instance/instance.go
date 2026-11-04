@@ -48,6 +48,9 @@ type Factory func(env *emu.Env) emu.Service
 // Version is set at build time.
 var Version = "dev"
 
+// ErrShutDown means the Instance shut down before it was ready.
+var ErrShutDown = errors.New("Instance shut down before it was ready")
+
 // Files written in the instance directory.
 const (
 	EndpointsFile = "endpoints.json"
@@ -621,11 +624,18 @@ func (in *Instance) Ready() bool {
 	return true
 }
 
-// WaitReady blocks until all services are ready or ctx ends.
+// WaitReady blocks until all services are ready or ctx ends. It returns
+// ErrShutDown once the Instance has shut down, as it can no longer become
+// ready.
 func (in *Instance) WaitReady(ctx context.Context) error {
 	t := time.NewTicker(50 * time.Millisecond)
 	defer t.Stop()
 	for {
+		select {
+		case <-in.done:
+			return ErrShutDown
+		default:
+		}
 		if in.Ready() {
 			return nil
 		}
