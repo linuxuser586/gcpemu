@@ -1,0 +1,32 @@
+name: Free disk space on a small runner
+description: >-
+  Removes preinstalled toolchains no job here uses, one at a time, until
+  the root filesystem has the free space asked for, and logs what it freed
+  (#993). ubuntu-26.04 sometimes gives a 72 GB runner with 20 GB free, and
+  jobs that run containers use up to 24 GB, plus the space kubelet keeps
+  before DiskPressure. A runner that already has the space is left alone.
+  Use it with continue-on-error: a job may still pass without the space.
+inputs:
+  min-free-gb:
+    description: Stop removing once this many GB are free.
+    default: "40"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WANT: ${{ inputs.min-free-gb }}
+      run: |
+        free_gb() { df --output=avail -BG / | tail -n 1 | tr -dc 0-9; }
+        before=$(free_gb)
+        if [ "$before" -ge "$WANT" ]; then
+          echo "${before} GB free, at least ${WANT} GB: nothing to remove"
+          exit 0
+        fi
+        for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+          [ "$(free_gb)" -ge "$WANT" ] && break
+          sudo rm -rf "$dir" || true
+          echo "removed $dir: $(free_gb) GB free"
+        done
+        after=$(free_gb)
+        echo "freed $((after - before)) GB: ${before} GB free before, ${after} GB after"
