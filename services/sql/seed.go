@@ -326,7 +326,7 @@ func (s *Service) seedInstance(ctx context.Context, si seedInstance, baseDir str
 
 // seedContents creates the seeded databases and users that are missing
 // and runs the init SQL when its hash changed. lock is false inside an
-// operation, which already holds the instance lock.
+// operation, which already holds the Cloud SQL instance's mutex.
 func (s *Service) seedContents(ctx context.Context, project string, si seedInstance, scripts []seedSQL, hash string, lock bool) error {
 	run := func(fn func(ctx context.Context) error) error {
 		if lock {
@@ -377,7 +377,7 @@ func (s *Service) seedContents(ctx context.Context, project string, si seedInsta
 	return nil
 }
 
-// withLock runs fn under the instance lock.
+// withLock runs fn under the Cloud SQL instance's mutex.
 func (s *Service) withLock(ctx context.Context, project, name string, fn func(ctx context.Context) error) error {
 	mu := s.lock(project, name)
 	defer mu.Unlock()

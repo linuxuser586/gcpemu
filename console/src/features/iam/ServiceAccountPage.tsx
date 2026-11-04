@@ -30,11 +30,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { downloadText } from '@/lib/download'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 import { time } from '../gcs/format'
-import { downloadText } from '../gke/kubeconfig'
 import {
   createKey,
   decodeBase64,

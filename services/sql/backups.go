@@ -281,12 +281,16 @@ func (s *Service) backupFile(project, owner string, id int64) (string, error) {
 // backup that later recoveries can start from.
 func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, description string) (*sqladmin.Operation, error) {
 	project, name := rec.Instance.Project, rec.Instance.Name
+	op, err := s.claimOp(ctx, project, name, "BACKUP_VOLUME")
+	if err != nil {
+		return nil, err
+	}
 	b := &backupRecord{Run: s.newBackupRun(rec, "ON_DEMAND", description)}
 	if err := s.storeNewBackup(project, b); err != nil {
+		s.releaseOp(op)
 		return nil, err
 	}
 	id := b.Run.Id
-	op := s.newOp(ctx, project, name, "BACKUP_VOLUME")
 	op.BackupContext = &sqladmin.BackupContext{Kind: "sql#backupContext", BackupId: id, Name: backupName(project, id)}
 	return s.runOp(op, true, func(ctx context.Context) error {
 		err := s.fillBackup(ctx, project, name, id)
@@ -415,16 +419,23 @@ func (s *Service) deleteBackupRun(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errBackupNotFound())
 		return
 	}
-	writeJSON(w, r, s.deleteBackupOp(r.Context(), rec.Instance.Project, b))
+	op, err := s.deleteBackupOp(r.Context(), rec.Instance.Project, b)
+	if err != nil {
+		apierr.Write(w, err)
+		return
+	}
+	writeJSON(w, r, op)
 }
 
 // deleteBackupOp removes a backup and its dump.
-func (s *Service) deleteBackupOp(ctx context.Context, project string, b *backupRecord) *sqladmin.Operation {
-	name := b.Run.Instance
-	op := s.newOp(ctx, project, name, "DELETE_BACKUP")
+func (s *Service) deleteBackupOp(ctx context.Context, project string, b *backupRecord) (*sqladmin.Operation, error) {
+	op, err := s.claimBackupOp(ctx, project, b, "DELETE_BACKUP")
+	if err != nil {
+		return nil, err
+	}
 	return s.runOp(op, false, func(context.Context) error {
 		return s.removeBackup(project, b)
-	})
+	}), nil
 }
 
 // removeBackup deletes a stored backup and its dump.
@@ -508,7 +519,12 @@ func (s *Service) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errBackupMissing())
 		return
 	}
-	op := s.newOp(r.Context(), project, name, "RESTORE_VOLUME")
+	op, err := s.claimOp(r.Context(), project, name, "RESTORE_VOLUME")
+	if err != nil {
+		release()
+		apierr.Write(w, err)
+		return
+	}
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
 		dump, err := os.ReadFile(b.File)
 		release()

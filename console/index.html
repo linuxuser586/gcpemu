@@ -3,17 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <!--
-      ADR 0063: when a same-origin script or stylesheet of this page fails
-      to load, as Chromium's net::ERR_NETWORK_CHANGED does to them, reload
-      the page after 1 s and then 2 s, at most twice per path; after that,
-      say so in #root. It is inline because a file of its own could fail
-      the same way, and the Web console handler allows it by its hash.
-      It must stay the only inline script.
+      ADR 0063: when a same-origin script of this page fails to load, as
+      Chromium's net::ERR_NETWORK_CHANGED does to it, reload the page after
+      1 s and then 2 s, at most twice per path; after that, say so in #root.
+      When a same-origin stylesheet fails, the console may be running, so
+      never reload: add a new <link> for it after 1 s and then 2 s; after
+      that, say so outside #root. It is inline because a file of its own
+      could fail the same way, and the Web console handler allows it by its
+      hash. It must stay the only inline script.
     -->
     <script>
       ;(function () {
         var key = 'gcpemu.boot:' + location.pathname
-        var failed = false
+        var bundleFailed = false
+        var stylesheetAttempts = 0
+        function whenParsed(show) {
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', show)
+          } else show()
+        }
         // Out of attempts, the page says so, and a reload by hand counts
         // from the start again.
         function giveUp() {
@@ -22,54 +30,73 @@
           } catch (err) {
             // Nothing was counted.
           }
-          var show = function () {
+          whenParsed(function () {
             var root = document.getElementById('root')
             if (root && !root.hasChildNodes()) {
               root.textContent =
                 'The Web console couldn\u2019t load its files from the emulator. Reload to try again.'
             }
-          }
-          if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', show)
-          } else show()
+          })
         }
         function reloadAfter(ms) {
           setTimeout(function () {
             location.reload()
           }, ms)
         }
+        function onBundleFailed() {
+          var attempts
+          try {
+            attempts = Number(sessionStorage.getItem(key)) || 0
+            if (attempts < 2) sessionStorage.setItem(key, String(attempts + 1))
+          } catch (err) {
+            // Without storage, a page that is itself a reload has had its one.
+            var nav = performance.getEntriesByType('navigation')[0]
+            if (nav && nav.type === 'reload') giveUp()
+            else reloadAfter(1000)
+            return
+          }
+          if (attempts >= 2) giveUp()
+          else reloadAfter(1000 * Math.pow(2, attempts))
+        }
+        function onStylesheetFailed(link) {
+          if (stylesheetAttempts >= 2) {
+            // Outside #root, which belongs to a console that keeps running.
+            whenParsed(function () {
+              var notice = document.createElement('p')
+              notice.setAttribute('role', 'alert')
+              notice.textContent =
+                'The Web console couldn\u2019t load its styles from the emulator. Reload to try again.'
+              document.body.prepend(notice)
+            })
+            return
+          }
+          setTimeout(
+            function () {
+              link.replaceWith(link.cloneNode())
+            },
+            1000 * Math.pow(2, stylesheetAttempts),
+          )
+          stylesheetAttempts++
+        }
         window.addEventListener(
           'error',
           function (e) {
             var el = e.target
-            var url =
-              el instanceof HTMLScriptElement
-                ? el.src
-                : el instanceof HTMLLinkElement && el.relList.contains('stylesheet')
-                  ? el.href
-                  : ''
-            if (failed || !url || new URL(url, location.href).origin !== location.origin) return
-            failed = true
-            var attempts
-            try {
-              attempts = Number(sessionStorage.getItem(key)) || 0
-              if (attempts < 2) sessionStorage.setItem(key, String(attempts + 1))
-            } catch (err) {
-              // Without storage, a page that is itself a reload has had its one.
-              var nav = performance.getEntriesByType('navigation')[0]
-              if (nav && nav.type === 'reload') giveUp()
-              else reloadAfter(1000)
-              return
+            var isStylesheet = el instanceof HTMLLinkElement && el.relList.contains('stylesheet')
+            var url = el instanceof HTMLScriptElement ? el.src : isStylesheet ? el.href : ''
+            if (!url || new URL(url, location.href).origin !== location.origin) return
+            if (isStylesheet) onStylesheetFailed(el)
+            else if (!bundleFailed) {
+              bundleFailed = true
+              onBundleFailed()
             }
-            if (attempts >= 2) giveUp()
-            else reloadAfter(1000 * Math.pow(2, attempts))
           },
           true,
         )
-        // A page all of whose files loaded has started, so the next failure
-        // on its path counts from the start again.
+        // A page whose bundle loaded has started, so the next failure on its
+        // path counts from the start again.
         window.addEventListener('load', function () {
-          if (failed) return
+          if (bundleFailed) return
           try {
             sessionStorage.removeItem(key)
           } catch (err) {

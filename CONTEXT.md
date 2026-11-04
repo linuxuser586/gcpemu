@@ -247,6 +247,10 @@ An Instance whose state disappears when it stops.
 **Persistent Instance**:
 An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
 
+**Clean stop**:
+A stop in which the Instance completes its own shutdown and its process exits, even if it could not remove everything it made and says so in its log. An Instance that is killed or crashes has not stopped cleanly (ADR 0064).
+_Avoid_: graceful stop
+
 **Data directory**:
 The directory an Instance holds its certificate authority and Instance ID in, and a Persistent Instance its state. Every Instance has one; an Ephemeral Instance keeps no state there.
 _Avoid_: instance dir
@@ -272,10 +276,10 @@ A data directory that a test owns until the test ends, or until the test's proce
 _Avoid_: temp dir, scratch dir
 
 **Emulator clock**:
-The time an Instance believes it is. It can be advanced, but never rewound, to trigger time-driven behaviour. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
+The time an Instance believes it is. It can be advanced, but never rewound while the Instance runs, to trigger time-driven behaviour. A restart drops any advance. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
 
 **Deterministic Instance**:
-An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it. It covers local Projects only, never Delegated Projects.
+An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it. It covers runs that start empty and local Projects only, never a run continuing from saved state or Delegated Projects.
 _Avoid_: deterministic mode
 
 **Fault rule**:
@@ -403,8 +407,8 @@ _Avoid_: LRO, job, task
 How long an Operation takes before it completes, configured per Service ID (`gke=20s`, `lb=5s`), with `*` for every Service. The API names `container` and `sqladmin` still work as aliases for `gke` and `sql`. Operations complete instantly unless it is set.
 
 **Operation lock**:
-A cluster accepts one mutating Operation at a time. A second one fails while the first is running. A State snapshot save takes the same lock, but it isn't an Operation a client can see.
-_Avoid_: busy, cluster lock
+A cluster or a Cloud SQL instance accepts one mutating Operation at a time. A second one fails while the first is running. A request waits for work that isn't an Operation a client can see, such as a State snapshot save, instead of failing at once.
+_Avoid_: busy, cluster lock, instance lock
 
 **Project**:
 A GCP project that exists in an Instance. It is created implicitly the first time a request references it, unless the Instance runs with Strict projects. Only a request handled by a Service counts as a reference. Choosing a Project in the Web console only scopes what is shown and creates nothing.

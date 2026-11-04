@@ -27,7 +27,7 @@ import (
 // turned on (the earliest recovery time), and one with every backup.
 // Transaction log retention (retention.go) prunes the WAL archive after
 // every Base backup and before the Recovery window is read or a restore
-// bundle is built, always under the instance's lock.
+// bundle is built, always under the Cloud SQL instance's mutex.
 //
 // A clone with pointInTime archives the source's current WAL segment, packs
 // the newest base backup that ended at or before that time with the
@@ -63,7 +63,7 @@ func errPITRDisabled(name string) error {
 const pgClockSQL = "SELECT (extract(epoch FROM clock_timestamp()) * 1000000)::bigint"
 
 // takeBaseBackup stores a base backup in the archive volume and prunes the
-// WAL archive. The caller holds the instance's lock.
+// WAL archive. The caller holds the Cloud SQL instance's mutex.
 func (s *Service) takeBaseBackup(ctx context.Context, project, name string) error {
 	psql := "psql -X -At -h " + proxy.SocketDir + " -p " + strconv.Itoa(proxy.InternalPort) + " -U " + superuser + " -d postgres"
 	script := "set -e\n" +

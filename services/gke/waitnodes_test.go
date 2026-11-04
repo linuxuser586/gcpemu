@@ -129,6 +129,9 @@ func TestAwaitNodesDeadlineMidPoll(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "nodes [n2] did not become ready") {
 		t.Fatalf("awaitNodes = %v; want n2 not ready", err)
 	}
+	if !strings.Contains(err.Error(), "logs unavailable") {
+		t.Errorf("awaitNodes = %v; want it to say no logs were read", err)
+	}
 	if polls.Load() < 2 {
 		t.Fatalf("polls = %d; want the deadline to cut off a later poll", polls.Load())
 	}
@@ -140,6 +143,152 @@ func TestAwaitNodesDeadlineMidPoll(t *testing.T) {
 	err = s.awaitNodes(ctx, rec.key(), "", nil)
 	if err == nil || !strings.Contains(err.Error(), "nodes [n1 n2] did not become ready") {
 		t.Fatalf("awaitNodes = %v; want n1 and n2 not ready", err)
+	}
+}
+
+// TestAwaitNodesTimeoutSaysWhy (#971): when nodes that are still running
+// miss the deadline, the error says what each one was doing. The test's
+// deadline has passed by the time the detail is read, so the log tail
+// appearing shows that the read outlives it.
+func TestAwaitNodesTimeoutSaysWhy(t *testing.T) {
+	const (
+		agentLog = `level=error msg="failed to get CA certs"`
+		noNodes  = `{"items":[]}`
+		notReady = `{"items":[{"metadata":{"name":"n1"},"status":{"conditions":[
+			{"type":"MemoryPressure","status":"False","reason":"KubeletHasSufficientMemory","message":"enough"},
+			{"type":"Ready","status":"False","reason":"KubeletNotReady","message":"cni plugin not initialized"}]}}]}`
+	)
+	for _, tt := range []struct {
+		name       string
+		polls      []string // the API server's node lists in turn, the last repeating; "" fails the request
+		secondNode string   // recorded besides n1
+		logFail    bool
+		want       []string
+		not        []string
+	}{
+		{
+			name:  "never registered",
+			polls: []string{noNodes},
+			want:  []string{"node n1: not registered with the API server", agentLog},
+		},
+		{
+			name:  "registered and NotReady",
+			polls: []string{notReady},
+			want:  []string{"node n1: registered, not Ready", "Ready=False KubeletNotReady: cni plugin not initialized", agentLog},
+			not:   []string{"not registered", "MemoryPressure"},
+		},
+		{
+			name:  "registered with no Ready condition",
+			polls: []string{`{"items":[{"metadata":{"name":"n1"}}]}`},
+			want:  []string{"node n1: registered, not Ready: no Ready condition", agentLog},
+		},
+		{
+			name:  "registered, then gone",
+			polls: []string{notReady, noNodes},
+			want:  []string{"node n1: registered, but the API server no longer lists it", agentLog},
+			not:   []string{"not registered"},
+		},
+		{
+			name: "Ready but still tainted",
+			polls: []string{`{"items":[{"metadata":{"name":"n1"},
+				"spec":{"taints":[{"key":"node.kubernetes.io/not-ready","effect":"NoSchedule"}]},
+				"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`},
+			want: []string{"node n1: registered, not Ready", "taint node.kubernetes.io/not-ready", agentLog},
+		},
+		{
+			name:  "API server never answers",
+			polls: []string{""},
+			want:  []string{"node n1: unknown, the API server never listed nodes", "last request for the nodes failed", "api server down", agentLog},
+			not:   []string{"not registered"},
+		},
+		{
+			name:       "API server stops answering",
+			secondNode: "n2",
+			polls:      []string{`{"items":[{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`, ""},
+			want: []string{"nodes [n1 n2] did not become ready", "node n1: Ready when the API server last listed nodes",
+				"node n2: not registered with the API server", "last request for the nodes failed", agentLog},
+			not: []string{"registered, not Ready"},
+		},
+		{
+			name:    "logs cannot be read",
+			polls:   []string{noNodes},
+			logFail: true,
+			want:    []string{"node n1: not registered with the API server", "logs unavailable"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Defaults()
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			s := New(&emu.Env{Config: &cfg, Store: store.NewMemory(), Clock: clock.Real{}, IDs: emu.NewIDs(true), Log: log,
+				Auth: emu.NewPolicyAuthorizer(config.IAMOff, log), Endpoints: emu.NewEndpoints()}).(*Service)
+			c := &containerpb.Cluster{Name: "c0", Id: "0123456789abcdef"}
+			rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0",
+				Nodes: []nodeRecord{{Name: "n1", Pool: "default-pool"}}}}
+			if tt.secondNode != "" {
+				rec.Int.Nodes = append(rec.Int.Nodes, nodeRecord{Name: tt.secondNode, Pool: "default-pool"})
+			}
+			rec.setCluster(c)
+			if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+				t.Fatal(err)
+			}
+			var polls atomic.Int32
+			kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				list := tt.polls[min(int(polls.Add(1)), len(tt.polls))-1]
+				if list == "" {
+					http.Error(w, "api server down", http.StatusServiceUnavailable)
+					return
+				}
+				_, _ = io.WriteString(w, list)
+			}))
+			defer kube.Close()
+			s.rtFor(rec.key()).kube = &kubeClient{base: kube.URL, hc: kube.Client()}
+
+			rt := &runtime.Manager{InstanceID: "i1"}
+			docker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/json"):
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"State": map[string]any{"Status": "running", "Running": true}})
+				case strings.HasSuffix(r.URL.Path, "/logs"):
+					if tt.logFail {
+						http.Error(w, "no logs", http.StatusInternalServerError)
+						return
+					}
+					hdr := make([]byte, 8)
+					hdr[0] = 2
+					binary.BigEndian.PutUint32(hdr[4:], uint32(len(agentLog)))
+					_, _ = w.Write(append(hdr, agentLog...))
+				default:
+					t.Errorf("unexpected runtime request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer docker.Close()
+			cl, err := runtime.New("tcp://" + strings.TrimPrefix(docker.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rt.Client = cl
+
+			// Long enough for every list in polls, even under load.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			err = s.awaitNodes(ctx, rec.key(), "", rt)
+			if err == nil {
+				t.Fatal("awaitNodes succeeded; want a timeout")
+			}
+			for _, want := range append(tt.want, "did not become ready") {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("awaitNodes = %v\nwant it to contain %q", err, want)
+				}
+			}
+			for _, not := range tt.not {
+				if strings.Contains(err.Error(), not) {
+					t.Errorf("awaitNodes = %v\nwant it not to contain %q", err, not)
+				}
+			}
+		})
 	}
 }
 

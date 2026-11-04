@@ -131,7 +131,7 @@ func (s *Service) allocHostPort(project, name string, prev int) int {
 
 // startContainer (re)creates an instance's container from its stored
 // record, waits until PostgreSQL accepts connections and records the
-// container's addresses. The caller holds the instance lock.
+// container's addresses. The caller holds the Cloud SQL instance's mutex.
 func (s *Service) startContainer(ctx context.Context, project, name string) error {
 	return s.startContainerWith(ctx, project, name, nil)
 }

@@ -9,6 +9,7 @@ import { CopyAs } from '@/components/resource/CopyAs'
 import { DetailList, JsonView, Mono } from '@/components/resource/DetailList'
 import { Button } from '@/components/ui/button'
 import { Card, CardTitle } from '@/components/ui/card'
+import { downloadText } from '@/lib/download'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -16,7 +17,7 @@ import { clusterMode, clusterQuery, deleteCluster, isRunning, type Cluster } fro
 import { clusterRecipe } from './copy'
 import { ClusterStatusBadge } from './format'
 import { clusterPath, useClusterRef } from './GkeLayout'
-import { buildKubeconfig, contextName, downloadText } from './kubeconfig'
+import { buildKubeconfig, contextName } from './kubeconfig'
 
 const TABS = [
   ['', 'Overview'],
@@ -75,6 +76,7 @@ export function ClusterPage() {
                 downloadText(
                   `kubeconfig-${contextName(ref.project, c)}.yaml`,
                   buildKubeconfig(ref.project, c),
+                  'application/yaml',
                 )
               }
             >

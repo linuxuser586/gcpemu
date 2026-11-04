@@ -216,8 +216,10 @@ type kubeNode struct {
 	} `json:"spec"`
 	Status struct {
 		Conditions []struct {
-			Type   string `json:"type"`
-			Status string `json:"status"`
+			Type    string `json:"type"`
+			Status  string `json:"status"`
+			Reason  string `json:"reason"`
+			Message string `json:"message"`
 		} `json:"conditions"`
 		Addresses []struct {
 			Type    string `json:"type"`
@@ -233,7 +235,7 @@ type kubeNode struct {
 // which lag the Ready condition and keep pods off the node.
 func (n *kubeNode) ready() bool {
 	for _, t := range n.Spec.Taints {
-		if t.Key == "node.kubernetes.io/not-ready" || t.Key == "node.kubernetes.io/unreachable" {
+		if isNotReadyTaint(t.Key) {
 			return false
 		}
 	}
@@ -243,6 +245,36 @@ func (n *kubeNode) ready() bool {
 		}
 	}
 	return false
+}
+
+func isNotReadyTaint(key string) bool {
+	return key == "node.kubernetes.io/not-ready" || key == "node.kubernetes.io/unreachable"
+}
+
+// notReadyReasons explains why the node is not ready: the taints ready
+// refuses, a Ready condition that is not True or absent, and any other
+// condition that is not False.
+func (n *kubeNode) notReadyReasons() []string {
+	var out []string
+	for _, t := range n.Spec.Taints {
+		if isNotReadyTaint(t.Key) {
+			out = append(out, "taint "+t.Key)
+		}
+	}
+	reported := false
+	for _, c := range n.Status.Conditions {
+		healthy := "False"
+		if c.Type == "Ready" {
+			healthy, reported = "True", true
+		}
+		if c.Status != healthy {
+			out = append(out, fmt.Sprintf("%s=%s %s: %s", c.Type, c.Status, c.Reason, c.Message))
+		}
+	}
+	if !reported {
+		out = append(out, "no Ready condition")
+	}
+	return out
 }
 
 type kubePod struct {
