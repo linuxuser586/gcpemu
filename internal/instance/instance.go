@@ -89,7 +89,11 @@ type Instance struct {
 	adcMu        sync.Mutex         // serialises serveADCKey
 	stateMu      sync.Mutex         // serialises Reset and State snapshots
 	shutdownOnce sync.Once
-	done         chan struct{}
+	// stopping ends when shutdown begins, which is well before done closes:
+	// shutdown goes on to remove containers.
+	stopping  context.Context
+	beginStop context.CancelFunc
+	done      chan struct{}
 
 	// managed are the Managed emulators by API (ADR 0029), which start
 	// under managedCtx.
@@ -146,6 +150,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (_ 
 	}
 
 	in := &Instance{Config: cfg, Dir: dir, byName: map[string]emu.Service{}, failed: map[string]error{}, holds: map[string]error{}, done: make(chan struct{})}
+	in.stopping, in.beginStop = context.WithCancel(context.Background())
 	in.ID = instanceID(dir, cfg.Ephemeral)
 
 	var st store.Store
@@ -372,8 +377,21 @@ func (in *Instance) Services() []emu.Service { return in.services }
 
 // Start registers routes, starts the gateway and every service, and writes
 // endpoints.json. A failing service is reported not-ready rather than
-// stopping the others (NFR-REL-003).
+// stopping the others (NFR-REL-003). Once shutdown has begun it returns
+// ErrShutDown, however starting ended.
 func (in *Instance) Start(ctx context.Context) error {
+	return in.unlessStopping(in.start(ctx))
+}
+
+// unlessStopping returns err, or ErrShutDown once shutdown has begun.
+func (in *Instance) unlessStopping(err error) error {
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
+	return err
+}
+
+func (in *Instance) start(ctx context.Context) error {
 	// The gateway listens first: every leaf the Instance CA issues names
 	// the CRL on its port (ADR 0046), so the CA learns it before anything
 	// can issue one. Connections wait until Serve.
@@ -628,22 +646,25 @@ func (in *Instance) Ready() bool {
 }
 
 // WaitReady blocks until all services are ready or ctx ends. It returns
-// ErrShutDown once the Instance has shut down, as it can no longer become
-// ready.
+// ErrShutDown once shutdown has begun, as the Instance can no longer become
+// ready, whatever its services report and however ctx ended.
 func (in *Instance) WaitReady(ctx context.Context) error {
 	t := time.NewTicker(50 * time.Millisecond)
 	defer t.Stop()
 	for {
-		select {
-		case <-in.done:
+		if in.stopping.Err() != nil {
 			return ErrShutDown
-		default:
 		}
 		if in.Ready() {
 			return nil
 		}
 		select {
+		case <-in.stopping.Done():
+			return ErrShutDown
 		case <-ctx.Done():
+			if in.stopping.Err() != nil {
+				return ErrShutDown
+			}
 			var names []string
 			for n, err := range in.Readiness() {
 				if err != nil {
@@ -731,6 +752,7 @@ func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx
 func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
 	var errs []error
 	in.shutdownOnce.Do(func() {
+		in.beginStop()
 		for i := len(in.services) - 1; i >= 0; i-- {
 			s := in.services[i]
 			if err := s.Stop(ctx); err != nil {

@@ -133,6 +133,24 @@ func (h *hiddenWork) Unlock() {
 func (s *Service) lock(project, name string) *hiddenWork {
 	mu := s.instanceMutex(project, name)
 	mu.Lock()
+	return s.hide(project, name, mu)
+}
+
+// lockCtx is lock, giving up when ctx ends.
+func (s *Service) lockCtx(ctx context.Context, project, name string) (*hiddenWork, error) {
+	mu := s.instanceMutex(project, name)
+	for !mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return s.hide(project, name, mu), nil
+}
+
+// hide marks the work holding mu as hidden.
+func (s *Service) hide(project, name string, mu *sync.Mutex) *hiddenWork {
 	s.opMu.Lock()
 	s.hidden[instKey(project, name)] = true
 	s.opMu.Unlock()

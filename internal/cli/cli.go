@@ -235,13 +235,29 @@ func shutdown(in *instance.Instance) error {
 // host starts an Instance in this process and waits, up to the wait
 // timeout, until it is ready, Seeding included. printToken prints how to
 // reach the Admin API. Unless mustBeReady, an Instance that does not
-// become ready keeps running. On error the Instance is shut down; the
-// error is instance.ErrShutDown if a shutdown request or ctx ending ended
-// the wait.
+// become ready keeps running. On error the Instance is shut down. A stop
+// wins: once a shutdown request or ctx ending has stopped startup, at any
+// point of it, the error is instance.ErrShutDown, whatever else happened.
+// host always waits for Seeding to return.
 func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Writer, printToken, mustBeReady bool) (*instance.Instance, error) {
 	in, err := instance.New(cfg, o.factories, logOut)
 	if err != nil {
 		return nil, err
+	}
+	stopped := func(err error) bool {
+		return errors.Is(err, instance.ErrShutDown) || ctx.Err() != nil
+	}
+	// abort shuts in down after err ended startup.
+	abort := func(err error) error {
+		if !stopped(err) {
+			_ = in.Shutdown(context.Background())
+			return err
+		}
+		if err := shutdown(in); err != nil {
+			return err
+		}
+		in.Env.Log.Info("stopped before it was ready")
+		return instance.ErrShutDown
 	}
 	// Not ready until seeded: `start --detach` and CI poll /_emu/v1/ready.
 	seeded := func() {}
@@ -249,8 +265,7 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 		seeded = in.HoldReady("seed", "applying "+cfg.Seed)
 	}
 	if err := in.Start(ctx); err != nil {
-		_ = in.Shutdown(context.Background())
-		return nil, err
+		return nil, abort(err)
 	}
 	if printToken {
 		printAdminToken(os.Stderr, cfg, in.Env.Endpoints.Get("gateway"), in.AdminToken(), in.ConsoleServed())
@@ -266,8 +281,7 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 		err := in.ApplySeed(sctx, cfg.Seed)
 		cancel()
 		if err != nil {
-			_ = in.Shutdown(context.Background())
-			return nil, fmt.Errorf("seed: %w", err)
+			return nil, abort(fmt.Errorf("seed: %w", err))
 		}
 	}
 	seeded()
@@ -277,21 +291,16 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 	wctx, cancel := context.WithDeadline(ctx, deadline)
 	err = in.WaitReady(wctx)
 	cancel()
-	if err != nil && (errors.Is(err, instance.ErrShutDown) || ctx.Err() != nil) {
-		if err := shutdown(in); err != nil {
-			return nil, err
-		}
-		in.Env.Log.Info("stopped before it was ready")
-		return nil, instance.ErrShutDown
-	}
-	if err != nil {
-		in.Env.Log.Error("not ready", "err", err)
-		if mustBeReady {
-			_ = in.Shutdown(context.Background())
-			return nil, err
-		}
-	} else {
+	switch {
+	case stopped(err):
+		return nil, abort(err)
+	case err == nil:
 		in.Env.Log.Info("ready")
+	case mustBeReady:
+		in.Env.Log.Error("not ready", "err", err)
+		return nil, abort(err)
+	default:
+		in.Env.Log.Error("not ready", "err", err)
 	}
 	return in, nil
 }

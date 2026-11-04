@@ -17,21 +17,42 @@ import (
 )
 
 // ApplySeed applies a seed file (FR-CORE-011). Top-level keys are service
-// names; each section is handed to that service's Seeder.
+// names; each section is handed to that service's Seeder. Once shutdown has
+// begun it returns ErrShutDown, however Seeding ended.
 func (in *Instance) ApplySeed(ctx context.Context, path string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if err := in.ApplySeedData(ctx, b, filepath.Dir(path)); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	return nil
+	return in.seeding(ctx, func(ctx context.Context) error {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := in.applySeedData(ctx, b, filepath.Dir(path)); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		return nil
+	})
 }
 
 // ApplySeedData applies a seed file's contents (an uploaded seed file);
-// relative paths in it resolve against base.
+// relative paths in it resolve against base. Once shutdown has begun it
+// returns ErrShutDown, however Seeding ended.
 func (in *Instance) ApplySeedData(ctx context.Context, b []byte, base string) error {
+	return in.seeding(ctx, func(ctx context.Context) error {
+		return in.applySeedData(ctx, b, base)
+	})
+}
+
+// seeding runs apply with a context that also ends when shutdown begins.
+func (in *Instance) seeding(ctx context.Context, apply func(context.Context) error) error {
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(in.stopping, cancel)()
+	return in.unlessStopping(apply(ctx))
+}
+
+func (in *Instance) applySeedData(ctx context.Context, b []byte, base string) error {
 	var doc map[string]yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
 		return err

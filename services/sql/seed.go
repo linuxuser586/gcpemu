@@ -377,9 +377,13 @@ func (s *Service) seedContents(ctx context.Context, project string, si seedInsta
 	return nil
 }
 
-// withLock runs fn under the Cloud SQL instance's mutex.
+// withLock runs fn under the Cloud SQL instance's mutex, unless ctx ends
+// first.
 func (s *Service) withLock(ctx context.Context, project, name string, fn func(ctx context.Context) error) error {
-	mu := s.lock(project, name)
+	mu, err := s.lockCtx(ctx, project, name)
+	if err != nil {
+		return err
+	}
 	defer mu.Unlock()
 	return fn(ctx)
 }

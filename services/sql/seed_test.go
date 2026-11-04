@@ -2,8 +2,10 @@ package sql
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -172,5 +174,30 @@ func TestExportSeedTierEdition(t *testing.T) {
 		if si.Tier != c.wantTier || edition != c.wantEdition {
 			t.Errorf("%s tier=%q edition=%q: exported tier=%q edition=%q settings=%v", c.version, c.tier, c.edition, si.Tier, edition, si.Settings)
 		}
+	}
+}
+
+// TestSeedLockWaitEndsWithItsContext is #1009: Seeding waits behind other
+// work on a Cloud SQL instance only while the Seeder's context lasts, so
+// it does not hold up a stop.
+func TestSeedLockWaitEndsWithItsContext(t *testing.T) {
+	s, _ := lockedService(t, "0s")
+	work := s.lock(lockProject, lockInstance)
+	defer work.Unlock()
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte("instances:\n  - {name: "+lockInstance+", project: "+lockProject+", databases: [app]}\n"), &n); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	seeded := make(chan error, 1)
+	go func() { seeded <- s.ApplySeed(ctx, n.Content[0], t.TempDir()) }()
+	select {
+	case err := <-seeded:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("ApplySeed: %v, want its deadline", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still waiting for the lock 5s after its context ended")
 	}
 }

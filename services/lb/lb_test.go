@@ -1258,3 +1258,20 @@ func TestOperationLatency(t *testing.T) {
 		t.Errorf("compute=1h: bucket %s, network %s", b, n)
 	}
 }
+
+// TestSeedWaitEndsWithItsContext is #1009: an insert that completes later,
+// with --lro-latency, is waited for only while the Seeder's context lasts,
+// so it does not hold up a stop.
+func TestSeedWaitEndsWithItsContext(t *testing.T) {
+	e := start(t, emutest.WithOperationLatency("lb", 30*time.Second))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	err := e.inst.Internal().ApplySeedData(ctx, []byte("lb:\n  project: "+proj+"\n  healthChecks:\n    - {name: hc, type: TCP, tcpHealthCheck: {port: 80}}\n"), t.TempDir())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("ApplySeedData: %v, want its deadline", err)
+	}
+	if d := time.Since(began); d > 10*time.Second {
+		t.Errorf("took %s", d)
+	}
+}
