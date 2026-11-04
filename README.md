@@ -1131,7 +1131,9 @@ that sends one API request at a time. Console and admin API traffic (`/_emu/`) d
 clock, so it does not affect the output. Operations with no `--lro-latency` come back `DONE` from
 the call that started them. Operations backed by runtime containers (GKE clusters, Cloud SQL
 instances, backups, imports and exports) and any operation once latency is configured are outside
-the guarantee, and so are Delegated Projects: the guarantee covers local Projects only.
+the guarantee, and so are Delegated Projects: the guarantee covers local Projects only. It also
+covers only runs that start empty. A restart on a `--data-dir` that holds state starts the clock and
+the ID counter again, so new timestamps can be older than stored ones and new IDs can repeat them.
 
 ### Seed files
 
