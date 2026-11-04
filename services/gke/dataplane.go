@@ -1,6 +1,7 @@
 package gke
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -796,25 +797,45 @@ func prepareServer(ctx context.Context, rt *runtime.Manager, id, staged string, 
 // awaitReady is awaitServer for ready and then, unless checkCert is nil (a
 // cluster without a Public endpoint), for checkCert to report the served
 // certificate names the Public endpoint (#886). When the wait runs out
-// on the certificate, the error says what it names.
+// on the certificate, the error says what it names, even if a later check
+// failed some other way (#957, ADR 0051). ready going false clears what the
+// checks reported, so a server that stopped being ready reports that.
 func awaitReady(ctx context.Context, rt *runtime.Manager, id string, ready func() bool, checkCert func(context.Context) error) error {
-	var certErr error
+	var nameErr, certErr error
 	err := awaitServer(ctx, rt, id, func() bool {
 		if !ready() {
-			certErr = nil
+			nameErr, certErr = nil, nil
 			return false
 		}
 		if checkCert == nil {
 			return true
 		}
 		certErr = checkCert(ctx)
+		var unnamed *publicEndpointNameError
+		if errors.As(certErr, &unnamed) {
+			nameErr = certErr
+		}
 		return certErr == nil
 	})
 	var exited *serverExitedError
-	if err != nil && certErr != nil && !errors.As(err, &exited) {
-		return fmt.Errorf("control plane did not become ready: %w", certErr)
+	if err == nil || errors.As(err, &exited) {
+		return err
+	}
+	if checkErr := cmp.Or(nameErr, certErr); checkErr != nil {
+		return fmt.Errorf("control plane did not become ready: %w", checkErr)
 	}
 	return err
+}
+
+// publicEndpointNameError reports that the Cluster server's certificate
+// does not name the Public endpoint.
+type publicEndpointNameError struct {
+	publicEndpoint string
+	names          []string // the names the certificate covers
+}
+
+func (e *publicEndpointNameError) Error() string {
+	return fmt.Sprintf("the Cluster server's certificate does not name the Public endpoint %s; it names %s", e.publicEndpoint, strings.Join(e.names, ", "))
 }
 
 // checkServedName completes a TLS handshake with the server at addr, dialed
@@ -839,7 +860,7 @@ func checkServedName(ctx context.Context, dial func(ctx context.Context, network
 		for _, ip := range host.Certificate.IPAddresses {
 			names = append(names, ip.String())
 		}
-		return fmt.Errorf("the Cluster server's certificate does not name the Public endpoint %s; it names %s", name, strings.Join(names, ", "))
+		return &publicEndpointNameError{publicEndpoint: name, names: names}
 	}
 	return err
 }
