@@ -110,6 +110,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - run: go test -count=1 -timeout 45m ./internal/vmrelay ./internal/netplane ./services/build ./services/sql ./services/compute ./services/nat ./services/lb ./services/gke
       - uses: google-github-actions/setup-gcloud@v3
@@ -283,6 +285,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -336,6 +340,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -371,6 +377,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -459,6 +467,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -501,6 +511,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -542,6 +554,8 @@ jobs:
         continue-on-error: true
         with:
           label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
