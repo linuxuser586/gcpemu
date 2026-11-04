@@ -350,7 +350,8 @@ func lbWeb(t *testing.T, k *kube) {
 		"spec": map[string]any{"type": "LoadBalancer", "selector": map[string]string{"app": "web"},
 			"ports": []map[string]any{{"port": 8081, "targetPort": 8080}}},
 	})
-	hosttest.Eventually(t, 3*time.Minute, "deployment web ready", func() bool { return k.deploymentReady("default", "web") }, nil)
+	hosttest.Eventually(t, 3*time.Minute, "deployment web ready", func() bool { return k.deploymentReady("default", "web") },
+		func() string { return k.diagnose("default", "app=web") })
 }
 
 func getOK(gateway, path string) bool { return getJSON(gateway, path, nil) }

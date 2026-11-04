@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto'
 
-import { expect, expectConsoleRequests, goto, projectId, reload, test } from './fixtures'
+import {
+  clipboardText,
+  expect,
+  expectConsoleRequests,
+  goto,
+  projectId,
+  reload,
+  test,
+} from './fixtures'
 import { SERVICES } from '../src/lib/services'
 
 // The paths the console may call: its own bundle, the admin API and public
@@ -144,7 +152,7 @@ test('FR-UI-010 dashboard', async ({ page, request, context, browserName }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await page.getByRole('button', { name: 'Copy' }).click()
     await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(await env.textContent())
+    expect(await clipboardText(page)).toBe(await env.textContent())
   }
 })
 

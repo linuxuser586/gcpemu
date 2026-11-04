@@ -45,6 +45,16 @@ export async function expectConsoleRequests(
   }
 }
 
+/**
+ * clipboardText reads the clipboard with LF line endings. Chromium on
+ * Windows writes CRLF whatever the page gave it (#961), and CI runs on
+ * Linux, so comparing multi-line text read directly fails only on Windows.
+ */
+export async function clipboardText(page: Page): Promise<string> {
+  const text = await page.evaluate(() => navigator.clipboard.readText())
+  return text.replaceAll('\r\n', '\n')
+}
+
 /** projectId returns a Project ID unique to the test's browser. */
 export function projectId(prefix: string, browserName: string): string {
   return `${prefix}-${browserName}`.slice(0, 30)

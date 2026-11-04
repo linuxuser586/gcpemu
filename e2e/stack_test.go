@@ -278,7 +278,7 @@ func (r *run) step2(t *testing.T) {
 		"ports":    []any{map[string]any{"name": "http", "port": 8080, "targetPort": 8080}},
 	}}))
 	hosttest.Eventually(t, 3*time.Minute, "app deployment ready", func() bool { return k.deploymentReady("app", "app") },
-		func() string { return k.logs("app", "app=app") })
+		func() string { return k.diagnose("app", "app=app") })
 	r.mark("  app deployed")
 
 	// The gateway's NEG now exists: add the API backend service.
