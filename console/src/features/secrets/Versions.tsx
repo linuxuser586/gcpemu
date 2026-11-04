@@ -26,10 +26,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { downloadBlob } from '@/lib/download'
 import { toast } from '@/lib/toast'
 
 import { formatSeconds, time } from '../gcs/format'
-import { downloadBlob } from '../gke/kubeconfig'
 import {
   accessVersion,
   addVersion,
