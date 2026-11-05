@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/linuxuser586/gcpemu/internal/ca"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/gateway"
 	"github.com/linuxuser586/gcpemu/internal/instance"
@@ -85,7 +88,6 @@ func TestAdminTokenAsksTheInstance(t *testing.T) {
 	for name, tt := range map[string]struct{ gw, want string }{
 		"nothing answers":  {deadAPIGateway(t), "nothing answers at"},
 		"another Instance": {instanceAPIGateway(t, "theirs", ""), "another Instance took the port"},
-		"token refused":    {instanceAPIGateway(t, "mine", "other"), "refused this data dir's Admin token"},
 		"not an Instance":  {notAnInstance(t), "did not say which Instance"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -259,4 +261,296 @@ func TestDoctorAsksTheInstance(t *testing.T) {
 			t.Errorf("err = %v, want the held gateway port reported:\n%s", err, out)
 		}
 	})
+}
+
+// childPID is the process countingAPIGateway's Instance reports.
+const childPID = 4242
+
+// countingAPIGateway returns the address of an API gateway serving the Instance
+// id, which asks for token when token is not "", and a count of the
+// requests that reached it other than the one asking which Instance it is.
+func countingAPIGateway(t *testing.T, id, token string) (string, *atomic.Int64) {
+	t.Helper()
+	acted := &atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_emu/v1/info" {
+			acted.Add(1)
+		}
+		if token != "" && r.Header.Get(gateway.AdminTokenHeader) != token {
+			http.Error(w, `{"error":"admin token required"}`, http.StatusUnauthorized)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"id":%q,"pid":%d}`, id, childPID)
+	}))
+	t.Cleanup(srv.Close)
+	return strings.TrimPrefix(srv.URL, "http://"), acted
+}
+
+// TestCommandsReportOneReason is #1024's table: whatever keeps a command
+// from a Live Instance, it fails with the check's reason and sends nothing
+// more. The other tests here take the rest of the commands through it.
+func TestCommandsReportOneReason(t *testing.T) {
+	t.Run("Live Instance", func(t *testing.T) {
+		gw, acted := countingAPIGateway(t, "mine", "kept")
+		out, err := gcpemu(t, "--data-dir", dataDir(t, gw), "reset")
+		if err != nil || !strings.Contains(out, "state reset") || acted.Load() != 1 {
+			t.Errorf("reset = %q, %v, with %d requests, want it reset", out, err, acted.Load())
+		}
+	})
+	t.Run("no endpoints.json", func(t *testing.T) {
+		dir := dataDir(t, deadAPIGateway(t))
+		if err := os.Remove(filepath.Join(dir, instance.EndpointsFile)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := gcpemu(t, "--data-dir", dir, "reset")
+		const want = `instance "default" has no endpoints.json in `
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
+		}
+	})
+	t.Run("unreadable endpoints.json", func(t *testing.T) {
+		dir := dataDir(t, deadAPIGateway(t))
+		if err := os.WriteFile(filepath.Join(dir, instance.EndpointsFile), []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := gcpemu(t, "--data-dir", dir, "reset")
+		const want = `instance "default" has an unreadable endpoints.json: `
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
+		}
+	})
+	t.Run("no API gateway recorded", func(t *testing.T) {
+		dir := dataDir(t, deadAPIGateway(t))
+		if err := os.WriteFile(filepath.Join(dir, instance.EndpointsFile), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := gcpemu(t, "--data-dir", dir, "reset")
+		const want = `instance "default" has no API gateway address in endpoints.json`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
+		}
+	})
+	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
+	web := notAnInstance(t)
+	refused, refusedActed := countingAPIGateway(t, "mine", "other")
+	for name, tt := range map[string]struct {
+		gw, want string
+		acted    *atomic.Int64
+	}{
+		"nothing answers":  {deadAPIGateway(t), `instance "default" is not running: nothing answers at `, nil},
+		"another Instance": {theirs, `instance "default" is not running: the API gateway serves Instance theirs, not mine: another Instance took the port`, theirsActed},
+		"no Instance":      {web, `instance "default" is not running: what answers at ` + web + ` did not say which Instance it serves`, nil},
+		"token refused":    {refused, `cannot tell whether instance "default" is running: the API gateway at ` + refused + ` refused this data dir's Admin token`, refusedActed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := gcpemu(t, "--data-dir", dataDir(t, tt.gw), "reset")
+			if err == nil || strings.Contains(out, "state reset") {
+				t.Fatalf("reset = %q, %v, want an error", out, err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want it to say %q", err, tt.want)
+			}
+			if tt.acted != nil && tt.acted.Load() != 0 {
+				t.Errorf("reset reached the API gateway with %d requests after the check", tt.acted.Load())
+			}
+		})
+	}
+}
+
+// TestAnotherInstanceIsNotActedOn is #1024: from a data dir whose
+// endpoints.json names another Instance, no command reports on that Instance
+// or sends it anything but the check.
+func TestAnotherInstanceIsNotActedOn(t *testing.T) {
+	const want = `instance "default" is not running: the API gateway serves Instance theirs, not mine: another Instance took the port`
+	for name, args := range map[string][]string{
+		"status":        {"status"},
+		"wait":          {"wait", "--for", "gke/cluster=p/z/c", "--timeout", "1s"},
+		"adminRequest":  {"fault", "list"},
+		"env":           {"env"},
+		"hosts":         {"hosts"},
+		"logs requests": {"logs", "--requests"},
+		"time advance":  {"time", "advance", "1h"},
+		"console":       {"console", "--print"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gw, acted := countingAPIGateway(t, "theirs", "")
+			out, err := gcpemu(t, append([]string{"--data-dir", dataDir(t, gw)}, args...)...)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want it to say %q", err, want)
+			}
+			if strings.Contains(out, "theirs") && !strings.Contains(out, "Error:") {
+				t.Errorf("output reports the other Instance:\n%s", out)
+			}
+			if acted.Load() != 0 {
+				t.Errorf("%d requests reached the other Instance after the check", acted.Load())
+			}
+		})
+	}
+}
+
+// TestStatusAndWaitSayWhy is #1024: they return the check's reason, not a
+// bare "not running".
+func TestStatusAndWaitSayWhy(t *testing.T) {
+	for name, args := range map[string][]string{
+		"status": {"status"},
+		"wait":   {"wait", "--for", "gke/cluster=p/z/c", "--timeout", "1s"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := gcpemu(t, append([]string{"--data-dir", dataDir(t, deadAPIGateway(t))}, args...)...)
+			if err == nil || !strings.Contains(err.Error(), "is not running: nothing answers at") {
+				t.Errorf("err = %v, want the reason", err)
+			}
+		})
+	}
+}
+
+// TestRefusedTokenNeverSaysNotRunning is #1024: an API gateway that refuses
+// the data dir's Admin token may be a Live Instance, so no command says the
+// Instance is not running.
+func TestRefusedTokenNeverSaysNotRunning(t *testing.T) {
+	const want = `cannot tell whether instance "default" is running: the API gateway at `
+	gw := instanceAPIGateway(t, "mine", "other")
+	t.Run("admin token", func(t *testing.T) {
+		out, err := gcpemu(t, "--data-dir", dataDir(t, gw), "admin", "token")
+		if err == nil || strings.Contains(out, "kept") {
+			t.Fatalf("admin token = %q, %v, want no token and an error", out, err)
+		}
+		if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "is not running") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("status", func(t *testing.T) {
+		_, err := gcpemu(t, "--data-dir", dataDir(t, gw), "status")
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "is not running") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("doctor", func(t *testing.T) {
+		out, _ := gcpemu(t, "--data-dir", dataDir(t, gw), "doctor")
+		if !strings.Contains(out, want) || strings.Contains(out, "is not running") {
+			t.Errorf("doctor:\n%s", out)
+		}
+	})
+}
+
+// TestCARotateAsksTheInstance is #1024: only a Live Instance rotates through
+// the Admin API, and a CA that may be in use is never rotated on disk. With
+// no Live Instance the CA is this data dir's own and nothing is using it.
+func TestCARotateAsksTheInstance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // rotating updates browser databases there
+	const live, onDisk, fails = "running instance", "on next start", ""
+	dropsPost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			panic(http.ErrAbortHandler) // the Instance went away after the check
+		}
+		_, _ = io.WriteString(w, `{"id":"mine"}`)
+	}))
+	defer dropsPost.Close()
+	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
+	refused, refusedActed := countingAPIGateway(t, "mine", "other")
+	mine, mineActed := countingAPIGateway(t, "mine", "kept")
+	for name, tt := range map[string]struct {
+		gw, want  string
+		acted     *atomic.Int64
+		wantActed int64
+	}{
+		"Live Instance":      {gw: mine, want: live, acted: mineActed, wantActed: 1},
+		"no endpoints.json":  {want: onDisk},
+		"nothing answers":    {gw: deadAPIGateway(t), want: onDisk},
+		"another Instance":   {gw: theirs, want: onDisk, acted: theirsActed},
+		"no Instance":        {gw: notAnInstance(t), want: onDisk},
+		"token refused":      {gw: refused, want: fails, acted: refusedActed},
+		"Live, then no POST": {gw: strings.TrimPrefix(dropsPost.URL, "http://"), want: fails},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := dataDir(t, tt.gw)
+			if tt.gw == "" {
+				if err := os.Remove(filepath.Join(dir, instance.EndpointsFile)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ca.Load(dir, "default"); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(dir, ca.CertFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := gcpemu(t, "--data-dir", dir, "ca", "rotate")
+			after, readErr := os.ReadFile(filepath.Join(dir, ca.CertFile))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if rotated := !bytes.Equal(before, after); rotated != (tt.want == onDisk) {
+				t.Errorf("rotated on disk = %v, want %v", rotated, tt.want == onDisk)
+			}
+			if tt.want == fails {
+				if err == nil {
+					t.Errorf("ca rotate = %q, want an error", out)
+				}
+			} else if err != nil || !strings.Contains(out, tt.want) {
+				t.Errorf("ca rotate = %q, %v, want it to say %q", out, err, tt.want)
+			}
+			if tt.acted != nil && tt.acted.Load() != tt.wantActed {
+				t.Errorf("%d requests after the check, want %d", tt.acted.Load(), tt.wantActed)
+			}
+		})
+	}
+}
+
+// fakeChild is a detached child that stands in for os.Process.
+type fakeChild struct {
+	signalErr error
+	killed    bool
+}
+
+func (c *fakeChild) Signal(os.Signal) error { return c.signalErr }
+func (c *fakeChild) Kill() error            { c.killed = true; return nil }
+
+// TestStopChildAsksOnlyItsOwnInstance is #1024: where a child takes no
+// signal, as on Windows, `start --detach` asks it to shut down only when
+// it is the data dir's Live Instance, and otherwise kills it.
+func TestStopChildAsksOnlyItsOwnInstance(t *testing.T) {
+	noSignals := errors.New("not supported by windows")
+	mine, mineActed := countingAPIGateway(t, "mine", "kept")
+	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
+	refuses := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			http.Error(w, "no", http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"id":"mine","pid":%d}`, childPID)
+	}))
+	defer refuses.Close()
+	for name, tt := range map[string]struct {
+		gw         string
+		acted      *atomic.Int64
+		pid        int
+		signalErr  error
+		wantActed  int64
+		wantKilled bool
+	}{
+		"signalled":        {gw: mine, acted: mineActed, pid: childPID},
+		"own Instance":     {gw: mine, acted: mineActed, pid: childPID, signalErr: noSignals, wantActed: 1},
+		"another process":  {gw: mine, acted: mineActed, pid: childPID + 1, signalErr: noSignals, wantKilled: true},
+		"another Instance": {gw: theirs, acted: theirsActed, pid: childPID, signalErr: noSignals, wantKilled: true},
+		"nothing answers":  {gw: deadAPIGateway(t), pid: childPID, signalErr: noSignals, wantKilled: true},
+		"shutdown refused": {gw: strings.TrimPrefix(refuses.URL, "http://"), pid: childPID, signalErr: noSignals, wantKilled: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tt.acted != nil {
+				tt.acted.Store(0)
+			}
+			cfg := config.Defaults()
+			cfg.DataDir = dataDir(t, tt.gw)
+			child := &fakeChild{signalErr: tt.signalErr}
+			stopChild(&cfg, child, tt.pid)
+			if child.killed != tt.wantKilled {
+				t.Errorf("killed = %v, want %v", child.killed, tt.wantKilled)
+			}
+			if tt.acted != nil && tt.acted.Load() != tt.wantActed {
+				t.Errorf("%d shutdown requests, want %d", tt.acted.Load(), tt.wantActed)
+			}
+		})
+	}
 }

@@ -76,7 +76,7 @@ func TestRunExitCode(t *testing.T) {
 	if code != 7 {
 		t.Fatalf("exit code %d, want 7:\n%s", code, out)
 	}
-	if out, err := gcpemu(t, nil, "status", "--data-dir", dir); err == nil || !strings.Contains(out, "not running") {
+	if out, err := gcpemu(t, nil, "status", "--data-dir", dir); err == nil || !strings.Contains(out, "has no endpoints.json") {
 		t.Errorf("status after run: %v %s", err, out)
 	}
 }

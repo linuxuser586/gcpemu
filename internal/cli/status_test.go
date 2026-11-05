@@ -57,7 +57,7 @@ func TestStatusReady(t *testing.T) {
 			t.Errorf("status %v when ready: %v", args, err)
 		}
 	}
-	if err := run("--ready", "--data-dir", t.TempDir()); err == nil || !strings.Contains(err.Error(), "not running") {
+	if err := run("--ready", "--data-dir", t.TempDir()); err == nil || !strings.Contains(err.Error(), "has no endpoints.json") {
 		t.Errorf("status --ready without an instance: %v", err)
 	}
 }

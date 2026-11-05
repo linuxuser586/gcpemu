@@ -26,7 +26,7 @@ func (o *rootOpts) consoleCmd() *cobra.Command {
 			}
 			b, err := c.get("/_emu/v1/info")
 			if err != nil {
-				return fmt.Errorf("instance %q is not running: %w", cfg.Instance, err)
+				return fmt.Errorf("asking instance %q: %w", cfg.Instance, err)
 			}
 			var info struct{ Console bool }
 			if err := json.Unmarshal(b, &info); err != nil {

@@ -159,6 +159,9 @@ func (o *rootOpts) startCmd() *cobra.Command {
 			if detach {
 				return startDetached(cmd, cfg)
 			}
+			if err := refuseRunning(cfg); err != nil {
+				return err
+			}
 			return o.runForeground(cfg)
 		},
 	}
@@ -377,19 +380,34 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		}
 	}
 	reasons := notReady(cfg)
-	// Windows delivers no signal to a detached process: ask the instance to
-	// shut down, and kill it if it cannot be reached.
-	if err := child.Process.Signal(syscall.SIGTERM); err != nil {
-		if c, err := clientFor(cfg); err != nil {
-			_ = child.Process.Kill()
-		} else if _, _, err := c.do(http.MethodPost, "/_emu/v1/shutdown"); err != nil {
-			_ = child.Process.Kill()
-		}
-	}
+	stopChild(cfg, child.Process, child.Process.Pid)
 	if reasons == "" {
 		reasons = logTail(logPath, logStart, 20)
 	}
 	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
+}
+
+// detachedChild is the process `start --detach` started.
+type detachedChild interface {
+	Signal(os.Signal) error
+	Kill() error
+}
+
+// stopChild stops a child in process pid that did not become ready. Windows
+// delivers no signal to a detached process: ask the Live Instance in that
+// process to shut down, and kill the child when that fails, so the request
+// reaches nothing but the child (#1024).
+func stopChild(cfg *config.Config, child detachedChild, pid int) {
+	if child.Signal(syscall.SIGTERM) == nil {
+		return
+	}
+	c, err := clientFor(cfg)
+	if err == nil {
+		_, err = instance.AskShutdown(c.do, instance.ReadID(cfg.InstanceDir()), pid)
+	}
+	if err != nil {
+		_ = child.Kill()
+	}
 }
 
 // refuseRunning fails when cfg's Instance is already running, or may be:
@@ -398,10 +416,10 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 func refuseRunning(cfg *config.Config) error {
 	live := checkLive(cfg)
 	switch {
-	case live.err == nil:
+	case live.state == stateLive:
 		return fmt.Errorf("instance %q is already running (%s)", cfg.Instance, cfg.InstanceDir())
-	case live.tokenRefused:
-		return fmt.Errorf("cannot tell whether instance %q is running (%s): %w", cfg.Instance, cfg.InstanceDir(), live.reason)
+	case !live.ruledOut():
+		return live.refusal(cfg)
 	}
 	return nil
 }
@@ -552,11 +570,11 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			}
 			c, err := clientFor(cfg)
 			if err != nil {
-				return fmt.Errorf("instance %q is not running", cfg.Instance)
+				return err
 			}
 			info, err := c.get("/_emu/v1/info")
 			if err != nil {
-				return fmt.Errorf("instance %q is not running: %w", cfg.Instance, err)
+				return fmt.Errorf("asking instance %q: %w", cfg.Instance, err)
 			}
 			code, ready, _ := c.do(http.MethodGet, "/_emu/v1/ready")
 			// --ready makes status a readiness probe (NFR-PORT-004: the OCI

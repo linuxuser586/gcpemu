@@ -77,12 +77,12 @@ func stopAtCleanup(t *testing.T, dir string) {
 	})
 }
 
-// stopInstance stops the Instance in dir. One that is not running is no failure:
+// stopInstance stops the Instance in dir. One that has no endpoints.json is no failure:
 // a test may have stopped it, and restarting it registers a second cleanup.
 func stopInstance(t *testing.T, dir string) error {
 	t.Helper()
 	out, err := gcpemu(t, nil, "stop", "--data-dir", dir)
-	if err != nil && !strings.Contains(out, "is not running") {
+	if err != nil && !strings.Contains(out, "has no endpoints.json") {
 		return fmt.Errorf("gcpemu stop --data-dir %s: %w\n%s", dir, err, out)
 	}
 	return nil
@@ -228,7 +228,7 @@ func TestCLILifecycle(t *testing.T) {
 	if _, err := gcpemu(t, nil, "status", "--data-dir", dir); err == nil {
 		t.Error("status succeeded after stop")
 	}
-	if out, err := gcpemu(t, nil, "console", "--print", "--data-dir", dir); err == nil || !strings.Contains(out, "not running") {
+	if out, err := gcpemu(t, nil, "console", "--print", "--data-dir", dir); err == nil || !strings.Contains(out, "has no endpoints.json") {
 		t.Errorf("console after stop: %v %s", err, out)
 	}
 }

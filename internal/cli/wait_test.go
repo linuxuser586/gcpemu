@@ -21,6 +21,10 @@ func waitServer(t *testing.T, states func(n int64, cond string) (state, reason s
 	t.Helper()
 	calls = &atomic.Int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_emu/v1/info" {
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
 		if r.URL.Path != "/_emu/v1/conditions" {
 			http.NotFound(w, r)
 			return
@@ -139,7 +143,11 @@ func TestWait(t *testing.T) {
 	})
 
 	t.Run("server error", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/_emu/v1/info" {
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			http.Error(w, "boom", http.StatusInternalServerError)
 		}))
 		t.Cleanup(srv.Close)
@@ -167,13 +175,16 @@ func TestWait(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		stale := writeEndpoints(t, l.Addr().String())
+		leftBehind := writeEndpoints(t, l.Addr().String())
 		l.Close()
-		for name, dir := range map[string]string{"none": t.TempDir(), "stale endpoints": stale} {
+		for name, tt := range map[string]struct{ dir, want string }{
+			"none":                  {t.TempDir(), "has no endpoints.json"},
+			"left-behind endpoints": {leftBehind, "is not running: nothing answers"},
+		} {
 			start := time.Now()
-			err := runWait(dir, "--for", cluster)
-			if err == nil || !strings.Contains(err.Error(), "not running") {
-				t.Errorf("%s: %v, want not running", name, err)
+			err := runWait(tt.dir, "--for", cluster)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("%s: %v, want it to say %q", name, err, tt.want)
 			}
 			if took := time.Since(start); took > time.Second {
 				t.Errorf("%s: took %v", name, took)

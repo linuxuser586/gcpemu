@@ -87,6 +87,9 @@ func (o *rootOpts) dnsCmd() *cobra.Command {
 			}
 			port := dnsPort(cfg)
 			if install && port == 0 {
+				if live := checkLive(cfg); live.state == stateUnconfirmed {
+					return live.refusal(cfg)
+				}
 				return fmt.Errorf("the dns Service endpoint of instance %q picks a free port (--port dns=0): start the Instance first, or give it a fixed port", cfg.Instance)
 			}
 			// uninstall works from the record alone: its plan checks
@@ -146,7 +149,7 @@ func normalizeSuffixes(suffixes []string) ([]string, error) {
 // dnsPort is the Instance's dns port: the Live Instance's, else the
 // configured one.
 func dnsPort(cfg *config.Config) int {
-	if live := checkLive(cfg); live.err == nil {
+	if live := checkLive(cfg); live.state == stateLive {
 		if _, p, err := net.SplitHostPort(live.client.endpoints["dns"]); err == nil {
 			if n, err := strconv.Atoi(p); err == nil {
 				return n

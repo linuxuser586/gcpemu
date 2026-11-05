@@ -91,14 +91,14 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 			}
 
 			live := checkLive(cfg)
-			running := live.err == nil
+			running := live.state == stateLive
 			if running {
 				fmt.Fprintf(out, "[ok  ] instance %q is running; skipping port checks\n", cfg.Instance)
 			} else {
-				switch {
-				case live.tokenRefused:
+				switch live.state {
+				case stateUnconfirmed:
 					fmt.Fprintf(out, "[--  ] %v; the %s here may be left behind\n", live.err, instance.EndpointsFile)
-				case live.leftBehind:
+				case stateLeftBehind:
 					fmt.Fprintf(out, "[--  ] %v; start replaces the %s left behind\n", live.err, instance.EndpointsFile)
 				}
 				for _, n := range portNames(cfg) {

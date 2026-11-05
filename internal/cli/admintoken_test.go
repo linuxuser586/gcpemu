@@ -74,7 +74,7 @@ func TestAdminTokenCLI(t *testing.T) {
 	if _, err := run("admin", "token"); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Errorf("admin token without a token file: %v", err)
 	}
-	if _, err := run("--data-dir", t.TempDir(), "admin", "token"); err == nil || !strings.Contains(err.Error(), "not running") {
+	if _, err := run("--data-dir", t.TempDir(), "admin", "token"); err == nil || !strings.Contains(err.Error(), "has no endpoints.json") {
 		t.Errorf("admin token without an instance: %v", err)
 	}
 }

@@ -20,6 +20,10 @@ The unique identifier that tags everything an Instance owns, such as its contain
 The Instance a data directory's files name, confirmed by asking it, not by reading those files: it answers at the address they give with that directory's Instance ID.
 _Avoid_: running (for anything judged from the files alone)
 
+**Unconfirmed Instance**:
+What a data directory's files name when asking neither confirms a Live Instance nor rules one out, such as an API gateway that refuses the Admin token or connects and never answers.
+_Avoid_: stale, dead, hung
+
 **Product**:
 A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
 
