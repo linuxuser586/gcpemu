@@ -21,4 +21,4 @@ A connection that never forms, an answer from another Instance, and an answer th
 - Commands that need an Instance fail either way; only their message says which.
 - `gcpemu wait` with a `--timeout` shorter than the check reports the timeout, not an Unconfirmed Instance, so that `--timeout` holds.
 - The rule binds commands that would do something costly in place of a Live Instance. `gcpemu dns install` with a fixed port needs no Instance and goes ahead on an Unconfirmed one; with `--port dns=0` it has no port to use, so it refuses.
-- Every command now waits on `/_emu/v1/info`, which asks the container runtime, so a hung runtime can make an Instance Unconfirmed.
+- Every command now waits on `/_emu/v1/info`, which reports the container runtime without letting it hold up the answer (ADR 0067), so a hung runtime cannot make an Instance Unconfirmed.

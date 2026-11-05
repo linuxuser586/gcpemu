@@ -1709,10 +1709,11 @@ components:
       type: object
       description: >-
         The container runtime the instance uses, or would use once a service
-        needs one. Probed at most every few seconds.
+        needs one. Probed at most every few seconds, and a slow probe does not
+        hold up the answer: kind is unknown until the first probe has finished.
       required: [kind, reachable]
       properties:
-        kind: { type: string, enum: [docker, podman, none] }
+        kind: { type: string, enum: [docker, podman, none, unknown] }
         version: { type: string }
         reachable: { type: boolean }
         error: { type: string, description: Why the runtime is not reachable. }

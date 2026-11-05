@@ -1330,10 +1330,10 @@ export interface components {
             /** @description Why it did not, such as a Managed emulator still starting or having no container runtime. */
             error?: string;
         };
-        /** @description The container runtime the instance uses, or would use once a service needs one. Probed at most every few seconds. */
+        /** @description The container runtime the instance uses, or would use once a service needs one. Probed at most every few seconds, and a slow probe does not hold up the answer: kind is unknown until the first probe has finished. */
         RuntimeStatus: {
             /** @enum {string} */
-            kind: "docker" | "podman" | "none";
+            kind: "docker" | "podman" | "none" | "unknown";
             version?: string;
             reachable: boolean;
             /** @description Why the runtime is not reachable. */

@@ -219,7 +219,7 @@ func New(cfg *config.Config, factories map[string]Factory, logOut io.Writer) (_ 
 	if in.link, err = in.newLink(); err != nil {
 		return nil, fmt.Errorf("links: %w", err)
 	}
-	in.containers = &containers{in: in}
+	in.containers = &containers{in: in, status: RuntimeStatus{Kind: runtimeUnknown}}
 	env.Containers = in.containers
 	in.managed = map[string]*managedEmulator{}
 	in.managedCtx, in.managedCancel = context.WithCancel(context.Background())

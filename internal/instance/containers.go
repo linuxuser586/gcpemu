@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
@@ -27,10 +28,15 @@ type containers struct {
 	rt    *runtime.Manager
 	plane *netplane.Plane
 	err   error
+	// connected is rt, for what must not wait for a connection, which holds
+	// mu for as long as the runtime takes.
+	connected atomic.Pointer[runtime.Manager]
 
 	statusMu sync.Mutex
 	status   RuntimeStatus
 	statusAt time.Time
+	// statusProbe closes when the running probe ends; nil while none runs.
+	statusProbe chan struct{}
 
 	disruptedMu  sync.Mutex
 	disruptedErr error
@@ -88,6 +94,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 		}
 	}
 	c.rt = m
+	c.connected.Store(m)
 	return m, nil
 }
 
@@ -197,6 +204,12 @@ func (c *containers) reset(ctx context.Context) error {
 // ephemeral instances, its other networks and volumes) after services have
 // stopped.
 func (c *containers) shutdown() error {
+	c.statusMu.Lock()
+	probe := c.statusProbe
+	c.statusMu.Unlock()
+	if probe != nil { // in.stopping has cancelled it, and no other starts
+		<-probe
+	}
 	c.mu.Lock()
 	rt, plane := c.rt, c.plane
 	c.mu.Unlock()
@@ -285,52 +298,93 @@ func (in *Instance) Containers(ctx context.Context) ([]ContainerInfo, error) {
 
 // RuntimeStatus describes the container runtime (admin API /info).
 type RuntimeStatus struct {
-	Kind      string `json:"kind"` // docker, podman or none
+	Kind      string `json:"kind"` // docker, podman, none or unknown
 	Version   string `json:"version,omitempty"`
 	Reachable bool   `json:"reachable"`
 	Error     string `json:"error,omitempty"`
 }
 
+const (
+	// runtimeUnknown is the Kind before the first probe has finished.
+	runtimeUnknown = "unknown"
+	// runtimeNone is the Kind when a probe found no usable runtime.
+	runtimeNone = "none"
+)
+
 // runtimeStatusTTL bounds how often RuntimeStatus probes the runtime;
-// the Web console dashboard polls /info.
-const runtimeStatusTTL = 5 * time.Second
+// the Web console dashboard polls /info (a variable for tests).
+var runtimeStatusTTL = 5 * time.Second
+
+// runtimeStatusWait is how long RuntimeStatus waits for a probe. A healthy
+// runtime answers well within it, so a caller that asks once is told the
+// truth; a slow one must not hold up /info, which every CLI command asks
+// first (ADR 0066, #1025).
+const runtimeStatusWait = time.Second
 
 // RuntimeStatus reports the container runtime the instance uses, or would
-// use. It probes without connecting: no orphans are reclaimed until a
-// service needs the runtime.
+// use. It starts a probe if its last answer is old, waits at most
+// runtimeStatusWait for it, and returns the latest answer: the runtime
+// cannot hold it up, and the probe is every caller's, so one going away
+// does not cut it short.
 func (in *Instance) RuntimeStatus(ctx context.Context) RuntimeStatus {
 	c := in.containers
 	c.statusMu.Lock()
-	defer c.statusMu.Unlock()
-	if !c.statusAt.IsZero() && time.Since(c.statusAt) < runtimeStatusTTL {
-		return c.status
+	stale := c.statusAt.IsZero() || time.Since(c.statusAt) >= runtimeStatusTTL
+	if stale && c.statusProbe == nil && in.stopping.Err() == nil {
+		probe := make(chan struct{})
+		c.statusProbe = probe
+		go func() {
+			defer close(probe)
+			st := c.probeStatus(in.stopping)
+			c.statusMu.Lock()
+			defer c.statusMu.Unlock()
+			c.statusProbe = nil
+			// A probe shutdown cut short says nothing about the runtime.
+			if in.stopping.Err() == nil {
+				c.status, c.statusAt = st, time.Now()
+			}
+		}()
 	}
-	c.mu.Lock()
-	rt := c.rt
-	c.mu.Unlock()
-	var st RuntimeStatus
-	if rt != nil {
+	probe := c.statusProbe
+	c.statusMu.Unlock()
+	if stale && probe != nil {
+		wait := time.NewTimer(runtimeStatusWait)
+		defer wait.Stop()
+		select {
+		case <-probe:
+		case <-wait.C:
+		case <-ctx.Done():
+		}
+	}
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	return c.status
+}
+
+// probeStatus asks the runtime how it is, without connecting: no orphans
+// are reclaimed until a service needs the runtime.
+func (c *containers) probeStatus(ctx context.Context) RuntimeStatus {
+	if rt := c.connected.Load(); rt != nil {
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
 		info, err := rt.Client.Info(pctx)
-		cancel()
-		st = RuntimeStatus{Kind: rt.Info.Name, Version: rt.Info.Version, Reachable: err == nil}
+		st := RuntimeStatus{Kind: rt.Info.Name, Version: rt.Info.Version, Reachable: err == nil}
 		if err != nil {
 			st.Error = err.Error()
 		} else {
 			st.Version = info.Version
 		}
-	} else if cl, err := runtime.Detect(); err != nil {
-		st = RuntimeStatus{Kind: "none", Error: err.Error()}
-	} else {
-		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		info, err := cl.Info(pctx)
-		cancel()
-		if err != nil {
-			st = RuntimeStatus{Kind: "none", Error: err.Error()}
-		} else {
-			st = RuntimeStatus{Kind: info.Name, Version: info.Version, Reachable: true}
-		}
+		return st
 	}
-	c.status, c.statusAt = st, time.Now()
-	return st
+	cl, err := runtime.DetectContext(ctx)
+	if err != nil {
+		return RuntimeStatus{Kind: runtimeNone, Error: err.Error()}
+	}
+	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	info, err := cl.Info(pctx)
+	if err != nil {
+		return RuntimeStatus{Kind: runtimeNone, Error: err.Error()}
+	}
+	return RuntimeStatus{Kind: info.Name, Version: info.Version, Reachable: true}
 }

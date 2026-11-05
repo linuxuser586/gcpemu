@@ -106,14 +106,21 @@ function ReadinessCard() {
 
 function RuntimeCard({ runtime }: { runtime: Info['runtime'] }) {
   const ok = runtime.reachable
+  const known = runtime.kind !== 'unknown'
   return (
     <Card aria-labelledby="runtime-title">
       <CardHeader>
         <CardTitle id="runtime-title">Container runtime</CardTitle>
-        <Badge variant={ok ? 'success' : 'warning'}>{ok ? 'Reachable' : 'Not reachable'}</Badge>
+        {known ? (
+          <Badge variant={ok ? 'success' : 'warning'}>{ok ? 'Reachable' : 'Not reachable'}</Badge>
+        ) : (
+          <Badge variant="outline">Checking</Badge>
+        )}
       </CardHeader>
       <p className="text-sm">
-        {runtime.kind === 'none' ? (
+        {!known ? (
+          'Checking the container runtime'
+        ) : runtime.kind === 'none' ? (
           'No container runtime found'
         ) : (
           <>
