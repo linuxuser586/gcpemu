@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/agent"
@@ -27,14 +28,15 @@ type containers struct {
 	rt    *runtime.Manager
 	plane *netplane.Plane
 	err   error
+	// connected is rt, for what must not wait for a connection, which holds
+	// mu for as long as the runtime takes.
+	connected atomic.Pointer[runtime.Manager]
 
 	statusMu sync.Mutex
 	status   RuntimeStatus
 	statusAt time.Time
 	// statusProbe closes when the running probe ends; nil while none runs.
 	statusProbe chan struct{}
-	// statusEnded stops new probes, as the Instance is shutting down.
-	statusEnded bool
 
 	disruptedMu  sync.Mutex
 	disruptedErr error
@@ -92,6 +94,7 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 		}
 	}
 	c.rt = m
+	c.connected.Store(m)
 	return m, nil
 }
 
@@ -202,10 +205,9 @@ func (c *containers) reset(ctx context.Context) error {
 // stopped.
 func (c *containers) shutdown() error {
 	c.statusMu.Lock()
-	c.statusEnded = true
 	probe := c.statusProbe
 	c.statusMu.Unlock()
-	if probe != nil { // in.stopping has cancelled it
+	if probe != nil { // in.stopping has cancelled it, and no other starts
 		<-probe
 	}
 	c.mu.Lock()
@@ -302,9 +304,12 @@ type RuntimeStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// runtimeUnknown is the Kind before the first probe has finished; none
-// means a probe found no usable runtime.
-const runtimeUnknown = "unknown"
+const (
+	// runtimeUnknown is the Kind before the first probe has finished.
+	runtimeUnknown = "unknown"
+	// runtimeNone is the Kind when a probe found no usable runtime.
+	runtimeNone = "none"
+)
 
 // runtimeStatusTTL bounds how often RuntimeStatus probes the runtime;
 // the Web console dashboard polls /info (a variable for tests).
@@ -325,7 +330,7 @@ func (in *Instance) RuntimeStatus(ctx context.Context) RuntimeStatus {
 	c := in.containers
 	c.statusMu.Lock()
 	stale := c.statusAt.IsZero() || time.Since(c.statusAt) >= runtimeStatusTTL
-	if stale && c.statusProbe == nil && !c.statusEnded {
+	if stale && c.statusProbe == nil && in.stopping.Err() == nil {
 		probe := make(chan struct{})
 		c.statusProbe = probe
 		go func() {
@@ -333,7 +338,11 @@ func (in *Instance) RuntimeStatus(ctx context.Context) RuntimeStatus {
 			st := c.probeStatus(in.stopping)
 			c.statusMu.Lock()
 			defer c.statusMu.Unlock()
-			c.status, c.statusAt, c.statusProbe = st, time.Now(), nil
+			c.statusProbe = nil
+			// A probe shutdown cut short says nothing about the runtime.
+			if in.stopping.Err() == nil {
+				c.status, c.statusAt = st, time.Now()
+			}
 		}()
 	}
 	probe := c.statusProbe
@@ -353,13 +362,9 @@ func (in *Instance) RuntimeStatus(ctx context.Context) RuntimeStatus {
 }
 
 // probeStatus asks the runtime how it is, without connecting: no orphans
-// are reclaimed until a service needs the runtime. It may wait for a
-// connection in progress, so nothing that must not wait may call it.
+// are reclaimed until a service needs the runtime.
 func (c *containers) probeStatus(ctx context.Context) RuntimeStatus {
-	c.mu.Lock()
-	rt := c.rt
-	c.mu.Unlock()
-	if rt != nil {
+	if rt := c.connected.Load(); rt != nil {
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		info, err := rt.Client.Info(pctx)
@@ -373,13 +378,13 @@ func (c *containers) probeStatus(ctx context.Context) RuntimeStatus {
 	}
 	cl, err := runtime.DetectContext(ctx)
 	if err != nil {
-		return RuntimeStatus{Kind: "none", Error: err.Error()}
+		return RuntimeStatus{Kind: runtimeNone, Error: err.Error()}
 	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	info, err := cl.Info(pctx)
 	if err != nil {
-		return RuntimeStatus{Kind: "none", Error: err.Error()}
+		return RuntimeStatus{Kind: runtimeNone, Error: err.Error()}
 	}
 	return RuntimeStatus{Kind: info.Name, Version: info.Version, Reachable: true}
 }

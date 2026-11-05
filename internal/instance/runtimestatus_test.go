@@ -106,15 +106,15 @@ func TestInfoTellsACallerThatAsksOnceAboutAHealthyRuntime(t *testing.T) {
 }
 
 // TestInfoAnswersDuringAConnection is #1025: a connection in progress holds
-// containers.mu, through Reclaim, however long the runtime takes.
+// containers.mu, through Reclaim, however long the runtime takes, and neither
+// /info nor the probe waits for it.
 func TestInfoAnswersDuringAConnection(t *testing.T) {
 	useStallingRuntime(t)
 	in, base, _ := startAdminToken(t, "127.0.0.1", "")
 	in.containers.mu.Lock()
-	var once sync.Once
-	unlock := func() { once.Do(in.containers.mu.Unlock) }
-	t.Cleanup(unlock)
-	if got, want := infoRuntime(t, base), (RuntimeStatus{Kind: "unknown"}); got != want {
+	t.Cleanup(in.containers.mu.Unlock)
+	got := infoRuntime(t, base)
+	if want := (RuntimeStatus{Kind: "docker", Version: "29.0.0", Reachable: true}); got != want {
 		t.Fatalf("runtime = %+v, want %+v", got, want)
 	}
 }
@@ -190,6 +190,32 @@ func TestConcurrentCallersShareOneProbe(t *testing.T) {
 	wg.Wait()
 	if got := f.versions.Load() - before; got != 1 {
 		t.Fatalf("%d probes, want 1", got)
+	}
+}
+
+// TestStoppingKeepsTheLastStatus: a probe that shutdown cancels says nothing
+// about the runtime, and none starts, while the API gateway still answers.
+func TestStoppingKeepsTheLastStatus(t *testing.T) {
+	f := useStallingRuntime(t)
+	shortStatusTTL(t)
+	in, base, _ := startAdminToken(t, "127.0.0.1", "")
+	want := infoRuntime(t, base)
+	f.stall.Store(true)
+	time.Sleep(50 * time.Millisecond)
+	infoRuntime(t, base) // leaves a probe out
+	in.beginStop()
+	for end := time.Now().Add(time.Second); f.inFlight.Load() != 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the probe was not cancelled")
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	asked := f.versions.Load()
+	if got := infoRuntime(t, base); got != want {
+		t.Fatalf("runtime = %+v, want the last answer %+v", got, want)
+	}
+	if got := f.versions.Load(); got != asked {
+		t.Fatal("a probe started after shutdown began")
 	}
 }
 

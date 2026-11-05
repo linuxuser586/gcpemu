@@ -12,14 +12,14 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/instance"
 )
 
-// idleService is a Service that does nothing.
-type idleService struct{}
+// idleSvc is a Service that does nothing.
+type idleSvc struct{}
 
-func (idleService) Name() string                { return "dns" }
-func (idleService) Register(emu.Router) error   { return nil }
-func (idleService) Start(context.Context) error { return nil }
-func (idleService) Stop(context.Context) error  { return nil }
-func (idleService) Ready() error                { return nil }
+func (idleSvc) Name() string                { return "dns" }
+func (idleSvc) Register(emu.Router) error   { return nil }
+func (idleSvc) Start(context.Context) error { return nil }
+func (idleSvc) Stop(context.Context) error  { return nil }
+func (idleSvc) Ready() error                { return nil }
 
 // TestALiveInstanceIsConfirmedWithAStalledRuntime is #1025: a runtime that
 // connects and never answers does not make a Live Instance Unconfirmed.
@@ -52,7 +52,7 @@ func TestALiveInstanceIsConfirmedWithAStalledRuntime(t *testing.T) {
 	cfg.Services = []string{"dns"}
 	cfg.Ports["gateway"] = 0
 	cfg.Ports[frontend.Endpoint] = 0
-	in, err := instance.New(&cfg, map[string]instance.Factory{"dns": func(*emu.Env) emu.Service { return idleService{} }}, nil)
+	in, err := instance.New(&cfg, map[string]instance.Factory{"dns": func(*emu.Env) emu.Service { return idleSvc{} }}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
