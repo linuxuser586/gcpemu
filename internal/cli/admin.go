@@ -27,7 +27,7 @@ func (o *rootOpts) adminCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := readEndpoints(cfg); err != nil {
+			if err := checkLive(cfg).err; err != nil {
 				return err
 			}
 			b, err := os.ReadFile(filepath.Join(cfg.InstanceDir(), instance.AdminTokenFile))

@@ -16,6 +16,10 @@ The user-chosen label for an Instance's configuration, e.g. "default".
 **Instance ID**:
 The unique identifier that tags everything an Instance owns, such as its containers and networks. It is held by the Instance's data directory, so every Instance started in that directory shares it.
 
+**Live Instance**:
+The Instance a data directory's files name, confirmed by asking it, not by reading those files: it answers at the address they give with that directory's Instance ID.
+_Avoid_: running (for anything judged from the files alone)
+
 **Product**:
 A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
 

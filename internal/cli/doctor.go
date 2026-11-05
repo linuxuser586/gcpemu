@@ -90,10 +90,17 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				checkAbandoned(out, found, err)
 			}
 
-			_, running := readEndpoints(cfg)
-			if running == nil {
+			live := checkLive(cfg)
+			running := live.err == nil
+			if running {
 				fmt.Fprintf(out, "[ok  ] instance %q is running; skipping port checks\n", cfg.Instance)
 			} else {
+				switch {
+				case live.tokenRefused:
+					fmt.Fprintf(out, "[--  ] %v; the %s here may be left behind\n", live.err, instance.EndpointsFile)
+				case live.leftBehind:
+					fmt.Fprintf(out, "[--  ] %v; start replaces the %s left behind\n", live.err, instance.EndpointsFile)
+				}
 				for _, n := range portNames(cfg) {
 					p := cfg.Port(n)
 					if p == 0 {
@@ -117,15 +124,15 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				}
 			}
 
-			checkLANBind(out, report, cfg, running == nil, hasRuntime, hostRuntime, ctr)
-			if running == nil {
+			checkLANBind(out, report, cfg, running, hasRuntime, hostRuntime, ctr)
+			if running {
 				checkUnpublished(out, cfg)
 				checkBuildDaemon(report, cfg)
 				checkRegistryRelay(out, report, cfg)
 				checkLinks(out, report, cfg)
 				checkExternal(report, cfg)
 			}
-			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running == nil)
+			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running)
 			if !inContainer {
 				checkResolver(out, cfg)
 			}

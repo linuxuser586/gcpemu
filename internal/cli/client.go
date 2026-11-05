@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,60 @@ func clientFor(cfg *config.Config) (*adminClient, error) {
 		return nil, fmt.Errorf("no API gateway address recorded")
 	}
 	return newAdminClient(eps, readAdminToken(cfg)), nil
+}
+
+// liveCheck is what asking a data dir's Instance found.
+type liveCheck struct {
+	// client reaches the Live Instance; nil when there is none.
+	client *adminClient
+	// err says there is no Live Instance.
+	err error
+	// reason is what was found in its place, when leftBehind.
+	reason error
+	// leftBehind reports an endpoints.json with no Live Instance behind it.
+	leftBehind bool
+	// tokenRefused reports an API gateway that refused the data dir's Admin
+	// token, so it wouldn't say which Instance it serves. That is almost
+	// always another Instance, as a Live Instance's token is in the data dir.
+	tokenRefused bool
+}
+
+// checkLive asks whether cfg's data dir has a Live Instance: endpoints.json
+// proves nothing, as a crash leaves it behind (#1018). It asks as `stop`
+// does, with the Instance ID, because the file's port may have another
+// Instance on it (ADR 0064).
+func checkLive(cfg *config.Config) liveCheck {
+	notLive := func(reason error) liveCheck {
+		return liveCheck{err: fmt.Errorf("instance %q is not running: %w", cfg.Instance, reason), reason: reason, leftBehind: true}
+	}
+	c, err := clientFor(cfg)
+	if err != nil {
+		if _, statErr := os.Stat(filepath.Join(cfg.InstanceDir(), instance.EndpointsFile)); statErr != nil {
+			return liveCheck{err: err}
+		}
+		return notLive(err)
+	}
+	addr := strings.TrimPrefix(c.base, "http://")
+	_, err = instance.Identify(func(method, path string) (int, []byte, error) {
+		code, b, err := c.do(method, path)
+		if err != nil {
+			return 0, nil, fmt.Errorf("nothing answers at %s", addr)
+		}
+		return code, b, nil
+	}, instance.ReadID(cfg.InstanceDir()), 0)
+	if err == nil {
+		return liveCheck{client: c}
+	}
+	var unidentified *instance.UnidentifiedError
+	if !errors.As(err, &unidentified) {
+		return notLive(err)
+	}
+	if unidentified.Code == http.StatusUnauthorized {
+		live := notLive(fmt.Errorf("the API gateway at %s refused this data dir's Admin token", addr))
+		live.tokenRefused = true
+		return live
+	}
+	return notLive(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
 }
 
 // newAdminClient returns a client for the Admin API on the gateway in eps,
