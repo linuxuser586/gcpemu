@@ -94,8 +94,7 @@ type relayAgent struct {
 	wait time.Duration
 	// listenTCP and listenPacket bind listen's and offer's TCP listeners
 	// and UDP sockets: net.Listen and net.ListenPacket, which tests
-	// replace to refuse binds as Windows does, or to hand over sockets
-	// they hold.
+	// replace to refuse binds or to hand over sockets they hold.
 	listenTCP    func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
 }
@@ -249,16 +248,13 @@ func (a *relayAgent) listen(name, addr string, withUDP bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	l, pc, err := a.listenPair(addr, withUDP, false)
+	l, pc, err := a.listenPair(addr, withUDP)
 	if err != nil {
 		// The port, or its UDP twin, is taken: try ports the kernel picks.
-		// A free TCP port's UDP twin can still be held or, on Windows, sit
-		// in an excluded port range, so a few are tried. Windows picks
-		// nearby ports, which can all sit in one of the other protocol's
-		// excluded ranges, so TCP and UDP take turns picking (#459).
+		// A free TCP port's UDP twin can still be held, so a few are tried.
 		anyPort := net.JoinHostPort(host, "0")
-		for i := range udpPairAttempts {
-			if l, pc, err = a.listenPair(anyPort, withUDP, i%2 == 0); err == nil {
+		for range udpPairAttempts {
+			if l, pc, err = a.listenPair(anyPort, withUDP); err == nil {
 				break
 			}
 		}
@@ -318,35 +314,13 @@ func (a *relayAgent) withdraw(name string) {
 	}
 }
 
-// udpPairAttempts bounds the kernel-picked ports listen tries for a TCP
-// listener with a UDP socket on the same port. Each protocol picks half,
-// enough to walk past an excluded port range, which Windows reserves 100
-// ports at a time. It is even, so the last attempt has TCP pick and its
-// error names the port and the UDP bind that failed.
-//
-// For the agent, excluded port ranges only arise in tests on Windows
-// hosts: a real relay binds in the VM relay container, never on Windows,
-// but tests run the agent on the host. So walking past them is not a
-// user-facing case, and no test needs it to get past a real range: a test
-// that binds a pair holds one, and only tests whose hooks refuse binds
-// reach the walk (#1007). Whether the walk stays is #1008.
-const udpPairAttempts = 256
+// udpPairAttempts bounds the kernel-picked ports listen tries when the
+// port it was asked for, or that port's UDP twin, is taken.
+const udpPairAttempts = 10
 
 // listenPair listens on addr over TCP and, withUDP, over UDP on the port
-// TCP got, or, udpPicks, over UDP first and TCP on the port UDP got.
-func (a *relayAgent) listenPair(addr string, withUDP, udpPicks bool) (net.Listener, net.PacketConn, error) {
-	if withUDP && udpPicks {
-		pc, err := a.listenPacket("udp", addr)
-		if err != nil {
-			return nil, nil, err
-		}
-		l, err := a.listenTCP("tcp", pc.LocalAddr().String())
-		if err != nil {
-			pc.Close()
-			return nil, nil, fmt.Errorf("tcp on %s: %w", pc.LocalAddr(), err)
-		}
-		return l, pc, nil
-	}
+// TCP got.
+func (a *relayAgent) listenPair(addr string, withUDP bool) (net.Listener, net.PacketConn, error) {
 	l, err := a.listenTCP("tcp", addr)
 	if err != nil {
 		return nil, nil, err
