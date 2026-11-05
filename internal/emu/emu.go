@@ -37,9 +37,13 @@ type Service interface {
 	Name() string
 	// Register mounts REST handlers and gRPC services on the gateway.
 	Register(r Router) error
-	// Start starts the service's own listeners and background work.
+	// Start starts the service's own listeners and background work. ctx is
+	// cancelled when the Instance's shutdown begins.
 	Start(ctx context.Context) error
-	// Stop releases everything Start acquired.
+	// Stop releases everything Start acquired. It never overlaps Start,
+	// except when the deadline of the Instance's shutdown ended first, and
+	// Start is not called after Stop during a shutdown (ADR 0065). It may
+	// be called on a Service that was never started.
 	Stop(ctx context.Context) error
 	// Ready returns nil when the service can take traffic, or the reason it can't.
 	Ready() error

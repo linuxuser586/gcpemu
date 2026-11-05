@@ -21,10 +21,24 @@ func (in *Instance) startHostNames() {
 	if _, err := in.WriteCABundle(); err != nil {
 		in.Env.Log.Warn("writing the CA bundle", "err", err)
 	}
-	if in.Config.HostMode {
-		in.hm = hostmode.New(in.Env, in.gw.Hosts)
-		in.hm.Start()
+	if !in.Config.HostMode {
+		return
 	}
+	in.startMu.Lock()
+	defer in.startMu.Unlock()
+	// Past Shutdown's deadline nothing would stop it (ADR 0065).
+	if in.stopping.Err() != nil {
+		return
+	}
+	in.hm = hostmode.New(in.Env, in.gw.Hosts)
+	in.hm.Start()
+}
+
+// hostManager returns host mode's Manager, nil until Start reaches it.
+func (in *Instance) hostManager() *hostmode.Manager {
+	in.startMu.Lock()
+	defer in.startMu.Unlock()
+	return in.hm
 }
 
 // startGFELAN serves the Google front end on the --gfe-bind addresses, with
@@ -62,7 +76,7 @@ func (in *Instance) WriteCABundle() (string, error) {
 }
 
 // HostMode returns host mode's status (State "disabled" when off).
-func (in *Instance) HostMode() hostmode.Status { return in.hm.Status() }
+func (in *Instance) HostMode() hostmode.Status { return in.hostManager().Status() }
 
 // FrontendHosts returns the real hostnames the Google frontend serves.
 func (in *Instance) FrontendHosts() []string { return in.fe.Hosts() }

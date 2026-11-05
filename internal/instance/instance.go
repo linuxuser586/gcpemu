@@ -95,6 +95,11 @@ type Instance struct {
 	stopping  context.Context
 	beginStop context.CancelFunc
 	done      chan struct{}
+	// startMu decides whether Start or the beginning of shutdown came first
+	// (ADR 0065). It guards started, closed when Start returns and nil until
+	// it is called, and hm, which Start sets while the Admin API reads it.
+	startMu sync.Mutex
+	started chan struct{}
 
 	// managed are the Managed emulators by API (ADR 0029), which start
 	// under managedCtx.
@@ -379,8 +384,19 @@ func (in *Instance) Services() []emu.Service { return in.services }
 // Start registers routes, starts the gateway and every service, and writes
 // endpoints.json. A failing service is reported not-ready rather than
 // stopping the others (NFR-REL-003). Once shutdown has begun it returns
-// ErrShutDown, however starting ended.
+// ErrShutDown, however starting ended: it does nothing if shutdown began
+// first, and otherwise starts nothing more from the next check on. Teardown
+// waits for it to return (ADR 0065).
 func (in *Instance) Start(ctx context.Context) error {
+	in.startMu.Lock()
+	if in.stopping.Err() != nil {
+		in.startMu.Unlock()
+		return ErrShutDown
+	}
+	started := make(chan struct{})
+	in.started = started
+	in.startMu.Unlock()
+	defer close(started)
 	return in.unlessStopping(in.start(ctx))
 }
 
@@ -392,8 +408,13 @@ func (in *Instance) unlessStopping(err error) error {
 	return err
 }
 
-// start is Start, without regard for a shutdown.
+// start is Start, without regard for how a shutdown changes its result. It
+// returns ErrShutDown at the first check after shutdown begins.
 func (in *Instance) start(ctx context.Context) error {
+	// A Service may keep ctx for background work, so returning does not
+	// cancel it: only shutdown beginning, or the caller, does.
+	ctx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(in.stopping, cancel)
 	// The gateway listens first: every leaf the Instance CA issues names
 	// the CRL on its port (ADR 0046), so the CA learns it before anything
 	// can issue one. Connections wait until Serve.
@@ -426,8 +447,14 @@ func (in *Instance) start(ctx context.Context) error {
 		return err
 	}
 
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	in.removeLeftoverRegistryRelay(ctx)
 	for _, s := range in.services {
+		if in.stopping.Err() != nil {
+			return ErrShutDown
+		}
 		if in.failure(s.Name()) != nil {
 			continue
 		}
@@ -436,16 +463,32 @@ func (in *Instance) start(ctx context.Context) error {
 			in.Env.Log.Error("service failed to start", "service", s.Name(), "err", err)
 		}
 	}
-	in.startGFELAN()
-	in.startLink()
-	in.startRegistryRelay()
-	in.warnContainerBind(ctx)
-	warnLoopbackNetmask(in.Env.Log, goruntime.GOOS, loopback.Lo0Aliases)
-	in.warnContainerized(ctx)
+	for _, step := range []func(){
+		in.startGFELAN,
+		in.startLink,
+		in.startRegistryRelay,
+		func() { in.warnContainerBind(ctx) },
+		func() { warnLoopbackNetmask(in.Env.Log, goruntime.GOOS, loopback.Lo0Aliases) },
+		func() { in.warnContainerized(ctx) },
+	} {
+		if in.stopping.Err() != nil {
+			return ErrShutDown
+		}
+		step()
+	}
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
 	}
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	in.startHostNames()
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	in.Env.Log.Info("gcpemu started", "instance", in.Config.Instance, "id", in.ID, "gateway", in.Env.Endpoints.Get("gateway"), "dir", in.Dir)
 	return nil
 }
@@ -740,8 +783,10 @@ func (in *Instance) AdvanceClock(ctx context.Context, d time.Duration) error {
 // Done is closed when Shutdown completes.
 func (in *Instance) Done() <-chan struct{} { return in.done }
 
-// Shutdown stops services in reverse order, closes the store and removes
-// runtime files (FR-CORE-006).
+// Shutdown begins shutdown at once, waits for a Start in progress to return,
+// then stops services in reverse order, closes the store and removes runtime
+// files (FR-CORE-006). ctx also limits that wait: when ctx ends first, it
+// logs a warning and carries on with Start still running (ADR 0065).
 func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx, false) }
 
 // shutdown is Shutdown. When logErrs, it also logs each error, such as a
@@ -751,14 +796,14 @@ func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx
 func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
 	var errs []error
 	in.shutdownOnce.Do(func() {
-		in.beginStop()
+		in.waitForStart(ctx)
 		for i := len(in.services) - 1; i >= 0; i-- {
 			s := in.services[i]
 			if err := s.Stop(ctx); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
 			}
 		}
-		in.hm.Stop()
+		in.hostManager().Stop()
 		in.fe.StopLAN()
 		errs = append(errs, in.link.Close())
 		in.stopManaged(ctx)
@@ -784,6 +829,27 @@ func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
 		close(in.done)
 	})
 	return errors.Join(errs...)
+}
+
+// waitForStart begins shutdown and waits for a Start in progress to return,
+// or for ctx to end.
+func (in *Instance) waitForStart(ctx context.Context) {
+	in.startMu.Lock()
+	in.beginStop()
+	started := in.started
+	in.startMu.Unlock()
+	if started == nil {
+		return
+	}
+	select {
+	case <-started:
+	case <-ctx.Done():
+		select {
+		case <-started:
+		default:
+			in.Env.Log.Warn("shutting down while Start is still running: its Services may be stopped while they start")
+		}
+	}
 }
 
 // release undoes what a failed New took before it failed: it closes st,
