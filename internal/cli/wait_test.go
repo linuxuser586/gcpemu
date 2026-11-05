@@ -21,6 +21,10 @@ func waitServer(t *testing.T, states func(n int64, cond string) (state, reason s
 	t.Helper()
 	calls = &atomic.Int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_emu/v1/info" {
+			_, _ = io.WriteString(w, `{}`)
+			return
+		}
 		if r.URL.Path != "/_emu/v1/conditions" {
 			http.NotFound(w, r)
 			return
@@ -139,7 +143,11 @@ func TestWait(t *testing.T) {
 	})
 
 	t.Run("server error", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/_emu/v1/info" {
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			http.Error(w, "boom", http.StatusInternalServerError)
 		}))
 		t.Cleanup(srv.Close)

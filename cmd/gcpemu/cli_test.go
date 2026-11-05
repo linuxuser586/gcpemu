@@ -82,7 +82,7 @@ func stopAtCleanup(t *testing.T, dir string) {
 func stopInstance(t *testing.T, dir string) error {
 	t.Helper()
 	out, err := gcpemu(t, nil, "stop", "--data-dir", dir)
-	if err != nil && !strings.Contains(out, "is not running") {
+	if err != nil && !strings.Contains(out, "is not running (no endpoints.json") {
 		return fmt.Errorf("gcpemu stop --data-dir %s: %w\n%s", dir, err, out)
 	}
 	return nil

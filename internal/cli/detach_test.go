@@ -116,6 +116,10 @@ func TestDetachFailureReasons(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		cfg := cfgFor(t)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/_emu/v1/info" {
+				_, _ = io.WriteString(w, `{}`)
+				return
+			}
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = io.WriteString(w, `{"ready":false,"services":{"gcs":{"ready":true},"sql":{"ready":false,"reason":"pulling postgres:17"}}}`)
 		}))
@@ -125,6 +129,37 @@ func TestDetachFailureReasons(t *testing.T) {
 		err := startDetached(cmd, cfg)
 		if err == nil || !strings.Contains(err.Error(), "sql: pulling postgres:17") || strings.Contains(err.Error(), "gcs") {
 			t.Fatalf("err = %v", err)
+		}
+	})
+
+	// #1024: ready means this data dir's Live Instance is ready.
+	readyGateway := func(t *testing.T, id string) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, `{"id":%q}`, id)
+		}))
+		t.Cleanup(srv.Close)
+		return strings.TrimPrefix(srv.URL, "http://")
+	}
+	t.Run("ready", func(t *testing.T) {
+		cfg := cfgFor(t)
+		writeDataFile(t, cfg.DataDir, instance.IDFile, "mine")
+		t.Setenv("GCPEMU_TEST_GATEWAY", readyGateway(t, "mine"))
+		fake(t, "starting", cfg.DataDir)
+		var out strings.Builder
+		cmd := &cobra.Command{}
+		cmd.SetOut(&out)
+		if err := startDetached(cmd, cfg); err != nil || !strings.Contains(out.String(), "ready") {
+			t.Errorf("start --detach = %q, %v", out.String(), err)
+		}
+	})
+	t.Run("another Instance is not ready", func(t *testing.T) {
+		cfg := cfgFor(t)
+		writeDataFile(t, cfg.DataDir, instance.IDFile, "mine")
+		t.Setenv("GCPEMU_TEST_GATEWAY", readyGateway(t, "theirs"))
+		fake(t, "starting", cfg.DataDir)
+		err := startDetached(cmd, cfg)
+		if err == nil || !strings.Contains(err.Error(), "not ready") {
+			t.Errorf("err = %v, want not ready", err)
 		}
 	})
 }

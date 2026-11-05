@@ -62,13 +62,23 @@ otherwise once --timeout passes, naming each Wait condition not met.`,
 			if err != nil {
 				return err
 			}
-			c, err := clientFor(cfg)
-			if err != nil {
-				return fmt.Errorf("instance %q is not running", cfg.Instance)
-			}
 			path := "/_emu/v1/conditions?" + url.Values{"for": fors}.Encode()
 			deadline := time.Now().Add(timeout)
 			unmet := []string{"  (no answer from the instance yet)"}
+			// --timeout holds even for an API gateway that hangs, and the
+			// check's own timeout can be longer.
+			checked := make(chan liveCheck, 1)
+			go func() { checked <- checkLive(cfg) }()
+			var c *adminClient
+			select {
+			case live := <-checked:
+				if live.err != nil {
+					return live.err
+				}
+				c = live.client
+			case <-time.After(timeout):
+				return fmt.Errorf("timed out after %v waiting for:\n%s", timeout, strings.Join(unmet, "\n"))
+			}
 			for {
 				res, err := pollWait(c, path, deadline)
 				if errors.Is(err, context.DeadlineExceeded) {

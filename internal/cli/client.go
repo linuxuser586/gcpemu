@@ -48,7 +48,18 @@ func readEndpoints(cfg *config.Config) (map[string]string, error) {
 	return m, nil
 }
 
+// clientFor returns a client for cfg's Live Instance, and otherwise says why
+// there is none. It is the only way to a data dir's Instance, so that no
+// command acts on whatever took the port in a left-behind endpoints.json
+// (#1024).
 func clientFor(cfg *config.Config) (*adminClient, error) {
+	live := checkLive(cfg)
+	return live.client, live.err
+}
+
+// endpointsClient returns a client for the address in endpoints.json, which
+// proves nothing about what answers there. Only checkLive may use it.
+func endpointsClient(cfg *config.Config) (*adminClient, error) {
 	eps, err := readEndpoints(cfg)
 	if err != nil {
 		return nil, err
@@ -71,7 +82,8 @@ type liveCheck struct {
 	leftBehind bool
 	// tokenRefused reports an API gateway that refused the data dir's Admin
 	// token, so it wouldn't say which Instance it serves. That is almost
-	// always another Instance, as a Live Instance's token is in the data dir.
+	// always another Instance, as a Live Instance's token is in the data dir,
+	// but it can be a Live Instance, so this says neither.
 	tokenRefused bool
 }
 
@@ -83,7 +95,7 @@ func checkLive(cfg *config.Config) liveCheck {
 	notLive := func(reason error) liveCheck {
 		return liveCheck{err: fmt.Errorf("instance %q is not running: %w", cfg.Instance, reason), reason: reason, leftBehind: true}
 	}
-	c, err := clientFor(cfg)
+	c, err := endpointsClient(cfg)
 	if err != nil {
 		if _, statErr := os.Stat(filepath.Join(cfg.InstanceDir(), instance.EndpointsFile)); statErr != nil {
 			return liveCheck{err: err}
@@ -106,9 +118,13 @@ func checkLive(cfg *config.Config) liveCheck {
 		return notLive(err)
 	}
 	if unidentified.Code == http.StatusUnauthorized {
-		live := notLive(fmt.Errorf("the API gateway at %s refused this data dir's Admin token", addr))
-		live.tokenRefused = true
-		return live
+		reason := fmt.Errorf("the API gateway at %s refused this data dir's Admin token", addr)
+		return liveCheck{
+			err:          fmt.Errorf("cannot tell whether instance %q is running: %w", cfg.Instance, reason),
+			reason:       reason,
+			leftBehind:   true,
+			tokenRefused: true,
+		}
 	}
 	return notLive(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
 }

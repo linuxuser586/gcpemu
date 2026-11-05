@@ -77,23 +77,31 @@ func (o *rootOpts) caCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cl, err := clientFor(cfg); err == nil {
-				code, b, err := cl.do(http.MethodPost, "/_emu/v1/ca/rotate")
+			live := checkLive(cfg)
+			switch {
+			case live.err == nil:
+				code, b, err := live.client.do(http.MethodPost, "/_emu/v1/ca/rotate")
 				switch {
-				case err == nil && code == http.StatusOK:
+				case err != nil:
+					return fmt.Errorf("rotate: %w", err)
+				case code == http.StatusOK:
 					fmt.Fprintf(cmd.OutOrStdout(), "Rotated the CA of running instance %q; managed certificates were re-issued.\n", cfg.Instance)
 					c, err := ca.Load(cfg.InstanceDir(), cfg.Instance)
 					if err != nil {
 						return err
 					}
 					return rotateTrust(cmd, cfg.Instance, c)
-				case err == nil && code == http.StatusNotFound:
+				case code == http.StatusNotFound:
 					return fmt.Errorf("instance %q is running without the certs service; stop it (`gcpemu stop`) and rotate again", cfg.Instance)
-				case err == nil:
-					return fmt.Errorf("rotate: %d %s", code, strings.TrimSpace(string(b)))
 				}
-				// Stale endpoints file: the instance is not reachable.
+				return fmt.Errorf("rotate: %d %s", code, strings.TrimSpace(string(b)))
+			case live.tokenRefused:
+				// Rotating a live CA on disk is the costly mistake; this is one
+				// clear error (#1024).
+				return live.err
 			}
+			// No Live Instance: the CA is this data dir's own, and nothing is
+			// using it.
 			c, err := ca.Load(cfg.InstanceDir(), cfg.Instance)
 			if err != nil {
 				return err

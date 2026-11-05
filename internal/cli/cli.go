@@ -377,19 +377,34 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		}
 	}
 	reasons := notReady(cfg)
-	// Windows delivers no signal to a detached process: ask the instance to
-	// shut down, and kill it if it cannot be reached.
-	if err := child.Process.Signal(syscall.SIGTERM); err != nil {
-		if c, err := clientFor(cfg); err != nil {
-			_ = child.Process.Kill()
-		} else if _, _, err := c.do(http.MethodPost, "/_emu/v1/shutdown"); err != nil {
-			_ = child.Process.Kill()
-		}
-	}
+	stopChild(cfg, child.Process)
 	if reasons == "" {
 		reasons = logTail(logPath, logStart, 20)
 	}
 	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
+}
+
+// detachedChild is the process `start --detach` started.
+type detachedChild interface {
+	Signal(os.Signal) error
+	Kill() error
+}
+
+// stopChild stops a child that did not become ready. Windows delivers no
+// signal to a detached process: ask the Live Instance to shut down, and kill
+// the child when that fails. clientFor keeps the request from reaching
+// another Instance on the port endpoints.json names (#1024).
+func stopChild(cfg *config.Config, child detachedChild) {
+	if child.Signal(syscall.SIGTERM) == nil {
+		return
+	}
+	c, err := clientFor(cfg)
+	if err == nil {
+		_, _, err = c.do(http.MethodPost, "/_emu/v1/shutdown")
+	}
+	if err != nil {
+		_ = child.Kill()
+	}
 }
 
 // refuseRunning fails when cfg's Instance is already running, or may be:
@@ -552,7 +567,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			}
 			c, err := clientFor(cfg)
 			if err != nil {
-				return fmt.Errorf("instance %q is not running", cfg.Instance)
+				return err
 			}
 			info, err := c.get("/_emu/v1/info")
 			if err != nil {
