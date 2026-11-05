@@ -11,6 +11,7 @@ import (
 	mdns "github.com/miekg/dns"
 
 	"github.com/linuxuser586/gcpemu/internal/frontend"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 )
 
@@ -66,7 +67,7 @@ func testHostServices(t *testing.T, e, priv *env) {
 		t.Errorf("a query carrying the VPC network got the alias")
 	}
 	addr := net.JoinHostPort(ip, "18080")
-	eventually(t, 30*time.Second, "web-host reachable from the host at "+addr, func() bool {
+	hosttest.Eventually(t, 30*time.Second, "web-host reachable from the host at "+addr, func() bool {
 		resp, err := (&http.Client{Timeout: 3 * time.Second}).Get("http://" + addr + "/")
 		if err != nil {
 			return false
@@ -74,7 +75,7 @@ func testHostServices(t *testing.T, e, priv *env) {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		return strings.TrimSpace(string(b)) == "ok"
-	})
+	}, e.diagnose("default", "app=web"))
 
 	// A second cluster with the Service takes the short name away until it
 	// deletes it; the qualified names still resolve.
