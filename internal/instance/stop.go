@@ -22,23 +22,34 @@ func (s Stopping) Watchable() bool {
 	return s.Pid > 1 && s.PIDScope != "" && s.PIDScope == PIDScope()
 }
 
-// AskShutdown asks the Instance that call reaches to shut down, if it is
-// the Instance id, unless id is "", and in process pid, unless pid is 0.
-// The Instance says which one it is because the files in a data dir may
-// be a crashed Instance's: their port may have another Instance on it, and
-// their pid may be dead. call makes an Admin API request, returning the
-// status and body.
-func AskShutdown(call func(method, path string) (int, []byte, error), id string, pid int) (Stopping, error) {
+// UnidentifiedError is Identify's error when the API gateway answered
+// without saying which Instance it serves.
+type UnidentifiedError struct {
+	Code int
+	Body []byte
+}
+
+func (e *UnidentifiedError) Error() string {
+	return fmt.Sprintf("the API gateway did not say which Instance it serves: %d %s", e.Code, e.Body)
+}
+
+// Identify asks the Instance that call reaches which one it is. It fails
+// unless that is the Instance id, when id is not "", and in process pid,
+// when pid is not 0. The Instance has to say because the files in a data dir may be a
+// crashed Instance's: their port may have another Instance on it, and their
+// pid may be dead. call makes an Admin API request, returning the status
+// and body.
+func Identify(call func(method, path string) (int, []byte, error), id string, pid int) (Stopping, error) {
 	var s Stopping
 	code, b, err := call(http.MethodGet, "/_emu/v1/info")
 	if err != nil {
 		return s, err
 	}
 	if code != http.StatusOK {
-		return s, fmt.Errorf("the API gateway did not say which Instance it serves: %d %s", code, b)
+		return s, &UnidentifiedError{Code: code, Body: b}
 	}
 	if err := json.Unmarshal(b, &s); err != nil {
-		return s, err
+		return s, &UnidentifiedError{Code: code, Body: b}
 	}
 	if id != "" && s.ID != id {
 		return s, fmt.Errorf("the API gateway serves Instance %s, not %s: another Instance took the port", s.ID, id)
@@ -46,7 +57,17 @@ func AskShutdown(call func(method, path string) (int, []byte, error), id string,
 	if pid != 0 && s.Pid != pid {
 		return s, fmt.Errorf("the API gateway serves process %d, not %d: another Instance took the port", s.Pid, pid)
 	}
-	code, b, err = call(http.MethodPost, "/_emu/v1/shutdown")
+	return s, nil
+}
+
+// AskShutdown asks the Instance that call reaches to shut down, if Identify
+// finds it is the Instance id in process pid.
+func AskShutdown(call func(method, path string) (int, []byte, error), id string, pid int) (Stopping, error) {
+	s, err := Identify(call, id, pid)
+	if err != nil {
+		return s, err
+	}
+	code, b, err := call(http.MethodPost, "/_emu/v1/shutdown")
 	if err != nil {
 		return s, err
 	}

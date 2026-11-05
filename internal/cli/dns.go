@@ -143,11 +143,11 @@ func normalizeSuffixes(suffixes []string) ([]string, error) {
 	return out, nil
 }
 
-// dnsPort is the Instance's dns port: the running Instance's, else the
+// dnsPort is the Instance's dns port: the Live Instance's, else the
 // configured one.
 func dnsPort(cfg *config.Config) int {
-	if eps, err := readEndpoints(cfg); err == nil {
-		if _, p, err := net.SplitHostPort(eps["dns"]); err == nil {
+	if live := checkLive(cfg); live.err == nil {
+		if _, p, err := net.SplitHostPort(live.client.endpoints["dns"]); err == nil {
 			if n, err := strconv.Atoi(p); err == nil {
 				return n
 			}

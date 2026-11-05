@@ -392,12 +392,16 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 	return fmt.Errorf("emulator not ready after %s:\n%s\nfull log: %s", cfg.WaitTimeout, reasons, logPath)
 }
 
-// refuseRunning fails when cfg's Instance is already running.
+// refuseRunning fails when cfg's Instance is already running, or may be:
+// a start that wrongly goes on could put two Instances on one data dir,
+// where wrongly refusing is one clear error.
 func refuseRunning(cfg *config.Config) error {
-	if c, err := clientFor(cfg); err == nil {
-		if _, err := c.get("/_emu/v1/health"); err == nil {
-			return fmt.Errorf("instance %q is already running (%s)", cfg.Instance, cfg.InstanceDir())
-		}
+	live := checkLive(cfg)
+	switch {
+	case live.err == nil:
+		return fmt.Errorf("instance %q is already running (%s)", cfg.Instance, cfg.InstanceDir())
+	case live.tokenRefused:
+		return fmt.Errorf("cannot tell whether instance %q is running (%s): %w", cfg.Instance, cfg.InstanceDir(), live.reason)
 	}
 	return nil
 }
