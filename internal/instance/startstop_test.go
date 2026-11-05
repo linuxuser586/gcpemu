@@ -98,6 +98,16 @@ func waitDone(t *testing.T, in *Instance) {
 	}
 }
 
+// noRuntimeFiles fails t if in's PID file or endpoints file exists.
+func noRuntimeFiles(t *testing.T, in *Instance) {
+	t.Helper()
+	for _, name := range []string{PIDFile, EndpointsFile} {
+		if _, err := os.Stat(filepath.Join(in.Dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s left behind: %v", name, err)
+		}
+	}
+}
+
 // awaitCancel returns when ctx ends, failing t if it does not end soon.
 func awaitCancel(t *testing.T, ctx context.Context) {
 	t.Helper()
@@ -145,13 +155,29 @@ func TestShutdownRequestDuringStart(t *testing.T) {
 	if got := j.all(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
-	for _, name := range []string{PIDFile, EndpointsFile} {
-		if _, err := os.Stat(filepath.Join(in.Dir, name)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s after Done: %v", name, err)
-		}
-	}
+	noRuntimeFiles(t, in)
 	if strings.Contains(logs.String(), "gcpemu started") {
 		t.Error(`a stopped Start logged "gcpemu started"`)
+	}
+}
+
+// TestRequestShutdownBeginsAtOnce is #1011: a shutdown has begun by the time
+// RequestShutdown returns, so a Service's Start that requests one and returns
+// at once is the last to start.
+func TestRequestShutdownBeginsAtOnce(t *testing.T) {
+	var in *Instance
+	j := &journal{}
+	first := &scriptedSvc{name: "dns", journal: j, start: func(context.Context) error {
+		in.RequestShutdown()
+		return nil
+	}}
+	in, _ = newScripted(t, true, first, &scriptedSvc{name: "gcs", journal: j})
+	if err := in.Start(context.Background()); !errors.Is(err, ErrShutDown) {
+		t.Errorf("Start: %v, want ErrShutDown", err)
+	}
+	waitDone(t, in)
+	if slices.Contains(j.all(), "gcs Start") {
+		t.Errorf("a second Service started: %q", j.all())
 	}
 }
 
@@ -224,11 +250,7 @@ func TestShutdownOutlastsAStuckStart(t *testing.T) {
 	if got := j.all(); !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
-	for _, name := range []string{PIDFile, EndpointsFile} {
-		if _, err := os.Stat(filepath.Join(in.Dir, name)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s after Start returned: %v", name, err)
-		}
-	}
+	noRuntimeFiles(t, in)
 }
 
 // TestShutdownOfAStartedInstanceDoesNotWarn: with Start long returned, a ctx

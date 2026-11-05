@@ -34,7 +34,8 @@ func (in *Instance) startHostNames() {
 	in.hm.Start()
 }
 
-// hostManager returns host mode's Manager, nil until Start reaches it.
+// hostManager returns host mode's Manager, nil when it is off or until
+// Start reaches it.
 func (in *Instance) hostManager() *hostmode.Manager {
 	in.startMu.Lock()
 	defer in.startMu.Unlock()

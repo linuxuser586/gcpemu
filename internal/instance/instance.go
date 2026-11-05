@@ -85,7 +85,7 @@ type Instance struct {
 
 	containers   *containers
 	fe           *frontend.Frontend // Google frontend (FR-INT-007, FR-CORE-043)
-	hm           *hostmode.Manager  // nil unless --host-mode
+	hm           *hostmode.Manager  // nil unless --host-mode, and until Start sets it; under startMu
 	link         *link.Manager      // links to other Instances (ADR 0027)
 	adcMu        sync.Mutex         // serialises serveADCKey
 	stateMu      sync.Mutex         // serialises Reset and State snapshots
@@ -96,10 +96,11 @@ type Instance struct {
 	beginStop context.CancelFunc
 	done      chan struct{}
 	// startMu decides whether Start or the beginning of shutdown came first
-	// (ADR 0065). It guards started, closed when Start returns and nil until
-	// it is called, and hm, which Start sets while the Admin API reads it.
-	startMu sync.Mutex
-	started chan struct{}
+	// (ADR 0065). It guards startReturned, closed when Start returns and nil
+	// until it is called, and hm, which Start sets while the Admin API reads
+	// it.
+	startMu       sync.Mutex
+	startReturned chan struct{}
 
 	// managed are the Managed emulators by API (ADR 0029), which start
 	// under managedCtx.
@@ -393,10 +394,10 @@ func (in *Instance) Start(ctx context.Context) error {
 		in.startMu.Unlock()
 		return ErrShutDown
 	}
-	started := make(chan struct{})
-	in.started = started
+	returned := make(chan struct{})
+	in.startReturned = returned
 	in.startMu.Unlock()
-	defer close(started)
+	defer close(returned)
 	return in.unlessStopping(in.start(ctx))
 }
 
@@ -796,7 +797,7 @@ func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx
 func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
 	var errs []error
 	in.shutdownOnce.Do(func() {
-		in.waitForStart(ctx)
+		in.waitForStart(ctx, in.beginShutdown())
 		for i := len(in.services) - 1; i >= 0; i-- {
 			s := in.services[i]
 			if err := s.Stop(ctx); err != nil {
@@ -831,21 +832,25 @@ func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
 	return errors.Join(errs...)
 }
 
-// waitForStart begins shutdown and waits for a Start in progress to return,
-// or for ctx to end.
-func (in *Instance) waitForStart(ctx context.Context) {
+// beginShutdown marks shutdown as begun and returns what closes when Start
+// returns, nil if it was never called. From here on Start does nothing.
+func (in *Instance) beginShutdown() <-chan struct{} {
 	in.startMu.Lock()
+	defer in.startMu.Unlock()
 	in.beginStop()
-	started := in.started
-	in.startMu.Unlock()
-	if started == nil {
+	return in.startReturned
+}
+
+// waitForStart waits until returned closes, if it is not nil, or ctx ends.
+func (in *Instance) waitForStart(ctx context.Context, returned <-chan struct{}) {
+	if returned == nil {
 		return
 	}
 	select {
-	case <-started:
+	case <-returned:
 	case <-ctx.Done():
 		select {
-		case <-started:
+		case <-returned:
 		default:
 			in.Env.Log.Warn("shutting down while Start is still running: its Services may be stopped while they start")
 		}
@@ -877,8 +882,10 @@ func (in *Instance) release(st store.Store) error {
 	return errors.Join(errs...)
 }
 
-// RequestShutdown triggers Shutdown asynchronously (used by the admin API).
+// RequestShutdown begins shutdown at once and does the rest of Shutdown
+// asynchronously (used by the admin API).
 func (in *Instance) RequestShutdown() {
+	in.beginShutdown()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
