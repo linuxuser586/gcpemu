@@ -280,14 +280,19 @@ func TestSeedUploadDuringAStop(t *testing.T) {
 }
 
 // TestStartDuringShutdown is #1009: Start failing once shutdown has begun is
-// the stop, not a startup failure.
+// the stop, not a startup failure. Teardown waits for Start (#1011), so a
+// Service's Start can see shutdown begin, not reach Stop.
 func TestStartDuringShutdown(t *testing.T) {
 	var in *Instance
-	svc := &stoppingSvc{}
+	svc := &stoppingSvc{ready: errors.New("starting")}
 	svc.start = func() error {
-		beginShutdown(t, in, svc)
-		// Start can no longer write its runtime files.
-		return os.MkdirAll(filepath.Join(in.Dir, EndpointsFile, "taken"), 0o700)
+		in.RequestShutdown()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := in.WaitReady(ctx); !errors.Is(err, ErrShutDown) {
+			t.Errorf("WaitReady: %v, want ErrShutDown", err)
+		}
+		return errors.New("failed to start")
 	}
 	in = newSvc(t, svc)
 	if err := in.Start(context.Background()); !errors.Is(err, ErrShutDown) {

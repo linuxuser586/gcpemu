@@ -85,7 +85,7 @@ type Instance struct {
 
 	containers   *containers
 	fe           *frontend.Frontend // Google frontend (FR-INT-007, FR-CORE-043)
-	hm           *hostmode.Manager  // nil unless --host-mode
+	hm           *hostmode.Manager  // nil unless --host-mode, and until Start sets it; under startMu
 	link         *link.Manager      // links to other Instances (ADR 0027)
 	adcMu        sync.Mutex         // serialises serveADCKey
 	stateMu      sync.Mutex         // serialises Reset and State snapshots
@@ -95,6 +95,12 @@ type Instance struct {
 	stopping  context.Context
 	beginStop context.CancelFunc
 	done      chan struct{}
+	// startMu decides whether Start or the beginning of shutdown came first
+	// (ADR 0065). It guards startReturned, closed when Start returns and nil
+	// until it is called, and hm, which Start sets while the Admin API reads
+	// it.
+	startMu       sync.Mutex
+	startReturned chan struct{}
 
 	// managed are the Managed emulators by API (ADR 0029), which start
 	// under managedCtx.
@@ -379,8 +385,19 @@ func (in *Instance) Services() []emu.Service { return in.services }
 // Start registers routes, starts the gateway and every service, and writes
 // endpoints.json. A failing service is reported not-ready rather than
 // stopping the others (NFR-REL-003). Once shutdown has begun it returns
-// ErrShutDown, however starting ended.
+// ErrShutDown, however starting ended: it does nothing if shutdown began
+// first, and otherwise starts nothing more from the next check on. Teardown
+// waits for it to return (ADR 0065).
 func (in *Instance) Start(ctx context.Context) error {
+	in.startMu.Lock()
+	if in.stopping.Err() != nil {
+		in.startMu.Unlock()
+		return ErrShutDown
+	}
+	returned := make(chan struct{})
+	in.startReturned = returned
+	in.startMu.Unlock()
+	defer close(returned)
 	return in.unlessStopping(in.start(ctx))
 }
 
@@ -392,8 +409,13 @@ func (in *Instance) unlessStopping(err error) error {
 	return err
 }
 
-// start is Start, without regard for a shutdown.
+// start is Start, without regard for how a shutdown changes its result. It
+// returns ErrShutDown at the first check after shutdown begins.
 func (in *Instance) start(ctx context.Context) error {
+	// A Service may keep ctx for background work, so returning does not
+	// cancel it: only shutdown beginning, or the caller, does.
+	ctx, cancel := context.WithCancel(ctx)
+	context.AfterFunc(in.stopping, cancel)
 	// The gateway listens first: every leaf the Instance CA issues names
 	// the CRL on its port (ADR 0046), so the CA learns it before anything
 	// can issue one. Connections wait until Serve.
@@ -426,8 +448,14 @@ func (in *Instance) start(ctx context.Context) error {
 		return err
 	}
 
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	in.removeLeftoverRegistryRelay(ctx)
 	for _, s := range in.services {
+		if in.stopping.Err() != nil {
+			return ErrShutDown
+		}
 		if in.failure(s.Name()) != nil {
 			continue
 		}
@@ -436,16 +464,32 @@ func (in *Instance) start(ctx context.Context) error {
 			in.Env.Log.Error("service failed to start", "service", s.Name(), "err", err)
 		}
 	}
-	in.startGFELAN()
-	in.startLink()
-	in.startRegistryRelay()
-	in.warnContainerBind(ctx)
-	warnLoopbackNetmask(in.Env.Log, goruntime.GOOS, loopback.Lo0Aliases)
-	in.warnContainerized(ctx)
+	for _, step := range []func(){
+		in.startGFELAN,
+		in.startLink,
+		in.startRegistryRelay,
+		func() { in.warnContainerBind(ctx) },
+		func() { warnLoopbackNetmask(in.Env.Log, goruntime.GOOS, loopback.Lo0Aliases) },
+		func() { in.warnContainerized(ctx) },
+	} {
+		if in.stopping.Err() != nil {
+			return ErrShutDown
+		}
+		step()
+	}
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	if err := in.writeRuntimeFiles(); err != nil {
 		return err
 	}
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	in.startHostNames()
+	if in.stopping.Err() != nil {
+		return ErrShutDown
+	}
 	in.Env.Log.Info("gcpemu started", "instance", in.Config.Instance, "id", in.ID, "gateway", in.Env.Endpoints.Get("gateway"), "dir", in.Dir)
 	return nil
 }
@@ -740,50 +784,73 @@ func (in *Instance) AdvanceClock(ctx context.Context, d time.Duration) error {
 // Done is closed when Shutdown completes.
 func (in *Instance) Done() <-chan struct{} { return in.done }
 
-// Shutdown stops services in reverse order, closes the store and removes
-// runtime files (FR-CORE-006).
-func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx, false) }
-
-// shutdown is Shutdown. When logErrs, it also logs each error, such as a
-// container it could not remove, before Done closes: a shutdown the admin
-// API requested has no caller to return them to, and the process may exit
-// as soon as Done closes (#920).
-func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
-	var errs []error
+// Shutdown begins shutdown at once, waits for a Start in progress to return,
+// then stops services in reverse order, closes the store and removes runtime
+// files (FR-CORE-006). ctx also limits that wait: when ctx ends first, it
+// logs a warning and carries on with Start still running (ADR 0065).
+func (in *Instance) Shutdown(ctx context.Context) error {
+	var err error
 	in.shutdownOnce.Do(func() {
-		in.beginStop()
-		for i := len(in.services) - 1; i >= 0; i-- {
-			s := in.services[i]
-			if err := s.Stop(ctx); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
-			}
-		}
-		in.hm.Stop()
-		in.fe.StopLAN()
-		errs = append(errs, in.link.Close())
-		in.stopManaged(ctx)
-		in.registryRelay.stop()
-		errs = append(errs, in.containers.shutdown())
-		errs = append(errs, in.fe.Close())
-		in.Events.Close() // end event streams so the gateway can drain
-		errs = append(errs, in.gw.Shutdown(ctx))
-		errs = append(errs, in.Env.Store.Close())
-		_ = os.Remove(filepath.Join(in.Dir, PIDFile))
-		_ = os.Remove(filepath.Join(in.Dir, EndpointsFile))
-		if in.adminToken != "" {
-			_ = os.Remove(filepath.Join(in.Dir, AdminTokenFile))
-		}
-		if in.tmpDir != "" {
-			_ = os.RemoveAll(in.tmpDir)
-		}
-		if logErrs {
-			for _, err := range leafErrors(errors.Join(errs...)) {
-				in.Env.Log.Warn("cleaning up on shutdown", "err", err)
-			}
-		}
+		in.waitForStart(ctx, in.beginShutdown())
+		err = in.teardown(ctx)
 		close(in.done)
 	})
+	return err
+}
+
+// teardown is the part of a shutdown that follows Start.
+func (in *Instance) teardown(ctx context.Context) error {
+	var errs []error
+	for i := len(in.services) - 1; i >= 0; i-- {
+		s := in.services[i]
+		if err := s.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
+		}
+	}
+	in.hostManager().Stop()
+	in.fe.StopLAN()
+	errs = append(errs, in.link.Close())
+	in.stopManaged(ctx)
+	in.registryRelay.stop()
+	errs = append(errs, in.containers.shutdown())
+	errs = append(errs, in.fe.Close())
+	in.Events.Close() // end event streams so the gateway can drain
+	errs = append(errs, in.gw.Shutdown(ctx))
+	errs = append(errs, in.Env.Store.Close())
+	_ = os.Remove(filepath.Join(in.Dir, PIDFile))
+	_ = os.Remove(filepath.Join(in.Dir, EndpointsFile))
+	if in.adminToken != "" {
+		_ = os.Remove(filepath.Join(in.Dir, AdminTokenFile))
+	}
+	if in.tmpDir != "" {
+		_ = os.RemoveAll(in.tmpDir)
+	}
 	return errors.Join(errs...)
+}
+
+// beginShutdown marks shutdown as begun and returns what closes when Start
+// returns, nil if it was never called. From here on Start does nothing.
+func (in *Instance) beginShutdown() <-chan struct{} {
+	in.startMu.Lock()
+	defer in.startMu.Unlock()
+	in.beginStop()
+	return in.startReturned
+}
+
+// waitForStart waits until returned closes, if it is not nil, or ctx ends.
+func (in *Instance) waitForStart(ctx context.Context, returned <-chan struct{}) {
+	if returned == nil {
+		return
+	}
+	select {
+	case <-returned:
+	case <-ctx.Done():
+		select {
+		case <-returned:
+		default:
+			in.Env.Log.Warn("shutting down while Start is still running: its Services may be stopped while they start")
+		}
+	}
 }
 
 // release undoes what a failed New took before it failed: it closes st,
@@ -811,13 +878,31 @@ func (in *Instance) release(st store.Store) error {
 	return errors.Join(errs...)
 }
 
-// RequestShutdown triggers Shutdown asynchronously (used by the admin API).
+// requestStartWait and requestTeardownTime are the limits of a requested
+// shutdown. Together they stay within `gcpemu stop`'s limit (ADR 0065).
+var (
+	requestStartWait    = 15 * time.Second
+	requestTeardownTime = 30 * time.Second
+)
+
+// RequestShutdown begins shutdown at once and does the rest of Shutdown
+// asynchronously (used by the admin API), with separate limits so that a
+// slow Start can't use up Teardown's time. It also logs each error, such as
+// a container it could not remove, before Done closes: it has no caller to
+// return them to, and the process may exit as soon as Done closes (#920).
 func (in *Instance) RequestShutdown() {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	returned := in.beginShutdown()
+	go in.shutdownOnce.Do(func() {
+		wait, cancel := context.WithTimeout(context.Background(), requestStartWait)
 		defer cancel()
-		_ = in.shutdown(ctx, true)
-	}()
+		in.waitForStart(wait, returned)
+		ctx, cancel := context.WithTimeout(context.Background(), requestTeardownTime)
+		defer cancel()
+		for _, err := range leafErrors(in.teardown(ctx)) {
+			in.Env.Log.Warn("cleaning up on shutdown", "err", err)
+		}
+		close(in.done)
+	})
 }
 
 // leafErrors flattens err, and every multi-error (Unwrap() []error) in it,

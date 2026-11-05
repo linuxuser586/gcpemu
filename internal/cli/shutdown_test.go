@@ -362,6 +362,47 @@ func TestHostInterruptedWhileStartFails(t *testing.T) {
 	}
 }
 
+// shutdownInStartSvc is a gcs whose Start requests a shutdown and returns
+// when it has begun.
+type shutdownInStartSvc struct {
+	notReadySvc
+	request func() error
+}
+
+func (s shutdownInStartSvc) Start(ctx context.Context) error {
+	if err := s.request(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(waitTimeout):
+		return errors.New("shutdown did not cancel Start's context")
+	}
+}
+
+// TestHostShutdownRequestDuringStart is #1011: a shutdown request during
+// Start is a Clean stop that leaves no PID file or endpoints file behind.
+func TestHostShutdownRequestDuringStart(t *testing.T) {
+	cfg := hostConfig(t)
+	cfg.Ephemeral = false
+	stopped := &atomic.Bool{}
+	o := &rootOpts{factories: map[string]instance.Factory{"gcs": func(env *emu.Env) emu.Service {
+		return shutdownInStartSvc{notReadySvc: notReadySvc{stopped: stopped}, request: func() error { return postShutdown(env) }}
+	}}}
+	if _, err := o.host(context.Background(), cfg, &bytes.Buffer{}, false, false); !errors.Is(err, instance.ErrShutDown) {
+		t.Errorf("host: %v, want ErrShutDown", err)
+	}
+	if !stopped.Load() {
+		t.Error("host returned before the Instance stopped")
+	}
+	for _, name := range []string{instance.PIDFile, instance.EndpointsFile} {
+		if _, err := os.Stat(filepath.Join(cfg.InstanceDir(), name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s left behind: %v", name, err)
+		}
+	}
+}
+
 // slowStopSvc is a gcs that never becomes ready, is asked to shut down when
 // something first waits for it, and takes stopFor to stop.
 type slowStopSvc struct {
