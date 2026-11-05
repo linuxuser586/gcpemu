@@ -40,7 +40,7 @@ func troubledAPIGateways(t *testing.T) map[string]struct{ gw, want string } {
 	return map[string]struct{ gw, want string }{
 		"token refused": {instanceAPIGateway(t, "mine", "other"), "refused this data dir's Admin token"},
 		"stalled":       {stalled, "did not answer in time"},
-		"dropped":       {dropped, "dropped the connection"},
+		"dropped":       {dropped, "gave no answer: "},
 		"5xx":           {failing, "answered 500"},
 	}
 }
@@ -158,7 +158,7 @@ func TestNonHTTPAnswerIsNoInstance(t *testing.T) {
 // TestUnparseableAPIGatewayIsUnreadable is ADR 0066: nothing was asked, so
 // the file is what is wrong, and it rules a Live Instance out.
 func TestUnparseableAPIGatewayIsUnreadable(t *testing.T) {
-	for _, gw := range []string{"bad host:1", "127.0.0.1:notaport"} {
+	for _, gw := range []string{"bad host:1", "127.0.0.1:notaport", "/", "/x", "?x", "#x", "@", "user@", ":"} {
 		t.Run(gw, func(t *testing.T) {
 			dir := dataDir(t, gw)
 			_, err := gcpemu(t, "--data-dir", dir, "reset")

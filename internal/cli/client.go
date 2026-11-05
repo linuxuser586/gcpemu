@@ -66,7 +66,8 @@ func clientFor(cfg *config.Config) (*adminClient, error) {
 }
 
 // endpointsClient returns a client for the address in endpoints.json, which
-// proves nothing about what answers there. Only checkLive may use it.
+// proves nothing about what answers there. Only checkLive may use it. An
+// address no request can go to is an unreadable file, as nothing can be asked.
 func endpointsClient(cfg *config.Config) (*adminClient, error) {
 	eps, err := readEndpoints(cfg)
 	if err != nil {
@@ -76,8 +77,12 @@ func endpointsClient(cfg *config.Config) (*adminClient, error) {
 		return nil, fmt.Errorf("instance %q has no API gateway address in %s", cfg.Instance, instance.EndpointsFile)
 	}
 	c := newAdminClient(eps, readAdminToken(cfg))
-	if _, err := url.Parse(c.base); err != nil {
+	u, err := url.Parse(c.base)
+	if err != nil {
 		return nil, unreadableEndpoints(cfg, err)
+	}
+	if u.Hostname() == "" {
+		return nil, unreadableEndpoints(cfg, fmt.Errorf("no host in API gateway address %q", eps["gateway"]))
 	}
 	return c, nil
 }
@@ -113,7 +118,7 @@ const (
 	// stateNoEndpoints is a data dir with no endpoints.json.
 	stateNoEndpoints
 	// stateLeftBehind is an endpoints.json with no Live Instance behind it,
-	// or one that can't be read.
+	// or one unreadable or with no usable address.
 	stateLeftBehind
 )
 
@@ -167,7 +172,7 @@ func checkLive(cfg *config.Config) liveCheck {
 	noInstance := leftBehind(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
 	asker := *c
 	asker.http = &http.Client{Timeout: liveCheckTimeout, Transport: liveCheckTransport}
-	var lost error // a connection that formed and gave no answer
+	var lost error // why asking gave no answer
 	_, err = instance.Identify(func(method, path string) (int, []byte, error) {
 		code, b, err := asker.do(method, path)
 		if err == nil {
@@ -191,7 +196,11 @@ func checkLive(cfg *config.Config) liveCheck {
 		if errors.As(lost, &timeout) && timeout.Timeout() {
 			return unconfirmed("the API gateway at %s did not answer in time", addr)
 		}
-		return unconfirmed("the API gateway at %s dropped the connection", addr)
+		var failed *url.Error
+		if errors.As(lost, &failed) {
+			lost = failed.Err
+		}
+		return unconfirmed("the API gateway at %s gave no answer: %v", addr, lost)
 	}
 	if err == nil {
 		return liveCheck{state: stateLive, client: c}
