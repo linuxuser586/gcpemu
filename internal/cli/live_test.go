@@ -325,8 +325,9 @@ func TestCommandsReportOneReason(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := gcpemu(t, "--data-dir", dir, "reset")
-		if err == nil || strings.Contains(err.Error(), "is not running") {
-			t.Errorf("err = %v, want one that does not judge from the file alone", err)
+		const want = `instance "default" has no API gateway address in endpoints.json`
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
 		}
 	})
 	theirs, theirsActed := countingAPIGateway(t, "theirs", "")

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"io"
 	"net"
@@ -105,14 +106,10 @@ func TestUnconfirmedInstance(t *testing.T) {
 	}
 }
 
-// TestJSONWithoutAnIDIsNoInstance is ADR 0066: it is something else on the
-// port, not another Instance, and it rules a Live Instance out.
-func TestJSONWithoutAnIDIsNoInstance(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{}`)
-	}))
-	defer srv.Close()
-	gw := strings.TrimPrefix(srv.URL, "http://")
+// wantNoInstance fails unless what answers at gw is reported as no Instance
+// and rules a Live Instance out.
+func wantNoInstance(t *testing.T, gw string) {
+	t.Helper()
 	_, err := gcpemu(t, "--data-dir", dataDir(t, gw), "reset")
 	want := `instance "default" is not running: what answers at ` + gw + ` did not say which Instance it serves`
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -123,9 +120,20 @@ func TestJSONWithoutAnIDIsNoInstance(t *testing.T) {
 	}
 }
 
-// TestNonHTTPAnswerIsNoInstance is ADR 0066: a server that speaks something
-// else on the port is no Instance, though net/http calls it a broken
-// connection.
+// TestJSONWithoutAnIDIsNoInstance is ADR 0066: it is something else on the
+// port, not another Instance, and it rules a Live Instance out.
+func TestJSONWithoutAnIDIsNoInstance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+	wantNoInstance(t, strings.TrimPrefix(srv.URL, "http://"))
+}
+
+// TestNonHTTPAnswerIsNoInstance is ADR 0066: a server that answers in some
+// other protocol is no Instance, though net/http calls it a broken connection.
+// It answers only once it has the request: one that speaks first can race the
+// client and look like a drop.
 func TestNonHTTPAnswerIsNoInstance(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -138,18 +146,30 @@ func TestNonHTTPAnswerIsNoInstance(t *testing.T) {
 			if err != nil {
 				return
 			}
-			_, _ = io.WriteString(conn, "SSH-2.0-OpenSSH_9.6\r\n")
+			if _, err := http.ReadRequest(bufio.NewReader(conn)); err == nil {
+				_, _ = io.WriteString(conn, "-ERR unknown command\r\n")
+			}
 			_ = conn.Close()
 		}
 	}()
-	gw := ln.Addr().String()
-	_, err = gcpemu(t, "--data-dir", dataDir(t, gw), "reset")
-	want := `instance "default" is not running: what answers at ` + gw + ` did not say which Instance it serves`
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("err = %v, want it to say %q", err, want)
-	}
-	if err := refuseRunningIn(dataDir(t, gw)); err != nil {
-		t.Errorf("refuseRunning: %v, want it ruled out", err)
+	wantNoInstance(t, ln.Addr().String())
+}
+
+// TestUnparseableAPIGatewayIsUnreadable is ADR 0066: nothing was asked, so
+// the file is what is wrong, and it rules a Live Instance out.
+func TestUnparseableAPIGatewayIsUnreadable(t *testing.T) {
+	for _, gw := range []string{"bad host:1", "127.0.0.1:notaport"} {
+		t.Run(gw, func(t *testing.T) {
+			dir := dataDir(t, gw)
+			_, err := gcpemu(t, "--data-dir", dir, "reset")
+			const want = `instance "default" has an unreadable endpoints.json: `
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want it to say %q", err, want)
+			}
+			if err := refuseRunningIn(dir); err != nil {
+				t.Errorf("refuseRunning: %v, want it ruled out", err)
+			}
+		})
 	}
 }
 

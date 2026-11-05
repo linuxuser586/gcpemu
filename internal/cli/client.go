@@ -43,13 +43,17 @@ func readEndpoints(cfg *config.Config) (map[string]string, error) {
 		return nil, fmt.Errorf("instance %q has no %s in %s", cfg.Instance, instance.EndpointsFile, cfg.InstanceDir())
 	}
 	if err != nil {
-		return nil, fmt.Errorf("instance %q has an unreadable %s: %w", cfg.Instance, instance.EndpointsFile, err)
+		return nil, unreadableEndpoints(cfg, err)
 	}
 	m := map[string]string{}
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("instance %q has an unreadable %s: %w", cfg.Instance, instance.EndpointsFile, err)
+		return nil, unreadableEndpoints(cfg, err)
 	}
 	return m, nil
+}
+
+func unreadableEndpoints(cfg *config.Config, reason error) error {
+	return fmt.Errorf("instance %q has an unreadable %s: %w", cfg.Instance, instance.EndpointsFile, reason)
 }
 
 // clientFor returns a client for cfg's Live Instance, and otherwise the
@@ -71,7 +75,11 @@ func endpointsClient(cfg *config.Config) (*adminClient, error) {
 	if eps["gateway"] == "" {
 		return nil, fmt.Errorf("instance %q has no API gateway address in %s", cfg.Instance, instance.EndpointsFile)
 	}
-	return newAdminClient(eps, readAdminToken(cfg)), nil
+	c := newAdminClient(eps, readAdminToken(cfg))
+	if _, err := url.Parse(c.base); err != nil {
+		return nil, unreadableEndpoints(cfg, err)
+	}
+	return c, nil
 }
 
 // liveCheckDialTimeout is how long the check waits for a connection. It is
@@ -104,7 +112,8 @@ const (
 	stateLive
 	// stateNoEndpoints is a data dir with no endpoints.json.
 	stateNoEndpoints
-	// stateLeftBehind is an endpoints.json with no Live Instance behind it.
+	// stateLeftBehind is an endpoints.json with no Live Instance behind it,
+	// or one that can't be read.
 	stateLeftBehind
 )
 
@@ -172,8 +181,9 @@ func checkLive(cfg *config.Config) liveCheck {
 		return 0, nil, err
 	}, instance.ReadID(cfg.InstanceDir()), 0)
 	if lost != nil {
-		// net/http has no type for this. If its wording changes, this is an
-		// Unconfirmed Instance, which only refuses more.
+		// net/http has no type for this. If its wording changes, or a server
+		// speaks before the request goes out and so looks like a drop, this
+		// is an Unconfirmed Instance, which only refuses more.
 		if strings.Contains(lost.Error(), "malformed HTTP") {
 			return noInstance
 		}
