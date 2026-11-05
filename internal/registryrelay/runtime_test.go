@@ -11,14 +11,11 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/porttest"
 	"github.com/linuxuser586/gcpemu/internal/registryrelay"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
-
-// relayPort is the port the tests listen on inside the runtime's host
-// network namespace (the VM's on a VM runtime, the host's otherwise).
-const relayPort = 45613
 
 func manager(t *testing.T, id string) (context.Context, *runtime.Manager) {
 	t.Helper()
@@ -108,15 +105,20 @@ func TestRegistryRelayServesVMLoopback(t *testing.T) {
 	}
 
 	target := net.JoinHostPort(ct.IPs[svc], "8080")
-	if err := registryrelay.Start(ctx, m, registryrelay.Options{Port: relayPort, Target: target, Log: slog.Default()}); err != nil {
+	// The relay binds in the runtime's host network namespace, so the test
+	// cannot hold the port for it. porttest probes the host, not a VM, but
+	// its range is below the VM's ephemeral range too, so only explicit
+	// binds take these ports there (#1027).
+	port := porttest.Free(t)
+	if err := registryrelay.Start(ctx, m, registryrelay.Options{Port: port, Target: target, Log: slog.Default()}); err != nil {
 		t.Fatal(err)
 	}
-	if got := fetch(t, ctx, m, "http://127.0.0.1:"+strconv.Itoa(relayPort)+"/v2/"); !strings.Contains(got, "hello-from-registry") {
+	if got := fetch(t, ctx, m, "http://127.0.0.1:"+strconv.Itoa(port)+"/v2/"); !strings.Contains(got, "hello-from-registry") {
 		t.Errorf("VM-side GET through the Registry relay = %q; want hello-from-registry", got)
 	}
 
 	// Starting again replaces the relay, as after a crash.
-	if err := registryrelay.Start(ctx, m, registryrelay.Options{Port: relayPort, Target: target, Log: slog.Default()}); err != nil {
+	if err := registryrelay.Start(ctx, m, registryrelay.Options{Port: port, Target: target, Log: slog.Default()}); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
 	if err := registryrelay.Remove(ctx, m); err != nil {
@@ -132,13 +134,12 @@ func TestRegistryRelayServesVMLoopback(t *testing.T) {
 // leaves no Registry relay.
 func TestRegistryRelayPortTaken(t *testing.T) {
 	ctx, m := manager(t, "registryrelaytaken")
-	port := strconv.Itoa(relayPort + 1)
-	run(t, ctx, m, "holder", "httpd", "-f", "-p", "127.0.0.1:"+port, "-h", "/")
+	port := porttest.Free(t)
+	run(t, ctx, m, "holder", "httpd", "-f", "-p", "127.0.0.1:"+strconv.Itoa(port), "-h", "/")
 	// httpd binds as it starts; give it a moment.
 	time.Sleep(time.Second)
 
-	n, _ := strconv.Atoi(port)
-	err := registryrelay.Start(ctx, m, registryrelay.Options{Port: n, Target: "127.0.0.1:1", Log: slog.Default()})
+	err := registryrelay.Start(ctx, m, registryrelay.Options{Port: port, Target: "127.0.0.1:1", Log: slog.Default()})
 	if !errors.Is(err, registryrelay.ErrPortTaken) {
 		t.Fatalf("Start = %v; want ErrPortTaken", err)
 	}
