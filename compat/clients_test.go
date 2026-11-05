@@ -80,7 +80,10 @@ func startWith(t *testing.T, o options) *emulator {
 		t.Fatalf("gcpemu start: %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
-		_ = exec.Command(e.bin, "stop", "--data-dir", e.dir).Run()
+		out, err := exec.Command(e.bin, "stop", "--data-dir", e.dir).CombinedOutput()
+		if err != nil && !strings.Contains(string(out), "is not running") {
+			t.Errorf("gcpemu stop: %v\n%s", err, out)
+		}
 	})
 	e.vars = e.emuEnv(t)
 	if o.hostMode {

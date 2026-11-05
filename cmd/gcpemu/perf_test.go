@@ -53,7 +53,7 @@ func TestColdStartAndIdleRSS(t *testing.T) {
 	start := time.Now()
 	out := must(t, nil, "start", "--detach", "--data-dir", dir, "--services", perfServices(), "--port", "0", "--wait-timeout", "30s")
 	took := time.Since(start)
-	t.Cleanup(func() { _, _ = gcpemu(t, nil, "stop", "--data-dir", dir) })
+	stopAtCleanup(t, dir)
 	if !strings.Contains(out, "ready") {
 		t.Fatal(out)
 	}

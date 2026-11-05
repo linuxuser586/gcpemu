@@ -132,6 +132,24 @@ func TestStopWaitsForTheInstanceItReached(t *testing.T) {
 	}
 }
 
+// TestStopTimeoutNamesPID is #999: a stop that gives up says which process
+// it was still waiting on. This test's own process plays the one that will
+// not exit, and so also shows that stop leaves it running.
+func TestStopTimeoutNamesPID(t *testing.T) {
+	was := stopTimeout
+	stopTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { stopTimeout = was })
+	pid := os.Getpid()
+	g := newStopGateway(t, infoBody(pid, instance.PIDScope()), nil)
+	out, err := stop(g.dir)
+	if err == nil {
+		t.Fatalf("stop succeeded with %q and the process still running", out)
+	}
+	if want := fmt.Sprintf("PID %d is still running", pid); !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to contain %q", err, want)
+	}
+}
+
 // TestStopUnconfirmed is #998 and ADR 0064: when this host cannot watch the
 // Instance's pid, stop still asks it to shut down, then fails and says the
 // exit is unconfirmed, without taking the pid, here a live process, for

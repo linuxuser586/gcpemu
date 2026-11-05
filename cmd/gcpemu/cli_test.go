@@ -2,7 +2,9 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,7 +63,55 @@ func startDetached(t *testing.T, dir string) {
 	if !strings.Contains(out, "ready") {
 		t.Fatalf("start --detach: %s", out)
 	}
-	t.Cleanup(func() { _, _ = gcpemu(t, nil, "stop", "--data-dir", dir) })
+	stopAtCleanup(t, dir)
+}
+
+// stopAtCleanup stops the Instance in dir when t ends, and fails t if that
+// fails.
+func stopAtCleanup(t *testing.T, dir string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := stopInstance(t, dir); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
+// stopInstance stops the Instance in dir. One that is not running is no failure:
+// a test may have stopped it, and restarting it registers a second cleanup.
+func stopInstance(t *testing.T, dir string) error {
+	t.Helper()
+	out, err := gcpemu(t, nil, "stop", "--data-dir", dir)
+	if err != nil && !strings.Contains(out, "is not running") {
+		return fmt.Errorf("gcpemu stop --data-dir %s: %w\n%s", dir, err, out)
+	}
+	return nil
+}
+
+// TestStopInstanceReportsFailure is #999: a stop that fails is reported, and
+// finding nothing running is not.
+func TestStopInstanceReportsFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the binary")
+	}
+	if err := stopInstance(t, t.TempDir()); err != nil {
+		t.Errorf("nothing running: %v", err)
+	}
+
+	// endpoints.json left behind, with nothing listening at the gateway.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "endpoints.json"), []byte(`{"gateway":"`+addr+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopInstance(t, dir); err == nil {
+		t.Error("a stop that could not reach the Instance was not reported")
+	}
 }
 
 // TestCLILifecycle is FR-CORE-001/002/004 end to end: start --detach,
@@ -250,7 +300,7 @@ func TestFaultsFromCLIAndSeed(t *testing.T) {
 	if !strings.Contains(out, "ready") {
 		t.Fatal(out)
 	}
-	t.Cleanup(func() { _, _ = gcpemu(t, nil, "stop", "--data-dir", dir) })
+	stopAtCleanup(t, dir)
 	eps := endpoints(t, dir)
 	gw, gcs := "http://"+eps["gateway"], "http://"+eps["gcs"]
 

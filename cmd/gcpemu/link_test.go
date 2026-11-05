@@ -30,7 +30,7 @@ func startLinkedOn(t *testing.T, name, dir, ip string, env []string) string {
 	if !strings.Contains(out, "ready") {
 		t.Fatalf("start --detach: %s", out)
 	}
-	t.Cleanup(func() { _, _ = gcpemu(t, nil, "stop", "--data-dir", dir) })
+	stopAtCleanup(t, dir)
 	b, err := os.ReadFile(filepath.Join(dir, "endpoints.json"))
 	if err != nil {
 		t.Fatal(err)
