@@ -17,6 +17,11 @@ outputs:
 runs:
   using: composite
   steps:
+    # #993: restoring the cache can fill a small runner by itself, so every
+    # job that restores it frees space first. This is the only caller.
+    - if: runner.os == 'Linux'
+      uses: ./.github/actions/free-disk
+      continue-on-error: true
     # #899: Ubuntu 26.04 runners don't apply the image's /etc/sysctl.conf
     # (actions/runner-images#15108), so inotify stays at the kernel's 128
     # instances and k3s nodes fail with "too many open files". These are
