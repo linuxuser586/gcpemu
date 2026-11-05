@@ -39,12 +39,15 @@ func readAdminToken(cfg *config.Config) string {
 
 func readEndpoints(cfg *config.Config) (map[string]string, error) {
 	b, err := os.ReadFile(filepath.Join(cfg.InstanceDir(), instance.EndpointsFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("instance %q has no %s in %s", cfg.Instance, instance.EndpointsFile, cfg.InstanceDir())
+	}
 	if err != nil {
-		return nil, fmt.Errorf("instance %q is not running (no %s in %s)", cfg.Instance, instance.EndpointsFile, cfg.InstanceDir())
+		return nil, fmt.Errorf("instance %q has an unreadable %s: %w", cfg.Instance, instance.EndpointsFile, err)
 	}
 	m := map[string]string{}
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instance %q has an unreadable %s: %w", cfg.Instance, instance.EndpointsFile, err)
 	}
 	return m, nil
 }
@@ -66,7 +69,7 @@ func endpointsClient(cfg *config.Config) (*adminClient, error) {
 		return nil, err
 	}
 	if eps["gateway"] == "" {
-		return nil, fmt.Errorf("no API gateway address recorded")
+		return nil, fmt.Errorf("instance %q has no API gateway address in %s", cfg.Instance, instance.EndpointsFile)
 	}
 	return newAdminClient(eps, readAdminToken(cfg)), nil
 }
@@ -74,7 +77,7 @@ func endpointsClient(cfg *config.Config) (*adminClient, error) {
 // liveCheckDialTimeout is how long the check waits for a connection. It is
 // shorter than liveCheckTimeout because only a dial that fails says that
 // nothing is there: an address that drops packets would otherwise time out
-// just as a wedged Instance does (ADR 0066).
+// just as an Instance that connects and never answers does (ADR 0066).
 const liveCheckDialTimeout = 3 * time.Second
 
 // liveCheckTimeout is how long an answer to the check may take (a variable
@@ -121,8 +124,8 @@ func (l liveCheck) ruledOut() bool {
 }
 
 // refusal is err with the way out, for a command an Unconfirmed Instance
-// stops. The PID is for a person to check: no command acts on the PID file
-// (ADR 0064).
+// stops. The PID is for a person to check: the check never acts on it
+// (ADR 0066).
 func (l liveCheck) refusal(cfg *config.Config) error {
 	endpoints := filepath.Join(cfg.InstanceDir(), instance.EndpointsFile)
 	if b, err := os.ReadFile(filepath.Join(cfg.InstanceDir(), instance.PIDFile)); err == nil {
@@ -149,9 +152,10 @@ func checkLive(cfg *config.Config) liveCheck {
 		if _, statErr := os.Stat(filepath.Join(cfg.InstanceDir(), instance.EndpointsFile)); statErr != nil {
 			return liveCheck{state: stateNoEndpoints, err: err}
 		}
-		return leftBehind(err)
+		return liveCheck{state: stateLeftBehind, err: err}
 	}
 	addr := strings.TrimPrefix(c.base, "http://")
+	noInstance := leftBehind(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
 	asker := *c
 	asker.http = &http.Client{Timeout: liveCheckTimeout, Transport: liveCheckTransport}
 	var lost error // a connection that formed and gave no answer
@@ -168,6 +172,11 @@ func checkLive(cfg *config.Config) liveCheck {
 		return 0, nil, err
 	}, instance.ReadID(cfg.InstanceDir()), 0)
 	if lost != nil {
+		// net/http has no type for this. If its wording changes, this is an
+		// Unconfirmed Instance, which only refuses more.
+		if strings.Contains(lost.Error(), "malformed HTTP") {
+			return noInstance
+		}
 		var timeout net.Error
 		if errors.As(lost, &timeout) && timeout.Timeout() {
 			return unconfirmed("the API gateway at %s did not answer in time", addr)
@@ -188,7 +197,7 @@ func checkLive(cfg *config.Config) liveCheck {
 	case unidentified.Code >= http.StatusInternalServerError:
 		return unconfirmed("the API gateway at %s answered %d", addr, unidentified.Code)
 	}
-	return leftBehind(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
+	return noInstance
 }
 
 // newAdminClient returns a client for the Admin API on the gateway in eps,

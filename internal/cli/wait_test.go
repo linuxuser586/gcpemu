@@ -177,11 +177,14 @@ func TestWait(t *testing.T) {
 		}
 		stale := writeEndpoints(t, l.Addr().String())
 		l.Close()
-		for name, dir := range map[string]string{"none": t.TempDir(), "stale endpoints": stale} {
+		for name, tt := range map[string]struct{ dir, want string }{
+			"none":            {t.TempDir(), "has no endpoints.json"},
+			"stale endpoints": {stale, "is not running: nothing answers"},
+		} {
 			start := time.Now()
-			err := runWait(dir, "--for", cluster)
-			if err == nil || !strings.Contains(err.Error(), "not running") {
-				t.Errorf("%s: %v, want not running", name, err)
+			err := runWait(tt.dir, "--for", cluster)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("%s: %v, want it to say %q", name, err, tt.want)
 			}
 			if took := time.Since(start); took > time.Second {
 				t.Errorf("%s: took %v", name, took)

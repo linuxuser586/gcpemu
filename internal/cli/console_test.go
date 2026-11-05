@@ -44,7 +44,7 @@ func TestConsoleCmd(t *testing.T) {
 	if err := run(); err == nil || !strings.Contains(err.Error(), "does not serve the Web console") {
 		t.Errorf("console when not served: %v", err)
 	}
-	if err := run("--data-dir", t.TempDir()); err == nil || !strings.Contains(err.Error(), "not running") {
+	if err := run("--data-dir", t.TempDir()); err == nil || !strings.Contains(err.Error(), "has no endpoints.json") {
 		t.Errorf("console without an instance: %v", err)
 	}
 }

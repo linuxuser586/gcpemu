@@ -81,7 +81,7 @@ func startWith(t *testing.T, o options) *emulator {
 	}
 	t.Cleanup(func() {
 		out, err := exec.Command(e.bin, "stop", "--data-dir", e.dir).CombinedOutput()
-		if err != nil && !strings.Contains(string(out), "is not running (no endpoints.json") {
+		if err != nil && !strings.Contains(string(out), "has no endpoints.json") {
 			t.Errorf("gcpemu stop: %v\n%s", err, out)
 		}
 	})

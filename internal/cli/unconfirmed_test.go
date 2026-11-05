@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -113,6 +114,36 @@ func TestJSONWithoutAnIDIsNoInstance(t *testing.T) {
 	defer srv.Close()
 	gw := strings.TrimPrefix(srv.URL, "http://")
 	_, err := gcpemu(t, "--data-dir", dataDir(t, gw), "reset")
+	want := `instance "default" is not running: what answers at ` + gw + ` did not say which Instance it serves`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want it to say %q", err, want)
+	}
+	if err := refuseRunningIn(dataDir(t, gw)); err != nil {
+		t.Errorf("refuseRunning: %v, want it ruled out", err)
+	}
+}
+
+// TestNonHTTPAnswerIsNoInstance is ADR 0066: a server that speaks something
+// else on the port is no Instance, though net/http calls it a broken
+// connection.
+func TestNonHTTPAnswerIsNoInstance(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = io.WriteString(conn, "SSH-2.0-OpenSSH_9.6\r\n")
+			_ = conn.Close()
+		}
+	}()
+	gw := ln.Addr().String()
+	_, err = gcpemu(t, "--data-dir", dataDir(t, gw), "reset")
 	want := `instance "default" is not running: what answers at ` + gw + ` did not say which Instance it serves`
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %v, want it to say %q", err, want)

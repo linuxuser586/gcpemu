@@ -273,12 +273,12 @@ func countingAPIGateway(t *testing.T, id, token string) (string, *atomic.Int64) 
 	t.Helper()
 	acted := &atomic.Int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_emu/v1/info" {
+			acted.Add(1)
+		}
 		if token != "" && r.Header.Get(gateway.AdminTokenHeader) != token {
 			http.Error(w, `{"error":"admin token required"}`, http.StatusUnauthorized)
 			return
-		}
-		if r.URL.Path != "/_emu/v1/info" {
-			acted.Add(1)
 		}
 		_, _ = fmt.Fprintf(w, `{"id":%q,"pid":%d}`, id, childPID)
 	}))
@@ -303,8 +303,30 @@ func TestCommandsReportOneReason(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := gcpemu(t, "--data-dir", dir, "reset")
-		if err == nil || !strings.Contains(err.Error(), "no "+instance.EndpointsFile) {
-			t.Errorf("err = %v, want it to name the missing file", err)
+		const want = `instance "default" has no endpoints.json in `
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
+		}
+	})
+	t.Run("unreadable endpoints.json", func(t *testing.T) {
+		dir := dataDir(t, deadAPIGateway(t))
+		if err := os.WriteFile(filepath.Join(dir, instance.EndpointsFile), []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := gcpemu(t, "--data-dir", dir, "reset")
+		const want = `instance "default" has an unreadable endpoints.json: `
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to say %q", err, want)
+		}
+	})
+	t.Run("no API gateway recorded", func(t *testing.T) {
+		dir := dataDir(t, deadAPIGateway(t))
+		if err := os.WriteFile(filepath.Join(dir, instance.EndpointsFile), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := gcpemu(t, "--data-dir", dir, "reset")
+		if err == nil || strings.Contains(err.Error(), "is not running") {
+			t.Errorf("err = %v, want one that does not judge from the file alone", err)
 		}
 	})
 	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
