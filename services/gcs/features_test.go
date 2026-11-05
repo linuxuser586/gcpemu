@@ -634,3 +634,23 @@ gcs:
 		t.Errorf("notifications = %v %v", ns, err)
 	}
 }
+
+// TestSeedDirectoryEndsWithItsContext is #1009: a directory of objects is
+// uploaded only while the Seeder's context lasts, so it does not hold up a
+// stop.
+func TestSeedDirectoryEndsWithItsContext(t *testing.T) {
+	inst := start(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte("buckets:\n  - name: seeded\n    project: test-project\n    objects:\n      - path: .\n"), &node); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := gcsService(t, inst).ApplySeed(ctx, node.Content[0], dir); !errors.Is(err, context.Canceled) {
+		t.Errorf("ApplySeed: %v, want its context's end", err)
+	}
+}

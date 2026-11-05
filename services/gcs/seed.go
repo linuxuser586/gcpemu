@@ -413,6 +413,9 @@ func (s *Service) seedObjects(ctx context.Context, bucket string, o seedObject, 
 		if err != nil || d.IsDir() {
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		rel, err := filepath.Rel(p, fp)
 		if err != nil {
 			return err

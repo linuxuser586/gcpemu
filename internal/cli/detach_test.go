@@ -30,7 +30,8 @@ func TestMain(m *testing.M) {
 }
 
 // fakeGcpemu is the detached child. "exit" fails at startup. "stopped"
-// exits cleanly, as one stopped during startup does. "starting"
+// exits cleanly, as one stopped during startup does. "stopped-seeding" runs
+// a real `gcpemu start`, stopped during Seeding. "starting"
 // publishes the gateway in GCPEMU_TEST_GATEWAY and never becomes ready.
 // It lives until it is signalled or, on Windows (no signals), the test
 // closes that gateway, so it no longer holds the log open when the test's
@@ -52,6 +53,10 @@ func fakeGcpemu(mode string) {
 				break
 			}
 			resp.Body.Close()
+		}
+	case "stopped-seeding": // a real `gcpemu start`, stopped during Seeding
+		if err := New(shutDownWhileSeeding()).Execute(); err != nil {
+			os.Exit(1)
 		}
 	case "sleep": // an Instance's process, until it is killed
 		time.Sleep(time.Minute)

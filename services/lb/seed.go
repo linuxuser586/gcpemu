@@ -155,7 +155,11 @@ func (s *Service) seedOne(ctx context.Context, k *kind, item map[string]any, def
 		if time.Now().After(deadline) {
 			return fmt.Errorf("insert of %s did not complete", path)
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,6 +111,10 @@ func newAdmin(in *Instance) http.Handler {
 			if b, err = io.ReadAll(http.MaxBytesReader(w, r.Body, maxSeedUpload)); err == nil {
 				err = in.ApplySeedData(r.Context(), b, in.Dir)
 			}
+		}
+		if errors.Is(err, ErrShutDown) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+			return
 		}
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
