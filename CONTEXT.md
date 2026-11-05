@@ -257,6 +257,10 @@ A `gcpemu stop` that saw the Instance's process exit, so nothing will write to i
 **Unconfirmed stop**:
 A `gcpemu stop` of an Instance that accepted the shutdown but whose process `stop` could not watch, as for a Containerized Instance, or any Instance in a container with its own processes. It fails even though the Instance may go on to a Clean stop (ADR 0064).
 
+**Teardown**:
+The part of an Instance's shutdown that stops its Services, removes what it made and closes its state. It follows startup, however a stop arrived. When a shutdown begins, the Instance stops starting things at once; Teardown comes after.
+_Avoid_: cleanup (an Instance's log uses it for what it could not remove)
+
 **Data directory**:
 The directory an Instance holds its certificate authority and Instance ID in, and a Persistent Instance its state. Every Instance has one; an Ephemeral Instance keeps no state there.
 _Avoid_: instance dir

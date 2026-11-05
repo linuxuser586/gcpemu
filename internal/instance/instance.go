@@ -788,47 +788,43 @@ func (in *Instance) Done() <-chan struct{} { return in.done }
 // then stops services in reverse order, closes the store and removes runtime
 // files (FR-CORE-006). ctx also limits that wait: when ctx ends first, it
 // logs a warning and carries on with Start still running (ADR 0065).
-func (in *Instance) Shutdown(ctx context.Context) error { return in.shutdown(ctx, false) }
-
-// shutdown is Shutdown. When logErrs, it also logs each error, such as a
-// container it could not remove, before Done closes: a shutdown the admin
-// API requested has no caller to return them to, and the process may exit
-// as soon as Done closes (#920).
-func (in *Instance) shutdown(ctx context.Context, logErrs bool) error {
-	var errs []error
+func (in *Instance) Shutdown(ctx context.Context) error {
+	var err error
 	in.shutdownOnce.Do(func() {
 		in.waitForStart(ctx, in.beginShutdown())
-		for i := len(in.services) - 1; i >= 0; i-- {
-			s := in.services[i]
-			if err := s.Stop(ctx); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
-			}
-		}
-		in.hostManager().Stop()
-		in.fe.StopLAN()
-		errs = append(errs, in.link.Close())
-		in.stopManaged(ctx)
-		in.registryRelay.stop()
-		errs = append(errs, in.containers.shutdown())
-		errs = append(errs, in.fe.Close())
-		in.Events.Close() // end event streams so the gateway can drain
-		errs = append(errs, in.gw.Shutdown(ctx))
-		errs = append(errs, in.Env.Store.Close())
-		_ = os.Remove(filepath.Join(in.Dir, PIDFile))
-		_ = os.Remove(filepath.Join(in.Dir, EndpointsFile))
-		if in.adminToken != "" {
-			_ = os.Remove(filepath.Join(in.Dir, AdminTokenFile))
-		}
-		if in.tmpDir != "" {
-			_ = os.RemoveAll(in.tmpDir)
-		}
-		if logErrs {
-			for _, err := range leafErrors(errors.Join(errs...)) {
-				in.Env.Log.Warn("cleaning up on shutdown", "err", err)
-			}
-		}
+		err = in.teardown(ctx)
 		close(in.done)
 	})
+	return err
+}
+
+// teardown is the part of a shutdown that follows Start.
+func (in *Instance) teardown(ctx context.Context) error {
+	var errs []error
+	for i := len(in.services) - 1; i >= 0; i-- {
+		s := in.services[i]
+		if err := s.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
+		}
+	}
+	in.hostManager().Stop()
+	in.fe.StopLAN()
+	errs = append(errs, in.link.Close())
+	in.stopManaged(ctx)
+	in.registryRelay.stop()
+	errs = append(errs, in.containers.shutdown())
+	errs = append(errs, in.fe.Close())
+	in.Events.Close() // end event streams so the gateway can drain
+	errs = append(errs, in.gw.Shutdown(ctx))
+	errs = append(errs, in.Env.Store.Close())
+	_ = os.Remove(filepath.Join(in.Dir, PIDFile))
+	_ = os.Remove(filepath.Join(in.Dir, EndpointsFile))
+	if in.adminToken != "" {
+		_ = os.Remove(filepath.Join(in.Dir, AdminTokenFile))
+	}
+	if in.tmpDir != "" {
+		_ = os.RemoveAll(in.tmpDir)
+	}
 	return errors.Join(errs...)
 }
 
@@ -882,15 +878,31 @@ func (in *Instance) release(st store.Store) error {
 	return errors.Join(errs...)
 }
 
+// requestStartWait and requestTeardownTime are the limits of a requested
+// shutdown. Together they stay within `gcpemu stop`'s limit (ADR 0065).
+var (
+	requestStartWait    = 15 * time.Second
+	requestTeardownTime = 30 * time.Second
+)
+
 // RequestShutdown begins shutdown at once and does the rest of Shutdown
-// asynchronously (used by the admin API).
+// asynchronously (used by the admin API), with separate limits so that a
+// slow Start can't use up Teardown's time. It also logs each error, such as
+// a container it could not remove, before Done closes: it has no caller to
+// return them to, and the process may exit as soon as Done closes (#920).
 func (in *Instance) RequestShutdown() {
-	in.beginShutdown()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	returned := in.beginShutdown()
+	go in.shutdownOnce.Do(func() {
+		wait, cancel := context.WithTimeout(context.Background(), requestStartWait)
 		defer cancel()
-		_ = in.shutdown(ctx, true)
-	}()
+		in.waitForStart(wait, returned)
+		ctx, cancel := context.WithTimeout(context.Background(), requestTeardownTime)
+		defer cancel()
+		for _, err := range leafErrors(in.teardown(ctx)) {
+			in.Env.Log.Warn("cleaning up on shutdown", "err", err)
+		}
+		close(in.done)
+	})
 }
 
 // leafErrors flattens err, and every multi-error (Unwrap() []error) in it,

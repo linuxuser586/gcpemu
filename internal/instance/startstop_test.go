@@ -42,6 +42,7 @@ type scriptedSvc struct {
 	journal *journal
 	ready   error
 	start   func(ctx context.Context) error
+	stop    func(ctx context.Context)
 }
 
 func (s *scriptedSvc) Name() string              { return s.name }
@@ -57,8 +58,11 @@ func (s *scriptedSvc) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *scriptedSvc) Stop(context.Context) error {
+func (s *scriptedSvc) Stop(ctx context.Context) error {
 	s.journal.add(s.name + " Stop")
+	if s.stop != nil {
+		s.stop(ctx)
+	}
 	return nil
 }
 
@@ -251,6 +255,37 @@ func TestShutdownOutlastsAStuckStart(t *testing.T) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
 	noRuntimeFiles(t, in)
+}
+
+// TestShutdownRequestKeepsTeardownsTime is #1011: however long a shutdown
+// request waited for Start, Teardown has its own time, so that a slow Start
+// can't cost a Managed emulator its saved data.
+func TestShutdownRequestKeepsTeardownsTime(t *testing.T) {
+	defer func(d time.Duration) { requestStartWait = d }(requestStartWait)
+	requestStartWait = 50 * time.Millisecond
+	stuck, release := make(chan struct{}), make(chan struct{})
+	stopCtx := make(chan error, 1)
+	in, logs := newScripted(t, true, &scriptedSvc{name: "dns", journal: &journal{},
+		start: func(context.Context) error {
+			close(stuck)
+			<-release
+			return nil
+		},
+		stop: func(ctx context.Context) { stopCtx <- ctx.Err() },
+	})
+	started := make(chan error, 1)
+	go func() { started <- in.Start(context.Background()) }()
+	<-stuck
+	in.RequestShutdown()
+	waitDone(t, in)
+	close(release)
+	<-started
+	if err := <-stopCtx; err != nil {
+		t.Errorf("Stop's context: %v, want time left", err)
+	}
+	if !strings.Contains(logs.String(), "Start is still running") {
+		t.Errorf("no warning in the log:\n%s", logs)
+	}
 }
 
 // TestShutdownOfAStartedInstanceDoesNotWarn: with Start long returned, a ctx
