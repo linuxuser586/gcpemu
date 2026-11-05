@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
@@ -101,9 +104,63 @@ var liveCheckTimeout = 10 * time.Second
 // shared as `start --detach` polls the check.
 var liveCheckTransport = func() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.DialContext = (&net.Dialer{Timeout: liveCheckDialTimeout}).DialContext
+	dial := (&net.Dialer{Timeout: liveCheckDialTimeout}).DialContext
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := dial(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return newCheckConn(c), nil
+	}
 	return t
 }()
+
+// errNotHTTP and errUnasked are what a checkConn fails a read with. net/http
+// has no type for a server that isn't HTTP, and when one speaks before the
+// request goes out it logs that and reports a broken connection (ADR 0066).
+var (
+	errNotHTTP = errors.New("first bytes are not HTTP")
+	errUnasked = errors.New("answered before the request went out")
+)
+
+// httpPrefix is how every HTTP/1.x answer begins.
+const httpPrefix = "HTTP/"
+
+// checkConn judges what a server sends first, so that what the check finds
+// does not depend on whether that beats the request. It fails the read rather
+// than passing the bytes on, as net/http logs what it wasn't expecting.
+type checkConn struct {
+	net.Conn
+	// asked is set before the request goes out, as the answer can beat a
+	// flag set afterwards.
+	asked atomic.Bool
+	// seen is how much of httpPrefix has arrived. net/http reads a
+	// connection from one goroutine.
+	seen int
+}
+
+func newCheckConn(c net.Conn) net.Conn { return &checkConn{Conn: c} }
+
+func (c *checkConn) Write(b []byte) (int, error) {
+	c.asked.Store(true)
+	return c.Conn.Write(b)
+}
+
+func (c *checkConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n == 0 || c.seen == len(httpPrefix) {
+		return n, err
+	}
+	first := b[:min(n, len(httpPrefix)-c.seen)]
+	if !strings.HasPrefix(httpPrefix[c.seen:], string(first)) {
+		return 0, errNotHTTP
+	}
+	if !c.asked.Load() {
+		return 0, errUnasked
+	}
+	c.seen += len(first)
+	return n, err
+}
 
 // liveState is what asking a data dir's Instance settled. The zero value
 // rules nothing out.
@@ -186,16 +243,22 @@ func checkLive(cfg *config.Config) liveCheck {
 		return 0, nil, err
 	}, instance.ReadID(cfg.InstanceDir()), 0)
 	if lost != nil {
-		// net/http has no type for this. If its wording changes, or a server
-		// speaks before the request goes out and so looks like a drop, this
-		// is an Unconfirmed Instance, which only refuses more.
-		if strings.Contains(lost.Error(), "malformed HTTP") {
+		switch {
+		case errors.Is(lost, errNotHTTP):
 			return noInstance
+		case errors.Is(lost, errUnasked):
+			return unconfirmed("the API gateway at %s answered before it was asked", addr)
 		}
 		var timeout net.Error
 		if errors.As(lost, &timeout) && timeout.Timeout() {
 			return unconfirmed("the API gateway at %s did not answer in time", addr)
 		}
+		for _, drop := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, syscall.EPIPE} {
+			if errors.Is(lost, drop) {
+				return unconfirmed("the API gateway at %s dropped the connection", addr)
+			}
+		}
+		// Not a drop: a dead proxy or a bad Admin token never reached it.
 		var failed *url.Error
 		if errors.As(lost, &failed) {
 			lost = failed.Err

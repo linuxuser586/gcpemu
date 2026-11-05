@@ -3,13 +3,17 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,7 +44,7 @@ func troubledAPIGateways(t *testing.T) map[string]struct{ gw, want string } {
 	return map[string]struct{ gw, want string }{
 		"token refused": {instanceAPIGateway(t, "mine", "other"), "refused this data dir's Admin token"},
 		"stalled":       {stalled, "did not answer in time"},
-		"dropped":       {dropped, "gave no answer: "},
+		"dropped":       {dropped, "dropped the connection"},
 		"5xx":           {failing, "answered 500"},
 	}
 }
@@ -130,10 +134,8 @@ func TestJSONWithoutAnIDIsNoInstance(t *testing.T) {
 	wantNoInstance(t, strings.TrimPrefix(srv.URL, "http://"))
 }
 
-// TestNonHTTPAnswerIsNoInstance is ADR 0066: a server that answers in some
-// other protocol is no Instance, though net/http calls it a broken connection.
-// It answers only once it has the request: one that speaks first can race the
-// client and look like a drop.
+// TestNonHTTPAnswerIsNoInstance is ADR 0066: a server that answers the request
+// in some other protocol is no Instance.
 func TestNonHTTPAnswerIsNoInstance(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -153,6 +155,174 @@ func TestNonHTTPAnswerIsNoInstance(t *testing.T) {
 		}
 	}()
 	wantNoInstance(t, ln.Addr().String())
+}
+
+// bannerServer returns a server that speaks on accept.
+func bannerServer(t *testing.T, banner string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_, _ = io.WriteString(conn, banner)
+				_, _ = io.Copy(io.Discard, conn)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// heldConn holds the request back until a read returns, so the answer always
+// beats it.
+type heldConn struct {
+	net.Conn
+	once sync.Once
+	read chan struct{}
+}
+
+func (c *heldConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.once.Do(func() { close(c.read) })
+	return n, err
+}
+
+func (c *heldConn) Write(b []byte) (int, error) {
+	<-c.read
+	return c.Conn.Write(b)
+}
+
+// holdRequests makes the check's connections heldConns for the test.
+func holdRequests(t *testing.T) {
+	t.Helper()
+	old := liveCheckTransport
+	t.Cleanup(func() { liveCheckTransport = old })
+	liveCheckTransport = old.Clone()
+	liveCheckTransport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := old.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &heldConn{Conn: c, read: make(chan struct{})}, nil
+	}
+}
+
+// captureLog returns what net/http's logging would put on a person's stderr.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	return &buf
+}
+
+// TestSpeakingFirstIsNoInstance is ADR 0066: a server that speaks first is
+// no Instance whichever side wins, and net/http's complaint stays off stderr.
+func TestSpeakingFirstIsNoInstance(t *testing.T) {
+	logged := captureLog(t)
+	gw := bannerServer(t, "SSH-2.0-OpenSSH_9.6\r\n")
+	for range 100 { // the race is the point: it is lost about 1 time in 300 unloaded
+		wantNoInstance(t, gw)
+		if t.Failed() {
+			break
+		}
+	}
+	holdRequests(t)
+	wantNoInstance(t, gw)
+	if logged.Len() != 0 {
+		t.Errorf("logged %q", logged)
+	}
+}
+
+// TestHTTPBeforeTheRequestRulesNothingOut is ADR 0066: it may be a real HTTP
+// server, so it stays Unconfirmed, and the reason is the check's own words.
+func TestHTTPBeforeTheRequestRulesNothingOut(t *testing.T) {
+	logged := captureLog(t)
+	holdRequests(t)
+	gw := bannerServer(t, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+	err := refuseRunningIn(dataDir(t, gw))
+	want := "the API gateway at " + gw + " answered before it was asked"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("refuseRunning: %v, want it to say %q", err, want)
+	}
+	if logged.Len() != 0 {
+		t.Errorf("logged %q", logged)
+	}
+}
+
+// TestBadAdminTokenIsNotADrop: the request never left, so the message gives the
+// cause rather than blame the API gateway. It rules nothing out.
+func TestBadAdminTokenIsNotADrop(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	dir := dataDir(t, strings.TrimPrefix(srv.URL, "http://"))
+	writeDataFile(t, dir, instance.AdminTokenFile, "bad\x7ftoken")
+	err := refuseRunningIn(dir)
+	if err == nil || !strings.Contains(err.Error(), "gave no answer: ") || strings.Contains(err.Error(), "dropped") {
+		t.Errorf("refuseRunning: %v, want the cause", err)
+	}
+}
+
+// TestCheckConn is the first bytes' rule, read in pieces as TCP may deliver
+// them.
+func TestCheckConn(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		asked  bool
+		reads  []string
+		want   error
+		passed string
+	}{
+		{name: "HTTP answer", asked: true, reads: []string{"HTTP/1.1 200 OK\r\n"}, passed: "HTTP/1.1 200 OK\r\n"},
+		{name: "split HTTP answer", asked: true, reads: []string{"HT", "TP/1.1"}, passed: "HTTP/1.1"},
+		{name: "not HTTP", asked: true, reads: []string{"-ERR\r\n"}, want: errNotHTTP},
+		{name: "split, not HTTP", asked: true, reads: []string{"HT", "XP/"}, want: errNotHTTP, passed: "HT"},
+		{name: "banner", reads: []string{"SSH-2.0\r\n"}, want: errNotHTTP},
+		{name: "unasked HTTP", reads: []string{"HTTP/1.1 200 OK\r\n"}, want: errUnasked},
+		{name: "later bytes are the body's", asked: true, reads: []string{"HTTP/1.1 200 OK\r\n", "anything"}, passed: "HTTP/1.1 200 OK\r\nanything"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer func() { _ = server.Close() }()
+			c := newCheckConn(client)
+			go func() {
+				if tt.asked {
+					_, _ = io.ReadFull(server, make([]byte, 1))
+				}
+				for _, r := range tt.reads {
+					_, _ = io.WriteString(server, r)
+				}
+				_ = server.Close()
+			}()
+			if tt.asked {
+				if _, err := c.Write([]byte("G")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var got bytes.Buffer
+			buf := make([]byte, 64)
+			var err error
+			for err == nil {
+				var n int
+				n, err = c.Read(buf)
+				got.Write(buf[:n])
+			}
+			if tt.want == nil && err != io.EOF || tt.want != nil && !errors.Is(err, tt.want) {
+				t.Errorf("err = %v, want %v", err, tt.want)
+			}
+			if got.String() != tt.passed {
+				t.Errorf("passed %q, want %q", got.String(), tt.passed)
+			}
+		})
+	}
 }
 
 // TestUnparseableAPIGatewayIsUnreadable is ADR 0066: nothing was asked, so
