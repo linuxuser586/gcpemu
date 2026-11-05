@@ -54,8 +54,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -74,11 +72,13 @@ jobs:
   # #340: the only writer of the Linux Go cache that every job restores.
   # On main it builds each variant the jobs compile (-exec true links the
   # test binaries without running them) and saves one entry per arch.
-  # Nothing waits for it: when it fails, the cache is a commit older.
+  # Nothing waits for it: when it fails, the cache is a commit older. It
+  # stays red all the same, so a cache that stopped updating gets noticed.
   go-cache:
     needs: changes
     if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
     strategy:
+      fail-fast: false # each arch saves its own entry
       matrix:
         runner: [ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.runner }}
@@ -88,6 +88,10 @@ jobs:
       actions: write # deletes the entries this one replaces
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
       - uses: ./.github/actions/setup-go
         id: go
       - uses: go-task/setup-task@v2
@@ -103,6 +107,11 @@ jobs:
         with:
           paths: ${{ steps.go.outputs.paths }}
           prefix: ${{ steps.go.outputs.prefix }}
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # ADR 0005: the VM relay path, forced on Linux, where a container
   # runtime is available (hosted macOS runners have none). Cloud NAT's
@@ -121,8 +130,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - run: go test -count=1 -timeout 45m ./internal/vmrelay ./internal/netplane ./services/build ./services/sql ./services/compute ./services/nat ./services/lb ./services/gke
       - uses: google-github-actions/setup-gcloud@v3
@@ -187,8 +194,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -307,8 +312,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -362,8 +365,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -399,8 +400,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -489,8 +488,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -533,8 +530,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -576,8 +571,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -610,8 +603,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       # The action runs on the node24 runtime (action.yml); test on the same.
       - uses: actions/setup-node@v7
@@ -829,8 +820,6 @@ jobs:
         continue-on-error: true
         with:
           label: start
-      - uses: ./.github/actions/free-disk
-        continue-on-error: true
       - uses: ./.github/actions/setup-go
       # SRS 8.1 measures with images pre-cached.
       - name: Pre-pull images
