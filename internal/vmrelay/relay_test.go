@@ -194,21 +194,30 @@ func TestInwardThroughRelay(t *testing.T) {
 	}
 }
 
-// heldPair holds a TCP and UDP port pair until the test ends. It asks for
-// random ports, not ports the kernel picks: Windows picks consecutive
-// ports for each protocol, which can both sit in the other protocol's
-// excluded port range, so every kernel-picked pair can be refused (#982).
+// heldPairAttempts bounds the random ports heldPair tries. They miss more
+// often on Windows, where excluded port ranges cover many of them, but 256
+// misses in a row are not realistic (#982).
+const heldPairAttempts = 256
+
+// heldPair holds a TCP and UDP port pair until the test ends. A test that
+// needs a TCP and UDP port pair holds one: on a Windows host, the UDP twin
+// of every port TCP picks can sit in an excluded port range, and listen
+// does not walk past one, so a test that lets listen pick with real binds
+// can fail there (#459). A real relay binds in the VM relay container, on
+// Linux, so only tests meet this (#1008). heldPair asks for random ports,
+// not ports the kernel picks, because Windows picks consecutive ports, so
+// every kernel-picked pair can be refused (#982).
 func heldPair(t *testing.T) (net.Listener, net.PacketConn) {
 	t.Helper()
 	var err error
-	for range udpPairAttempts {
+	for range heldPairAttempts {
 		var (
 			l  net.Listener
 			pc net.PacketConn
 		)
 		port := 1024 + rand.IntN(65536-1024)
 		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-		if l, pc, err = newRelayAgent().listenPair(addr, true, false); err == nil {
+		if l, pc, err = newRelayAgent().listenPair(addr, true); err == nil {
 			t.Cleanup(func() { l.Close(); pc.Close() })
 			return l, pc
 		}
@@ -242,28 +251,31 @@ func heldAgent(t *testing.T) (*relayAgent, string) {
 	return a, held
 }
 
-// TestInwardUDPTwinRefused: on Windows the UDP twin of every port TCP
-// picks can sit in one excluded port range, since the kernel picks
-// consecutive ports (#459). The relay still finds a port both protocols
-// hold. The port UDP picks is one the test holds until the relay binds
-// it, so no other process or excluded port range can refuse the relay's
-// TCP bind (#982).
-func TestInwardUDPTwinRefused(t *testing.T) {
-	heldTCP, heldUDP := heldPair(t)
-	want := heldTCP.Addr().String()
-
-	a := newRelayAgent()
+// TestInwardUDPTwinTaken: when the UDP twin of the port TCP picks is
+// taken, the relay walks on to a port both protocols can hold. Every UDP
+// bind listen makes goes through the hook and only the held socket is
+// handed over, so the agent's binds can't make the test depend on the
+// machine (#1008).
+func TestInwardUDPTwinTaken(t *testing.T) {
+	a, want := heldAgent(t)
+	bindTCP, bindUDP := a.listenTCP, a.listenPacket
+	// listen's first try and two of its walk get a refused twin; the third
+	// walk try gets the held pair. listen holds the agent's lock, so the
+	// hooks run one at a time.
+	picks := 0
 	a.listenTCP = func(network, addr string) (net.Listener, error) {
-		if addr == want {
-			return heldTCP, nil
+		if _, port, _ := net.SplitHostPort(addr); port == "0" {
+			if picks++; picks > 3 {
+				return bindTCP(network, want)
+			}
 		}
-		return net.Listen(network, addr)
+		return bindTCP(network, addr)
 	}
 	a.listenPacket = func(network, addr string) (net.PacketConn, error) {
-		if _, port, _ := net.SplitHostPort(addr); port == "0" {
-			return heldUDP, nil
+		if addr == want {
+			return bindUDP(network, addr)
 		}
-		return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: forbidden by its access permissions")}
+		return nil, &net.OpError{Op: "listen", Net: network, Err: errors.New("bind: address already in use")}
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
