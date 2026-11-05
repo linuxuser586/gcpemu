@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -70,22 +71,66 @@ func endpointsClient(cfg *config.Config) (*adminClient, error) {
 	return newAdminClient(eps, readAdminToken(cfg)), nil
 }
 
+// liveCheckDialTimeout is how long the check waits for a connection. It is
+// shorter than liveCheckTimeout because only a dial that fails says that
+// nothing is there: an address that drops packets would otherwise time out
+// just as a wedged Instance does (ADR 0066).
+const liveCheckDialTimeout = 3 * time.Second
+
+// liveCheckTimeout is how long an answer to the check may take (a variable
+// for tests).
+var liveCheckTimeout = 10 * time.Second
+
+// liveCheckTransport is the check's own, for liveCheckDialTimeout. One is
+// shared as `start --detach` polls the check.
+var liveCheckTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = (&net.Dialer{Timeout: liveCheckDialTimeout}).DialContext
+	return t
+}()
+
+// liveState is what asking a data dir's Instance settled. The zero value
+// rules nothing out.
+type liveState int
+
+const (
+	// stateUnconfirmed is an Unconfirmed Instance: what answered neither
+	// confirms a Live Instance nor rules one out.
+	stateUnconfirmed liveState = iota
+	// stateLive is a Live Instance.
+	stateLive
+	// stateNoEndpoints is a data dir with no endpoints.json.
+	stateNoEndpoints
+	// stateLeftBehind is an endpoints.json with no Live Instance behind it.
+	stateLeftBehind
+)
+
 // liveCheck is what asking a data dir's Instance found.
 type liveCheck struct {
-	// client reaches the Live Instance; nil when there is none.
+	state liveState
+	// client reaches the Live Instance; nil for any other state.
 	client *adminClient
-	// err says no Live Instance was confirmed, and why.
+	// err says why no Live Instance was confirmed.
 	err error
-	// reason is what was found instead, when leftBehind or tokenRefused.
-	reason error
-	// leftBehind reports an endpoints.json with no Live Instance behind it.
-	leftBehind bool
-	// tokenRefused reports an API gateway that refused the data dir's Admin
-	// token, so it wouldn't say which Instance it serves. That is almost
-	// always another Instance, as a Live Instance's token is in the data dir,
-	// but it can be a Live Instance, so neither err nor leftBehind says there
-	// is none.
-	tokenRefused bool
+}
+
+// ruledOut reports that cfg's data dir has no Live Instance, so a command may
+// do without one (ADR 0066).
+func (l liveCheck) ruledOut() bool {
+	return l.state == stateNoEndpoints || l.state == stateLeftBehind
+}
+
+// refusal is err with the way out, for a command an Unconfirmed Instance
+// stops. The PID is for a person to check: no command acts on the PID file
+// (ADR 0064).
+func (l liveCheck) refusal(cfg *config.Config) error {
+	endpoints := filepath.Join(cfg.InstanceDir(), instance.EndpointsFile)
+	if b, err := os.ReadFile(filepath.Join(cfg.InstanceDir(), instance.PIDFile)); err == nil {
+		if pid := strings.TrimSpace(string(b)); pid != "" {
+			return fmt.Errorf("%w; if PID %s is not a gcpemu using this data dir, remove %s", l.err, pid, endpoints)
+		}
+	}
+	return fmt.Errorf("%w; if nothing is using this data dir, remove %s", l.err, endpoints)
 }
 
 // checkLive asks whether cfg's data dir has a Live Instance: endpoints.json
@@ -93,40 +138,57 @@ type liveCheck struct {
 // does, with the Instance ID, because the file's port may have another
 // Instance on it (ADR 0064).
 func checkLive(cfg *config.Config) liveCheck {
-	notLive := func(reason error) liveCheck {
-		return liveCheck{err: fmt.Errorf("instance %q is not running: %w", cfg.Instance, reason), reason: reason, leftBehind: true}
+	leftBehind := func(reason error) liveCheck {
+		return liveCheck{state: stateLeftBehind, err: fmt.Errorf("instance %q is not running: %w", cfg.Instance, reason)}
+	}
+	unconfirmed := func(format string, args ...any) liveCheck {
+		return liveCheck{state: stateUnconfirmed, err: fmt.Errorf("cannot tell whether instance %q is running: %s", cfg.Instance, fmt.Sprintf(format, args...))}
 	}
 	c, err := endpointsClient(cfg)
 	if err != nil {
 		if _, statErr := os.Stat(filepath.Join(cfg.InstanceDir(), instance.EndpointsFile)); statErr != nil {
-			return liveCheck{err: err}
+			return liveCheck{state: stateNoEndpoints, err: err}
 		}
-		return notLive(err)
+		return leftBehind(err)
 	}
 	addr := strings.TrimPrefix(c.base, "http://")
+	asker := *c
+	asker.http = &http.Client{Timeout: liveCheckTimeout, Transport: liveCheckTransport}
+	var lost error // a connection that formed and gave no answer
 	_, err = instance.Identify(func(method, path string) (int, []byte, error) {
-		code, b, err := c.do(method, path)
-		if err != nil {
+		code, b, err := asker.do(method, path)
+		if err == nil {
+			return code, b, nil
+		}
+		var op *net.OpError
+		if errors.As(err, &op) && op.Op == "dial" {
 			return 0, nil, fmt.Errorf("nothing answers at %s", addr)
 		}
-		return code, b, nil
+		lost = err
+		return 0, nil, err
 	}, instance.ReadID(cfg.InstanceDir()), 0)
+	if lost != nil {
+		var timeout net.Error
+		if errors.As(lost, &timeout) && timeout.Timeout() {
+			return unconfirmed("the API gateway at %s did not answer in time", addr)
+		}
+		return unconfirmed("the API gateway at %s dropped the connection", addr)
+	}
 	if err == nil {
-		return liveCheck{client: c}
+		return liveCheck{state: stateLive, client: c}
 	}
 	var unidentified *instance.UnidentifiedError
-	if !errors.As(err, &unidentified) {
-		return notLive(err)
+	switch {
+	case !errors.As(err, &unidentified):
+		return leftBehind(err)
+	case unidentified.Code == http.StatusUnauthorized:
+		// Almost always another Instance, as a Live Instance's token is in the
+		// data dir, but it can be a Live Instance.
+		return unconfirmed("the API gateway at %s refused this data dir's Admin token", addr)
+	case unidentified.Code >= http.StatusInternalServerError:
+		return unconfirmed("the API gateway at %s answered %d", addr, unidentified.Code)
 	}
-	if unidentified.Code == http.StatusUnauthorized {
-		reason := fmt.Errorf("the API gateway at %s refused this data dir's Admin token", addr)
-		return liveCheck{
-			err:          fmt.Errorf("cannot tell whether instance %q is running: %w", cfg.Instance, reason),
-			reason:       reason,
-			tokenRefused: true,
-		}
-	}
-	return notLive(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
+	return leftBehind(fmt.Errorf("what answers at %s did not say which Instance it serves", addr))
 }
 
 // newAdminClient returns a client for the Admin API on the gateway in eps,

@@ -33,7 +33,8 @@ func (e *UnidentifiedError) Error() string {
 	return fmt.Sprintf("the API gateway did not say which Instance it serves: %d %s", e.Code, e.Body)
 }
 
-// Identify asks the Instance that call reaches which one it is. It fails
+// Identify asks the Instance that call reaches which one it is. JSON with no
+// ID, when there is one to compare, is not an Instance's answer. It fails
 // unless that is the Instance id, when id is not "", and in process pid,
 // when pid is not 0. The Instance has to say because the files in a data dir may be a
 // crashed Instance's: their port may have another Instance on it, and their
@@ -49,6 +50,9 @@ func Identify(call func(method, path string) (int, []byte, error), id string, pi
 		return s, &UnidentifiedError{Code: code, Body: b}
 	}
 	if err := json.Unmarshal(b, &s); err != nil {
+		return s, &UnidentifiedError{Code: code, Body: b}
+	}
+	if id != "" && s.ID == "" {
 		return s, &UnidentifiedError{Code: code, Body: b}
 	}
 	if id != "" && s.ID != id {

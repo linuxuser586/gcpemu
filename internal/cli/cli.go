@@ -159,6 +159,9 @@ func (o *rootOpts) startCmd() *cobra.Command {
 			if detach {
 				return startDetached(cmd, cfg)
 			}
+			if err := refuseRunning(cfg); err != nil {
+				return err
+			}
 			return o.runForeground(cfg)
 		},
 	}
@@ -377,7 +380,7 @@ func startDetached(cmd *cobra.Command, cfg *config.Config) error {
 		}
 	}
 	reasons := notReady(cfg)
-	stopChild(cfg, child.Process)
+	stopChild(cfg, child.Process, child.Process.Pid)
 	if reasons == "" {
 		reasons = logTail(logPath, logStart, 20)
 	}
@@ -390,17 +393,17 @@ type detachedChild interface {
 	Kill() error
 }
 
-// stopChild stops a child that did not become ready. Windows delivers no
-// signal to a detached process: ask the Live Instance to shut down, and kill
-// the child when that fails. clientFor keeps the request from reaching
-// another Instance on the port endpoints.json names (#1024).
-func stopChild(cfg *config.Config, child detachedChild) {
+// stopChild stops a child in process pid that did not become ready. Windows
+// delivers no signal to a detached process: ask the Live Instance in that
+// process to shut down, and kill the child when that fails, so the request
+// reaches nothing but the child (#1024).
+func stopChild(cfg *config.Config, child detachedChild, pid int) {
 	if child.Signal(syscall.SIGTERM) == nil {
 		return
 	}
 	c, err := clientFor(cfg)
 	if err == nil {
-		_, _, err = c.do(http.MethodPost, "/_emu/v1/shutdown")
+		_, err = instance.AskShutdown(c.do, instance.ReadID(cfg.InstanceDir()), pid)
 	}
 	if err != nil {
 		_ = child.Kill()
@@ -413,10 +416,10 @@ func stopChild(cfg *config.Config, child detachedChild) {
 func refuseRunning(cfg *config.Config) error {
 	live := checkLive(cfg)
 	switch {
-	case live.err == nil:
+	case live.state == stateLive:
 		return fmt.Errorf("instance %q is already running (%s)", cfg.Instance, cfg.InstanceDir())
-	case live.tokenRefused:
-		return fmt.Errorf("cannot tell whether instance %q is running (%s): %w", cfg.Instance, cfg.InstanceDir(), live.reason)
+	case !live.ruledOut():
+		return live.refusal(cfg)
 	}
 	return nil
 }
@@ -571,7 +574,7 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			}
 			info, err := c.get("/_emu/v1/info")
 			if err != nil {
-				return fmt.Errorf("instance %q is not running: %w", cfg.Instance, err)
+				return fmt.Errorf("asking instance %q: %w", cfg.Instance, err)
 			}
 			code, ready, _ := c.do(http.MethodGet, "/_emu/v1/ready")
 			// --ready makes status a readiness probe (NFR-PORT-004: the OCI

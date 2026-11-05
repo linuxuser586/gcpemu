@@ -79,7 +79,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 			}
 			live := checkLive(cfg)
 			switch {
-			case live.err == nil:
+			case live.state == stateLive:
 				code, b, err := live.client.do(http.MethodPost, "/_emu/v1/ca/rotate")
 				switch {
 				case err != nil:
@@ -95,10 +95,10 @@ func (o *rootOpts) caCmd() *cobra.Command {
 					return fmt.Errorf("instance %q is running without the certs service; stop it (`gcpemu stop`) and rotate again", cfg.Instance)
 				}
 				return fmt.Errorf("rotate: %d %s", code, strings.TrimSpace(string(b)))
-			case live.tokenRefused:
-				// Rotating a Live Instance's CA on disk is the costly mistake; this is one
-				// clear error (#1024).
-				return live.err
+			case !live.ruledOut():
+				// Rotating a Live Instance's CA on disk is the costly mistake;
+				// this is one clear error (ADR 0066).
+				return live.refusal(cfg)
 			}
 			// No Live Instance: the CA is this data dir's own, and nothing is
 			// using it.

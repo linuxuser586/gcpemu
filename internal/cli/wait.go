@@ -85,7 +85,7 @@ otherwise once --timeout passes, naming each Wait condition not met.`,
 					return fmt.Errorf("timed out after %v waiting for:\n%s", timeout, strings.Join(unmet, "\n"))
 				}
 				if errors.Is(err, errNoAnswer) {
-					return fmt.Errorf("instance %q is not running: %w", cfg.Instance, err)
+					return fmt.Errorf("asking instance %q: %w", cfg.Instance, err)
 				}
 				if err != nil {
 					return err

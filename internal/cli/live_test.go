@@ -263,6 +263,9 @@ func TestDoctorAsksTheInstance(t *testing.T) {
 	})
 }
 
+// childPID is the process countingAPIGateway's Instance reports.
+const childPID = 4242
+
 // countingAPIGateway returns the address of an API gateway serving the Instance
 // id, which asks for token when token is not "", and a count of the
 // requests that reached it other than the one asking which Instance it is.
@@ -277,7 +280,7 @@ func countingAPIGateway(t *testing.T, id, token string) (string, *atomic.Int64) 
 		if r.URL.Path != "/_emu/v1/info" {
 			acted.Add(1)
 		}
-		_, _ = fmt.Fprintf(w, `{"id":%q}`, id)
+		_, _ = fmt.Fprintf(w, `{"id":%q,"pid":%d}`, id, childPID)
 	}))
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://"), acted
@@ -488,17 +491,28 @@ func TestStopChildAsksOnlyItsOwnInstance(t *testing.T) {
 	noSignals := errors.New("not supported by windows")
 	mine, mineActed := countingAPIGateway(t, "mine", "kept")
 	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
+	refuses := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			http.Error(w, "no", http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"id":"mine","pid":%d}`, childPID)
+	}))
+	defer refuses.Close()
 	for name, tt := range map[string]struct {
 		gw         string
 		acted      *atomic.Int64
+		pid        int
 		signalErr  error
 		wantActed  int64
 		wantKilled bool
 	}{
-		"signalled":        {gw: mine, acted: mineActed},
-		"own Instance":     {gw: mine, acted: mineActed, signalErr: noSignals, wantActed: 1},
-		"another Instance": {gw: theirs, acted: theirsActed, signalErr: noSignals, wantKilled: true},
-		"nothing answers":  {gw: deadAPIGateway(t), signalErr: noSignals, wantKilled: true},
+		"signalled":        {gw: mine, acted: mineActed, pid: childPID},
+		"own Instance":     {gw: mine, acted: mineActed, pid: childPID, signalErr: noSignals, wantActed: 1},
+		"another process":  {gw: mine, acted: mineActed, pid: childPID + 1, signalErr: noSignals, wantKilled: true},
+		"another Instance": {gw: theirs, acted: theirsActed, pid: childPID, signalErr: noSignals, wantKilled: true},
+		"nothing answers":  {gw: deadAPIGateway(t), pid: childPID, signalErr: noSignals, wantKilled: true},
+		"shutdown refused": {gw: strings.TrimPrefix(refuses.URL, "http://"), pid: childPID, signalErr: noSignals, wantKilled: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if tt.acted != nil {
@@ -507,7 +521,7 @@ func TestStopChildAsksOnlyItsOwnInstance(t *testing.T) {
 			cfg := config.Defaults()
 			cfg.DataDir = dataDir(t, tt.gw)
 			child := &fakeChild{signalErr: tt.signalErr}
-			stopChild(&cfg, child)
+			stopChild(&cfg, child, tt.pid)
 			if child.killed != tt.wantKilled {
 				t.Errorf("killed = %v, want %v", child.killed, tt.wantKilled)
 			}
