@@ -113,6 +113,15 @@ it('shows no Delegated APIs card without --external', async () => {
   expect(screen.queryByRole('table', { name: 'Delegated APIs' })).not.toBeInTheDocument()
 })
 
+it('says the runtime is not known yet, neither missing nor unreachable', async () => {
+  fake.info.runtime = { kind: 'unknown', reachable: false }
+  renderApp('/')
+  expect(await screen.findByText('Checking the container runtime')).toBeInTheDocument()
+  expect(screen.getByText('Checking')).toBeInTheDocument()
+  expect(screen.queryByText('Not reachable')).not.toBeInTheDocument()
+  expect(screen.queryByText('No container runtime found')).not.toBeInTheDocument()
+})
+
 it('says when no container runtime is reachable', async () => {
   fake.info.runtime = { kind: 'none', reachable: false, error: 'no container runtime found' }
   renderApp('/')

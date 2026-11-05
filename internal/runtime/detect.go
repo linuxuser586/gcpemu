@@ -42,7 +42,12 @@ func windowsContainers(in Info) bool {
 
 // Detect finds a runtime and returns a client for it; see Locate.
 func Detect() (*Client, error) {
-	cl, _, err := Locate()
+	return DetectContext(context.Background())
+}
+
+// DetectContext is Detect, given up when ctx ends.
+func DetectContext(ctx context.Context) (*Client, error) {
+	cl, _, err := locateContext(ctx)
 	return cl, err
 }
 
@@ -56,6 +61,10 @@ func Detect() (*Client, error) {
 // gcpemu and `docker` agree. A listed endpoint serving Windows containers
 // is skipped.
 func Locate() (*Client, Detection, error) {
+	return locateContext(context.Background())
+}
+
+func locateContext(ctx context.Context) (*Client, Detection, error) {
 	home, _ := os.UserHomeDir()
 	return locate(hostEnv{
 		getenv:   os.Getenv,
@@ -64,7 +73,7 @@ func Locate() (*Client, Detection, error) {
 		isSocket: isSocket,
 		isPipe:   isPipe,
 		group:    fileGroup,
-		probe:    probe,
+		probe:    func(endpoint string) (*Client, Info, error) { return probe(ctx, endpoint) },
 	})
 }
 
@@ -279,12 +288,12 @@ func isPipe(addr string) bool {
 }
 
 // probe returns a client for endpoint once it answers /info.
-func probe(endpoint string) (*Client, Info, error) {
+func probe(ctx context.Context, endpoint string) (*Client, Info, error) {
 	cl, err := New(endpoint)
 	if err != nil {
 		return nil, Info{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	in, err := cl.Info(ctx)
 	if err != nil {
