@@ -60,14 +60,14 @@ func FindAbandoned(ctx context.Context, cl *runtime.Client, stateHome string) ([
 	idFiles, _ := filepath.Glob(filepath.Join(stateHome, "*", IDFile))
 	for _, f := range idFiles {
 		dir := filepath.Dir(f)
-		id := readID(dir)
+		id := ReadID(dir)
 		holders[id] = append(holders[id], dir)
 	}
 	var out []Abandoned
 	for _, a := range tagged {
 		held := holders[a.ID]
 		for _, d := range a.Dirs {
-			if readID(d) == a.ID && !slices.Contains(held, d) {
+			if ReadID(d) == a.ID && !slices.Contains(held, d) {
 				held = append(held, d)
 			}
 		}
@@ -155,8 +155,8 @@ func taggedByID(ctx context.Context, cl *runtime.Client, id string) (Tagged, err
 	return Tagged{ID: id}, nil
 }
 
-// readID returns the Instance ID that dir holds, or "".
-func readID(dir string) string {
+// ReadID returns the Instance ID that dir holds, or "".
+func ReadID(dir string) string {
 	b, err := os.ReadFile(filepath.Join(dir, IDFile))
 	if err != nil {
 		return ""

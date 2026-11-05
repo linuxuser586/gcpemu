@@ -3,6 +3,7 @@
 package instance
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,7 +14,26 @@ import (
 
 // ProcessAlive reports whether a process with pid exists.
 func ProcessAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	err := syscall.Kill(pid, 0)
+	// Another user's process exists but cannot be signalled.
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// PIDScope is an opaque value that says where this process's pids mean
+// something: another process can watch a pid only from an equal scope.
+// Linux has a PID namespace per container, and every kernel's first one
+// reads the same, so the boot ID tells apart those of a host and a VM.
+// Every other OS has one scope, its own.
+func PIDScope() string {
+	if runtime.GOOS != "linux" {
+		return runtime.GOOS
+	}
+	ns, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		return ""
+	}
+	boot, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	return ns + " " + strings.TrimSpace(string(boot))
 }
 
 // exePath returns the path of the executable that the process pid runs.

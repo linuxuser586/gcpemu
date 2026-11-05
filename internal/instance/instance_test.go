@@ -567,8 +567,9 @@ func TestConsole(t *testing.T) {
 			}
 
 			var info struct {
-				Console bool
-				Runtime struct {
+				Console  bool
+				PIDScope string
+				Runtime  struct {
 					Kind      string
 					Reachable bool
 					Error     string
@@ -577,6 +578,10 @@ func TestConsole(t *testing.T) {
 			getJSON(t, base+"/_emu/v1/info", h, &info)
 			if info.Console != tc.served {
 				t.Errorf("info.console = %v, want %v", info.Console, tc.served)
+			}
+			// gcpemu stop on the same host can watch this Instance's process.
+			if info.PIDScope == "" || info.PIDScope != PIDScope() {
+				t.Errorf("info.pidScope = %q, want %q", info.PIDScope, PIDScope())
 			}
 			if info.Runtime.Kind == "" || (info.Runtime.Kind == "none") != (info.Runtime.Error != "") {
 				t.Errorf("info.runtime = %+v", info.Runtime)

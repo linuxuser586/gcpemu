@@ -70,6 +70,13 @@ them, while Managed containers that something other than the Instance stopped or
 of the container runtime, `docker stop` or `docker restart`) are down or have lost their setup: stop and
 start the Instance to bring them back.
 
+`gcpemu stop` succeeds only once the Instance's process has exited and `stop` has confirmed it, so
+nothing will write to its data directory again and a script can delete or reuse it. It waits for the
+process of the Instance it reached, not the one in `gcpemu.pid`, which a crash can leave behind, and
+it never kills the process. A Containerized Instance, or any Instance in a container with its own PID
+namespace, has a process the host cannot watch: `stop` still asks it to shut down, then exits non-zero
+and says the exit is unconfirmed. To know it has exited, wait for its container (`docker wait`).
+
 ### Running one command
 
 `gcpemu run` does the whole `start --detach`, `eval "$(gcpemu env)"`, command, `stop` sequence in one

@@ -248,8 +248,14 @@ An Instance whose state disappears when it stops.
 An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
 
 **Clean stop**:
-A stop in which the Instance completes its own shutdown and its process exits, even if it could not remove everything it made and says so in its log. An Instance that is killed or crashes has not stopped cleanly (ADR 0064).
+A stop in which the Instance completes its own shutdown and its process exits, even if it could not remove everything it made and says so in its log. An Instance that is killed or crashes has not stopped cleanly (ADR 0064). This is what the Instance did; a Confirmed stop or an Unconfirmed stop is what `gcpemu stop` could prove of it.
 _Avoid_: graceful stop
+
+**Confirmed stop**:
+A `gcpemu stop` that saw the Instance's process exit, so nothing will write to its data directory again. It is the only stop that succeeds (ADR 0064).
+
+**Unconfirmed stop**:
+A `gcpemu stop` of an Instance that accepted the shutdown but whose process `stop` could not watch, as for a Containerized Instance, or any Instance in a container with its own processes. It fails even though the Instance may go on to a Clean stop (ADR 0064).
 
 **Data directory**:
 The directory an Instance holds its certificate authority and Instance ID in, and a Persistent Instance its state. Every Instance has one; an Ephemeral Instance keeps no state there.
