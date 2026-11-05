@@ -263,10 +263,10 @@ func TestDoctorAsksTheInstance(t *testing.T) {
 	})
 }
 
-// actionGateway returns the address of an API gateway serving the Instance
+// countingAPIGateway returns the address of an API gateway serving the Instance
 // id, which asks for token when token is not "", and a count of the
 // requests that reached it other than the one asking which Instance it is.
-func actionGateway(t *testing.T, id, token string) (string, *atomic.Int64) {
+func countingAPIGateway(t *testing.T, id, token string) (string, *atomic.Int64) {
 	t.Helper()
 	acted := &atomic.Int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +288,7 @@ func actionGateway(t *testing.T, id, token string) (string, *atomic.Int64) {
 // more. The other tests here take the rest of the commands through it.
 func TestCommandsReportOneReason(t *testing.T) {
 	t.Run("Live Instance", func(t *testing.T) {
-		gw, acted := actionGateway(t, "mine", "kept")
+		gw, acted := countingAPIGateway(t, "mine", "kept")
 		out, err := gcpemu(t, "--data-dir", dataDir(t, gw), "reset")
 		if err != nil || !strings.Contains(out, "state reset") || acted.Load() != 1 {
 			t.Errorf("reset = %q, %v, with %d requests, want it reset", out, err, acted.Load())
@@ -304,9 +304,9 @@ func TestCommandsReportOneReason(t *testing.T) {
 			t.Errorf("err = %v, want it to name the missing file", err)
 		}
 	})
-	theirs, theirsActed := actionGateway(t, "theirs", "")
+	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
 	web := notAnInstance(t)
-	refused, refusedActed := actionGateway(t, "mine", "other")
+	refused, refusedActed := countingAPIGateway(t, "mine", "other")
 	for name, tt := range map[string]struct {
 		gw, want string
 		acted    *atomic.Int64
@@ -347,7 +347,7 @@ func TestAnotherInstanceIsNotActedOn(t *testing.T) {
 		"console":       {"console", "--print"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			gw, acted := actionGateway(t, "theirs", "")
+			gw, acted := countingAPIGateway(t, "theirs", "")
 			out, err := gcpemu(t, append([]string{"--data-dir", dataDir(t, gw)}, args...)...)
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Errorf("err = %v, want it to say %q", err, want)
@@ -413,16 +413,16 @@ func TestRefusedTokenNeverSaysNotRunning(t *testing.T) {
 func TestCARotateAsksTheInstance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // rotating updates browser databases there
 	const live, onDisk, fails = "running instance", "on next start", ""
-	unreachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dropsPost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			panic(http.ErrAbortHandler) // the Instance went away after the check
 		}
 		_, _ = io.WriteString(w, `{"id":"mine"}`)
 	}))
-	defer unreachable.Close()
-	theirs, theirsActed := actionGateway(t, "theirs", "")
-	refused, refusedActed := actionGateway(t, "mine", "other")
-	mine, mineActed := actionGateway(t, "mine", "kept")
+	defer dropsPost.Close()
+	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
+	refused, refusedActed := countingAPIGateway(t, "mine", "other")
+	mine, mineActed := countingAPIGateway(t, "mine", "kept")
 	for name, tt := range map[string]struct {
 		gw, want  string
 		acted     *atomic.Int64
@@ -434,7 +434,7 @@ func TestCARotateAsksTheInstance(t *testing.T) {
 		"another Instance":   {gw: theirs, want: onDisk, acted: theirsActed},
 		"no Instance":        {gw: notAnInstance(t), want: onDisk},
 		"token refused":      {gw: refused, want: fails, acted: refusedActed},
-		"Live, then no POST": {gw: strings.TrimPrefix(unreachable.URL, "http://"), want: fails},
+		"Live, then no POST": {gw: strings.TrimPrefix(dropsPost.URL, "http://"), want: fails},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := dataDir(t, tt.gw)
@@ -486,8 +486,8 @@ func (c *fakeChild) Kill() error            { c.killed = true; return nil }
 // it is the data dir's Live Instance, and otherwise kills it.
 func TestStopChildAsksOnlyItsOwnInstance(t *testing.T) {
 	noSignals := errors.New("not supported by windows")
-	mine, mineActed := actionGateway(t, "mine", "kept")
-	theirs, theirsActed := actionGateway(t, "theirs", "")
+	mine, mineActed := countingAPIGateway(t, "mine", "kept")
+	theirs, theirsActed := countingAPIGateway(t, "theirs", "")
 	for name, tt := range map[string]struct {
 		gw         string
 		acted      *atomic.Int64

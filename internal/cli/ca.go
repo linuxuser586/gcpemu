@@ -96,7 +96,7 @@ func (o *rootOpts) caCmd() *cobra.Command {
 				}
 				return fmt.Errorf("rotate: %d %s", code, strings.TrimSpace(string(b)))
 			case live.tokenRefused:
-				// Rotating a live CA on disk is the costly mistake; this is one
+				// Rotating a Live Instance's CA on disk is the costly mistake; this is one
 				// clear error (#1024).
 				return live.err
 			}

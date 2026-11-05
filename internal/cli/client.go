@@ -48,10 +48,10 @@ func readEndpoints(cfg *config.Config) (map[string]string, error) {
 	return m, nil
 }
 
-// clientFor returns a client for cfg's Live Instance, and otherwise says why
-// there is none. It is the only way to a data dir's Instance, so that no
-// command acts on whatever took the port in a left-behind endpoints.json
-// (#1024).
+// clientFor returns a client for cfg's Live Instance, and otherwise the
+// check's error, so that no command acts on whatever took the port in a
+// left-behind endpoints.json (#1024). A command that needs more than that
+// error calls checkLive; none goes around the check.
 func clientFor(cfg *config.Config) (*adminClient, error) {
 	live := checkLive(cfg)
 	return live.client, live.err
@@ -74,16 +74,17 @@ func endpointsClient(cfg *config.Config) (*adminClient, error) {
 type liveCheck struct {
 	// client reaches the Live Instance; nil when there is none.
 	client *adminClient
-	// err says there is no Live Instance.
+	// err says no Live Instance was confirmed, and why.
 	err error
-	// reason is what was found in its place, when leftBehind.
+	// reason is what was found instead, when leftBehind or tokenRefused.
 	reason error
 	// leftBehind reports an endpoints.json with no Live Instance behind it.
 	leftBehind bool
 	// tokenRefused reports an API gateway that refused the data dir's Admin
 	// token, so it wouldn't say which Instance it serves. That is almost
 	// always another Instance, as a Live Instance's token is in the data dir,
-	// but it can be a Live Instance, so this says neither.
+	// but it can be a Live Instance, so neither err nor leftBehind says there
+	// is none.
 	tokenRefused bool
 }
 
@@ -122,7 +123,6 @@ func checkLive(cfg *config.Config) liveCheck {
 		return liveCheck{
 			err:          fmt.Errorf("cannot tell whether instance %q is running: %w", cfg.Instance, reason),
 			reason:       reason,
-			leftBehind:   true,
 			tokenRefused: true,
 		}
 	}

@@ -133,17 +133,10 @@ func TestDetachFailureReasons(t *testing.T) {
 	})
 
 	// #1024: ready means this data dir's Live Instance is ready.
-	readyGateway := func(t *testing.T, id string) string {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = fmt.Fprintf(w, `{"id":%q}`, id)
-		}))
-		t.Cleanup(srv.Close)
-		return strings.TrimPrefix(srv.URL, "http://")
-	}
 	t.Run("ready", func(t *testing.T) {
 		cfg := cfgFor(t)
 		writeDataFile(t, cfg.DataDir, instance.IDFile, "mine")
-		t.Setenv("GCPEMU_TEST_GATEWAY", readyGateway(t, "mine"))
+		t.Setenv("GCPEMU_TEST_GATEWAY", instanceAPIGateway(t, "mine", ""))
 		fake(t, "starting", cfg.DataDir)
 		var out strings.Builder
 		cmd := &cobra.Command{}
@@ -155,7 +148,7 @@ func TestDetachFailureReasons(t *testing.T) {
 	t.Run("another Instance is not ready", func(t *testing.T) {
 		cfg := cfgFor(t)
 		writeDataFile(t, cfg.DataDir, instance.IDFile, "mine")
-		t.Setenv("GCPEMU_TEST_GATEWAY", readyGateway(t, "theirs"))
+		t.Setenv("GCPEMU_TEST_GATEWAY", instanceAPIGateway(t, "theirs", ""))
 		fake(t, "starting", cfg.DataDir)
 		err := startDetached(cmd, cfg)
 		if err == nil || !strings.Contains(err.Error(), "not ready") {
