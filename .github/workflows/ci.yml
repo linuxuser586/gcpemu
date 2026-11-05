@@ -50,6 +50,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -59,6 +65,11 @@ jobs:
       - run: task vet
       - run: task race
       - run: task cross
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # #340: the only writer of the Linux Go cache that every job restores.
   # On main it builds each variant the jobs compile (-exec true links the
@@ -172,6 +183,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       - uses: go-task/setup-task@v2
         with:
@@ -264,6 +281,11 @@ jobs:
         with:
           name: playwright-report
           path: console/playwright-report
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   # SRS 11.2: v1.0 is accepted when the Reference stack runs green on both
   # architectures within 10 minutes (the test enforces the budget). The same
@@ -584,6 +606,12 @@ jobs:
       actions: read # the post step reads the job's result
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/disk-report
+        continue-on-error: true
+        with:
+          label: start
+      - uses: ./.github/actions/free-disk
+        continue-on-error: true
       - uses: ./.github/actions/setup-go
       # The action runs on the node24 runtime (action.yml); test on the same.
       - uses: actions/setup-node@v7
@@ -645,6 +673,11 @@ jobs:
           services: pubsub
           artifact-name: gcpemu-selftest-release-${{ runner.arch }}
       - run: test -n "${{ steps.release.outputs.version }}" && test "$GCPEMU_INSTANCE" = release
+      - uses: ./.github/actions/disk-report
+        if: always()
+        continue-on-error: true
+        with:
+          label: end
 
   action-artifacts:
     needs: action
