@@ -95,10 +95,11 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	cl.SetReserved(c.reservedAddrs)
 	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
 	m.LoopbackAliases = runtime.DecideLoopbackAliases(c.in.Config.LoopbackAliases, info)
-	if err := m.Reclaim(ctx); err != nil {
-		if stopping.Err() != nil {
-			return nil, ErrShutDown
-		}
+	err = m.Reclaim(ctx)
+	if stopping.Err() != nil {
+		return nil, ErrShutDown
+	}
+	if err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
 	c.selfJoined(ctx, m)

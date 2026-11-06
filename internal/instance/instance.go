@@ -49,7 +49,8 @@ type Factory func(env *emu.Env) emu.Service
 var Version = "dev"
 
 // ErrShutDown means shutdown has begun, so what was asked of the Instance
-// will not happen: it will not become ready, or Seeding will not finish.
+// will not happen: it will not become ready, Seeding will not finish, or it
+// will not connect to the container runtime.
 var ErrShutDown = errors.New("Instance shut down")
 
 // Files written in the instance directory.

@@ -28,9 +28,10 @@ type hungRuntime struct {
 	// hangVersion hangs detection too, and versions counts what reached it.
 	hangVersion atomic.Bool
 	versions    atomic.Int64
-	// listing makes container lists answer at once, or with listStatus if set.
-	listing    atomic.Bool
-	listStatus atomic.Int64
+	// answerLists makes container lists answer at once, or with listStatus
+	// if set.
+	answerLists atomic.Bool
+	listStatus  atomic.Int64
 	// self is the Instance's container; inspecting it hangs, and inspects
 	// counts what reached that.
 	self     string
@@ -54,7 +55,7 @@ func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(int(st))
 			return
 		}
-		if !f.listing.Load() && !f.hang(r) {
+		if !f.answerLists.Load() && !f.hang(r) {
 			return
 		}
 		_, _ = io.WriteString(w, `[]`)
@@ -148,10 +149,41 @@ func connectOverARequest(t *testing.T, base string, f *hungRuntime) {
 			resp.Body.Close()
 		}
 	}()
-	for end := time.Now().Add(10 * time.Second); f.lists.Load() == 0; time.Sleep(5 * time.Millisecond) {
+	reached(t, &f.lists)
+}
+
+// reached waits for a runtime to get a request it counts in n.
+func reached(t *testing.T, n *atomic.Int64) {
+	t.Helper()
+	for end := time.Now().Add(10 * time.Second); n.Load() == 0; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(end) {
-			t.Fatal("the connection did not reach Reclaim")
+			t.Fatal("the connection did not get that far")
 		}
+	}
+}
+
+// connecting connects to the runtime without a request and returns what
+// that ends with.
+func connecting(in *Instance) <-chan error {
+	got := make(chan error, 1)
+	go func() {
+		_, err := in.containers.Runtime(context.Background())
+		got <- err
+	}()
+	return got
+}
+
+// endsWithShutDown fails unless got, the end of a connection that shutdown
+// has just cut short, says so.
+func endsWithShutDown(t *testing.T, got <-chan error) {
+	t.Helper()
+	select {
+	case err := <-got:
+		if !errors.Is(err, ErrShutDown) {
+			t.Fatalf("Runtime: %v, want ErrShutDown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the connection is still running after shutdown began")
 	}
 }
 
@@ -179,9 +211,10 @@ func shutdownPromptly(t *testing.T, in *Instance) {
 func TestShutdownEndsAConnectionInProgress(t *testing.T) {
 	in, base, f := startOnHungRuntime(t)
 	connectOverARequest(t, base, f)
+	before := f.requests.Load()
 	shutdownPromptly(t, in)
-	if got := f.lists.Load(); got != 1 {
-		t.Fatalf("%d container lists, want Reclaim's alone: Cleanup ran on the hung runtime", got)
+	if got := f.requests.Load() - before; got != 0 {
+		t.Fatalf("Teardown made %d requests of the hung runtime", got)
 	}
 }
 
@@ -191,25 +224,10 @@ func TestShutdownEndsAConnectionInProgress(t *testing.T) {
 func TestShutdownEndsDetectionWithoutRulingOutTheRuntime(t *testing.T) {
 	in, _, f := startOnHungRuntime(t)
 	f.hangVersion.Store(true)
-	got := make(chan error, 1)
-	go func() {
-		_, err := in.containers.Runtime(context.Background())
-		got <- err
-	}()
-	for end := time.Now().Add(2 * time.Second); f.versions.Load() == 0; time.Sleep(5 * time.Millisecond) {
-		if time.Now().After(end) {
-			t.Fatal("detection did not reach the runtime")
-		}
-	}
+	got := connecting(in)
+	reached(t, &f.versions)
 	in.beginStop()
-	select {
-	case err := <-got:
-		if !errors.Is(err, ErrShutDown) {
-			t.Fatalf("Runtime: %v, want ErrShutDown", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("detection is still running after shutdown began")
-	}
+	endsWithShutDown(t, got)
 	if _, err := in.containers.Runtime(context.Background()); !errors.Is(err, ErrShutDown) {
 		t.Fatalf("Runtime afterwards: %v, want ErrShutDown", err)
 	}
@@ -245,26 +263,11 @@ func TestShutdownCutsAConnectionShortOfItsSelfAddresses(t *testing.T) {
 	in, _, f := startOnHungRuntime(t)
 	t.Setenv(runtime.SelfEnv, "me") // after Start, which would connect for it
 	f.self = "self-id"
-	f.listing.Store(true)
-	got := make(chan error, 1)
-	go func() {
-		_, err := in.containers.Runtime(context.Background())
-		got <- err
-	}()
-	for end := time.Now().Add(2 * time.Second); f.inspects.Load() == 0; time.Sleep(5 * time.Millisecond) {
-		if time.Now().After(end) {
-			t.Fatal("the connection did not reach the Instance's container")
-		}
-	}
+	f.answerLists.Store(true)
+	got := connecting(in)
+	reached(t, &f.inspects)
 	in.beginStop()
-	select {
-	case err := <-got:
-		if !errors.Is(err, ErrShutDown) {
-			t.Fatalf("Runtime: %v, want ErrShutDown", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("the connection is still running after shutdown began")
-	}
+	endsWithShutDown(t, got)
 }
 
 // TestAConnectionCutShortTellsServicesNothing: SelfJoined writes the store,
@@ -296,7 +299,7 @@ func TestNoConnectionStartsOnceShutdownHasBegun(t *testing.T) {
 // the Instance made through it.
 func TestAConnectedInstanceKeepsItsRuntimeDuringShutdown(t *testing.T) {
 	in, _, f := startOnHungRuntime(t)
-	f.listing.Store(true)
+	f.answerLists.Store(true)
 	want, err := in.containers.Runtime(context.Background())
 	if err != nil {
 		t.Fatal(err)
