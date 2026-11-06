@@ -50,14 +50,27 @@ func (c *containers) Connected() *runtime.Manager {
 	return c.rt
 }
 
+// Runtime implements emu.Containers. It holds c.mu while it connects, so
+// shutdown ends a connection in progress and, once begun, lets none start: a
+// runtime that hangs while connecting never holds Teardown (#1028). A connection
+// cut short leaves nothing behind: no error to repeat, and no runtime for
+// Teardown to clean up on. Detection follows the Instance's shutdown and not
+// ctx, as one caller leaving doesn't rule out the runtime.
 func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.rt != nil || c.err != nil {
 		return c.rt, c.err
 	}
-	cl, err := runtime.Detect()
+	stopping := c.in.stopping
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(stopping, cancel)()
+	cl, err := runtime.DetectContext(stopping)
 	if err != nil {
+		if stopping.Err() != nil {
+			return nil, ErrShutDown
+		}
 		c.err = emu.NoRuntime(err)
 		return nil, c.err
 	}
@@ -83,9 +96,15 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
 	m.LoopbackAliases = runtime.DecideLoopbackAliases(c.in.Config.LoopbackAliases, info)
 	if err := m.Reclaim(ctx); err != nil {
+		if stopping.Err() != nil {
+			return nil, ErrShutDown
+		}
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
 	c.selfJoined(ctx, m)
+	if stopping.Err() != nil {
+		return nil, ErrShutDown
+	}
 	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
 	if cl.Self() != "" {
 		m.Log.Info("VM runtime " + m.VM.String())
