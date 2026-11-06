@@ -470,7 +470,8 @@ type Containers interface {
 	// Runtime detects the runtime on first use and reclaims orphans. An
 	// error matching ErrNoRuntime is permanent: the instance has no usable
 	// runtime and returns the same error on every later call. Any other
-	// error is transient, and a later call tries again.
+	// error is transient, and a later call tries again, until the Instance
+	// begins to shut down: from then on it connects no more.
 	Runtime(ctx context.Context) (*runtime.Manager, error)
 	// Netplane returns the instance's services/external network manager.
 	Netplane(ctx context.Context) (*netplane.Plane, error)
