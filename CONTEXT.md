@@ -494,8 +494,12 @@ The most GKE nodes one Instance runs, across all its clusters, Standard and Auto
 _Avoid_: host node limit, quota
 
 **Mirror cache**:
-The images an Instance's GKE nodes pulled from public registries through the emulator, kept so later pulls are served locally. An image is in it only once every one of its blobs is. State snapshots hold it, but a change to it while one is saved does not count as the Instance's state changing; an image a restore lacks is fetched again when next pulled.
-_Avoid_: pull-through cache, image cache (the Build daemon's)
+The copies of public-registry images that the registry keeps after an Instance's GKE nodes pull them through it, so later pulls are served locally, even while the emulator is offline. An image is in it only once every one of its blobs is. It is cache: State snapshots hold it, but a change to it while one is saved does not count as the Instance's state changing, and an image a restore lacks is fetched again when next pulled.
+_Avoid_: pull-through cache (remote repositories pull through too, but their images are packages users see), image cache (the Build daemon's)
+
+**Registry cleanup**:
+The registry's periodic pass that runs each standard repository's cleanup policies and frees what nothing refers to any more: blobs that no manifest of their image uses, blob content that nothing in the registry uses, and abandoned uploads. In a Deterministic Instance it runs only when the Emulator clock is advanced (ADR 0070).
+_Avoid_: garbage collection (names only the freeing part), cleanup job
 
 **Workload restrictions**:
 What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates (a cluster can be set to allow the NET_ADMIN capability); refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
@@ -508,10 +512,6 @@ _Avoid_: migration check, Autopilot readiness
 **Admin kubeconfig**:
 The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
-
-**Mirror cache**:
-The copies of public-registry images that the registry keeps after a GKE node pulls them through it, so later pulls work while the emulator is offline. It is cache: a State snapshot may miss an image pulled just before it was saved, and such an image is fetched again.
-_Avoid_: pull-through cache (remote repositories pull through too, but their images are packages users see)
 
 **OTLP endpoint**:
 Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, or one whose protocol the Instance does not speak, the telemetry is dropped; one that is set but unreachable fails the exports instead.

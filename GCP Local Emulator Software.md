@@ -333,7 +333,7 @@ IAM is the identity backbone every other service calls; the IAM enforcement leve
 | FR-AR-004 | Packages, versions, tags and docker images are listable through the AR API and agree with registry contents. | M |
 | FR-AR-005 | GKE nodes in the same instance pull from the registry with no extra config, both in Host mode and without it. | M |
 | FR-AR-006 | Remote repositories (pull-through cache of Docker Hub) and virtual repositories. | S |
-| FR-AR-007 | Cleanup policies (dry-run and delete) evaluated on demand. | C |
+| FR-AR-007 | Cleanup policies (dry-run and delete) run on a schedule, as Artifact Registry runs them; deleting a version frees the blobs nothing else refers to. | S |
 | FR-AR-008 | Non-Docker formats (npm, Go, Python, generic). | C |
 
 ### 5.4 Cloud Storage
