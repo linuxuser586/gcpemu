@@ -269,6 +269,10 @@ A `gcpemu stop` of an Instance that accepted the shutdown but whose process `sto
 The part of an Instance's shutdown that stops its Services, removes what it made and closes its state. It follows startup, however a stop arrived. When a shutdown begins, the Instance stops starting things at once; Teardown comes after.
 _Avoid_: cleanup (an Instance's log uses it for what it could not remove)
 
+**Reclaim**:
+What an Instance does when it first connects to its container runtime: it removes the containers its Instance ID left from an earlier run that did not finish Teardown, and for an Ephemeral Instance also its networks and volumes. It happens once per run, before any Service starts a container. What a Reclaim cannot remove waits for the next start with that Instance ID (ADR 0068).
+_Avoid_: orphan cleanup, orphan reclaim (an orphan suggests an Abandoned Instance ID, which no future Instance reclaims)
+
 **Data directory**:
 The directory an Instance holds its certificate authority and Instance ID in, and a Persistent Instance its state. Every Instance has one; an Ephemeral Instance keeps no state there.
 _Avoid_: instance dir
