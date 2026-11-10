@@ -610,12 +610,16 @@ _Avoid_: external IP, endpoint (unqualified)
 A backup of a Cloud SQL instance taken at someone's request while the Cloud SQL instance exists. It never expires: it lasts until it is deleted, or until its Cloud SQL instance is deleted unless it becomes a Retained backup. Always qualify it, so it is not confused with a Final backup.
 _Avoid_: manual backup
 
+**Automated backup**:
+A backup of a Cloud SQL instance taken on its daily schedule, at its backup start time, while the Cloud SQL instance is running and has backups enabled. Only Automated backups count toward the number of backups the Cloud SQL instance retains: once a newer one is taken beyond that number, the oldest is deleted. A day whose backup could not be taken because the emulator was not running is made up once, not once per missed day. Always qualify it, so it is not confused with an on-demand backup or a Base backup.
+_Avoid_: scheduled backup, daily backup, nightly backup
+
 **Final backup**:
 A backup of a Cloud SQL instance taken as part of deleting it. It outlives the Cloud SQL instance and is deleted when it expires. Unlike a Retained backup, the delete takes it. Always qualify it, so it is not confused with an on-demand backup taken while the Cloud SQL instance exists.
 _Avoid_: last backup, deletion backup
 
 **Retained backup**:
-An on-demand backup that outlives its deleted Cloud SQL instance because the Cloud SQL instance was set to keep its backups on delete. A Final backup also outlives its Cloud SQL instance, but it is not a Retained backup. Always qualify it.
+An on-demand backup or Automated backup that outlives its deleted Cloud SQL instance because the Cloud SQL instance was set to keep its backups on delete. A Retained on-demand backup never expires. Retained Automated backups expire one a day, oldest first, so that the newest lasts as many days as the number of backups the Cloud SQL instance retained. A Final backup also outlives its Cloud SQL instance, but it is not a Retained backup. Always qualify it.
 _Avoid_: orphaned backup, kept backup
 
 **Recovery window**:
