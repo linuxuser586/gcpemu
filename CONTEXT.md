@@ -637,6 +637,10 @@ _Avoid_: archive (unqualified), transaction log storage
 The emulator's log of API requests it has received.
 _Avoid_: recording, records
 
+**Instance log**:
+What a detached Instance and the processes it starts write as they run, kept in its data directory. Its oldest part is dropped once it outgrows its size limit.
+_Avoid_: gcpemu.log (in user-facing text), daemon log, server log
+
 **Declared range**:
 The CIDR that a subnetwork or a private services access allocation has in GCP's API, as the user declared it.
 
