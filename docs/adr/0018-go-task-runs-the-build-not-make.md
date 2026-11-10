@@ -1,5 +1,7 @@
 # Task runs the build, not make
 
+Superseded by ADR 0061 (`0061-just-runs-the-build-and-control-flow-lives-in-go.md`).
+
 The repository's build, test and release steps are tasks in a root `Taskfile.yml`, run with Task (go-task), and there is no Makefile. Task runs every command through its built-in POSIX shell interpreter, so the same recipes run from PowerShell, cmd, zsh or bash. The aim is that a contributor on native Windows needs only the tools a task itself calls (go, git, pnpm, docker, npm), with no Git Bash, MSYS or coreutils. Since ADR 0015 made native Windows a full platform for the emulator, asking its contributors to build from a POSIX userland was the last place where Windows was second-class.
 
 - Recipes call no Unix-only programs, such as `grep`, `sed` or `awk`. Logic that make did in the shell uses Task's own `for:`, `preconditions:` and `defer:`, or shell builtins the interpreter provides. CI on Windows runs the tasks from pwsh, so a recipe that quietly depends on a POSIX tool on PATH fails there.
