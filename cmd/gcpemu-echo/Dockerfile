@@ -1,6 +1,6 @@
 # #862: the Conformance suite's test backend, published with each release
 # as docker.io/linuxuser586/gcpemu-echo. The build context is dist-echo/
-# after `task echo:dist`:
+# after `just echo-dist`:
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 -f cmd/gcpemu-echo/Dockerfile dist-echo
 #

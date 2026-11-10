@@ -32,7 +32,7 @@ const (
 // release builds the release binaries once for every runtime: the image
 // each runtime builds from them lives in that runtime's own store.
 var release = sync.OnceValue(func() error {
-	cmd := exec.Command("task", "release")
+	cmd := exec.Command("just", "release")
 	cmd.Dir = repo
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
@@ -45,13 +45,13 @@ var release = sync.OnceValue(func() error {
 // Then the Resolver routes check runs an Instance on the host, gcpemu.exe.
 func containerizedChecks(t *testing.T, rt string) {
 	done := setup(t, rt)
-	// task and go build gcpemu.exe for the Resolver routes check.
-	requireTools(t, "docker", "task", "go", "gcloud", "kubectl", "cloud-sql-proxy")
+	// just and go build gcpemu.exe for the Resolver routes check.
+	requireTools(t, "docker", "just", "go", "gcloud", "kubectl", "cloud-sql-proxy")
 	requireBin(t)
 	useRuntime(t, rt)
 	// A dev build's Sidecar agent, for this runtime's architecture: the
 	// relays of checks 7 and 8 run it, and gcpemu.exe finds it in bin.
-	task(t, context.Background(), "agent")
+	just(t, context.Background(), "agent")
 	image := releaseImage(t)
 	gw := hosttest.RunEmulator(t, container, image, "4562", containerArgs(t, rt, portRange, registryPort), "--port-range", portRange)
 	t.Logf("API gateway at %s", gw)
@@ -98,9 +98,9 @@ func releaseImage(t *testing.T) string {
 	if image := os.Getenv(imageEnv); image != "" {
 		return image
 	}
-	requireTools(t, "task", "pnpm")
+	requireTools(t, "just", "pnpm")
 	if err := release(); err != nil {
-		t.Fatalf("task release: %v", err)
+		t.Fatalf("just release: %v", err)
 	}
 	arch := hosttest.Docker(t, "version", "--format", "{{.Server.Arch}}")
 	hosttest.Docker(t, "build", "-q", "--provenance=false", "--output", "type=docker,oci-mediatypes=false", "--build-arg", "TARGETARCH="+arch, "-t", rcImage, "-f", filepath.Join(repo, "Dockerfile"), filepath.Join(repo, "dist"))

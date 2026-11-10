@@ -1,6 +1,6 @@
 // Package console embeds the Web console's built bundle (FR-UI-001).
 //
-// dist/bundle/ holds the output of `pnpm build` (run by `task build` when
+// dist/bundle/ holds the output of `pnpm build` (run by `just build` when
 // pnpm is on PATH) and is never committed; placeholder.html is, so that
 // plain `go build` works without Node and serves "console not built"
 // (ADR 0060).

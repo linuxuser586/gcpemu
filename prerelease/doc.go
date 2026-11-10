@@ -5,15 +5,15 @@
 // host would.
 //
 // The tests are behind the "prerelease" build tag so that `go test ./...`
-// is unaffected. `task prerelease` runs them:
+// is unaffected. `just prerelease` runs them:
 //
-//	task prerelease                          # the Required runtimes
-//	task prerelease RUNTIMES=colima,orbstack # docker contexts to check
-//	task prerelease IMAGE=gcpemu:rc          # an image already built
+//	just prerelease                          # the Required runtimes
+//	just prerelease colima,orbstack          # docker contexts to check
+//	just prerelease desktop-linux gcpemu:rc  # an image already built
 //
-// On macOS (and on Linux, where they run only for runtimes named in
-// RUNTIMES, so the suite can be worked on there) each runtime runs the
-// Reference stack (`task e2e`), two Cloud SQL instances at once over
+// On macOS (and on Linux, where they run only for the runtimes named on
+// its command line, so the suite can be worked on there) each runtime
+// runs the Reference stack (`just e2e`), two Cloud SQL instances at once over
 // loopback aliases, a GKE LoadBalancer Service from the host and the VLAN
 // (8021q) check, whose result goes into README.md's runtime table. On
 // Windows each runtime runs the release's image as a Containerized
@@ -25,7 +25,7 @@
 // whose `gcpemu dns install` routes resolve both through the host's
 // resolver until `gcpemu dns uninstall` takes them away. On Windows its
 // Instance is on the host, gcpemu.exe, with dns on port 53 (ADR 0026), so
-// `task prerelease` builds it there too. Next, the VM relay check: with
+// `just prerelease` builds it there too. Next, the VM relay check: with
 // GCPEMU_VM_RELAY cleared, gcpemu doctor on the host must report the
 // relay on, not forced (ADR 0056), and the VM relay's own tests,
 // which CI runs only on Linux with the relay forced, must all pass

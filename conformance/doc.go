@@ -7,8 +7,8 @@
 // The tests are behind the "conformance" build tag, so `go test ./...` is
 // unaffected. They run in one of two modes:
 //
-//	task conformance         # = go test -tags conformance ./conformance -v
-//	task conformance:record  # GCPEMU_CONFORMANCE_RECORD=1, against GCPEMU_CONFORMANCE_PROJECT
+//	just conformance         # = go test -tags conformance ./conformance -v
+//	just conformance-record  # GCPEMU_CONFORMANCE_RECORD=1, against GCPEMU_CONFORMANCE_PROJECT
 //
 // Compare mode, the default, runs each test against an Instance that
 // emutest starts (not Deterministic), behind the Escape guard: the clients'
@@ -23,7 +23,7 @@
 // difference is a Mismatch named by the field's path, e.g.
 // exchanges[2].response.body.labels.color. Later Exchanges are not
 // reported, since they may differ only because of the first. A test
-// without a Recording skips and says to run `task conformance:record`.
+// without a Recording skips and says to run `just conformance-record`.
 //
 // Record mode (GCPEMU_CONFORMANCE_RECORD=1) runs the Products' tests
 // against the project GCPEMU_CONFORMANCE_PROJECT names, with Application

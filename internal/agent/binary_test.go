@@ -279,7 +279,7 @@ func TestDevBuildHintsTaskAgent(t *testing.T) {
 		e := newEnv(t)
 		e.images.files["ghcr.io/linuxuser586/gcpemu:"+v] = fakeELF(elf.EM_AARCH64, false)
 		_, err := e.resolver("arm64", v).Binary(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "task agent") || !strings.Contains(err.Error(), BinaryEnv) {
+		if err == nil || !strings.Contains(err.Error(), "just agent") || !strings.Contains(err.Error(), BinaryEnv) {
 			t.Fatalf("%s: err = %v", v, err)
 		}
 		if len(e.images.pulls) > 0 {

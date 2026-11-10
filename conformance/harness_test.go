@@ -144,7 +144,7 @@ func gcpTarget(t testing.TB) *target {
 
 // recordHint is how a skipped test, or one whose Recording is stale, says
 // its Recording is made.
-const recordHint = "run `task conformance:record` to record it against GCP"
+const recordHint = "run `just conformance-record` to record it against GCP"
 
 // mode is how a test runs: whether it records, where Recordings are, what
 // it runs against and how Mismatches are reported.
@@ -155,7 +155,7 @@ type mode struct {
 	report func(t testing.TB, file string, ms []Mismatch)
 }
 
-// envMode is the mode `task conformance` and `task conformance:record`
+// envMode is the mode `just conformance` and `just conformance-record`
 // select: compare against the emulator, or with GCPEMU_CONFORMANCE_RECORD=1
 // record against GCPEMU_CONFORMANCE_PROJECT.
 func envMode() mode {

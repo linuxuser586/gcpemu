@@ -15,7 +15,7 @@
 // cluster from the autopilot/ module at each supported minor passes
 // Kubernetes conformance (Sonobuoy quick mode), and at the default minor
 // scales past one node, refuses a privileged pod and runs Istio's sidecar
-// injection. It needs GCPEMU_NET_TESTS=1; `task autopilot` runs it.
+// injection. It needs GCPEMU_NET_TESTS=1; `just autopilot` runs it.
 //
 // TestContainerizedLBIngress runs the emulator as its OCI image, with the
 // host's Docker socket, and checks that the host reaches GKE LoadBalancer

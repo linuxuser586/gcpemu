@@ -35,10 +35,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      - uses: go-task/setup-task@v2
+      # just adr runs internal/devtool, which needs only the standard library.
+      - uses: actions/setup-go@v7
         with:
-          version: 3.54.0
-      - run: task adr
+          go-version-file: go.mod
+          cache: false
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
+      - run: just adr
 
   test:
     needs: changes
@@ -55,14 +60,14 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       # #541: optional tools only warn, so this checks the script itself.
-      - run: task doctor
-      - run: task vet
-      - run: task race
-      - run: task cross
+      - run: just doctor
+      - run: just vet
+      - run: just race
+      - run: just cross
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -94,15 +99,15 @@ jobs:
           label: start
       - uses: ./.github/actions/setup-go
         id: go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
-      - run: task vet
+          just-version: 1.56.0
+      - run: just vet
       - run: go test -exec true ./...
       - run: go test -exec true -race ./...
       - run: go test -exec true -tags e2e ./e2e
       - run: go test -exec true -tags compat ./compat
-      - run: task cross
+      - run: just cross
       - uses: ./.github/actions/go-cache-save
         with:
           paths: ${{ steps.go.outputs.paths }}
@@ -195,9 +200,9 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: console/package.json
@@ -249,7 +254,7 @@ jobs:
           key: ${{ steps.playwright-key.outputs.key }}
       # The Instance removes its containers on exit, so record how they end.
       - run: docker events --filter type=container --filter event=die --filter event=oom --filter event=kill --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' > "$RUNNER_TEMP/container-events.log" &
-      - run: task console-e2e
+      - run: just console-e2e
       - name: Container ends and OOM kills
         if: failure()
         run: |
@@ -294,7 +299,7 @@ jobs:
 
   # SRS 11.2: v1.0 is accepted when the Reference stack runs green on both
   # architectures within 10 minutes (the test enforces the budget). The same
-  # task runs the Containerized Instance tests (#494).
+  # recipe runs the Containerized Instance tests (#494).
   e2e:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -313,9 +318,9 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       - uses: actions/cache@v6
@@ -324,21 +329,21 @@ jobs:
           key: gcpemu-e2e-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
           restore-keys: gcpemu-e2e-${{ runner.arch }}-
       - name: Reference stack (SRS 11.2) and Containerized Instance tests
-        run: task e2e
+        run: just e2e
       # #498, #630: the release workflow's Image readiness check, run on
       # every change so it keeps working between releases. Each runner
-      # checks its own platform's image, built from task cross output.
+      # checks its own platform's image, built from just cross output.
       - name: Image readiness check
         run: |
-          task cross
+          just cross
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist
-          task image-check IMAGE=gcpemu:check
+          just image-check gcpemu:check
       # #862: the release workflow's echo-image-check, likewise.
       - name: Echo image check
         run: |
-          task echo:dist
+          just echo-dist
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo
-          task echo:image-check IMAGE=gcpemu-echo:check
+          just echo-image-check gcpemu-echo:check
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
       - uses: ./.github/actions/disk-report
@@ -366,9 +371,9 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       - uses: actions/cache@v6
@@ -377,7 +382,7 @@ jobs:
           key: gcpemu-e2e-autopilot-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
           restore-keys: gcpemu-e2e-autopilot-${{ runner.arch }}-
       - name: Autopilot acceptance (SRS 11.4)
-        run: task autopilot
+        run: just autopilot
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -401,9 +406,9 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin,kubectl
@@ -450,7 +455,7 @@ jobs:
       - name: Client compatibility (SRS 7.1)
         env:
           GCPEMU_COMPAT_REQUIRE: "1"
-        run: task compat
+        run: just compat
       # #611: gcpemu dns install through systemd-resolved, with the
       # runner's passwordless sudo. The Pre-release host checks run it on
       # macOS and Windows. With it, the reclaim of the host checks'
@@ -460,7 +465,7 @@ jobs:
         env:
           GCPEMU_RESOLVER_TESTS: "1"
         run: |
-          task build
+          just build
           go test -tags prerelease ./prerelease -run '^(TestResolverRoutes|TestAddresses|TestRoutesOwner|TestPort53InUse|TestHostEndReclaimsWhenStopFails|TestHostChildDoesNotHoldOwnerLock|TestRunStartReclaim|TestRunStartReclaimKeepsUnrecorded)$' -count=1 -timeout 15m -v
       - uses: ./.github/actions/disk-report
         if: always()
@@ -489,9 +494,9 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - name: Install OpenTofu
         run: .github/install-tofu.sh
       # actions/cache saves nothing after an exact key hit, so the week in
@@ -506,7 +511,7 @@ jobs:
           key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**', 'compat/tofu_test.go') }}-${{ steps.week.outputs.week }}
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
       - name: OpenTofu acceptance (SRS 11.1)
-        run: task tofu
+        run: just tofu
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -531,16 +536,16 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - uses: google-github-actions/setup-gcloud@v3
         with:
           install_components: gke-gcloud-auth-plugin
       - name: Kubernetes conformance (SRS 11.1)
         env:
           GCPEMU_COMPAT_REQUIRE: "1"
-        run: task kube-conformance
+        run: just kube-conformance
       - name: Sonobuoy results
         if: failure()
         uses: actions/upload-artifact@v7
@@ -572,11 +577,11 @@ jobs:
         with:
           label: start
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
+          just-version: 1.56.0
       - name: Conformance suite (SRS 11.1)
-        run: task conformance
+        run: just conformance
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -614,7 +619,7 @@ jobs:
           npm ci
           npm test
           npm run build
-          git diff --exit-code dist/ || { echo "::error::setup-gcpemu/dist is stale: run 'task action' and commit it"; exit 1; }
+          git diff --exit-code dist/ || { echo "::error::setup-gcpemu/dist is stale: run 'just action' and commit it"; exit 1; }
       - name: Serve this commit as a release
         run: |
           rel="$RUNNER_TEMP/rel/v0.0.0-selftest"
@@ -691,8 +696,9 @@ jobs:
             test ! -e "diag/gcpemu-selftest-second-$arch" || { echo "::error::a successful job uploaded diagnostics"; exit 1; }
           done
 
-  # The Taskfile, scripts and tests on macOS and Windows. The tasks run
-  # from pwsh (ADR 0018), so one that needs a POSIX tool fails here; the
+  # The justfile, scripts and tests on macOS and Windows. The recipes run
+  # from pwsh, with Windows PowerShell 5.1 as just's Windows shell (ADR
+  # 0061), so one that needs a POSIX tool fails here; the
   # other steps run in bash (Git Bash on Windows). Hosted macOS runners
   # have no container runtime and native Windows cannot use one (ADR 0008),
   # so tests that need one skip. On macOS, the setup-gcpemu action against
@@ -724,14 +730,14 @@ jobs:
         id: go
         with:
           modules: ${{ runner.os != 'Windows' }}
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
-      - run: task vet
+          just-version: 1.56.0
+      - run: just vet
         shell: pwsh
-      - run: task build
+      - run: just build
         shell: pwsh
-      - run: task cross
+      - run: just cross
         shell: pwsh
       - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
       - name: Tests
@@ -765,7 +771,7 @@ jobs:
       - name: Client compatibility (SRS 7.1)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: task compat
+        run: just compat
       - name: Serve this commit as a release
         if: runner.os == 'macOS'
         run: |

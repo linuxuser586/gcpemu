@@ -28,10 +28,10 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
-      # FR-UI-001: `task release` embeds the Web console and fails if it
+          just-version: 1.56.0
+      # FR-UI-001: `just release` embeds the Web console and fails if it
       # is not built.
       - uses: pnpm/action-setup@v6
         with:
@@ -43,7 +43,7 @@ jobs:
           cache-dependency-path: console/pnpm-lock.yaml
       - name: Build
         run: |
-          task release VERSION="$GITHUB_REF_NAME"
+          just release "$GITHUB_REF_NAME"
           cd dist && sha256sum gcpemu-* > SHA256SUMS && cat SHA256SUMS
       # NFR-SEC-005. Everything below runs before Publish, so a failure
       # publishes nothing. The SBOMs stay out of dist, so the dist/gcpemu-*
@@ -68,7 +68,7 @@ jobs:
         with:
           subject-path: dist/gcpemu-*
       # One per binary: keep these in step with the platforms in the
-      # Taskfile's cross task.
+      # justfile's cross recipe.
       - uses: actions/attest@v4
         with:
           subject-path: dist/gcpemu-linux-amd64
@@ -146,11 +146,16 @@ jobs:
           file: Dockerfile
           load: true
           tags: gcpemu:check
-      - uses: go-task/setup-task@v2
+      # The check runs internal/devtool, which needs only the standard library.
+      - uses: actions/setup-go@v7
         with:
-          version: 3.54.0
+          go-version-file: go.mod
+          cache: false
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
       - name: Image readiness check
-        run: task image-check IMAGE=gcpemu:check
+        run: just image-check gcpemu:check
 
   # A separate job, so a registry outage never holds up the binaries that
   # setup-gcpemu downloads, and it can be re-run on its own. It rebuilds
@@ -228,10 +233,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
-      - uses: go-task/setup-task@v2
+      - uses: extractions/setup-just@v4
         with:
-          version: 3.54.0
-      - run: task echo:dist
+          just-version: 1.56.0
+      - run: just echo-dist
       - uses: actions/upload-artifact@v7
         with:
           name: echo-binaries
@@ -261,11 +266,16 @@ jobs:
           file: cmd/gcpemu-echo/Dockerfile
           load: true
           tags: gcpemu-echo:check
-      - uses: go-task/setup-task@v2
+      # The check runs internal/devtool, which needs only the standard library.
+      - uses: actions/setup-go@v7
         with:
-          version: 3.54.0
+          go-version-file: go.mod
+          cache: false
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
       - name: Echo image check
-        run: task echo:image-check IMAGE=gcpemu-echo:check
+        run: just echo-image-check gcpemu-echo:check
 
   # Docker Hub only: Cloud Run on GCP, which #859's recordings deploy it
   # to, can't pull from ghcr.io.
