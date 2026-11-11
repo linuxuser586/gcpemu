@@ -1,0 +1,106 @@
+name: Install Playwright browsers and their system packages
+description: >-
+  Installs Chromium, Firefox and WebKit and the system packages they need,
+  from a cache keyed on the runner OS, ImageOS and the resolved Playwright
+  version (#817, #1054). A cache hit installs the cached .debs with dpkg and
+  never contacts the Ubuntu archive, so an archive outage only affects the
+  first run after a runner OS or Playwright bump. A miss downloads the
+  browsers as the runner user and the system packages as root, so timeout
+  can stop apt (#1054: under sudo, the runner user could not signal apt and
+  the retry never fired). Give the step using this action a timeout-minutes
+  of at least 12.
+inputs:
+  working-directory:
+    description: The directory whose node_modules has @playwright/test.
+    default: console
+  key-prefix:
+    description: >-
+      The cache key's first part. Only tests of this action change it, to
+      force a cold cache.
+    default: playwright
+runs:
+  using: composite
+  steps:
+    # ImageOS is a runner variable, not in the env context, hence the shell.
+    - id: key
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PREFIX: ${{ inputs.key-prefix }}
+      run: echo "key=$PREFIX-$RUNNER_OS-$ImageOS-$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-debs
+        key: ${{ steps.key.outputs.key }}
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        HIT: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        browsers="chromium firefox webkit"
+        debs=~/.cache/playwright-debs
+        log=$(mktemp)
+
+        # The .debs are exactly the packages a cold install downloaded for
+        # this runner OS and Playwright version, so dpkg needs neither apt's
+        # indexes nor the network. A runner image update that conflicts with
+        # one of them falls through to the cold path below.
+        if [ "$HIT" = true ] && compgen -G "$debs/*.deb" >/dev/null; then
+          if sudo dpkg -i "$debs"/*.deb >"$log" 2>&1; then
+            timeout 3m pnpm exec playwright install $browsers
+            exit 0
+          fi
+          tail -n 20 "$log"
+          echo "::warning::The cached Playwright system packages did not install; installing from the Ubuntu archive"
+        fi
+
+        # The browsers come from Playwright's CDN, not the Ubuntu archive.
+        if ! timeout 3m pnpm exec playwright install $browsers; then
+          echo "::error::Downloading the Playwright browsers failed or took over 3 minutes"
+          exit 1
+        fi
+
+        # Explains a failed install-deps attempt from its output in $1 and its
+        # exit status in $2, as the message of a ::warning:: annotation. apt
+        # reports an unreachable archive host as a DNS failure (#1054),
+        # a connection timeout or a refused connection.
+        describe_failure() {
+          local hosts
+          hosts=$(grep -oE "(Temporary failure resolving '|Could not connect to |Unable to connect to )[^':]+" "$1" \
+            | sed -E "s/.*(resolving '|connect to )//" | sort -u | paste -sd, - | sed 's/,/, /g' || true)
+          if [ -n "$hosts" ]; then
+            echo "Ubuntu archive unreachable: $hosts"
+          elif [ "$2" -eq 124 ] || [ "$2" -eq 137 ]; then
+            echo "took over 3m30s; the Ubuntu archive may be slow"
+          else
+            echo "failed with exit $2; see the apt output above"
+          fi
+        }
+
+        # As root, so timeout can stop apt; -k because apt may ignore SIGTERM
+        # mid-download. sudo resets PATH, which would lose node and pnpm.
+        mkdir -p "$debs"
+        for attempt in 1 2; do
+          # The step runs under bash -eo pipefail, so a failed pipeline would
+          # end the script here without the || that records its status.
+          status=0
+          sudo env "PATH=$PATH" timeout -k 20s 3m30s pnpm exec playwright install-deps $browsers 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          if [ "$status" -eq 0 ]; then
+            cp /var/cache/apt/archives/*.deb "$debs"/ 2>/dev/null || true
+            exit 0
+          fi
+          echo "::warning::Attempt $attempt: $(describe_failure "$log" "$status")"
+        done
+        echo "::error::Could not install Playwright's system packages from the Ubuntu archive after 2 attempts (#1054)"
+        exit 1
+    # Saved straight away, so a failing suite still keeps the cache.
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/.cache/playwright-debs
+        key: ${{ steps.key.outputs.key }}

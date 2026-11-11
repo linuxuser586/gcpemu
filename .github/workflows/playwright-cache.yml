@@ -1,0 +1,32 @@
+name: playwright-cache
+# #1054: keeps main's Playwright cache present, so console-e2e on main never
+# needs the Ubuntu archive. The cache is evicted after a day or so without
+# use (#1055), and a run of docs-only commits on main skips console-e2e, so
+# this restores it daily, which counts as a use, and rebuilds it after
+# eviction. It is outside ci, so ci-ok never waits on it.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: console
+      - uses: ./.github/actions/playwright
+        timeout-minutes: 12
