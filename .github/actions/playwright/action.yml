@@ -57,12 +57,6 @@ runs:
           echo "::warning::The cached Playwright system packages did not install; installing from the Ubuntu archive"
         fi
 
-        # The browsers come from Playwright's CDN, not the Ubuntu archive.
-        if ! timeout 3m pnpm exec playwright install $browsers; then
-          echo "::error::Downloading the Playwright browsers failed or took over 3 minutes"
-          exit 1
-        fi
-
         # Explains a failed install-deps attempt from its output in $1 and its
         # exit status in $2, as the message of a ::warning:: annotation. apt
         # reports an unreachable archive host as a DNS failure (#1054),
@@ -80,22 +74,39 @@ runs:
           fi
         }
 
-        # As root, so timeout can stop apt; -k because apt may ignore SIGTERM
-        # mid-download. sudo resets PATH, which would lose node and pnpm.
+        # System packages first: playwright install checks for them and warns
+        # at length when they are missing. As root, so timeout can stop apt;
+        # -k because apt may ignore SIGTERM mid-download. GNU timeout takes
+        # one number and one unit, so 210s, not 3m30s. sudo resets PATH,
+        # which would lose node and pnpm.
         mkdir -p "$debs"
+        # Cache only the .debs this install downloads: apt's archive may hold
+        # others from earlier in the job, and a hit dpkg-installs them all.
+        archives=/var/cache/apt/archives
+        ls "$archives" > "$log.before"
+        installed=false
         for attempt in 1 2; do
           # The step runs under bash -eo pipefail, so a failed pipeline would
           # end the script here without the || that records its status.
           status=0
-          sudo env "PATH=$PATH" timeout -k 20s 3m30s pnpm exec playwright install-deps $browsers 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          sudo env "PATH=$PATH" timeout -k 20s 210s pnpm exec playwright install-deps $browsers 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
           if [ "$status" -eq 0 ]; then
-            cp /var/cache/apt/archives/*.deb "$debs"/ 2>/dev/null || true
-            exit 0
+            ls "$archives" | { grep '\.deb$' || true; } | { grep -vxFf "$log.before" || true; } | sed "s|^|$archives/|" | xargs -r cp -t "$debs"/
+            installed=true
+            break
           fi
           echo "::warning::Attempt $attempt: $(describe_failure "$log" "$status")"
         done
-        echo "::error::Could not install Playwright's system packages from the Ubuntu archive after 2 attempts (#1054)"
-        exit 1
+        if [ "$installed" != true ]; then
+          echo "::error::Could not install Playwright's system packages from the Ubuntu archive after 2 attempts (#1054)"
+          exit 1
+        fi
+
+        # The browsers come from Playwright's CDN, not the Ubuntu archive.
+        if ! timeout 3m pnpm exec playwright install $browsers; then
+          echo "::error::Downloading the Playwright browsers failed or took over 3 minutes"
+          exit 1
+        fi
     # Saved straight away, so a failing suite still keeps the cache.
     - if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6
