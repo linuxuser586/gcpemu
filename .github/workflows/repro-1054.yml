@@ -31,12 +31,17 @@ jobs:
         with:
           key-prefix: repro-hit-${{ github.run_id }}-${{ github.run_attempt }}
 
+  # The cold cases don't need warm, so they run even while the real archive
+  # is down; new-hit needs warm's cache.
   case:
+    if: ${{ !cancelled() }}
     needs: warm
     strategy:
       fail-fast: false
       matrix:
         case: [old-cold, new-cold, new-hit]
+        exclude:
+          - case: ${{ needs.warm.result != 'success' && 'new-hit' || 'none' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     steps:
