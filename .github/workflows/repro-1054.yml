@@ -1,0 +1,109 @@
+name: repro-1054
+# THROWAWAY, removed before merge. Reproduces #1054 by blackholing the
+# Ubuntu archive hosts, and checks the old install step against the new
+# action. Each case asserts its own outcome and elapsed time.
+on:
+  push:
+    branches: [fix/1054-playwright-archive-outage]
+
+permissions:
+  contents: read
+
+jobs:
+  # Fills a cache only new-hit reads; the cold cases use their own key prefix.
+  warm:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: console
+      - uses: ./.github/actions/playwright
+        timeout-minutes: 12
+        with:
+          key-prefix: repro-hit-${{ github.run_id }}-${{ github.run_attempt }}
+
+  case:
+    needs: warm
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [old-cold, new-cold, new-hit]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: console
+      # 192.0.2.1 is TEST-NET-1: connections to it hang, like this morning's.
+      - name: Blackhole the Ubuntu archive
+        run: |
+          grep -ho 'https\?://[^/ ]*' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/* 2>/dev/null | sort -u || true
+          echo "192.0.2.1 azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com" | sudo tee -a /etc/hosts
+          echo "start=$(date +%s)" >> "$GITHUB_ENV"
+      # The step from main at 13dccaf, verbatim.
+      - name: Old step
+        if: matrix.case == 'old-cold'
+        id: old
+        continue-on-error: true
+        timeout-minutes: 12
+        working-directory: console
+        run: |
+          debs=~/.cache/playwright-debs
+          mkdir -p "$debs"
+          sudo cp "$debs"/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          for attempt in 1 2; do
+            if timeout 5m pnpm exec playwright install --with-deps chromium firefox webkit; then
+              cp /var/cache/apt/archives/*.deb "$debs"/ 2>/dev/null || true
+              exit 0
+            fi
+            echo "::warning::Playwright install attempt $attempt failed or took over 5 minutes"
+          done
+          exit 1
+      - name: New action, cold cache
+        if: matrix.case == 'new-cold'
+        id: newcold
+        continue-on-error: true
+        uses: ./.github/actions/playwright
+        timeout-minutes: 12
+        with:
+          key-prefix: repro-cold-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: New action, cache hit
+        if: matrix.case == 'new-hit'
+        id: newhit
+        continue-on-error: true
+        uses: ./.github/actions/playwright
+        timeout-minutes: 12
+        with:
+          key-prefix: repro-hit-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Check the outcome
+        env:
+          CASE: ${{ matrix.case }}
+          OUTCOME: ${{ steps.old.outcome || steps.newcold.outcome || steps.newhit.outcome }}
+        run: |
+          elapsed=$(( $(date +%s) - start ))
+          echo "$CASE: $OUTCOME after ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
+          case "$CASE" in
+            # Today's failure: the retry never fires, the step limit ends it.
+            old-cold) [ "$OUTCOME" = failure ] && [ "$elapsed" -ge 700 ] ;;
+            # Fails by itself, inside the step limit.
+            new-cold) [ "$OUTCOME" = failure ] && [ "$elapsed" -lt 690 ] ;;
+            # Never touches the archive, so the blackhole costs nothing.
+            new-hit) [ "$OUTCOME" = success ] && [ "$elapsed" -lt 180 ] ;;
+          esac
