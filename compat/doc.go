@@ -80,7 +80,7 @@
 // the google and google-beta providers at their current and previous
 // minor versions, behind an Escape guard (internal/escapeguard) that fails
 // a module on any request leaving the machine. It needs tofu on PATH
-// (`task tofu`; `task compat` skips it).
+// (`just tofu`; `just compat` skips it).
 //
 // TestKubeConformance is Kubernetes conformance (SRS 11.1): at the newest
 // patch of each minor getServerConfig reports, a one-node Standard cluster
@@ -88,5 +88,5 @@
 // passed test, as internal/sonobuoytest judges it for TestAutopilot too.
 // Sonobuoy, pinned for Linux only, runs behind the Escape
 // guard. A failed minor keeps its results tarball in kube-conformance-results
-// (`task kube-conformance`; `task compat` skips it).
+// (`just kube-conformance`; `just compat` skips it).
 package compat

@@ -96,7 +96,7 @@ func TestMissingRecordingSkips(t *testing.T) {
 		defer func() { skippedTest = t.Skipped() }()
 		pubsubTopics.run(t, cmp, "TestPubSubTopics")
 	})
-	if !skippedTest || !strings.Contains(recordHint, "task conformance:record") {
+	if !skippedTest || !strings.Contains(recordHint, "just conformance-record") {
 		t.Errorf("skipped = %v, hint %q", skippedTest, recordHint)
 	}
 }

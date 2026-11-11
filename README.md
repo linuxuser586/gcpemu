@@ -9,7 +9,7 @@ except for Endpoint overrides. See [the SRS](GCP%20Local%20Emulator%20Software.m
 Milestones **M1** (core, IAM, Cloud Storage, Pub/Sub, Cloud DNS, Artifact Registry),
 **M2** (compute networking, Cloud SQL, GKE, Cloud NAT) and **M3** (Application Load Balancer,
 Cloud CDN, backend mTLS, Certificate Manager, Host mode) are implemented. The full SRS 11.2
-Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
+Reference stack (steps 1–10) passes on linux/amd64 (`just e2e`).
 
 | Area | Package | Highlights |
 | --- | --- | --- |
@@ -31,25 +31,25 @@ Reference stack (steps 1–10) passes on linux/amd64 (`task e2e`).
 
 ## Development
 
-Builds and tests run through [Task](https://taskfile.dev/installation) (3.54.0 or later), on
-macOS, Linux and Windows:
+Builds and tests run through [just](https://github.com/casey/just#installation) (1.56.0 or
+later), on macOS, Linux and Windows:
 
 ```sh
-task          # lists the tasks
-task doctor   # checks the tools they need (Go, git, Node.js and pnpm, a container runtime, ...)
+just          # lists the recipes
+just doctor   # checks the tools they need (Go, git, Node.js and pnpm, a container runtime, ...)
 ```
 
-`task doctor` fails when a required tool (Task, Go, git) is missing or too old, and warns about
-optional ones, naming the tasks each one blocks and how to install it. It checks the tools for
+`just doctor` fails when a required tool (just, Go, git) is missing or too old, and warns about
+optional ones, naming the recipes each one blocks and how to install it. It checks the tools for
 building and testing gcpemu; `gcpemu doctor` checks a host for running it.
 
 The Go tests run alongside your own `gcpemu` Instance, so there is no need to stop it before
-`task test`.
+`just test`.
 
 ## Quick start
 
 ```sh
-task build
+just build
 bin/gcpemu start --detach --services gcs,pubsub --seed seed.yaml
 eval "$(bin/gcpemu env)"       # STORAGE_EMULATOR_HOST, PUBSUB_EMULATOR_HOST, GCE_METADATA_HOST, …
 bin/gcpemu status
@@ -203,7 +203,7 @@ opens it. It calls only the public APIs and the admin API, and works offline. It
 the default principal until you pick another user or service account in the header's
 principal switcher, so the views show what IAM allows that principal (try it with
 `--iam-mode enforce`). The choice is kept per browser and is not part of a shared link. `--console=false` turns it off; under `CI=true` a `gcpemu` command leaves it off unless `--console`
-is passed. `task build` builds it when
+is passed. `just build` builds it when
 `pnpm` is on PATH (Node.js 26); without it the binary serves a "console not built" page.
 It works behind an authenticating reverse proxy on the same origin, such as oauth2-proxy, since
 its requests carry the proxy's session cookie; the API gateway drops cookies from public API
@@ -743,7 +743,7 @@ runtime's architecture. On a linux host of that architecture it's its own execut
 it uses `GCPEMU_AGENT_BINARY`, then `gcpemu-linux-<arch>` next to the executable, then the copy
 cached in the instance directory under `agent/<version>/linux-<arch>/`. A release build (`vX.Y.Z`)
 with none of these copies it out of the published image of the same version (`ghcr.io`, then
-Docker Hub) and caches it. A dev build needs `task agent` instead. A binary for the wrong
+Docker Hub) and caches it. A dev build needs `just agent` instead. A binary for the wrong
 architecture fails the start with an error naming both.
 
 Cloud NAT knobs: `natReject` / `GCPEMU_NAT_REJECT=true` rejects uncovered egress immediately
@@ -1530,11 +1530,11 @@ in-process emulator at IAM enforcement level `enforce`:
 10. `tofu destroy` leaves no containers (`gcpemu status` lists the instance's containers).
 
 ```sh
-task e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -timeout 30m -v
-GCPEMU_NET_TESTS=0 task e2e       # offline-ish: steps 1, 3, 9 and 10 only
+just e2e                          # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -timeout 30m -v
+GCPEMU_NET_TESTS=0 just e2e       # offline-ish: steps 1, 3, 9 and 10 only
 ```
 
-`task e2e` runs the whole `e2e` package: the Reference stack and the Containerized Instance tests,
+`just e2e` runs the whole `e2e` package: the Reference stack and the Containerized Instance tests,
 which build the OCI image and drive a Containerized Instance from the host. Those need Docker and
 `GCPEMU_NET_TESTS=1`, and skip themselves otherwise. The 10-minute budget is the Reference stack's alone.
 
@@ -1552,7 +1552,7 @@ For each supported minor, at its newest version on the Rapid channel, `tofu appl
 `e2e/autopilot/` creates an Autopilot cluster (`enable_autopilot = true`, `allow_net_admin = true`),
 a plan right after must be empty, Kubernetes conformance passes (Sonobuoy quick mode, its `e2e`
 plugin only, since Autopilot refuses the privileged `systemd-logs` DaemonSet, judged as
-`task kube-conformance` judges it, with the same runner in `internal/sonobuoytest`, and behind the
+`just kube-conformance` judges it, with the same runner in `internal/sonobuoytest`, and behind the
 Escape guard as there, after the same canary) and `tofu destroy`
 leaves no containers. The cluster at the default version's minor also scales a Deployment past
 one node, has a privileged pod refused by the Workload restrictions, and installs Istio from its Helm charts with
@@ -1560,16 +1560,16 @@ the proxy's requests left unset: an injected pod runs, and its `istio-proxy` get
 default requests from the resources webhook running again after Istio's injector.
 
 ```sh
-task autopilot                    # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run '^TestAutopilot$' -count=1 -timeout 45m -v
+just autopilot                    # = GCPEMU_NET_TESTS=1 go test -tags e2e ./e2e -run '^TestAutopilot$' -count=1 -timeout 45m -v
 ```
 
 It needs a container runtime, `tofu` on `PATH` and internet access: Sonobuoy, Helm and the Istio
 release are downloaded at pinned, checksum-verified versions into `$GCPEMU_E2E_CACHE`, and the
-nodes pull the Sonobuoy, Kubernetes conformance and Istio images. `task e2e` skips it.
+nodes pull the Sonobuoy, Kubernetes conformance and Istio images. `just e2e` skips it.
 
 ### Client compatibility (SRS 7.1)
 
-`task compat` runs the real clients against a detached instance with only Endpoint
+`just compat` runs the real clients against a detached instance with only Endpoint
 overrides: `gcloud` (storage, pubsub, secrets, iam, dns, compute load balancing and NAT, artifacts,
 sql, container), `kubectl` through `gke-gcloud-auth-plugin`, Helm, Docker, `crane`, `ko`, `psql`,
 the Cloud SQL Auth Proxy v2 (including automatic IAM authentication) and `dig`. gcloud (with the
@@ -1604,15 +1604,15 @@ secrets and versions (access, disable, destroy), Cloud DNS managed zones and rec
 Artifact Registry repositories, and IAM service accounts and the IAM policies of a bucket and a topic.
 
 ```sh
-task conformance                  # compare mode: = go test -tags conformance ./conformance -v
-GCPEMU_CONFORMANCE_PROJECT=my-sandbox task conformance:record   # record mode, real GCP
+just conformance                  # compare mode: = go test -tags conformance ./conformance -v
+GCPEMU_CONFORMANCE_PROJECT=my-sandbox just conformance-record   # record mode, real GCP
 ```
 
 - **Compare mode** (the default; CI runs it on `ubuntu-26.04` and `ubuntu-26.04-arm`) runs each
   test against an in-process Instance behind the Escape guard, with no credentials, and compares
   every response with the test's Recording. Any difference is a Mismatch and fails the test with
-  the field's JSON path. A test with no Recording skips and says to run `task conformance:record`.
-- **Record mode** (`GCPEMU_CONFORMANCE_RECORD=1`, which `task conformance:record` sets) runs the
+  the field's JSON path. A test with no Recording skips and says to run `just conformance-record`.
+- **Record mode** (`GCPEMU_CONFORMANCE_RECORD=1`, which `just conformance-record` sets) runs the
   tests against the project in `GCPEMU_CONFORMANCE_PROJECT` with Application Default Credentials and
   writes the Recordings. It first sweeps resources that earlier runs left more than 24 hours ago.
   Resource names carry a per-run suffix, resources are labelled `gcpemu-conformance`, and each test
@@ -1629,7 +1629,7 @@ full rules.
 
 ### Kubernetes conformance (SRS 11.1)
 
-`task kube-conformance` starts an ephemeral instance with GKE, reads the supported versions from
+`just kube-conformance` starts an ephemeral instance with GKE, reads the supported versions from
 `gcloud container get-server-config` and, for each minor at its newest patch, one at a time,
 creates a one-node Standard cluster with `gcloud container clusters create --cluster-version`,
 checks its `currentMasterVersion`, runs Sonobuoy's quick mode (its `e2e` plugin only, as on
@@ -1649,11 +1649,11 @@ with `gke-gcloud-auth-plugin` on `PATH`, and the nodes pull the Sonobuoy and Kub
 conformance images from the internet. Sonobuoy runs behind the Escape guard (below), with
 `NO_PROXY` covering loopback and the cluster's Public endpoint, so any other host it reaches fails the
 test, named. The `escape-guard` subtest points Sonobuoy at `kube-conformance.gcpemu.invalid` and
-fails unless the guard refuses it. `task compat` skips it.
+fails unless the guard refuses it. `just compat` skips it.
 
 ### OpenTofu acceptance (SRS 11.1, IF-001)
 
-`task tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
+`just tofu` applies each module in `compat/tofu/` (one per service area: IAM, Storage, Pub/Sub,
 DNS, VPC networking, load balancing and CDN, Certificate Manager, Cloud SQL, GKE Standard and
 Autopilot, Artifact Registry), plans again expecting no changes, destroys it and checks the
 state is empty. It does this with the `google` and `google-beta` providers, each at the latest
@@ -1782,16 +1782,18 @@ shell it refuses the token with a universe mismatch. Its `--universe-domain` can
 ## Development
 
 ```sh
-task agent         # the Sidecar agent, bin/gcpemu-linux-<arch> (needed off linux)
-task vet race      # gofmt, vet, tests with -race
-task release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
-task cross         # the same binaries without building the console (no Node.js)
+just agent         # the Sidecar agent, bin/gcpemu-linux-<arch> (needed off linux)
+just vet race      # gofmt, vet, tests with -race
+just release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
+just cross         # the same binaries without building the console (no Node.js)
 ```
 
-The tasks in `Taskfile.yml` need Task 3.54 or later, from any shell (brew, winget, or
-`go install github.com/go-task/task/v3/cmd/task@v3.54.0`), and only the tools each task calls
-(go, git, pnpm, docker, npm); `task doctor` checks them. `task build` writes `bin/gcpemu.exe` on
-Windows. `task race` needs a C compiler for cgo.
+The recipes in the `justfile` need just 1.56.0 or later (brew, winget, scoop, or
+`cargo install just`), and only the tools each recipe calls (go, git, pnpm, docker, npm); `just
+doctor` checks them. They run from any shell: on Windows just runs them in Windows PowerShell,
+with no Git Bash or other POSIX tools (ADR 0061). Their logic lives in `internal/devtool`. `just
+build` writes `bin/gcpemu.exe` on Windows. `just race` needs a C compiler for cgo. Recipes take
+arguments in order: `just release v1.2.3`, `just generate latest`.
 
 The Web console (`console/`) is Vite + React + TypeScript; `console/embed.go` embeds its
 `dist/`. With Node.js 26 and pnpm:
@@ -1802,7 +1804,7 @@ cd console && pnpm install && pnpm dev # /console/ with hot reload; other paths 
                                        # (GCPEMU_GATEWAY, default 127.0.0.1:4562)
 pnpm lint && pnpm typecheck && pnpm test
 pnpm gen:api                           # after editing internal/admin/openapi.yaml
-task console-e2e                       # Playwright on Chromium, Firefox and WebKit
+just console-e2e                       # Playwright on Chromium, Firefox and WebKit
 ```
 
 Each Service is an isolated package implementing `emu.Service`
@@ -1815,8 +1817,8 @@ version in `go.mod`. gRPC services get REST through `internal/transcode`, and th
 checks every gRPC request against the generated tables. After a version bump, regenerate:
 
 ```sh
-task generate                     # after go get google.golang.org/api@... or editing apis.yaml
-task generate GOOGLEAPIS=latest   # move the googleapis pin to master, then regenerate
+just generate                     # after go get google.golang.org/api@... or editing apis.yaml
+just generate latest              # move the googleapis pin to master, then regenerate
 go test ./internal/apidef         # TestDrift: the pin and the Go modules must agree
 ```
 

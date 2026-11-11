@@ -19,10 +19,10 @@ Hub nor GHCR gets any of that release's tags, `latest` included. The failing job
 container's logs and its last health-check output. Fix the cause and release it under a new patch
 tag.
 
-To run the check locally after `task release`, on a host with Docker and Go, for the host's architecture:
+To run the check locally after `just release`, on a host with Docker, Go and just, for the host's architecture:
 
 ```sh
-docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist && task image-check IMAGE=gcpemu:check
+docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist && just image-check gcpemu:check
 ```
 
 ## Echo image
@@ -40,7 +40,7 @@ repositories private, make it public, or Cloud Run on GCP can't pull it.
 To run the check locally, on a host with Docker and Go, for the host's architecture:
 
 ```sh
-task echo:dist && docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo && task echo:image-check IMAGE=gcpemu-echo:check
+just echo-dist && docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo && just echo-image-check gcpemu-echo:check
 ```
 
 ## Signing
@@ -88,7 +88,7 @@ cosign verify \
 
 ## Pre-release host checks
 
-Run `task prerelease` on macOS (Apple Silicon) and on Windows from a clean checkout of the commit
+Run `just prerelease` on macOS (Apple Silicon) and on Windows from a clean checkout of the commit
 to be tagged. It runs every check below on each runtime, one after the other, through its docker
 context, and confirms each choice with `gcpemu doctor`. By default it checks the Required runtimes:
 **Docker Desktop** (`desktop-linux`) and **Colima** (`colima`) on macOS, and **Docker Desktop** in
@@ -99,7 +99,7 @@ Required and is skipped otherwise, and a note under the table says why and how t
 when one is at hand, and a release doesn't wait for them:
 
 ```sh
-task prerelease RUNTIMES=desktop-linux,colima,orbstack
+just prerelease desktop-linux,colima,orbstack
 ```
 
 It ends with a table of runtime × check (pass, fail or skip) and each runtime's version, which it
@@ -114,11 +114,11 @@ even when it fails.
 
 ### macOS
 
-Needs `go`, `task`, `docker`, `gcloud` with `gke-gcloud-auth-plugin`, `kubectl`, and OpenTofu for
-the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your password once
+Needs `go`, `just`, `docker`, `gcloud` with `gke-gcloud-auth-plugin`, `kubectl`, and OpenTofu for
+the Reference stack. `just prerelease` builds `bin/gcpemu` and asks for your password once
 (`sudo -v`) for `gcpemu loopback install` and `gcpemu dns install`.
 
-1. **Reference stack:** `task e2e`. The Reference stack and the Containerized Instance tests pass,
+1. **Reference stack:** `just e2e`. The Reference stack and the Containerized Instance tests pass,
    and the Reference stack finishes within its 10-minute budget. See "Reference stack (SRS 11.2)"
    in the README.
 2. **Two Cloud SQL instances at once:** with the loopback aliases installed (and taken out again
@@ -137,18 +137,19 @@ the Reference stack. `task prerelease` builds `bin/gcpemu` and asks for your pas
 7. **VM relay:** see below.
 8. **Registry relay:** see below.
 9. **Containerized Instance registry:** see below. To build the image it also needs Node and pnpm,
-   unless `IMAGE=<ref>` names one already built.
+   unless `just prerelease <runtimes> <image>` names one already built.
 
-The suite also runs on Linux, but only for the runtimes `RUNTIMES` names, so it can be worked on
+The suite also runs on Linux, but only for the runtimes named on `just prerelease`'s command line, so it can be worked on
 with Docker Desktop for Linux. Check 6 changes the host's resolver there only with
 `GCPEMU_RESOLVER_TESTS=1`.
 
 ### Windows (Containerized Instance)
 
-Needs `go`, `task`, `docker`, `gcloud`, `kubectl` and `cloud-sql-proxy`, with or without
-`IMAGE=<ref>`: `task prerelease` always builds `bin/gcpemu.exe` for the checks that run on the host.
-To build the image it also needs Node and pnpm: it runs `task release` and builds `gcpemu:rc` from
-`dist/`. `IMAGE=<ref>` uses an image already built instead. The container publishes
+Needs `go`, `just`, `docker`, `gcloud`, `kubectl` and `cloud-sql-proxy`, with or without an
+image named: `just prerelease` always builds `bin/gcpemu.exe` for the checks that run on the host.
+To build the image it also needs Node and pnpm: it runs `just release` and builds `gcpemu:rc` from
+`dist/`. `just prerelease <runtimes> <image>` uses an image already built instead (name the
+runtimes too, e.g. `just prerelease desktop-linux gcpemu:rc`). The container publishes
 `127.0.0.1:4562`, `127.0.0.1:4561` (the registry) and `127.0.0.1:20000-20019`, so those ports must
 be free. With Podman machine, the container also gets `GCPEMU_VM_RUNTIME=true`.
 

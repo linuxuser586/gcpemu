@@ -142,7 +142,7 @@ func resolverRoutes(t *testing.T, ctx context.Context, withService bool) {
 func requireSudo(t *testing.T) {
 	t.Helper()
 	if out, err := exec.Command("sudo", "-n", "true").CombinedOutput(); err != nil {
-		t.Fatalf("sudo needs a password: run `sudo -v` first (task prerelease does): %v\n%s", err, out)
+		t.Fatalf("sudo needs a password: run `sudo -v` first (just prerelease does): %v\n%s", err, out)
 	}
 }
 

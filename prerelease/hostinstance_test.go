@@ -21,7 +21,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
-// gcpemuBin is the binary `task build` makes, which the macOS checks and
+// gcpemuBin is the binary `just build` makes, which the macOS checks and
 // the Windows Resolver routes check run on the host.
 var gcpemuBin = filepath.Join(repo, "bin", "gcpemu"+exeExt())
 
@@ -36,7 +36,7 @@ func exeExt() string {
 func requireBin(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat(gcpemuBin); err != nil {
-		t.Fatalf("%s: %v (task build makes it)", gcpemuBin, err)
+		t.Fatalf("%s: %v (just build makes it)", gcpemuBin, err)
 	}
 }
 
@@ -44,18 +44,18 @@ func requireBin(t *testing.T) {
 // binary on the host, with the VM relay, against the runtime's VM.
 func hostInstanceChecks(t *testing.T, rt string) {
 	done := setup(t, rt)
-	requireTools(t, "docker", "task", "go", "gcloud", "gke-gcloud-auth-plugin", "kubectl")
+	requireTools(t, "docker", "just", "go", "gcloud", "gke-gcloud-auth-plugin", "kubectl")
 	requireBin(t)
 	useRuntime(t, rt)
 	// A dev build's Sidecar agent, for this runtime's architecture.
-	task(t, context.Background(), "agent")
+	just(t, context.Background(), "agent")
 	requireDoctor(t, doctor(t),
 		fmt.Sprintf("(chosen by Docker context %q", rt),
 		"[ok  ] VM relay: on (")
 	done()
 
 	step(t, rt, "1-reference-stack", 45*time.Minute, func(t *testing.T, ctx context.Context) {
-		task(t, ctx, "e2e")
+		just(t, ctx, "e2e")
 	})
 	step(t, rt, "2-two-sql-instances", 30*time.Minute, twoSQLInstances)
 	step(t, rt, "3-gke-loadbalancer", 30*time.Minute, hostLoadBalancer)
@@ -338,7 +338,7 @@ func sudo(t *testing.T, ctx context.Context, verb string) {
 	}
 }
 
-// keepSudo keeps sudo's timestamp, which `task prerelease` takes before
+// keepSudo keeps sudo's timestamp, which `just prerelease` takes before
 // the run, alive for the run on macOS, so loopback install and uninstall
 // don't ask for a password halfway through.
 func keepSudo() (stop func()) {

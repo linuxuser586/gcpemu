@@ -26,7 +26,8 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
 )
 
-// The variables `task prerelease` passes RUNTIMES and IMAGE in.
+// The variables `just prerelease` exports its runtimes and image
+// parameters as.
 const (
 	runtimesEnv = "GCPEMU_PRERELEASE_RUNTIMES"
 	imageEnv    = "GCPEMU_PRERELEASE_IMAGE"
@@ -54,7 +55,8 @@ var required = map[string][]string{
 
 func isRequired(rt string) bool { return slices.Contains(required[goruntime.GOOS], rt) }
 
-// runtimes returns the docker contexts to check: RUNTIMES, or the
+// runtimes returns the docker contexts to check: those `just prerelease`
+// names, or the
 // Required runtimes of this OS.
 func runtimes() []string {
 	if v := os.Getenv(runtimesEnv); v != "" {
@@ -67,7 +69,7 @@ func runtimes() []string {
 func TestHostChecks(t *testing.T) {
 	rts := runtimes()
 	if len(rts) == 0 {
-		t.Skipf("no runtime to check on %s: name VM runtimes' docker contexts in RUNTIMES", goruntime.GOOS)
+		t.Skipf("no runtime to check on %s: name VM runtimes' docker contexts: just prerelease <context,...>", goruntime.GOOS)
 	}
 	reclaimEndedTests(t, rts)
 	suite := hostInstanceChecks
@@ -541,13 +543,13 @@ func inRange(addr, r string) bool {
 	return p >= lo && p <= hi
 }
 
-// task runs a Task task from the repository's root, streaming its output.
-func task(t *testing.T, ctx context.Context, args ...string) {
+// just runs a just recipe from the repository's root, streaming its output.
+func just(t *testing.T, ctx context.Context, args ...string) {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, "task", args...)
+	cmd := exec.CommandContext(ctx, "just", args...)
 	cmd.Dir = repo
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("task %s: %v", strings.Join(args, " "), err)
+		t.Fatalf("just %s: %v", strings.Join(args, " "), err)
 	}
 }
