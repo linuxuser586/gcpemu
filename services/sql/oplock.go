@@ -86,6 +86,18 @@ func (s *Service) acquire(ctx context.Context, key, name string) error {
 	}
 }
 
+// tryAcquire takes a Cloud SQL instance's Operation lock for name only if
+// neither an Operation nor hidden work holds it.
+func (s *Service) tryAcquire(key, name string) bool {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if _, busy := s.busy[key]; busy || s.hidden[key] {
+		return false
+	}
+	s.busy[key] = name
+	return true
+}
+
 // releaseOp drops op's Operation lock if op holds it.
 func (s *Service) releaseOp(op *sqladmin.Operation) {
 	key := instKey(op.TargetProject, op.TargetId)

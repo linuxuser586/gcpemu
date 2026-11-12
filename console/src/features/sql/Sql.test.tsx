@@ -611,6 +611,19 @@ it('takes, restores and lists backups', async () => {
   })
 })
 
+it('shows an Automated backup’s type', async () => {
+  state.backups = [
+    {
+      id: '1700000000001',
+      status: 'SUCCESSFUL',
+      type: 'AUTOMATED',
+      endTime: '2026-10-09T02:00:00Z',
+    },
+  ]
+  renderApp(`${base}/backups?project=${P}`)
+  expect(await screen.findByTestId('backup')).toHaveTextContent('AUTOMATED')
+})
+
 it('copies an instance as gcloud, curl and OpenTofu', async () => {
   const user = userEvent.setup()
   renderApp(`${base}?project=${P}`)

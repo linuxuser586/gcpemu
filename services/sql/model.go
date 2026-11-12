@@ -66,6 +66,11 @@ type instanceRecord struct {
 	AppliedFlags map[string]string `json:"appliedFlags,omitempty"`
 	// SeedHash records the init SQL applied by the seed (FR-CORE-011).
 	SeedHash string `json:"seedHash,omitempty"`
+	// BackupSlot is the latest daily Automated backup slot handled, RFC
+	// 3339: one whose backup was attempted, or that creating the instance,
+	// enabling its backups or changing their start time skipped
+	// (automatedbackup.go). A record stored before #1038 has none.
+	BackupSlot string `json:"backupSlot,omitempty"`
 }
 
 // userRecord is a stored user (the password is kept for re-creation after

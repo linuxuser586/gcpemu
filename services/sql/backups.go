@@ -179,15 +179,21 @@ func parseBackupName(name string) (project string, id int64, err error) {
 }
 
 // findBackup looks a backup up by project and ID, whatever its instance.
-func (s *Service) findBackup(project string, id int64) (*backupRecord, bool) {
-	var found *backupRecord
+func (s *Service) findBackup(project string, id int64) (found *backupRecord, ok bool) {
 	_ = s.env.Store.View(func(tx store.Tx) error {
-		scanJSON(tx, nsBackups, project+"/", func(k string, b *backupRecord) {
-			if found == nil && strings.HasSuffix(k, "/"+backupKey(id)) {
-				found = b
-			}
-		})
+		found, ok = s.findBackupIn(tx, project, id)
 		return nil
+	})
+	return found, ok
+}
+
+// findBackupIn is findBackup in tx.
+func (s *Service) findBackupIn(tx store.Tx, project string, id int64) (*backupRecord, bool) {
+	var found *backupRecord
+	scanJSON(tx, nsBackups, project+"/", func(k string, b *backupRecord) {
+		if found == nil && strings.HasSuffix(k, "/"+backupKey(id)) {
+			found = b
+		}
 	})
 	return found, found != nil
 }
@@ -234,15 +240,18 @@ func (s *Service) newBackupRun(rec *instanceRecord, typ, description string) *sq
 
 // storeNewBackup gives b's run an ID unique in the project and stores it.
 func (s *Service) storeNewBackup(project string, b *backupRecord) error {
-	return s.env.Store.Update(func(tx store.Tx) error {
-		id := s.env.Clock.Now().UnixMilli()
-		for backupIDTaken(tx, project, id) {
-			id++
-		}
-		b.Run.Id = id
-		b.Run.SelfLink = instanceLink(project, b.Run.Instance) + "/backupRuns/" + strconv.FormatInt(id, 10)
-		return store.PutJSON(tx, nsBackups, b.key(project), b)
-	})
+	return s.env.Store.Update(func(tx store.Tx) error { return s.putNewBackup(tx, project, b) })
+}
+
+// putNewBackup is storeNewBackup in tx.
+func (s *Service) putNewBackup(tx store.Tx, project string, b *backupRecord) error {
+	id := s.env.Clock.Now().UnixMilli()
+	for backupIDTaken(tx, project, id) {
+		id++
+	}
+	b.Run.Id = id
+	b.Run.SelfLink = instanceLink(project, b.Run.Instance) + "/backupRuns/" + strconv.FormatInt(id, 10)
+	return store.PutJSON(tx, nsBackups, b.key(project), b)
 }
 
 // fail marks the backup FAILED with err.
@@ -254,7 +263,7 @@ func (s *Service) fail(b *backupRecord, err error) {
 // writeDump writes a pg_dumpall of the instance to the file of the backup
 // with the ID stored under owner (backupRecord.owner) and returns its path.
 func (s *Service) writeDump(ctx context.Context, project, name, owner string, id int64) (string, error) {
-	dump, err := s.dumpAll(ctx, project, name)
+	dump, err := s.dump(ctx, project, name)
 	if err != nil {
 		return "", err
 	}
@@ -290,15 +299,32 @@ func (s *Service) startBackup(ctx context.Context, rec *instanceRecord, descript
 		s.releaseOp(op)
 		return nil, err
 	}
-	id := b.Run.Id
+	return s.runBackup(op, project, name, b.Run.Id, false), nil
+}
+
+// runBackup runs op, the BACKUP_VOLUME Operation that fills the stored
+// RUNNING backup id of the instance. A failure leaves the backup FAILED; an
+// Automated backup that succeeds applies the instance's backup retention.
+func (s *Service) runBackup(op *sqladmin.Operation, project, name string, id int64, automated bool) *sqladmin.Operation {
 	op.BackupContext = &sqladmin.BackupContext{Kind: "sql#backupContext", BackupId: id, Name: backupName(project, id)}
-	return s.runOp(op, true, func(ctx context.Context) error {
+	op = s.runOp(op, true, func(ctx context.Context) error {
 		err := s.fillBackup(ctx, project, name, id)
-		if err != nil && !wasReset(ctx) {
-			_ = s.updateBackupRecord(project, name, id, func(b *backupRecord) { s.fail(b, err) })
+		if err != nil {
+			if !wasReset(ctx) {
+				_ = s.updateBackupRecord(project, name, id, func(b *backupRecord) { s.fail(b, err) })
+			}
+			return err
 		}
-		return err
-	}), nil
+		if automated {
+			return s.pruneAutomated(project, name)
+		}
+		return nil
+	})
+	if op.Status == "DONE" {
+		// The service stopped before the work could start.
+		_ = s.updateBackupRecord(project, name, id, func(b *backupRecord) { s.fail(b, errStopped) })
+	}
+	return op
 }
 
 func (s *Service) fillBackup(ctx context.Context, project, name string, id int64) error {
@@ -311,7 +337,7 @@ func (s *Service) fillBackup(ctx context.Context, project, name string, id int64
 		return err
 	}
 	if rec, err := s.loadRecord(project, name); err == nil && pitrEnabled(rec.Instance) {
-		if err := s.takeBaseBackup(ctx, project, name); err != nil {
+		if err := s.baseBackup(ctx, project, name); err != nil {
 			return err
 		}
 	}
