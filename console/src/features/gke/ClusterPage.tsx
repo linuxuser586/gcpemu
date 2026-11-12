@@ -106,14 +106,16 @@ export function ClusterPage() {
         )}
       </div>
       <QueryStatus query={query} />
-      {c?.status === 'ERROR' && c.statusMessage && (
-        <p
-          role="alert"
-          className="rounded-md border border-destructive/50 p-3 text-sm text-destructive"
-        >
-          {c.statusMessage}
-        </p>
-      )}
+      {c &&
+        problems(c).map((msg, i) => (
+          <p
+            key={i}
+            role="alert"
+            className="rounded-md border border-destructive/50 p-3 text-sm text-destructive"
+          >
+            {msg}
+          </p>
+        ))}
       {c && (
         <>
           <nav aria-label="Cluster" className="flex flex-wrap gap-1 border-b">
@@ -208,4 +210,17 @@ export function NotRunning({ c }: { c: Cluster }) {
       </p>
     </Card>
   )
+}
+
+/**
+ * problems are the messages a cluster reports trouble with: an ERROR or
+ * DEGRADED cluster's statusMessage, then its conditions, such as its
+ * Cluster server exiting (ADR 0045), which a RUNNING cluster can carry.
+ */
+function problems(c: Cluster): string[] {
+  const out: string[] = []
+  if ((c.status === 'ERROR' || c.status === 'DEGRADED') && c.statusMessage)
+    out.push(c.statusMessage)
+  for (const cond of c.conditions ?? []) if (cond.message) out.push(cond.message)
+  return out
 }

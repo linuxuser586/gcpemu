@@ -16,10 +16,12 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/genproto/googleapis/rpc/code"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // fakeServer drives a serverSupervisor: each exit sent on exits ends the
@@ -280,7 +282,13 @@ func (rt *clusterRT) watching() bool {
 // whose watch uses w instead of the runtime, and starts watching it.
 func watchTestServer(t *testing.T, s *Service, w *watched) string {
 	t.Helper()
-	key := putTestCluster(t, s, containerpb.Cluster_RUNNING)
+	return watchServerOf(t, s, w, putTestCluster(t, s, containerpb.Cluster_RUNNING))
+}
+
+// watchServerOf gives cluster key the Cluster server cp1, as
+// watchTestServer does.
+func watchServerOf(t *testing.T, s *Service, w *watched, key string) string {
+	t.Helper()
 	w.killed = make(chan struct{})
 	s.serverWait = func(ctx context.Context, id string) error {
 		w.mu.Lock()
@@ -403,6 +411,10 @@ func TestPurposefulStopsAreNotExits(t *testing.T) {
 			if s.rtFor(key).watching() {
 				t.Error("still watching the server")
 			}
+			// Nor is it counted (#1061).
+			if c := clusterStatus(t, s, key); len(c.Conditions) != 0 {
+				t.Errorf("conditions = %v; want none", c.Conditions)
+			}
 		})
 	}
 }
@@ -481,5 +493,194 @@ func TestServeAPIKeepsListenerForSameTarget(t *testing.T) {
 	}
 	if s.serveLAN(context.Background(), d, key, "c", lan, "10.0.0.3:443"); rt.lan[0] == lanEx {
 		t.Error("serveLAN at a new target kept the old listener")
+	}
+}
+
+// apiClusterName is the cluster watchAPIServer watches, by the name the
+// API takes.
+const apiClusterName = "projects/proj-1/locations/us-central1-a/clusters/c"
+
+// watchAPIServer gives a RUNNING cluster the API can read, apiClusterName,
+// a watched Cluster server, as watchTestServer does.
+func watchAPIServer(t *testing.T, s *Service, w *watched) string {
+	t.Helper()
+	rec := &clusterRecord{Int: clusterInternal{Project: "proj-1", Location: "us-central1-a", Name: "c"}}
+	rec.setCluster(&containerpb.Cluster{Name: "c", Id: "id1", Location: "us-central1-a", Status: containerpb.Cluster_RUNNING})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	return watchServerOf(t, s, w, rec.key())
+}
+
+// getTestCluster returns apiClusterName as clusters.get does.
+func getTestCluster(t *testing.T, s *Service) *containerpb.Cluster {
+	t.Helper()
+	c, err := s.api.GetCluster(context.Background(), &containerpb.GetClusterRequest{Name: apiClusterName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// exitCondition returns the cluster's one condition, failing unless it
+// has exactly one.
+func exitCondition(t *testing.T, c *containerpb.Cluster) *containerpb.StatusCondition {
+	t.Helper()
+	if len(c.Conditions) != 1 {
+		t.Fatalf("conditions = %v; want one", c.Conditions)
+	}
+	return c.Conditions[0]
+}
+
+// Each exit the Service starts the Cluster server again after is counted
+// in one UNAVAILABLE condition naming the last one; the cluster stays
+// RUNNING (#1061).
+func TestServerExitsCountedInCondition(t *testing.T) {
+	s := newUnitService(t)
+	at := time.Date(2026, 11, 12, 10, 41, 7, 0, time.UTC)
+	s.serverNow = func() time.Time { return at }
+	w := &watched{}
+	watchAPIServer(t, s, w)
+	if c := getTestCluster(t, s); len(c.Conditions) != 0 {
+		t.Fatalf("conditions before any exit = %v; want none", c.Conditions)
+	}
+	for i := 1; i <= 2; i++ {
+		w.kill()
+		eventually(t, "the restart", func() bool { return w.restarted() == i })
+	}
+	c := getTestCluster(t, s)
+	if c.Status != containerpb.Cluster_RUNNING {
+		t.Errorf("status = %v; want RUNNING", c.Status)
+	}
+	cond := exitCondition(t, c)
+	if cond.CanonicalCode != code.Code_UNAVAILABLE || cond.Code != containerpb.StatusCondition_UNKNOWN {
+		t.Errorf("codes = %v, %v; want UNAVAILABLE, UNKNOWN", cond.CanonicalCode, cond.Code)
+	}
+	for _, want := range []string{"exited 2 times", "2026-11-12T10:41:07Z", "code 137", "Transaction commit failed"} {
+		if !strings.Contains(cond.Message, want) {
+			t.Errorf("message %q; want it to contain %q", cond.Message, want)
+		}
+	}
+}
+
+// A start that fails after an exit is reported as a failed start, not as
+// the server exiting again (#1061).
+func TestSupervisorFailedRestartSaysSo(t *testing.T) {
+	f := newFakeServer(t, errors.New("pulling image"), nil)
+	f.run()
+	f.waitFor("the first wait", func() bool { return len(f.waited) == 1 })
+	f.exit(1, "first")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.warned) != 2 {
+		t.Fatalf("warned %v; want the exit and the failed start", f.warned)
+	}
+	if strings.Contains(f.warned[0].Error(), "failed to start") {
+		t.Errorf("exit warned as %q; want no failed start", f.warned[0])
+	}
+	if msg := f.warned[1].Error(); !strings.Contains(msg, "failed to start") || !strings.Contains(msg, "pulling image") {
+		t.Errorf("failed start warned as %q; want it to say it failed to start, with the cause", msg)
+	}
+}
+
+// The exit the Service gives up on is counted too: the DEGRADED cluster
+// keeps the condition with the final count, and a failed start says so
+// (#1061).
+func TestDegradedClusterKeepsExitCondition(t *testing.T) {
+	s := newUnitService(t)
+	w := &watched{fail: errors.New("pulling image")}
+	watchAPIServer(t, s, w)
+	w.kill()
+	eventually(t, "DEGRADED", func() bool { return getTestCluster(t, s).Status == containerpb.Cluster_DEGRADED })
+	c := getTestCluster(t, s)
+	msg := exitCondition(t, c).Message
+	for _, want := range []string{"exited 3 times", "failed to start", "pulling image"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q; want it to contain %q", msg, want)
+		}
+	}
+	if !strings.Contains(c.StatusMessage, "is no longer started again") {
+		t.Errorf("statusMessage = %q; want it as before", c.StatusMessage)
+	}
+}
+
+// The count outlives serverwatch's window, and is cleared only when the
+// Cluster server is next brought up afresh: after an Instance stop and
+// start, or Reset (#1061).
+func TestExitConditionClearedOnlyByFreshBringUp(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		fresh func(t *testing.T, s *Service)
+	}{
+		{"Instance stop and start", func(t *testing.T, s *Service) {
+			if err := s.Stop(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		// A State snapshot restore: Reset, then Restore. Reset fails
+		// tearing down, as the unit Service has no runtime, and the store
+		// keeps the record the Instance would restore.
+		{"Reset", func(t *testing.T, s *Service) {
+			_ = s.Reset(context.Background())
+			if err := s.Restore(context.Background(), t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newUnitService(t)
+			var mu sync.Mutex
+			now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+			s.serverNow = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+			w := &watched{}
+			watchAPIServer(t, s, w)
+			for i := 1; i <= 3; i++ {
+				w.kill()
+				eventually(t, "the restart", func() bool { return w.restarted() == i })
+				mu.Lock()
+				now = now.Add(serverExitWindow + time.Minute)
+				mu.Unlock()
+			}
+			c := getTestCluster(t, s)
+			if msg := exitCondition(t, c).Message; c.Status != containerpb.Cluster_RUNNING || !strings.Contains(msg, "exited 3 times") {
+				t.Fatalf("status %v, condition %q; want RUNNING with 3 exits past the window", c.Status, msg)
+			}
+			tt.fresh(t, s)
+			if c := getTestCluster(t, s); len(c.Conditions) != 0 {
+				t.Errorf("conditions after a fresh bring-up = %v; want none", c.Conditions)
+			}
+		})
+	}
+}
+
+// clusters.list and the REST surface return the condition clusters.get
+// does (#1061).
+func TestExitConditionListedAndOverREST(t *testing.T) {
+	s := newUnitService(t)
+	w := &watched{}
+	watchAPIServer(t, s, w)
+	w.kill()
+	eventually(t, "the restart", func() bool { return w.restarted() == 1 })
+	want := exitCondition(t, getTestCluster(t, s)).Message
+	l, err := s.api.ListClusters(context.Background(), &containerpb.ListClustersRequest{Parent: "projects/proj-1/locations/-"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Clusters) != 1 || exitCondition(t, l.Clusters[0]).Message != want {
+		t.Errorf("clusters.list = %v; want the cluster with the condition %q", l.Clusters, want)
+	}
+	rec := httptest.NewRecorder()
+	s.restHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/"+apiClusterName, nil))
+	var got struct {
+		Conditions []struct{ Message, CanonicalCode string }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("REST get: %v: %s", err, rec.Body)
+	}
+	if len(got.Conditions) != 1 || got.Conditions[0].Message != want || got.Conditions[0].CanonicalCode != "UNAVAILABLE" {
+		t.Errorf("REST conditions = %+v; want one UNAVAILABLE with %q", got.Conditions, want)
 	}
 }
