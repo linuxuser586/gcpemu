@@ -121,6 +121,7 @@ type Service struct {
 	// Registry cleanup (cleanup.go): passMu runs one pass at a time;
 	// cleanupLoops runs the periodic pass outside a Deterministic Instance.
 	passMu       sync.Mutex
+	passStopped  bool // under passMu: Stop ran, so ClockAdvanced runs no pass
 	cleanupLoops inflight.Loops
 }
 
@@ -180,6 +181,9 @@ func (s *Service) Start(ctx context.Context) error {
 			s.env.Log.Error("ar registry stopped", "err", err)
 		}
 	}()
+	s.passMu.Lock()
+	s.passStopped = false
+	s.passMu.Unlock()
 	if !s.env.Config.Deterministic {
 		s.cleanupLoops.Start(s.cleanupLoop)
 	}
@@ -191,8 +195,9 @@ func (s *Service) Start(ctx context.Context) error {
 func (s *Service) Stop(ctx context.Context) error {
 	s.ops.Close()
 	_ = s.cleanupLoops.Stop(ctx)
-	s.passMu.Lock()
-	s.passMu.Unlock() //nolint:staticcheck // waits for a ClockAdvanced pass
+	s.passMu.Lock() // waits for a ClockAdvanced pass
+	s.passStopped = true
+	s.passMu.Unlock()
 	s.mu.Lock()
 	srv, lan := s.srv, s.lan
 	s.srv, s.lan, s.lanH, s.ready = nil, nil, nil, false

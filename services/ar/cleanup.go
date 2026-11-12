@@ -32,11 +32,12 @@ const cleanupGrace = time.Hour
 const cleanupInterval = time.Minute
 
 // cleanupPass runs the Registry cleanup pass once. Passes run one at a
-// time, so ClockAdvanced returns only once the work it asked for is done.
+// time, so ClockAdvanced returns only once the work it asked for is done;
+// after Stop none runs.
 func (s *Service) cleanupPass(ctx context.Context) error {
 	s.passMu.Lock()
 	defer s.passMu.Unlock()
-	if s.blobs == nil {
+	if s.blobs == nil || s.passStopped {
 		return nil
 	}
 	// Steps that delete versions (cleanup policies, #1039) go before the

@@ -241,3 +241,22 @@ func TestPassKeepsLinkAPushFoundByHead(t *testing.T) {
 		t.Fatal("the pass dropped a link a push had just found by HEAD")
 	}
 }
+
+// After Stop, advancing the clock runs no pass: the Instance is shutting
+// down and its store closing.
+func TestNoPassAfterStop(t *testing.T) {
+	p := newPassService(t)
+	stray := p.blobs.uploadPath("left-by-a-restart")
+	if err := os.WriteFile(stray, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.ClockAdvanced(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stray); err != nil {
+		t.Fatalf("a pass ran after Stop: %v", err)
+	}
+}
