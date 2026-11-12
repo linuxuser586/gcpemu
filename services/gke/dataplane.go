@@ -90,22 +90,6 @@ type clusterRT struct {
 	// (serverwatch.go).
 	server string
 	watch  *serverWatch
-	// negLBSvcs are the Services whose NEGs a load balancer uses, by
-	// namespace/name, as the last NEG sync found them: their pods get the
-	// NEG readiness gate (neggate.go).
-	negLBSvcs map[string]bool
-}
-
-func (rt *clusterRT) setNEGLBServices(m map[string]bool) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.negLBSvcs = m
-}
-
-func (rt *clusterRT) negLBServices() map[string]bool {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.negLBSvcs
 }
 
 func (s *Service) stopRT(rt *clusterRT) {

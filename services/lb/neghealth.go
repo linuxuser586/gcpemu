@@ -9,7 +9,7 @@ import (
 )
 
 // NEGEndpointHealth implements emu.NEGHealth for GKE's NEG readiness gate
-// (ADR 0071): the endpoint ip:port's state in each backend service with a
+// (ADR 0071): the network endpoint ip:port's state in each backend service with a
 // health check that has the zonal NEG as a backend, by relative name, as
 // getHealth reports it. Every backend service counts, whether or not a
 // forwarding rule routes to it.

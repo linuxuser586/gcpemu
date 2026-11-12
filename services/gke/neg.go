@@ -21,9 +21,9 @@ import (
 // Container-native load balancing (FR-GKE-008, FR-INT-001): Services
 // annotated cloud.google.com/neg: {"exposed_ports": {"80": {"name": "x"}}}
 // get standalone zonal GCE_VM_IP_PORT NEGs (one per cluster zone) whose
-// endpoints are the Service's ready pod IP:targetPort pairs: a pod with
-// the NEG readiness gate is ready once its containers are (neggate.go,
-// ADR 0071). The controller
+// network endpoints are the Service's pod IP:targetPort pairs: those of
+// pods the EndpointSlices say are ready, and of pods with the NEG readiness
+// gate once containers ready (neggate.go, ADR 0071). The controller
 // polls the cluster every second, so endpoint changes reach the NEG well
 // within 5 s, and it reports the NEGs in the cloud.google.com/neg-status
 // annotation like GKE's NEG controller.
@@ -136,7 +136,7 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 	if err := kc.get(ctx, "/api/v1/services", &svcs); err != nil {
 		return err
 	}
-	// Without the pods a gated pod would look not ready and leave its NEGs.
+	// Without the pods a gated pod would look not pod Ready and leave its NEGs.
 	var podList kubeList[gatedPod]
 	if err := kc.get(ctx, "/api/v1/pods?resourceVersion=0", &podList); err != nil {
 		return err
@@ -146,14 +146,14 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 		p := &podList.Items[i]
 		pods[p.Metadata.Namespace+"/"+p.Metadata.Name] = p
 	}
-	lbSvcs := map[string]bool{}
-	for k := range lbPorts {
-		lbSvcs[k] = true
-	}
-	s.rtFor(key).setNEGLBServices(lbSvcs)
-	// covers holds the NEGs covering each gated pod, by namespace/name.
+	// covers holds the NEGs covering each gated pod, by namespace/name,
+	// and unknown the gated pods a Kubernetes Service whose network
+	// endpoints could not be read selects: their gate waits.
 	covers := map[string][]negCover{}
-	written := map[string]bool{}
+	unknown := map[string]bool{}
+	// synced holds the NEGs, by zone/name, whose network endpoints are
+	// as this sync wants them.
+	synced := map[string]bool{}
 	nodeZone := map[string]string{}
 	for _, n := range rec.Int.Nodes {
 		nodeZone[n.Name] = n.Zone
@@ -200,16 +200,20 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 			name := negNameFor(c.Id, &svc, port)
 			status[p] = name
 			eps, members, err := s.negEndpoints(ctx, kc, svc, port, nodeZone, pods)
-			if err != nil {
-				errs = append(errs, err)
-				continue
-			}
 			for pk, p := range pods {
 				if !p.gated() || p.Metadata.Namespace != svc.Metadata.Namespace || !selects(&svc, p.Metadata.Labels) {
 					continue
 				}
+				if err != nil {
+					unknown[pk] = true
+					continue
+				}
 				m, in := members[pk]
-				covers[pk] = append(covers[pk], negCover{name: name, member: m, in: in && slices.Contains(zones, m.zone)})
+				covers[pk] = append(covers[pk], negCover{name: name, member: m, inNEG: in && slices.Contains(zones, m.zone)})
+			}
+			if err != nil {
+				errs = append(errs, err)
+				continue
 			}
 			for _, z := range zones {
 				k := negKey(key, z, name)
@@ -217,7 +221,7 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 				cur, exists := owned[k]
 				h := hashEndpoints(eps[z])
 				if exists && cur.Hash == h {
-					written[z+"/"+name] = true
+					synced[z+"/"+name] = true
 					continue
 				}
 				if !exists {
@@ -231,7 +235,7 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 					errs = append(errs, err)
 					continue
 				}
-				written[z+"/"+name] = true
+				synced[z+"/"+name] = true
 				nr := negRecord{Project: rec.Int.Project, Zone: z, Name: name, Namespace: svc.Metadata.Namespace, Service: svc.Metadata.Name, Port: port, Hash: h}
 				_ = s.env.Store.Update(func(tx store.Tx) error { return store.PutJSON(tx, nsNEGs, k, nr) })
 			}
@@ -247,9 +251,12 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 	}
 	for pk, cs := range covers {
 		for i := range cs {
-			cs[i].in = cs[i].in && written[cs[i].member.zone+"/"+cs[i].name]
+			cs[i].inNEG = cs[i].inNEG && synced[cs[i].member.zone+"/"+cs[i].name]
 		}
 		covers[pk] = cs
+	}
+	for pk := range unknown {
+		delete(pods, pk)
 	}
 	errs = append(errs, s.syncNEGGates(ctx, kc, rec.Int.Project, pods, covers)...)
 	for k, r := range owned {
@@ -270,17 +277,18 @@ func (s *Service) syncNEGs(ctx context.Context, key string, lbPorts map[string]m
 	return nil
 }
 
-// negMember is a pod's endpoint in a NEG.
+// negMember is a pod's network endpoint in a NEG.
 type negMember struct {
 	zone, ip string
 	port     int
 }
 
-// negEndpoints returns the ready endpoints of svc's port, by zone, and
-// the ready pods' endpoints, by namespace/name. A pod with the NEG
-// readiness gate is ready once its containers are and while it is not
-// terminating, since its EndpointSlice condition waits on the gate; any
-// other endpoint is ready as its EndpointSlice says.
+// negEndpoints returns the network endpoints of the Kubernetes Service
+// svc's port that belong in its NEGs, by zone, and those of pods, by pod
+// namespace/name. A pod with the NEG readiness gate belongs once
+// containers ready and while it is not terminating, since its
+// EndpointSlice condition waits for pod Ready, which waits on the gate;
+// any other network endpoint belongs while its EndpointSlice says ready.
 func (s *Service) negEndpoints(ctx context.Context, kc *kubeClient, svc kubeService, port int, nodeZone map[string]string, pods map[string]*gatedPod) (map[string][]emu.NEGEndpoint, map[string]negMember, error) {
 	var sp *kubeServicePort
 	for i := range svc.Spec.Ports {

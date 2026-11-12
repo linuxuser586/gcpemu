@@ -33,6 +33,8 @@ type fakeKube struct {
 	// admit, when set, sees each create and replace (with the object
 	// stored at path, if any) and denies it with a non-zero status.
 	admit func(method, path string, old, obj map[string]any) (int, string)
+	// failList, when set, fails the lists of the resource it names.
+	failList string
 }
 
 func newFakeKube(t *testing.T) (*fakeKube, *kubeClient) {
@@ -132,6 +134,8 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.Method == http.MethodGet && name == "" && res == k.failList:
+		http.Error(w, "injected failure", http.StatusInternalServerError)
 	case r.Method == http.MethodGet && name == "":
 		var keys []string
 		for p := range k.objs {

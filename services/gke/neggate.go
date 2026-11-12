@@ -14,7 +14,7 @@ import (
 // The NEG readiness gate (ADR 0071). GKE's NEG controller gives pods
 // behind a NEG the readiness gate cloud.google.com/load-balancer-neg-ready
 // and holds the pod condition of that type until the load balancer finds
-// the pod's endpoint HEALTHY, so a rollout cannot run ahead of the load
+// the pod's network endpoint HEALTHY, so a rollout cannot run ahead of the load
 // balancer. Here a mutating webhook, served by the Instance through the
 // Google front end like the CA injector's, adds the gate to new pods, and
 // the NEG sync (neg.go) sets the condition, by the rule of GKE's
@@ -26,9 +26,9 @@ const (
 	// creation.
 	negGateTimeout = 10 * time.Minute
 
-	negReadyReason          = "LoadBalancerNegReady"
-	negReadyTimedOutReason  = "LoadBalancerNegTimeout"
-	negReadyUnhealthChecked = "LoadBalancerNegWithoutHealthCheck"
+	negReadyReason              = "LoadBalancerNegReady"
+	negReadyTimedOutReason      = "LoadBalancerNegTimeout"
+	negReadyNoHealthCheckReason = "LoadBalancerNegWithoutHealthCheck"
 )
 
 // negGateInput is what the gate rule decides on for one gated pod.
@@ -36,15 +36,15 @@ type negGateInput struct {
 	// ContainersReady is the pod's ContainersReady condition.
 	ContainersReady bool
 	// NEGs are the NEGs the controller owns that cover the pod: those of
-	// the Services that select it.
+	// the Kubernetes Services that select it.
 	NEGs []negGateNEG
 	// Created is the pod's creation time, and Now the time of the sync.
 	Created, Now time.Time
 }
 
-// negGateNEG is one NEG covering the pod: whether the pod's endpoint is in
-// it, and the endpoint's state in each backend service with a health check
-// that uses the NEG.
+// negGateNEG is one NEG covering the pod: whether the pod's network
+// endpoint is in it, and that network endpoint's state in each backend
+// service with a health check that uses the NEG.
 type negGateNEG struct {
 	Name        string
 	HasEndpoint bool
@@ -58,9 +58,9 @@ type negGateResult struct {
 	Reason, Message string
 }
 
-// negGateCondition is the gate rule: True once the endpoint is HEALTHY in
-// any health-checked backend service using one of its NEGs; at once for an
-// endpoint in a NEG no such backend service uses; once containers ready
+// negGateCondition is the gate rule: True once the network endpoint is HEALTHY in
+// any health-checked backend service using one of its NEGs; at once for a
+// network endpoint in a NEG no such backend service uses; once containers ready
 // for a pod no owned NEG covers; and otherwise after negGateTimeout.
 func negGateCondition(in negGateInput) negGateResult {
 	marking := fmt.Sprintf(" Marking condition %q to True.", negReadinessGate)
@@ -74,7 +74,7 @@ func negGateCondition(in negGateInput) negGateResult {
 	}
 	for _, n := range in.NEGs {
 		if n.HasEndpoint && len(n.Health) == 0 {
-			return negGateResult{true, negReadyUnhealthChecked,
+			return negGateResult{true, negReadyNoHealthCheckReason,
 				fmt.Sprintf("Pod is in NEG %q. NEG is not attached to any BackendService with health checking.", n.Name) + marking}
 		}
 	}
@@ -139,9 +139,10 @@ func (p *gatedPod) condition(typ string) string {
 	return ""
 }
 
-// negGated reports whether the NEG controller gates the pods svc selects:
-// its NEG annotation exposes ports, or a load balancer uses its NEGs
-// (lbSvcs, by namespace/name), as syncNEGs treats them.
+// negGated reports whether the NEG controller gates the pods the
+// Kubernetes Service svc selects: its NEG annotation exposes ports, or a
+// load balancer uses its NEGs (lbSvcs, by namespace/name), as syncNEGs
+// treats them.
 func negGated(svc *kubeService, lbSvcs map[string]bool) bool {
 	if len(svc.Spec.Selector) == 0 {
 		return false
@@ -153,7 +154,7 @@ func negGated(svc *kubeService, lbSvcs map[string]bool) bool {
 	return json.Unmarshal([]byte(svc.Metadata.Annotations[annoNEG]), &ann) == nil && len(ann.ExposedPorts) > 0
 }
 
-// selects reports whether svc's selector selects labels.
+// selects reports whether the Kubernetes Service svc selects labels.
 func selects(svc *kubeService, labels map[string]string) bool {
 	if len(svc.Spec.Selector) == 0 {
 		return false
@@ -167,9 +168,9 @@ func selects(svc *kubeService, labels map[string]string) bool {
 }
 
 // negGatePatch returns the JSON patch adding the gate to a new pod in
-// namespace ns, given the Services of ns and the load balancers' NEG
-// Services (lbSvcs, by namespace/name), or nil when no gated Service
-// selects it, it is in kube-system or it has the gate.
+// namespace ns, given the Kubernetes Services of ns and those whose NEGs a
+// load balancer uses (lbSvcs, by namespace/name), or nil when no gated
+// Kubernetes Service selects it, it is in kube-system or it has the gate.
 func negGatePatch(pod *gatedPod, ns string, svcs []kubeService, lbSvcs map[string]bool) []patchOp {
 	if ns == kubeSystem || pod.gated() {
 		return nil
@@ -186,15 +187,15 @@ func negGatePatch(pod *gatedPod, ns string, svcs []kubeService, lbSvcs map[strin
 	return nil
 }
 
-// negCover is a NEG covering a gated pod: in is set when the pod's
-// endpoint, member, is in it.
+// negCover is a NEG covering a gated pod: inNEG is set when the pod's
+// network endpoint, member, is in it.
 type negCover struct {
 	name   string
 	member negMember
-	in     bool
+	inNEG  bool
 }
 
-// negHealth returns the load balancer's view of NEG endpoints, or nil
+// negHealth returns the load balancer's view of NEG network endpoints, or nil
 // without one, when every NEG counts as having no health check.
 func (s *Service) negHealth() emu.NEGHealth {
 	if h, ok := s.testLB.(emu.NEGHealth); ok {
@@ -220,11 +221,14 @@ func (s *Service) syncNEGGates(ctx context.Context, kc *kubeClient, project stri
 		if !p.gated() || p.condition(negReadinessGate) == "True" || p.Metadata.DeletionTimestamp != nil {
 			continue
 		}
-		created, _ := time.Parse(time.RFC3339, p.Metadata.CreationTimestamp)
+		created, err := time.Parse(time.RFC3339, p.Metadata.CreationTimestamp)
+		if err != nil {
+			created = now // no timeout from a time the pod doesn't give
+		}
 		in := negGateInput{ContainersReady: p.condition("ContainersReady") == "True", Created: created, Now: now}
 		for _, c := range covers[pk] {
-			n := negGateNEG{Name: c.name, HasEndpoint: c.in}
-			if c.in && health != nil {
+			n := negGateNEG{Name: c.name, HasEndpoint: c.inNEG}
+			if c.inNEG && health != nil {
 				n.Health = health.NEGEndpointHealth(ctx, project, c.member.zone, c.name, c.member.ip, c.member.port)
 			}
 			in.NEGs = append(in.NEGs, n)
@@ -290,8 +294,30 @@ func negGateWebhook(url string, caPEM []byte) map[string]any {
 	}
 }
 
-// serveNEGGate answers the NEG readiness gate webhook. When the Services
-// cannot be read, the pod is admitted unchanged.
+// negLBServices returns the Kubernetes Services whose NEGs a GKE Ingress
+// or Gateway load balancer uses, by namespace/name, as the NEG sync finds
+// them (l7.go). It reads them afresh, so a pod created before the first
+// sync after a restart is gated too. When they cannot be read it returns
+// none, and only the NEG annotation gates a pod.
+func (s *Service) negLBServices(ctx context.Context, kc *kubeClient, key string) map[string]bool {
+	out := map[string]bool{}
+	rec, err := s.loadKey(key)
+	if err != nil || s.lbResources() == nil {
+		return out
+	}
+	in, err := s.l7Input(ctx, kc, rec)
+	if err != nil {
+		s.env.Log.Warn("gke: reading Ingresses and Gateways failed; only the NEG annotation gates the pod", "cluster", key, "err", err)
+		return out
+	}
+	for k := range translateL7(in).NEGPorts {
+		out[k] = true
+	}
+	return out
+}
+
+// serveNEGGate answers the NEG readiness gate webhook. When the
+// Kubernetes Services cannot be read, the pod is admitted unchanged.
 func (s *Service) serveNEGGate(w http.ResponseWriter, r *http.Request, key string) {
 	var ar admissionReview
 	if err := json.NewDecoder(r.Body).Decode(&ar); err != nil || ar.Request == nil {
@@ -308,8 +334,8 @@ func (s *Service) serveNEGGate(w http.ResponseWriter, r *http.Request, key strin
 			err = kc.get(r.Context(), "/api/v1/namespaces/"+req.Namespace+"/services", &svcs)
 		}
 		if err != nil {
-			s.env.Log.Warn("gke: reading Services failed; the pod gets no NEG readiness gate", "cluster", key, "namespace", req.Namespace, "err", err)
-		} else if ops := negGatePatch(&pod, req.Namespace, svcs.Items, s.rtFor(key).negLBServices()); len(ops) > 0 {
+			s.env.Log.Warn("gke: reading Kubernetes Services failed; the pod gets no NEG readiness gate", "cluster", key, "namespace", req.Namespace, "err", err)
+		} else if ops := negGatePatch(&pod, req.Namespace, svcs.Items, s.negLBServices(r.Context(), kc, key)); len(ops) > 0 {
 			b, _ := json.Marshal(ops)
 			resp.PatchType, resp.Patch = "JSONPatch", base64.StdEncoding.EncodeToString(b)
 		}

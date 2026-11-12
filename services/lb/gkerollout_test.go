@@ -230,7 +230,8 @@ func TestGKERolloutWaitsForLB(t *testing.T) {
 			mu.Unlock()
 		}
 	})
-	// The request log keeps the most recent entries only.
+	// The request log keeps the last 2000 entries, many more than a second
+	// of this load makes.
 	every(time.Second, func() {
 		reqs := lbRequests(t, inst.GatewayURL())
 		mu.Lock()

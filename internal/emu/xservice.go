@@ -611,20 +611,20 @@ type LoadBalancerResources interface {
 }
 
 // NEGHealth is implemented by the "lb" service: how the load balancer
-// sees one GCE_VM_IP_PORT endpoint of a zonal NEG, for GKE's NEG readiness
+// sees one GCE_VM_IP_PORT network endpoint of a zonal NEG, for GKE's NEG readiness
 // gate (ADR 0071). Every backend service is in the load balancer's
 // dataplane, whether or not a forwarding rule routes to it.
 type NEGHealth interface {
 	// NEGEndpointHealth returns, for each backend service with a health
-	// check that has the NEG as a backend, the state of the endpoint ip:port
+	// check that has the NEG as a backend, the state of the network endpoint ip:port
 	// there, as backendServices.getHealth reports it ("HEALTHY",
 	// "UNHEALTHY", "UNKNOWN" or "DRAINING"), or "" while the backend service
-	// does not have the endpoint yet. None means no health check covers the
+	// does not have the network endpoint yet. None means no health check covers the
 	// NEG.
 	NEGEndpointHealth(ctx context.Context, project, zone, neg, ip string, port int) []NEGBackendHealth
 }
 
-// NEGBackendHealth is a NEG endpoint's state in one backend service.
+// NEGBackendHealth is a NEG network endpoint's state in one backend service.
 type NEGBackendHealth struct {
 	// BackendService is its relative name
 	// ("projects/P/global/backendServices/B").

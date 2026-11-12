@@ -2,7 +2,10 @@ package gke
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -290,5 +293,72 @@ func TestNEGGateSync(t *testing.T) {
 	sync()
 	if got := negIPs("web-neg"); !slices.Equal(got, []string{"10.0.0.1"}) {
 		t.Errorf("web-neg endpoints %v after web-new began terminating, want only web-old's", got)
+	}
+}
+
+// The webhook gates a pod behind a Kubernetes Service that only an
+// Ingress uses, before any NEG sync has run (as after a restart).
+func TestServeNEGGateIngressService(t *testing.T) {
+	s := newUnitService(t)
+	s.testLB = &fakeLB{res: map[string]map[string]any{}}
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c1"}}
+	rec.setCluster(&containerpb.Cluster{Name: "c1", Id: "0123456789abcdef", Locations: []string{"us-central1-a"}})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	key := rec.key()
+	kube, kc := newFakeKube(t)
+	s.rtFor(key).kube = kc
+	kube.put(`{"apiVersion":"v1","kind":"Service","metadata":{"namespace":"default","name":"web"},"spec":{"selector":{"app":"web"},"ports":[{"port":80}]}}`)
+	kube.put(`{"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"namespace":"default","name":"web"},
+		"spec":{"defaultBackend":{"service":{"name":"web","port":{"number":80}}}}}`)
+	admit := func(labels string) admissionResponse {
+		t.Helper()
+		body := `{"apiVersion":"admission.k8s.io/v1","kind":"AdmissionReview","request":{"uid":"u1","namespace":"default","operation":"CREATE",
+			"object":{"metadata":{"labels":` + labels + `},"spec":{"containers":[{"name":"c"}]}}}}`
+		w := httptest.NewRecorder()
+		s.serveNEGGate(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), key)
+		var ar admissionReview
+		if err := json.Unmarshal(w.Body.Bytes(), &ar); err != nil || ar.Response == nil {
+			t.Fatalf("response %s: %v", w.Body, err)
+		}
+		return *ar.Response
+	}
+	resp := admit(`{"app":"web"}`)
+	patch, _ := base64.StdEncoding.DecodeString(resp.Patch)
+	if !resp.Allowed || resp.UID != "u1" || !strings.Contains(string(patch), negReadinessGate) {
+		t.Errorf("pod behind the Ingress's Service: %+v, patch %s; want it allowed with the gate", resp, patch)
+	}
+	if resp := admit(`{"app":"other"}`); !resp.Allowed || resp.Patch != "" {
+		t.Errorf("pod no Kubernetes Service selects: %+v, want it allowed unchanged", resp)
+	}
+}
+
+// A gated pod whose Kubernetes Service's EndpointSlices can't be read is
+// not taken for one no NEG covers: its gate waits.
+func TestNEGGateWaitsWhenEndpointsUnread(t *testing.T) {
+	s := newUnitService(t)
+	s.testLB, s.testVPC = &fakeLB{res: map[string]map[string]any{}}, &fakeVPC{negs: map[string][]emu.NEGEndpoint{}}
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c1",
+		Nodes: []nodeRecord{{Name: "n1", Zone: "us-central1-a"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: "c1", Id: "0123456789abcdef", Locations: []string{"us-central1-a"}})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	key := rec.key()
+	kube, kc := newFakeKube(t)
+	s.rtFor(key).kube = kc
+	kube.put(`{"apiVersion":"v1","kind":"Service","metadata":{"namespace":"default","name":"web",
+		"annotations":{"cloud.google.com/neg":"{\"exposed_ports\":{\"80\":{\"name\":\"web-neg\"}}}"}},
+		"spec":{"selector":{"app":"web"},"ports":[{"port":80,"targetPort":8080}]}}`)
+	kube.put(`{"apiVersion":"v1","kind":"Pod","metadata":{"namespace":"default","name":"web-1","labels":{"app":"web"},
+		"creationTimestamp":"` + time.Now().UTC().Format(time.RFC3339) + `"},"spec":{"readinessGates":[{"conditionType":"` + negReadinessGate + `"}]},
+		"status":{"podIP":"10.0.0.1","conditions":[{"type":"ContainersReady","status":"True"}]}}`)
+	kube.failList = "endpointslices"
+	if err := s.syncLoadBalancers(context.Background(), key); err == nil {
+		t.Error("sync with unreadable EndpointSlices succeeded")
+	}
+	if c, _ := field(kube.get("/api/v1/namespaces/default/pods/web-1"), "status.conditions").([]any); len(c) != 1 {
+		t.Errorf("conditions %v, want the gate's left unset", c)
 	}
 }
