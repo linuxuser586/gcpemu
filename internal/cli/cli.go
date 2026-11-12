@@ -71,6 +71,9 @@ type rootOpts struct {
 	external   map[string]string
 	configFile string
 	factories  map[string]instance.Factory
+	// instanceLog, when set, is the Instance log that host rotates: only
+	// a detached child, whose stdout it is, sets it.
+	instanceLog string
 }
 
 // New returns the root command. factories lists the services compiled in.
@@ -210,6 +213,7 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	logOut := io.Writer(os.Stderr)
 	if os.Getenv("GCPEMU_DETACHED") == "1" {
 		logOut = os.Stdout // redirected to the log file by the parent
+		o.instanceLog = filepath.Join(cfg.InstanceDir(), instance.LogFile)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -246,6 +250,9 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 	in, err := instance.New(cfg, o.factories, logOut)
 	if err != nil {
 		return nil, err
+	}
+	if o.instanceLog != "" {
+		startLogRotation(in.Done(), o.instanceLog, in.Env.Log, logMaxSize, logKeep, logCheckInterval)
 	}
 	stopped := func(err error) bool {
 		return errors.Is(err, instance.ErrShutDown) || ctx.Err() != nil
@@ -489,13 +496,16 @@ func readyReasons(b []byte) string {
 }
 
 // logTail returns the last n lines written to the log at path after
-// offset start.
+// offset start, or from the start of a log rotated since.
 func logTail(path string, start int64, n int) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() < start {
+		start = 0 // rotated since start recorded the size
+	}
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return ""
 	}
@@ -734,16 +744,7 @@ func (o *rootOpts) logsCmd() *cobra.Command {
 				_, err = cmd.OutOrStdout().Write(b)
 				return err
 			}
-			b, err := os.ReadFile(filepath.Join(cfg.InstanceDir(), instance.LogFile))
-			if err != nil {
-				return err
-			}
-			for _, line := range strings.SplitAfter(string(b), "\n") {
-				if svc == "" || strings.Contains(line, "service="+svc) || strings.Contains(line, `"service":"`+svc+`"`) {
-					fmt.Fprint(cmd.OutOrStdout(), line)
-				}
-			}
-			return nil
+			return printLogs(cmd.OutOrStdout(), filepath.Join(cfg.InstanceDir(), instance.LogFile), svc)
 		},
 	}
 	cmd.Flags().BoolVar(&requests, "requests", false, "print the structured request log from the running instance")
