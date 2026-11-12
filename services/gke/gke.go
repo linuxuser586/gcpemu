@@ -131,6 +131,9 @@ type Service struct {
 	// calls the watch of a Cluster server makes (serverwatch.go).
 	serverWait    func(ctx context.Context, id string) error
 	serverRestart func(ctx context.Context, key string) (string, error)
+	// testImageStore, set by tests, replaces each node's image storage
+	// (imagegc.go).
+	testImageStore func(key, node string) nodeImageStore
 	// pub holds the Public routes (RoutePublic), programmed into nodes
 	// with external IPs.
 	pub emu.PublicRouteTable
@@ -326,6 +329,22 @@ func (s *Service) Ready() error {
 	if names := s.degraded(); len(names) > 0 {
 		return fmt.Errorf("cluster %s is DEGRADED: its Cluster server kept exiting; stop and start the instance to bring it back", strings.Join(names, ", "))
 	}
+	return nil
+}
+
+// ClockAdvanced implements emu.ClockObserver: it runs image GC on every
+// running cluster's nodes, so a Deterministic Instance collects images on
+// `gcpemu time advance` (ADR 0073).
+func (s *Service) ClockAdvanced(ctx context.Context) error {
+	g := s.track(1)
+	if g == nil {
+		return nil // stopped
+	}
+	defer g.wg.Done()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(g.ctx, cancel)()
+	s.imageGCAll(ctx)
 	return nil
 }
 

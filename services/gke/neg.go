@@ -53,14 +53,14 @@ func negKey(cluster, zone, name string) string { return cluster + "|" + zone + "
 // before a Reset starts none (#293).
 func (s *Service) startControllers(ctx context.Context, key string) {
 	g := genOf(ctx)
-	if g == nil || !s.join(g, 7) {
+	if g == nil || !s.join(g, 8) {
 		return
 	}
 	rt := s.rtFor(key)
 	rt.mu.Lock()
 	if rt.cancel != nil {
 		rt.mu.Unlock()
-		g.wg.Add(-7)
+		g.wg.Add(-8)
 		return
 	}
 	ctx, cancel := context.WithCancel(g.ctx)
@@ -89,6 +89,10 @@ func (s *Service) startControllers(ctx context.Context, key string) {
 	go func() {
 		defer g.wg.Done()
 		s.autoscaleLoop(ctx, key)
+	}()
+	go func() {
+		defer g.wg.Done()
+		s.imageGCLoop(ctx, key)
 	}()
 	go func() {
 		defer g.wg.Done()
