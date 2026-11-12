@@ -194,27 +194,29 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 	if err := a.s.repoAccess(ctx, ref, "artifactregistry.repositories.update"); err != nil {
 		return nil, err
 	}
-	paths := mutableRepoFields
+	paths, keys := mutableRepoFields, map[string][]string(nil)
 	if m := req.GetUpdateMask(); m != nil && len(m.GetPaths()) > 0 {
-		paths = nil
+		paths, keys = nil, map[string][]string{}
 		for _, p := range m.GetPaths() {
-			p = snakeCase(p)
-			if i := strings.IndexByte(p, '.'); i >= 0 && (p[:i] == "labels" || p[:i] == "cleanup_policies") {
-				p = p[:i]
-			}
-			if !contains(mutableRepoFields, p) {
+			field, key, isKey := strings.Cut(p, ".")
+			field = snakeCase(field)
+			if !contains(mutableRepoFields, field) {
 				return nil, apierr.InvalidArgument("Invalid update_mask path %q: field is immutable or does not exist.", p)
 			}
-			paths = append(paths, p)
+			if isKey {
+				fd := repoFields.ByName(protoreflect.Name(field))
+				k, ok := mapKey(key)
+				if !fd.IsMap() || !ok {
+					return nil, apierr.InvalidArgument("Invalid update_mask path %q: only a map field may name a key, and a key is one segment (quote it with backticks if it holds dots).", p)
+				}
+				keys[field] = append(keys[field], k)
+				continue
+			}
+			paths = append(paths, field)
 		}
 	}
 	if err := checkSupportedUpdate(in, paths); err != nil {
 		return nil, err
-	}
-	if contains(paths, "cleanup_policies") {
-		if err := checkCleanupPolicies(in.GetCleanupPolicies()); err != nil {
-			return nil, err
-		}
 	}
 	var out *artifactregistrypb.Repository
 	err = a.s.env.Store.Update(func(tx store.Tx) error {
@@ -232,13 +234,34 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 			}
 		}
 		src, dst := in.ProtoReflect(), repo.ProtoReflect()
-		fields := dst.Descriptor().Fields()
 		for _, p := range paths {
-			fd := fields.ByName(protoreflect.Name(p))
+			fd := repoFields.ByName(protoreflect.Name(p))
 			if src.Has(fd) {
 				dst.Set(fd, src.Get(fd))
 			} else {
 				dst.Clear(fd)
+			}
+		}
+		for field, ks := range keys {
+			if contains(paths, field) {
+				continue // the whole-field path wins
+			}
+			fd := repoFields.ByName(protoreflect.Name(field))
+			from, to := src.Get(fd).Map(), dst.Mutable(fd).Map()
+			for _, k := range ks {
+				mk := protoreflect.ValueOfString(k).MapKey()
+				if v := from.Get(mk); v.IsValid() {
+					to.Set(mk, v)
+				} else {
+					to.Clear(mk)
+				}
+			}
+		}
+		// The checks see the merged map, so a per-key update cannot take
+		// the repository past the policy limit.
+		if contains(paths, "cleanup_policies") || len(keys["cleanup_policies"]) > 0 {
+			if err := checkCleanupPolicies(repo.GetCleanupPolicies()); err != nil {
+				return err
 			}
 		}
 		normalizeRepo(repo)
@@ -309,6 +332,20 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// repoFields describes the fields of Repository.
+var repoFields = (&artifactregistrypb.Repository{}).ProtoReflect().Descriptor().Fields()
+
+// mapKey returns the map key an update_mask path names after its field
+// segment: a bare key, or a backtick-quoted one (AIP-161) that may hold
+// dots. It reports false for an empty key or one with more segments.
+func mapKey(s string) (string, bool) {
+	if q, ok := strings.CutPrefix(s, "`"); ok {
+		k, ok := strings.CutSuffix(q, "`")
+		return k, ok && k != "" && !strings.Contains(k, "`")
+	}
+	return s, s != "" && !strings.ContainsAny(s, ".`")
 }
 
 // snakeCase converts a lowerCamel JSON field path to snake_case.
