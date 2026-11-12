@@ -395,7 +395,7 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 		s.closeLoopback(project, name)
 	}
 	lanPort := s.serveLAN(ctx, plane, rec, publicIP, hostPort)
-	return s.updateRecord(project, name, func(r *instanceRecord) error {
+	if err := s.updateRecord(project, name, func(r *instanceRecord) error {
 		r.HostPort, r.PublicIP, r.LoopIP, r.LANPort = hostPort, publicIP, loopIP, lanPort
 		if rec.PrivateNet != nil && r.PrivateNet != nil {
 			r.PrivateNet = rec.PrivateNet
@@ -405,7 +405,26 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 		// keeps what was applied, and applyFlags catches up from there.
 		r.Instance.IpAddresses = ipMappings(r)
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	// A clone started with a restore bundle is still in recovery;
+	// finishRecovery gives it its full settings, archive_command included.
+	if hasRestoreBundle(extra) {
+		return nil
+	}
+	return s.syncArchiveCommand(ctx, project, name)
+}
+
+// hasRestoreBundle reports whether files hold a point-in-time restore
+// bundle.
+func hasRestoreBundle(files []runtime.File) bool {
+	for _, f := range files {
+		if strings.HasSuffix(f.Name, "/"+proxy.RestoreBundle) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostPortTaken reports whether err, from starting a Cloud SQL instance's
@@ -570,7 +589,10 @@ func (s *Service) restartContainer(ctx context.Context, project, name string) er
 	if err != nil {
 		return err
 	}
-	return s.waitReady(ctx, rt, plane, cname, addr)
+	if err := s.waitReady(ctx, rt, plane, cname, addr); err != nil {
+		return err
+	}
+	return s.syncArchiveCommand(ctx, project, name)
 }
 
 // aliasPrivateIP gives a running container on a Translated private

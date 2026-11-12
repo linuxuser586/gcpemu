@@ -120,3 +120,61 @@ func TestPrepareRestoreRejectsEscapingPaths(t *testing.T) {
 		t.Fatal("file written outside the restore directory")
 	}
 }
+
+// The WAL archive holds segments gzipped by the archive command and, from
+// before it compressed, uncompressed ones; the agent hands PostgreSQL
+// every segment uncompressed under its own name.
+func TestPrepareRestoreDecompressesWAL(t *testing.T) {
+	dir, pgdata := t.TempDir(), filepath.Join(t.TempDir(), "pgdata")
+	gz := func(b []byte) []byte {
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		if _, err := zw.Write(b); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	segment := func(c byte) []byte { return bytes.Repeat([]byte{c, 0, 7}, 4096) }
+	want := map[string][]byte{
+		"000000010000000000000002": segment('a'),
+		"000000010000000000000003": segment('b'),
+		"000000010000000000000004": segment('c'),
+		"00000002.history":         []byte("1\t0/4000000\tno recovery target specified\n"),
+	}
+	bundle := tgz(t, map[string][]byte{
+		"base/1760000000000000/base.tar.gz": tgz(t, map[string][]byte{"PG_VERSION": []byte("14\n")}),
+		"wal/000000010000000000000002":      want["000000010000000000000002"],
+		"wal/000000010000000000000003.gz":   gz(want["000000010000000000000003"]),
+		"wal/000000010000000000000004.gz":   gz(want["000000010000000000000004"]),
+		"wal/00000002.history.gz":           gz(want["00000002.history"]),
+	})
+	if err := os.WriteFile(filepath.Join(dir, RestoreBundle), bundle, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, RestoreTarget), []byte("2026-10-16 10:00:00+00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := prepareRestore(pgdata, dir); !ok || err != nil {
+		t.Fatalf("prepareRestore: %v %v", ok, err)
+	}
+	walDir := filepath.Join(dir, "restore", "wal")
+	entries, err := os.ReadDir(walDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if len(got) != len(want) {
+		t.Fatalf("restore WAL = %v, want the %d segments uncompressed", got, len(want))
+	}
+	for name, data := range want {
+		if b, err := os.ReadFile(filepath.Join(walDir, name)); err != nil || !bytes.Equal(b, data) {
+			t.Errorf("%s: %d bytes, %v; want the original %d bytes", name, len(b), err, len(data))
+		}
+	}
+}

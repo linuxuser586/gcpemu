@@ -118,3 +118,28 @@ func TestManifestStart(t *testing.T) {
 		}
 	}
 }
+
+// The archive command gzips each segment (<segment>.gz) and a WAL archive
+// from before it compressed keeps its uncompressed segments: retention
+// prunes both forms by position and keeps timeline history either way.
+func TestRetentionPrunesGzippedWALByPosition(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	bases := []baseBackup{
+		{End: now.AddDate(0, 0, -9).UnixMicro(), Start: "000000010000000000000002"},
+		{End: now.AddDate(0, 0, -8).UnixMicro(), Start: "000000020000000000000005"},
+	}
+	wal := []string{
+		"000000010000000000000002", "000000010000000000000003.gz",
+		"000000010000000000000004.00000028.backup.gz", "000000010000000000000004.partial.gz",
+		"00000002.history", "00000003.history.gz",
+		"000000010000000000000005", "000000020000000000000005.gz", "000000020000000000000006.gz",
+	}
+	p := planRetention(bases, wal, now, 7)
+	want := []string{
+		"000000010000000000000002", "000000010000000000000003.gz",
+		"000000010000000000000004.00000028.backup.gz", "000000010000000000000004.partial.gz",
+	}
+	if !reflect.DeepEqual(p.DropWAL, want) {
+		t.Errorf("dropped WAL %v, want %v", p.DropWAL, want)
+	}
+}

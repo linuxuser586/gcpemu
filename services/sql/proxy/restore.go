@@ -17,8 +17,10 @@ import (
 // Point-in-time recovery (FR-SQL-008). The emulator gives a clone's
 // container, before it starts, a restore bundle in Dir: a gzipped tar of
 // one base backup (base/<id>/base.tar.gz, from pg_basebackup -Ft -z) and
-// the source's archived WAL (wal/), plus the recovery target time. On a
-// fresh data directory the agent lays the base backup out as PGDATA and
+// the source's archived WAL (wal/, gzipped as <segment>.gz or, from before
+// the archive command compressed, uncompressed), plus the recovery target
+// time. On a fresh data directory the agent decompresses the WAL, lays the
+// base backup out as PGDATA and
 // sets PostgreSQL up to replay the WAL up to the target and promote; the
 // emulator then applies the clone's own settings.
 const (
@@ -38,6 +40,9 @@ func prepareRestore(pgdata, dir string) (bool, error) {
 	restore := filepath.Join(dir, "restore")
 	if err := untgz(filepath.Join(dir, RestoreBundle), restore); err != nil {
 		return false, fmt.Errorf("unpack restore bundle: %w", err)
+	}
+	if err := gunzipWAL(filepath.Join(restore, "wal")); err != nil {
+		return false, fmt.Errorf("decompress WAL: %w", err)
 	}
 	bases, _ := filepath.Glob(filepath.Join(restore, "base", "*", "base.tar.gz"))
 	if len(bases) != 1 {
@@ -72,6 +77,48 @@ func prepareRestore(pgdata, dir string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// gunzipWAL replaces every <name>.gz in dir, as the archive command stores
+// WAL, with <name> uncompressed, so that restore_command stays a plain cp.
+// Files archived uncompressed, before the archive command compressed, are
+// left as they are.
+func gunzipWAL(dir string) error {
+	gzs, err := filepath.Glob(filepath.Join(dir, "*.gz"))
+	if err != nil {
+		return err
+	}
+	for _, p := range gzs {
+		if err := gunzipFile(p, strings.TrimSuffix(p, ".gz")); err != nil {
+			return fmt.Errorf("%s: %w", filepath.Base(p), err)
+		}
+		if err := os.Remove(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// gunzipFile decompresses src into dst.
+func gunzipFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	zr, err := gzip.NewReader(in)
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, zr)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // untgz extracts a gzipped tar into dir, refusing entries outside it.
