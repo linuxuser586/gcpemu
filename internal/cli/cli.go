@@ -36,6 +36,7 @@ var flagFields = map[string]string{
 	"i-understand-this-is-insecure": "Insecure",
 	"lb-bind":                       "LBBind",
 	"gke-bind":                      "GKEBind",
+	"gke-max-nodes":                 "GKEMaxNodes",
 	"ar-bind":                       "ARBind",
 	"gfe-bind":                      "GFEBind",
 	"sql-bind":                      "SQLBind",
@@ -182,6 +183,7 @@ func (o *rootOpts) instanceFlags(f *pflag.FlagSet) {
 	f.BoolVar(&o.flags.Insecure, "i-understand-this-is-insecure", false, "allow non-loopback bind with IAM off")
 	f.StringSliceVar(&o.flags.LBBind, "lb-bind", nil, "also serve load balancing (forwarding rules and GKE LoadBalancer Services) on this address (repeatable), e.g. a LAN IP; nothing else is exposed")
 	f.StringSliceVar(&o.flags.GKEBind, "gke-bind", nil, "also serve every GKE cluster's Kubernetes API on this address (repeatable), e.g. a LAN IP; it then accepts only real credentials")
+	f.IntVar(&o.flags.GKEMaxNodes, "gke-max-nodes", 5, "the Node limit: the most GKE nodes this Instance runs, across all clusters, Standard and Autopilot alike")
 	f.StringSliceVar(&o.flags.ARBind, "ar-bind", nil, "also serve the Artifact Registry registry on this address (repeatable), e.g. a LAN IP, over TLS and to authenticated callers only")
 	f.StringSliceVar(&o.flags.GFEBind, "gfe-bind", nil, "also serve the Google front end (storage.googleapis.com, oauth2.googleapis.com, LOCATION-docker.pkg.dev, ...) on port 443 of this address (repeatable), e.g. a LAN IP, to authenticated callers only")
 	f.StringSliceVar(&o.flags.SQLBind, "sql-bind", nil, "also serve every Cloud SQL instance with a public IP on this address (repeatable), e.g. a LAN IP; Postgres password and IAM authentication apply")

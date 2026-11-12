@@ -758,8 +758,10 @@ proxy translates onto the workload's port block on its own external address, reu
 destination; endpoint-independent mapping caps a workload's concurrent connections at its block,
 and dynamic port allocation lets it grow to `maxPortsPerVm`. Mapping info, status and NAT logs
 name the NAT IP the block stands for.
-`GCPEMU_GKE_MAX_NODES` sets the Node limit, the most GKE nodes per instance (default 5), Standard and
-Autopilot alike. `gcpemu status` shows the limit in force (`info.gke.nodeLimit` in `gcpemu status --json`).
+`--gke-max-nodes` (`GCPEMU_GKE_MAX_NODES`, `gkeMaxNodes` in `gcpemu.yaml`) sets the Node limit, the
+most GKE nodes per Instance (default 5), Standard and Autopilot alike. A value that is not a whole
+number of at least 1 stops `gcpemu start` with an error. `gcpemu status` shows the limit in force
+(`info.gke.nodeLimit` in `gcpemu status --json`).
 [GKE sizing](#gke-sizing) gives the memory and CPUs the Runtime machine needs for them.
 An Autopilot cluster starts with one node and adds one when a pod is Pending for lack of room,
 removing a node once it has been empty for 30 s, never the last (FR-GKE-015). Each node
@@ -981,7 +983,7 @@ included):
 | Clusters, nodes | Memory before your pods | CPUs |
 |---|---|---|
 | 1 cluster, 5 nodes (the default Node limit) | 768 MiB + 1280 MiB + 2 GiB = **4 GiB** | 4 |
-| 1 cluster, 8 nodes (`GCPEMU_GKE_MAX_NODES=8`) | 768 MiB + 2048 MiB + 2 GiB = **4.75 GiB** | 5 |
+| 1 cluster, 8 nodes (`--gke-max-nodes 8`) | 768 MiB + 2048 MiB + 2 GiB = **4.75 GiB** | 5 |
 
 So a 16 GiB Runtime machine (Docker Desktop's VM, say) running 8 nodes leaves about 11 GiB for pods, however much
 memory the nodes' machine shapes advertise (8 `ek-standard-2` nodes advertise 64 GB).
