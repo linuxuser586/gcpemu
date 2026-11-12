@@ -372,9 +372,33 @@ func unionKeys(a, b map[string]string) []string {
 // is enabled: PostgreSQL then archives its WAL (pitr.go).
 const pitrFlag = "gcpemu.pitr"
 
-// archiveCommand copies a completed WAL segment into the archive volume,
-// never overwriting a segment already archived.
-const archiveCommand = "test ! -f " + archiveWAL + "/%f && cp %p " + archiveWAL + "/%f"
+// archiveCommand stores a completed WAL segment %f in the archive volume
+// as %f.gz, compressed with gzip -1 (busybox's, in every postgres:*-alpine
+// image the emulator uses): WAL is often an instance's largest backup
+// cost, and compresses about 2× (random data) to 16× (pgbench). It writes
+// a hidden temporary file (.%f.tmp, which listing and pruning ignore) and
+// renames it into place, so a crash never leaves a partial %f.gz.
+//
+// It never overwrites. PostgreSQL's continuous-archiving docs ask that a
+// file already archived with identical content succeed (the archiver may
+// crash after storing it but before recording success, and retries), so
+// when %f.gz, or %f from before the command compressed, exists the command
+// succeeds if its decompressed content equals %p and fails if it differs.
+// The agent decompresses the WAL of a restore bundle (proxy/restore.go),
+// so restore_command stays a plain cp.
+//
+// Nothing syncs the file before the rename: a crash of the emulator's host
+// (not of PostgreSQL or the container) can leave an empty or truncated
+// %f.gz, which then fails every retry and stalls archiving until it is
+// deleted. A local emulator accepts that, as its data volume does.
+//
+// It is an archive_command, not an archive_library, because PostgreSQL 14
+// has no archive_library. wal_compression is left alone: it is a database
+// flag users set. Instances started with an older command get this one on
+// their next start (syncArchiveCommand). ADR 0072 records these choices.
+const archiveCommand = "if [ -f " + archiveWAL + "/%f.gz ] || [ -f " + archiveWAL + "/%f ]; then " +
+	"{ gzip -dc " + archiveWAL + "/%f.gz 2>/dev/null || cat " + archiveWAL + "/%f; } | cmp -s - %p; " +
+	"else gzip -1 -c %p > " + archiveWAL + "/.%f.tmp && mv " + archiveWAL + "/.%f.tmp " + archiveWAL + "/%f.gz; fi"
 
 // serverFlags are the flags applied to PostgreSQL: the database flags plus
 // pitrFlag when point-in-time recovery is enabled.

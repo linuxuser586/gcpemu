@@ -63,3 +63,28 @@ func SegmentBefore(name, start string) bool {
 	_, drop := walFrom(start, []string{name})
 	return len(drop) == 1
 }
+
+// ArchiveCommand is the archive_command of an instance with point-in-time
+// recovery (exported to the external tests).
+const ArchiveCommand = archiveCommand
+
+// ExecSQL runs SQL as the internal superuser in an instance's container
+// (exported to the external tests).
+func ExecSQL(ctx context.Context, svc emu.Service, project, name, sql string) (string, error) {
+	return svc.(*Service).execSQL(ctx, project, name, "postgres", "", sql)
+}
+
+// ArchiveNow switches an instance's WAL segment and waits until it is
+// archived (exported to the external tests).
+func ArchiveNow(ctx context.Context, svc emu.Service, project, name string) error {
+	return svc.(*Service).archiveNow(ctx, project, name)
+}
+
+// RestartContainer restarts an instance's container in place (exported
+// to the external tests).
+func RestartContainer(ctx context.Context, svc emu.Service, project, name string) error {
+	s := svc.(*Service)
+	mu := s.lock(project, name)
+	defer mu.Unlock()
+	return s.restartContainer(ctx, project, name)
+}

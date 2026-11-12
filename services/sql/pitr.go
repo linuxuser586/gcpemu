@@ -96,10 +96,48 @@ func (s *Service) ensureBaseBackup(ctx context.Context, project, name string) er
 	return s.takeBaseBackup(ctx, project, name)
 }
 
-// clearArchive removes the archived WAL and base backups.
+// clearArchive removes the archived WAL, including the archive command's
+// temporary files, and base backups.
 func (s *Service) clearArchive(ctx context.Context, project, name string) error {
-	_, err := s.execIn(ctx, project, name, "", "sh", "-c", "rm -rf "+archiveWAL+"/* "+archiveBase+"/*")
+	_, err := s.execIn(ctx, project, name, "", "sh", "-c", "rm -rf "+archiveWAL+"/* "+archiveWAL+"/.[!.]* "+archiveBase+"/*")
 	return err
+}
+
+// syncArchiveCommand brings archive_command up to archiveCommand on an
+// instance whose server has point-in-time recovery applied, once its
+// container has just started: AppliedFlags records only that PITR is on,
+// so a server set up with an older command would otherwise keep it. It
+// reloads the configuration; no restart is needed. A server PITR is not
+// yet applied to gets the command from applyFlags, and a fresh volume
+// from bootstrapSQL.
+//
+// A failure is logged, not returned: the server runs, and an older
+// command still archives, uncompressed. The next start tries again.
+func (s *Service) syncArchiveCommand(ctx context.Context, project, name string) {
+	if err := s.updateArchiveCommand(ctx, project, name); err != nil {
+		s.env.Log.Warn("sql: updating WAL archive command", "instance", project+":"+name, "err", err)
+	}
+}
+
+// updateArchiveCommand is syncArchiveCommand, returning its error.
+func (s *Service) updateArchiveCommand(ctx context.Context, project, name string) error {
+	rec, err := s.loadRecord(project, name)
+	if err != nil || rec.AppliedFlags[pitrFlag] == "" {
+		return err
+	}
+	out, err := s.execSQL(ctx, project, name, "postgres", "", "SELECT current_setting('archive_command');")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSuffix(out, "\n") == archiveCommand {
+		return nil
+	}
+	q := alterSystemSQL(nil, map[string]string{"archive_command": archiveCommand}) + "SELECT pg_reload_conf();"
+	if _, err := s.execSQL(ctx, project, name, "postgres", "", q); err != nil {
+		return err
+	}
+	s.env.Log.Info("sql: updated WAL archive command", "instance", project+":"+name)
+	return nil
 }
 
 // baseBackups lists the instance's base backups by end time, oldest first.

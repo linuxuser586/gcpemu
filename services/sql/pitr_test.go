@@ -83,6 +83,9 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 		t.Fatalf("WAL archive before back-dating = %+v, %v", bases, err)
 	}
 	anchor := bases[1]
+	if !hasGzippedSegment(wal) || hasPlainSegment(wal) {
+		t.Fatalf("archived WAL = %v, want every segment as <segment>.gz", wal)
+	}
 	if !hasSegmentBefore(wal, anchor.Start) {
 		t.Fatalf("no archived WAL before the anchor's start %s: %v", anchor.Start, wal)
 	}
@@ -159,6 +162,10 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 		t.Helper()
 		waitOp(t, svc, must(svc.Instances.Patch(testProject, "pitr-clone", &sqladmin.DatabaseInstance{Settings: st}).Do()))
 	}
+	// A temporary file an archive command left behind goes too.
+	if _, err := sql.ExecIn(ctx, sqlSvc, testProject, "pitr-clone", "touch", proxy.ArchiveDir+"/wal/.000000010000000000000099.tmp"); err != nil {
+		t.Fatal(err)
+	}
 	patch(&sqladmin.Settings{ActivationPolicy: "NEVER"})
 	patch(&sqladmin.Settings{BackupConfiguration: &sqladmin.BackupConfiguration{
 		Enabled: true, PointInTimeRecoveryEnabled: false, ForceSendFields: []string{"PointInTimeRecoveryEnabled"},
@@ -170,6 +177,9 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 		t.Fatalf("archive_mode after turning PITR off while stopped = %q, %v", mode, err)
 	}
 	c.Close(ctx)
+	if left, err := sql.ExecIn(ctx, sqlSvc, testProject, "pitr-clone", "ls", "-A", proxy.ArchiveDir+"/wal"); err != nil || strings.TrimSpace(left) != "" {
+		t.Fatalf("archived WAL after turning PITR off = %q, %v; want none", left, err)
+	}
 	if _, err := svc.Projects.Instances.GetLatestRecoveryTime(testProject, "pitr-clone").Do(); err == nil {
 		t.Fatal("recovery window reported with PITR off")
 	}
