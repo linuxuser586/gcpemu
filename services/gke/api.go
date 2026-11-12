@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -465,9 +466,9 @@ func (s *Service) checkNodeLimit(tx store.Tx, exclude string, want int) error {
 			used += len(rec.Int.Nodes)
 		}
 	}
-	if limit := maxNodes(); used+want > limit {
+	if limit := s.maxNodes(); used+want > limit {
 		return apierr.New(8, "gcpemu node limit exceeded: this request needs %d node(s) and %d of %d are in use (set %s to raise the limit; regional clusters run node_count nodes in each zone).",
-			want, used, limit, maxNodesEnv).WithReason("container.googleapis.com", "QUOTA_EXCEEDED")
+			want, used, limit, config.GKEMaxNodesSetting).WithReason("container.googleapis.com", "QUOTA_EXCEEDED")
 	}
 	return nil
 }

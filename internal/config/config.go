@@ -81,6 +81,9 @@ type Config struct {
 	// Kubernetes API is also served, and which its serving certificate
 	// covers. The API server then accepts only real credentials.
 	GKEBind []string `yaml:"gkeBind" env:"GKE_BIND"`
+	// GKEMaxNodes is the Node limit: the most GKE nodes the Instance runs,
+	// Standard and Autopilot alike (FR-GKE-003, default 5).
+	GKEMaxNodes int `yaml:"gkeMaxNodes" env:"GKE_MAX_NODES"`
 	// ARBind lists extra addresses on which the Artifact Registry registry
 	// is also served, over TLS from the instance CA and only to
 	// authenticated callers, whatever the IAM enforcement level.
@@ -154,6 +157,10 @@ type BuildConfig struct {
 	Concurrency int `yaml:"concurrency" env:"CONCURRENCY"`
 }
 
+// GKEMaxNodesSetting names the flag, variable and gcpemu.yaml key that
+// set GKEMaxNodes, for messages that tell the user how to raise the limit.
+const GKEMaxNodesSetting = "--gke-max-nodes (GCPEMU_GKE_MAX_NODES, gkeMaxNodes)"
+
 // MinAdminTokenLen is the shortest AdminToken accepted.
 const MinAdminTokenLen = 32
 
@@ -193,6 +200,7 @@ func Defaults() Config {
 		VMRuntime:        "auto",
 		LoopbackAliases:  "auto",
 		Containerized:    "auto",
+		GKEMaxNodes:      5,
 		Build:            BuildConfig{Concurrency: 4},
 	}
 	return c
@@ -575,6 +583,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Build.Concurrency < 1 {
 		return fmt.Errorf("invalid --build-concurrency (GCPEMU_BUILD_CONCURRENCY, build.concurrency) %d (want at least 1)", c.Build.Concurrency)
+	}
+	if c.GKEMaxNodes < 1 {
+		return fmt.Errorf("invalid %s %d (want at least 1)", GKEMaxNodesSetting, c.GKEMaxNodes)
 	}
 	if c.AdminToken != "" && len(c.AdminToken) < MinAdminTokenLen {
 		return fmt.Errorf("GCPEMU_ADMIN_TOKEN is %d characters; use at least %d", len(c.AdminToken), MinAdminTokenLen)

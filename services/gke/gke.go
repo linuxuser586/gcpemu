@@ -74,8 +74,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -88,12 +86,6 @@ import (
 
 // apiHost is the real API host (host mode).
 const apiHost = "container.googleapis.com"
-
-// maxNodesEnv overrides the per-instance node limit (FR-GKE-003).
-const maxNodesEnv = "GCPEMU_GKE_MAX_NODES"
-
-// defaultMaxNodes is the default per-instance node limit.
-const defaultMaxNodes = 5
 
 // Service is the GKE service module.
 type Service struct {
@@ -419,7 +411,7 @@ func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]str
 // info is what the Service reports in GET /_emu/v1/info as "gke"
 // (FR-GKE-003, #1065).
 type info struct {
-	// NodeLimit is the Node limit in force: from the same lookup the
+	// NodeLimit is the Node limit in force: from the same Config the
 	// quota checks use, so the report and the enforcement agree.
 	NodeLimit int `json:"nodeLimit"`
 }
@@ -427,15 +419,12 @@ type info struct {
 var _ emu.Informer = (*Service)(nil)
 
 // Info implements emu.Informer.
-func (s *Service) Info() any { return info{NodeLimit: maxNodes()} }
+func (s *Service) Info() any { return info{NodeLimit: s.maxNodes()} }
 
-// maxNodes is the per-instance node limit.
-func maxNodes() int {
-	if v, err := strconv.Atoi(os.Getenv(maxNodesEnv)); err == nil && v > 0 {
-		return v
-	}
-	return defaultMaxNodes
-}
+// maxNodes is the Node limit, the most nodes the Instance runs
+// (FR-GKE-003): Config.GKEMaxNodes, which Config.Validate holds at 1 or
+// more.
+func (s *Service) maxNodes() int { return s.env.Config.GKEMaxNodes }
 
 // index records a cluster ID → key mapping (webhook and agent URLs carry
 // the ID).

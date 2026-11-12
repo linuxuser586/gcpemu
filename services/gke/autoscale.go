@@ -15,6 +15,7 @@ import (
 	"cloud.google.com/go/container/apiv1/containerpb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -429,7 +430,7 @@ func (a *autoscaler) scaleUp(ctx context.Context, kc *kubeClient, rec *clusterRe
 		}
 		return ri.mem > rj.mem
 	})
-	limit := maxNodes()
+	limit := s.maxNodes()
 	room := limit - s.nodesElsewhere(a.key) - len(rec.Int.Nodes)
 	perZone := map[string]int{}
 	for _, n := range rec.Int.Nodes {
@@ -485,7 +486,7 @@ pods:
 	for _, f := range failed {
 		a.recordEvent(ctx, kc, f.p, "Warning", "FailedScaleUp", fmt.Sprintf(
 			"Node scale up in zones %s associated with this pod failed: gcpemu node limit exceeded (%d nodes; set %s to raise it). Pod is at risk of not being scheduled.",
-			strings.Join(f.zones, ","), limit, maxNodesEnv))
+			strings.Join(f.zones, ","), limit, config.GKEMaxNodesSetting))
 	}
 	if len(added) == 0 {
 		return waiting, nil
