@@ -13,5 +13,6 @@ On a busy host, k3s can exit hours after its cluster became ready: kine's compac
 
 - A Cluster server the Instance started again is not Disrupted. One started by something else still is.
 - A cluster stays RUNNING while its Cluster server is being restarted. Once the Service gives up, the cluster is DEGRADED and `/_emu/v1/ready` fails, naming it. Stopping and starting the Instance is still the way back from there.
+- Each exit the Service starts the Cluster server again after, and each start that fails, is counted in one condition on the cluster (`conditions` in the GKE API, canonical code `UNAVAILABLE`), with the time and cause of the last one, so a client can tell a bouncing server from a slow one without reading the Instance's log (#1061). The condition stays when the cluster goes DEGRADED, does not expire, and is cleared only when the Cluster server is next brought up afresh: cluster create, Instance start, or Reset. A Cluster server that runs but stops answering is not counted.
 - While the Cluster server is down, the cluster's endpoint still accepts connections and closes them. Refusing them would mean closing the exposed port, which could then move. The Instance logs a warning naming the cluster instead.
 - A proposal to restart another Managed container should show that all of its state is on its volumes, and add it here.
