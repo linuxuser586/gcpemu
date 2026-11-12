@@ -40,10 +40,7 @@ func lastBackupSlot(now time.Time, startTime string) (slot time.Time, ok bool) {
 	if !startTimeRe.MatchString(startTime) {
 		return time.Time{}, false
 	}
-	t, err := time.Parse("15:04", startTime)
-	if err != nil {
-		return time.Time{}, false
-	}
+	t, _ := time.Parse("15:04", startTime) // can't fail once startTimeRe matches
 	now = now.UTC()
 	slot = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, time.UTC)
 	if slot.After(now) {

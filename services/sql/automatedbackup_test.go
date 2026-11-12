@@ -567,7 +567,7 @@ func TestAutomatedBackupTakesABaseBackupWithPITR(t *testing.T) {
 // HH:MM, which the Automated backup schedule could never run.
 func TestBackupStartTimeIsValidated(t *testing.T) {
 	s, _ := fileService(t)
-	bad := []string{"7am", "24:00", "12:60", "7:00", "07:00:00", " 07:00"}
+	bad := []string{"7am", "24:00", "12:60", "7:00", "07:00:00", " 07:00", "07:00 "}
 	good := []string{"00:00", "07:30", "23:59"}
 	instance := func(name string) (int, *sqladmin.DatabaseInstance) {
 		t.Helper()
@@ -580,7 +580,7 @@ func TestBackupStartTimeIsValidated(t *testing.T) {
 		}
 		return code, &in
 	}
-	opCount := func(name string) int {
+	instanceOps := func(name string) int {
 		t.Helper()
 		code, body := call(s, "GET", "/projects/proj-one/operations?instance="+name, "")
 		if code != 200 {
@@ -609,7 +609,7 @@ func TestBackupStartTimeIsValidated(t *testing.T) {
 		if code, _ := instance(name); code != 404 {
 			t.Errorf("insert with startTime %q: instance GET %d, want 404", start, code)
 		}
-		if n := opCount(name); n != 0 {
+		if n := instanceOps(name); n != 0 {
 			t.Errorf("insert with startTime %q: %d Operations, want none", start, n)
 		}
 	}
@@ -668,5 +668,34 @@ func TestBackupStartTimeIsValidated(t *testing.T) {
 				t.Errorf("%s with startTime %q: stored %q", method, start, in.Settings.BackupConfiguration.StartTime)
 			}
 		}
+	}
+}
+
+// TestStoredBadStartTimeFailsPatchesUntilFixed covers #1059's rule that a
+// patch is checked against the merged settings: an instance stored with a
+// startTime the schedule can't read fails every patch that leaves it, which
+// at last explains why it took no Automated backups.
+func TestStoredBadStartTimeFailsPatchesUntilFixed(t *testing.T) {
+	s, _ := fileService(t)
+	putInstance(t, s, "proj-one", "a", false)
+	if err := s.updateRecord("proj-one", "a", func(r *instanceRecord) error {
+		applySettingsDefaults(r.Instance.Settings, nil, "", r.Instance.DatabaseVersion, true)
+		r.Instance.Settings.Tier = "db-perf-optimized-N-2"
+		r.Instance.Settings.IpConfiguration.Ipv4Enabled = true
+		r.Instance.Settings.BackupConfiguration.StartTime = "7am"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/projects/proj-one/instances/a"
+	if code, body := call(s, "PATCH", path, `{"settings":{"userLabels":{"k":"v"}}}`); code != 400 || !strings.Contains(body, "backupConfiguration.startTime (7am)") {
+		t.Errorf("patch leaving startTime 7am: %d %s, want 400 naming it", code, body)
+	}
+	code, body := call(s, "PATCH", path, `{"settings":{"backupConfiguration":{"startTime":"07:00"}}}`)
+	if code != 200 {
+		t.Fatalf("patch fixing startTime: %d %s", code, body)
+	}
+	if op := waitOpDone(t, s, "proj-one", body); op.Error != nil {
+		t.Fatalf("patch fixing startTime: %+v", op.Error.Errors[0])
 	}
 }
