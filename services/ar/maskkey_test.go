@@ -201,3 +201,13 @@ func TestMaskKeyREST(t *testing.T) {
 		})
 	}
 }
+
+// A whole-map update with an invalid policy is INVALID_ARGUMENT even when
+// the repository does not exist: the request is checked before the store.
+func TestMaskInvalidPoliciesBeforeNotFound(t *testing.T) {
+	e := start(t)
+	bad := map[string]*artifactregistrypb.CleanupPolicy{"a": deletePolicy("other", &artifactregistrypb.CleanupPolicyCondition{})}
+	if err := e.update(&artifactregistrypb.Repository{CleanupPolicies: bad}, "cleanup_policies"); code(err) != codes.InvalidArgument {
+		t.Fatalf("UpdateRepository = %v, want INVALID_ARGUMENT", err)
+	}
+}

@@ -218,6 +218,14 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 	if err := checkSupportedUpdate(in, paths); err != nil {
 		return nil, err
 	}
+	// The request's own policies are checked before the store is read, so
+	// a malformed request is INVALID_ARGUMENT even for a missing
+	// repository. The merged map is checked again in the transaction.
+	if sent := requestPolicies(in, paths, keys["cleanup_policies"]); sent != nil {
+		if err := checkCleanupPolicies(sent); err != nil {
+			return nil, err
+		}
+	}
 	var out *artifactregistrypb.Repository
 	err = a.s.env.Store.Update(func(tx store.Tx) error {
 		repo, err := getRepo(tx, ref)
@@ -332,6 +340,26 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// requestPolicies returns the cleanup policies an update applies from the
+// request: the whole map for a cleanup_policies path, or the named keys
+// the request holds for key paths. It returns nil when the update changes
+// no policies.
+func requestPolicies(in *artifactregistrypb.Repository, paths, keys []string) map[string]*artifactregistrypb.CleanupPolicy {
+	if contains(paths, "cleanup_policies") {
+		return in.GetCleanupPolicies()
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sent := map[string]*artifactregistrypb.CleanupPolicy{}
+	for _, k := range keys {
+		if p, ok := in.GetCleanupPolicies()[k]; ok {
+			sent[k] = p
+		}
+	}
+	return sent
 }
 
 // repoFields describes the fields of Repository.
