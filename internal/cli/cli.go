@@ -633,6 +633,8 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				Instance, ID, Version, Dir, IamMode string
 				Pid                                 int
 				Endpoints                           map[string]string
+				// Absent without gke, and on an Instance that predates it.
+				GKE *struct{ NodeLimit int }
 			}
 			var r struct {
 				Services map[string]struct {
@@ -656,6 +658,9 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			fmt.Fprintln(out, "service endpoints:")
 			for _, n := range sortedKeys(i.Endpoints) {
 				fmt.Fprintf(out, "  %-8s %s\n", n, i.Endpoints[n])
+			}
+			if i.GKE != nil {
+				fmt.Fprintf(out, "%-8s node limit %d\n", "gke", i.GKE.NodeLimit)
 			}
 			var ct struct{ Containers []instance.ContainerInfo }
 			_ = json.Unmarshal(cts, &ct)

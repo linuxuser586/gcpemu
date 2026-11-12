@@ -49,6 +49,13 @@ type Service interface {
 	Ready() error
 }
 
+// Informer is implemented by services that report Instance status of their
+// own in GET /_emu/v1/info: Info's value, JSON-serialisable, goes under the
+// service's Name (#1065). It is Instance status, not a GCP API field.
+type Informer interface {
+	Info() any
+}
+
 // Resetter is implemented by services that hold state outside the Store
 // (blob files, in-memory queues) and must clear it on `gcpemu reset`.
 type Resetter interface {

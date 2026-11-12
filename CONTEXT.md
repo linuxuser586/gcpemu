@@ -495,7 +495,7 @@ _Avoid_: preemptible node (GKE's older, separate kind)
 
 **Node limit**:
 The most GKE nodes one Instance runs, across all its clusters, Standard and Autopilot alike. A request that would exceed it fails, and an Autopilot cluster's pods that need a node beyond it stay Pending.
-_Avoid_: host node limit, quota
+_Avoid_: host node limit, quota, max nodes, cap
 
 **GKE overcommit**:
 An Instance's GKE nodes and Cluster servers needing more memory than its Runtime machine has, by the documented sizing formula. The Instance warns about it but never refuses a node for it: what refuses nodes is the Node limit, so where a cluster scales up stays the same on every machine (ADR 0031).
