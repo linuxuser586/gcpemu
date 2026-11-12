@@ -300,10 +300,11 @@ func (a *api) UpdateSecret(ctx context.Context, req *secretmanagerpb.UpdateSecre
 	if err := s.check(ctx, "secretmanager.secrets.update", ref.resource()); err != nil {
 		return nil, err
 	}
-	if len(req.GetUpdateMask().GetPaths()) == 0 {
+	mask := req.GetUpdateMask().GetPaths()
+	if len(mask) == 0 {
 		return nil, apierr.InvalidArgument("update_mask is required.")
 	}
-	paths, keys, err := parseMask(req.GetUpdateMask().GetPaths())
+	paths, keys, err := parseMask(mask)
 	if err != nil {
 		return nil, err
 	}

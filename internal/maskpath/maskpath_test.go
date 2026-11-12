@@ -42,7 +42,7 @@ func TestParseRejectedKeepsField(t *testing.T) {
 	}
 }
 
-func TestCase(t *testing.T) {
+func TestSnakeCaseLowerCamel(t *testing.T) {
 	for _, tc := range []struct{ camel, snake string }{
 		{"labels", "labels"},
 		{"versionAliases", "version_aliases"},
