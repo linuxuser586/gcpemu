@@ -76,6 +76,7 @@ type clusterRT struct {
 	// has logged dropping.
 	otlpWarned sync.Map
 	syncs      sync.Map // SecretSync UID → syncState
+	caBundles  sync.Map // namespace → caBundleEntry
 	// api serves the API server, at apiTarget, on the host's 127.0.0.1 on
 	// a VM runtime.
 	api       *netplane.Exposed

@@ -88,7 +88,7 @@ func (k *fakeKube) put(obj string) {
 func (k *fakeKube) pathOf(m map[string]any) string {
 	res := map[string]string{"Service": "services", "Ingress": "ingresses", "Gateway": "gateways", "HTTPRoute": "httproutes",
 		"Pod": "pods", "EndpointSlice": "endpointslices", "ReplicaSet": "replicasets", "Namespace": "namespaces",
-		"GatewayClass": "gatewayclasses", "Secret": "secrets", "CustomResourceDefinition": "customresourcedefinitions",
+		"GatewayClass": "gatewayclasses", "Secret": "secrets", "ConfigMap": "configmaps", "CustomResourceDefinition": "customresourcedefinitions",
 		"ValidatingAdmissionPolicy": "validatingadmissionpolicies", "ValidatingAdmissionPolicyBinding": "validatingadmissionpolicybindings"}[m["kind"].(string)]
 	av, _ := m["apiVersion"].(string)
 	base := "/apis/" + av
@@ -214,6 +214,13 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		var patch map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&patch)
+		// A resourceVersion in the patch is a precondition, as on a real
+		// API server.
+		if rv, _ := field(patch, "metadata.resourceVersion").(string); rv != "" && rv != field(o, "metadata.resourceVersion") {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"kind":"Status","reason":"Conflict","code":409}`)
+			return
+		}
 		if sub == "status" {
 			patch = map[string]any{"status": patch["status"]}
 		} else {
