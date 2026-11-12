@@ -3,7 +3,6 @@ package ar
 import (
 	"context"
 	"strings"
-	"unicode"
 
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
 	"cloud.google.com/go/longrunning/autogen/longrunningpb"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/listpage"
+	"github.com/linuxuser586/gcpemu/internal/maskpath"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -198,18 +198,16 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 	if m := req.GetUpdateMask(); m != nil && len(m.GetPaths()) > 0 {
 		paths, keys = nil, map[string][]string{}
 		for _, p := range m.GetPaths() {
-			field, key, isKey := strings.Cut(p, ".")
-			field = snakeCase(field)
+			mp, ok := maskpath.Parse(p)
+			field := maskpath.SnakeCase(mp.Field)
 			if !contains(mutableRepoFields, field) {
 				return nil, apierr.InvalidArgument("Invalid update_mask path %q: field is immutable or does not exist.", p)
 			}
-			if isKey {
-				fd := repoFields.ByName(protoreflect.Name(field))
-				k, ok := mapKey(key)
-				if !fd.IsMap() || !ok {
+			if !ok || mp.HasKey {
+				if !ok || !repoFields.ByName(protoreflect.Name(field)).IsMap() {
 					return nil, apierr.InvalidArgument("Invalid update_mask path %q: only a map field may name a key, and a key is one segment (quote it with backticks if it holds dots).", p)
 				}
-				keys[field] = append(keys[field], k)
+				keys[field] = append(keys[field], mp.Key)
 				continue
 			}
 			paths = append(paths, field)
@@ -364,28 +362,3 @@ func requestPolicies(in *artifactregistrypb.Repository, paths, keys []string) ma
 
 // repoFields describes the fields of Repository.
 var repoFields = (&artifactregistrypb.Repository{}).ProtoReflect().Descriptor().Fields()
-
-// mapKey returns the map key an update_mask path names after its field
-// segment: a bare key, or a backtick-quoted one (AIP-161) that may hold
-// dots. It reports false for an empty key or one with more segments.
-func mapKey(s string) (string, bool) {
-	if q, ok := strings.CutPrefix(s, "`"); ok {
-		k, ok := strings.CutSuffix(q, "`")
-		return k, ok && k != "" && !strings.Contains(k, "`")
-	}
-	return s, s != "" && !strings.ContainsAny(s, ".`")
-}
-
-// snakeCase converts a lowerCamel JSON field path to snake_case.
-func snakeCase(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsUpper(r) {
-			b.WriteByte('_')
-			b.WriteRune(unicode.ToLower(r))
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}

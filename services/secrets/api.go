@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/listpage"
 	"github.com/linuxuser586/gcpemu/internal/locations"
+	"github.com/linuxuser586/gcpemu/internal/maskpath"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -298,9 +300,12 @@ func (a *api) UpdateSecret(ctx context.Context, req *secretmanagerpb.UpdateSecre
 	if err := s.check(ctx, "secretmanager.secrets.update", ref.resource()); err != nil {
 		return nil, err
 	}
-	paths := req.GetUpdateMask().GetPaths()
-	if len(paths) == 0 {
+	if len(req.GetUpdateMask().GetPaths()) == 0 {
 		return nil, apierr.InvalidArgument("update_mask is required.")
+	}
+	paths, keys, err := parseMask(req.GetUpdateMask().GetPaths())
+	if err != nil {
+		return nil, err
 	}
 	now := s.env.Clock.Now()
 	var out *secretmanagerpb.Secret
@@ -315,12 +320,7 @@ func (a *api) UpdateSecret(ctx context.Context, req *secretmanagerpb.UpdateSecre
 		}
 		old := rec.pb
 		sec := clone(old)
-		for _, p := range paths {
-			p = snakeCase(p)
-			field, _, _ := strings.Cut(p, ".")
-			if !mutableFields[field] {
-				return apierr.InvalidArgument("Invalid update_mask path %q: the field is immutable or does not exist.", p)
-			}
+		for _, field := range paths {
 			switch field {
 			case "labels":
 				sec.Labels = in.GetLabels()
@@ -341,6 +341,19 @@ func (a *api) UpdateSecret(ctx context.Context, req *secretmanagerpb.UpdateSecre
 					return apierr.InvalidArgument("Secret.customer_managed_encryption is only valid for regional secrets.")
 				}
 				sec.CustomerManagedEncryption = in.GetCustomerManagedEncryption()
+			}
+		}
+		for field, ks := range keys {
+			if slices.Contains(paths, field) {
+				continue // the whole-field path wins
+			}
+			switch field {
+			case "labels":
+				sec.Labels = mergeKeys(sec.Labels, in.GetLabels(), ks)
+			case "annotations":
+				sec.Annotations = mergeKeys(sec.Annotations, in.GetAnnotations(), ks)
+			case "version_aliases":
+				sec.VersionAliases = mergeKeys(sec.VersionAliases, in.GetVersionAliases(), ks)
 			}
 		}
 		if err := s.validateSecret(ctx, ref, sec, old, now); err != nil {
@@ -407,15 +420,45 @@ func (a *api) DeleteSecret(ctx context.Context, req *secretmanagerpb.DeleteSecre
 	return &emptypb.Empty{}, nil
 }
 
-// snakeCase converts a camelCase field mask path to snake_case.
-func snakeCase(p string) string {
-	var b strings.Builder
-	for _, r := range p {
-		if r >= 'A' && r <= 'Z' {
-			b.WriteByte('_')
-			r += 'a' - 'A'
+// mapFields are the mutable Secret fields that are maps, whose keys an
+// update_mask path may name.
+var mapFields = map[string]bool{"labels": true, "annotations": true, "version_aliases": true}
+
+// parseMask splits update_mask paths into whole snake_case fields and the
+// map keys named per field (ADR 0075). Only the field segment is converted
+// from lowerCamel; a key is used as written.
+func parseMask(mask []string) (fields []string, keys map[string][]string, err error) {
+	keys = map[string][]string{}
+	for _, p := range mask {
+		mp, ok := maskpath.Parse(p)
+		field := maskpath.SnakeCase(mp.Field)
+		if !mutableFields[field] {
+			return nil, nil, apierr.InvalidArgument("Invalid update_mask path %q: the field is immutable or does not exist.", p)
 		}
-		b.WriteRune(r)
+		if !ok || mp.HasKey {
+			if !ok || !mapFields[field] {
+				return nil, nil, apierr.InvalidArgument("Invalid update_mask path %q: only a map field may name a key, and a key is one segment (quote it with backticks if it holds dots).", p)
+			}
+			keys[field] = append(keys[field], mp.Key)
+			continue
+		}
+		fields = append(fields, field)
 	}
-	return b.String()
+	return fields, keys, nil
+}
+
+// mergeKeys sets each of keys in dst to its value in src, or removes it
+// when src lacks it, and keeps dst's other keys.
+func mergeKeys[V any](dst, src map[string]V, keys []string) map[string]V {
+	if dst == nil {
+		dst = map[string]V{}
+	}
+	for _, k := range keys {
+		if v, ok := src[k]; ok {
+			dst[k] = v
+		} else {
+			delete(dst, k)
+		}
+	}
+	return dst
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/listpage"
+	"github.com/linuxuser586/gcpemu/internal/maskpath"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -109,7 +110,7 @@ func orderImages(imgs []*artifactregistrypb.DockerImage, orderBy string) error {
 	}
 	desc := len(f) > 1 && strings.EqualFold(f[1], "desc")
 	var less func(a, b *artifactregistrypb.DockerImage) bool
-	switch snakeCase(f[0]) {
+	switch maskpath.SnakeCase(f[0]) {
 	case "name":
 		less = func(a, b *artifactregistrypb.DockerImage) bool { return a.Name < b.Name }
 	case "upload_time":
@@ -307,7 +308,7 @@ func orderVersions(vs []*artifactregistrypb.Version, orderBy string) error {
 	}
 	desc := len(f) > 1 && strings.EqualFold(f[1], "desc")
 	var less func(a, b *artifactregistrypb.Version) bool
-	switch snakeCase(f[0]) {
+	switch maskpath.SnakeCase(f[0]) {
 	case "name":
 		less = func(a, b *artifactregistrypb.Version) bool { return a.Name < b.Name }
 	case "create_time":
