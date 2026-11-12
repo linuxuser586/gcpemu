@@ -79,3 +79,56 @@ func TestPrintHostServices(t *testing.T) {
 		t.Errorf("none: %q", out.String())
 	}
 }
+
+// TestStatusGKENodeLimit: plain `gcpemu status` prints the Node limit when
+// info.gke is present, and nothing for it on an info body without it
+// (#1065); --json carries info unchanged.
+func TestStatusGKENodeLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, info, want string
+	}{
+		{"gke", `{"instance":"default","endpoints":{"gke":"127.0.0.1:1"},"gke":{"nodeLimit":8}}`, "gke      node limit 8\n"},
+		{"older", `{"instance":"default","endpoints":{"gke":"127.0.0.1:1"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/_emu/v1/info":
+					_, _ = io.WriteString(w, tc.info)
+				case "/_emu/v1/ready":
+					_, _ = io.WriteString(w, `{"ready":true,"services":{"gke":{"ready":true}}}`)
+				default:
+					_, _ = io.WriteString(w, `{"containers":[]}`)
+				}
+			}))
+			defer srv.Close()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "endpoints.json"), []byte(`{"gateway":"`+strings.TrimPrefix(srv.URL, "http://")+`"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			run := func(args ...string) string {
+				var out strings.Builder
+				root := New(nil)
+				root.SetOut(&out)
+				root.SetArgs(append([]string{"status", "--config", filepath.Join(dir, "none.yaml"), "--data-dir", dir}, args...))
+				if err := root.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				return out.String()
+			}
+			out := run()
+			if tc.want != "" {
+				// After the service endpoints, before the containers.
+				if !strings.Contains(out, "  gke      127.0.0.1:1\n"+tc.want+"containers:") {
+					t.Errorf("status:\n%s", out)
+				}
+			} else if strings.Contains(out, "node limit") {
+				t.Errorf("status without info.gke:\n%s", out)
+			}
+			js := run("--json")
+			if strings.Contains(js, `"gke":{"nodeLimit":8}`) != (tc.want != "") {
+				t.Errorf("status --json: %s", js)
+			}
+		})
+	}
+}

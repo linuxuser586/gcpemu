@@ -52,7 +52,7 @@ func newAdmin(in *Instance) http.Handler {
 		for _, s := range in.services {
 			names = append(names, s.Name())
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		body := map[string]any{
 			"instance":       in.Config.Instance,
 			"id":             in.ID,
 			"pid":            os.Getpid(),
@@ -66,7 +66,17 @@ func newAdmin(in *Instance) http.Handler {
 			"services":       names,
 			"endpoints":      in.Env.Endpoints.All(),
 			"runtime":        in.RuntimeStatus(r.Context()),
-		})
+		}
+		// A service's own status goes under its name (#1065). It never
+		// replaces one of the keys above.
+		for _, s := range in.services {
+			if i, ok := s.(emu.Informer); ok {
+				if _, taken := body[s.Name()]; !taken {
+					body[s.Name()] = i.Info()
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("GET /_emu/v1/iam/enforcement", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, enforcement{Level: in.Env.Auth.Mode()})

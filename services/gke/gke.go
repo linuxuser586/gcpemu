@@ -416,6 +416,19 @@ func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]str
 	}
 }
 
+// info is what the Service reports in GET /_emu/v1/info as "gke"
+// (FR-GKE-003, #1065).
+type info struct {
+	// NodeLimit is the Node limit in force: from the same lookup the
+	// quota checks use, so the report and the enforcement agree.
+	NodeLimit int `json:"nodeLimit"`
+}
+
+var _ emu.Informer = (*Service)(nil)
+
+// Info implements emu.Informer.
+func (s *Service) Info() any { return info{NodeLimit: maxNodes()} }
+
 // maxNodes is the per-instance node limit.
 func maxNodes() int {
 	if v, err := strconv.Atoi(os.Getenv(maxNodesEnv)); err == nil && v > 0 {
