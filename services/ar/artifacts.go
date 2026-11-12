@@ -376,16 +376,20 @@ func (a *api) DeleteVersion(ctx context.Context, req *artifactregistrypb.DeleteV
 	})
 }
 
-// removeManifest deletes a manifest and its tags and collects its blob.
+// removeManifest deletes a manifest, its tags and the blob links only it
+// used, and collects what lost its last reference.
 func (s *Service) removeManifest(ref repoRef, img, digest string) error {
+	var freed []string
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		if _, ok := getManifest(tx, ref, img, digest); !ok {
 			return entityNotFound()
 		}
-		return deleteManifest(tx, ref, img, digest)
+		var err error
+		freed, err = deleteManifest(tx, ref, img, digest)
+		return err
 	})
 	if err == nil {
-		s.collect([]string{digest})
+		s.collect(freed)
 	}
 	return err
 }

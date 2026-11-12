@@ -141,22 +141,71 @@ func getManifest(tx store.Tx, r repoRef, img, digest string) (*manifestRec, bool
 	return &m, true
 }
 
-// deleteManifest removes a manifest and every tag pointing at it, returning
-// the digest for garbage collection.
-func deleteManifest(tx store.Tx, r repoRef, img, digest string) error {
+// deleteManifest removes a manifest, every tag pointing at it and each
+// blob link of the image that the manifest used and no remaining manifest
+// of the image uses (ADR 0070). It returns the digests that lost a
+// reference, for collect. An index's children are left alone.
+func deleteManifest(tx store.Tx, r repoRef, img, digest string) ([]string, error) {
+	m, ok := getManifest(tx, r, img, digest)
+	if !ok {
+		return nil, nil
+	}
 	k := itemKey(r, img, digest)
 	if err := tx.Delete(nsManifests, k); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tx.Delete(nsRefs, refKey(digest, k, "m")); err != nil {
-		return err
+		return nil, err
 	}
 	for _, t := range tagsFor(tx, r, img, digest) {
 		if err := tx.Delete(nsTags, itemKey(r, img, t)); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	freed := []string{digest}
+	if len(m.Blobs) == 0 {
+		return freed, nil
+	}
+	used := imageBlobs(tx, imgPrefix(r, img))[imgPrefix(r, img)]
+	if used == nil {
+		used = map[string]bool{}
+	}
+	for _, d := range m.Blobs {
+		if used[d] {
+			continue
+		}
+		if _, ok := getLink(tx, r, img, d); !ok {
+			continue
+		}
+		if err := deleteLink(tx, r, img, d); err != nil {
+			return nil, err
+		}
+		used[d] = true // a digest listed twice is dropped once
+		freed = append(freed, d)
+	}
+	return freed, nil
+}
+
+// imageBlobs returns, for each image under prefix (a store key prefix),
+// keyed by its imgPrefix, the config and layer digests its manifests use.
+func imageBlobs(tx store.Tx, prefix string) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	tx.Scan(nsManifests, prefix, func(k string, b []byte) bool {
+		var m manifestRec
+		if json.Unmarshal(b, &m) != nil {
+			return true
+		}
+		ref, img, _ := splitItemKey(k)
+		ip := imgPrefix(ref, img)
+		if out[ip] == nil {
+			out[ip] = map[string]bool{}
+		}
+		for _, d := range m.Blobs {
+			out[ip][d] = true
+		}
+		return true
+	})
+	return out
 }
 
 // tagsFor returns the tags of an image pointing at digest, sorted.
@@ -182,13 +231,13 @@ func getTag(tx store.Tx, r repoRef, img, tag string) (*tagRec, bool) {
 	return &t, true
 }
 
-// putLink records a blob in an OCI repository.
+// putLink records a blob in an OCI repository. Linking a blob already
+// linked renews the link's create time, so that the Registry cleanup pass
+// counts its grace period from the push that linked it last.
 func putLink(tx store.Tx, r repoRef, img, digest string, size int64, now time.Time) error {
 	k := itemKey(r, img, digest)
-	if store.Exists(tx, nsLinks, k) {
-		return nil
-	}
-	if err := store.PutJSON(tx, nsLinks, k, linkRec{Size: size, Created: now}); err != nil {
+	existed := store.Exists(tx, nsLinks, k)
+	if err := store.PutJSON(tx, nsLinks, k, linkRec{Size: size, Created: now}); err != nil || existed {
 		return err
 	}
 	return tx.Put(nsRefs, refKey(digest, k, "b"), nil)

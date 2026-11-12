@@ -230,6 +230,18 @@ func (s *Service) putManifest(w http.ResponseWriter, r *http.Request, t *target,
 			if err != nil {
 				return err
 			}
+			// A version delete or cleanup pass since checkReferences may have
+			// dropped what this manifest uses (ADR 0070).
+			for _, d := range rec.Blobs {
+				if _, ok := getLink(tx, t.ref, t.img, d); !ok {
+					return &referenceGoneError{d}
+				}
+			}
+			for _, c := range rec.Children {
+				if _, ok := getManifest(tx, t.ref, t.img, c.Digest); !ok {
+					return &referenceGoneError{c.Digest}
+				}
+			}
 			if old, ok := getManifest(tx, t.ref, t.img, digest); ok {
 				rec.Created = old.Created
 			}
@@ -250,7 +262,13 @@ func (s *Service) putManifest(w http.ResponseWriter, r *http.Request, t *target,
 		})
 	}
 	s.blobs.gc.RUnlock()
+	var gone *referenceGoneError
 	switch {
+	case errors.As(err, &gone):
+		rerr := regErr(http.StatusBadRequest, "MANIFEST_BLOB_UNKNOWN", "blob unknown to registry: %s", gone.digest)
+		rerr.detail = map[string]string{"digest": gone.digest}
+		writeRegError(w, rerr)
+		return
 	case errors.Is(err, errImmutableTag):
 		writeRegError(w, regErr(http.StatusBadRequest, "TAG_INVALID", "tag %q is immutable in repository %s", tag, t.ref.name()))
 		return
@@ -272,6 +290,12 @@ func (s *Service) putManifest(w http.ResponseWriter, r *http.Request, t *target,
 }
 
 var errImmutableTag = errors.New("immutable tag")
+
+// referenceGoneError is a blob or child manifest that checkReferences
+// found but that was deleted before the manifest was stored.
+type referenceGoneError struct{ digest string }
+
+func (e *referenceGoneError) Error() string { return "reference gone: " + e.digest }
 
 // manifestType determines the manifest media type from Content-Type or,
 // failing that, the document itself.
@@ -371,7 +395,7 @@ func (s *Service) buildTime(digest string) *time.Time {
 // deleteManifest deletes a manifest by digest (with its tags) or a tag.
 func (s *Service) deleteManifest(w http.ResponseWriter, t *target, ref string) {
 	var missing bool
-	var removed bool
+	var freed []string
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		if !isDigestRef(ref) {
 			if _, ok := getTag(tx, t.ref, t.img, ref); !ok {
@@ -384,8 +408,9 @@ func (s *Service) deleteManifest(w http.ResponseWriter, t *target, ref string) {
 			missing = true
 			return nil
 		}
-		removed = true
-		return deleteManifest(tx, t.ref, t.img, ref)
+		var err error
+		freed, err = deleteManifest(tx, t.ref, t.img, ref)
+		return err
 	})
 	if err != nil {
 		writeRegError(w, regErr(http.StatusInternalServerError, "UNKNOWN", "%v", err))
@@ -395,9 +420,7 @@ func (s *Service) deleteManifest(w http.ResponseWriter, t *target, ref string) {
 		writeRegError(w, regErr(http.StatusNotFound, "MANIFEST_UNKNOWN", "manifest unknown: %s", ref))
 		return
 	}
-	if removed {
-		s.collect([]string{ref})
-	}
+	s.collect(freed)
 	w.Header().Set("Content-Length", "0")
 	w.WriteHeader(http.StatusAccepted)
 }
