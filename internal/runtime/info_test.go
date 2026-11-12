@@ -89,3 +89,41 @@ func TestInfoCPUSet(t *testing.T) {
 		}
 	}
 }
+
+// TestInfoMemTotal: Info reports the memory the runtime's own machine has
+// (/info's MemTotal): the VM's on a VM runtime (#1070). A runtime that
+// reports none gives 0.
+func TestInfoMemTotal(t *testing.T) {
+	for _, tc := range []struct {
+		name, info string
+		want       int64
+	}{
+		{name: "reported", info: `{"MemTotal":17179869184}`, want: 17179869184},
+		{name: "absent", info: `{}`, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/version"):
+					_, _ = io.WriteString(w, `{"Version":"27.3.1"}`)
+				case strings.HasSuffix(r.URL.Path, "/info"):
+					_, _ = io.WriteString(w, tc.info)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			cl, err := New("tcp://" + strings.TrimPrefix(srv.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			in, err := cl.Info(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if in.MemTotal != tc.want {
+				t.Errorf("MemTotal = %d; want %d", in.MemTotal, tc.want)
+			}
+		})
+	}
+}

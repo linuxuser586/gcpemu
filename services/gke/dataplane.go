@@ -225,7 +225,12 @@ func (s *Service) provision(ctx context.Context, key string) error {
 // restart (FR-CORE-031). Volumes keep the Kubernetes state.
 // The caller marks the cluster RECONCILING first (markRestoring).
 func (s *Service) restore(ctx context.Context, key string) {
-	if err := s.bringUp(ctx, key); err != nil && ctx.Err() == nil {
+	err := s.bringUp(ctx, key)
+	// The bring-up connected the runtime, so the Runtime machine's memory
+	// is known: an Instance that starts with nodes beyond it warns now
+	// (#1070), whether or not the cluster came back.
+	s.reestimate(ctx)
+	if err != nil && ctx.Err() == nil {
 		s.env.Log.Warn("gke: restoring cluster failed", "cluster", key, "err", err)
 		s.markError(ctx, key, err)
 	}
@@ -1675,6 +1680,7 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 		}
 		return tx.Delete(nsClusters, key)
 	})
+	s.reestimate(ctx)
 	s.mu.Lock()
 	delete(s.clusters, key)
 	delete(s.byID, id)

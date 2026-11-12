@@ -156,6 +156,11 @@ type Service struct {
 	hostNames  map[string]map[string]bool
 	hostWarned map[string]bool
 	hostFail   map[string]error
+	// ocMu guards oc, the last estimate of the memory the Instance's GKE
+	// clusters need (overcommit.go); oc is nil while the Runtime machine's
+	// memory is unknown.
+	ocMu sync.Mutex
+	oc   *overcommit
 }
 
 // New returns the service.
@@ -397,6 +402,12 @@ func (s *Service) Reset(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+var _ emu.ResetFinisher = (*Service)(nil)
+
+// ResetDone implements emu.ResetFinisher: once the Store is reset too, the
+// Instance has no GKE nodes, so GKE overcommit is estimated afresh (#1070).
+func (s *Service) ResetDone() { s.reestimate(context.Background()) }
+
 // EnvVars implements emu.EnvVarer (FR-CORE-004): gcloud's container
 // endpoint override and the kubeconfig the emulator maintains. The
 // Instance derives the LoadBalancer Services' GCPEMU_GKE_* variables from
@@ -414,12 +425,17 @@ type info struct {
 	// NodeLimit is the Node limit in force: from the same Config the
 	// quota checks use, so the report and the enforcement agree.
 	NodeLimit int `json:"nodeLimit"`
+	// Overcommit is the last GKE overcommit estimate (#1070); absent while
+	// the Runtime machine's memory is unknown.
+	Overcommit *overcommit `json:"overcommit,omitempty"`
 }
 
 var _ emu.Informer = (*Service)(nil)
 
 // Info implements emu.Informer.
-func (s *Service) Info() any { return info{NodeLimit: s.maxNodes()} }
+func (s *Service) Info() any {
+	return info{NodeLimit: s.maxNodes(), Overcommit: s.overcommitReport()}
+}
 
 // maxNodes is the Node limit, the most nodes the Instance runs
 // (FR-GKE-003): Config.GKEMaxNodes, which Config.Validate holds at 1 or
