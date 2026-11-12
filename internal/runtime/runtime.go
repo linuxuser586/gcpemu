@@ -1299,56 +1299,136 @@ type ExecResult struct {
 	Stderr   []byte
 }
 
-// Exec runs cmd in a running container and waits for it.
+// Exec runs cmd in a running container and waits for it, collecting its
+// output. ExecStream is for output too large to hold.
 func (c *Client) Exec(ctx context.Context, id string, cmd []string, stdin []byte) (ExecResult, error) {
+	var in io.Reader
+	if stdin != nil {
+		in = bytes.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	code, err := c.ExecStream(ctx, id, cmd, in, &stdout, &stderr)
+	return ExecResult{ExitCode: code, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, err
+}
+
+// ExecStream runs cmd in a running container and waits for it, copying
+// stdin (none if nil) to it and its stdout and stderr to the writers as they
+// arrive, and returns its exit code. A stdin that fails to read, or a writer
+// that fails, fails the exec, and so does output that ends before the
+// command exits. A Read of stdin may still be in progress when ExecStream
+// returns; nothing it reads is sent.
+func (c *Client) ExecStream(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	var created struct {
 		ID string `json:"Id"`
 	}
 	body := map[string]any{"Cmd": cmd, "AttachStdout": true, "AttachStderr": true, "AttachStdin": stdin != nil}
 	if err := c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/exec", nil, body, &created); err != nil {
-		return ExecResult{}, err
+		return 0, err
 	}
-	res, err := c.execStart(ctx, created.ID, stdin)
-	if err != nil {
-		return res, err
+	if stdout == nil {
+		stdout = io.Discard
 	}
-	var st struct{ ExitCode int }
-	if err := c.do(ctx, http.MethodGet, "/exec/"+created.ID+"/json", nil, nil, &st); err != nil {
-		return res, err
+	if stderr == nil {
+		stderr = io.Discard
 	}
-	res.ExitCode = st.ExitCode
-	return res, nil
+	if err := c.execStart(ctx, created.ID, stdin, stdout, stderr); err != nil {
+		return 0, err
+	}
+	return c.execExitCode(ctx, created.ID)
 }
 
-// execStart starts an exec and demultiplexes its output. Stdin requires a
-// hijacked connection, so it is done over a raw connection.
-func (c *Client) execStart(ctx context.Context, execID string, stdin []byte) (ExecResult, error) {
-	var res ExecResult
+// execExitCode returns the exit code of an exec whose stream has ended.
+// The daemon may record the exit just after it ends the stream; a command
+// still running after that lost its stream, and with it some output.
+func (c *Client) execExitCode(ctx context.Context, execID string) (int, error) {
+	for wait := 5 * time.Millisecond; ; wait *= 2 {
+		var st struct {
+			Running  bool
+			ExitCode int
+		}
+		if err := c.do(ctx, http.MethodGet, "/exec/"+execID+"/json", nil, nil, &st); err != nil {
+			return 0, err
+		}
+		if !st.Running {
+			return st.ExitCode, nil
+		}
+		if wait > time.Second {
+			return 0, fmt.Errorf("exec %s: its output ended while it was still running", execID)
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}
+}
+
+// execStart starts an exec and demultiplexes its output to stdout and
+// stderr. Stdin requires a hijacked connection, so it is done over a raw
+// connection.
+func (c *Client) execStart(ctx context.Context, execID string, stdin io.Reader, stdout, stderr io.Writer) error {
 	payload, _ := json.Marshal(map[string]any{"Detach": false, "Tty": false})
 	if stdin == nil {
 		resp, err := c.raw(ctx, http.MethodPost, "/exec/"+execID+"/start", nil, bytes.NewReader(payload), "application/json")
 		if err != nil {
-			return res, err
+			return err
 		}
 		defer resp.Body.Close()
-		err = demux(resp.Body, &res)
-		return res, err
+		return demuxTo(resp.Body, stdout, stderr)
 	}
 	conn, br, release, err := c.hijack(ctx, "/exec/"+execID+"/start", payload)
 	if err != nil {
-		return res, err
+		return err
 	}
-	defer release()
+	in := &stdinReader{r: stdin}
+	// The copy is not waited for: a command can exit without reading all
+	// of stdin while a Read of it blocks. It ends when that Read returns,
+	// on the next write to the closed connection.
 	go func() {
-		_, _ = conn.Write(stdin)
+		// A write fails once the command stops reading, which is its
+		// business; only a failure to read stdin fails the exec.
+		if _, err := io.Copy(conn, in); err != nil {
+			if in.failed() != nil {
+				release()
+			}
+			return
+		}
 		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
 			_ = cw.CloseWrite()
 		}
 	}()
-	if err = demux(br, &res); err != nil && ctx.Err() != nil {
-		err = ctx.Err()
+	err = demuxTo(br, stdout, stderr)
+	release()
+	switch {
+	case in.failed() != nil:
+		return fmt.Errorf("exec stdin: %w", in.failed())
+	case err != nil && ctx.Err() != nil:
+		return ctx.Err()
 	}
-	return res, err
+	return err
+}
+
+// stdinReader keeps the error of a Read that failed other than at EOF.
+type stdinReader struct {
+	r   io.Reader
+	mu  sync.Mutex
+	err error
+}
+
+func (s *stdinReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF {
+		s.mu.Lock()
+		s.err = err
+		s.mu.Unlock()
+	}
+	return n, err
+}
+
+func (s *stdinReader) failed() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // hijack issues an upgrade request and returns the raw connection, which is
@@ -1402,7 +1482,7 @@ func demuxTo(r io.Reader, stdout, stderr io.Writer) error {
 	hdr := make([]byte, 8)
 	for {
 		if _, err := io.ReadFull(r, hdr); err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if err == io.EOF {
 				return nil
 			}
 			return err

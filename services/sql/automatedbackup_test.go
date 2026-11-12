@@ -3,6 +3,7 @@ package sql
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -52,7 +53,10 @@ func TestLastBackupSlot(t *testing.T) {
 // autoService is a fileService whose backups dump without a container.
 func autoService(t *testing.T) (*Service, *clock.Offset) {
 	s, clk := fileService(t)
-	s.dump = func(context.Context, string, string) (string, error) { return "-- dump", nil }
+	s.dump = func(_ context.Context, _, _ string, w io.Writer) error {
+		_, err := io.WriteString(w, "-- dump")
+		return err
+	}
 	return s, clk
 }
 
@@ -188,9 +192,10 @@ func TestAutomatedBackupWaitsForAnotherOperation(t *testing.T) {
 	// An on-demand backup holds the instance until unblock.
 	unblock, blocked := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	s.dump = func(ctx context.Context, _, _ string) (string, error) {
+	s.dump = func(_ context.Context, _, _ string, w io.Writer) error {
 		once.Do(func() { close(blocked); <-unblock })
-		return "-- dump", nil
+		_, err := io.WriteString(w, "-- dump")
+		return err
 	}
 	code, body := call(s, "POST", "/projects/proj-one/instances/a/backupRuns", `{"description":"mine"}`)
 	if code != 200 {
@@ -213,8 +218,8 @@ func TestAutomatedBackupWaitsForAnotherOperation(t *testing.T) {
 func TestFailedAutomatedBackupIsNotRetriedBeforeTheNextSlot(t *testing.T) {
 	s, clk := autoService(t)
 	putWithAutomatedBackups(t, s, clk, "a", "02:00", 7)
-	s.dump = func(context.Context, string, string) (string, error) {
-		return "", newOpError("ERROR_RDBMS", "pg_dumpall: disk full")
+	s.dump = func(context.Context, string, string, io.Writer) error {
+		return newOpError("ERROR_RDBMS", "pg_dumpall: disk full")
 	}
 
 	advance(t, s, clk, 3*time.Hour)
@@ -439,8 +444,8 @@ func TestRetentionDeletesFailedAutomatedBackupsOlderThanTheOldestKept(t *testing
 	s, clk := autoService(t)
 	putWithAutomatedBackups(t, s, clk, "a", "02:00", 1)
 	ok := s.dump
-	s.dump = func(context.Context, string, string) (string, error) {
-		return "", newOpError("ERROR_RDBMS", "disk full")
+	s.dump = func(context.Context, string, string, io.Writer) error {
+		return newOpError("ERROR_RDBMS", "disk full")
 	}
 	advance(t, s, clk, 3*time.Hour)
 	s.dump = ok

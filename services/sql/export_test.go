@@ -2,6 +2,11 @@ package sql
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
@@ -87,4 +92,63 @@ func RestartContainer(ctx context.Context, svc emu.Service, project, name string
 	mu := s.lock(project, name)
 	defer mu.Unlock()
 	return s.restartContainer(ctx, project, name)
+}
+
+// BackupFile returns the dump file recorded on a stored backup (exported to
+// the external tests).
+func BackupFile(svc emu.Service, project string, id int64) string {
+	b, _ := svc.(*Service).findBackup(project, id)
+	if b == nil {
+		return ""
+	}
+	return b.File
+}
+
+// MakePlainBackup rewrites a stored backup's gzipped dump as the plain
+// <id>.sql that backups had before #1043, and records it on the backup
+// (exported to the external tests).
+func MakePlainBackup(svc emu.Service, project string, id int64) error {
+	s := svc.(*Service)
+	b, ok := s.findBackup(project, id)
+	if !ok {
+		return fmt.Errorf("no backup %d", id)
+	}
+	r, err := openDump(b.File)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	plain := strings.TrimSuffix(b.File, ".gz")
+	f, err := os.Create(plain)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, r); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(b.File); err != nil {
+		return err
+	}
+	return s.updateBackupRecord(project, b.owner(), id, func(b *backupRecord) { b.File = plain })
+}
+
+// DataDirFiles lists the files under the service's data directory
+// (exported to the external tests).
+func DataDirFiles(svc emu.Service) ([]string, error) {
+	d, err := svc.(*Service).env.ServiceDir("sql")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	err = filepath.WalkDir(d, func(p string, e fs.DirEntry, err error) error {
+		if err == nil && !e.IsDir() {
+			out = append(out, p)
+		}
+		return err
+	})
+	return out, err
 }

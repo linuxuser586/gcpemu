@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -80,7 +81,7 @@ type Service struct {
 	// dump and baseBackup are a backup's pg_dumpall and, with
 	// point-in-time recovery, its Base backup (dumpAll, takeBaseBackup).
 	// Tests replace them.
-	dump       func(ctx context.Context, project, name string) (string, error)
+	dump       func(ctx context.Context, project, name string, w io.Writer) error
 	baseBackup func(ctx context.Context, project, name string) error
 }
 
