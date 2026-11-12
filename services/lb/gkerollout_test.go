@@ -1,6 +1,7 @@
 package lb_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -301,22 +302,27 @@ func TestGKERolloutWaitsForLB(t *testing.T) {
 	}
 
 	// With the Instance out of reach, the webhook fails open: a pod behind
-	// the Service is created without the gate.
+	// the Kubernetes Service is admitted without the gate. The API server
+	// takes up the changed webhook a moment later, so dry runs are sent
+	// until one goes to the unreachable URL.
 	k.do("PATCH", "/apis/admissionregistration.k8s.io/v1/mutatingwebhookconfigurations/gcpemu-neg-readiness-gate", "application/json-patch+json",
 		[]byte(`[{"op":"replace","path":"/webhooks/0/clientConfig/url","value":"https://127.0.0.1:1/unreachable"}]`))
 	pod, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "Pod",
 		"metadata": map[string]any{"name": "ungated", "labels": map[string]string{"app": "web"}},
 		"spec":     d["spec"].(map[string]any)["template"].(map[string]any)["spec"]})
-	k.do("POST", "/api/v1/namespaces/default/pods", "application/json", pod)
-	pods, err = k.pods("web")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range pods {
-		if p.Metadata.Name == "ungated" && p.gated() {
-			t.Error("a pod created while the webhook was out of reach has the gate")
+	eventually(t, 30*time.Second, "a pod admitted without the gate while the webhook is out of reach", func() bool {
+		resp, err := k.hc.Post(k.endpoint+"/api/v1/namespaces/default/pods?dryRun=All", "application/json", bytes.NewReader(pod))
+		if err != nil {
+			return false
 		}
-	}
+		defer resp.Body.Close()
+		var p rolloutPod
+		if resp.StatusCode != http.StatusCreated {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("pod refused while the webhook is out of reach: %s %s", resp.Status, b)
+		}
+		return json.NewDecoder(resp.Body).Decode(&p) == nil && !p.gated()
+	})
 }
 
 type lbRequest struct {
