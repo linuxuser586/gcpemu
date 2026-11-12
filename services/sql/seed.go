@@ -137,6 +137,10 @@ func exportSettings(si *seedInstance, in *sqladmin.DatabaseInstance) {
 	// edition derived from the tier is not written.
 	def := &sqladmin.Settings{Tier: cur.Tier}
 	applySettingsDefaults(def, map[string]any{}, in.Region+"-b", in.DatabaseVersion, true)
+	// Backup retention defaults by the Cloud SQL instance's own edition,
+	// which the Seed file writes when it is not the derived one.
+	def.BackupConfiguration.BackupRetentionSettings.RetainedBackups,
+		def.BackupConfiguration.TransactionLogRetentionDays = retentionDefaults(cur.Edition)
 	st := settingsDiff(toMap(cur), toMap(def))
 	for _, k := range []string{"tier", "settingsVersion", "databaseFlags"} {
 		delete(st, k)
