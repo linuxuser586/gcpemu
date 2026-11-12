@@ -177,6 +177,10 @@ _Avoid_: daemon client, in-VM client
 **VM runtime**:
 A container runtime whose networks the host cannot route into: those that live inside a virtual machine, and, on Linux, rootless runtimes, whose networks live in their own network namespace. On Windows and macOS every container runtime is one, e.g. Docker Desktop, Colima, OrbStack or Podman machine; on Linux, one that reports itself as Docker Desktop or rootless, or whose Bridge gateway is not held by the bridge it reports, e.g. Docker Desktop on Linux or rootless Podman.
 
+**Runtime machine**:
+The machine a container runtime's containers run on: the host, or the virtual machine a runtime such as Docker Desktop, Colima or Podman machine runs in. Its memory is what the runtime reports, not the host's. A rootless runtime on Linux is a VM runtime whose Runtime machine is the host.
+_Avoid_: host (when a VM is meant), Docker Desktop VM (unqualified)
+
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
 _Avoid_: bridge container, tunnel
@@ -492,6 +496,10 @@ _Avoid_: preemptible node (GKE's older, separate kind)
 **Node limit**:
 The most GKE nodes one Instance runs, across all its clusters, Standard and Autopilot alike. A request that would exceed it fails, and an Autopilot cluster's pods that need a node beyond it stay Pending.
 _Avoid_: host node limit, quota
+
+**GKE overcommit**:
+An Instance's GKE nodes and Cluster servers needing more memory than its Runtime machine has, by the documented sizing formula. The Instance warns about it but never refuses a node for it: what refuses nodes is the Node limit, so where a cluster scales up stays the same on every machine (ADR 0031).
+_Avoid_: overprovisioning, host node limit
 
 **Mirror cache**:
 The copies of public-registry images that the registry keeps after an Instance's GKE nodes pull them through it, so later pulls are served locally, even while the emulator is offline. An image is in it only once every one of its blobs is. It is cache: State snapshots hold it, but a change to it while one is saved does not count as the Instance's state changing, and an image a restore lacks is fetched again when next pulled.
