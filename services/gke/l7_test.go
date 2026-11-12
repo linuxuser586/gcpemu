@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ func (k *fakeKube) put(obj string) {
 
 func (k *fakeKube) pathOf(m map[string]any) string {
 	res := map[string]string{"Service": "services", "Ingress": "ingresses", "Gateway": "gateways", "HTTPRoute": "httproutes",
-		"Pod": "pods", "ReplicaSet": "replicasets", "Namespace": "namespaces",
+		"Pod": "pods", "EndpointSlice": "endpointslices", "ReplicaSet": "replicasets", "Namespace": "namespaces",
 		"GatewayClass": "gatewayclasses", "Secret": "secrets", "CustomResourceDefinition": "customresourcedefinitions",
 		"ValidatingAdmissionPolicy": "validatingadmissionpolicies", "ValidatingAdmissionPolicyBinding": "validatingadmissionpolicybindings"}[m["kind"].(string)]
 	av, _ := m["apiVersion"].(string)
@@ -126,11 +127,7 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	base, ns, res, name, sub := splitKubePath(r.URL.Path)
-	if strings.HasPrefix(base, "/apis/gateway.networking.k8s.io") && !k.gatewayAPI || res == "endpointslices" && r.Method == http.MethodGet && name == "" {
-		if res == "endpointslices" {
-			_, _ = io.WriteString(w, `{"items":[]}`)
-			return
-		}
+	if strings.HasPrefix(base, "/apis/gateway.networking.k8s.io") && !k.gatewayAPI {
 		http.NotFound(w, r)
 		return
 	}
@@ -145,11 +142,15 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Strings(keys)
 		items := []any{}
-		// Label selectors of the form key!=value only.
-		lk, lv, _ := strings.Cut(r.URL.Query().Get("labelSelector"), "!=")
+		// Label selectors of one key!=value or key=value only.
+		sel := r.URL.Query().Get("labelSelector")
+		lk, lv, ne := strings.Cut(sel, "!=")
+		if !ne {
+			lk, lv, _ = strings.Cut(sel, "=")
+		}
 		for _, p := range keys {
 			if lk != "" {
-				if l, _ := field(k.objs[p], "metadata.labels").(map[string]any); l[lk] == lv {
+				if l, _ := field(k.objs[p], "metadata.labels").(map[string]any); (l[lk] == lv) == ne {
 					continue
 				}
 			}
@@ -214,6 +215,9 @@ func (k *fakeKube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			delete(patch, "status")
 		}
+		if r.Header.Get("Content-Type") == "application/strategic-merge-patch+json" {
+			mergeConditions(o, patch)
+		}
 		mergeJSON(o, patch)
 		k.patches = append(k.patches, r.URL.Path)
 		_ = json.NewEncoder(w).Encode(o)
@@ -243,6 +247,26 @@ func (k *fakeKube) store(path string, obj map[string]any) {
 		obj["status"] = map[string]any{"conditions": []any{map[string]any{"type": "Established", "status": "True"}}}
 	}
 	k.objs[path] = obj
+}
+
+// mergeConditions turns a strategic merge patch's status.conditions into
+// the whole list it merges into, by type.
+func mergeConditions(dst, patch map[string]any) {
+	pc, _ := field(patch, "status.conditions").([]any)
+	if pc == nil {
+		return
+	}
+	cur, _ := field(dst, "status.conditions").([]any)
+	out := append([]any{}, cur...)
+	for _, c := range pc {
+		i := slices.IndexFunc(out, func(o any) bool { return field(o.(map[string]any), "type") == field(c.(map[string]any), "type") })
+		if i < 0 {
+			out = append(out, c)
+		} else {
+			out[i] = c
+		}
+	}
+	patch["status"].(map[string]any)["conditions"] = out
 }
 
 // mergeJSON applies a JSON merge patch (RFC 7386) to dst.

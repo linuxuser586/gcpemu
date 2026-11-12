@@ -90,6 +90,22 @@ type clusterRT struct {
 	// (serverwatch.go).
 	server string
 	watch  *serverWatch
+	// negLBSvcs are the Services whose NEGs a load balancer uses, by
+	// namespace/name, as the last NEG sync found them: their pods get the
+	// NEG readiness gate (neggate.go).
+	negLBSvcs map[string]bool
+}
+
+func (rt *clusterRT) setNEGLBServices(m map[string]bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.negLBSvcs = m
+}
+
+func (rt *clusterRT) negLBServices() map[string]bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.negLBSvcs
 }
 
 func (s *Service) stopRT(rt *clusterRT) {
@@ -285,6 +301,7 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	}
 	s.installCAInjector(ctx, d, key)
 	s.installInstrumentationWebhook(ctx, d, key)
+	s.installNEGGateWebhook(ctx, d, key)
 	s.installAutopilotWebhooks(ctx, d, key)
 	if err := s.startNodes(ctx, d, key, sn, ""); err != nil {
 		return err
@@ -929,6 +946,7 @@ func (s *Service) upgradeServer(ctx context.Context, key, version string) error 
 	s.watchServer(ctx, d, key)
 	s.installCAInjector(ctx, d, key)
 	s.installInstrumentationWebhook(ctx, d, key)
+	s.installNEGGateWebhook(ctx, d, key)
 	s.installAutopilotWebhooks(ctx, d, key)
 	if err := s.waitNodes(ctx, key, ""); err != nil {
 		return err
