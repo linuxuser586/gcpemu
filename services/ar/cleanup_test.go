@@ -325,8 +325,8 @@ func TestDeterministicCleanupPassOnlyOnClockAdvance(t *testing.T) {
 
 // Pushes, version deletes sharing a layer with them, and cleanup passes
 // run at once; every version left afterwards pulls in full. A push that
-// raced the delete of its shared layer's last user may fail, as on any
-// registry, and is pushed again.
+// raced the delete of its shared layer's last user, or that a 2h clock
+// advance left idle past the grace period, may fail, and is pushed again.
 func TestCleanupPassConcurrentWithPushesAndDeletes(t *testing.T) {
 	e := start(t)
 	e.createRepo(testLoc, "images")
@@ -337,9 +337,12 @@ func TestCleanupPassConcurrentWithPushesAndDeletes(t *testing.T) {
 		keeps = append(keeps, imageOf(t, fmt.Sprintf("keep-%d", i), shared, randomLayer(t)))
 		drops = append(drops, imageOf(t, fmt.Sprintf("drop-%d", i), shared, randomLayer(t)))
 	}
-	// raced reports a push that lost its shared layer to a concurrent
-	// delete, the one failure ADR 0070 allows.
-	raced := func(err error) bool { return err != nil && strings.Contains(err.Error(), "MANIFEST_BLOB_UNKNOWN") }
+	// raced reports a push that ADR 0070 lets fail: it lost its shared
+	// layer to a concurrent delete, or a clock advance past the grace
+	// period made its upload session or links abandoned mid-push.
+	raced := func(err error) bool {
+		return err != nil && (strings.Contains(err.Error(), "MANIFEST_BLOB_UNKNOWN") || strings.Contains(err.Error(), "BLOB_UPLOAD_UNKNOWN"))
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 3*rounds)
 	wg.Add(3)
