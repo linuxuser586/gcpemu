@@ -155,6 +155,37 @@ func TestPolicyDeletesOldUntagged(t *testing.T) {
 	checkLine(t, log.take(), untagged, "[]", "[old-untagged]", false)
 }
 
+// A version a policy deletes frees its own layer and config blobs; a layer
+// it shares with a remaining version stays (#1039: "by policy").
+func TestPolicyDeleteFreesLayers(t *testing.T) {
+	e := policyEnv(t, false, deletePolicy("old-untagged", &artifactregistrypb.CleanupPolicyCondition{
+		TagState: tagState(artifactregistrypb.CleanupPolicyCondition_UNTAGGED), OlderThan: durationpb.New(7 * day),
+	}))
+	shared, own := randomLayer(t), randomLayer(t)
+	tagged := imageOf(t, "app:v1", shared)
+	e.push("app:v1", tagged)
+	untagged := imageOf(t, "app-untagged", shared, own)
+	ud := digestOf(t, untagged)
+	e.push("app@"+ud.String(), untagged)
+	cfg, err := untagged.ConfigName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, od := digestOf(t, shared), digestOf(t, own)
+
+	e.advance(8 * day)
+
+	e.checkVersions("app", digestOf(t, tagged))
+	for what, d := range map[string]v1.Hash{"manifest": ud, "own layer": od, "config": cfg} {
+		if e.hasBlob(d) {
+			t.Errorf("the deleted version's %s %s is still on disk", what, d)
+		}
+	}
+	if !e.hasBlob(sd) {
+		t.Error("the layer shared with the remaining version was freed")
+	}
+}
+
 // cleanupLog collects the Instance's cleanup policy log lines, written
 // as JSON (emutest.WithLogOutput).
 type cleanupLog struct {

@@ -262,7 +262,7 @@ func (c *cleanupTB) runCleanups() {
 	}
 }
 
-// lockedBuffer is a bytes.Buffer safe for concurrent use.
+// lockedBuffer is a strings.Builder safe for concurrent use.
 type lockedBuffer struct {
 	mu  sync.Mutex
 	buf strings.Builder
