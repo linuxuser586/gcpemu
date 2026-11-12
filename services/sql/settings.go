@@ -245,6 +245,11 @@ func validateSettings(st *sqladmin.Settings, version string) (map[string]string,
 	if fb := st.FinalBackupConfig; fb != nil && (fb.RetentionDays < 0 || fb.RetentionDays > maxTTLDays) {
 		return nil, errInvalid("finalBackupConfig.retentionDays must be between 1 and %d.", maxTTLDays)
 	}
+	// An omitted startTime is 00:00 by now (applySettingsDefaults); one the
+	// Automated backup schedule can't read would never back up (#1059).
+	if bc := st.BackupConfiguration; bc != nil && !startTimeRe.MatchString(bc.StartTime) {
+		return nil, errInvalid("Invalid backupConfiguration.startTime (%s). Use 24-hour HH:MM in UTC.", bc.StartTime)
+	}
 	if err := validateRetention(st); err != nil {
 		return nil, err
 	}
