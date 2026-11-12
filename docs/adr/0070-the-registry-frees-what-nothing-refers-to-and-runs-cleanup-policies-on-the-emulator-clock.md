@@ -25,5 +25,5 @@ Artifact Registry reports cleanup, and dry runs as `BatchDeleteVersions` with `v
 - A store that leaked before this change shrinks on the first pass after the upgrade.
 - A push reusing a layer in the instant its last other user is deleted fails with `MANIFEST_BLOB_UNKNOWN`, as it can on any registry, and succeeds when pushed again.
 - In a Deterministic Instance nothing is cleaned up, and no abandoned upload or orphaned link freed, until `gcpemu time advance` runs.
-- After a restart, a dry run reports each matching version once more.
+- After a restart or `gcpemu reset`, a dry run reports each matching version once more.
 - Referrer protection is a deliberate departure from Artifact Registry; a referrer whose subject is deleted is cleaned up like any other untagged version.
