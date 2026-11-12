@@ -845,6 +845,33 @@ it('lists the cluster’s NEGs from the compute API', async () => {
   expect(rows[0]).toHaveTextContent('us-central1-a')
 })
 
+it('shows a running cluster’s conditions, such as its Cluster server exiting', async () => {
+  const msg =
+    'The Cluster server exited 2 times since the instance started it and was started again; last at 2026-11-12T10:41:07Z: Cluster server exited with code 1: boom'
+  server.use(
+    http.get(`*/container/v1/projects/${P}/locations/us-central1-a/clusters/web`, () =>
+      HttpResponse.json(
+        cluster({ conditions: [{ code: 'UNKNOWN', canonicalCode: 'UNAVAILABLE', message: msg }] }),
+      ),
+    ),
+  )
+  renderApp(`${base}?project=${P}`)
+  expect(await screen.findByRole('alert')).toHaveTextContent(msg)
+  expect(screen.getByText('RUNNING')).toBeInTheDocument()
+})
+
+it('shows a DEGRADED cluster’s status message', async () => {
+  const msg =
+    'The Cluster server exited 3 times within 10m0s and is no longer started again; stop and start the instance to bring it back.'
+  server.use(
+    http.get(`*/container/v1/projects/${P}/locations/us-central1-a/clusters/web`, () =>
+      HttpResponse.json(cluster({ status: 'DEGRADED', statusMessage: msg })),
+    ),
+  )
+  renderApp(`${base}?project=${P}`)
+  expect(await screen.findByRole('alert')).toHaveTextContent(msg)
+})
+
 it('waits for a running cluster before reading Kubernetes', async () => {
   server.use(
     http.get(`*/container/v1/projects/${P}/locations/us-central1-a/clusters/web`, () =>

@@ -231,13 +231,15 @@ func (s *Service) restore(ctx context.Context, key string) {
 }
 
 // markRestoring reports a cluster whose containers are being recreated as
-// RECONCILING until it is back.
+// RECONCILING until it is back. Its Cluster server is brought up afresh,
+// so the count of its exits is cleared.
 func (s *Service) markRestoring(key string) {
 	_ = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
 		switch c.Status {
 		case containerpb.Cluster_RUNNING, containerpb.Cluster_ERROR, containerpb.Cluster_DEGRADED:
 			c.Status = containerpb.Cluster_RECONCILING
 		}
+		clearServerExits(rec, c)
 		return nil
 	})
 }

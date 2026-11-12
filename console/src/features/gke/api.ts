@@ -55,6 +55,13 @@ export interface WorkloadPolicyConfig {
   autopilotCompatibilityAuditingEnabled?: boolean
 }
 
+/** StatusCondition is a condition a cluster or node pool reports. */
+export interface StatusCondition {
+  code?: string
+  canonicalCode?: string
+  message?: string
+}
+
 export interface Cluster {
   name: string
   id?: string
@@ -63,6 +70,7 @@ export interface Cluster {
   locations?: string[]
   status?: ClusterStatus
   statusMessage?: string
+  conditions?: StatusCondition[]
   endpoint?: string
   initialClusterVersion?: string
   currentMasterVersion?: string

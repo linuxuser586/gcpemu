@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"google.golang.org/genproto/googleapis/rpc/code"
 
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -83,6 +84,7 @@ func (v *serverSupervisor) run(ctx context.Context, id string) {
 				id = nid
 				break
 			}
+			err = fmt.Errorf("the Cluster server failed to start again: %w", err)
 		}
 	}
 }
@@ -157,13 +159,20 @@ func (s *Service) unwatchServer(key string) {
 // supervisor returns the supervisor of the cluster's Cluster server.
 func (s *Service) supervisor(d *deps, key string) *serverSupervisor {
 	v := &serverSupervisor{
-		now:     time.Now,
+		now:     s.serverNow,
 		wait:    s.serverWait,
 		restart: func(ctx context.Context) (string, error) { return s.serverRestart(ctx, key) },
-		warn: func(err error) {
-			s.env.Log.Warn("gke: Cluster server exited; starting it again", "cluster", key, "err", err)
-		},
-		degrade: func(err error) { s.degradeServer(key, err) },
+	}
+	if v.now == nil {
+		v.now = time.Now
+	}
+	v.warn = func(err error) {
+		s.env.Log.Warn("gke: Cluster server exited; starting it again", "cluster", key, "err", err)
+		s.countServerExit(key, v.now(), err, false)
+	}
+	v.degrade = func(err error) {
+		s.countServerExit(key, v.now(), err, true)
+		s.degradeServer(key, err)
 	}
 	if v.wait == nil {
 		v.wait = func(ctx context.Context, id string) error { return awaitServerExit(ctx, d, id) }
@@ -226,6 +235,49 @@ func (s *Service) restartServer(ctx context.Context, d *deps, key string) (strin
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	return rt.server, nil
+}
+
+// countServerExit counts an exit of the cluster's Cluster server, made
+// when with err, in the cluster's one UNAVAILABLE condition (#1061);
+// gaveUp says the Service no longer starts it again.
+func (s *Service) countServerExit(key string, when time.Time, err error, gaveUp bool) {
+	_ = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
+		if c.Status == containerpb.Cluster_STOPPING {
+			return nil
+		}
+		rec.Int.ServerExits++
+		c.Conditions = []*containerpb.StatusCondition{serverExitCondition(rec.Int.ServerExits, when, err, gaveUp)}
+		return nil
+	})
+}
+
+// clearServerExits clears the count of the cluster's Cluster server exits,
+// and its condition, as a bring-up starts the server afresh: on Instance
+// start and the restore after Reset (#1061). A created cluster starts with
+// none.
+func clearServerExits(rec *clusterRecord, c *containerpb.Cluster) {
+	rec.Int.ServerExits = 0
+	c.Conditions = nil
+}
+
+// serverExitCondition is the condition counting n exits of a Cluster
+// server, the last made when with err, after which it was started again
+// unless gaveUp.
+func serverExitCondition(n int, when time.Time, err error, gaveUp bool) *containerpb.StatusCondition {
+	times := "times"
+	if n == 1 {
+		times = "time"
+	}
+	then := "was started again"
+	if gaveUp {
+		then = "is no longer started again"
+	}
+	return &containerpb.StatusCondition{
+		Code:          containerpb.StatusCondition_UNKNOWN,
+		CanonicalCode: code.Code_UNAVAILABLE,
+		Message: fmt.Sprintf("The Cluster server exited %d %s since the instance started it and %s; last at %s: %v",
+			n, times, then, when.UTC().Format(time.RFC3339), err),
+	}
 }
 
 // degradeServer marks the cluster DEGRADED once its Cluster server kept
