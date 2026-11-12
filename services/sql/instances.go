@@ -129,6 +129,8 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	in.ServerCaCert = sslCertOf(rec.ServerCAPEM, project, in.Name)
 	in.Etag = etagOf(in.Settings)
 	rec.Instance = &in
+	// The first Automated backup comes at the next start time.
+	rec.BackupSlot = currentSlot(in.Settings, s.env.Clock.Now())
 	ensureDNSName(rec)
 	rec.AppliedFlags = serverFlags(in.Settings) // applied by the bootstrap script
 
@@ -368,6 +370,13 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 	next.Settings.SettingsVersion = cur.Settings.SettingsVersion + 1
 	next.Etag = etagOf(next.Settings)
 
+	// Enabling backups or changing their start time skips the current
+	// slot: the next Automated backup comes at the next start time.
+	rescheduled := backupsEnabled(next.Settings) &&
+		(!backupsEnabled(cur.Settings) || backupStartTime(cur.Settings) != backupStartTime(next.Settings))
+	// Lowering retainedBackups deletes the excess Automated backups.
+	lowered := retainedBackups(next.Settings) < retainedBackups(cur.Settings)
+
 	oldAct, newAct := cur.Settings.ActivationPolicy, next.Settings.ActivationPolicy
 	netChanged := oldIP.Ipv4Enabled != newIP.Ipv4Enabled || oldIP.PrivateNetwork != newIP.PrivateNetwork
 	flagsChanged := !reflect.DeepEqual(serverFlags(cur.Settings), serverFlags(next.Settings))
@@ -402,6 +411,10 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 		}
 		next.State, next.IpAddresses = latest.Instance.State, ipMappings(&nrec)
 		nrec.HostPort, nrec.PublicIP, nrec.LoopIP, nrec.AppliedFlags = latest.HostPort, latest.PublicIP, latest.LoopIP, latest.AppliedFlags
+		nrec.BackupSlot = latest.BackupSlot
+		if rescheduled {
+			nrec.BackupSlot = currentSlot(next.Settings, s.env.Clock.Now())
+		}
 		return store.PutJSON(tx, nsInstances, instKey(project, name), &nrec)
 	}); err != nil {
 		s.releaseOp(op)
@@ -412,6 +425,11 @@ func (s *Service) modifyInstance(w http.ResponseWriter, r *http.Request, replace
 	failed := cur.State == "FAILED"
 	needsWork := oldAct != newAct || (newAct != "NEVER" && (netChanged || flagsChanged || failed))
 	op = s.runOp(op, needsWork, func(ctx context.Context) error {
+		if lowered {
+			if err := s.pruneAutomated(project, name); err != nil {
+				return err
+			}
+		}
 		switch {
 		case newAct == "NEVER" && oldAct != "NEVER":
 			if err := s.stopContainer(ctx, project, name); err != nil {

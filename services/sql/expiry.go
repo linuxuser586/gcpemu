@@ -19,18 +19,26 @@ import (
 // clock advance.
 const expirySweepInterval = time.Second
 
-// ClockAdvanced deletes the backups that expired before returning
-// (`gcpemu time advance`).
+// ClockAdvanced takes the Automated backups that became due
+// (automatedbackup.go), and waits for any the sweep started, and deletes
+// the backups that expired, before returning (`gcpemu time advance`).
 func (s *Service) ClockAdvanced(ctx context.Context) error {
+	s.bgMu.Lock()
+	gen := s.bg.ctx
+	s.bgMu.Unlock()
+	s.startDueAutomatedBackups(gen)
+	err := s.awaitOps(ctx, s.runningAutomated())
 	s.expireBackups()
-	return nil
+	return err
 }
 
-// expiryLoop sweeps every expirySweepInterval until ctx is done.
-func (s *Service) expiryLoop(ctx context.Context) {
+// backupLoop sweeps every expirySweepInterval until ctx is done, starting
+// due Automated backups and deleting expired backups.
+func (s *Service) backupLoop(ctx context.Context) {
 	t := time.NewTicker(expirySweepInterval)
 	defer t.Stop()
 	for {
+		s.startDueAutomatedBackups(ctx)
 		s.expireBackups()
 		select {
 		case <-ctx.Done():
@@ -40,14 +48,16 @@ func (s *Service) expiryLoop(ctx context.Context) {
 	}
 }
 
-// expiry is b's expiryTime, "" for none. Only a Final backup expires, as
-// in Cloud SQL; an on-demand backup's stored expiryTime, as an older state
-// snapshot can hold, is ignored.
+// expiry is b's expiryTime, "" for none. Only a Final backup and a
+// Retained Automated backup (retainedbackup.go) expire, as in Cloud SQL;
+// an on-demand backup's stored expiryTime, as an older state snapshot can
+// hold, is ignored.
 func (b *backupRecord) expiry() string {
-	if b.Run.Type != "FINAL" {
-		return ""
+	switch {
+	case b.Run.Type == "FINAL", b.Run.Type == "AUTOMATED" && b.InstanceDeletionTime != "":
+		return b.ExpiryTime
 	}
-	return b.ExpiryTime
+	return ""
 }
 
 // expired reports whether b is due for deletion at now.

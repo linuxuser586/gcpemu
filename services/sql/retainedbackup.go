@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
@@ -13,10 +14,11 @@ import (
 // Backups of deleted Cloud SQL instances (FR-SQL-008): Final backups
 // (finalbackup.go, #407) and Retained backups (#366). With
 // settings.retainBackupsOnDelete, instances.delete keeps every on-demand
-// backup of the instance, whatever its state, as a Retained backup: it
-// keeps its type, ID, name, description and state, and gains the
-// instanceDeletionTime and instanceSettings a Final backup has. Like any
-// on-demand backup it has no expiry.
+// and Automated backup of the instance (automatedbackup.go), whatever its
+// state, as a Retained backup: it keeps its type, ID, name, description
+// and state, and gains the instanceDeletionTime and instanceSettings a
+// Final backup has. A Retained on-demand backup has no expiry; Retained
+// Automated backups expire one a day (expireRetainedAutomated).
 //
 // A backup of a deleted instance is stored under "P/I@deleted/backupKey"
 // and its dump under backups/P/I@deleted. Instance names cannot contain
@@ -46,7 +48,7 @@ func (b *backupRecord) owner() string {
 // instance's delete keeps it.
 var errDeletedMidBackup = errors.New("the Cloud SQL instance was deleted before the backup finished")
 
-// retainBackups makes every on-demand backup of the Cloud SQL instance a
+// retainBackups makes every backup of the Cloud SQL instance a
 // Retained backup of in, deleted at deletedAt, and moves its dump out of
 // the instance's backup directory. The delete runs after the instance's
 // other operations, so a backup run is normally finished; one that is not
@@ -58,6 +60,9 @@ func (s *Service) retainBackups(in *sqladmin.DatabaseInstance, deletedAt string)
 		scanJSON(tx, nsBackups, project+"/"+name+"/", func(_ string, b *backupRecord) { recs = append(recs, b) })
 		return nil
 	})
+	if err := expireRetainedAutomated(recs, in, deletedAt); err != nil {
+		return err
+	}
 	// The dumps move first: a crash before the records do leaves a file
 	// nothing names, not a backup without its dump.
 	for _, b := range recs {
@@ -88,6 +93,31 @@ func (s *Service) retainBackups(in *sqladmin.DatabaseInstance, deletedAt string)
 		}
 		return nil
 	})
+}
+
+// expireRetainedAutomated gives the Automated backups among recs (newest
+// first) the expiry they have as Retained backups of in, deleted at
+// deletedAt: the newest successful one expires retainedBackups days after
+// the deletion, the next a day earlier, and so on, but none sooner than a
+// day after it. A FAILED one expires with the successful one taken before
+// it.
+func expireRetainedAutomated(recs []*backupRecord, in *sqladmin.DatabaseInstance, deletedAt string) error {
+	at, err := time.Parse(time.RFC3339Nano, deletedAt)
+	if err != nil {
+		return err
+	}
+	keep := max(retainedBackups(in.Settings), 1)
+	var successful int64
+	for _, b := range recs {
+		if b.Run.Type != "AUTOMATED" {
+			continue
+		}
+		b.ExpiryTime = at.Add(days(max(keep-successful, 1))).Format(time.RFC3339Nano)
+		if b.Run.Status == "SUCCESSFUL" {
+			successful++
+		}
+	}
+	return nil
 }
 
 // migrateDeletedOwners moves Final backups stored by v0.9.0 under

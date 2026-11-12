@@ -37,7 +37,7 @@ type Service struct {
 	mux *http.ServeMux
 
 	// bgMu guards bg, the current generation of background work
-	// (operations, recovery, the expiry loop). Reset cancels it, waits for
+	// (operations, recovery, the backup loop). Reset cancels it, waits for
 	// it and starts the next; Stop cancels it until Start starts the next.
 	// A generation's own fields are safe to use once read.
 	bgMu sync.Mutex
@@ -76,6 +76,12 @@ type Service struct {
 	// about to read, which a sweep must not delete yet.
 	inUseMu sync.Mutex
 	inUse   map[string]int
+
+	// dump and baseBackup are a backup's pg_dumpall and, with
+	// point-in-time recovery, its Base backup (dumpAll, takeBaseBackup).
+	// Tests replace them.
+	dump       func(ctx context.Context, project, name string) (string, error)
+	baseBackup func(ctx context.Context, project, name string) error
 }
 
 // New returns the service.
@@ -84,6 +90,7 @@ func New(env *emu.Env) emu.Service {
 		lan: map[string]*instanceLAN{}, routers: map[string]*connectRouter{}, inUse: map[string]int{}}
 	s.mux = s.routes()
 	s.bg = newBackground()
+	s.dump, s.baseBackup = s.dumpAll, s.takeBaseBackup
 	return s
 }
 
@@ -96,7 +103,7 @@ type background struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 	wg     sync.WaitGroup
-	// runsExpiry is set once the generation runs the backup expiry loop,
+	// runsExpiry is set once the generation runs the backup loop,
 	// which Reset starts again in the next one. Guarded by Service.bgMu.
 	runsExpiry bool
 }
@@ -165,7 +172,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if err := s.migrateDeletedOwners(); err != nil {
 		return err
 	}
-	s.goBackground(s.expiryLoop)
+	s.goBackground(s.backupLoop)
 	var recs []*instanceRecord
 	_ = s.env.Store.View(func(tx store.Tx) error {
 		scanJSON(tx, nsInstances, "", func(_ string, rec *instanceRecord) {
@@ -263,7 +270,7 @@ func (s *Service) Reset(ctx context.Context) error {
 			next.wg.Add(1)
 			go func() {
 				defer next.wg.Done()
-				s.expiryLoop(next.ctx)
+				s.backupLoop(next.ctx)
 			}()
 		}
 		s.bg = next

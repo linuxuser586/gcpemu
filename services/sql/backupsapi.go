@@ -18,9 +18,10 @@ import (
 // project-level view of the stored backup runs, with the run's ID as the
 // backup ID. Permissions are the backupRuns ones on the backup's instance,
 // as in Cloud SQL. Also as in Cloud SQL, only a Final backup
-// (finalbackup.go) has an expiry: its expiryTime or ttlDays can be
-// updated, and once the emulator clock passes its expiryTime it is
-// deleted. An on-demand backup is kept until it is deleted.
+// (finalbackup.go) and a Retained Automated backup (retainedbackup.go)
+// have an expiry, and once the emulator clock passes it the backup is
+// deleted; only a Final backup's expiryTime or ttlDays can be updated. An
+// on-demand backup is kept until it is deleted.
 
 // toBackup renders a stored backup as a backups API resource.
 func toBackup(project string, b *backupRecord) *sqladmin.Backup {
