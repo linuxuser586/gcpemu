@@ -40,9 +40,10 @@ func (s *Service) cleanupPass(ctx context.Context) error {
 	if s.blobs == nil || s.passStopped {
 		return nil
 	}
-	// Steps that delete versions (cleanup policies, #1039) go before the
-	// freeing steps, so that what they leave unused is freed by this pass.
+	// Cleanup policies delete versions before the freeing steps, so that
+	// what they leave unused is freed by this pass.
 	steps := []func(context.Context) error{
+		s.runCleanupPolicies,
 		s.dropOrphanLinks,
 		s.dropAbandonedUploads,
 	}

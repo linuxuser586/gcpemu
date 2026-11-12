@@ -123,6 +123,9 @@ type Service struct {
 	passMu       sync.Mutex
 	passStopped  bool // under passMu: Stop ran, so ClockAdvanced runs no pass
 	cleanupLoops inflight.Loops
+	// dryRunReported holds the version names a dry run has reported in
+	// this process (under passMu): each is logged once.
+	dryRunReported map[string]bool
 }
 
 // New returns the service.
@@ -130,6 +133,7 @@ func New(env *emu.Env) emu.Service {
 	s := &Service{
 		env: env, ops: lro.NewManager(env, "ar"), uploads: map[string]*upload{},
 		upstreamURLs: map[string]string{}, tagTTL: defaultTagTTL, fetches: map[string]*blobFetch{},
+		dryRunReported: map[string]bool{},
 	}
 	s.upstream = newUpstreamClient(env.Clock.Now)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
@@ -315,6 +319,7 @@ func (s *Service) Reset(ctx context.Context) error {
 	}
 	s.passMu.Lock()
 	defer s.passMu.Unlock()
+	s.dryRunReported = map[string]bool{}
 	err := s.ops.Reset(ctx)
 	s.mu.Lock()
 	s.uploads = map[string]*upload{}
