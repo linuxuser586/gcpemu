@@ -1843,6 +1843,7 @@ just agent         # the Sidecar agent, bin/gcpemu-linux-<arch> (needed off linu
 just vet race      # gofmt, vet, tests with -race
 just release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
 just cross         # the same binaries without building the console (no Node.js)
+just cross-host    # only this host's binary, dist/gcpemu-<os>-<arch>[.exe]
 ```
 
 The recipes in the `justfile` need just 1.56.0 or later (brew, winget, scoop, or

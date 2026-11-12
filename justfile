@@ -204,6 +204,12 @@ release version=`go run ./internal/devtool version`: console && (cross version)
 [doc("Build static binaries for every supported OS/arch into dist/")]
 cross version=`go run ./internal/devtool version`: (cross-one "linux" "amd64" version) (cross-one "linux" "arm64" version) (cross-one "darwin" "arm64" version) (cross-one "darwin" "amd64" version) (cross-one "windows" "amd64" version) (cross-one "windows" "arm64" version)
 
+# #1055: cross's binary for this host only, at the same dist/ path. CI
+# runs cross on x64 Linux alone; every other runner runs this, so its Go
+# cache holds one target's compile, not six.
+[doc("Build the static binary for this host's OS/arch into dist/")]
+cross-host version=`go run ./internal/devtool version`: (cross-one `go env GOOS` `go env GOARCH` version)
+
 # One static binary, dir/gcpemu-<os>-<arch>, for cross and agent. GOOS and
 # GOARCH are exported parameters, since [env] can't read parameters and
 # must not reach the backticks that `go run` devtool for the host.
