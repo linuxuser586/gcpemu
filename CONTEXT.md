@@ -614,6 +614,10 @@ _Avoid_: manual backup
 A backup of a Cloud SQL instance taken on its daily schedule, at its backup start time, while the Cloud SQL instance is running and has backups enabled. Only Automated backups count toward the number of backups the Cloud SQL instance retains: once a newer one is taken beyond that number, the oldest is deleted. A day whose backup could not be taken because the emulator was not running is made up once, not once per missed day. Always qualify it, so it is not confused with an on-demand backup or a Base backup.
 _Avoid_: scheduled backup, daily backup, nightly backup
 
+**Backup slot**:
+One day's occurrence of a Cloud SQL instance's backup start time. A Backup slot is handled once its Automated backup was attempted, or once creating the Cloud SQL instance, enabling its backups or changing their start time passed it by.
+_Avoid_: backup window, schedule slot
+
 **Final backup**:
 A backup of a Cloud SQL instance taken as part of deleting it. It outlives the Cloud SQL instance and is deleted when it expires. Unlike a Retained backup, the delete takes it. Always qualify it, so it is not confused with an on-demand backup taken while the Cloud SQL instance exists.
 _Avoid_: last backup, deletion backup
