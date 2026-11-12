@@ -90,6 +90,10 @@ type clusterRT struct {
 	// (serverwatch.go).
 	server string
 	watch  *serverWatch
+	// gcMu serialises image GC passes (imagegc.go), and guards imageGC,
+	// each node's GC state by node name.
+	gcMu    sync.Mutex
+	imageGC map[string]*imageGC
 }
 
 func (s *Service) stopRT(rt *clusterRT) {
