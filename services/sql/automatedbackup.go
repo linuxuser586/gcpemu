@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"regexp"
 	"time"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
@@ -28,10 +29,17 @@ import (
 // start time marks the current slot handled, and so does the first sweep
 // that finds a record stored before #1038.
 
+// startTimeRe is a backupConfiguration.startTime: exactly two-digit 24-hour
+// HH:MM (#1059). time.Parse("15:04") alone would take "7:00".
+var startTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
 // lastBackupSlot is the latest daily Automated backup slot at or before now:
 // startTime ("HH:MM", UTC) on now's UTC day, or the day before. ok is false
 // for a startTime that is not one.
 func lastBackupSlot(now time.Time, startTime string) (slot time.Time, ok bool) {
+	if !startTimeRe.MatchString(startTime) {
+		return time.Time{}, false
+	}
 	t, err := time.Parse("15:04", startTime)
 	if err != nil {
 		return time.Time{}, false

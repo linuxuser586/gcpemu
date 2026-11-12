@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestLastBackupSlot(t *testing.T) {
 			t.Errorf("lastBackupSlot(%s, %s) = %v, %t; want %s", c.now, c.start, got, ok, c.want)
 		}
 	}
-	for _, bad := range []string{"", "24:00", "7am", "12:60"} {
+	for _, bad := range []string{"", "24:00", "7am", "12:60", "7:00", "07:00:00", " 07:00", "07:00 "} {
 		if _, ok := lastBackupSlot(at("2026-03-10T12:00:00Z"), bad); ok {
 			t.Errorf("lastBackupSlot with startTime %q: ok, want not", bad)
 		}
@@ -558,5 +559,114 @@ func TestAutomatedBackupTakesABaseBackupWithPITR(t *testing.T) {
 	advance(t, s, clk, day)
 	if len(bases) != 1 || bases[0] != "proj-one/a" {
 		t.Errorf("with point-in-time recovery: Base backups %v, want one of proj-one/a", bases)
+	}
+}
+
+// TestBackupStartTimeIsValidated covers #1059: insert, patch and update
+// reject a backupConfiguration.startTime that is not two-digit 24-hour
+// HH:MM, which the Automated backup schedule could never run.
+func TestBackupStartTimeIsValidated(t *testing.T) {
+	s, _ := fileService(t)
+	bad := []string{"7am", "24:00", "12:60", "7:00", "07:00:00", " 07:00"}
+	good := []string{"00:00", "07:30", "23:59"}
+	instance := func(name string) (int, *sqladmin.DatabaseInstance) {
+		t.Helper()
+		code, body := call(s, "GET", "/projects/proj-one/instances/"+name, "")
+		var in sqladmin.DatabaseInstance
+		if code == 200 {
+			if err := json.Unmarshal([]byte(body), &in); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return code, &in
+	}
+	opCount := func(name string) int {
+		t.Helper()
+		code, body := call(s, "GET", "/projects/proj-one/operations?instance="+name, "")
+		if code != 200 {
+			t.Fatalf("operations.list: %d %s", code, body)
+		}
+		var resp sqladmin.OperationsListResponse
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return len(resp.Items)
+	}
+	insert := func(name, backup string) (int, string) {
+		return call(s, "POST", "/projects/proj-one/instances",
+			`{"name":"`+name+`","databaseVersion":"POSTGRES_18","settings":{"tier":"db-perf-optimized-N-2"`+backup+`}}`)
+	}
+	withStart := func(start string) string {
+		return `,"backupConfiguration":{"enabled":true,"startTime":` + strconv.Quote(start) + `}`
+	}
+
+	for i, start := range bad {
+		name := "bad-" + strconv.Itoa(i)
+		code, body := insert(name, withStart(start))
+		if code != 400 || !strings.Contains(body, "backupConfiguration.startTime") {
+			t.Errorf("insert with startTime %q: %d %s, want 400 naming the field", start, code, body)
+		}
+		if code, _ := instance(name); code != 404 {
+			t.Errorf("insert with startTime %q: instance GET %d, want 404", start, code)
+		}
+		if n := opCount(name); n != 0 {
+			t.Errorf("insert with startTime %q: %d Operations, want none", start, n)
+		}
+	}
+	for i, start := range good {
+		name := "good-" + strconv.Itoa(i)
+		if code, body := insert(name, withStart(start)); code != 200 {
+			t.Errorf("insert with startTime %q: %d %s", start, code, body)
+			continue
+		}
+		if _, in := instance(name); in.Settings.BackupConfiguration.StartTime != start {
+			t.Errorf("insert with startTime %q: stored %q", start, in.Settings.BackupConfiguration.StartTime)
+		}
+	}
+	if code, body := insert("omitted", ""); code != 200 {
+		t.Fatalf("insert without startTime: %d %s", code, body)
+	}
+	if _, in := instance("omitted"); in.Settings.BackupConfiguration.StartTime != "00:00" {
+		t.Errorf("insert without startTime: stored %q, want 00:00", in.Settings.BackupConfiguration.StartTime)
+	}
+
+	// Patch and update need the instance created; a store-only one stands in.
+	putInstance(t, s, "proj-one", "stored", false)
+	if err := s.updateRecord("proj-one", "stored", func(r *instanceRecord) error {
+		applySettingsDefaults(r.Instance.Settings, nil, "", r.Instance.DatabaseVersion, true)
+		r.Instance.Settings.Tier = "db-perf-optimized-N-2"
+		r.Instance.Settings.IpConfiguration.Ipv4Enabled = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"PATCH", "PUT"} {
+		for _, start := range bad {
+			_, before := instance("stored")
+			code, body := call(s, method, "/projects/proj-one/instances/stored",
+				`{"settings":{"tier":"db-perf-optimized-N-2","ipConfiguration":{"ipv4Enabled":true}`+withStart(start)+`}}`)
+			if code != 400 || !strings.Contains(body, "backupConfiguration.startTime") {
+				t.Errorf("%s with startTime %q: %d %s, want 400 naming the field", method, start, code, body)
+			}
+			_, after := instance("stored")
+			if a, b := after.Settings, before.Settings; a.SettingsVersion != b.SettingsVersion ||
+				a.BackupConfiguration.StartTime != b.BackupConfiguration.StartTime {
+				t.Errorf("%s with startTime %q: settings changed to version %d startTime %q, want %d %q",
+					method, start, a.SettingsVersion, a.BackupConfiguration.StartTime, b.SettingsVersion, b.BackupConfiguration.StartTime)
+			}
+		}
+		for _, start := range good {
+			code, body := call(s, method, "/projects/proj-one/instances/stored",
+				`{"settings":{"tier":"db-perf-optimized-N-2","ipConfiguration":{"ipv4Enabled":true}`+withStart(start)+`}}`)
+			if code != 200 {
+				t.Fatalf("%s with startTime %q: %d %s", method, start, code, body)
+			}
+			if op := waitOpDone(t, s, "proj-one", body); op.Error != nil {
+				t.Fatalf("%s with startTime %q: %+v", method, start, op.Error.Errors[0])
+			}
+			if _, in := instance("stored"); in.Settings.BackupConfiguration.StartTime != start {
+				t.Errorf("%s with startTime %q: stored %q", method, start, in.Settings.BackupConfiguration.StartTime)
+			}
+		}
 	}
 }
