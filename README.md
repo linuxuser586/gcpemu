@@ -759,6 +759,7 @@ destination; endpoint-independent mapping caps a workload's concurrent connectio
 and dynamic port allocation lets it grow to `maxPortsPerVm`. Mapping info, status and NAT logs
 name the NAT IP the block stands for.
 `GCPEMU_GKE_MAX_NODES` caps nodes per instance (default 5), Standard and Autopilot alike.
+[GKE sizing](#gke-sizing) gives the memory and CPUs the Runtime machine needs for them.
 An Autopilot cluster starts with one node and adds one when a pod is Pending for lack of room,
 removing a node once it has been empty for 30 s, never the last (FR-GKE-015). Each node
 advertises the allocatable CPU, memory and 32 pods of the GKE shape its first pod fits
@@ -938,6 +939,62 @@ them with the forwarding rule's own IP (host clients still get the local listene
 `lb-edge` container serves those IPs on the external network. Nodes with external IPs route
 them to it directly, and the backend sees the node's address; private nodes go through Cloud
 NAT, so they need one, and the backend sees the NAT's address (ADR 0007).
+
+### GKE sizing
+
+Each GKE cluster runs a Cluster server (a k3s server container), and each node is a privileged
+k3s agent container with its own containerd and image store. Neither has a memory or CPU limit.
+A node's machine shape (`e2-medium`, `ek-standard-8`, ...) is only what it advertises to the
+scheduler: it reserves no memory on the Runtime machine (the host, or the VM of Docker Desktop,
+Colima or Podman machine), so a cluster that is half empty by GKE's measure can still exhaust it
+(ADR 0031). Size the Runtime machine by what the containers use instead:
+
+| Container | Idle memory (mean / peak) | Idle CPU (mean) | Load memory (mean / peak) | Load CPU (mean / peak) |
+|---|---|---|---|---|
+| Cluster server, 1 node | 345 / 357 MiB | 37m | 423 / 430 MiB | 151m / 271m |
+| Cluster server, 5 nodes | 427 / 444 MiB | 33m | 495 / 507 MiB | 304m / 735m |
+| First node | 289 / 295 MiB | 51m | 252 / 261 MiB | 179m / 671m |
+| Each further node | 127 / 139 MiB | 21m | 158 / 161 MiB | 114m / 467m |
+
+The figures **exclude your pods**: the nodes ran only pause containers, so a node's figure is the
+k3s agent, containerd and the system pods it runs (the first node runs CoreDNS, metrics-server
+and the local-path provisioner, hence its larger figure). Add what your pods use. "Each further
+node" is the 5-node figure minus the 1-node figure, divided by 4. Memory is what `docker stats`
+reports: the container's cgroup memory less inactive page cache, which is why a node can read
+lower under load than idle.
+
+For a Runtime machine running C clusters with N nodes in all (every node, each cluster's first
+included):
+
+- **Memory:** `C × 768 MiB + N × 256 MiB + 2 GiB`, plus your pods. The per-node term covers a
+  node and what it adds to its Cluster server: about 180 MiB measured (161 MiB, plus 19 MiB on
+  the Cluster server). The per-cluster term covers the Cluster server and the system pods only its
+  first node runs: about 565 MiB measured (430 MiB, plus the first node's 295 MiB less a further
+  node's 161 MiB). Each is rounded up by 35 to 45%. The 2 GiB headroom is for the Runtime
+  machine's own system, the runtime and the Instance's other Managed containers (`lb-edge`,
+  Cloud NAT, Cloud SQL, Build).
+- **CPU:** `C × 1 + N × 0.5` vCPUs, rounded up, at least 2. Too few CPUs slows pod starts and the
+  Kubernetes API down; too little memory gets containers OOM-killed, the Cluster server among
+  them.
+
+| Clusters, nodes | Memory before your pods | CPUs |
+|---|---|---|
+| 1 cluster, 5 nodes (the default Node limit) | 768 MiB + 1280 MiB + 2 GiB = **4 GiB** | 4 |
+| 1 cluster, 8 nodes (`GCPEMU_GKE_MAX_NODES=8`) | 768 MiB + 2048 MiB + 2 GiB = **4.75 GiB** | 5 |
+
+So a 16 GiB Runtime machine (Docker Desktop's VM, say) running 8 nodes leaves about 11 GiB for pods, however much
+memory the nodes' machine shapes advertise (8 `ek-standard-2` nodes advertise 64 GB).
+
+**How it was measured:** `just gke-sizing` (the `TestGKESizing` test in `e2e/`) on gcpemu
+v0.14.0-70-g18a7efe, GKE `1.36.5-gke.100` (`rancher/k3s:v1.36.5-k3s1`), Docker 29.9.3 on Ubuntu
+26.04.1 (Linux 7.0, cgroup v2, 8 CPUs, 60.5 GiB); the test logs each of these. It creates an Autopilot cluster and samples the
+Cluster server and node containers with `docker stats` every 10 s for 3 min, after 3 min to
+settle, in four phases: 1 node idle, 1 node under load, 5 nodes idle and 5 nodes under load. The
+cluster scales to 5 nodes for a Deployment of 5 pause pods that each request 1 vCPU, so no two
+fit on a node. **Load** is a client listing every pod, node and event in the cluster in turn every
+100 ms, while a Deployment of 2 pause pods per node (50m, 52Mi each) has every pod replaced every
+20 s. Rerun it when the k3s image changes; `just gke-sizing 8` measures at 8 nodes instead of 5,
+and `GCPEMU_GKE_SIZING_CLI=podman` samples with `podman stats`.
 
 ### Kubernetes Services from the host
 

@@ -17,6 +17,11 @@
 // scales past one node, refuses a privileged pod and runs Istio's sidecar
 // injection. It needs GCPEMU_NET_TESTS=1; `just autopilot` runs it.
 //
+// TestGKESizing is a measurement, not an acceptance test: it samples an
+// Autopilot cluster's Cluster server and nodes with docker stats, idle and
+// under load, at 1 node and at more, and logs the table in README.md ("GKE
+// sizing"). It runs only under GCPEMU_GKE_SIZING=1; `just gke-sizing` runs it.
+//
 // TestContainerizedLBIngress runs the emulator as its OCI image, with the
 // host's Docker socket, and checks that the host reaches GKE LoadBalancer
 // Services at their ingress (#276), on a VM runtime through the

@@ -94,6 +94,7 @@ adr:
 # and the Containerized Instance tests, which build the OCI image (they need
 # the net and Docker too). Each test's own checks decide whether it runs.
 # TestAutopilot alone is skipped: just autopilot runs it, in its own CI job.
+# TestGKESizing skips itself unless just gke-sizing runs it.
 [doc("Run the SRS 11.2 Reference stack and the Containerized Instance tests")]
 [env("GCPEMU_NET_TESTS", if env("GCPEMU_NET_TESTS", "") == "" { "1" } else { env("GCPEMU_NET_TESTS") })]
 e2e:
@@ -106,6 +107,15 @@ e2e:
 [env("GCPEMU_NET_TESTS", "1")]
 autopilot:
     go test -tags e2e ./e2e -run '^TestAutopilot$' -count=1 -timeout 45m -v
+
+# #1069: measure an Autopilot cluster's Cluster server and nodes, idle and
+# under load, at 1 node and at GCPEMU_GKE_SIZING_NODES nodes (at least 4),
+# for the README's GKE sizing table. Prints the table; rerun it when the
+# k3s image changes. GCPEMU_GKE_SIZING_CLI=podman samples with podman stats.
+[doc("Measure GKE Cluster server and node memory/CPU for the README sizing table")]
+[env("GCPEMU_GKE_SIZING", "1")]
+gke-sizing $GCPEMU_GKE_SIZING_NODES="5" version=`go run ./internal/devtool version`:
+    go test -ldflags "-X github.com/linuxuser586/gcpemu/internal/instance.Version={{ version }}" -tags e2e ./e2e -run '^TestGKESizing$' -count=1 -timeout 60m -v
 
 # #606: the Pre-release host checks (docs/release.md) on each runtime in
 # runtimes, docker contexts (default: the Required runtimes). Every OS runs
