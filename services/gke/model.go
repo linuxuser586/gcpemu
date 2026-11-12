@@ -73,6 +73,10 @@ type clusterInternal struct {
 	// NamedPorts holds the named ports set on node pool instance groups,
 	// by group name.
 	NamedPorts map[string][]*computev1.NamedPort `json:"namedPorts,omitempty"`
+	// ServerExits counts the exits of the Cluster server the Service
+	// started it again after, or gave up on, since a bring-up last started
+	// it afresh (ADR 0045, #1061).
+	ServerExits int `json:"serverExits,omitempty"`
 }
 
 // nodeRecord is one node container.

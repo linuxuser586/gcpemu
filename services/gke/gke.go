@@ -132,6 +132,9 @@ type Service struct {
 	// calls the watch of a Cluster server makes (serverwatch.go).
 	serverWait    func(ctx context.Context, id string) error
 	serverRestart func(ctx context.Context, key string) (string, error)
+	// serverNow, set by tests, replaces the clock the watch of a Cluster
+	// server times its exits by.
+	serverNow func() time.Time
 	// testImageStore, set by tests, replaces each node's image storage
 	// (imagegc.go).
 	testImageStore func(key, node string) nodeImageStore

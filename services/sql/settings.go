@@ -82,6 +82,31 @@ func merge(dst, patch map[string]any) map[string]any {
 	return dst
 }
 
+// retentionDefaults returns Cloud SQL's retainedBackups and
+// transactionLogRetentionDays for an edition that leaves them unset (#1044):
+// https://docs.cloud.google.com/sql/docs/postgres/backup-recovery/backup-options
+func retentionDefaults(edition string) (retained, logDays int64) {
+	if edition == "ENTERPRISE_PLUS" {
+		return 15, 14
+	}
+	return defaultRetainedBackups, defaultLogRetentionDays
+}
+
+// defaultRetainedBackups is retainedBackups when unset on Enterprise.
+const defaultRetainedBackups = 7
+
+// maxLogRetentionDays is the largest transactionLogRetentionDays of an
+// edition.
+func maxLogRetentionDays(edition string) int64 {
+	if edition == "ENTERPRISE_PLUS" {
+		return 35
+	}
+	return 7
+}
+
+// maxRetainedBackups is the largest retainedBackups.
+const maxRetainedBackups = 365
+
 // applySettingsDefaults fills settings the way Cloud SQL reports them.
 // raw is the request's settings object (to tell absent from false).
 func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone, version string, create bool) {
@@ -131,11 +156,18 @@ func applySettingsDefaults(st *sqladmin.Settings, raw map[string]any, zone, vers
 	if bc.StartTime == "" {
 		bc.StartTime = "00:00"
 	}
+	retained, logDays := retentionDefaults(st.Edition)
 	if bc.BackupRetentionSettings == nil {
-		bc.BackupRetentionSettings = &sqladmin.BackupRetentionSettings{RetentionUnit: "COUNT", RetainedBackups: 7}
+		bc.BackupRetentionSettings = &sqladmin.BackupRetentionSettings{}
+	}
+	if bc.BackupRetentionSettings.RetentionUnit == "" {
+		bc.BackupRetentionSettings.RetentionUnit = "COUNT"
+	}
+	if bc.BackupRetentionSettings.RetainedBackups == 0 {
+		bc.BackupRetentionSettings.RetainedBackups = retained
 	}
 	if bc.TransactionLogRetentionDays == 0 {
-		bc.TransactionLogRetentionDays = defaultLogRetentionDays
+		bc.TransactionLogRetentionDays = logDays
 	}
 	if bc.TransactionalLogStorageState == "" && bc.PointInTimeRecoveryEnabled {
 		bc.TransactionalLogStorageState = "CLOUD_STORAGE"
@@ -218,6 +250,9 @@ func validateSettings(st *sqladmin.Settings, version string) (map[string]string,
 	if bc := st.BackupConfiguration; bc != nil && !startTimeRe.MatchString(bc.StartTime) {
 		return nil, errInvalid("Invalid backupConfiguration.startTime (%s). Use 24-hour HH:MM in UTC.", bc.StartTime)
 	}
+	if err := validateRetention(st); err != nil {
+		return nil, err
+	}
 	ipc := st.IpConfiguration
 	if !ipc.Ipv4Enabled && ipc.PrivateNetwork == "" && (ipc.PscConfig == nil || !ipc.PscConfig.PscEnabled) {
 		return nil, errInvalid("At least one of public IP or private IP must be enabled.")
@@ -240,6 +275,25 @@ func validateSettings(st *sqladmin.Settings, version string) (map[string]string,
 		}
 	}
 	return validateFlags(st.DatabaseFlags, version)
+}
+
+// validateRetention checks the defaulted backup retention against Cloud
+// SQL's ranges, then transactionLogRetentionDays ≤ retainedBackups (#1044),
+// whether or not backups and point-in-time recovery are enabled. The
+// wording of Cloud SQL's errors is unconfirmed.
+func validateRetention(st *sqladmin.Settings) error {
+	bc := st.BackupConfiguration
+	logDays, retained := bc.TransactionLogRetentionDays, bc.BackupRetentionSettings.RetainedBackups
+	if most := maxLogRetentionDays(st.Edition); logDays < 1 || logDays > most {
+		return errInvalid("transactionLogRetentionDays (%d) must be between 1 and %d for the %s edition.", logDays, most, st.Edition)
+	}
+	if retained < 1 || retained > maxRetainedBackups {
+		return errInvalid("backupRetentionSettings.retainedBackups (%d) must be between 1 and %d.", retained, maxRetainedBackups)
+	}
+	if logDays > retained {
+		return errInvalid("transactionLogRetentionDays (%d) must be less than or equal to backupRetentionSettings.retainedBackups (%d).", logDays, retained)
+	}
+	return nil
 }
 
 func validIPv4(s string) bool { _, ok := parseIPv4(s); return ok }
