@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/frontend"
 	"github.com/linuxuser586/gcpemu/internal/trust"
@@ -49,8 +50,13 @@ import (
 // while LOCATION-docker.pkg.dev stays emulated (ADR 0019). A pod that
 // sets dnsPolicy None keeps its own DNS; a dnsConfig of its own is merged.
 //
-// The webhook's failurePolicy is Ignore: pods are admitted unchanged when
-// the emulator is unreachable.
+// The webhook fails closed (failurePolicy Fail, ADR 0074): a pod whose
+// namespace's ConfigMap can't be ensured is refused, with a message saying
+// why, and its controller creates it again; a pod is never started without
+// the Instance CA. So while the Google front end is down, pods outside
+// kube-system that haven't opted out can't be created. A ConfigMap confirmed to hold the
+// current CA is not read again for caBundleTTL, so most admissions make no
+// call back into the API server they are admitting for.
 
 const (
 	caInjectorName   = "gcpemu-ca-injector"
@@ -75,7 +81,9 @@ var caEnvVars = workload.CAEnvVars
 const metadataHostEnv = workload.MetadataHostEnv
 
 // installCAInjector registers (or updates) the CA-injecting webhook in a
-// running cluster. Errors are logged: injection is best effort.
+// running cluster. Errors are logged: registering is best effort, and a
+// cluster without the webhook admits pods without the Instance CA. Once
+// registered, the webhook refuses what it can't inject (ADR 0074).
 func (s *Service) installCAInjector(ctx context.Context, d *deps, key string) {
 	hooks, kc, ok := s.hookBase(ctx, d, key, "pods will not trust the emulator CA")
 	if !ok {
@@ -125,7 +133,7 @@ func caInjectorConfig(url string, caPEM []byte) map[string]any {
 			"name":                    "ca-injector.gcpemu.dev",
 			"admissionReviewVersions": []string{"v1"},
 			"sideEffects":             "NoneOnDryRun",
-			"failurePolicy":           "Ignore",
+			"failurePolicy":           "Fail",
 			"timeoutSeconds":          10,
 			"reinvocationPolicy":      "IfNeeded",
 			"clientConfig": map[string]any{
@@ -257,14 +265,22 @@ func (s *Service) servePodAdmission(w http.ResponseWriter, r *http.Request, key 
 	req := ar.Request
 	resp := &admissionResponse{UID: req.UID, Allowed: true}
 	var pod admitPod
-	if req.Operation == "CREATE" && json.Unmarshal(req.Object, &pod) == nil {
+	// kube-system is out of scope; the namespaceSelector keeps it from
+	// the webhook, and this keeps it out should a request get here anyway.
+	if req.Operation == "CREATE" && req.Namespace != kubeSystem && json.Unmarshal(req.Object, &pod) == nil {
 		if ops := injectPatch(&pod, req.Namespace); len(ops) > 0 {
 			dry := req.DryRun != nil && *req.DryRun
-			if dry || s.ensureCABundle(r.Context(), key, req.Namespace) {
-				b, _ := json.Marshal(ops)
-				resp.PatchType = "JSONPatch"
-				resp.Patch = base64.StdEncoding.EncodeToString(b)
+			if !dry {
+				if err := s.ensureCABundle(r.Context(), key, req.Namespace); err != nil {
+					s.env.Log.Warn("gke: refusing a pod: its namespace's "+caBundleName+" ConfigMap could not be ensured", "cluster", key, "namespace", req.Namespace, "err", err)
+					resp.Allowed, resp.Status = false, bundleRefusal(req.Namespace, err)
+					writeJSON(w, admissionReview{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview", Response: resp})
+					return
+				}
 			}
+			b, _ := json.Marshal(ops)
+			resp.PatchType = "JSONPatch"
+			resp.Patch = base64.StdEncoding.EncodeToString(b)
 		}
 	}
 	writeJSON(w, admissionReview{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview", Response: resp})
@@ -393,14 +409,14 @@ func containerPatch(base string, c admitContainer) []patchOp {
 	return ops
 }
 
-// bundleCache memoizes the bundle for the current CA.
+// bundleCache memoizes the bundle for the last CA asked for.
 var bundleCache struct {
 	sync.Mutex
 	ca, bundle []byte
 }
 
-func (s *Service) caBundle() []byte {
-	ca := s.env.CA.PEM()
+// caBundle is the bundle of the host's system roots and ca.
+func caBundle(ca []byte) []byte {
 	bundleCache.Lock()
 	defer bundleCache.Unlock()
 	if !bytes.Equal(bundleCache.ca, ca) {
@@ -409,19 +425,73 @@ func (s *Service) caBundle() []byte {
 	return bundleCache.bundle
 }
 
-// ensureCABundle creates or refreshes the namespace's bundle ConfigMap and
-// reports whether it is in place.
-func (s *Service) ensureCABundle(ctx context.Context, key, ns string) bool {
-	kc, err := s.kube(key)
-	if err != nil || ns == "" {
-		return false
+// bundleRefusal is the status refusing a pod in namespace ns whose CA
+// bundle ConfigMap could not be ensured, for err. kubectl and the pod's
+// controller show Message after `admission webhook "ca-injector.gcpemu.dev"
+// denied the request: `.
+func bundleRefusal(ns string, err error) *admissionStatus {
+	return &admissionStatus{
+		Code:   http.StatusServiceUnavailable,
+		Reason: "ServiceUnavailable",
+		Message: "could not ensure ConfigMap " + caBundleName + " (the Instance CA for pods) in namespace " + ns +
+			": " + err.Error() + "; the pod's controller will retry",
 	}
-	want := string(s.caBundle())
+}
+
+// caBundleTTL is how long a namespace's bundle ConfigMap, once confirmed
+// to hold the current Instance CA, is taken to still hold it. It bounds
+// how long a namespace deleted and recreated, or a ConfigMap deleted by
+// hand, goes unnoticed (ADR 0074).
+const caBundleTTL = 60 * time.Second
+
+// caBundleEntry records that a namespace's bundle ConfigMap held ca.
+type caBundleEntry struct {
+	ca  []byte
+	exp time.Time
+}
+
+// bundleTime is the real time, or the tests' (bundleNow).
+func (s *Service) bundleTime() time.Time {
+	if s.bundleNow != nil {
+		return s.bundleNow()
+	}
+	return time.Now()
+}
+
+// ensureCABundle creates or refreshes the namespace's bundle ConfigMap,
+// returning why it is not in place. A ConfigMap confirmed current within
+// caBundleTTL, for the same Instance CA, is not read again: under load
+// that read is what ran out the webhook's timeout (#1053).
+func (s *Service) ensureCABundle(ctx context.Context, key, ns string) error {
+	if ns == "" {
+		return errors.New("the pod has no namespace")
+	}
+	ca, rt, now := s.env.CA.PEM(), s.rtFor(key), s.bundleTime()
+	if v, ok := rt.caBundles.Load(ns); ok {
+		if e := v.(caBundleEntry); bytes.Equal(e.ca, ca) && now.Before(e.exp) {
+			return nil
+		}
+	}
+	kc, err := s.kube(key)
+	if err != nil {
+		return err
+	}
+	if err := applyCABundle(ctx, kc, ns, string(caBundle(ca))); err != nil {
+		return err
+	}
+	rt.caBundles.Store(ns, caBundleEntry{ca: ca, exp: now.Add(caBundleTTL)})
+	return nil
+}
+
+// applyCABundle creates namespace ns's bundle ConfigMap holding want, or
+// updates the one there if it holds something else.
+func applyCABundle(ctx context.Context, kc *kubeClient, ns, want string) error {
 	path := "/api/v1/namespaces/" + ns + "/configmaps"
 	var cm struct {
-		Data map[string]string `json:"data"`
+		Metadata objectMeta        `json:"metadata"`
+		Data     map[string]string `json:"data"`
 	}
-	err = kc.get(ctx, path+"/"+caBundleName, &cm)
+	err := kc.get(ctx, path+"/"+caBundleName, &cm)
 	switch {
 	case isKubeNotFound(err):
 		err = kc.do(ctx, http.MethodPost, path, "", map[string]any{
@@ -434,11 +504,13 @@ func (s *Service) ensureCABundle(ctx context.Context, key, ns string) bool {
 			err = nil // created concurrently
 		}
 	case err == nil && cm.Data[caBundleKey] != want:
-		err = kc.mergePatch(ctx, path+"/"+caBundleName, map[string]any{"data": map[string]string{caBundleKey: want}})
+		// The resourceVersion read makes the patch conditional: an
+		// admission holding a CA rotated away since must not write it back
+		// over a newer one (it gets 409 and refuses its pod).
+		err = kc.mergePatch(ctx, path+"/"+caBundleName, map[string]any{
+			"metadata": map[string]any{"resourceVersion": cm.Metadata.ResourceVersion},
+			"data":     map[string]string{caBundleKey: want},
+		})
 	}
-	if err != nil {
-		s.env.Log.Warn("gke: CA bundle ConfigMap", "namespace", ns, "err", err)
-		return false
-	}
-	return true
+	return err
 }

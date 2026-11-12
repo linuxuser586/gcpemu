@@ -509,6 +509,10 @@ _Avoid_: pull-through cache (remote repositories pull through too, but their ima
 The registry's periodic pass that runs each standard repository's cleanup policies and frees what nothing refers to any more: blobs that no manifest of their image uses, blob content that nothing in the registry uses, and abandoned uploads. In a Deterministic Instance it runs only when the Emulator clock is advanced (ADR 0070).
 _Avoid_: garbage collection (names only the freeing part), cleanup job
 
+**CA injector**:
+The webhook every GKE cluster has that gives each new pod the Instance CA to trust, outside `kube-system` and unless the pod or its namespace opts out. A pod it can't give the Instance CA to is refused, not started without it, so its controller creates it again (ADR 0074).
+_Avoid_: CA bundle (for what the pod receives; say the Instance CA)
+
 **Workload restrictions**:
 What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates (a cluster can be set to allow the NET_ADMIN capability); refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
 _Avoid_: Warden (GKE's internal name), Autopilot policy, workload policy

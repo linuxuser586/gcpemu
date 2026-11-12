@@ -78,6 +78,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 
@@ -134,6 +135,9 @@ type Service struct {
 	// testImageStore, set by tests, replaces each node's image storage
 	// (imagegc.go).
 	testImageStore func(key, node string) nodeImageStore
+	// bundleNow, set by tests, replaces the real time the CA injector's
+	// bundle cache expires by (cainject.go).
+	bundleNow func() time.Time
 	// pub holds the Public routes (RoutePublic), programmed into nodes
 	// with external IPs.
 	pub emu.PublicRouteTable
