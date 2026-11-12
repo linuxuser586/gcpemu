@@ -94,7 +94,13 @@ func start(ctx context.Context, timeout time.Duration, svcs []string, opts []Opt
 			return nil, fmt.Errorf("emutest: %w", err)
 		}
 	}
-	i, err := launch(ctx, &cfg, release)
+	var logOut io.Writer
+	for _, o := range opts {
+		if o.logOut != nil {
+			logOut = o.logOut
+		}
+	}
+	i, err := launch(ctx, &cfg, logOut, release)
 	if err != nil {
 		return nil, fmt.Errorf("emutest: %w", err)
 	}
@@ -119,10 +125,11 @@ func testConfig(svcs []string, opts []Option) config.Config {
 	return cfg
 }
 
-// launch starts an Instance from cfg and waits until it is ready; release
-// is called once it stops. With no data dir in cfg, it runs in a Test data
-// dir of its own that it removes then.
-func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instance, err error) {
+// launch starts an Instance from cfg, logging to extraLog (nil: nowhere)
+// as well as to stderr with GCPEMU_TEST_LOG=1, and waits until it is
+// ready; release is called once it stops. With no data dir in cfg, it
+// runs in a Test data dir of its own that it removes then.
+func launch(ctx context.Context, cfg *config.Config, extraLog io.Writer, release func()) (_ *Instance, err error) {
 	// Not the named result: a failed launch returns nil, but must still
 	// clean up the Instance it built (#863).
 	i := &Instance{release: release}
@@ -144,6 +151,13 @@ func launch(ctx context.Context, cfg *config.Config, release func()) (_ *Instanc
 	if os.Getenv("GCPEMU_TEST_LOG") == "1" {
 		logOut = os.Stderr
 		cfg.LogLevel = "debug"
+	}
+	if extraLog != nil {
+		if logOut == io.Discard {
+			logOut = extraLog
+		} else {
+			logOut = io.MultiWriter(logOut, extraLog)
+		}
 	}
 	in, err := instance.New(cfg, services.Factories(), logOut)
 	if err != nil {

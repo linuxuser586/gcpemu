@@ -55,6 +55,9 @@ func (a *api) CreateRepository(ctx context.Context, req *artifactregistrypb.Crea
 	if err := checkSupported(in, loc); err != nil {
 		return nil, err
 	}
+	if err := checkCleanupPolicies(in.GetCleanupPolicies()); err != nil {
+		return nil, err
+	}
 	ref := repoRef{p, loc, id}
 	now := timestamppb.New(s.env.Clock.Now())
 	repo := proto.Clone(in).(*artifactregistrypb.Repository)
@@ -207,6 +210,11 @@ func (a *api) UpdateRepository(ctx context.Context, req *artifactregistrypb.Upda
 	}
 	if err := checkSupportedUpdate(in, paths); err != nil {
 		return nil, err
+	}
+	if contains(paths, "cleanup_policies") {
+		if err := checkCleanupPolicies(in.GetCleanupPolicies()); err != nil {
+			return nil, err
+		}
 	}
 	var out *artifactregistrypb.Repository
 	err = a.s.env.Store.Update(func(tx store.Tx) error {
