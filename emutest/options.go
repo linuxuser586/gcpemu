@@ -1,6 +1,7 @@
 package emutest
 
 import (
+	"io"
 	"testing"
 	"time"
 
@@ -9,7 +10,20 @@ import (
 
 // Option customises an Instance before it starts.
 type Option struct {
-	apply func(*config.Config)
+	apply  func(*config.Config)
+	logOut io.Writer
+}
+
+// WithLogOutput also writes the Instance's log, at info level and above,
+// to w, from before it starts. The Instance writes to w from many
+// goroutines, one record per Write call, so w must be safe for concurrent
+// use. Set GCPEMU_TEST_LOG=1 to see the log on stderr as well.
+func WithLogOutput(w io.Writer) Option {
+	return Option{logOut: w, apply: func(c *config.Config) {
+		if c.LogLevel == "warn" || c.LogLevel == "error" {
+			c.LogLevel = "info"
+		}
+	}}
 }
 
 // WithIAMMode sets the IAM enforcement level: "off", "audit" (the

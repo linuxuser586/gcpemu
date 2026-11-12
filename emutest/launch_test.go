@@ -19,7 +19,7 @@ import (
 func TestLaunchFailureCleansUp(t *testing.T) {
 	cfg := testConfig([]string{"no-such-service"}, nil)
 	released := 0
-	i, err := launch(context.Background(), &cfg, func() { released++ })
+	i, err := launch(context.Background(), &cfg, nil, func() { released++ })
 	if err == nil {
 		i.Close(context.Background())
 		t.Fatal("launch with an unknown service succeeded")
@@ -91,7 +91,7 @@ func TestLaunchFailureKeepsGivenDataDir(t *testing.T) {
 	}
 	cfg := testConfig([]string{"no-such-service"}, []Option{WithDataDir(dir)})
 	released := 0
-	i, err := launch(context.Background(), &cfg, func() { released++ })
+	i, err := launch(context.Background(), &cfg, nil, func() { released++ })
 	if err == nil {
 		i.Close(context.Background())
 		t.Fatal("launch with an unknown service succeeded")
@@ -117,7 +117,7 @@ func TestLaunchFailureKeepsTestDataDirWhenResourcesRemain(t *testing.T) {
 	t.Cleanup(func() { shutdownInstance, removeInstanceResources = savedShutdown, savedRemove })
 	cfg := testConfig([]string{"gcs"}, []Option{WithSeed(filepath.Join(t.TempDir(), "missing.yaml"))})
 	released := 0
-	i, err := launch(context.Background(), &cfg, func() { released++ })
+	i, err := launch(context.Background(), &cfg, nil, func() { released++ })
 	if err == nil {
 		i.Close(context.Background())
 		t.Fatal("launch with a missing seed file succeeded")

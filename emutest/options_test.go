@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,5 +259,33 @@ func (c *cleanupTB) Errorf(format string, a ...any) {
 func (c *cleanupTB) runCleanups() {
 	for i := len(c.cleanups) - 1; i >= 0; i-- {
 		c.cleanups[i]()
+	}
+}
+
+// lockedBuffer is a strings.Builder safe for concurrent use.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestWithLogOutput: the Instance's log, info and above, reaches the writer
+// from before it starts.
+func TestWithLogOutput(t *testing.T) {
+	var buf lockedBuffer
+	emutest.Start(t, []string{"gcs"}, emutest.WithLogOutput(&buf))
+	if !strings.Contains(buf.String(), "gcpemu started") {
+		t.Fatalf("log output = %q, want the start line", buf.String())
 	}
 }
