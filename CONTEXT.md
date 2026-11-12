@@ -14,7 +14,7 @@ _Avoid_: emulator (when a specific running one is meant), server
 The user-chosen label for an Instance's configuration, e.g. "default".
 
 **Instance ID**:
-The unique identifier that tags everything an Instance owns, such as its containers and networks. It is held by the Instance's data directory, so every Instance started in that directory shares it.
+The unique identifier that tags everything an Instance owns, such as its containers and networks. It is held by the Instance's data directory, so every Instance started in that directory shares it. A Test data dir may also hold one that no Instance runs under, to tag runtime objects the test makes on the host itself, so that they are reclaimed with the dir.
 
 **Live Instance**:
 The Instance a data directory's files name, confirmed by asking it, not by reading those files: it answers at the address they give with that directory's Instance ID.
@@ -298,7 +298,7 @@ An Instance ID that still tags containers, networks or volumes on the host but t
 _Avoid_: orphan, dead instance
 
 **Test data dir**:
-A data directory that a test owns until the test ends, or until the test's process ends if that comes first. The owner is the outermost test that names the directory; its subtests share it. Once either has ended, no Instance of that test will start in it again, even if the directory is still there. A later test that names the same path owns it anew, along with whatever Instance it still holds. It may hold a Persistent Instance that the test restarts, the Ephemeral Instance of a test that names no data directory, or an Instance the test starts with the `gcpemu` CLI. An Instance that a test process shares across its tests, from `TestMain`, has a Test data dir that the process owns. A data directory a test hands to an Instance that should outlive the test is not one (ADRs 0047, 0057).
+A data directory that a test owns until the test ends, or until the test's process ends if that comes first. The owner is the outermost test that names the directory; its subtests share it. Once either has ended, no Instance of that test will start in it again, even if the directory is still there. A later test that names the same path owns it anew, along with whatever Instance it still holds. It may hold a Persistent Instance that the test restarts, the Ephemeral Instance of a test that names no data directory, or an Instance the test starts with the `gcpemu` CLI. It may also hold no Instance at all, only the Instance ID of runtime objects the test makes on the host itself, such as a network that overlaps a range the test declares. An Instance that a test process shares across its tests, from `TestMain`, has a Test data dir that the process owns. A data directory a test hands to an Instance that should outlive the test is not one (ADRs 0047, 0057).
 _Avoid_: temp dir, scratch dir
 
 **Emulator clock**:
