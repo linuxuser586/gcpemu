@@ -780,7 +780,7 @@ _Avoid_: egress check, leak detector
 - "Snapshot" on its own is ambiguous. Use *State snapshot* or *Pub/Sub snapshot*.
 - "Datastore" on its own always means a GKE cluster's k3s Datastore. The GCP product is always called *Cloud Datastore* or *Firestore in Datastore mode*.
 - "Endpoint" on its own is ambiguous. Use *Service endpoint*, *Endpoint override*, a cluster's *Public endpoint*, or GCP's *network endpoint* (NEG).
-- "Ready" on its own is ambiguous for a GKE pod behind a load balancer. Say *containers ready* when the kubelet's probes pass, *pod Ready* when the pod's readiness gates also hold, and *HEALTHY* for its network endpoint's state in a backend service. A pod can be containers ready and HEALTHY before it is pod Ready.
+- "Ready" on its own is ambiguous for a GKE pod behind a load balancer. Say *containers ready* when the kubelet's probes pass, *pod Ready* when the pod's readiness gates also hold, and *HEALTHY* for its network endpoint's state in a backend service. A pod can be containers ready and HEALTHY before it is pod Ready. Behind a NEG, its readiness gate `cloud.google.com/load-balancer-neg-ready` holds it back from pod Ready until it is HEALTHY (ADR 0071).
 - "Gateway" and "frontend" on their own are ambiguous. Load balancer frontends and the network's gateway IP keep their GCP meanings and are always qualified.
 - "Secret" on its own is ambiguous. Use *Secret Manager secret*, *Secret version* or *Kubernetes Secret*.
 - "Build" on its own is ambiguous: it also means compiling gcpemu, a Docker image build or the Web console's Vite build. Use *Build* (capitalised) only for a Cloud Build execution, and say *image build* or *compile* for the others.

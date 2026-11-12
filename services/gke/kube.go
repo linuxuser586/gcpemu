@@ -157,6 +157,12 @@ func (k *kubeClient) mergePatch(ctx context.Context, path string, patch any) err
 	return k.do(ctx, http.MethodPatch, path, "application/merge-patch+json", patch, nil)
 }
 
+// strategicPatch applies a strategic merge patch, which merges lists such
+// as a pod's status.conditions by key instead of replacing them.
+func (k *kubeClient) strategicPatch(ctx context.Context, path string, patch any) error {
+	return k.do(ctx, http.MethodPatch, path, "application/strategic-merge-patch+json", patch, nil)
+}
+
 func (k *kubeClient) delete(ctx context.Context, path string) error {
 	err := k.do(ctx, http.MethodDelete, path, "", nil, nil)
 	if isKubeNotFound(err) {
@@ -306,6 +312,7 @@ type kubeService struct {
 		ClusterIP    string            `json:"clusterIP,omitempty"`
 		ExternalName string            `json:"externalName,omitempty"`
 		Ports        []kubeServicePort `json:"ports"`
+		Selector     map[string]string `json:"selector,omitempty"`
 	} `json:"spec"`
 	Status struct {
 		LoadBalancer struct {
@@ -325,7 +332,11 @@ type kubeEndpointSlice struct {
 		Conditions struct {
 			Ready *bool `json:"ready"`
 		} `json:"conditions"`
-		NodeName string `json:"nodeName"`
+		NodeName  string `json:"nodeName"`
+		TargetRef *struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"targetRef,omitempty"`
 	} `json:"endpoints"`
 	Ports []struct {
 		Name     *string `json:"name"`

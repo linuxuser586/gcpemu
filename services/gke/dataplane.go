@@ -285,6 +285,7 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	}
 	s.installCAInjector(ctx, d, key)
 	s.installInstrumentationWebhook(ctx, d, key)
+	s.installNEGGateWebhook(ctx, d, key)
 	s.installAutopilotWebhooks(ctx, d, key)
 	if err := s.startNodes(ctx, d, key, sn, ""); err != nil {
 		return err
@@ -929,6 +930,7 @@ func (s *Service) upgradeServer(ctx context.Context, key, version string) error 
 	s.watchServer(ctx, d, key)
 	s.installCAInjector(ctx, d, key)
 	s.installInstrumentationWebhook(ctx, d, key)
+	s.installNEGGateWebhook(ctx, d, key)
 	s.installAutopilotWebhooks(ctx, d, key)
 	if err := s.waitNodes(ctx, key, ""); err != nil {
 		return err
