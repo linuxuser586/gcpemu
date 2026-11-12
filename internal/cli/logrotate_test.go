@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -260,17 +262,61 @@ func TestDetachedChildRotatesItsLogAtStartup(t *testing.T) {
 	}
 }
 
-func TestAdvancingTheEmulatorClockDoesNotRotate(t *testing.T) {
+// TestOnlyTheRealClockRotates advances the Emulator clock of a
+// Deterministic Instance whose log is over the limit: only the real
+// clock's next check rotates it.
+func TestOnlyTheRealClockRotates(t *testing.T) {
+	old := logCheckInterval
+	logCheckInterval = time.Second
+	t.Cleanup(func() { logCheckInterval = old })
 	in, path := hostDetached(t, true, func(string) {})
 	// host made the first check, at startup, before it returned.
+	started := time.Now()
 	if err := os.Truncate(path, logMaxSize+1); err != nil {
 		t.Fatal(err)
 	}
-	if err := in.AdvanceClock(context.Background(), time.Hour); err != nil {
+	if err := in.AdvanceClock(context.Background(), 24*time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(logCheckInterval / 10)
-	if _, err := os.Stat(path + ".1"); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("advancing the emulator clock rotated the log: %v", err)
+	_, err := os.Stat(path + ".1")
+	if early := time.Since(started) < logCheckInterval; early && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("advancing the Emulator clock rotated the log: %v", err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(path + ".1"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the real clock's next check did not rotate the log")
+		}
+	}
+}
+
+// TestForegroundStartWritesNoInstanceLog runs a real foreground `gcpemu
+// start`, stopped during Seeding: it logs to stderr, and leaves no
+// Instance log in its data directory.
+func TestForegroundStartWritesNoInstanceLog(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	child := exec.Command(exe, "start", "--data-dir", dir, "--config", os.DevNull, "--port", "0", "--services", "gcs", "--seed", seedFile(t), "--wait-timeout", waitTimeout.String())
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GCPEMU_DETACHED=") {
+			child.Env = append(child.Env, kv)
+		}
+	}
+	child.Env = append(child.Env, "GCPEMU_TEST_FAKE=stopped-seeding")
+	var stderr bytes.Buffer
+	child.Stdout, child.Stderr = io.Discard, &stderr
+	if err := child.Run(); err != nil {
+		t.Fatalf("start: %v\n%s", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "stopped before it was ready") {
+		t.Errorf("stderr has no log records:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, instance.LogFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("foreground start made an Instance log: %v", err)
 	}
 }

@@ -12,13 +12,15 @@ import (
 )
 
 // The Instance log's limits: rotate at this size, keeping this many old
-// files (gcpemu.log.1, the newest, to gcpemu.log.3), checking the size at
-// this interval.
+// files (gcpemu.log.1, the newest, to gcpemu.log.3).
 const (
-	logMaxSize       = 100 << 20
-	logKeep          = 3
-	logCheckInterval = 5 * time.Second
+	logMaxSize = 100 << 20
+	logKeep    = 3
 )
+
+// logCheckInterval is how often, on the real clock, the Instance log's size
+// is checked (a variable for tests).
+var logCheckInterval = 5 * time.Second
 
 // copyLogTail and truncateLog are rotateLog's copy and truncate (variables
 // for tests).
