@@ -155,11 +155,12 @@ func bigLog(t *testing.T, path string, limit int) *slog.Logger {
 func TestRotateLogCopyFailureLosesTheLogButTruncates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gcpemu.log")
 	log := bigLog(t, path, 1024)
+	old := copyLogTail
 	copyLogTail = func(src, dst string, size, maxSize int64) error {
 		_ = os.WriteFile(dst, []byte("partial"), 0o600)
 		return errors.New("no space left on device")
 	}
-	t.Cleanup(func() { copyLogTail = copyTail })
+	t.Cleanup(func() { copyLogTail = old })
 	if err := rotateLog(path, 1024, 3, log); err != nil {
 		t.Fatal(err)
 	}
@@ -172,25 +173,25 @@ func TestRotateLogCopyFailureLosesTheLogButTruncates(t *testing.T) {
 	}
 }
 
-func TestRotationRetriesAfterATruncateFailure(t *testing.T) {
+func TestRotationRetriesOnlyTheTruncateAfterItFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gcpemu.log")
 	log := bigLog(t, path, 1024)
 	fails := 1
+	var beforeRetry string
+	old := truncateLog
 	truncateLog = func(name string, size int64) error {
 		if fails > 0 {
 			fails--
 			return errors.New("sharing violation")
 		}
-		return os.Truncate(name, size)
+		b, _ := os.ReadFile(name)
+		beforeRetry = string(b)
+		return old(name, size)
 	}
-	t.Cleanup(func() { truncateLog = os.Truncate })
-	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() { truncateLog = old })
 	stopped := make(chan struct{})
-	go func() {
-		runLogRotation(ctx, path, log, 1024, 3, 10*time.Millisecond)
-		close(stopped)
-	}()
-	defer func() { cancel(); <-stopped }()
+	done := startLogRotation(stopped, path, log, 1024, 3, 10*time.Millisecond)
+	defer func() { close(stopped); <-done }()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		cur := readFile(t, path)
 		if strings.Contains(cur, "instance log rotated") {
@@ -200,24 +201,25 @@ func TestRotationRetriesAfterATruncateFailure(t *testing.T) {
 			t.Fatalf("not rotated after a failed truncate:\n%s", cur)
 		}
 	}
-	if one := readFile(t, path+".1"); !strings.Contains(one, "level=WARN") || !strings.Contains(one, "sharing violation") {
-		t.Errorf("no Warn record for the failed truncate before the rotation:\n%s", one)
+	if !strings.Contains(beforeRetry, "level=WARN") || !strings.Contains(beforeRetry, "sharing violation") {
+		t.Errorf("no Warn record for the failed truncate:\n%s", beforeRetry)
+	}
+	if _, err := os.Stat(path + ".2"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the retry rotated again, shifting .1 to .2: %v", err)
+	}
+	if one := readFile(t, path+".1"); !strings.HasPrefix(one, "old line\n") || strings.Contains(one, "level=") {
+		t.Errorf(".1 does not hold the log as copied before the failed truncate:\n%s", one)
 	}
 }
 
-func TestRotationStopsWithItsContext(t *testing.T) {
+func TestRotationStopsWhenDoneCloses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gcpemu.log")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	done := make(chan struct{})
-	go func() {
-		runLogRotation(ctx, path, slog.New(slog.DiscardHandler), 1024, 3, time.Hour)
-		close(done)
-	}()
+	stop := make(chan struct{})
+	close(stop)
 	select {
-	case <-done:
+	case <-startLogRotation(stop, path, slog.New(slog.DiscardHandler), 1024, 3, time.Hour):
 	case <-time.After(5 * time.Second):
-		t.Fatal("runLogRotation did not return when its context ended")
+		t.Fatal("rotation did not stop when done closed")
 	}
 }
 
@@ -250,13 +252,8 @@ func TestDetachedChildRotatesItsLogAtStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if strings.Contains(readFile(t, path), "instance log rotated") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("a log at the limit was not rotated at startup")
-		}
+	if !strings.Contains(readFile(t, path), "instance log rotated") {
+		t.Fatal("a log at the limit was not rotated at startup")
 	}
 	if _, err := os.Stat(path + ".1"); err != nil {
 		t.Error(err)
@@ -265,13 +262,14 @@ func TestDetachedChildRotatesItsLogAtStartup(t *testing.T) {
 
 func TestAdvancingTheEmulatorClockDoesNotRotate(t *testing.T) {
 	in, path := hostDetached(t, true, func(string) {})
+	// host made the first check, at startup, before it returned.
 	if err := os.Truncate(path, logMaxSize+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := in.AdvanceClock(context.Background(), time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(logCheckGap / 10)
+	time.Sleep(logCheckInterval / 10)
 	if _, err := os.Stat(path + ".1"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("advancing the emulator clock rotated the log: %v", err)
 	}

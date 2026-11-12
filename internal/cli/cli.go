@@ -252,9 +252,7 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 		return nil, err
 	}
 	if o.instanceLog != "" {
-		rctx, cancel := context.WithCancel(context.Background())
-		go func() { <-in.Done(); cancel() }()
-		go runLogRotation(rctx, o.instanceLog, in.Env.Log, logMaxSize, logKeep, logCheckGap)
+		startLogRotation(in.Done(), o.instanceLog, in.Env.Log, logMaxSize, logKeep, logCheckInterval)
 	}
 	stopped := func(err error) bool {
 		return errors.Is(err, instance.ErrShutDown) || ctx.Err() != nil

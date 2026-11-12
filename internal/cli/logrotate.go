@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,45 +12,62 @@ import (
 )
 
 // The Instance log's limits: rotate at this size, keeping this many old
-// files (gcpemu.log.1, the newest, to gcpemu.log.3).
+// files (gcpemu.log.1, the newest, to gcpemu.log.3), checking the size at
+// this interval.
 const (
-	logMaxSize  = 100 << 20
-	logKeep     = 3
-	logCheckGap = 5 * time.Second
+	logMaxSize       = 100 << 20
+	logKeep          = 3
+	logCheckInterval = 5 * time.Second
 )
 
-// Test hooks for rotateLog's copy and truncate.
+// copyLogTail and truncateLog are rotateLog's copy and truncate (variables
+// for tests).
 var (
 	copyLogTail = copyTail
 	truncateLog = os.Truncate
 )
 
-// runLogRotation checks the size of the Instance log at path at once, then
-// every check on the real clock, and rotates it when it has reached
-// maxSize. The emulator clock plays no part: advancing it never rotates.
-// It returns when ctx ends. Rotation errors are logged, never returned:
-// they must not stop the Instance.
-func runLogRotation(ctx context.Context, path string, log *slog.Logger, maxSize int64, keep int, check time.Duration) {
-	rotate := func() {
-		if fi, err := os.Stat(path); err == nil && fi.Size() >= maxSize {
-			_ = rotateLog(path, maxSize, keep, log)
+// startLogRotation checks the size of the Instance log at path at once,
+// then in the background every interval on the real clock until done
+// closes, and rotates the log when it has reached maxSize. The Emulator
+// clock plays no part: advancing it never rotates. The returned channel
+// closes when the checks have stopped. Rotation errors are logged, never
+// returned: they must not stop the Instance.
+func startLogRotation(done <-chan struct{}, path string, log *slog.Logger, maxSize int64, keep int, interval time.Duration) <-chan struct{} {
+	var pending *logRotation // copied, but not yet truncated
+	check := func() {
+		if pending == nil {
+			fi, err := os.Stat(path)
+			if err != nil || fi.Size() < maxSize {
+				return
+			}
+			pending = copyOldLog(path, fi.Size(), maxSize, keep, log)
+		}
+		if pending.truncate(path, log) == nil {
+			pending = nil
 		}
 	}
-	rotate()
-	t := time.NewTicker(check)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			rotate()
+	check()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				check()
+			}
 		}
-	}
+	}()
+	return stopped
 }
 
-// rotateLog moves the Instance log at path to path.1, path.1 to path.2 and
-// so on, keeping keep old files, and logs what it did to log. path.1 holds
+// rotateLog rotates the Instance log at path, of at least maxSize bytes:
+// it moves path.1 to path.2 and so on, keeping keep old files, copies the
+// log to path.1 and truncates it, logging what it did to log. path.1 holds
 // at most maxSize bytes: the end of the log, from a line boundary.
 //
 // It copies the log and truncates it in place rather than renaming it and
@@ -67,8 +83,25 @@ func runLogRotation(ctx context.Context, path string, log *slog.Logger, maxSize 
 //
 // A failed copy loses the earlier log: rotateLog removes the partial
 // path.1, truncates anyway and logs a warning. A failed truncate is logged
-// and returned, so the next check tries again.
+// and returned; startLogRotation's next check retries only the truncate.
 func rotateLog(path string, maxSize int64, keep int, log *slog.Logger) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	return copyOldLog(path, fi.Size(), maxSize, keep, log).truncate(path, log)
+}
+
+// logRotation is a rotation of the Instance log that has copied it, or
+// failed to, and has yet to truncate it.
+type logRotation struct {
+	size    int64 // the log's size when copied
+	copyErr error
+}
+
+// copyOldLog shifts the old files of the log at path, of size bytes, and
+// copies its end to path.1, as rotateLog does.
+func copyOldLog(path string, size, maxSize int64, keep int, log *slog.Logger) *logRotation {
 	// Shift first, freeing the oldest file's space before the copy.
 	if err := os.Remove(oldLog(path, keep)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Warn("rotating instance log", "err", err)
@@ -78,23 +111,24 @@ func rotateLog(path string, maxSize int64, keep int, log *slog.Logger) error {
 			log.Warn("rotating instance log", "err", err)
 		}
 	}
-	size := int64(-1)
-	if fi, err := os.Stat(path); err == nil {
-		size = fi.Size()
-	}
-	copyErr := copyLogTail(path, oldLog(path, 1), size, maxSize)
-	if copyErr != nil {
+	err := copyLogTail(path, oldLog(path, 1), size, maxSize)
+	if err != nil {
 		_ = os.Remove(oldLog(path, 1))
 	}
+	return &logRotation{size: size, copyErr: err}
+}
+
+// truncate truncates the log at path and logs the rotation's outcome.
+func (r *logRotation) truncate(path string, log *slog.Logger) error {
 	if err := truncateLog(path, 0); err != nil {
-		log.Warn("instance log not rotated: truncating it failed", "size", size, "err", err)
+		log.Warn("instance log not rotated: truncating it failed", "size", r.size, "err", err)
 		return err
 	}
-	if copyErr != nil {
-		log.Warn("earlier instance log lost: copying it failed", "size", size, "err", copyErr)
+	if r.copyErr != nil {
+		log.Warn("earlier instance log lost: copying it failed", "size", r.size, "err", r.copyErr)
 		return nil
 	}
-	log.Info("instance log rotated", "size", size)
+	log.Info("instance log rotated", "size", r.size)
 	return nil
 }
 
