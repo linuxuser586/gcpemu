@@ -31,7 +31,7 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 	settings := func() *sqladmin.Settings {
 		return &sqladmin.Settings{
 			IpConfiguration:     &sqladmin.IpConfiguration{Ipv4Enabled: true, AuthorizedNetworks: open},
-			BackupConfiguration: &sqladmin.BackupConfiguration{Enabled: true, PointInTimeRecoveryEnabled: true},
+			BackupConfiguration: &sqladmin.BackupConfiguration{Enabled: true, PointInTimeRecoveryEnabled: true, TransactionLogRetentionDays: 7},
 		}
 	}
 	createInstance(t, svc, &sqladmin.DatabaseInstance{
@@ -73,7 +73,7 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 		t.Fatalf("backup = %+v", b)
 	}
 
-	// Transaction log retention (7 days by default). The Base backups taken
+	// Transaction log retention (7 days, set on create). The Base backups taken
 	// on create and with the backup are back-dated to 10 and 8 days ago;
 	// the next Base backup prunes the first and the WAL before the second,
 	// the anchor (ADR 0022: the WAL archive is aged directly).

@@ -73,6 +73,8 @@ func putWithAutomatedBackups(t *testing.T, s *Service, clk *clock.Offset, name, 
 		st.BackupConfiguration.Enabled = true
 		st.BackupConfiguration.StartTime = start
 		st.BackupConfiguration.BackupRetentionSettings = &sqladmin.BackupRetentionSettings{RetentionUnit: "COUNT", RetainedBackups: retained}
+		// 1 day of logs, so that any retainedBackups is valid (#1044).
+		st.BackupConfiguration.TransactionLogRetentionDays = 1
 		return nil
 	}); err != nil {
 		t.Fatal(err)
