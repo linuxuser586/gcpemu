@@ -410,10 +410,10 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	}
 	// A clone started with a restore bundle is still in recovery;
 	// finishRecovery gives it its full settings, archive_command included.
-	if hasRestoreBundle(extra) {
-		return nil
+	if !hasRestoreBundle(extra) {
+		s.syncArchiveCommand(ctx, project, name)
 	}
-	return s.syncArchiveCommand(ctx, project, name)
+	return nil
 }
 
 // hasRestoreBundle reports whether files hold a point-in-time restore
@@ -592,7 +592,8 @@ func (s *Service) restartContainer(ctx context.Context, project, name string) er
 	if err := s.waitReady(ctx, rt, plane, cname, addr); err != nil {
 		return err
 	}
-	return s.syncArchiveCommand(ctx, project, name)
+	s.syncArchiveCommand(ctx, project, name)
+	return nil
 }
 
 // aliasPrivateIP gives a running container on a Translated private

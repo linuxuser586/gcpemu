@@ -110,7 +110,17 @@ func (s *Service) clearArchive(ctx context.Context, project, name string) error 
 // reloads the configuration; no restart is needed. A server PITR is not
 // yet applied to gets the command from applyFlags, and a fresh volume
 // from bootstrapSQL.
-func (s *Service) syncArchiveCommand(ctx context.Context, project, name string) error {
+//
+// A failure is logged, not returned: the server runs, and an older
+// command still archives, uncompressed. The next start tries again.
+func (s *Service) syncArchiveCommand(ctx context.Context, project, name string) {
+	if err := s.updateArchiveCommand(ctx, project, name); err != nil {
+		s.env.Log.Warn("sql: updating WAL archive command", "instance", project+":"+name, "err", err)
+	}
+}
+
+// updateArchiveCommand is syncArchiveCommand, returning its error.
+func (s *Service) updateArchiveCommand(ctx context.Context, project, name string) error {
 	rec, err := s.loadRecord(project, name)
 	if err != nil || rec.AppliedFlags[pitrFlag] == "" {
 		return err
