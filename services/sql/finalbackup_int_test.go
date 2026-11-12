@@ -3,11 +3,14 @@ package sql_test
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
 // TestFinalBackupRestoresADeletedInstance covers FR-SQL-008's Final
@@ -58,7 +61,17 @@ func TestFinalBackupRestoresADeletedInstance(t *testing.T) {
 	if len(finals) != 2 || byInstance["live"] == nil || byInstance["stopped"] == nil {
 		t.Fatalf("Final backups: %+v, want one each of live and stopped", finals)
 	}
+	sqlSvc := serviceNamed(t, inst, "sql")
 	for _, b := range finals {
+		id, err := strconv.ParseInt(b.Name[strings.LastIndex(b.Name, "/")+1:], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if file := sql.BackupFile(sqlSvc, testProject, id); !strings.HasSuffix(file, "/"+strconv.FormatInt(id, 10)+".sql.gz") {
+			t.Errorf("Final backup of %s: file %s, want <id>.sql.gz (#1043)", b.Instance, file)
+		} else {
+			requireGzip(t, file)
+		}
 		if b.State != "SUCCESSFUL" || b.InstanceDeletionTime == "" || b.ExpiryTime == "" {
 			t.Errorf("Final backup of %s: state %s, instanceDeletionTime %q, expiryTime %q", b.Instance, b.State, b.InstanceDeletionTime, b.ExpiryTime)
 		}

@@ -1,8 +1,12 @@
 package sql
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -49,30 +53,75 @@ func (s *Service) removeAllBackupFiles() {
 	}
 }
 
-// dumpAll returns a pg_dumpall of the instance.
-func (s *Service) dumpAll(ctx context.Context, project, name string) (string, error) {
-	return s.execIn(ctx, project, name, "", "pg_dumpall", "-h", "/var/run/postgresql", "-p", "5433", "-U", superuser, "--no-password")
+// dumpAll streams a plain pg_dumpall of the instance to w.
+func (s *Service) dumpAll(ctx context.Context, project, name string, w io.Writer) error {
+	return s.execStream(ctx, project, name, nil, w, "pg_dumpall", "-h", "/var/run/postgresql", "-p", "5433", "-U", superuser, "--no-password")
 }
 
-// writeFileAtomic writes temp + fsync + rename (NFR-REL-001).
-func writeFileAtomic(path string, data []byte) error {
+// writeDumpFile writes the dump that dump streams to path gzipped, through
+// a temporary file that is fsynced and renamed into place (NFR-REL-001), so
+// the dump is never held whole. If dump fails, nothing is left at path or
+// in the temporary file.
+func writeDumpFile(path string, dump func(io.Writer) error) (err error) {
 	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+		}
+	}()
+	zw, err := gzip.NewWriterLevel(f, gzip.BestSpeed)
+	if err != nil {
+		return err
+	}
+	if err := dump(zw); err != nil {
+		return err
+	}
+	if err := zw.Close(); err != nil {
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
 		return err
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// isGzip reports whether b starts with gzip's magic bytes.
+func isGzip(b []byte) bool { return len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b }
+
+// dumpFile is an open dump file read through r.
+type dumpFile struct {
+	io.Reader
+	f *os.File
+}
+
+func (d dumpFile) Close() error { return d.f.Close() }
+
+// openDump opens a dump file for reading, decompressed when gzipped. Whether
+// it is goes by its first two bytes, not its name: backups and State
+// snapshots from before #1043 are plain .sql files.
+func openDump(file string) (io.ReadCloser, error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	br := bufio.NewReader(f)
+	if magic, _ := br.Peek(2); !isGzip(magic) {
+		return dumpFile{br, f}, nil
+	}
+	zr, err := gzip.NewReader(br)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return dumpFile{zr, f}, nil
 }
 
 // snapshotAPIState returns the stored databases and users of an instance.
@@ -125,11 +174,10 @@ func (s *Service) replaceAPIState(project, name string, dbs []*sqladmin.Database
 	})
 }
 
-// loadDump replays a pg_dumpall into the instance; "already exists"
-// errors for the bootstrap roles are expected and ignored.
-func (s *Service) loadDump(ctx context.Context, project, name, dump string) error {
-	_, err := s.execIn(ctx, project, name, dump, "psql", "-X", "-q", "-h", "/var/run/postgresql", "-p", "5433", "-U", superuser, "-d", "postgres", "-f", "-")
-	return err
+// loadDump replays a plain pg_dumpall read from dump into the instance;
+// "already exists" errors for the bootstrap roles are expected and ignored.
+func (s *Service) loadDump(ctx context.Context, project, name string, dump io.Reader) error {
+	return s.execStream(ctx, project, name, dump, io.Discard, "psql", "-X", "-q", "-h", "/var/run/postgresql", "-p", "5433", "-U", superuser, "-d", "postgres", "-f", "-")
 }
 
 // reinitialize replaces the instance's volumes with a fresh cluster. The
@@ -263,25 +311,25 @@ func (s *Service) fail(b *backupRecord, err error) {
 // writeDump writes a pg_dumpall of the instance to the file of the backup
 // with the ID stored under owner (backupRecord.owner) and returns its path.
 func (s *Service) writeDump(ctx context.Context, project, name, owner string, id int64) (string, error) {
-	dump, err := s.dump(ctx, project, name)
-	if err != nil {
-		return "", err
-	}
 	file, err := s.backupFile(project, owner, id)
 	if err != nil {
 		return "", err
 	}
-	return file, writeFileAtomic(file, []byte(dump))
+	if err := writeDumpFile(file, func(w io.Writer) error { return s.dump(ctx, project, name, w) }); err != nil {
+		return "", err
+	}
+	return file, nil
 }
 
-// backupFile returns the dump file of the backup with the ID stored under
-// owner, creating its directory.
+// backupFile returns the gzipped dump file of a new backup with the ID
+// stored under owner, creating its directory. Backups from before #1043
+// have a plain <id>.sql: backupRecord.File names the file a backup has.
 func (s *Service) backupFile(project, owner string, id int64) (string, error) {
 	dir, err := s.backupDir(project, owner)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, strconv.FormatInt(id, 10)+".sql"), nil
+	return filepath.Join(dir, strconv.FormatInt(id, 10)+".sql.gz"), nil
 }
 
 // startBackup stores a RUNNING on-demand backup of the instance and starts
@@ -539,7 +587,7 @@ func (s *Service) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, errInvalid("Backup %d is %s; only a successful backup can be restored.", b.Run.Id, b.Run.Status))
 		return
 	}
-	// The backup must outlive its expiry until the dump has been read.
+	// The backup must outlive its expiry until its dump has been loaded.
 	release, ok := s.holdBackup(srcProject, b)
 	if !ok {
 		apierr.Write(w, errBackupMissing())
@@ -552,15 +600,16 @@ func (s *Service) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, s.runOp(op, true, func(ctx context.Context) error {
-		dump, err := os.ReadFile(b.File)
-		release()
+		defer release()
+		dump, err := openDump(b.File)
 		if err != nil {
 			return newOpError("INTERNAL_ERROR", "read backup: %v", err)
 		}
+		defer dump.Close()
 		if err := s.reinitialize(ctx, project, name); err != nil {
 			return err
 		}
-		if err := s.loadDump(ctx, project, name, string(dump)); err != nil {
+		if err := s.loadDump(ctx, project, name, dump); err != nil {
 			return err
 		}
 		if err := s.replaceAPIState(project, name, b.Databases, b.Users); err != nil {
@@ -645,15 +694,12 @@ func (s *Service) cloneInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	dest := cc.DestinationInstanceName
 	hooks := createHooks{after: func(ctx context.Context) error {
-		dump, err := s.dumpAll(ctx, project, src)
-		if err != nil {
-			return err
-		}
-		if err := s.loadDump(ctx, project, dest, dump); err != nil {
+		if err := s.copyData(ctx, project, src, dest); err != nil {
 			return err
 		}
 		dbs, users := s.snapshotAPIState(project, src)
-		if dbs, err = s.keepDatabases(ctx, project, dest, dbs, cc.DatabaseNames); err != nil {
+		dbs, err := s.keepDatabases(ctx, project, dest, dbs, cc.DatabaseNames)
+		if err != nil {
 			return err
 		}
 		return s.replaceAPIState(project, dest, dbs, users)
@@ -682,6 +728,36 @@ func (s *Service) cloneInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, op)
+}
+
+// errLoadEnded closes the pipe of a clone's dump once the destination
+// stops reading it.
+var errLoadEnded = errors.New("sql: the clone's load ended")
+
+// copyData pipes a pg_dumpall of src straight into psql on dest, so the
+// data is neither written to disk nor held whole. A failure on either side
+// fails the copy, with the error of the side that failed first.
+func (s *Service) copyData(ctx context.Context, project, src, dest string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	pr, pw := io.Pipe()
+	dumped := make(chan error, 1)
+	go func() {
+		err := s.dumpAll(ctx, project, src, pw)
+		pw.CloseWithError(err)
+		dumped <- err
+	}()
+	loadErr := s.loadDump(ctx, project, dest, pr)
+	pr.CloseWithError(errLoadEnded)
+	if loadErr != nil {
+		// Even a dump that writes nothing more stops.
+		cancel()
+	}
+	// A failed dump breaks the load's stdin with its own error.
+	if dumpErr := <-dumped; dumpErr != nil && (loadErr == nil || errors.Is(loadErr, dumpErr)) {
+		return dumpErr
+	}
+	return loadErr
 }
 
 // keepDatabases drops from a clone the databases not in names (all are

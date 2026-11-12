@@ -89,7 +89,7 @@ func (s *Service) readObject(ctx context.Context, rec *instanceRecord, uri strin
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > 2 && b[0] == 0x1f && b[1] == 0x8b {
+	if isGzip(b) {
 		zr, err := gzip.NewReader(bytes.NewReader(b))
 		if err != nil {
 			return nil, err

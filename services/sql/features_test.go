@@ -16,6 +16,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
 func count(t testing.TB, c *pgx.Conn, q string) int {
@@ -182,6 +183,16 @@ func TestClone(t *testing.T) {
 	waitOp(t, svc, must(svc.Instances.Clone(testProject, "src", &sqladmin.InstancesCloneRequest{CloneContext: &sqladmin.CloneContext{
 		DestinationInstanceName: "src-clone",
 	}}).Do()))
+	// The source's dump is piped into the clone, never written (#1043).
+	files, err := sql.DataDirFiles(serviceNamed(t, inst, "sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.Contains(filepath.Base(f), ".sql") {
+			t.Errorf("dump file %s after the clone, want none", f)
+		}
+	}
 	conn = connectHost(t, inst, "src-clone", "postgres", "rootpw", "app")
 	defer conn.Close(ctx)
 	if n := count(t, conn, "SELECT count(*) FROM items"); n != 5 {

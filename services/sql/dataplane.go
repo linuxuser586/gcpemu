@@ -1,9 +1,11 @@
 package sql
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"strconv"
@@ -689,30 +691,43 @@ func (s *Service) execSQL(ctx context.Context, project, name, db, user, sql stri
 		"-h", proxy.SocketDir, "-p", strconv.Itoa(proxy.InternalPort), "-U", orDefault(user, superuser), "-d", orDefault(db, "postgres"), "-f", "-")
 }
 
-// execIn runs a command in the container with stdin; a non-zero exit is an
-// ERROR_RDBMS operation error carrying stderr.
+// execIn is execStream for small input and output: stdin and stdout as
+// strings.
 func (s *Service) execIn(ctx context.Context, project, name, stdin string, cmd ...string) (string, error) {
+	var in io.Reader
+	if stdin != "" {
+		in = strings.NewReader(stdin)
+	}
+	var out strings.Builder
+	if err := s.execStream(ctx, project, name, in, &out, cmd...); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// execStream runs a command in the container, streaming stdin (none if
+// nil) to it and its stdout to stdout as it runs, so that a dump is never
+// held whole; a non-zero exit is an ERROR_RDBMS operation error carrying
+// stderr.
+func (s *Service) execStream(ctx context.Context, project, name string, stdin io.Reader, stdout io.Writer, cmd ...string) error {
 	rt, _, err := s.plane(ctx)
 	if err != nil {
-		return "", err
+		return err
 	}
-	var in []byte
-	if stdin != "" {
-		in = []byte(stdin)
-	}
-	res, err := rt.Exec(ctx, containerName(rt, project, name), cmd, in)
+	var stderr bytes.Buffer
+	code, err := rt.ExecStream(ctx, containerName(rt, project, name), cmd, stdin, stdout, &stderr)
 	if err != nil {
 		if errors.Is(err, runtime.ErrNotFound) {
-			return "", errNotRunning()
+			return errNotRunning()
 		}
-		return "", err
+		return err
 	}
-	if res.ExitCode != 0 {
-		msg := strings.TrimSpace(string(res.Stderr))
+	if code != 0 {
+		msg := strings.TrimSpace(stderr.String())
 		msg = strings.TrimPrefix(msg, "psql:<stdin>:")
-		return "", newOpError("ERROR_RDBMS", "%s", msg)
+		return newOpError("ERROR_RDBMS", "%s", msg)
 	}
-	return string(res.Stdout), nil
+	return nil
 }
 
 func orDefault(v, d string) string {

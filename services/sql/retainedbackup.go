@@ -3,6 +3,7 @@ package sql
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,10 +74,12 @@ func (s *Service) retainBackups(in *sqladmin.DatabaseInstance, deletedAt string)
 		if b.File == "" {
 			continue
 		}
-		file, err := s.backupFile(project, b.owner(), b.Run.Id)
+		// The file keeps its name: a plain .sql from before #1043 stays one.
+		dir, err := s.backupDir(project, b.owner())
 		if err != nil {
 			return err
 		}
+		file := filepath.Join(dir, filepath.Base(b.File))
 		if err := os.Rename(b.File, file); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
