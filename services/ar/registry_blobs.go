@@ -23,6 +23,11 @@ type upload struct {
 	img     string
 	size    int64
 	started time.Time
+	// touched is when, on the Emulator clock, the session was opened or
+	// last received bytes; the Registry cleanup pass drops a session
+	// untouched for longer than cleanupGrace, and sets dropped.
+	touched time.Time
+	dropped bool
 }
 
 // blobsRoute serves /v2/<name>/blobs/<digest>.
@@ -66,9 +71,12 @@ func (s *Service) blobsRoute(w http.ResponseWriter, r *http.Request, t *target, 
 
 // getBlob serves a linked blob with Range support.
 func (s *Service) getBlob(w http.ResponseWriter, r *http.Request, t *target, digest string) {
-	var ok bool
-	_ = s.env.Store.View(func(tx store.Tx) error { _, ok = getLink(tx, t.ref, t.img, digest); return nil })
-	if !ok {
+	var l *linkRec
+	_ = s.env.Store.View(func(tx store.Tx) error { l, _ = getLink(tx, t.ref, t.img, digest); return nil })
+	if l != nil && r.Method == http.MethodHead {
+		s.renewLink(t, digest, l)
+	}
+	if l == nil {
 		writeRegError(w, regErr(http.StatusNotFound, "BLOB_UNKNOWN", "blob unknown to registry"))
 		return
 	}
@@ -84,6 +92,23 @@ func (s *Service) getBlob(w http.ResponseWriter, r *http.Request, t *target, dig
 	h.Set("Etag", `"`+digest+`"`)
 	h.Set("Cache-Control", "max-age=31536000")
 	http.ServeContent(w, r, "", time.Time{}, f)
+}
+
+// renewLink makes an old link young again when a push HEADs its blob and,
+// finding it, skips the upload: the Registry cleanup pass must not drop it
+// before the push's manifest arrives (ADR 0070). Links younger than half
+// the grace period are left alone, so that HEADs rarely write.
+func (s *Service) renewLink(t *target, digest string, l *linkRec) {
+	now := s.env.Clock.Now()
+	if now.Sub(l.Created) <= cleanupGrace/2 {
+		return
+	}
+	_ = s.env.Store.Update(func(tx store.Tx) error {
+		if _, ok := getLink(tx, t.ref, t.img, digest); !ok {
+			return nil
+		}
+		return putLink(tx, t.ref, t.img, digest, l.Size, now)
+	})
 }
 
 // uploadsRoute serves /v2/<name>/blobs/uploads/[<id>].
@@ -108,6 +133,10 @@ func (s *Service) uploadsRoute(w http.ResponseWriter, r *http.Request, t *target
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.dropped {
+		writeRegError(w, regErr(http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", "blob upload unknown to registry"))
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s.uploadStatus(w, t, u, http.StatusNoContent)
@@ -176,19 +205,23 @@ func (s *Service) startUpload(w http.ResponseWriter, r *http.Request, t *target)
 		s.blobCreated(w, t, d)
 		return
 	}
-	u := &upload{id: s.env.IDs.UUID(), ref: t.ref, img: t.img, started: s.env.Clock.Now()}
-	// Under gc, so that Reset does not empty uploads meanwhile (#397).
+	now := s.env.Clock.Now()
+	u := &upload{id: s.env.IDs.UUID(), ref: t.ref, img: t.img, started: now, touched: now}
+	// Under gc, so that Reset does not empty uploads meanwhile (#397) and
+	// the cleanup pass never sees the file without its session.
 	s.blobs.gc.RLock()
 	f, err := os.OpenFile(s.blobs.uploadPath(u.id), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err == nil {
+		_ = f.Close()
+		s.mu.Lock()
+		s.uploads[u.id] = u
+		s.mu.Unlock()
+	}
 	s.blobs.gc.RUnlock()
 	if err != nil {
 		writeRegError(w, regErr(http.StatusInternalServerError, "UNKNOWN", "%v", err))
 		return
 	}
-	_ = f.Close()
-	s.mu.Lock()
-	s.uploads[u.id] = u
-	s.mu.Unlock()
 	s.uploadStatus(w, t, u, http.StatusAccepted)
 }
 
@@ -280,6 +313,7 @@ func (s *Service) appendUpload(u *upload, body io.Reader) error {
 	}
 	n, err := io.Copy(f, body)
 	u.size += n
+	u.touched = s.env.Clock.Now()
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

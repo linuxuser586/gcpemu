@@ -46,6 +46,15 @@
 // pullthrough.go, upstream.go). RegistriesYAML renders the k3s node
 // configuration (registries.go).
 //
+// # Registry cleanup (FR-AR-007, ADR 0070)
+//
+// Deleting a version also drops the blob links of its image that no
+// remaining manifest uses, and blob files go once nothing in the registry
+// refers to them. A periodic pass (cleanup.go) frees links that no
+// manifest uses after a grace period on the Emulator clock, and abandoned
+// uploads; in a Deterministic Instance it runs only on `gcpemu time
+// advance`.
+//
 // # Registry auth (FR-AR-003)
 //
 // Clients are challenged with "WWW-Authenticate: Bearer realm=<host>/v2/token"
@@ -108,6 +117,12 @@ type Service struct {
 	bgCancel     context.CancelFunc
 	fetchRuns    inflight.Tracker // running upstream fetches, waited for by Reset
 	resetting    bool             // no upstream fetch starts while set
+
+	// Registry cleanup (cleanup.go): passMu runs one pass at a time;
+	// cleanupLoops runs the periodic pass outside a Deterministic Instance.
+	passMu       sync.Mutex
+	passStopped  bool // under passMu: Stop ran, so ClockAdvanced runs no pass
+	cleanupLoops inflight.Loops
 }
 
 // New returns the service.
@@ -166,12 +181,23 @@ func (s *Service) Start(ctx context.Context) error {
 			s.env.Log.Error("ar registry stopped", "err", err)
 		}
 	}()
+	s.passMu.Lock()
+	s.passStopped = false
+	s.passMu.Unlock()
+	if !s.env.Config.Deterministic {
+		s.cleanupLoops.Start(s.cleanupLoop)
+	}
 	return nil
 }
 
-// Stop shuts the registry down and stops pending operations.
+// Stop shuts the registry down and stops pending operations and the
+// Registry cleanup pass, waiting for a pass in progress.
 func (s *Service) Stop(ctx context.Context) error {
 	s.ops.Close()
+	_ = s.cleanupLoops.Stop(ctx)
+	s.passMu.Lock() // waits for a ClockAdvanced pass
+	s.passStopped = true
+	s.passMu.Unlock()
 	s.mu.Lock()
 	srv, lan := s.srv, s.lan
 	s.srv, s.lan, s.lanH, s.ready = nil, nil, nil, false
@@ -281,8 +307,14 @@ func (s *Service) IsStoreCache(ns, key string) bool {
 // none writes to the blob store while it is emptied (#397) or caches
 // anything afterwards (#306), and removes every blob and upload; the
 // store is reset by the Instance. Fetches after Reset run on a fresh
-// background context.
+// background context. The Registry cleanup pass is stopped, and a pass in
+// progress waited for, until ResetDone.
 func (s *Service) Reset(ctx context.Context) error {
+	if err := s.cleanupLoops.Reset(ctx); err != nil {
+		return fmt.Errorf("ar: waiting for the cleanup pass: %w", err)
+	}
+	s.passMu.Lock()
+	defer s.passMu.Unlock()
 	err := s.ops.Reset(ctx)
 	s.mu.Lock()
 	s.uploads = map[string]*upload{}
@@ -307,6 +339,14 @@ func (s *Service) Reset(ctx context.Context) error {
 	defer s.blobs.gc.Unlock()
 	return errors.Join(err, s.blobs.reset())
 }
+
+// ResetDone implements emu.ResetFinisher: the periodic cleanup pass runs
+// again once the store is reset too.
+func (s *Service) ResetDone() { s.cleanupLoops.Resume() }
+
+// ClockAdvanced implements emu.ClockObserver: it runs a Registry cleanup
+// pass and returns once it has finished (ADR 0070).
+func (s *Service) ClockAdvanced(ctx context.Context) error { return s.cleanupPass(ctx) }
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004).
 func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]string {
