@@ -107,8 +107,10 @@ runs:
           echo "::error::Downloading the Playwright browsers failed or took over 3 minutes"
           exit 1
         fi
-    # Saved straight away, so a failing suite still keeps the cache.
-    - if: steps.cache.outputs.cache-hit != 'true'
+    # Saved straight away, so a failing suite still keeps the cache. #1055:
+    # never from a PR, whose entry no other ref can restore; PRs restore
+    # main's, which ci on push and the playwright-cache workflow save.
+    - if: steps.cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
       uses: actions/cache/save@v6
       with:
         path: |

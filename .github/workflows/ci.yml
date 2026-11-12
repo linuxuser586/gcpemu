@@ -67,7 +67,9 @@ jobs:
       - run: just doctor
       - run: just vet
       - run: just race
-      - run: just cross
+      # #1055: only x64 Linux compiles all six targets; the rest build their
+      # own, so each Go cache entry holds one cross compile, not six.
+      - run: just ${{ runner.arch == 'X64' && 'cross' || 'cross-host' }}
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -107,7 +109,8 @@ jobs:
       - run: go test -exec true -race ./...
       - run: go test -exec true -tags e2e ./e2e
       - run: go test -exec true -tags compat ./compat
-      - run: just cross
+      # #1055: the same targets as this arch's test job, so neither misses.
+      - run: just ${{ runner.arch == 'X64' && 'cross' || 'cross-host' }}
       - uses: ./.github/actions/go-cache-save
         with:
           paths: ${{ steps.go.outputs.paths }}
@@ -298,10 +301,11 @@ jobs:
         run: just e2e
       # #498, #630: the release workflow's Image readiness check, run on
       # every change so it keeps working between releases. Each runner
-      # checks its own platform's image, built from just cross output.
+      # checks its own platform's image. #1055: just cross-host builds only
+      # the binary that image copies.
       - name: Image readiness check
         run: |
-          just cross
+          just cross-host
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist
           just image-check gcpemu:check
       # #862: the release workflow's echo-image-check, likewise.
@@ -703,7 +707,9 @@ jobs:
         shell: pwsh
       - run: just build
         shell: pwsh
-      - run: just cross
+      # #1055: x64 Linux cross-compiles every target; here the recipe still
+      # runs under pwsh, for this runner's target only.
+      - run: just cross-host
         shell: pwsh
       - run: .github/install-tofu.sh "$RUNNER_TEMP/tofu"
       - name: Tests
