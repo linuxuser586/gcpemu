@@ -1131,9 +1131,9 @@ var removeRetryWaits = []time.Duration{500 * time.Millisecond, 1500 * time.Milli
 
 // RemoveContainer deletes a container (with anonymous volumes); a missing
 // container is not an error. A forced remove that races the container's
-// own exit ("did not receive an exit event") is retried a few times and
-// the last error returned (#1142); other runtime errors are returned at
-// once.
+// own exit ("did not receive an exit event") is retried a few times; if
+// it never succeeds, that first error is returned (#1142). Other runtime
+// errors are returned at once.
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
 	c.forgetStart(id)
 	remove := func() error {
@@ -1144,24 +1144,30 @@ func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) err
 		}
 		return err
 	}
-	err := remove()
+	first := remove()
+	if !isExitRace(first) {
+		return first
+	}
 	for _, wait := range removeRetryWaits {
-		if !exitRace(err) {
-			return err
-		}
 		select {
 		case <-ctx.Done():
-			return err
+			return first
 		case <-time.After(wait):
 		}
-		err = remove()
+		err := remove()
+		if err == nil {
+			return nil
+		}
+		if !isExitRace(err) {
+			return first
+		}
 	}
-	return err
+	return first
 }
 
-// exitRace reports the runtime's transient failure to remove a container
-// whose kill raced its own exit.
-func exitRace(err error) bool {
+// isExitRace reports the runtime's transient failure to remove a
+// container whose kill raced its own exit.
+func isExitRace(err error) bool {
 	var ae *apiError
 	return errors.As(err, &ae) && ae.Status >= 500 && strings.Contains(ae.Message, "did not receive an exit event")
 }
