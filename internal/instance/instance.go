@@ -789,18 +789,21 @@ func (in *Instance) Done() <-chan struct{} { return in.done }
 // then stops services in reverse order, closes the store and removes runtime
 // files (FR-CORE-006). ctx also limits that wait: when ctx ends first, it
 // logs a warning and carries on with Start still running (ADR 0065).
+// Removing the Instance's containers has a limit of its own, cleanupTime,
+// so Shutdown can run past ctx by up to that (ADR 0078).
 func (in *Instance) Shutdown(ctx context.Context) error {
 	var err error
 	in.shutdownOnce.Do(func() {
 		in.waitForStart(ctx, in.beginShutdown())
-		err = in.teardown(ctx)
+		err = in.teardown(ctx, time.Time{})
 		close(in.done)
 	})
 	return err
 }
 
-// teardown is the part of a shutdown that follows Start.
-func (in *Instance) teardown(ctx context.Context) error {
+// teardown is the part of a shutdown that follows Start. The runtime's
+// Cleanup must end by cleanupBy, unless it is zero.
+func (in *Instance) teardown(ctx context.Context, cleanupBy time.Time) error {
 	var errs []error
 	for i := len(in.services) - 1; i >= 0; i-- {
 		s := in.services[i]
@@ -809,11 +812,11 @@ func (in *Instance) teardown(ctx context.Context) error {
 		}
 	}
 	in.hostManager().Stop()
-	in.fe.StopLAN()
+	in.fe.StopLAN(ctx)
 	errs = append(errs, in.link.Close())
 	in.stopManaged(ctx)
 	in.registryRelay.stop()
-	errs = append(errs, in.containers.shutdown())
+	errs = append(errs, in.containers.shutdown(cleanupBy))
 	errs = append(errs, in.fe.Close())
 	in.Events.Close() // end event streams so the gateway can drain
 	errs = append(errs, in.gw.Shutdown(ctx))
@@ -880,26 +883,39 @@ func (in *Instance) release(st store.Store) error {
 }
 
 // requestStartWait and requestTeardownTime are the limits of a requested
-// shutdown. Together they stay within `gcpemu stop`'s limit (ADR 0065).
+// shutdown, and requestCleanupBy ends its Cleanup, so that it stays within
+// `gcpemu stop`'s limit (ADRs 0065 and 0078).
 var (
 	requestStartWait    = 15 * time.Second
 	requestTeardownTime = 30 * time.Second
+	// cleanupTime limits removing the Instance's containers, networks and
+	// volumes (the runtime's Cleanup) on every shutdown path. It is apart
+	// from the shutdown's ctx, so a ctx that has already ended does not stop
+	// a healthy runtime's containers being removed (ADR 0078).
+	cleanupTime = 30 * time.Second
+	// requestCleanupBy is how long after a requested shutdown begins the
+	// runtime's Cleanup must end, so that the shutdown stays within `gcpemu
+	// stop`'s 60s. Cleanup has at least 10s of it after the Start wait and
+	// the rest of Teardown.
+	requestCleanupBy = 55 * time.Second
 )
 
 // RequestShutdown begins shutdown at once and does the rest of Shutdown
 // asynchronously (used by the admin API), with separate limits so that a
-// slow Start can't use up Teardown's time. It also logs each error, such as
+// slow Start can't use up Teardown's time, and Done closes by
+// requestCleanupBy after it begins. It also logs each error, such as
 // a container it could not remove, before Done closes: it has no caller to
 // return them to, and the process may exit as soon as Done closes (#920).
 func (in *Instance) RequestShutdown() {
 	returned := in.beginShutdown()
+	cleanupBy := time.Now().Add(requestCleanupBy)
 	go in.shutdownOnce.Do(func() {
 		wait, cancel := context.WithTimeout(context.Background(), requestStartWait)
 		defer cancel()
 		in.waitForStart(wait, returned)
 		ctx, cancel := context.WithTimeout(context.Background(), requestTeardownTime)
 		defer cancel()
-		for _, err := range leafErrors(in.teardown(ctx)) {
+		for _, err := range leafErrors(in.teardown(ctx, cleanupBy)) {
 			in.Env.Log.Warn("cleaning up on shutdown", "err", err)
 		}
 		close(in.done)

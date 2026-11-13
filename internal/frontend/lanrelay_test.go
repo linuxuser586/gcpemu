@@ -31,19 +31,35 @@ type fakeRelay struct {
 	ingress string
 	addrs   []string
 	closed  bool
+	// closedBy is the deadline of the context Close was given.
+	closedBy time.Time
+	// setting, if set, makes Set close it and wait for its ctx to end.
+	setting chan struct{}
 }
 
-func (r *fakeRelay) Set(_ context.Context, ingress string, addrs []string) error {
+func (r *fakeRelay) Set(ctx context.Context, ingress string, addrs []string) error {
+	if r.setting != nil {
+		close(r.setting)
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.ingress, r.addrs = ingress, append([]string(nil), addrs...)
 	return nil
 }
 
-func (r *fakeRelay) Close(context.Context) {
+func (r *fakeRelay) Close(ctx context.Context) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closed = true
+	r.closedBy, _ = ctx.Deadline()
+}
+
+func (r *fakeRelay) closedWith() (bool, time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed, r.closedBy
 }
 
 func (r *fakeRelay) state() (string, []string, bool) {
@@ -342,5 +358,39 @@ func TestLANNotLocal(t *testing.T) {
 		if env.Endpoints.Get(frontend.LANEndpoint) != "" {
 			t.Errorf("%v: %s served", tc.where, frontend.LANEndpoint)
 		}
+	}
+}
+
+// TestStopLANRemovesTheRelayWithinItsCtx is #1031: removing the relay takes
+// the stop's ctx, not a 30s limit of its own.
+func TestStopLANRemovesTheRelayWithinItsCtx(t *testing.T) {
+	rc := startRelayCase(t, nil)
+	waitFor(t, "the relay to serve", func() bool { _, addrs, _ := rc.relay.state(); return len(addrs) > 0 })
+	stopLANBy(t, rc)
+}
+
+// TestStopLANRemovesARelayStillStartingWithinItsCtx: a relay that the stop
+// cuts short while it starts is removed with the stop's ctx too.
+func TestStopLANRemovesARelayStillStartingWithinItsCtx(t *testing.T) {
+	starting := &fakeRelay{setting: make(chan struct{})}
+	rc := startRelayCase(t, func(_ *config.Config, h *frontend.LANHooks) {
+		h.Relay = func() frontend.LANRelay { return starting }
+	})
+	<-starting.setting
+	rc.relay = starting
+	stopLANBy(t, rc)
+}
+
+// stopLANBy stops rc's LAN listeners with a ctx and checks the relay was
+// removed with that ctx's deadline.
+func stopLANBy(t *testing.T, rc *relayCase) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	want, _ := ctx.Deadline()
+	rc.fe.StopLAN(ctx)
+	closed, by := rc.relay.closedWith()
+	if !closed || !by.Equal(want) {
+		t.Errorf("relay closed %v by %v, want by %v", closed, by, want)
 	}
 }

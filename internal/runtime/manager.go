@@ -239,7 +239,7 @@ func (m *Manager) cleanup(ctx context.Context, all bool) error {
 	sel := map[string]string{LabelInstance: m.InstanceID}
 	cs, err := m.ListContainers(ctx, sel)
 	if err != nil {
-		return err
+		return fmt.Errorf("list containers: %w", err)
 	}
 	var errs []error
 	var wg sync.WaitGroup
@@ -258,7 +258,7 @@ func (m *Manager) cleanup(ctx context.Context, all bool) error {
 	wg.Wait()
 	nets, err := m.ListNetworks(ctx, sel)
 	if err != nil {
-		errs = append(errs, err)
+		errs = append(errs, fmt.Errorf("list networks: %w", err))
 	}
 	for _, n := range nets {
 		// Probes are never attached, so they go even when the networks
@@ -275,7 +275,7 @@ func (m *Manager) cleanup(ctx context.Context, all bool) error {
 	}
 	vols, err := m.ListVolumes(ctx, sel)
 	if err != nil {
-		errs = append(errs, err)
+		errs = append(errs, fmt.Errorf("list volumes: %w", err))
 	}
 	for _, v := range vols {
 		if err := m.RemoveVolume(ctx, v); err != nil {

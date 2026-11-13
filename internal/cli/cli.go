@@ -234,7 +234,8 @@ func (o *rootOpts) runForeground(cfg *config.Config) error {
 	return shutdown(in)
 }
 
-// shutdown shuts in down, allowing it 30s.
+// shutdown shuts in down, allowing it 30s, and removing its containers up
+// to 30s more (ADR 0078). A stop by signal and a failed startup both use it.
 func shutdown(in *instance.Instance) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -262,7 +263,7 @@ func (o *rootOpts) host(ctx context.Context, cfg *config.Config, logOut io.Write
 	// abort shuts in down after err ended startup.
 	abort := func(err error) error {
 		if !stopped(err) {
-			_ = in.Shutdown(context.Background())
+			_ = shutdown(in)
 			return err
 		}
 		// Leaving things behind does not make it any less a Clean stop.

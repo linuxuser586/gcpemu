@@ -36,17 +36,31 @@ type hungRuntime struct {
 	// counts what reached that.
 	self     string
 	inspects atomic.Int64
+	// listed is what an answered container list returns, [] if empty;
+	// removes counts container removals, each taking removeDelay.
+	listed      atomic.Value
+	removes     atomic.Int64
+	removeDelay atomic.Int64 // a time.Duration
 }
 
 func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests.Add(1)
 	switch {
+	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/containers/"):
+		select {
+		case <-time.After(time.Duration(f.removeDelay.Load())):
+			f.removes.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		case <-r.Context().Done():
+		}
 	case strings.HasSuffix(r.URL.Path, "/version"):
 		f.versions.Add(1)
 		if f.hangVersion.Load() && !f.hang(r) {
 			return
 		}
 		_, _ = io.WriteString(w, `{"Version":"29.0.0","Arch":"amd64"}`)
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/networks"):
+		_, _ = io.WriteString(w, `[]`)
 	case strings.HasSuffix(r.URL.Path, "/info"):
 		_, _ = io.WriteString(w, `{"OSType":"linux"}`)
 	case strings.HasSuffix(r.URL.Path, "/containers/json"):
@@ -58,7 +72,11 @@ func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !f.answerLists.Load() && !f.hang(r) {
 			return
 		}
-		_, _ = io.WriteString(w, `[]`)
+		listed, _ := f.listed.Load().(string)
+		if listed == "" {
+			listed = `[]`
+		}
+		_, _ = io.WriteString(w, listed)
 	case f.self != "" && strings.HasSuffix(r.URL.Path, "/containers/"+f.self+"/json"):
 		f.inspects.Add(1)
 		f.hang(r)
@@ -105,7 +123,27 @@ func (s *connectingSvc) Register(r emu.Router) error {
 // startOnHungRuntime starts an Instance that has not connected to f.
 func startOnHungRuntime(t *testing.T) (*Instance, string, *hungRuntime) {
 	t.Helper()
+	in, base, f, _ := startOnHungRuntimeLogged(t)
+	return in, base, f
+}
+
+// startOnHungRuntimeLogged is startOnHungRuntime, also returning the log.
+func startOnHungRuntimeLogged(t *testing.T) (*Instance, string, *hungRuntime, *syncBuffer) {
+	t.Helper()
 	f := &hungRuntime{release: make(chan struct{})}
+	in, logs := newOnRuntime(t, f, func(e *emu.Env) emu.Service { return &connectingSvc{env: e} })
+	if err := in.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(in.Env.Endpoints.Get("gateway"))
+	return in, "http://127.0.0.1:" + port, f, logs
+}
+
+// newOnRuntime returns an Ephemeral Instance on f, not yet started, running
+// the Service svc makes as dns, and its log. It shuts down when the test
+// ends, after f is released.
+func newOnRuntime(t *testing.T, f *hungRuntime, svc Factory) (*Instance, *syncBuffer) {
+	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	t.Setenv("DOCKER_HOST", "tcp://"+srv.Listener.Addr().String())
@@ -118,19 +156,16 @@ func startOnHungRuntime(t *testing.T) (*Instance, string, *hungRuntime) {
 	cfg.Ports[frontend.Endpoint] = 0
 	cfg.Bind = "127.0.0.1"
 	cfg.NoRegistryRelay = true
-	in, err := New(&cfg, map[string]Factory{"dns": func(e *emu.Env) emu.Service { return &connectingSvc{env: e} }}, &syncBuffer{})
+	logs := &syncBuffer{}
+	in, err := New(&cfg, map[string]Factory{"dns": svc}, logs)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := in.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		close(f.release)
 		_ = in.Shutdown(context.Background())
 	})
-	_, port, _ := net.SplitHostPort(in.Env.Endpoints.Get("gateway"))
-	return in, "http://127.0.0.1:" + port, f
+	return in, logs
 }
 
 // connectOverARequest sends a request that connects to the runtime, and

@@ -73,7 +73,7 @@ func TestEnsureAdoptsExisting(t *testing.T) {
 		t.Run(tc.suffix, func(t *testing.T) {
 			m := fakeRaced(t, "gcpemu-i1-"+tc.suffix, http.StatusConflict, "network with name gcpemu-i1-"+tc.suffix+" already exists", "127.0.0.1")
 			p := netplane.New(m, func() map[string]string { return nil }, "127.0.0.1", slog.Default())
-			defer p.Close()
+			defer p.Close(context.Background())
 			n, err := tc.get(p, context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -90,7 +90,7 @@ func TestEnsureAdoptsExisting(t *testing.T) {
 func TestEnsureAdoptedNeedsGateway(t *testing.T) {
 	m := fakeRaced(t, "gcpemu-i1-svc", http.StatusConflict, "network with name gcpemu-i1-svc already exists", "")
 	p := netplane.New(m, func() map[string]string { return nil }, "127.0.0.1", slog.Default())
-	defer p.Close()
+	defer p.Close(context.Background())
 	if _, err := p.Services(context.Background()); err == nil || !strings.Contains(err.Error(), "has no IPv4 gateway") {
 		t.Errorf("Services: %v; want the no-IPv4-gateway error", err)
 	}
@@ -101,7 +101,7 @@ func TestEnsureAdoptedNeedsGateway(t *testing.T) {
 func TestEnsureOtherCreateError(t *testing.T) {
 	m := fakeRaced(t, "gcpemu-i1-svc", http.StatusInternalServerError, "disk full", "127.0.0.1")
 	p := netplane.New(m, func() map[string]string { return nil }, "127.0.0.1", slog.Default())
-	defer p.Close()
+	defer p.Close(context.Background())
 	if _, err := p.Services(context.Background()); err == nil || !strings.Contains(err.Error(), "runtime API 500: disk full") {
 		t.Errorf("Services: %v; want the create error", err)
 	}

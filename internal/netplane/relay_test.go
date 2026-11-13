@@ -62,7 +62,7 @@ func TestVMRelay(t *testing.T) {
 	endpoints := map[string]string{"gateway": l.Addr().String(), "dns": pc.LocalAddr().String()}
 
 	p := netplane.New(m, func() map[string]string { return endpoints }, "127.0.0.1", slog.Default())
-	defer p.Close()
+	defer p.Close(context.Background())
 	svc, err := p.Services(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestVMRelay(t *testing.T) {
 		t.Fatalf("emulator → later network after Reset: %q", got)
 	}
 
-	p.Close()
+	p.Close(context.Background())
 	if _, err := m.InspectContainer(ctx, r2.ID()); !errors.Is(err, runtime.ErrNotFound) {
 		t.Fatalf("relay after Close: %v", err)
 	}

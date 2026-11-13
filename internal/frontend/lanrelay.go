@@ -102,24 +102,30 @@ func (f *Frontend) startRelay(ctx context.Context, srv func() *http.Server, addr
 	err = relay.Set(ctx, ln.Addr().String(), addrs)
 	f.mu.Lock()
 	stopped := ctx.Err() != nil || f.closed
-	if err == nil && !stopped {
+	if err == nil || stopped {
+		// StopLAN, which stopped it, waits for this to return, then
+		// removes it within its own ctx.
 		f.relay = relay
 	}
 	f.mu.Unlock()
-	if err != nil || stopped {
+	if stopped {
 		ln.Close()
-		closeRelay(relay)
-		if !stopped {
-			skip(fmt.Errorf("gfe-lan relay: %w", err))
-		}
+		return
+	}
+	if err != nil {
+		ln.Close()
+		closeRelay(ctx, relay)
+		skip(fmt.Errorf("gfe-lan relay: %w", err))
 		return
 	}
 	f.serveLAN(srv(), edgeagent.ProxiedListener(ln), "relay", addrs...)
 }
 
-// closeRelay removes relay, waiting up to 30s.
-func closeRelay(relay lanRelay) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// closeRelay removes a relay that failed to start, waiting up to 30s or
+// until ctx, the relay's start, is stopped: StopLAN waits for it, and the
+// runtime's Cleanup removes what it leaves.
+func closeRelay(ctx context.Context, relay lanRelay) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	relay.Close(ctx)
 }
