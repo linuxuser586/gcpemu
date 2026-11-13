@@ -31,22 +31,24 @@ func TestFetchLinksEveryScope(t *testing.T) {
 		sum := sha256.Sum256(b)
 		blobs["sha256:"+hex.EncodeToString(sum[:])] = b
 	}
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The upstream is served in memory: a loopback socket could reset
+	// under this many concurrent fetches, which has nothing to do with
+	// #798 (#972).
+	s.upstream.hc.Transport = handlerTransport(func(w http.ResponseWriter, r *http.Request) {
 		b, ok := blobs[path.Base(r.URL.Path)]
 		if !ok {
 			http.NotFound(w, r)
 			return
 		}
 		_, _ = w.Write(b)
-	}))
-	t.Cleanup(up.Close)
+	})
 	const img = "library/app"
 	scopes := []repoRef{{mirrorProject, "docker.io", "a"}, {mirrorProject, "docker.io", "b"}}
 	var wg sync.WaitGroup
 	for d := range blobs {
 		for _, scope := range scopes {
 			wg.Go(func() {
-				pt := &pullThrough{scope: scope, img: img, up: upstreamRef{Host: "docker.io", Base: up.URL, Repo: img}}
+				pt := &pullThrough{scope: scope, img: img, up: upstreamRef{Host: "docker.io", Base: "http://upstream.invalid", Repo: img}}
 				src, err := s.ptOpenBlob(context.Background(), pt, d)
 				if err != nil {
 					t.Errorf("open %s in %s: %v", d, scope.key(), err)
@@ -74,4 +76,14 @@ func TestFetchLinksEveryScope(t *testing.T) {
 	if missing > 0 {
 		t.Fatalf("%d of %d links missing after every fetch ended", missing, len(blobs)*len(scopes))
 	}
+}
+
+// handlerTransport serves each request with its handler in memory, with
+// no listener and no dial.
+type handlerTransport http.HandlerFunc
+
+func (h handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	h(rec, r)
+	return rec.Result(), nil
 }
