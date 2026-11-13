@@ -46,5 +46,9 @@
 // for CI: it runs only with GCPEMU_RESOLVER_TESTS=1.
 //
 // The run ends with a summary table, printed and written to
-// dist/prerelease-<os>-<commit>.md.
+// dist/prerelease-<os>-<commit>.md. Each runtime's setup and steps write
+// their output, the commands they stream and their own t.Log and t.Fatal
+// lines, to dist/prerelease-<os>-<commit>/<runtime>/<step>.log as well as
+// the terminal (#1139), and the table's fail cells and the notes under it
+// link to those logs.
 package prerelease

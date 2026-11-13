@@ -436,7 +436,7 @@ jobs:
           GCPEMU_RESOLVER_TESTS: "1"
         run: |
           just build
-          go test -tags prerelease ./prerelease -run '^(TestResolverRoutes|TestAddresses|TestRoutesOwner|TestPort53InUse|TestHostEndReclaimsWhenStopFails|TestHostChildDoesNotHoldOwnerLock|TestRunStartReclaim|TestRunStartReclaimKeepsUnrecorded)$' -count=1 -timeout 15m -v
+          go test -tags prerelease ./prerelease -run '^(TestResolverRoutes|TestAddresses|TestRoutesOwner|TestPort53InUse|TestHostEndReclaimsWhenStopFails|TestHostChildDoesNotHoldOwnerLock|TestRunStartReclaim|TestRunStartReclaimKeepsUnrecorded|TestReportLinksFailedSteps|TestStepLogsSwitch|TestFailedStepLog)$' -count=1 -timeout 15m -v
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true

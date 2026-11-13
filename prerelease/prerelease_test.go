@@ -85,13 +85,18 @@ func TestHostChecks(t *testing.T) {
 
 type result struct{ runtime, step, outcome string }
 
-var summary struct {
-	sync.Mutex
+// runSummary is what the report says about a run.
+type runSummary struct {
 	commit   string
 	results  []result
 	versions map[string]string
 	// notes says why a runtime's setup didn't pass, by runtime.
 	notes map[string]string
+}
+
+var summary struct {
+	sync.Mutex
+	runSummary
 }
 
 func record(rt, step, outcome string) {
@@ -111,9 +116,13 @@ func outcome(t *testing.T) string {
 }
 
 // step runs fn as subtest name of runtime rt, with its own deadline, and
-// records how it ended. It reports whether it passed or skipped.
+// records how it ended. Its output goes to its log as well as the
+// terminal. It reports whether it passed or skipped.
 func step(t *testing.T, rt, name string, timeout time.Duration, fn func(t *testing.T, ctx context.Context)) bool {
 	return t.Run(name, func(t *testing.T) {
+		logs.to(stepLog(rt, name))
+		// The last cleanup, so the log has the others' output.
+		t.Cleanup(func() { logs.to("") })
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		defer func() { record(rt, name, outcome(t)) }()
@@ -122,29 +131,45 @@ func step(t *testing.T, rt, name string, timeout time.Duration, fn func(t *testi
 }
 
 // setup records the setup of runtime rt as its first row: a fail or skip
-// when t ends before done is called, a pass once it is.
+// when t ends before done is called, a pass once it is. Its output, with
+// the note of a setup that doesn't pass, goes to its log until then.
 func setup(t *testing.T, rt string) (done func()) {
+	logs.to(stepLog(rt, "setup"))
 	finished := false
 	t.Cleanup(func() {
 		if !finished {
+			logs.to("")
 			record(rt, "setup", outcome(t))
 		}
 	})
 	return func() {
+		logs.to("")
 		finished = true
 		record(rt, "setup", "pass")
 	}
 }
 
+// fakeRunEnv names a dir for the report and logs of TestFakeRun, which
+// runs only when it is set.
+const fakeRunEnv = "GCPEMU_PRERELEASE_FAKE_RUN"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeGcpemuEnv) != "" {
 		os.Exit(fakeGcpemu(os.Args[1:]))
+	}
+	if d := os.Getenv(fakeRunEnv); d != "" {
+		distDir = d
 	}
 	summary.commit = commit()
 	summary.versions = map[string]string{}
 	summary.notes = map[string]string{}
 	stop := keepSudo()
+	var err error
+	if logs, err = teeStdout(); err != nil {
+		fmt.Fprintf(os.Stderr, "the steps' output is not saved: %v\n", err)
+	}
 	code := m.Run()
+	logs.stop()
 	stop()
 	if report() && code == 0 {
 		code = 1
@@ -165,6 +190,26 @@ func commit() string {
 	return c
 }
 
+// distDir holds the report, dist/prerelease-<os>-<commit>.md, and the
+// steps' logs, dist/prerelease-<os>-<commit>/<runtime>/<step>.log.
+var distDir = filepath.Join(repo, "dist")
+
+// name is the report's name without .md, and its logs' dir.
+func (s *runSummary) name() string {
+	return fmt.Sprintf("prerelease-%s-%s", goruntime.GOOS, s.commit)
+}
+
+// logLink is the log of runtime rt's step, relative to distDir and the
+// report, with forward slashes.
+func (s *runSummary) logLink(rt, step string) string {
+	return s.name() + "/" + rt + "/" + step + ".log"
+}
+
+// stepLog is the file of runtime rt's step's log.
+func stepLog(rt, step string) string {
+	return filepath.Join(distDir, filepath.FromSlash(summary.logLink(rt, step)))
+}
+
 // report prints the summary and writes it to dist/. It reports whether a
 // Required runtime was skipped, which fails the run: a release waits for
 // every Required runtime.
@@ -174,54 +219,65 @@ func report() (requiredSkipped bool) {
 	if len(summary.results) == 0 {
 		return false
 	}
+	md, requiredSkipped := summary.markdown(time.Now())
+	fmt.Print("\n" + md)
+	path := filepath.Join(distDir, summary.name()+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+		if err := os.WriteFile(path, []byte(md), 0o644); err == nil {
+			fmt.Printf("\nwritten to %s, with each step's log in %s\n", path, filepath.Join(distDir, summary.name()))
+		}
+	}
+	return requiredSkipped
+}
+
+// markdown is the report of the run at now: a table of runtime × step,
+// whose fail cells link to the step's log, and the notes, which link to
+// setup's. It reports whether a Required runtime was skipped.
+func (s *runSummary) markdown(now time.Time) (md string, requiredSkipped bool) {
 	var rts, steps []string
 	cell := map[[2]string]string{}
-	for _, r := range summary.results {
+	for _, r := range s.results {
 		if !slices.Contains(rts, r.runtime) {
 			rts = append(rts, r.runtime)
 		}
 		if !slices.Contains(steps, r.step) {
 			steps = append(steps, r.step)
 		}
-		cell[[2]string{r.runtime, r.step}] = r.outcome
+		c := r.outcome
+		if c == "fail" {
+			c = fmt.Sprintf("[fail](%s)", s.logLink(r.runtime, r.step))
+		}
+		cell[[2]string{r.runtime, r.step}] = c
 		if r.outcome == "skip" && r.step == "setup" && isRequired(r.runtime) {
 			requiredSkipped = true
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Pre-release host checks\n\n%s/%s, commit %s, %s\n\n", goruntime.GOOS, goruntime.GOARCH, summary.commit, time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "# Pre-release host checks\n\n%s/%s, commit %s, %s\n\n", goruntime.GOOS, goruntime.GOARCH, s.commit, now.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "| Runtime | Version | %s |\n|---|---|%s\n", strings.Join(steps, " | "), strings.Repeat("---|", len(steps)))
 	for _, rt := range rts {
 		kind := "best-effort"
 		if isRequired(rt) {
 			kind = "required"
 		}
-		fmt.Fprintf(&b, "| %s (%s) | %s |", rt, kind, summary.versions[rt])
-		for _, s := range steps {
-			fmt.Fprintf(&b, " %s |", cmp.Or(cell[[2]string{rt, s}], "-"))
+		fmt.Fprintf(&b, "| %s (%s) | %s |", rt, kind, s.versions[rt])
+		for _, st := range steps {
+			fmt.Fprintf(&b, " %s |", cmp.Or(cell[[2]string{rt, st}], "-"))
 		}
 		b.WriteByte('\n')
 	}
-	if len(summary.notes) > 0 {
+	if len(s.notes) > 0 {
 		b.WriteByte('\n')
 	}
 	for _, rt := range rts {
-		if n := summary.notes[rt]; n != "" {
-			fmt.Fprintf(&b, "- %s: %s\n", rt, n)
+		if n := s.notes[rt]; n != "" {
+			fmt.Fprintf(&b, "- %s: %s ([log](%s))\n", rt, n, s.logLink(rt, "setup"))
 		}
 	}
 	if requiredSkipped {
 		b.WriteString("\nA Required runtime was skipped, so the release is not checked.\n")
 	}
-	fmt.Print("\n" + b.String())
-	name := filepath.Join("dist", fmt.Sprintf("prerelease-%s-%s.md", goruntime.GOOS, summary.commit))
-	path := filepath.Join(repo, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
-		if err := os.WriteFile(path, []byte(b.String()), 0o644); err == nil {
-			fmt.Printf("\nwritten to %s\n", name)
-		}
-	}
-	return requiredSkipped
+	return b.String(), requiredSkipped
 }
 
 // ---- Runtimes ----
@@ -548,8 +604,15 @@ func just(t *testing.T, ctx context.Context, args ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, "just", args...)
 	cmd.Dir = repo
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	stream(t, cmd)
+}
+
+// stream runs cmd with its output, stderr too, on os.Stdout, which takes
+// it to the terminal and the step's log, and fails t on error.
+func stream(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stdout
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("just %s: %v", strings.Join(args, " "), err)
+		t.Fatalf("%s: %v", strings.Join(cmd.Args, " "), err)
 	}
 }

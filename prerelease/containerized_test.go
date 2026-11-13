@@ -34,7 +34,8 @@ const (
 var release = sync.OnceValue(func() error {
 	cmd := exec.Command("just", "release")
 	cmd.Dir = repo
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	// Both to os.Stdout, which takes them to setup's log too.
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stdout
 	return cmd.Run()
 })
 
