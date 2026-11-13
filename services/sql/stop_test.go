@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 )
 
@@ -112,8 +113,8 @@ func TestStopGraceExpires(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop = %v, want deadline exceeded", err)
 	}
-	if took < stopGrace-100*time.Millisecond || took > 2*stopGrace-100*time.Millisecond {
-		t.Errorf("Stop took %v, want about %v", took, stopGrace)
+	if took < emu.StopGrace-100*time.Millisecond || took > 2*emu.StopGrace-100*time.Millisecond {
+		t.Errorf("Stop took %v, want about %v", took, emu.StopGrace)
 	}
 	assertClosed(t, addrs)
 }
