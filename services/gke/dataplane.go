@@ -250,6 +250,9 @@ func (s *Service) provision(ctx context.Context, key string) error {
 // restart (FR-CORE-031). Volumes keep the Kubernetes state.
 // The caller marks the cluster RECONCILING first (markRestoring).
 func (s *Service) restore(ctx context.Context, key string) {
+	if s.restoring != nil {
+		s.restoring(ctx, key)
+	}
 	err := s.bringUp(ctx, key)
 	// The bring-up connected the runtime, so the Runtime machine's memory
 	// is known: an Instance that starts with nodes beyond it warns now

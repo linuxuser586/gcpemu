@@ -124,11 +124,28 @@ func TestRecoverRestoresOtherError(t *testing.T) {
 		deleted.Store(true)
 		return nil
 	}
+	// The restore fails at once with no runtime and marks the cluster
+	// ERROR, so it is held until the status is read (#1161).
+	started, release := make(chan string, 1), make(chan struct{})
+	s.restoring = func(_ context.Context, k string) {
+		started <- k
+		<-release
+	}
 
 	s.recoverClusters()
-	if c := clusterStatus(t, s, key); c.Status != containerpb.Cluster_RECONCILING {
-		t.Fatalf("status after recoverClusters = %v, want RECONCILING (brought back up)", c.Status)
+	select {
+	case k := <-started:
+		if k != key {
+			t.Fatalf("restore ran for %q, want %q", k, key)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cluster was not restored")
 	}
+	if c := clusterStatus(t, s, key); c.Status != containerpb.Cluster_RECONCILING {
+		close(release)
+		t.Fatalf("status while the restore runs = %v, want RECONCILING (brought back up)", c.Status)
+	}
+	close(release)
 	if err := s.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}

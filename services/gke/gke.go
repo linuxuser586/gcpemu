@@ -117,6 +117,9 @@ type Service struct {
 	// beforeServerStart, set by tests, runs before a bring-up touches the
 	// cluster's server container or volume.
 	beforeServerStart func(ctx context.Context, key string)
+	// restoring, set by tests, runs when a restore starts, before its
+	// bring-up (ADR 0079).
+	restoring func(ctx context.Context, key string)
 	// beforeResetTeardown, set by tests, runs once Reset has started a new
 	// background generation, before it tears data planes down.
 	beforeResetTeardown func()
