@@ -15,6 +15,11 @@ import (
 // execServer answers an exec whose attached stream is handled by stream,
 // and reports exit code 3.
 func execServer(stream func(net.Conn)) http.HandlerFunc {
+	return execServerStatus(`{"ExitCode":3}`, stream)
+}
+
+// execServerStatus is execServer reporting the exec's inspect as status.
+func execServerStatus(status string, stream func(net.Conn)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/exec"):
@@ -29,7 +34,7 @@ func execServer(stream func(net.Conn)) http.HandlerFunc {
 			_ = buf.Flush()
 			stream(conn)
 		case strings.HasSuffix(r.URL.Path, "/exec/e1/json"):
-			_, _ = io.WriteString(w, `{"ExitCode":3}`)
+			_, _ = io.WriteString(w, status)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -200,5 +205,63 @@ func TestExecStreamReturnsWhileStdinBlocks(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("ExecStream still waiting on stdin 5s after the command exited")
+	}
+}
+
+// unreadStdin gives a few bytes, more than resetAfter reads, then blocks
+// until the test ends: a write of stdin would take the reset error, which
+// a socket reports once, from the read of the output.
+func unreadStdin(t *testing.T) io.Reader {
+	in := &blockingReader{unblock: make(chan struct{})}
+	t.Cleanup(func() { close(in.unblock) })
+	return io.MultiReader(strings.NewReader("data"), in)
+}
+
+// resetAfter reads part of stdin, writes out, waits for the client to get
+// it, and then resets the connection with the rest of stdin unread, as a
+// peer that closes without draining stdin may.
+func resetAfter(out []byte, got <-chan struct{}) func(net.Conn) {
+	return func(conn net.Conn) {
+		_, _ = io.ReadFull(conn, make([]byte, 2))
+		_, _ = conn.Write(out)
+		<-got
+		// Linger 0 makes the close a reset whatever is left unread.
+		_ = conn.(*net.TCPConn).SetLinger(0)
+	}
+}
+
+// A connection reset after the command exited ends its output: the exit
+// code the daemon recorded is the result, and the output that arrived is
+// kept (#1106). psql with ON_ERROR_STOP exits like this, its dump unread.
+func TestExecStreamReturnsTheExitCodeWhenTheStreamIsResetAfterExit(t *testing.T) {
+	stdout := &notifyWriter{got: make(chan struct{})}
+	cl := testClient(t, execServerStatus(`{"Running":false,"ExitCode":3}`, resetAfter(frame(1, "ERROR: bad\n"), stdout.got)))
+	code, err := cl.ExecStream(context.Background(), "c1", []string{"psql"}, unreadStdin(t), stdout, io.Discard)
+	if err != nil || code != 3 || stdout.buf.String() != "ERROR: bad\n" {
+		t.Errorf("ExecStream = stdout %q exit %d err %v, want \"ERROR: bad\\n\", 3, nil", stdout.buf.String(), code, err)
+	}
+}
+
+// A reset while the command still runs fails the exec: its output was cut
+// short.
+func TestExecStreamFailsWhenTheStreamIsResetWhileTheCommandRuns(t *testing.T) {
+	stdout := &notifyWriter{got: make(chan struct{})}
+	cl := testClient(t, execServerStatus(`{"Running":true,"ExitCode":0}`, resetAfter(frame(1, "first\n"), stdout.got)))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := cl.ExecStream(ctx, "c1", []string{"cmd"}, unreadStdin(t), stdout, io.Discard); err == nil || ctx.Err() != nil {
+		t.Fatalf("ExecStream = %v (ctx %v), want an error before the deadline", err, ctx.Err())
+	}
+}
+
+// Only a reset is taken as the end of output: a stream with stdin that
+// breaks part way through a frame fails the exec though the command exited.
+func TestExecStreamWithStdinFailsWhenTheStreamBreaks(t *testing.T) {
+	cl := testClient(t, execServer(func(conn net.Conn) {
+		_, _ = io.ReadAll(conn)
+		_, _ = conn.Write(frame(1, "second\n")[:4])
+	}))
+	if _, err := cl.ExecStream(context.Background(), "c1", []string{"cmd"}, strings.NewReader("in"), io.Discard, io.Discard); err == nil {
+		t.Fatal("ExecStream of a broken stream succeeded")
 	}
 }

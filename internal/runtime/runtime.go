@@ -1321,7 +1321,8 @@ func (c *Client) Exec(ctx context.Context, id string, cmd []string, stdin []byte
 // stdin (none if nil) to it and its stdout and stderr to the writers as they
 // arrive, and returns its exit code. A stdin that fails to read, or a writer
 // that fails, fails the exec, and so does output that ends before the
-// command exits. A Read of stdin may still be in progress when ExecStream
+// command exits. A connection reset ends the output if the command has
+// exited by then, and fails the exec if not. A Read of stdin may still be in progress when ExecStream
 // returns; nothing it reads is sent.
 func (c *Client) ExecStream(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	var created struct {
@@ -1338,7 +1339,18 @@ func (c *Client) ExecStream(ctx context.Context, id string, cmd []string, stdin 
 		stderr = io.Discard
 	}
 	if err := c.execStart(ctx, created.ID, stdin, stdout, stderr); err != nil {
-		return 0, err
+		if !connReset(err) {
+			return 0, err
+		}
+		// The daemon may close the stream with our stdin unread, as when
+		// psql stops at a bad statement, and then the close is a reset that
+		// can reach us before the end of output does. If the command has
+		// exited, the exit code it recorded is the result (#1106).
+		code, ierr := c.execExitCode(ctx, created.ID)
+		if ierr != nil {
+			return 0, errors.Join(err, ierr)
+		}
+		return code, nil
 	}
 	return c.execExitCode(ctx, created.ID)
 }
