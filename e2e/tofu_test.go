@@ -121,6 +121,16 @@ func (tf *tofu) try(timeout time.Duration, args ...string) (string, error) {
 	return buf.String(), err
 }
 
+// cleanupDestroy runs tofu destroy from t.Cleanup, for a test that stops
+// before its own destroy. It logs a failure, with the output, rather than
+// failing the test: what it leaves behind can explain a later failure.
+func (tf *tofu) cleanupDestroy() {
+	tf.t.Helper()
+	if out, err := tf.try(15*time.Minute, "destroy", "-auto-approve"); err != nil {
+		tf.t.Logf("deferred tofu destroy: %v\n%s", err, tail(out, 60))
+	}
+}
+
 // apply sets vars and applies.
 func (tf *tofu) apply(vars map[string]string) {
 	tf.t.Helper()

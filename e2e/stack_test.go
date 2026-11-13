@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -665,6 +666,31 @@ func leftoverContainers(cts []instance.ContainerInfo) []string {
 		}
 	}
 	return left
+}
+
+// leftoverContainersSince is leftoverContainers without those already in
+// before, so that a test sharing its Instance with earlier ones counts only
+// its own: a failed cluster delete leaves its containers until the next
+// delete or Instance start (ADR 0081), which would otherwise fail every
+// later test too (#1146).
+func leftoverContainersSince(before, cts []instance.ContainerInfo) []string {
+	return leftoverContainers(slices.DeleteFunc(slices.Clone(cts), func(c instance.ContainerInfo) bool {
+		return slices.ContainsFunc(before, func(b instance.ContainerInfo) bool { return b.Name == c.Name })
+	}))
+}
+
+func TestLeftoverContainersSinceIgnoresEarlier(t *testing.T) {
+	before := []instance.ContainerInfo{
+		{Name: "gcpemu-1-gke-old-server", Service: "gke", Role: "server"},
+	}
+	cts := []instance.ContainerInfo{
+		{Name: "gcpemu-1-gke-old-server", Service: "gke", Role: "server"},
+		{Name: "gcpemu-1-gke-new-node-0", Service: "gke", Role: "node"},
+	}
+	got := strings.Join(leftoverContainersSince(before, cts), "\n")
+	if want := "gke/node gcpemu-1-gke-new-node-0"; got != want {
+		t.Errorf("leftoverContainersSince = %q, want %q", got, want)
+	}
 }
 
 func TestLeftoverContainersIgnoresCore(t *testing.T) {
