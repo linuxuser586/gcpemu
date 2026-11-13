@@ -1129,11 +1129,30 @@ func (c *Client) UnpauseContainer(ctx context.Context, id string) error {
 // the runtime's kill/exit race: three attempts over about two seconds.
 var removeRetryWaits = []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond}
 
+// awaitGonePoll and awaitGoneLimit pace the wait for a removal that another
+// request already started: inspected every awaitGonePoll, given up on after
+// awaitGoneLimit (#1148).
+var (
+	awaitGonePoll  = 250 * time.Millisecond
+	awaitGoneLimit = 30 * time.Second
+)
+
+// removeAction is what RemoveContainer does after a failed DELETE.
+type removeAction int
+
+const (
+	removeFail      removeAction = iota // return the first error
+	removeRetry                         // send the DELETE again (kill/exit race, #1142)
+	removeAwaitGone                     // another removal is under way: wait for it (#1148)
+)
+
 // RemoveContainer deletes a container (with anonymous volumes); a missing
 // container is not an error. A forced remove that races the container's
-// own exit ("did not receive an exit event") is retried a few times; if
-// it never succeeds, that first error is returned (#1142). Other runtime
-// errors are returned at once.
+// own exit ("did not receive an exit event") is retried a few times
+// (#1142); one that finds another removal of the container under way waits
+// for the container to be gone (#1148). If neither ends with the container
+// gone, the first error is returned. Other runtime errors are returned at
+// once.
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
 	c.forgetStart(id)
 	remove := func() error {
@@ -1145,31 +1164,79 @@ func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) err
 		return err
 	}
 	first := remove()
-	if !isExitRace(first) {
-		return first
-	}
-	for _, wait := range removeRetryWaits {
-		select {
-		case <-ctx.Done():
+	err, waits := first, removeRetryWaits
+	for err != nil {
+		switch classifyRemove(err) {
+		case removeRetry:
+			if len(waits) == 0 || !sleepCtx(ctx, waits[0]) {
+				return first
+			}
+			waits = waits[1:]
+			err = remove()
+		case removeAwaitGone:
+			if c.awaitGone(ctx, id) {
+				return nil
+			}
 			return first
-		case <-time.After(wait):
-		}
-		err := remove()
-		if err == nil {
-			return nil
-		}
-		if !isExitRace(err) {
+		default:
 			return first
 		}
 	}
-	return first
+	return nil
 }
 
-// isExitRace reports the runtime's transient failure to remove a
-// container whose kill raced its own exit.
-func isExitRace(err error) bool {
+// classifyRemove decides what a failed container DELETE calls for.
+//
+// The runtime's errors arrive as *apiError (Status is the HTTP code,
+// Message the daemon's text). Two are transient:
+//   - kill/exit race: a 5xx whose Message contains
+//     "did not receive an exit event" → removeRetry (#1142)
+//   - another removal under way: a 409 whose Message contains
+//     "is already in progress" → removeAwaitGone (#1148)
+//
+// Everything else, including other 409s and other 5xx, is removeFail.
+// The 409 is Docker Engine's; Podman makes a second remove wait for the
+// first and then answers 204 or 404, so it never sends one.
+func classifyRemove(err error) removeAction {
 	var ae *apiError
-	return errors.As(err, &ae) && ae.Status >= 500 && strings.Contains(ae.Message, "did not receive an exit event")
+	switch {
+	case !errors.As(err, &ae):
+		return removeFail
+	case ae.Status >= 500 && strings.Contains(ae.Message, "did not receive an exit event"):
+		return removeRetry
+	case ae.Status == http.StatusConflict && strings.Contains(ae.Message, "is already in progress"):
+		return removeAwaitGone
+	default:
+		return removeFail
+	}
+}
+
+// awaitGone inspects the container until the runtime no longer knows it,
+// reporting whether that happened before awaitGoneLimit or ctx ended.
+func (c *Client) awaitGone(ctx context.Context, id string) bool {
+	ctx, cancel := context.WithTimeout(ctx, awaitGoneLimit)
+	defer cancel()
+	for {
+		err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/json", nil, nil, nil)
+		if errors.Is(err, ErrNotFound) {
+			return true
+		}
+		if !sleepCtx(ctx, awaitGonePoll) {
+			return false
+		}
+	}
+}
+
+// sleepCtx waits d, reporting false if ctx ended first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 // InspectContainer returns container state.
