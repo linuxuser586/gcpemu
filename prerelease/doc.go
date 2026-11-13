@@ -50,5 +50,5 @@
 // their output, the commands they stream and their own t.Log and t.Fatal
 // lines, to dist/prerelease-<os>-<commit>/<runtime>/<step>.log as well as
 // the terminal (#1139), and the table's fail cells and the notes under it
-// link to those logs.
+// link to those logs. What setup started logs its cleanup to teardown.log.
 package prerelease

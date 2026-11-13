@@ -122,7 +122,7 @@ func step(t *testing.T, rt, name string, timeout time.Duration, fn func(t *testi
 	return t.Run(name, func(t *testing.T) {
 		logs.to(stepLog(rt, name))
 		// The last cleanup, so the log has the others' output.
-		t.Cleanup(func() { logs.to("") })
+		t.Cleanup(logs.end)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		defer func() { record(rt, name, outcome(t)) }()
@@ -132,20 +132,24 @@ func step(t *testing.T, rt, name string, timeout time.Duration, fn func(t *testi
 
 // setup records the setup of runtime rt as its first row: a fail or skip
 // when t ends before done is called, a pass once it is. Its output, with
-// the note of a setup that doesn't pass, goes to its log until then.
+// the note of a setup that doesn't pass, goes to its log until then. The
+// output of the cleanups of what setup started, such as RunEmulator's
+// dump of the container's logs, goes to rt's teardown log.
 func setup(t *testing.T, rt string) (done func()) {
 	logs.to(stepLog(rt, "setup"))
 	finished := false
 	t.Cleanup(func() {
+		logs.end()
 		if !finished {
-			logs.to("")
 			record(rt, "setup", outcome(t))
 		}
 	})
 	return func() {
-		logs.to("")
+		logs.end()
 		finished = true
 		record(rt, "setup", "pass")
+		// After the steps, before the cleanups setup registered.
+		t.Cleanup(func() { logs.to(stepLog(rt, "teardown")) })
 	}
 }
 

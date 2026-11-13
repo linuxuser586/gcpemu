@@ -65,7 +65,7 @@ func TestStepLogsSwitch(t *testing.T) {
 	w.WriteString(logMark[5:] + b)
 	w.WriteString("\x00in b\n")
 	<-l.acks // as to does
-	l.to("")
+	l.end()
 	w.WriteString("after\n")
 	w.Close()
 	<-copied
@@ -124,10 +124,17 @@ func TestFailedStepLog(t *testing.T) {
 	if !bytes.Contains(setupLog, []byte("setting up")) || bytes.Contains(setupLog, []byte(failure)) {
 		t.Errorf("the setup's log holds:\n%s", setupLog)
 	}
+	teardownLog, err := os.ReadFile(filepath.Join(dist, name, "fake", "teardown.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(teardownLog, []byte("tearing down")) {
+		t.Errorf("the teardown's log holds:\n%s", teardownLog)
+	}
 }
 
 // TestFakeRun is the run of TestFailedStepLog: a runtime whose setup
-// logs, and whose step streams a command that fails with a word on its
+// logs and starts something its cleanup logs, and whose step streams a command that fails with a word on its
 // stderr.
 func TestFakeRun(t *testing.T) {
 	if os.Getenv(fakeRunEnv) == "" {
@@ -136,6 +143,7 @@ func TestFakeRun(t *testing.T) {
 	t.Run("fake", func(t *testing.T) {
 		done := setup(t, "fake")
 		t.Log("setting up")
+		t.Cleanup(func() { t.Log("tearing down") })
 		done()
 		step(t, "fake", "1-fails", time.Minute, func(t *testing.T, ctx context.Context) {
 			cmd := exec.CommandContext(ctx, os.Args[0], "say")

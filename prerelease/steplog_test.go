@@ -19,7 +19,10 @@ var logs *stepLogs
 // the log of the step running: go test -v's lines, t.Log's and t.Fatal's
 // among them, and the output of the commands a step streams. The steps
 // run one at a time, so what is written between a step's start and end
-// is its own.
+// is its own. go test writes t.Log's lines as they come only with -v,
+// which just prerelease passes; without it they come after the step ends
+// and reach no log. The test binary's own stderr, such as the panic of
+// go test's -timeout, is not copied.
 type stepLogs struct {
 	// w is the pipe's write end, os.Stdout while the tee runs.
 	w *os.File
@@ -49,13 +52,15 @@ func teeStdout() (*stepLogs, error) {
 	return l, nil
 }
 
+// newStepLogs is the tee of what is written to w, the write end of a pipe
+// whose reader is copy's, to term.
 func newStepLogs(w *os.File, term io.Writer) *stepLogs {
 	return &stepLogs{w: w, term: term, acks: make(chan struct{})}
 }
 
 // to sends what is written from now on to the log at path, which it
-// creates, as well as the terminal, or to no log when path is "". It
-// returns once what was written before has gone to the previous log.
+// creates, as well as the terminal, or to no log when path is "" (end).
+// It returns once what was written before has gone to the previous log.
 func (l *stepLogs) to(path string) {
 	if l == nil {
 		return
@@ -68,6 +73,9 @@ func (l *stepLogs) to(path string) {
 	<-l.acks
 }
 
+// end sends what is written from now on to the terminal only.
+func (l *stepLogs) end() { l.to("") }
+
 // stop ends the last log and gives os.Stdout back. The pipe stays open:
 // a process the run left, such as a detached Instance, may hold its write
 // end, and its reader goes on copying it to the terminal.
@@ -75,7 +83,7 @@ func (l *stepLogs) stop() {
 	if l == nil {
 		return
 	}
-	l.to("")
+	l.end()
 	if l.stdout != nil {
 		os.Stdout = l.stdout
 	}
@@ -146,6 +154,7 @@ func (l *stepLogs) copy(r io.Reader) {
 	}
 }
 
+// createLog creates the log at path, with its dir.
 func createLog(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
