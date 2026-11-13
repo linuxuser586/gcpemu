@@ -77,6 +77,10 @@ type clusterInternal struct {
 	// started it again after, or gave up on, since a bring-up last started
 	// it afresh (ADR 0045, #1061).
 	ServerExits int `json:"serverExits,omitempty"`
+	// DeleteFailed is set when a delete of the cluster failed and left it
+	// in ERROR: the Instance's next start runs the delete again instead of
+	// bringing the cluster back up (ADR 0081).
+	DeleteFailed bool `json:"deleteFailed,omitempty"`
 }
 
 // nodeRecord is one node container.
