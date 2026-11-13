@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/listpage"
+	"github.com/linuxuser586/gcpemu/internal/maskpath"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -306,15 +309,16 @@ func (s *Service) patch(ctx context.Context, k *kind, name string, in obj, mask 
 			return nil, apierr.Aborted("The etag %q does not match the current etag of %s.", e, name)
 		}
 	}
-	paths, err := maskPaths(k, in, mask)
+	m, err := parseMask(k, mask)
 	if err != nil {
 		return nil, err
 	}
 	res := clone(old)
-	for _, p := range paths {
+	for _, p := range m.paths {
 		v, ok := getPath(in, p)
 		setPath(res, p, v, ok)
 	}
+	m.mergeKeys(res, old, in)
 	normalize(k, res)
 	for _, p := range k.immutable {
 		a, aok := getPath(old, p)
@@ -329,6 +333,7 @@ func (s *Service) patch(ctx context.Context, k *kind, name string, in obj, mask 
 	}
 	for _, f := range k.inputOnly {
 		delete(res, f)
+		delete(m.keys, f)
 	}
 	return s.operation(ctx, k, n, name, "update", func(ctx context.Context) (proto.Message, error) {
 		err := s.env.Store.Update(func(tx store.Tx) error {
@@ -336,6 +341,10 @@ func (s *Service) patch(ctx context.Context, k *kind, name string, in obj, mask 
 			if cur == nil {
 				return notFound(name)
 			}
+			// Merge named map keys again into the maps as stored now, so
+			// keys another update wrote since old was read are kept. No
+			// check in prepare reads these maps, so none is rerun.
+			m.mergeKeys(res, cur, in)
 			res["createTime"] = cur["createTime"]
 			res["updateTime"] = s.now()
 			if k.etag {
@@ -357,25 +366,34 @@ func (s *Service) patch(ctx context.Context, k *kind, name string, in obj, mask 
 	})
 }
 
-// maskPaths returns the JSON paths to copy from in: the update mask
-// (snake_case or lowerCamel), or every mutable field present when absent.
-func maskPaths(k *kind, in obj, mask []string) ([]string, error) {
+// parsedMask is an update mask: whole JSON paths to copy from the request,
+// and the map keys named per map field (ADR 0075).
+type parsedMask struct {
+	paths []string
+	keys  map[string][]string
+}
+
+// parseMask parses the update mask (snake_case or lowerCamel field
+// segments), or names every mutable field present when it is absent. A
+// path <map field>.<key> names one key, bare or backtick-quoted and used
+// as written. A path into a message field keeps its lowerCamel segments.
+func parseMask(k *kind, mask []string) (parsedMask, error) {
 	known := jsonFields(k.newREST())
 	skip := map[string]bool{"name": true, "createTime": true, "updateTime": true, "etag": true}
 	for _, f := range k.output {
 		skip[f] = true
 	}
-	var out []string
+	out := parsedMask{keys: map[string][]string{}}
 	if len(mask) == 0 {
 		if k.api == "certificatemanager" {
-			return nil, apierr.InvalidArgument("Field update_mask is required.")
+			return out, apierr.InvalidArgument("Field update_mask is required.")
 		}
 		for f := range known {
 			if !skip[f] {
-				out = append(out, f)
+				out.paths = append(out.paths, f)
 			}
 		}
-		sort.Strings(out)
+		sort.Strings(out.paths)
 		return out, nil
 	}
 	for _, p := range mask {
@@ -386,40 +404,96 @@ func maskPaths(k *kind, in obj, mask []string) ([]string, error) {
 		if p == "*" {
 			for f := range known {
 				if !skip[f] {
-					out = append(out, f)
+					out.paths = append(out.paths, f)
 				}
 			}
 			continue
 		}
-		segs := strings.Split(p, ".")
-		for i := range segs {
-			segs[i] = camel(segs[i])
+		mp, ok := maskpath.Parse(p)
+		field := maskpath.LowerCamel(mp.Field)
+		t, isField := known[field]
+		if !isField {
+			return out, apierr.InvalidArgument("Invalid update_mask path %q.", p)
 		}
-		if !known[segs[0]] {
-			return nil, apierr.InvalidArgument("Invalid update_mask path %q.", p)
+		_, rest, nested := strings.Cut(p, ".")
+		isMap := t.Kind() == reflect.Map
+		if nested && (isMap && !ok || !isMap && !isMessage(t)) {
+			return out, badKeyPath(p)
 		}
-		if skip[segs[0]] {
-			continue
+		switch {
+		case skip[field]:
+		case !nested:
+			out.paths = append(out.paths, field)
+		case isMap:
+			out.keys[field] = append(out.keys[field], mp.Key)
+		default:
+			segs := strings.Split(rest, ".")
+			for i := range segs {
+				segs[i] = maskpath.LowerCamel(segs[i])
+			}
+			out.paths = append(out.paths, field+"."+strings.Join(segs, "."))
 		}
-		// Map-valued fields are replaced whole ("labels.k" addresses a key).
-		out = append(out, strings.Join(segs, "."))
 	}
-	sort.Strings(out)
+	sort.Strings(out.paths)
+	for f := range out.keys {
+		if slices.Contains(out.paths, f) {
+			delete(out.keys, f) // the whole-field path wins
+		}
+	}
 	return out, nil
 }
 
-// jsonFields returns the JSON field names of a REST struct.
-func jsonFields(v any) map[string]bool {
+// isMessage reports whether a REST field type is a nested message.
+func isMessage(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.Kind() == reflect.Struct
+}
+
+// badKeyPath is the error for a key path on a field that is not a map, or
+// one with segments after the key.
+func badKeyPath(p string) error {
+	return apierr.InvalidArgument("Invalid update_mask path %q: only a map field may name a key, and a key is one segment (quote it with backticks if it holds dots).", p)
+}
+
+// mergeKeys sets, in res, each key m names to its value in in, or removes
+// it when in lacks it, starting from base's map and keeping its other
+// keys. A map left empty is dropped.
+func (m parsedMask) mergeKeys(res, base, in obj) {
+	for f, ks := range m.keys {
+		dst := map[string]any{}
+		if b, ok := base[f].(map[string]any); ok {
+			maps.Copy(dst, b)
+		}
+		src, _ := in[f].(map[string]any)
+		for _, key := range ks {
+			if v, ok := src[key]; ok {
+				dst[key] = v
+			} else {
+				delete(dst, key)
+			}
+		}
+		if len(dst) == 0 {
+			delete(res, f)
+		} else {
+			res[f] = dst
+		}
+	}
+}
+
+// jsonFields returns the JSON field names of a REST struct and their types.
+func jsonFields(v any) map[string]reflect.Type {
 	t := reflect.TypeOf(v)
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	out := map[string]bool{}
+	out := map[string]reflect.Type{}
 	for i := 0; i < t.NumField(); i++ {
 		tag := t.Field(i).Tag.Get("json")
 		name, _, _ := strings.Cut(tag, ",")
 		if name != "" && name != "-" {
-			out[name] = true
+			out[name] = t.Field(i).Type
 		}
 	}
 	return out
@@ -546,7 +620,7 @@ func matchFilter(o obj, filter string) bool {
 func sortItems(items []obj, orderBy string) {
 	field, desc := "name", false
 	if f := strings.Fields(orderBy); len(f) > 0 {
-		field = camel(strings.TrimSuffix(f[0], ","))
+		field = maskpath.LowerCamel(strings.TrimSuffix(f[0], ","))
 		desc = len(f) > 1 && strings.EqualFold(f[1], "desc")
 	}
 	sort.SliceStable(items, func(i, j int) bool {
