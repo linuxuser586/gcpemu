@@ -47,9 +47,10 @@ type Gateway struct {
 	grpcOwners map[string]string       // gRPC service name → emu service
 	apiOwners  map[string]string       // mounted API name or host → emu service
 	srv        *http.Server
-	adminToken string   // see SetAdminToken
-	gate       gate     // see CloseGate
-	front      *handoff // see ServeFrontend
+	ln         *closeErrListener // what Serve serves on
+	adminToken string            // see SetAdminToken
+	gate       gate              // see CloseGate
+	front      *handoff          // see ServeFrontend
 	// delegated are the Delegated APIs, delegatedHosts them by hostname
 	// (see Delegate).
 	delegated      []*delegatedAPI
@@ -58,6 +59,9 @@ type Gateway struct {
 	links Links
 	// fallback is the Service that serves paths no other route matches.
 	fallback string
+	// connState, if set before Serve, observes the HTTP server's
+	// connections (tests).
+	connState func(net.Conn, http.ConnState)
 
 	// Faults holds fault-injection rules applied to every request (FR-CORE-060).
 	Faults fault.Set
@@ -625,9 +629,13 @@ func NewServer(h http.Handler, log *slog.Logger) *http.Server {
 
 // Serve serves on l, and connections from ServeFrontend, until Shutdown.
 func (g *Gateway) Serve(l net.Listener) error {
+	ln := &closeErrListener{Listener: l}
+	l = ln
 	g.mu.Lock()
+	g.ln = ln
 	g.srv = NewServer(g, g.env.Log)
 	g.srv.ConnContext = connContext
+	g.srv.ConnState = g.connState
 	srv := g.srv
 	g.mu.Unlock()
 	// Shutdown closes g.front before srv, so its Serve can end with
@@ -648,15 +656,52 @@ func (g *Gateway) Serve(l net.Listener) error {
 	return err
 }
 
-// Shutdown stops the gateway.
+// Shutdown stops the gateway. Its HTTP server drains within ctx; if ctx
+// ends first, the connections still open are closed by force, which is
+// the normal end of a shutdown rather than an error (#1034). Shutdown
+// leaves no connection open, and reports only a real failure to stop.
 func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.RLock()
-	srv := g.srv
+	srv, ln := g.srv, g.ln
 	g.mu.RUnlock()
 	g.front.Close()
 	g.grpc.Stop()
 	if srv == nil {
 		return nil
 	}
-	return srv.Shutdown(ctx)
+	err := srv.Shutdown(ctx)
+	if drainCut := ctx.Err() != nil && errors.Is(err, ctx.Err()); !drainCut {
+		return err
+	}
+	// Shutdown returned ctx's error in place of the listener's, and
+	// Close no longer sees the listener, so ln reports it.
+	err = errors.Join(srv.Close(), ln.closeErr())
+	if err == nil {
+		g.env.Log.Info("API gateway closed connections still open at shutdown")
+	}
+	return err
+}
+
+// closeErrListener remembers the error from closing it, which
+// http.Server.Shutdown does not report once its ctx has ended.
+type closeErrListener struct {
+	net.Listener
+	mu  sync.Mutex
+	err error
+}
+
+func (l *closeErrListener) Close() error {
+	err := l.Listener.Close()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.err == nil {
+		l.err = err
+	}
+	return err
+}
+
+func (l *closeErrListener) closeErr() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.err
 }
