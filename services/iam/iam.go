@@ -17,7 +17,7 @@ import (
 	credentialspb "cloud.google.com/go/iam/credentials/apiv1/credentialspb"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
-	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/httpserver"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -33,7 +33,7 @@ type Service struct {
 	mu       sync.Mutex
 	started  bool
 	metaL    net.Listener
-	metaSrv  *http.Server
+	metaSrv  *httpserver.Server
 	tokCache map[string]cachedToken // metadata token cache, by email
 	meta     metadataSettings
 }
@@ -109,7 +109,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	srv := gateway.NewServer(s.env.Middleware("iam", s.MetadataHandler(MetadataIdentity{})), s.env.Log)
+	srv := httpserver.New("metadata server", s.env.Middleware("iam", s.MetadataHandler(MetadataIdentity{})), s.env.Log)
 	s.mu.Lock()
 	s.metaL, s.metaSrv, s.started = l, srv, true
 	s.mu.Unlock()
