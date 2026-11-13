@@ -160,7 +160,7 @@ func TestAwaitNodesTimeoutSaysWhy(t *testing.T) {
 	)
 	for _, tt := range []struct {
 		name       string
-		polls      []string // the API server's node lists in turn, the last repeating; "" fails the request
+		polls      []string // the API server's node lists in turn, the last repeating; "" fails the request, "hang" blocks it until the client gives up
 		secondNode string   // recorded besides n1
 		logFail    bool
 		want       []string
@@ -202,6 +202,14 @@ func TestAwaitNodesTimeoutSaysWhy(t *testing.T) {
 			not:   []string{"not registered"},
 		},
 		{
+			// The deadline cuts off a request after one that failed: the
+			// error is the API server's, not the cutoff (#1135).
+			name:  "deadline cuts off a failing request",
+			polls: []string{"", "hang"},
+			want:  []string{"node n1: unknown, the API server never listed nodes", "last request for the nodes failed", "api server down", agentLog},
+			not:   []string{"nodes\": context deadline exceeded"},
+		},
+		{
 			name:       "API server stops answering",
 			secondNode: "n2",
 			polls:      []string{`{"items":[{"metadata":{"name":"n1"},"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}`, ""},
@@ -235,6 +243,10 @@ func TestAwaitNodesTimeoutSaysWhy(t *testing.T) {
 			var polls atomic.Int32
 			kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				list := tt.polls[min(int(polls.Add(1)), len(tt.polls))-1]
+				if list == "hang" {
+					<-r.Context().Done()
+					return
+				}
 				if list == "" {
 					http.Error(w, "api server down", http.StatusServiceUnavailable)
 					return
