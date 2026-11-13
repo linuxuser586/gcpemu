@@ -257,7 +257,19 @@ func (s *Service) replaceTrigger(ctx context.Context, cur, t *cloudbuildpb.Build
 	if err := s.ensureSubscription(ctx, cur, t); err != nil {
 		return nil, err
 	}
-	err := s.env.Store.Update(func(tx store.Tx) error { return putTrigger(tx, t) })
+	// t was merged from cur and checked outside this transaction, so it is
+	// written only if cur is still what is stored: a key path then merges
+	// into the map the write replaces (ADR 0075).
+	err := s.env.Store.Update(func(tx store.Tx) error {
+		now, err := getTrigger(tx, r)
+		if err != nil {
+			return err
+		}
+		if !proto.Equal(now, cur) {
+			return apierr.Aborted("Build trigger %q changed during the update; retry.", r.ID)
+		}
+		return putTrigger(tx, t)
+	})
 	return t, err
 }
 

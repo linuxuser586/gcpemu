@@ -92,11 +92,15 @@ func validatePool(wp *cloudbuildpb.WorkerPool) error {
 	return nil
 }
 
+// stampPool marks a worker pool as running and updated now.
+func (s *Service) stampPool(wp *cloudbuildpb.WorkerPool) {
+	wp.UpdateTime, wp.State, wp.DeleteTime = timestamppb.New(s.env.Clock.Now()), cloudbuildpb.WorkerPool_RUNNING, nil
+	wp.Etag = poolEtag(wp)
+}
+
 // savePool stores a worker pool, created or updated now.
 func (s *Service) savePool(wp *cloudbuildpb.WorkerPool, create bool) (*cloudbuildpb.WorkerPool, error) {
-	now := timestamppb.New(s.env.Clock.Now())
-	wp.UpdateTime, wp.State, wp.DeleteTime = now, cloudbuildpb.WorkerPool_RUNNING, nil
-	wp.Etag = poolEtag(wp)
+	s.stampPool(wp)
 	err := s.env.Store.Update(func(tx store.Tx) error {
 		if _, err := getPool(tx, wp.GetName()); create && err == nil {
 			return apierr.AlreadyExists("Worker pool %q already exists.", wp.GetName())
@@ -201,31 +205,43 @@ func (a *api) UpdateWorkerPool(ctx context.Context, req *cloudbuildpb.UpdateWork
 	if err := a.s.check(ctx, "cloudbuild.workerpools.update", resRoot+in.GetName()); err != nil {
 		return nil, err
 	}
-	cur, err := a.s.loadPool(in.GetName())
-	if err != nil {
-		return nil, err
-	}
-	if in.GetEtag() != "" && in.GetEtag() != cur.GetEtag() {
-		return nil, apierr.Aborted("The worker pool's etag %q does not match %q.", in.GetEtag(), cur.GetEtag())
-	}
 	paths := req.GetUpdateMask().GetPaths()
 	if len(paths) == 0 {
 		paths = []string{"display_name", "annotations", "private_pool_v1_config"}
 	}
-	wp := proto.Clone(cur).(*cloudbuildpb.WorkerPool)
-	if err := applyMask(wp, in, paths); err != nil {
-		return nil, err
+	// The pool is read, merged, checked and written in one transaction, so
+	// a key path merges into the map the write replaces (ADR 0075).
+	tx := a.s.env.Store.Update
+	if req.GetValidateOnly() {
+		tx = a.s.env.Store.View
 	}
-	wp.Name, wp.Uid, wp.CreateTime = cur.Name, cur.Uid, cur.CreateTime
-	if err := validatePool(wp); err != nil {
+	var wp *cloudbuildpb.WorkerPool
+	err = tx(func(tx store.Tx) error {
+		cur, err := getPool(tx, in.GetName())
+		if err != nil {
+			return err
+		}
+		if in.GetEtag() != "" && in.GetEtag() != cur.GetEtag() {
+			return apierr.Aborted("The worker pool's etag %q does not match %q.", in.GetEtag(), cur.GetEtag())
+		}
+		wp = proto.Clone(cur).(*cloudbuildpb.WorkerPool)
+		if err := applyMask(wp, in, paths); err != nil {
+			return err
+		}
+		wp.Name, wp.Uid, wp.CreateTime = cur.Name, cur.Uid, cur.CreateTime
+		if err := validatePool(wp); err != nil {
+			return err
+		}
+		if req.GetValidateOnly() {
+			return nil
+		}
+		a.s.stampPool(wp)
+		return putPool(tx, wp)
+	})
+	if err != nil {
 		return nil, err
 	}
 	md := &cloudbuildpb.UpdateWorkerPoolOperationMetadata{WorkerPool: wp.Name, CreateTime: timestamppb.New(a.s.env.Clock.Now())}
-	if !req.GetValidateOnly() {
-		if wp, err = a.s.savePool(wp, false); err != nil {
-			return nil, err
-		}
-	}
 	return a.s.ops.Run(ctx, locationName(project, location), md, func(context.Context) (proto.Message, error) {
 		md.CompleteTime = timestamppb.New(a.s.env.Clock.Now())
 		return wp, nil
