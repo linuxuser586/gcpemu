@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
-	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/httpserver"
 	"github.com/linuxuser586/gcpemu/internal/inflight"
 )
 
@@ -58,7 +58,7 @@ type Service struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	grpcSrv  *grpc.Server
-	httpSrv  *http.Server
+	httpSrv  *httpserver.Server
 	push     *http.Client
 	stopping chan struct{}
 
@@ -165,7 +165,7 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 		rest.ServeHTTP(w, r)
 	})
-	s.httpSrv = gateway.NewServer(h, s.env.Log)
+	s.httpSrv = httpserver.New("Pub/Sub", h, s.env.Log)
 	// Server-side HTTP/2 keepalive pings keep idle streaming pulls alive.
 	s.httpSrv.HTTP2 = &http.HTTP2Config{SendPingTimeout: 30 * time.Second, PingTimeout: 20 * time.Second}
 	s.wg.Add(1)

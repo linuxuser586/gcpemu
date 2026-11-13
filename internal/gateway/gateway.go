@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -32,6 +31,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/fault"
+	"github.com/linuxuser586/gcpemu/internal/httpserver"
 	"github.com/linuxuser586/gcpemu/internal/reqlog"
 )
 
@@ -46,12 +46,7 @@ type Gateway struct {
 	hosts      map[string]http.Handler // Host → handler (host mode)
 	grpcOwners map[string]string       // gRPC service name → emu service
 	apiOwners  map[string]string       // mounted API name or host → emu service
-	srv        *http.Server
-	ln         *closeErrListener // what Serve serves on
-	// endConns ends every request's context once the HTTP server has
-	// stopped, so connections it handed over, such as a Delegated API's
-	// switched to another protocol, close too.
-	endConns   context.CancelFunc
+	srv        *httpserver.Server
 	adminToken string   // see SetAdminToken
 	gate       gate     // see CloseGate
 	front      *handoff // see ServeFrontend
@@ -617,32 +612,12 @@ func (w *statusWriter) Flush() {
 	}
 }
 
-// NewServer returns an http.Server for h that speaks HTTP/1.1 and h2c.
-func NewServer(h http.Handler, log *slog.Logger) *http.Server {
-	s := &http.Server{
-		Handler:           h,
-		ReadHeaderTimeout: 30 * time.Second,
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug),
-	}
-	s.Protocols = new(http.Protocols)
-	s.Protocols.SetHTTP1(true)
-	s.Protocols.SetHTTP2(true)
-	s.Protocols.SetUnencryptedHTTP2(true)
-	return s
-}
-
 // Serve serves on l, and connections from ServeFrontend, until Shutdown.
 func (g *Gateway) Serve(l net.Listener) error {
-	ln := &closeErrListener{Listener: l}
-	l = ln
 	g.mu.Lock()
-	g.ln = ln
-	g.srv = NewServer(g, g.env.Log)
+	g.srv = httpserver.New("API gateway", g, g.env.Log)
 	g.srv.ConnContext = connContext
 	g.srv.ConnState = g.connState
-	base, endConns := context.WithCancel(context.Background())
-	g.srv.BaseContext = func(net.Listener) context.Context { return base }
-	g.endConns = endConns
 	srv := g.srv
 	g.mu.Unlock()
 	// Shutdown closes g.front before srv, so its Serve can end with
@@ -666,51 +641,17 @@ func (g *Gateway) Serve(l net.Listener) error {
 // Shutdown stops the gateway. Its HTTP server drains within ctx; if ctx
 // ends first, the connections still open are closed by force, which is
 // the normal end of a shutdown rather than an error (#1034). Then it
-// ends every request's context, so connections the server handed over
-// close as their handlers return. It reports only a real failure to stop.
+// ends every request's context, so connections the server handed over,
+// such as a Delegated API's switched to another protocol, close as their
+// handlers return. It reports only a real failure to stop.
 func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.RLock()
-	srv, ln, endConns := g.srv, g.ln, g.endConns
+	srv := g.srv
 	g.mu.RUnlock()
 	g.front.Close()
 	g.grpc.Stop()
 	if srv == nil {
 		return nil
 	}
-	err := srv.Shutdown(ctx)
-	defer endConns()
-	if drainCut := ctx.Err() != nil && errors.Is(err, ctx.Err()); !drainCut {
-		return err
-	}
-	// Shutdown returned ctx's error in place of the listener's, and
-	// Close no longer sees the listener, so ln reports it.
-	err = errors.Join(srv.Close(), ln.closeErr())
-	if err == nil {
-		g.env.Log.Info("API gateway closed connections still open at shutdown")
-	}
-	return err
-}
-
-// closeErrListener remembers the error from closing it, which
-// http.Server.Shutdown does not report once its ctx has ended.
-type closeErrListener struct {
-	net.Listener
-	mu  sync.Mutex
-	err error
-}
-
-func (l *closeErrListener) Close() error {
-	err := l.Listener.Close()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.err == nil {
-		l.err = err
-	}
-	return err
-}
-
-func (l *closeErrListener) closeErr() error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.err
+	return srv.Shutdown(ctx)
 }

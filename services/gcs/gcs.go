@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
-	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/httpserver"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -36,7 +36,7 @@ type Service struct {
 	log   *slog.Logger
 	blobs *blobStore
 
-	srv    *http.Server
+	srv    *httpserver.Server
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	ready  atomic.Bool
@@ -88,7 +88,7 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("gcs listen: %w", err)
 	}
-	s.srv = gateway.NewServer(s.env.Middleware(Name, s), s.log)
+	s.srv = httpserver.New("Cloud Storage", s.env.Middleware(Name, s), s.log)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()

@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
-	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/httpserver"
 )
 
 // --ar-bind (Config.ARBind): the registry is also served on each
@@ -80,7 +80,7 @@ func (s *Service) LANHandler() http.Handler {
 
 // startLAN serves h on every --ar-bind address. A failed address is
 // logged and skipped.
-func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*http.Server {
+func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*httpserver.Server {
 	binds := s.env.Config.ARBind
 	if len(binds) == 0 {
 		return nil
@@ -91,7 +91,7 @@ func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*htt
 			return s.env.CA.ServerCert(binds...)
 		},
 	}
-	var srvs []*http.Server
+	var srvs []*httpserver.Server
 	var addrs []string
 	for _, ip := range binds {
 		l, err := net.Listen("tcp", net.JoinHostPort(ip, strconv.Itoa(port)))
@@ -106,7 +106,7 @@ func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*htt
 				continue
 			}
 		}
-		srv := gateway.NewServer(h, s.env.Log)
+		srv := httpserver.New("Artifact Registry on --ar-bind", h, s.env.Log)
 		srv.TLSConfig = cfg
 		srvs = append(srvs, srv)
 		addrs = append(addrs, l.Addr().String())

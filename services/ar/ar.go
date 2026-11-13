@@ -84,7 +84,7 @@ import (
 	"google.golang.org/genproto/googleapis/cloud/location"
 
 	"github.com/linuxuser586/gcpemu/internal/emu"
-	"github.com/linuxuser586/gcpemu/internal/gateway"
+	"github.com/linuxuser586/gcpemu/internal/httpserver"
 	"github.com/linuxuser586/gcpemu/internal/inflight"
 	"github.com/linuxuser586/gcpemu/internal/lro"
 	"github.com/linuxuser586/gcpemu/internal/store"
@@ -98,9 +98,9 @@ type Service struct {
 	api   *api
 
 	mu      sync.Mutex
-	srv     *http.Server
-	lan     []*http.Server // --ar-bind listeners (lan.go)
-	lanH    http.Handler   // what they serve, also behind --gfe-bind
+	srv     *httpserver.Server
+	lan     []*httpserver.Server // --ar-bind listeners (lan.go)
+	lanH    http.Handler         // what they serve, also behind --gfe-bind
 	conns   connTracker
 	ready   bool
 	uploads map[string]*upload
@@ -171,7 +171,7 @@ func (s *Service) Start(ctx context.Context) error {
 		return err
 	}
 	h := s.env.Middleware("ar", http.HandlerFunc(s.serveRegistry))
-	srv := gateway.NewServer(s.withRegistryAuth(h), s.env.Log)
+	srv := httpserver.New("Artifact Registry", s.withRegistryAuth(h), s.env.Log)
 	srv.ConnState = s.conns.track
 	lanH := s.lanHandler(h)
 	lan := s.startLAN(ctx, l.Addr().(*net.TCPAddr).Port, lanH)
