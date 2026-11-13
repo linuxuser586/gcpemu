@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -204,19 +205,30 @@ func assertKept(t *testing.T, cl *runtime.Client, id, dir string) {
 	}
 }
 
-// assertReclaimed fails t if id tags anything or dir still exists.
-func assertReclaimed(t *testing.T, cl *runtime.Client, id, dir string) {
+// leftovers returns what keeps id from being reclaimed: the objects it
+// tags, and dir unless it is gone.
+func leftovers(t *testing.T, cl *runtime.Client, id, dir string) []string {
 	t.Helper()
-	for _, o := range objects(t, cl, id) {
-		t.Errorf("%s of Instance %s left after the sweep", o, id)
-	}
+	left := objects(t, cl, id)
 	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("data dir %s after the sweep: %v, want it removed", dir, err)
+		left = append(left, fmt.Sprintf("data dir %s (stat: %v)", dir, err))
 	}
+	return left
 }
+
+// reclaimWait bounds how long testReclaimKilled waits for the sweep of
+// another test process, which took the killed child's owner lock before
+// the test's own sweeps did, to finish reclaiming the Instance (#1154).
+// That sweep force-removes a running container, which takes seconds on
+// Docker Desktop and longer under a full parallel run.
+const reclaimWait = 60 * time.Second
 
 // testReclaimKilled: the Instance of a live child is never swept; once
 // the child is killed, two sweeps at once reclaim it without an error.
+// Any test process that starts an Instance sweeps too, so the reclaim may
+// be another process's: the test's sweeps then find the owner lock held
+// and leave the Instance to it (#1154). The test sweeps again while it
+// waits, in case that sweep failed and let go of the lock.
 func testReclaimKilled(t *testing.T, kind, dir string) {
 	cl := reclaimRuntime(t)
 	c := startChild(t, cl, kind, dir)
@@ -234,7 +246,15 @@ func testReclaimKilled(t *testing.T, kind, dir string) {
 		}()
 	}
 	wg.Wait()
-	assertReclaimed(t, cl, c.id, c.dir)
+	hosttest.Eventually(t, reclaimWait, "a sweep to reclaim Instance "+c.id,
+		func() bool {
+			if len(leftovers(t, cl, c.id, c.dir)) == 0 {
+				return true
+			}
+			sweep(ctx, cl, t.Logf)
+			return false
+		},
+		func() string { return "left: " + strings.Join(leftovers(t, cl, c.id, c.dir), "; ") })
 }
 
 // TestSweepReclaimsKilledTestDataDir is #846 for WithTestDataDir.
