@@ -115,7 +115,16 @@ func newBackground() *background {
 	return g
 }
 
-// wait waits for the generation's goroutines, or for ctx to end.
+// wait waits for the generation's goroutines and returns nil once they
+// have all returned, whatever ctx. If ctx ends first, the work gets
+// emu.StopGrace from then to return; work still running after that could
+// write after the store is closed, so wait returns ctx.Err(). wait thus
+// runs at most emu.StopGrace past ctx (#1116).
+//
+// Work returns on its own goroutine after it sees the cancellation, so
+// with a ctx that has already ended (Teardown after the other Services
+// used it up) it could never win a plain race against ctx.Done, and Stop
+// would report a failure with nothing left running.
 func (g *background) wait(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() { g.wg.Wait(); close(done) }()
@@ -123,6 +132,13 @@ func (g *background) wait(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+	}
+	grace := time.NewTimer(emu.StopGrace)
+	defer grace.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-grace.C:
 		return ctx.Err()
 	}
 }
@@ -230,7 +246,8 @@ func (s *Service) ReservedAddrs() []string {
 	return out
 }
 
-// Stop cancels background work and waits for it.
+// Stop cancels background work and waits for it (bounded by ctx, plus
+// emu.StopGrace). It closes the LAN and loopback listeners either way.
 func (s *Service) Stop(ctx context.Context) error {
 	s.bgMu.Lock()
 	g := s.bg
@@ -258,9 +275,9 @@ func (s *Service) ResourceCounts() map[string]int {
 }
 
 // Reset cancels the background work started before it and waits for it
-// (bounded by ctx), so none of it creates a container or writes a record
-// afterwards (#306). It then removes every instance container and volume
-// and the backup files (`gcpemu reset`). Work started after Reset runs on
+// (bounded by ctx, plus emu.StopGrace), so none of it creates a container
+// or writes a record afterwards (#306). It then removes every instance
+// container and volume and the backup files (`gcpemu reset`). Work started after Reset runs on
 // a fresh background context, unless the service is stopped.
 func (s *Service) Reset(ctx context.Context) error {
 	s.bgMu.Lock()

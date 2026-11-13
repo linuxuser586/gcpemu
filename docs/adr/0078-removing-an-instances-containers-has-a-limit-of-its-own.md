@@ -13,6 +13,6 @@ Teardown's last removal of the Instance's containers, networks and volumes, the 
 ## Consequences
 
 - A shutdown request still ends within `gcpemu stop`'s 60s against a hung runtime, but a `Cleanup` cut short leaves containers, networks or volumes for the next start's Reclaim with that Instance ID, if there is one. It is still a Clean stop and a Confirmed stop (ADR 0064).
-- `Cleanup` gets 30s only when earlier steps finish quickly; after a `Start` wait and Teardown that use their full limits it gets 10s, less than a large or busy Instance needs.
+- `Cleanup` gets 30s only when earlier steps finish quickly; after a `Start` wait and Teardown that use their full limits, including a Service's `Stop` running `emu.StopGrace` past its context (#1116), it gets 9s, less than a large or busy Instance needs.
 - A stop by signal can take up to 60s: 30s for the shutdown, and 30s more for `Cleanup`.
 - Containers, networks and volumes share the one limit, in the order they always had.

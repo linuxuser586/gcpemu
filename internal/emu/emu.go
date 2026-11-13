@@ -31,6 +31,10 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
+// StopGrace is how long a Service's Stop may run past its ctx, to let
+// background work it cancelled return (ADR 0065, #1116).
+const StopGrace = time.Second
+
 // Service is one emulated GCP service.
 type Service interface {
 	// Name is the short service name used by --services (e.g. "gcs").
@@ -43,7 +47,8 @@ type Service interface {
 	// Stop releases everything Start acquired. It never overlaps Start,
 	// except when the deadline of the Instance's shutdown ended first, and
 	// Start is not called after Stop during a shutdown (ADR 0065). It may
-	// be called on a Service that was never started.
+	// be called on a Service that was never started. It returns by the
+	// time ctx ends, or at most StopGrace after.
 	Stop(ctx context.Context) error
 	// Ready returns nil when the service can take traffic, or the reason it can't.
 	Ready() error

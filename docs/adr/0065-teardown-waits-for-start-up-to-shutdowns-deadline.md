@@ -16,6 +16,7 @@ The wait is limited by the context given to `Shutdown`. If that ends first, the 
 ## Consequences
 
 - A shutdown request can take 45s, up from 30s, and a Service's `Start` that needs longer than 15s to return past its context overlaps its `Stop`.
+- A Service's `Stop` may run up to `emu.StopGrace` (1s) past its context, so Teardown can take 31s (#1116).
 - `Shutdown`'s `ctx` limits the wait and Teardown together, so a caller that passes one short deadline can still run Teardown with a context that has already ended.
 - An Instance that has begun to shut down never starts, so a `Start` that comes after the request returns `ErrShutDown` and can't be retried.
 - Past the deadline, what the wait prevents can still happen: a `Start` still running may touch a Service that was stopped or a store that was closed. It starts no further Service and no step after them, and it can't leave host mode running. Steps before the Services, such as the Google front end, have no check: only a direct `Shutdown` can reach them, as the Admin API isn't served yet.
