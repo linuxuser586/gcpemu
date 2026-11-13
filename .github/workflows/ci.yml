@@ -297,6 +297,13 @@ jobs:
           path: ~/.cache/gcpemu-e2e
           key: gcpemu-e2e-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
           restore-keys: gcpemu-e2e-${{ runner.arch }}-
+      # #1147: keep the emulator's log and the Docker daemon's events, for a
+      # failed run's artifact.
+      - name: Keep logs
+        run: |
+          echo "GCPEMU_TEST_LOG_DIR=$RUNNER_TEMP/gcpemu-logs" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/gcpemu-logs"
+          docker events > "$RUNNER_TEMP/gcpemu-logs/docker-events.log" 2>&1 &
       - name: Reference stack (SRS 11.2) and Containerized Instance tests
         run: just e2e
       # #498, #630: the release workflow's Image readiness check, run on
@@ -316,6 +323,12 @@ jobs:
           just echo-image-check gcpemu-echo:check
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: logs-e2e-${{ runner.arch }}
+          path: ${{ runner.temp }}/gcpemu-logs
+          retention-days: 7
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -351,8 +364,21 @@ jobs:
           path: ~/.cache/gcpemu-e2e
           key: gcpemu-e2e-autopilot-${{ runner.arch }}-${{ hashFiles('e2e/**') }}
           restore-keys: gcpemu-e2e-autopilot-${{ runner.arch }}-
+      # #1147: keep the emulator's log and the Docker daemon's events, for a
+      # failed run's artifact.
+      - name: Keep logs
+        run: |
+          echo "GCPEMU_TEST_LOG_DIR=$RUNNER_TEMP/gcpemu-logs" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/gcpemu-logs"
+          docker events > "$RUNNER_TEMP/gcpemu-logs/docker-events.log" 2>&1 &
       - name: Autopilot acceptance (SRS 11.4)
         run: just autopilot
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: logs-autopilot-${{ runner.arch }}
+          path: ${{ runner.temp }}/gcpemu-logs
+          retention-days: 7
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true
@@ -480,8 +506,21 @@ jobs:
             ~/.cache/gcpemu-compat/tofu-versions-*.json
           key: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-${{ hashFiles('compat/tofu/**', 'compat/tofu_test.go') }}-${{ steps.week.outputs.week }}
           restore-keys: gcpemu-tofu-${{ runner.arch }}-${{ matrix.provider }}-
+      # #1147: keep the emulator's log and the Docker daemon's events, for a
+      # failed run's artifact.
+      - name: Keep logs
+        run: |
+          echo "GCPEMU_TEST_LOG_DIR=$RUNNER_TEMP/gcpemu-logs" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/gcpemu-logs"
+          docker events > "$RUNNER_TEMP/gcpemu-logs/docker-events.log" 2>&1 &
       - name: OpenTofu acceptance (SRS 11.1)
         run: just tofu
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: logs-tofu-${{ runner.arch }}-${{ matrix.provider }}
+          path: ${{ runner.temp }}/gcpemu-logs
+          retention-days: 7
       - uses: ./.github/actions/disk-report
         if: always()
         continue-on-error: true

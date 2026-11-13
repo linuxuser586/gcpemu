@@ -6,6 +6,7 @@
 package hosttest
 
 import (
+	"errors"
 	"net"
 	"os/exec"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/net/ipv4"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	"github.com/linuxuser586/gcpemu/internal/testlog"
 )
 
 // Eventually polls cond until it holds or timeout passes; diag explains a
@@ -71,7 +73,7 @@ var containerGateway = strconv.Itoa(config.DefaultPorts["gateway"])
 // picks when it is ""), extra docker run args and start args. It waits
 // until the container is healthy and returns the host address of the API
 // gateway. At cleanup it prints the logs of a failed test's container,
-// stops it, so the Instance removes its containers and networks, and
+// keeps them all in GCPEMU_TEST_LOG_DIR when that is set, stops it, so the Instance removes its containers and networks, and
 // removes it.
 func RunEmulator(t testing.TB, name, image, gatewayPort string, args []string, start ...string) string {
 	t.Helper()
@@ -82,6 +84,7 @@ func RunEmulator(t testing.TB, name, image, gatewayPort string, args []string, s
 			out, _ := exec.Command("docker", "logs", "--tail", "80", name).CombinedOutput()
 			t.Logf("emulator logs:\n%s", out)
 		}
+		keepLogs(t, name)
 		// An Ephemeral Instance removes its containers and networks on stop.
 		_, _ = exec.Command("docker", "stop", "-t", "60", name).CombinedOutput()
 		_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
@@ -91,6 +94,23 @@ func RunEmulator(t testing.TB, name, image, gatewayPort string, args []string, s
 		return Docker(t, "inspect", "-f", "{{.State.Health.Status}}", name) == "healthy"
 	}, nil)
 	return strings.TrimSpace(strings.Split(Docker(t, "port", name, containerGateway+"/tcp"), "\n")[0])
+}
+
+// keepLogs writes all of container name's logs to a new file in
+// GCPEMU_TEST_LOG_DIR, when that is set, named after the test.
+func keepLogs(t testing.TB, name string) {
+	f, err := testlog.Create(func() string { return t.Name() })
+	if f == nil {
+		if err != nil {
+			t.Logf("keep the emulator logs: %v", err)
+		}
+		return
+	}
+	cmd := exec.Command("docker", "logs", name)
+	cmd.Stdout, cmd.Stderr = f, f
+	if err := errors.Join(cmd.Run(), f.Close()); err != nil {
+		t.Logf("keep the emulator logs: %v", err)
+	}
 }
 
 // ParseEnv returns the variables in `gcpemu env` output for a POSIX shell

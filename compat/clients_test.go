@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -26,6 +27,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/hostmode"
 	"github.com/linuxuser586/gcpemu/internal/porttest"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/testlog"
 )
 
 const project = "compat-proj"
@@ -74,6 +76,10 @@ func startWith(t *testing.T, o options) *emulator {
 		args = append(args, "--host-mode")
 		e.envArgs = []string{"--no-universe"}
 	}
+	logDir := os.Getenv("GCPEMU_TEST_LOG_DIR")
+	if logDir != "" {
+		args = append(args, "--log-level", "debug")
+	}
 	cmd := exec.Command(e.bin, args...)
 	cmd.Env = append(os.Environ(), "CI=")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -83,6 +89,9 @@ func startWith(t *testing.T, o options) *emulator {
 		out, err := exec.Command(e.bin, "stop", "--data-dir", e.dir).CombinedOutput()
 		if err != nil && !strings.Contains(string(out), "has no endpoints.json") {
 			t.Errorf("gcpemu stop: %v\n%s", err, out)
+		}
+		if logDir != "" {
+			keepLog(t, filepath.Join(e.dir, "gcpemu.log"))
 		}
 	})
 	e.vars = e.emuEnv(t)
@@ -118,6 +127,23 @@ func startWith(t *testing.T, o options) *emulator {
 		e.env = append(e.env, k+"="+v)
 	}
 	return e
+}
+
+// keepLog copies the detached Instance's log to a new file in
+// GCPEMU_TEST_LOG_DIR named after the test, before t.TempDir removes it.
+func keepLog(t *testing.T, log string) {
+	src, err := os.Open(log)
+	if err == nil {
+		defer src.Close()
+		var dst *os.File
+		if dst, err = testlog.Create(t.Name); err == nil {
+			_, err = io.Copy(dst, src)
+			err = errors.Join(err, dst.Close())
+		}
+	}
+	if err != nil {
+		t.Logf("keep the Instance log: %v", err)
+	}
 }
 
 // emuEnv returns the variables `gcpemu env` prints now (it grows as

@@ -1285,7 +1285,8 @@ held them. A test holds a lock on a file in its dir until its Instance's resourc
 only the dirs of tests that have ended are reclaimed. `WithDataDir` dirs never are; `gcpemu prune`
 removes what their Instances leave. A failed reclaim is logged and never fails the test.
 
-Set `GCPEMU_TEST_LOG=1` to see the emulator's logs. `RequireRuntime(t)` skips a test without a
+Set `GCPEMU_TEST_LOG=1` to see the emulator's logs, or `GCPEMU_TEST_LOG_DIR` to keep each Instance's
+debug log in a file there named after its test. `RequireRuntime(t)` skips a test without a
 container runtime; GKE tests call `HoldClusterSlot(t)` to limit how many clusters run at once
 (`GCPEMU_TEST_CLUSTERS`, default 2).
 

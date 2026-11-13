@@ -20,6 +20,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/instance"
+	"github.com/linuxuser586/gcpemu/internal/testlog"
 	"github.com/linuxuser586/gcpemu/services"
 )
 
@@ -33,19 +34,21 @@ var (
 // Instance is a running test emulator.
 type Instance struct {
 	in        *instance.Instance
-	ownedDir  string // the Test data dir Close removes, "" with WithDataDir
-	dropOwner func() // drops ownedDir's owner lock, nil when none is held
-	release   func() // drops the host loopback lock, nil when none is held
+	ownedDir  string   // the Test data dir Close removes, "" with WithDataDir
+	logFile   *os.File // the log file in GCPEMU_TEST_LOG_DIR, nil when unset
+	dropOwner func()   // drops ownedDir's owner lock, nil when none is held
+	release   func()   // drops the host loopback lock, nil when none is held
 	closeOnce sync.Once
 	closeErr  error
 	removeErr error // removing ownedDir, part of closeErr
 }
 
 // Start launches an Instance running svcs (plus their dependencies) and
-// stops it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs.
+// stops it when the test ends. Set GCPEMU_TEST_LOG=1 to see emulator logs,
+// or GCPEMU_TEST_LOG_DIR to keep them in a file named after the test.
 func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 	t.Helper()
-	i, err := start(context.Background(), 60*time.Second, svcs, opts, testDeadline(t), t.Logf)
+	i, err := start(context.Background(), 60*time.Second, svcs, opts, testDeadline(t), func() string { return t.Name() }, t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +69,11 @@ func Start(t testing.TB, svcs []string, opts ...Option) *Instance {
 // lives until Close, for sharing one Instance across a package's tests
 // from TestMain. ctx bounds the start only. Unless WithDataDir is given,
 // the Instance keeps its files in a Test data dir of its own that Close
-// removes. Set GCPEMU_TEST_LOG=1 to see emulator logs.
+// removes. Set GCPEMU_TEST_LOG=1 to see emulator logs, or
+// GCPEMU_TEST_LOG_DIR to keep them in a file there.
 func New(ctx context.Context, svcs []string, opts ...Option) (*Instance, error) {
 	deadline, _ := ctx.Deadline()
-	return start(ctx, 0, svcs, opts, deadline, func(format string, args ...any) {
+	return start(ctx, 0, svcs, opts, deadline, func() string { return "emutest" }, func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, format+"\n", args...)
 	})
 }
@@ -78,8 +82,10 @@ func New(ctx context.Context, svcs []string, opts ...Option) (*Instance, error) 
 // only ctx bounds it), waiting for the host loopback lock, when it needs
 // one, until lockDeadline (zero: forever). The first Instance of the
 // process first reclaims those of tests that have ended (ADR 0047),
-// outside timeout, logging failures with logf.
-func start(ctx context.Context, timeout time.Duration, svcs []string, opts []Option, lockDeadline time.Time, logf logFunc) (*Instance, error) {
+// outside timeout, logging failures with logf. With GCPEMU_TEST_LOG_DIR
+// set, it also logs at debug level to a new file there named after what
+// name returns.
+func start(ctx context.Context, timeout time.Duration, svcs []string, opts []Option, lockDeadline time.Time, name func() string, logf logFunc) (*Instance, error) {
 	cfg := testConfig(svcs, opts)
 	processSweep.run(logf)
 	if timeout > 0 {
@@ -100,10 +106,29 @@ func start(ctx context.Context, timeout time.Duration, svcs []string, opts []Opt
 			logOut = o.logOut
 		}
 	}
-	i, err := launch(ctx, &cfg, logOut, release)
+	logFile, err := testlog.Create(name)
 	if err != nil {
+		if release != nil {
+			release()
+		}
 		return nil, fmt.Errorf("emutest: %w", err)
 	}
+	if logFile != nil {
+		cfg.LogLevel = "debug"
+		if logOut == nil {
+			logOut = logFile
+		} else {
+			logOut = io.MultiWriter(logOut, logFile)
+		}
+	}
+	i, err := launch(ctx, &cfg, logOut, release)
+	if err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
+		return nil, fmt.Errorf("emutest: %w", err)
+	}
+	i.logFile = logFile
 	return i, nil
 }
 
@@ -217,11 +242,15 @@ func (i *Instance) shutdown(ctx context.Context, in *instance.Instance) error {
 	return err
 }
 
-// cleanup drops the host loopback lock and the owner lock, then removes
-// the Test data dir, if i still owns one: shutdown gives up the dir
-// of an Instance whose containers, networks or volumes remain, and with
-// WithDataDir i owns none.
+// cleanup closes the log file, drops the host loopback lock and the owner
+// lock, then removes the Test data dir, if i still owns one: shutdown
+// gives up the dir of an Instance whose containers, networks or volumes
+// remain, and with WithDataDir i owns none.
 func (i *Instance) cleanup() error {
+	if i.logFile != nil {
+		_ = i.logFile.Close()
+		i.logFile = nil
+	}
 	if i.release != nil {
 		i.release()
 		i.release = nil
