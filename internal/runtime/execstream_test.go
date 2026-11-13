@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -263,5 +264,45 @@ func TestExecStreamWithStdinFailsWhenTheStreamBreaks(t *testing.T) {
 	}))
 	if _, err := cl.ExecStream(context.Background(), "c1", []string{"cmd"}, strings.NewReader("in"), io.Discard, io.Discard); err == nil {
 		t.Fatal("ExecStream of a broken stream succeeded")
+	}
+}
+
+// resetReader returns some data, then a connection reset of its own.
+type resetReader struct{ sent bool }
+
+func (r *resetReader) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, "part"), nil
+	}
+	return 0, syscall.ECONNRESET
+}
+
+// A stdin that fails with a reset of its own, say a dump read over the
+// network, fails the exec though the command has exited: what it read was
+// cut short. Only a reset of the output stream ends the output.
+func TestExecStreamFailsWhenStdinIsReset(t *testing.T) {
+	cl := testClient(t, execServerStatus(`{"Running":false,"ExitCode":0}`, func(conn net.Conn) {
+		_, _ = io.ReadAll(conn)
+	}))
+	if _, err := cl.ExecStream(context.Background(), "c1", []string{"psql"}, &resetReader{}, io.Discard, io.Discard); !errors.Is(err, syscall.ECONNRESET) {
+		t.Errorf("ExecStream = %v, want the stdin reset", err)
+	}
+}
+
+// pipeWriter fails every write as a closed pipe does.
+type pipeWriter struct{}
+
+func (pipeWriter) Write([]byte) (int, error) { return 0, syscall.EPIPE }
+
+// A writer that fails with a broken pipe fails the exec: the output was
+// not all delivered.
+func TestExecStreamFailsWhenAWriterBreaks(t *testing.T) {
+	cl := testClient(t, execServerStatus(`{"Running":false,"ExitCode":0}`, func(conn net.Conn) {
+		_, _ = io.ReadAll(conn)
+		_, _ = conn.Write(frame(1, "first\n"))
+	}))
+	if _, err := cl.ExecStream(context.Background(), "c1", []string{"cmd"}, strings.NewReader("in"), pipeWriter{}, io.Discard); !errors.Is(err, syscall.EPIPE) {
+		t.Errorf("ExecStream = %v, want the writer's broken pipe", err)
 	}
 }
