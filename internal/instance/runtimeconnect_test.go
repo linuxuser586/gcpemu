@@ -33,8 +33,9 @@ type hungRuntime struct {
 	answerLists atomic.Bool
 	listStatus  atomic.Int64
 	// self is the Instance's container; inspecting it hangs, and inspects
-	// counts what reached that.
-	self     string
+	// counts what reached that. A test sets it while the Instance is running,
+	// so it is atomic like the rest.
+	self     atomic.Value // a string
 	inspects atomic.Int64
 	// listed is what an answered container list returns, [] if empty;
 	// removes counts container removals, each taking removeDelay.
@@ -47,6 +48,7 @@ type hungRuntime struct {
 
 func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests.Add(1)
+	self, _ := f.self.Load().(string)
 	switch {
 	case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/containers/"):
 		select {
@@ -85,11 +87,11 @@ func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			listed = `[]`
 		}
 		_, _ = io.WriteString(w, listed)
-	case f.self != "" && strings.HasSuffix(r.URL.Path, "/containers/"+f.self+"/json"):
+	case self != "" && strings.HasSuffix(r.URL.Path, "/containers/"+self+"/json"):
 		f.inspects.Add(1)
 		f.hang(r)
 	case strings.HasSuffix(r.URL.Path, "/containers/me/json"):
-		_, _ = io.WriteString(w, `{"Id":"`+f.self+`"}`)
+		_, _ = io.WriteString(w, `{"Id":"`+self+`"}`)
 	default:
 		_, _ = io.WriteString(w, `{}`)
 	}
@@ -305,7 +307,7 @@ func TestShutdownEndsAConnectionAheadOfAQueuedRegistryRelay(t *testing.T) {
 func TestShutdownCutsAConnectionShortOfItsSelfAddresses(t *testing.T) {
 	in, _, f := startOnHungRuntime(t)
 	t.Setenv(runtime.SelfEnv, "me") // after Start, which would connect for it
-	f.self = "self-id"
+	f.self.Store("self-id")
 	f.answerLists.Store(true)
 	got := connecting(in)
 	reached(t, &f.inspects)
