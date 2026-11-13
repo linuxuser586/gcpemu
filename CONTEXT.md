@@ -27,6 +27,14 @@ _Avoid_: stale, dead, hung
 **Product**:
 A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
 
+**Product image**:
+An image whose version decides how a Product behaves, such as a Cloud SQL `postgres` image, a GKE cluster's k3s and the system images it preloads, a Managed emulator's image, or a vendored GKE add-on manifest. Refreshing one changes what the emulator promises, so it is a deliberate change, not a routine dependency update. The images of Managed containers that only carry traffic or run helpers, such as the Edge relay's or the NAT egress proxy's, are not Product images, even when they share a name with one.
+_Avoid_: runtime image, pinned image
+
+**Product image refresh**:
+A deliberate change that moves one or more Product images to the version the real Product runs. It is not a routine dependency update, and it is not an upgrade: upgrade means changing a GKE cluster's or node pool's version.
+_Avoid_: bump, upgrade
+
 **Service**:
 An independently enabled unit of emulation that implements all or part of a Product. One Product may be split across several Services, which is why there are more Services than Products.
 _Avoid_: module, component, emulated API
