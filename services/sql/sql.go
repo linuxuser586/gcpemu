@@ -169,6 +169,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	s.bg.runsExpiry = true
 	s.bgMu.Unlock()
+	s.removeLeftoverRestoreBundles()
 	s.failInterruptedOps()
 	if err := s.migrateDeletedOwners(); err != nil {
 		return err

@@ -2,7 +2,6 @@ package sql_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -144,8 +143,16 @@ func TestBackupsAPIAndPointInTimeClone(t *testing.T) {
 	if got := strings.Fields(out); hasSegmentBefore(got, bases[1].Start) {
 		t.Fatalf("restore bundle WAL %v holds segments before the Base backup's start %s", got, bases[1].Start)
 	}
-	if left, _ := filepath.Glob(filepath.Join(os.TempDir(), "gcpemu-sql-restore-*")); len(left) != 0 {
-		t.Fatalf("restore bundle temporary files left: %v", left)
+	// Only this Instance's own data directory is looked at: a parallel
+	// test's clone stages its bundle in its own (#1110).
+	files, err := sql.DataDirFiles(sqlSvc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.Contains(filepath.ToSlash(f), "/restore-staging/") {
+			t.Fatalf("restore bundle temporary file left: %s", f)
+		}
 	}
 	if dbs := must(svc.Databases.List(testProject, "pitr-clone").Do()); len(dbs.Items) != 2 {
 		t.Fatalf("clone databases = %+v", dbs.Items)
