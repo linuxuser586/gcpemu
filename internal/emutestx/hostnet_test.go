@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -102,8 +104,11 @@ func TestHostNetworkTagged(t *testing.T) {
 }
 
 // TestHostNetworkKilledRun: a run killed before its cleanups leaves the
-// network and its dir, whose lock the OS has dropped; ReclaimEnded then
-// removes both.
+// network and its dir, whose lock the OS has dropped; a reclaim then removes
+// both. Once the lock is free the dir is a real ended Test data dir, so the
+// sweep of any other test process, gcpemu-testdir reclaim or gcpemu prune may
+// reclaim it before this test does (#1121); the test checks that some reclaim
+// does.
 func TestHostNetworkKilledRun(t *testing.T) {
 	cl := hostNetworkClient(t)
 	t.Parallel()
@@ -114,19 +119,30 @@ func TestHostNetworkKilledRun(t *testing.T) {
 	if err := hostNetwork(t, cl, runtime.NetworkSpec{Name: name}, killed); err != nil {
 		t.Fatal(err)
 	}
-	release() // as the OS does when the process dies
-	a := tagged(t, cl, name)
+	a := tagged(t, cl, name) // while the lock holds, nothing can reclaim it
 	dir := a.Dirs[0]
+	release() // as the OS does when the process dies
 	reclaimed, err := instance.ReclaimEnded(context.Background(), cl, a, dir)
-	if err != nil || !reclaimed {
-		t.Fatalf("ReclaimEnded after a killed run = %v, %v; want true, nil", reclaimed, err)
+	if err != nil {
+		t.Fatalf("ReclaimEnded after a killed run: %v", err)
 	}
-	if networkExists(t, cl, name) {
-		t.Errorf("network %s is still there after the reclaim", name)
+	gone := func() (net, d bool) {
+		_, statErr := os.Stat(dir)
+		return !networkExists(t, cl, name), os.IsNotExist(statErr)
 	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("dir %s is still there after the reclaim: %v", dir, err)
+	if reclaimed {
+		if net, d := gone(); !net || !d {
+			t.Fatalf("ReclaimEnded reported a reclaim but left network gone=%v, dir gone=%v", net, d)
+		}
+		return
 	}
+	// Another process holds the lock or has reclaimed the dir already.
+	hosttest.Eventually(t, 5*time.Second, "another process to reclaim network "+name+" and dir "+dir,
+		func() bool { net, d := gone(); return net && d },
+		func() string {
+			net, d := gone()
+			return fmt.Sprintf("this test's ReclaimEnded reported false; network gone=%v, dir gone=%v", net, d)
+		})
 }
 
 // TestHostNetworkRemovedAtEnd: a test that ends normally removes its
