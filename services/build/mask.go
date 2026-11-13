@@ -14,6 +14,9 @@ import (
 // path is dotted for nested fields, and each field segment is a field's
 // proto (snake_case) or JSON (camelCase) name. A path into a map field
 // names one key, bare or backtick-quoted, used as written (ADR 0075).
+// A whole-map path wins over key paths of the same map in either order:
+// once the map is copied, a key path sets a key to the value it has, or
+// removes one already gone.
 func applyMask(dst, src proto.Message, paths []string) error {
 	for _, p := range paths {
 		for _, p := range strings.Split(p, ",") {

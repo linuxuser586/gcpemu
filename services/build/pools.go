@@ -211,12 +211,12 @@ func (a *api) UpdateWorkerPool(ctx context.Context, req *cloudbuildpb.UpdateWork
 	}
 	// The pool is read, merged, checked and written in one transaction, so
 	// a key path merges into the map the write replaces (ADR 0075).
-	tx := a.s.env.Store.Update
+	run := a.s.env.Store.Update
 	if req.GetValidateOnly() {
-		tx = a.s.env.Store.View
+		run = a.s.env.Store.View
 	}
 	var wp *cloudbuildpb.WorkerPool
-	err = tx(func(tx store.Tx) error {
+	err = run(func(tx store.Tx) error {
 		cur, err := getPool(tx, in.GetName())
 		if err != nil {
 			return err
