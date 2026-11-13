@@ -45,7 +45,7 @@ console:
 
 # FR-UI-023: Playwright on Chromium, Firefox and WebKit against a binary
 # with the real console. gcpemu-testdir holds the owner locks of the
-# tests' Test data dirs (ADR 0076); it is never released.
+# tests' Test data dirs (ADR 0077); it is never released.
 [doc("Run the Web console's Playwright tests against a fresh build")]
 [working-directory("console")]
 console-e2e: build

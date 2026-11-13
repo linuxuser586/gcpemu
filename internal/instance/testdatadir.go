@@ -191,7 +191,7 @@ func ReclaimEndedDir(ctx context.Context, cl *runtime.Client, dir string) (recla
 	return ReclaimEnded(ctx, cl, a, dir)
 }
 
-// ReclaimEndedUnder is a run-start reclaim (ADRs 0057, 0076): it reclaims
+// ReclaimEndedUnder is a run-start reclaim (ADRs 0057, 0077): it reclaims
 // every Test data dir whose test has ended that an object on one of cls
 // records, then each dir directly under root that none records, such as
 // one whose Instance made no object (#921). A nil client is a runtime

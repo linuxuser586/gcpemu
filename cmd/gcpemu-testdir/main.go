@@ -1,6 +1,6 @@
 // Command gcpemu-testdir lets a test harness with no OS file lock of its
 // own, such as the console's Playwright e2e, keep its Instances in Test
-// data dirs (ADR 0076, #1035). It is a development tool, never released.
+// data dirs (ADR 0077, #1035). It is a development tool, never released.
 //
 //	gcpemu-testdir hold <dir>
 //

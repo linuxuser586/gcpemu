@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -314,9 +315,9 @@ func (a *api) CompleteNodePoolUpgrade(ctx context.Context, req *containerpb.Comp
 // limitFor checks the node limit for a cluster that will run want nodes;
 // others is the number of nodes other clusters run (nodesElsewhere).
 func (s *Service) limitFor(others, want int) error {
-	if limit := maxNodes(); others+want > limit {
+	if limit := s.maxNodes(); others+want > limit {
 		return apierr.New(8, "gcpemu node limit exceeded: this request needs %d node(s) and %d of %d are in use (set %s to raise the limit).",
-			want, others, limit, maxNodesEnv).WithReason("container.googleapis.com", "QUOTA_EXCEEDED")
+			want, others, limit, config.GKEMaxNodesSetting).WithReason("container.googleapis.com", "QUOTA_EXCEEDED")
 	}
 	return nil
 }

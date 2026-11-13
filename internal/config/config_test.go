@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -387,6 +388,57 @@ func TestBuildConcurrency(t *testing.T) {
 	c.Build.Concurrency = 0
 	if err := c.Validate(); err == nil {
 		t.Error("concurrency 0 accepted")
+	}
+}
+
+// gkeMaxNodes is the GKE Node limit (FR-GKE-003): 5 unless set, from the
+// config file, GCPEMU_GKE_MAX_NODES or --gke-max-nodes, and at least 1. An
+// unusable value is an error, never the default (#1068).
+func TestGKEMaxNodes(t *testing.T) {
+	c := Defaults()
+	if c.GKEMaxNodes != 5 {
+		t.Errorf("default = %d, want 5", c.GKEMaxNodes)
+	}
+	f := filepath.Join(t.TempDir(), "gcpemu.yaml")
+	if err := os.WriteFile(f, []byte("gkeMaxNodes: 3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.LoadFile(f); err != nil || c.GKEMaxNodes != 3 {
+		t.Errorf("from file = %d, %v; want 3", c.GKEMaxNodes, err)
+	}
+	c = Defaults()
+	env := map[string]string{"GCPEMU_GKE_MAX_NODES": "3"}
+	if err := c.LoadEnv(func(k string) string { return env[k] }); err != nil || c.GKEMaxNodes != 3 {
+		t.Errorf("from env = %d, %v; want 3", c.GKEMaxNodes, err)
+	}
+	c = Defaults()
+	flags := Defaults()
+	flags.GKEMaxNodes = 3
+	c.ApplyFlags(&flags, map[string]bool{"GKEMaxNodes": true})
+	if c.GKEMaxNodes != 3 {
+		t.Errorf("from --gke-max-nodes = %d, want 3", c.GKEMaxNodes)
+	}
+	for _, v := range []string{"abc", "8 "} {
+		c := Defaults()
+		env := map[string]string{"GCPEMU_GKE_MAX_NODES": v}
+		err := c.LoadEnv(func(k string) string { return env[k] })
+		if err == nil || !strings.Contains(err.Error(), "GCPEMU_GKE_MAX_NODES") {
+			t.Errorf("GCPEMU_GKE_MAX_NODES=%q: err %v, want one naming the variable", v, err)
+		}
+	}
+	for _, n := range []int{0, -3} {
+		c := Defaults()
+		c.GKEMaxNodes = n
+		err := c.Validate()
+		if err == nil {
+			t.Errorf("gkeMaxNodes %d accepted", n)
+			continue
+		}
+		for _, want := range []string{"--gke-max-nodes", "GCPEMU_GKE_MAX_NODES", "gkeMaxNodes", strconv.Itoa(n)} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("gkeMaxNodes %d: error %q does not name %s", n, err, want)
+			}
+		}
 	}
 }
 

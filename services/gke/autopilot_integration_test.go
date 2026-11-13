@@ -11,6 +11,7 @@ import (
 	"cloud.google.com/go/container/apiv1/containerpb"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/config"
 )
 
 // apNode is a node as the Autopilot test reads it.
@@ -69,15 +70,13 @@ func (e *env) scaleFill(replicas int) {
 // ek-standard-2, whatever the host has; a pod Pending for lack of
 // capacity gets a new node within 30 s (NFR-PERF-010); a compute class
 // and Spot required through node affinity are labels on the node
-// provisioned for them, in the zone the affinity requires; at the host
-// node limit pods stay Pending with FailedScaleUp; and emptied nodes are
-// removed, never the last. Not parallel: it sets the node limit in the
-// process environment.
+// provisioned for them, in the zone the affinity requires; at the
+// Node limit pods stay Pending with FailedScaleUp; and emptied nodes are
+// removed, never the last.
 func TestAutopilotNodeProvisioning(t *testing.T) {
 	emutest.RequireRuntime(t)
-	t.Setenv("GCPEMU_GKE_MAX_NODES", "3")
 	emutest.HoldClusterSlot(t)
-	inst := emutest.Start(t, []string{"gke"})
+	inst := emutest.Start(t, []string{"gke"}, emutest.WithConfig(func(c *config.Config) { c.GKEMaxNodes = 3 }))
 	cm := newClient(t, inst)
 	ctx := context.Background()
 	const region = "us-central1"

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 )
@@ -65,9 +66,7 @@ func TestGKESizing(t *testing.T) {
 			t.Fatalf("GCPEMU_GKE_SIZING_NODES=%q: want a number of at least 4", v)
 		}
 	}
-	t.Setenv("GCPEMU_GKE_MAX_NODES", strconv.Itoa(n))
-
-	inst := emutest.Start(t, []string{"compute", "gke"})
+	inst := emutest.Start(t, []string{"compute", "gke"}, emutest.WithConfig(func(c *config.Config) { c.GKEMaxNodes = n }))
 	gw := inst.Endpoint("gateway")
 	const project, region, name = "sizing", "us-central1", "sizing"
 	cluster := "projects/" + project + "/locations/" + region + "/clusters/" + name

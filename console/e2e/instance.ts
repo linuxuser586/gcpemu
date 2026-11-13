@@ -5,7 +5,7 @@
 // (requests.spec.ts), or link with each other (links.spec.ts).
 //
 // Each Instance runs in a Test data dir under testDirRoot whose owner lock
-// bin/gcpemu-testdir holds for this process (ADR 0076). Nothing here
+// bin/gcpemu-testdir holds for this process (ADR 0077). Nothing here
 // relies on running when the run ends: on Windows, Playwright ends the
 // webServer's process tree with taskkill /T /F. The lock then drops with
 // the helper, and the next run's reclaimEnded, `gcpemu prune` or an
@@ -128,7 +128,7 @@ function within(p: Promise<unknown>, ms: number) {
  * `gcpemu stop`, so that it removes what it made, then with a kill. It
  * then lets go of testDir's lock and removes testDir, unless the Instance
  * did not exit cleanly: whatever it left, its dir records, so the next
- * run's reclaim removes both (ADR 0076).
+ * run's reclaim removes both (ADR 0077).
  */
 export async function stopInstance(
   child: ChildProcess,

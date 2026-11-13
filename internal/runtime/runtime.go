@@ -117,6 +117,10 @@ type Info struct {
 	// Podman's /libpod/info controller list decides (#805); otherwise
 	// /info's "CPUSet": false. False when neither said.
 	NoCPUSet bool
+	// MemTotal is the memory, in bytes, of the machine the runtime runs
+	// containers on (/info's MemTotal): on a VM runtime, the VM's, not the
+	// host's (#1070). 0 if the runtime did not say.
+	MemTotal int64
 }
 
 // String names the runtime for messages, e.g. "docker 27.3.1 (Docker
@@ -268,10 +272,12 @@ func (c *Client) Info(ctx context.Context) (Info, error) {
 		KernelVersion   string
 		OSType          string
 		CPUSet          *bool
+		MemTotal        int64
 	}
 	if err := c.do(ctx, http.MethodGet, "/info", nil, nil, &info); err == nil {
 		in.OS, in.Kernel, in.OSType = info.OperatingSystem, info.KernelVersion, info.OSType
 		in.NoCPUSet = info.CPUSet != nil && !*info.CPUSet
+		in.MemTotal = info.MemTotal
 		for _, o := range info.SecurityOptions {
 			if strings.Contains(o, "rootless") {
 				in.Rootless = true
