@@ -2,17 +2,28 @@ package gke_test
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 )
 
 // promServer serves a Prometheus counter on port 8080 with busybox nc.
-const promServer = `while true; do printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n# TYPE demo_requests_total counter\ndemo_requests_total 42\n' | nc -l -p 8080 -w 1 >/dev/null; done`
+// -lk keeps listening and runs the handler once per connection, so
+// simultaneous scrapes of one pod all get the counter (#1132); a loop
+// around nc -l takes one connection at a time and drops the rest. The
+// handler reads the request's headers before it answers: a socket closed
+// with the request unread resets the connection, and the proxy may then
+// drop the answer.
+const promServer = `nc -lk -p 8080 -e sh -c 'while read -r l && [ "${l%$(printf "\r")}" ]; do :; done; printf "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n# TYPE demo_requests_total counter\ndemo_requests_total 42\n"'`
 
 // FR-GKE-020: with managed Prometheus enabled the cluster has GMP's CRDs;
 // a PodMonitoring's pod and a ClusterPodMonitoring's pods in any namespace
@@ -76,6 +87,7 @@ func TestManagedPrometheusOTLP(t *testing.T) {
 			e.mustKube("GET", "/api/v1/namespaces/"+ns+"/pods/app", nil, &p)
 			return p.Status.Phase == "Running"
 		})
+		e.mustServeConcurrently(ns, "app")
 	}
 
 	const interval = 10 * time.Second
@@ -138,4 +150,42 @@ func TestManagedPrometheusOTLP(t *testing.T) {
 		e.mustKube("GET", "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/"+crd, nil, nil)
 	}
 	e.mustKube("GET", "/apis/monitoring.googleapis.com/v1/namespaces/default/podmonitorings/demo", nil, nil)
+}
+
+// mustServeConcurrently requires the pod's metrics server to answer
+// simultaneous requests through the API server's pod proxy, the path the
+// scraper takes: a pod two monitors select can be scraped by both at once
+// (#1132).
+func (e *env) mustServeConcurrently(ns, pod string) {
+	e.t.Helper()
+	path := "/api/v1/namespaces/" + ns + "/pods/http:" + pod + ":8080/proxy/metrics"
+	get := func() error {
+		resp, err := e.adm.Get("https://" + e.c.Endpoint + path)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), "demo_requests_total 42") {
+			return fmt.Errorf("%d %s", resp.StatusCode, b)
+		}
+		return nil
+	}
+	var last error
+	hosttest.Eventually(e.t, 30*time.Second, ns+"/"+pod+" serving", func() bool {
+		last = get()
+		return last == nil
+	}, func() string { return fmt.Sprintf("last request: %v\n%s", last, e.diagnosePod(ns, pod)()) })
+	const rounds, n = 5, 3
+	for round := range rounds {
+		errs := make(chan error, n)
+		for range n {
+			go func() { errs <- get() }()
+		}
+		for range n {
+			if err := <-errs; err != nil {
+				e.t.Fatalf("%s/%s, round %d of %d, %d simultaneous requests: %v", ns, pod, round+1, rounds, n, err)
+			}
+		}
+	}
 }
