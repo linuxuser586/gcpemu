@@ -185,14 +185,21 @@ func (r *LANRelay) removeLocked(ctx context.Context) {
 	if !r.created {
 		return
 	}
-	if rt, err := r.Runtime(ctx); err == nil {
+	rt, err := r.Runtime(ctx)
+	if err == nil {
 		target := r.id
 		if target == "" {
 			target = rt.Name(r.Name)
 		}
-		_ = rt.RemoveContainer(ctx, target, true)
+		// RemoveContainer is nil for a container already gone, so an error
+		// means the relay may still exist.
+		err = rt.RemoveContainer(ctx, target, true)
 	}
-	if r.id != "" {
+	switch {
+	case err != nil:
+		// The runtime's Cleanup removes it by the Instance's label.
+		r.Log.Info(r.Name+" relay container left for Cleanup", "err", err)
+	case r.id != "":
 		r.Log.Info(r.Name + " relay container removed")
 	}
 	r.created, r.id, r.pushed = false, "", ""
