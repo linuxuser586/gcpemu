@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -53,8 +54,8 @@ func decode(r *http.Request, m proto.Message) error {
 		return apierr.InvalidArgument("Unable to read request body: %v", err)
 	}
 	if len(strings.TrimSpace(string(body))) > 0 {
-		if err := unmarshalOpts.Unmarshal(body, m); err != nil {
-			return apierr.InvalidArgument("Invalid JSON payload received. %v", err)
+		if err := unmarshalBody(body, m); err != nil {
+			return err
 		}
 	}
 	return bindQuery(m.ProtoReflect(), r.URL.Query())
@@ -89,12 +90,7 @@ func bindQuery(m protoreflect.Message, q url.Values) error {
 		}
 		if fd == nil || fd.IsMap() || fd.Kind() == protoreflect.MessageKind {
 			if fd != nil && fd.Message().FullName() == "google.protobuf.FieldMask" {
-				fm := cur.Mutable(fd).Message()
-				paths := fm.Descriptor().Fields().ByName("paths")
-				list := fm.Mutable(paths).List()
-				for _, p := range strings.Split(vals[0], ",") {
-					list.Append(protoreflect.ValueOfString(camelToSnake(p)))
-				}
+				appendMaskPaths(cur, fd, strings.Split(vals[0], ","))
 			}
 			continue
 		}
@@ -111,19 +107,6 @@ func bindQuery(m protoreflect.Message, q url.Values) error {
 		}
 	}
 	return nil
-}
-
-func camelToSnake(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			b.WriteByte('_')
-			b.WriteRune(r + 'a' - 'A')
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 func scalarValue(fd protoreflect.FieldDescriptor, v string) (protoreflect.Value, error) {
@@ -268,8 +251,64 @@ func decodeBody(r *http.Request, m proto.Message) error {
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return nil
 	}
-	if err := unmarshalOpts.Unmarshal(body, m); err != nil {
+	return unmarshalBody(body, m)
+}
+
+// unmarshalBody reads a JSON body into m. A top-level update mask is taken
+// out first and its paths kept as written: protojson would snake-case a
+// map key in a path and rejects one that is not a proto name, such as a
+// backtick-quoted key (ADR 0075). applyMask converts the field segments.
+func unmarshalBody(body []byte, m proto.Message) error {
+	var err error
+	fd := maskField(m.ProtoReflect().Descriptor())
+	var paths []string
+	if fd != nil {
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(body, &obj) == nil {
+			for _, k := range []string{fd.JSONName(), string(fd.Name())} {
+				raw, ok := obj[k]
+				if !ok {
+					continue
+				}
+				var mask string
+				if err := json.Unmarshal(raw, &mask); err != nil {
+					return apierr.InvalidArgument("Invalid JSON payload received. Invalid value at '%s': %s", k, raw)
+				}
+				if mask != "" {
+					paths = append(paths, strings.Split(mask, ",")...)
+				}
+				delete(obj, k)
+			}
+			if body, err = json.Marshal(obj); err != nil {
+				return apierr.Internal("%v", err)
+			}
+		}
+	}
+	if err = unmarshalOpts.Unmarshal(body, m); err != nil {
 		return apierr.InvalidArgument("Invalid JSON payload received. %v", err)
+	}
+	if len(paths) > 0 {
+		appendMaskPaths(m.ProtoReflect(), fd, paths)
+	}
+	return nil
+}
+
+// appendMaskPaths appends paths, as written, to m's FieldMask field fd.
+func appendMaskPaths(m protoreflect.Message, fd protoreflect.FieldDescriptor, paths []string) {
+	fm := m.Mutable(fd).Message()
+	list := fm.Mutable(fm.Descriptor().Fields().ByName("paths")).List()
+	for _, p := range paths {
+		list.Append(protoreflect.ValueOfString(p))
+	}
+}
+
+// maskField returns md's top-level google.protobuf.FieldMask field, or nil.
+func maskField(md protoreflect.MessageDescriptor) protoreflect.FieldDescriptor {
+	fields := md.Fields()
+	for i := range fields.Len() {
+		if f := fields.Get(i); f.Message() != nil && f.Message().FullName() == "google.protobuf.FieldMask" {
+			return f
+		}
 	}
 	return nil
 }

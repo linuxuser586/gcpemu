@@ -1,6 +1,7 @@
 package pubsub
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/linuxuser586/gcpemu/internal/apierr"
+	"github.com/linuxuser586/gcpemu/internal/maskpath"
 )
 
 // GCP limits and defaults (https://cloud.google.com/pubsub/quotas).
@@ -76,8 +78,11 @@ func tooLarge(field string, got, max int) error {
 	return apierr.InvalidArgument("The value for %s is too large. You passed %d in the request, but the maximum value is %d.", field, got, max)
 }
 
-// applyMask copies the fields named by paths (snake_case, dotted for nested
-// fields) from src to dst; allowed lists the permitted top-level fields.
+// applyMask copies the fields named by paths from src to dst; allowed lists
+// the permitted top-level fields. A path is dotted for nested message
+// fields, and its field segments may be snake_case or lowerCamel. A path
+// into a map field names one key, bare or backtick-quoted, used as written
+// (ADR 0075).
 func applyMask(dst, src proto.Message, paths []string, allowed map[string]bool, kind string) error {
 	if len(paths) == 0 {
 		return apierr.InvalidArgument("The update_mask in the Update%sRequest must be set, and must be non-empty.", kind)
@@ -85,22 +90,26 @@ func applyMask(dst, src proto.Message, paths []string, allowed map[string]bool, 
 	src = proto.Clone(src)
 	for _, p := range paths {
 		top, _, _ := strings.Cut(p, ".")
-		if !allowed[top] {
+		if !allowed[maskpath.SnakeCase(top)] {
 			return apierr.InvalidArgument("Invalid update_mask provided in the Update%sRequest: the '%s' field cannot be updated.", kind, p)
 		}
-		if err := copyPath(dst.ProtoReflect(), src.ProtoReflect(), strings.Split(p, ".")); err != nil {
+		if err := copyPath(dst.ProtoReflect(), src.ProtoReflect(), p); err != nil {
 			return apierr.InvalidArgument("Invalid update_mask provided in the Update%sRequest: %s", kind, err.Error())
 		}
 	}
 	return nil
 }
 
-func copyPath(dst, src protoreflect.Message, path []string) error {
-	fd := dst.Descriptor().Fields().ByName(protoreflect.Name(path[0]))
+// copyPath copies the field path p names from src to dst. A path into a
+// map field sets the key if src holds it and removes it otherwise, keeping
+// dst's other keys; a whole-field path replaces the whole map.
+func copyPath(dst, src protoreflect.Message, p string) error {
+	seg, rest, more := strings.Cut(p, ".")
+	fd := dst.Descriptor().Fields().ByName(protoreflect.Name(maskpath.SnakeCase(seg)))
 	if fd == nil {
-		return &maskError{path[0]}
+		return &maskError{seg}
 	}
-	if len(path) == 1 {
+	if !more {
 		if src.Has(fd) {
 			dst.Set(fd, src.Get(fd))
 		} else {
@@ -108,16 +117,41 @@ func copyPath(dst, src protoreflect.Message, path []string) error {
 		}
 		return nil
 	}
-	if fd.Kind() != protoreflect.MessageKind || fd.IsList() || fd.IsMap() {
-		return &maskError{strings.Join(path, ".")}
+	if fd.IsMap() {
+		return copyKey(dst, src, fd, p)
 	}
-	if !src.Has(fd) {
-		if dst.Has(fd) {
-			return copyPath(dst.Mutable(fd).Message(), src.Get(fd).Message(), path[1:])
-		}
+	if fd.Kind() != protoreflect.MessageKind || fd.IsList() {
+		return &maskError{p}
+	}
+	if !src.Has(fd) && !dst.Has(fd) {
 		return nil
 	}
-	return copyPath(dst.Mutable(fd).Message(), src.Get(fd).Message(), path[1:])
+	return copyPath(dst.Mutable(fd).Message(), src.Get(fd).Message(), rest)
+}
+
+// copyKey copies the one key p names in map field fd from src to dst.
+func copyKey(dst, src protoreflect.Message, fd protoreflect.FieldDescriptor, p string) error {
+	mp, ok := maskpath.Parse(p)
+	if !ok || fd.MapKey().Kind() != protoreflect.StringKind {
+		return &keyError{p}
+	}
+	k := protoreflect.ValueOfString(mp.Key).MapKey()
+	if sm := src.Get(fd).Map(); sm.Has(k) {
+		dst.Mutable(fd).Map().Set(k, sm.Get(k))
+	} else if dst.Has(fd) {
+		dst.Mutable(fd).Map().Clear(k)
+	}
+	return nil
+}
+
+// errStale reports that a config changed after an update read it; the
+// update merges its mask into the new config and tries again.
+var errStale = errors.New("pubsub: config changed during update")
+
+type keyError struct{ path string }
+
+func (e *keyError) Error() string {
+	return "'" + e.path + "' must name one map key; quote a key that holds dots with backticks"
 }
 
 type maskError struct{ path string }

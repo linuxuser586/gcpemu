@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"time"
 
@@ -192,24 +193,38 @@ func (p *subscriberServer) UpdateSubscription(ctx context.Context, req *pubsubpb
 	if err := s.env.Auth.Check(ctx, "pubsub.subscriptions.update", fullName(name)); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	sb, err := s.subscription(name)
-	var cur *pubsubpb.Subscription
-	if err == nil {
-		cur = proto.Clone(sb.cfg).(*pubsubpb.Subscription)
+	// The mask merges into the stored config: if another update replaced
+	// it meanwhile, merge again rather than write over that update.
+	for {
+		s.mu.Lock()
+		sb, err := s.subscription(name)
+		var base, cur *pubsubpb.Subscription
+		if err == nil {
+			base = sb.cfg
+			cur = proto.Clone(base).(*pubsubpb.Subscription)
+		}
+		s.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+		if err := applyMask(cur, req.GetSubscription(), req.GetUpdateMask().GetPaths(), subUpdatable, "Subscription"); err != nil {
+			return nil, err
+		}
+		out, err := s.replaceSubscriptionFrom(sb, base, cur)
+		if !errors.Is(err, errStale) {
+			return out, err
+		}
 	}
-	s.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	if err := applyMask(cur, req.GetSubscription(), req.GetUpdateMask().GetPaths(), subUpdatable, "Subscription"); err != nil {
-		return nil, err
-	}
-	return s.replaceSubscription(sb, cur)
 }
 
 // replaceSubscription validates and installs a new config for sb.
 func (s *Service) replaceSubscription(sb *sub, cur *pubsubpb.Subscription) (*pubsubpb.Subscription, error) {
+	return s.replaceSubscriptionFrom(sb, nil, cur)
+}
+
+// replaceSubscriptionFrom is replaceSubscription, except that with a
+// non-nil base it returns errStale if sb's config is no longer base.
+func (s *Service) replaceSubscriptionFrom(sb *sub, base, cur *pubsubpb.Subscription) (*pubsubpb.Subscription, error) {
 	f, err := normalizeSubscription(cur)
 	if err != nil {
 		return nil, err
@@ -219,6 +234,10 @@ func (s *Service) replaceSubscription(sb *sub, cur *pubsubpb.Subscription) (*pub
 	if s.subs[sb.name] != sb {
 		s.mu.Unlock()
 		return nil, notFound(sb.name)
+	}
+	if base != nil && sb.cfg != base {
+		s.mu.Unlock()
+		return nil, errStale
 	}
 	cur.Detached = sb.cfg.GetDetached()
 	cur.Topic = sb.cfg.GetTopic()
