@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -132,21 +133,43 @@ func (p *publisherServer) UpdateTopic(ctx context.Context, req *pubsubpb.UpdateT
 	if err := s.env.Auth.Check(ctx, "pubsub.topics.update", fullName(name)); err != nil {
 		return nil, err
 	}
-	cur, err := s.lookupTopic(name)
-	if err != nil {
-		return nil, err
+	// The mask merges into the stored config: if another update replaced
+	// it meanwhile, merge again rather than write over that update.
+	for {
+		s.mu.Lock()
+		t, ok := s.topics[name]
+		if !ok {
+			s.mu.Unlock()
+			return nil, notFound(name)
+		}
+		base := t.cfg
+		cur := proto.Clone(base).(*pubsubpb.Topic)
+		s.mu.Unlock()
+		if err := applyMask(cur, req.GetTopic(), req.GetUpdateMask().GetPaths(), topicUpdatable, "Topic"); err != nil {
+			return nil, err
+		}
+		if err := s.validateTopic(cur); err != nil {
+			return nil, err
+		}
+		out, err := s.replaceTopic(name, base, cur)
+		if !errors.Is(err, errStale) {
+			return out, err
+		}
 	}
-	if err := applyMask(cur, req.GetTopic(), req.GetUpdateMask().GetPaths(), topicUpdatable, "Topic"); err != nil {
-		return nil, err
-	}
-	if err := s.validateTopic(cur); err != nil {
-		return nil, err
-	}
+}
+
+// replaceTopic installs cur as topic name's config if its config is still
+// base, and returns errStale otherwise.
+func (s *Service) replaceTopic(name string, base, cur *pubsubpb.Topic) (*pubsubpb.Topic, error) {
 	s.mu.Lock()
 	t, ok := s.topics[name]
 	if !ok {
 		s.mu.Unlock()
 		return nil, notFound(name)
+	}
+	if t.cfg != base {
+		s.mu.Unlock()
+		return nil, errStale
 	}
 	t.cfg = cur
 	t.schema = s.topicSchema(cur)

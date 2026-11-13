@@ -15,6 +15,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/maskpath"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -147,7 +148,7 @@ func (s *Service) setIamPolicy(ctx context.Context, req *iampb.SetIamPolicyReque
 		if len(mask) > 0 {
 			next := proto.Clone(cur).(*iampb.Policy)
 			for _, p := range mask {
-				switch p {
+				switch maskpath.SnakeCase(p) {
 				case "bindings":
 					next.Bindings = pol.Bindings
 				case "audit_configs":
