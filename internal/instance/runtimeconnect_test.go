@@ -41,6 +41,8 @@ type hungRuntime struct {
 	listed      atomic.Value
 	removes     atomic.Int64
 	removeDelay atomic.Int64 // a time.Duration
+	// listDelay makes a container list answer after it rather than hang.
+	listDelay atomic.Int64 // a time.Duration
 }
 
 func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +71,13 @@ func (f *hungRuntime) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(int(st))
 			return
 		}
-		if !f.answerLists.Load() && !f.hang(r) {
+		if d := time.Duration(f.listDelay.Load()); d != 0 {
+			select {
+			case <-time.After(d):
+			case <-r.Context().Done():
+				return
+			}
+		} else if !f.answerLists.Load() && !f.hang(r) {
 			return
 		}
 		listed, _ := f.listed.Load().(string)

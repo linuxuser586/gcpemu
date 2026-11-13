@@ -15,3 +15,4 @@ A Reclaim runs once per run and is not tried again within it. It removes every c
 - While a Reclaim runs, `/_emu/v1/ready` reports the Instance not ready, for up to 2 minutes on a slow runtime.
 - A caller with a short budget no longer decides how long a Reclaim takes, and no longer makes the next caller start the connection again.
 - Leftovers that outlast a Reclaim's limit stay until the next start with that Instance ID; nothing removes them sooner.
+- Info, which no caller's context limits any more, has a limit of its own (10 seconds), so a runtime that hangs there ends the connection with a transient error and the next caller connects again.
