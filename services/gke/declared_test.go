@@ -40,11 +40,9 @@ func TestDeclaredAddressesOverlap(t *testing.T) {
 	}
 	block := func(rng string) {
 		name := fmt.Sprintf("gcpemu-test-overlap-%d", rand.Uint32())
-		if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
+		if err := emutestx.HostNetwork(t, cl, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
 			t.Logf("creating %s on %s: %v (the range is in use, which overlaps it too)", name, rng, err)
-			return
 		}
-		t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), name) })
 	}
 	b := 160 + rand.IntN(16)
 	nodes := fmt.Sprintf("10.%d.%d.0/20", b, rand.IntN(8)*16)

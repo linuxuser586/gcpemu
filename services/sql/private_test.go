@@ -16,6 +16,7 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
@@ -63,17 +64,14 @@ func TestPrivateIP(t *testing.T) {
 func TestPrivateIPOverlap(t *testing.T) {
 	emutest.RequireRuntime(t)
 	t.Parallel()
-	ctx := context.Background()
 	cl, err := runtime.Detect()
 	if err != nil {
 		t.Fatal(err)
 	}
 	rng := fmt.Sprintf("10.%d.%d.0/20", 160+rand.IntN(16), rand.IntN(16)*16)
 	name := fmt.Sprintf("gcpemu-test-overlap-%d", rand.Uint32())
-	if _, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
+	if err := emutestx.HostNetwork(t, cl, runtime.NetworkSpec{Name: name, Subnet: rng}); err != nil {
 		t.Logf("creating %s on %s: %v (the range is in use, which overlaps it too)", name, rng, err)
-	} else {
-		t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), name) })
 	}
 	testPrivateIP(t, rng)
 }
