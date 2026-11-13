@@ -285,6 +285,9 @@ func (in *Instance) saveManaged(ctx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, managedSaveTimeout)
 	defer cancel()
+	if h := in.hooks.saving; h != nil {
+		h(ctx)
+	}
 	var wg sync.WaitGroup
 	for _, m := range in.managed {
 		if !m.spec.keepsData {

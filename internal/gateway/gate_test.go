@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestClosedGateRefusesHTTP(t *testing.T) {
 	h := g.Middleware("svc", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 	}))
-	if err := g.CloseGate(context.Background()); err != nil {
+	if err := g.CloseGate(context.Background(), GateStateChange); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -89,7 +90,7 @@ func TestClosingGateCutsOffHTTP(t *testing.T) {
 		close(served)
 	}()
 	<-started
-	if err := g.CloseGate(context.Background()); err != nil {
+	if err := g.CloseGate(context.Background(), GateStateChange); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -121,7 +122,7 @@ func TestCloseGateBoundedByCtx(t *testing.T) {
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := g.CloseGate(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	if err := g.CloseGate(ctx, GateStateChange); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("CloseGate = %v, want %v", err, context.DeadlineExceeded)
 	}
 	rec := httptest.NewRecorder()
@@ -201,7 +202,7 @@ func TestClosedGateRefusesGRPC(t *testing.T) {
 	g, _ := newTestGateway(t)
 	started := make(chan struct{}, 2)
 	conn := serveGated(t, g, started)
-	if err := g.CloseGate(context.Background()); err != nil {
+	if err := g.CloseGate(context.Background(), GateStateChange); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -229,7 +230,7 @@ func TestClosingGateCutsOffGRPC(t *testing.T) {
 	go func() { errs <- watchGated(ctx, conn) }()
 	<-started
 	<-started
-	if err := g.CloseGate(ctx); err != nil {
+	if err := g.CloseGate(ctx, GateStateChange); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -237,4 +238,158 @@ func TestClosingGateCutsOffGRPC(t *testing.T) {
 			t.Errorf("call cut off by the gate: %v, want UNAVAILABLE", err)
 		}
 	}
+}
+
+// When the gate closes for the Instance's shutdown (#1118), a refused REST
+// request is told the Instance is shutting down, with no Retry-After, and
+// a later OpenGate, such as a Reset's ending, does not open it again.
+func TestShutdownGateRefusesHTTP(t *testing.T) {
+	g, _ := newTestGateway(t)
+	h := g.Middleware("svc", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	if err := g.CloseGate(context.Background(), GateShutdown); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.CloseGate(context.Background(), GateStateChange); err != nil {
+		t.Fatal(err)
+	}
+	g.OpenGate()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/things", nil))
+	assertShuttingDownHTTP(t, rec)
+}
+
+func assertShuttingDownHTTP(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rec.Code)
+	}
+	if v := rec.Header().Get("Retry-After"); v != "" {
+		t.Errorf("Retry-After = %q, want none", v)
+	}
+	var body struct {
+		Error struct {
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body %q: %v", rec.Body, err)
+	}
+	if body.Error.Status != "UNAVAILABLE" || !strings.Contains(body.Error.Message, "shutting down") {
+		t.Errorf("error = %+v, want UNAVAILABLE saying the Instance is shutting down", body.Error)
+	}
+}
+
+// A REST request in progress when the gate closes for shutdown has its
+// context cancelled with a shutdown cause and ends UNAVAILABLE, saying so.
+func TestShutdownGateCutsOffHTTP(t *testing.T) {
+	g, _ := newTestGateway(t)
+	started := make(chan struct{})
+	cause := make(chan error, 1)
+	h := g.Middleware("svc", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		cause <- context.Cause(r.Context())
+	}))
+	rec := httptest.NewRecorder()
+	served := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/things", nil))
+		close(served)
+	}()
+	<-started
+	if err := g.CloseGate(context.Background(), GateShutdown); err != nil {
+		t.Fatal(err)
+	}
+	<-served
+	if err := <-cause; err == nil || !strings.Contains(err.Error(), "shutdown") {
+		t.Errorf("cause = %v, want the Instance's shutdown", err)
+	}
+	assertShuttingDownHTTP(t, rec)
+}
+
+// Unary and streaming calls cut off, or refused, by a gate closed for
+// shutdown end UNAVAILABLE, saying the Instance is shutting down.
+func TestShutdownGateGRPC(t *testing.T) {
+	g, _ := newTestGateway(t)
+	started := make(chan struct{}, 2)
+	conn := serveGated(t, g, started)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() { errs <- callGated(ctx, conn) }()
+	go func() { errs <- watchGated(ctx, conn) }()
+	<-started
+	<-started
+	if err := g.CloseGate(ctx, GateShutdown); err != nil {
+		t.Fatal(err)
+	}
+	check := func(what string, err error) {
+		t.Helper()
+		if s := status.Convert(err); s.Code() != codes.Unavailable || !strings.Contains(s.Message(), "shutting down") {
+			t.Errorf("%s: %v, want UNAVAILABLE saying the Instance is shutting down", what, err)
+		}
+	}
+	for range 2 {
+		check("cut off", <-errs)
+	}
+	check("refused unary", callGated(ctx, conn))
+	check("refused stream", watchGated(ctx, conn))
+}
+
+// RunningRequests counts the requests still in their handlers, so that a
+// shutdown can say how many outlasted its wait.
+func TestGateRunningRequests(t *testing.T) {
+	g, _ := newTestGateway(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	h := g.Middleware("svc", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		close(started)
+		<-release
+	}))
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/things", nil))
+		close(done)
+	}()
+	<-started
+	if n := g.RunningRequests(); n != 1 {
+		t.Errorf("RunningRequests = %d, want 1", n)
+	}
+	close(release)
+	<-done
+	if n := g.RunningRequests(); n != 0 {
+		t.Errorf("RunningRequests after it returned = %d, want 0", n)
+	}
+}
+
+// A request a Reset cut off whose handler has not returned when the gate
+// closes for shutdown is told the Instance is shutting down (#1118).
+func TestShutdownAfterResetCutOff(t *testing.T) {
+	g, _ := newTestGateway(t)
+	started, cancelled, proceed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	h := g.Middleware("svc", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(cancelled)
+		<-proceed
+	}))
+	rec := httptest.NewRecorder()
+	served := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/things", nil))
+		close(served)
+	}()
+	<-started
+	reset := make(chan error, 1)
+	go func() { reset <- g.CloseGate(context.Background(), GateStateChange) }()
+	<-cancelled
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = g.CloseGate(ended, GateShutdown) // the handler is still running
+	close(proceed)
+	<-served
+	if err := <-reset; err != nil {
+		t.Fatal(err)
+	}
+	assertShuttingDownHTTP(t, rec)
 }
