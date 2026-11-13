@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
-// A caller that missed the cache while a fetch was running, but joins
+// A caller that missed the Mirror cache while a fetch was running, but joins
 // only once the fetch has linked the scopes it had, still gets its scope
 // linked (#798). Before the fix the fetch stayed joinable after copying
 // its scopes, so such a caller was added to a fetch that never linked
@@ -24,8 +23,8 @@ import (
 // #798's other window, a fetch ending before its first caller's scope
 // was added, is closed twice over: joinFetch adds the scope before the
 // fetch starts, and the fetch takes s.mu, which joinFetch holds, before
-// copying its scopes. Undoing either alone loses no link, so it has no
-// test of its own.
+// copying its scopes. Undoing either alone loses no link in that window,
+// so it has no test of its own.
 func TestFetchLinksScopeOfCallerJoiningLate(t *testing.T) {
 	s := startedService(t)
 	var err error
@@ -41,10 +40,10 @@ func TestFetchLinksScopeOfCallerJoiningLate(t *testing.T) {
 
 	requested := make(chan struct{}) // A's fetch asked the upstream
 	release := make(chan struct{})   // lets the upstream answer
-	missedB := make(chan struct{})   // B found no cached blob
+	missedB := make(chan struct{})   // B missed the Mirror cache
 	linked := make(chan struct{})    // A's fetch linked the scopes it had
 	bReturned := make(chan struct{}) // B's open returned
-	var requestedOnce sync.Once
+	var requestedOnce, linkedOnce sync.Once
 	s.upstream.hc.Transport = handlerTransport(func(w http.ResponseWriter, r *http.Request) {
 		requestedOnce.Do(func() { close(requested) })
 		<-release
@@ -57,15 +56,13 @@ func TestFetchLinksScopeOfCallerJoiningLate(t *testing.T) {
 		close(missedB)
 		<-linked
 	}
-	var linkedOnce atomic.Bool
 	s.hooks.linked = func() {
-		if !linkedOnce.CompareAndSwap(false, true) {
-			return
-		}
-		close(linked)
-		// A's fetch stays where B could find it until B has joined
-		// whichever fetch it joins and returned.
-		<-bReturned
+		// Only A's fetch, the first to link, waits: it stays where B could
+		// find it until B has joined whichever fetch it joins and returned.
+		linkedOnce.Do(func() {
+			close(linked)
+			<-bReturned
+		})
 	}
 
 	open := func(scope repoRef) {

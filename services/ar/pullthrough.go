@@ -665,11 +665,12 @@ func (f *blobFetch) run(ctx context.Context, up upstreamRef) {
 // #798 lost links, so they fail each time the fix is reverted (ADR 0079).
 // Every hook is nil in production.
 type fetchHooks struct {
-	// missedCache runs in ptOpenBlob after the caller's scope found no
-	// cached blob, before the caller joins a fetch.
+	// missedCache runs in ptOpenBlob once the caller's scope has missed
+	// the Mirror cache, before the caller joins a fetch.
 	missedCache func(scope repoRef)
 	// linked runs once a fetch has installed its blob and linked the
-	// scopes it copied, before it finishes.
+	// scopes it copied, before it finishes. A fetch that fails never
+	// reaches it.
 	linked func()
 }
 

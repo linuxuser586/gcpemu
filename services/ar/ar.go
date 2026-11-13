@@ -117,7 +117,7 @@ type Service struct {
 	bgCancel     context.CancelFunc
 	fetchRuns    inflight.Tracker // running upstream fetches, waited for by Reset
 	resetting    bool             // no upstream fetch starts while set
-	hooks        fetchHooks       // nil in production; see fetchHooks
+	hooks        fetchHooks       // set only by tests; see fetchHooks
 
 	// Registry cleanup (cleanup.go): passMu runs one pass at a time;
 	// cleanupLoops runs the periodic pass outside a Deterministic Instance.
