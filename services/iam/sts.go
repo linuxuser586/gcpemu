@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -226,39 +227,50 @@ func (s *Service) wifItem(w http.ResponseWriter, r *http.Request, ctx context.Co
 		return nil
 	}
 	var patch map[string]json.RawMessage
+	var fields []string
+	var keys map[string][]string
 	if perm == "update" {
 		if err := readJSON(r, &patch); err != nil {
 			return err
 		}
-	}
-	var cur map[string]json.RawMessage
-	_ = json.Unmarshal(raw, &cur)
-	switch perm {
-	case "update":
 		mask := r.URL.Query().Get("updateMask")
 		if mask == "" {
 			return apierr.InvalidArgument("updateMask is required.")
 		}
-		for _, f := range strings.Split(mask, ",") {
-			f = strings.TrimSpace(f)
-			top, _, _ := strings.Cut(f, ".")
-			if val, ok := patch[top]; ok {
-				cur[top] = val
-			} else {
-				delete(cur, top)
-			}
+		var err error
+		if fields, keys, err = parseWIFMask(mask, v); err != nil {
+			return err
 		}
-	case "delete":
-		cur["state"], _ = json.Marshal("DELETED")
-		cur["expireTime"], _ = json.Marshal(s.env.Clock.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339))
-	case "undelete":
-		cur["state"], _ = json.Marshal("ACTIVE")
-		delete(cur, "expireTime")
 	}
-	b, _ := json.Marshal(cur)
-	if ns == nsProviders {
-		var p iamv1.WorkloadIdentityPoolProvider
-		if err := json.Unmarshal(b, &p); err == nil {
+	// The merge and its checks run in the transaction that writes them.
+	var b []byte
+	err := s.env.Store.Update(func(tx store.Tx) error {
+		raw, found := tx.Get(ns, name)
+		if !found {
+			return apierr.NotFound("Requested entity was not found.")
+		}
+		var cur map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &cur); err != nil {
+			return err
+		}
+		switch perm {
+		case "update":
+			if err := applyWIFMask(cur, patch, fields, keys); err != nil {
+				return err
+			}
+		case "delete":
+			cur["state"], _ = json.Marshal("DELETED")
+			cur["expireTime"], _ = json.Marshal(s.env.Clock.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339))
+		case "undelete":
+			cur["state"], _ = json.Marshal("ACTIVE")
+			delete(cur, "expireTime")
+		}
+		b, _ = json.Marshal(cur)
+		if ns == nsProviders {
+			var p iamv1.WorkloadIdentityPoolProvider
+			if err := json.Unmarshal(b, &p); err != nil {
+				return apierr.InvalidArgument("Invalid provider: %v", err)
+			}
 			if err := validateProvider(&p); err != nil {
 				return err
 			}
@@ -266,10 +278,14 @@ func (s *Service) wifItem(w http.ResponseWriter, r *http.Request, ctx context.Co
 				return err
 			}
 		}
-	}
-	if err := s.env.Store.Update(func(tx store.Tx) error { return tx.Put(ns, name, b) }); err != nil {
+		return tx.Put(ns, name, b)
+	})
+	if err != nil {
 		return err
 	}
+	// v still holds the old resource; decoding into it would keep its
+	// removed map keys.
+	reflect.ValueOf(v).Elem().SetZero()
 	_ = json.Unmarshal(b, v)
 	writeJSON(w, s.doneOp(name, v))
 	return nil
