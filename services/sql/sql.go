@@ -278,9 +278,9 @@ func (s *Service) ResourceCounts() map[string]int {
 }
 
 // Reset cancels the background work started before it and waits for it
-// (bounded by ctx, plus stopGrace), so none of it creates a container or writes a record
-// afterwards (#306). It then removes every instance container and volume
-// and the backup files (`gcpemu reset`). Work started after Reset runs on
+// (bounded by ctx, plus stopGrace), so none of it creates a container or
+// writes a record afterwards (#306). It then removes every instance
+// container and volume and the backup files (`gcpemu reset`). Work started after Reset runs on
 // a fresh background context, unless the service is stopped.
 func (s *Service) Reset(ctx context.Context) error {
 	s.bgMu.Lock()

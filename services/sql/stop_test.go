@@ -32,9 +32,9 @@ func blockForever(t *testing.T, s *Service) {
 	<-started
 }
 
-// listen exposes a loopback listener and a LAN router on s, as a running
-// public instance would have, and returns their addresses.
-func listen(t *testing.T, s *Service) []string {
+// plantListeners exposes a loopback listener and a LAN router on s, as a
+// running public instance would have, and returns their addresses.
+func plantListeners(t *testing.T, s *Service) []string {
 	t.Helper()
 	plane := netplane.New(nil, nil, "127.0.0.1", s.env.Log)
 	loop, err := plane.Expose("loopback", "127.0.0.1:0", "127.0.0.1:1", false)
@@ -72,7 +72,8 @@ func assertClosed(t *testing.T, addrs []string) {
 }
 
 // Stop with an already-ended ctx on a Service that was never started
-// returns nil: there is nothing to wait for (#1116).
+// returns nil: there is nothing to wait for (#1116). The race it guards
+// against lost only some of the time, hence the repeats.
 func TestStopEndedCtxNeverStarted(t *testing.T) {
 	for i := range 50 {
 		s := testService(t, "permissive")
@@ -90,7 +91,7 @@ func TestStopEndedCtxAfterStart(t *testing.T) {
 		if err := s.Start(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		addrs := listen(t, s)
+		addrs := plantListeners(t, s)
 		if err := s.Stop(endedCtx(t)); err != nil {
 			t.Fatalf("call %d: Stop = %v, want nil", i, err)
 		}
@@ -103,7 +104,7 @@ func TestStopEndedCtxAfterStart(t *testing.T) {
 // still closes the listeners (#1116).
 func TestStopGraceExpires(t *testing.T) {
 	s := testService(t, "permissive")
-	addrs := listen(t, s)
+	addrs := plantListeners(t, s)
 	blockForever(t, s)
 	start := time.Now()
 	err := s.Stop(endedCtx(t))
@@ -111,7 +112,7 @@ func TestStopGraceExpires(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop = %v, want deadline exceeded", err)
 	}
-	if took < 900*time.Millisecond || took > 1900*time.Millisecond {
+	if took < stopGrace-100*time.Millisecond || took > 2*stopGrace-100*time.Millisecond {
 		t.Errorf("Stop took %v, want about %v", took, stopGrace)
 	}
 	assertClosed(t, addrs)
