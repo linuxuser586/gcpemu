@@ -126,8 +126,8 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 					resp, err = h(ctx, req)
 				}()
 			}
-			if cutOff(ctx) {
-				resp, err = nil, errUnavailable
+			if refusal := g.gate.cutOff(ctx); refusal != nil {
+				resp, err = nil, refusal
 			}
 			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, timer, err,
 				&reqlog.Bodies{Request: grpcBody(req), Response: grpcBody(resp)})
@@ -152,8 +152,8 @@ func (g *Gateway) GRPCOptions(service string) []grpc.ServerOption {
 			if err == nil {
 				err = h(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
 			}
-			if cutOff(ctx) {
-				err = errUnavailable
+			if refusal := g.gate.cutOff(ctx); refusal != nil {
+				err = refusal
 			}
 			g.logGRPC(ctx, ci, owner(info.FullMethod), info.FullMethod, start, timer, err, nil)
 			return toGRPC(err)
@@ -444,7 +444,7 @@ func (g *Gateway) Middleware(service string, h http.Handler) http.Handler {
 		if err == nil {
 			defer leave()
 		}
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK, gateCtx: ctx}
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK, gate: &g.gate, gateCtx: ctx}
 		var reqBody reqlog.Capture
 		if r.Body != nil && r.Body != http.NoBody {
 			r.Body = &teeBody{ReadCloser: r.Body, c: &reqBody}
@@ -562,11 +562,12 @@ type statusWriter struct {
 	// the request off, a handler that has not yet responded cannot, so that
 	// Middleware answers UNAVAILABLE instead (answerCutOff).
 	gateCtx context.Context
+	gate    *gate // what gateCtx came from
 }
 
 // refused reports whether a handler's response is dropped as cut off.
 func (w *statusWriter) refused() bool {
-	return !w.wrote && w.gateCtx != nil && cutOff(w.gateCtx)
+	return !w.wrote && w.gateCtx != nil && w.gate.cutOff(w.gateCtx) != nil
 }
 
 // answerCutOff answers UNAVAILABLE, without any headers the handler set,
@@ -575,9 +576,10 @@ func (w *statusWriter) answerCutOff() {
 	if !w.refused() {
 		return
 	}
+	refusal := w.gate.cutOff(w.gateCtx)
 	w.gateCtx = nil
 	clear(w.Header())
-	writeError(w, errUnavailable)
+	writeError(w, refusal)
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -592,7 +594,7 @@ func (w *statusWriter) WriteHeader(code int) {
 
 func (w *statusWriter) Write(b []byte) (int, error) {
 	if w.refused() {
-		return 0, errCutOff
+		return 0, context.Cause(w.gateCtx)
 	}
 	w.wrote = true
 	n, err := w.ResponseWriter.Write(b)

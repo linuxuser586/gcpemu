@@ -77,6 +77,7 @@ type Instance struct {
 
 	gw       *gateway.Gateway
 	services []emu.Service
+	hooks    teardownHooks // set only by tests; see teardownHooks
 	byName   map[string]emu.Service
 	failedMu sync.RWMutex
 	failed   map[string]error
@@ -738,7 +739,7 @@ func (in *Instance) gated(ctx context.Context, hold, reason string, change func(
 	release := in.HoldReady(hold, reason)
 	defer release()
 	defer in.gw.OpenGate()
-	if err := in.gw.CloseGate(ctx); err != nil {
+	if err := in.gw.CloseGate(ctx, gateway.GateStateChange); err != nil {
 		return fmt.Errorf("cutting off requests in progress: %w", err)
 	}
 	return change()
@@ -801,9 +802,14 @@ func (in *Instance) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// teardown is the part of a shutdown that follows Start. The runtime's
-// Cleanup must end by cleanupBy, unless it is zero.
+// teardown is the part of a shutdown that follows Start. It closes the
+// API gateway's gate and saves the Managed emulators' data before it stops
+// any Service, so that a slow Stop cannot leave the save no time and no
+// write lands after it (ADR 0080). The runtime's Cleanup must end by
+// cleanupBy, unless it is zero.
 func (in *Instance) teardown(ctx context.Context, cleanupBy time.Time) error {
+	in.closeGateForShutdown(ctx)
+	in.stopManaged(ctx)
 	var errs []error
 	for i := len(in.services) - 1; i >= 0; i-- {
 		s := in.services[i]
@@ -814,7 +820,6 @@ func (in *Instance) teardown(ctx context.Context, cleanupBy time.Time) error {
 	in.hostManager().Stop()
 	in.fe.StopLAN(ctx)
 	errs = append(errs, in.link.Close())
-	in.stopManaged(ctx)
 	in.registryRelay.stop()
 	errs = append(errs, in.containers.shutdown(cleanupBy))
 	errs = append(errs, in.fe.Close())
@@ -830,6 +835,29 @@ func (in *Instance) teardown(ctx context.Context, cleanupBy time.Time) error {
 		_ = os.RemoveAll(in.tmpDir)
 	}
 	return errors.Join(errs...)
+}
+
+// closeGateForShutdown closes the API gateway's gate for good, refusing
+// every request but the Admin API's as UNAVAILABLE, and waits up to
+// teardownGateWait of ctx for those it cut off. Past that it warns and
+// carries on, so that a handler ignoring its cancellation cannot use up
+// the save's time (ADR 0080).
+func (in *Instance) closeGateForShutdown(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, teardownGateWait)
+	defer cancel()
+	if err := in.gw.CloseGate(ctx, gateway.GateShutdown); err != nil {
+		in.Env.Log.Warn("shutting down while requests through the API gateway are still running: data they write may not be saved",
+			"running", in.gw.RunningRequests(), "err", err)
+	}
+}
+
+// teardownHooks let tests hold Teardown at its steps, to check what has
+// and has not happened by then (ADR 0079). Every hook is nil in
+// production.
+type teardownHooks struct {
+	// saving runs on a Persistent Instance as the save of its Managed
+	// emulators' data begins, with the save's ctx.
+	saving func(ctx context.Context)
 }
 
 // beginShutdown marks shutdown as begun and returns what closes when Start
@@ -886,6 +914,9 @@ func (in *Instance) release(st store.Store) error {
 // shutdown, and requestCleanupBy ends its Cleanup, so that it stays within
 // `gcpemu stop`'s limit (ADRs 0065 and 0078).
 var (
+	// teardownGateWait limits how long Teardown waits for the requests
+	// through the API gateway that closing its gate cut off (ADR 0080).
+	teardownGateWait    = 10 * time.Second
 	requestStartWait    = 15 * time.Second
 	requestTeardownTime = 30 * time.Second
 	// cleanupTime limits removing the Instance's containers, networks and
