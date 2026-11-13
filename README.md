@@ -1099,7 +1099,7 @@ serve (`logging.googleapis.com`, …) are never redirected.
 
 **GKE pods** use real hostnames automatically. Each node answers DNS for the served names with
 169.254.169.254 and relays port 443 there to the Google front end. A mutating admission webhook mounts a
-bundle of the host's system roots plus the emulator CA at `/etc/ssl/certs/ca-certificates.crt`
+bundle of the host's Public roots plus the Instance CA at `/etc/ssl/certs/ca-certificates.crt`
 and `/etc/gcpemu/certs/`. It also sets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
 `NODE_EXTRA_CA_CERTS` and `GCE_METADATA_HOST`. Unmodified Go, Python, Java and Node clients get
 Workload Identity tokens from the metadata server and reach the emulated Services without any
@@ -1181,8 +1181,13 @@ Containerized Instance's (see "Trusting the CA on the host"). The Web console's 
 view rotates a running Instance's CA too (Rotate CA), but changes no Host trust: run `gcpemu ca install`
 afterwards. Or trust it per shell with
 `eval "$(gcpemu env --trust)"`. That sets `SSL_CERT_FILE` to `<data-dir>/ca-bundle.pem`, which
-holds the system roots (on Windows, exported from the ROOT certificate store) plus the emulator
-CA. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the host, use `curl
+holds the host's Public roots plus the Instance CA. The Public roots are the root CAs the host
+trusts for public sites: its system bundle file on Linux, the roots the keychain trusts on macOS
+(system roots, plus those an admin or user trusted, minus those they denied), and the ROOT
+certificate store on Windows. They never include another Instance's CA, even one `ca install` put
+in the host's trust store. On macOS, Apple's date-limited distrusts (such as Entrust's) don't carry
+over to the bundle; if the keychain can't be read, `/etc/ssl/cert.pem` is used and `gcpemu doctor`
+warns. An Instance reads them when it starts. `gcpemu env` always exports `GCPEMU_CA_FILE`. To test without changing the host, use `curl
 --resolve storage.googleapis.com:443:<ip> --cacert "$GCPEMU_CA_FILE" …`, or give Go clients a
 `net.Resolver` that dials `<ip>:53`.
 

@@ -33,6 +33,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/netplane"
 	"github.com/linuxuser586/gcpemu/internal/registryrelay"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/trust"
 	"github.com/linuxuser586/gcpemu/internal/vmrelay"
 )
 
@@ -154,6 +155,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				fmt.Fprintln(out, "[--  ] Instance CA not created yet (created on first start)")
 			}
 
+			checkPublicRoots(out, trust.PublicRootsSource(), bytes.Count(trust.PublicRoots(), []byte("-----BEGIN CERTIFICATE-----")))
 			checkForeignCreds(out, report)
 
 			if problems > 0 {
@@ -1362,6 +1364,21 @@ func checkForeignCreds(out io.Writer, report func(bool, string, string)) {
 	}
 	if wk := wellKnownADC(); wk != "" {
 		fmt.Fprintf(out, "[--  ] gcloud's application-default credentials at %s go to real Google; `eval \"$(gcpemu env)\"` points ADC at an emulator key instead\n", wk)
+	}
+}
+
+// checkPublicRoots reports where the Public roots that pods, Cloud Build
+// steps and `gcpemu env --trust` get come from: n certificates from src
+// (#1138).
+func checkPublicRoots(out io.Writer, src trust.Source, n int) {
+	switch {
+	case src.FallbackErr != nil:
+		fmt.Fprintf(out, "[WARN] Public roots: %d certificates from %s, not the macOS keychain (%v); "+
+			"pods, Cloud Build steps and `gcpemu env --trust` may not trust every public site the host does\n", n, src.Where, src.FallbackErr)
+	case n == 0:
+		fmt.Fprintln(out, "[WARN] Public roots: none found; pods, Cloud Build steps and `gcpemu env --trust` trust only the Instance CA")
+	default:
+		fmt.Fprintf(out, "[ok  ] Public roots: %d certificates from %s (an Instance reads them when it starts)\n", n, src.Where)
 	}
 }
 

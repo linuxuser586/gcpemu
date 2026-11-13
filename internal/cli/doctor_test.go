@@ -17,6 +17,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/lanbind"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/internal/trust"
 )
 
 // Linux, macOS and native Windows are supported, Windows with the Runtime
@@ -961,6 +962,27 @@ func TestCheckCPUSet(t *testing.T) {
 			if strings.Contains(got, n) {
 				t.Errorf("%s %s: %q has %q", tc.goos, tc.in.Name, got, n)
 			}
+		}
+	}
+}
+
+// TestCheckPublicRoots: doctor warns when the Public roots came from a
+// fallback file or are missing (#1138).
+func TestCheckPublicRoots(t *testing.T) {
+	for _, tc := range []struct {
+		src  trust.Source
+		n    int
+		want string
+	}{
+		{trust.Source{Where: "the macOS keychain"}, 151, "[ok  ] Public roots: 151 certificates from the macOS keychain"},
+		{trust.Source{Where: "/etc/ssl/cert.pem", FallbackErr: errors.New("security: exit status 1")}, 123,
+			"[WARN] Public roots: 123 certificates from /etc/ssl/cert.pem, not the macOS keychain (security: exit status 1)"},
+		{trust.Source{}, 0, "[WARN] Public roots: none found"},
+	} {
+		var out strings.Builder
+		checkPublicRoots(&out, tc.src, tc.n)
+		if !strings.HasPrefix(out.String(), tc.want) {
+			t.Errorf("checkPublicRoots(%+v, %d) = %q, want prefix %q", tc.src, tc.n, out.String(), tc.want)
 		}
 	}
 }

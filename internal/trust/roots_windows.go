@@ -8,6 +8,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// hostRoots returns the host's roots: its ROOT certificate store.
+func hostRoots() ([]byte, Source) {
+	return systemRoots(), Source{Where: "the Windows ROOT certificate store"}
+}
+
 // systemRoots exports the current user's ROOT certificate store (which
 // includes the machine's) as PEM: Windows keeps its roots in the store, not
 // in a bundle file, and SSL_CERT_FILE replaces it for OpenSSL and Python

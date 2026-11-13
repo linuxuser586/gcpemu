@@ -29,7 +29,7 @@ import (
 // (on the namespace or the pod) it:
 //
 //   - ensures a ConfigMap "gcpemu-ca-bundle" in the pod's namespace with
-//     the host's system roots plus the emulator CA (a ConfigMap rather
+//     the Public roots plus the Instance CA (a ConfigMap rather
 //     than a hostPath volume keeps pods admissible under Pod Security
 //     "baseline" and "restricted");
 //   - mounts it at /etc/gcpemu/certs and, file-wise, over
@@ -415,7 +415,7 @@ var bundleCache struct {
 	ca, bundle []byte
 }
 
-// caBundle is the bundle of the host's system roots and ca.
+// caBundle is the bundle of the Public roots and ca.
 func caBundle(ca []byte) []byte {
 	bundleCache.Lock()
 	defer bundleCache.Unlock()

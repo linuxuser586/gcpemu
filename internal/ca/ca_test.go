@@ -219,3 +219,27 @@ func mkdir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 }
+
+// TestIsInstanceCA: an Instance CA, of any Instance, is recognized; its
+// leaves and other CAs are not (#1138).
+func TestIsInstanceCA(t *testing.T) {
+	c, err := Load(t.TempDir(), "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsInstanceCA(c.Certificate()) {
+		t.Error("an Instance CA is not recognized")
+	}
+	leaf, err := c.ServerCert("app.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsInstanceCA(leaf.Leaf) {
+		t.Error("a leaf the Instance CA issued is taken for an Instance CA")
+	}
+	other := *c.Certificate()
+	other.Subject.CommonName = "gcpemu local CA"
+	if IsInstanceCA(&other) {
+		t.Error("a CA without the Instance's name is taken for an Instance CA")
+	}
+}

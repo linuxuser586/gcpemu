@@ -3,27 +3,26 @@ package lb
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"net"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/linuxuser586/gcpemu/internal/trust"
 )
 
 // PushTransport returns an HTTP transport for in-process clients (Pub/Sub
 // push, FR-INT-011) that resolves host names through the emulated Cloud
 // DNS, delivers requests addressed to a forwarding rule (or its mapped
 // listener) straight to the load balancer's listener, and trusts the
-// emulator CA in addition to the system roots, so a push endpoint such as
+// Instance CA in addition to the Public roots (never another Instance's
+// CA, #1138), so a push endpoint such as
 // https://app.example.test/push reaches the service behind the load
 // balancer.
 func (s *Service) PushTransport() http.RoundTripper {
 	s.ptOnce.Do(func() {
-		roots, err := x509.SystemCertPool()
-		if err != nil || roots == nil {
-			roots = x509.NewCertPool()
-		}
+		roots := trust.PublicRootPool()
 		if s.env.CA != nil {
 			roots.AddCert(s.env.CA.Certificate())
 		}

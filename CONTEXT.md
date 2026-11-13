@@ -95,6 +95,10 @@ _Avoid_: signer, OIDC key, service account key
 The places on the user's machine that trust the Instance CA: the OS certificate store, container runtimes' registry trust and browser certificate databases. `gcpemu ca install` adds the Instance CA to them and `gcpemu doctor` reports where it is. A place is part of Host trust once it holds the Instance CA, even if a client on the host is set up not to read it, such as a kubelet whose containerd does not read the registry trust; doctor reports that client separately.
 _Avoid_: trust store (that is part of a Trust config)
 
+**Public roots**:
+The root CAs the host trusts for public sites, which every client an Instance gives the Instance CA to (pods, Cloud Build steps, `gcpemu env --trust`) also trusts alongside it. On macOS they are the roots the system trusts, including those an admin or user added, not a bundle file; Apple's date-limited distrusts do not carry over. They never include another Instance's CA, even one the host trusts: Instances come to trust each other only by Pairing. A Containerized Instance's are its own container's, not the host's.
+_Avoid_: system roots, CA bundle
+
 **Google front end**:
 The component that terminates TLS for real Google hostnames in Host mode and hands requests to the API gateway. Its in-container piece is the *host-mode relay*. With `--gfe-bind` it also serves another machine on the LAN, to real credentials only, and makes Read-throughs there (ADR 0021).
 _Avoid_: frontend (unqualified)
@@ -510,8 +514,8 @@ The registry's periodic pass that runs each standard repository's cleanup polici
 _Avoid_: garbage collection (names only the freeing part), cleanup job
 
 **CA injector**:
-The webhook every GKE cluster has that gives each new pod the Instance CA to trust, outside `kube-system` and unless the pod or its namespace opts out. A pod it can't give the Instance CA to is refused, not started without it, so its controller creates it again (ADR 0074).
-_Avoid_: CA bundle (for what the pod receives; say the Instance CA)
+The webhook every GKE cluster has that gives each new pod the Instance CA and the Public roots to trust, outside `kube-system` and unless the pod or its namespace opts out. A pod it can't give the Instance CA to is refused, not started without it, so its controller creates it again (ADR 0074).
+_Avoid_: CA bundle (for what the pod receives; say the Instance CA and the Public roots)
 
 **Workload restrictions**:
 What an Autopilot cluster refuses or changes before it admits a pod or a workload: it rejects privileged containers, host namespaces, host ports, most host paths and disallowed capabilities, in pods and in workloads' pod templates (a cluster can be set to allow the NET_ADMIN capability); refuses writes to `kube-system` by anyone but the cluster itself and its Admin kubeconfig; and sets a new pod's resource requests to Autopilot's defaults, minimums and ratios.
@@ -599,7 +603,7 @@ A Network Security resource that a target HTTPS proxy names to verify its client
 _Avoid_: mTLS policy, TLS policy (unqualified)
 
 **Backend authentication config**:
-A Network Security resource that a backend service names to verify its backends' certificates against a Trust config or the public roots, optionally presenting a client certificate of its own.
+A Network Security resource that a backend service names to verify its backends' certificates against a Trust config or the Public roots, optionally presenting a client certificate of its own.
 _Avoid_: backend TLS policy, BAC (in user-facing text)
 
 **Client TLS policy**:

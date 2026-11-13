@@ -13,6 +13,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/apierr"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/store"
+	"github.com/linuxuser586/gcpemu/internal/trust"
 )
 
 // emu.CertManager: the data-plane view of Certificate Manager and Network
@@ -137,9 +138,10 @@ func (s *Service) Certificate(ctx context.Context, name string) (*tls.Certificat
 
 // BackendAuthentication implements emu.CertManager. roots holds the trust
 // config's anchors (plus intermediates that chain to them and allowlisted
-// certificates); with wellKnownRoots PUBLIC_ROOTS it also holds the system
-// roots and the instance CA, which plays the role of the public CAs for
-// emulated workloads. NONE without a trust config yields an empty pool.
+// certificates); with wellKnownRoots PUBLIC_ROOTS it also holds the Public
+// roots and the Instance CA, which plays the role of the public CAs for
+// emulated workloads, and never another Instance's CA (#1138). NONE
+// without a trust config yields an empty pool.
 func (s *Service) BackendAuthentication(ctx context.Context, name string) (*tls.Certificate, *x509.CertPool, error) {
 	o, _, err := s.loadKind(kBAC, name)
 	if err != nil {
@@ -157,9 +159,7 @@ func (s *Service) BackendAuthentication(ctx context.Context, name string) (*tls.
 	}
 	roots := x509.NewCertPool()
 	if b.WellKnownRoots == "PUBLIC_ROOTS" {
-		if sys, err := x509.SystemCertPool(); err == nil && sys != nil {
-			roots = sys
-		}
+		roots = trust.PublicRootPool()
 		if s.env.CA != nil {
 			roots.AddCert(s.env.CA.Certificate())
 		}
