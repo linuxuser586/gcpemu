@@ -289,3 +289,25 @@ func TestWithLogOutput(t *testing.T) {
 		t.Fatalf("log output = %q, want the start line", buf.String())
 	}
 }
+
+// TestLogDir: with GCPEMU_TEST_LOG_DIR set, the Instance's log goes to a
+// file in that dir named after the test, which outlives the test (#1147).
+func TestLogDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GCPEMU_TEST_LOG_DIR", dir)
+	t.Run("sub/test", func(t *testing.T) {
+		emutest.Start(t, []string{"gcs"})
+	})
+	logs, err := filepath.Glob(filepath.Join(dir, "TestLogDir_sub_test-*.log"))
+	if err != nil || len(logs) != 1 {
+		entries, _ := os.ReadDir(dir)
+		t.Fatalf("logs = %v (%v), want one; dir holds %v", logs, err, entries)
+	}
+	b, err := os.ReadFile(logs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "gcpemu started") {
+		t.Fatalf("%s = %q, want the start line", logs[0], b)
+	}
+}
