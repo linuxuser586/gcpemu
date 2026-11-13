@@ -28,6 +28,12 @@ import (
 //  2. Kubernetes conformance passes (Sonobuoy quick mode);
 //  3. tofu destroy leaves no containers.
 //
+// Each version has its own project (autopilotProject), so that what one
+// version's subtest leaves behind can't fail the others (#1146), and step 3
+// counts only the containers created since its subtest started. The
+// serverConfig lookup that picks the versions stays on project autopilot:
+// it runs before they are known, and creates nothing.
+//
 // The cluster at the default version's minor also runs the workload
 // checks between 1 and 2:
 //
@@ -93,6 +99,12 @@ func TestAutopilot(t *testing.T) {
 	}
 }
 
+// autopilotProject is the project that the subtest for version creates
+// its cluster in ("1.36.5-gke.100" → "autopilot-1-36").
+func autopilotProject(version string) string {
+	return "autopilot-" + strings.ReplaceAll(minorOf(version), ".", "-")
+}
+
 // minorOf returns the minor of a GKE version ("1.36.5-gke.100" → "1.36").
 func minorOf(v string) string {
 	p := strings.SplitN(v, ".", 3)
@@ -102,12 +114,19 @@ func minorOf(v string) string {
 // autopilotCluster runs steps 1–3 for one version, and the workload
 // checks if workloads.
 func autopilotCluster(t *testing.T, inst *emutest.Instance, tofuBin, version string, workloads bool) {
+	before, err := inst.Internal().Containers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	tf := newTofu(t, tofuBin, inst.Endpoint("gateway"), "autopilot")
+	// Set before init, not through apply, so that the deferred destroy
+	// targets this version's project even if the test stops before apply.
+	tf.vars["project"] = autopilotProject(version)
 	tf.run(10*time.Minute, "init", "-no-color")
 	destroyed := false
 	t.Cleanup(func() {
 		if !destroyed {
-			_, _ = tf.try(15*time.Minute, "destroy", "-auto-approve")
+			tf.cleanupDestroy()
 		}
 	})
 	tf.apply(map[string]string{"kubernetes_version": version})
@@ -133,7 +152,7 @@ func autopilotCluster(t *testing.T, inst *emutest.Instance, tofuBin, version str
 		if err != nil {
 			t.Fatal(err)
 		}
-		left = leftoverContainers(cts)
+		left = leftoverContainersSince(before, cts)
 		return len(left) == 0
 	}, func() string { return strings.Join(left, "\n") })
 }
