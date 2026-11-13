@@ -257,7 +257,7 @@ _Avoid_: condition (on its own), readiness check
 An Instance whose state disappears when it stops.
 
 **Persistent Instance**:
-An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
+An Instance that keeps its state in a data directory across restarts. Its Firestore and Datastore Managed emulators' data survives a clean stop, unless the stop runs out of time to save it, which the Instance logs as an error; Spanner's and Bigtable's does not, and neither does data written to any of them since they started when the stop is not clean.
 
 **Clean stop**:
 A stop in which the Instance completes its own shutdown and its process exits, even if it could not remove everything it made and says so in its log. An Instance that is killed or crashes has not stopped cleanly (ADR 0064). This is what the Instance did; a Confirmed stop or an Unconfirmed stop is what `gcpemu stop` could prove of it.
