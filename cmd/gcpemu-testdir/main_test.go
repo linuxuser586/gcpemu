@@ -147,6 +147,8 @@ type fakeDocker struct {
 // tag serves a running container, a network and a volume of the Instance
 // id whose dir is dir.
 func (d *fakeDocker) tag(id, dir string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	l := map[string]string{runtime.LabelInstance: id, runtime.LabelDir: dir}
 	for kind := range d.objs {
 		d.objs[kind][kind[:1]+"-"+id] = l
