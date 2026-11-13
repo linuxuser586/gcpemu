@@ -18,6 +18,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/netplane"
+	"github.com/linuxuser586/gcpemu/internal/runtime"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -42,13 +43,16 @@ func TestParseHostName(t *testing.T) {
 	}
 }
 
-// planeOnly is a container runtime that offers only a netplane.
+// planeOnly is a container runtime that offers only a netplane, and the
+// netplane's runtime.
 type planeOnly struct {
 	emu.Containers
 	np *netplane.Plane
 }
 
 func (p planeOnly) Netplane(context.Context) (*netplane.Plane, error) { return p.np, nil }
+
+func (p planeOnly) Runtime(context.Context) (*runtime.Manager, error) { return p.np.Runtime(), nil }
 
 // hostFixture is a GKE service whose clusters' nodes are this host, with
 // a ClusterIP relay to the Service range 127.0.0.0/8.

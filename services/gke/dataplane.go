@@ -65,7 +65,9 @@ type clusterRT struct {
 	cancel context.CancelFunc // controllers (NEG sync)
 	// scaleMu is held while Autopilot node provisioning adds or removes
 	// nodes (autoscale.go), and taken by destroyDataPlane once the
-	// controllers are cancelled, so no node outlives the cluster.
+	// controllers are cancelled, so no node outlives the cluster. A node
+	// removal the cancel interrupts still finishes before it lets go
+	// (deps.removeContainer, #1144).
 	scaleMu sync.Mutex
 	// l7Mu serialises load balancer syncs with their removal (l7.go).
 	l7Mu    sync.Mutex
@@ -148,6 +150,29 @@ type deps struct {
 	np  *netplane.Plane
 	vpc emu.VPC
 	svc netplane.Net
+}
+
+// removeWait bounds a removal that its caller's cancellation does not end.
+const removeWait = 30 * time.Second
+
+// removeContainer force-removes a container, finishing even when ctx is
+// cancelled. Removals on the controllers' context or the server watch's
+// use it, since destroyDataPlane cancels those and goes on once their
+// callers return (scaleMu, unwatchServer). The runtime keeps removing a
+// container after its client disconnects, so a cut-off removal would
+// still be under way when destroyDataPlane removed the same container,
+// which the runtime refuses with a 409 (#1144).
+func (d *deps) removeContainer(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeWait)
+	defer cancel()
+	return d.rt.RemoveContainer(ctx, id, true)
+}
+
+// removeVolume removes a volume as removeContainer removes a container.
+func (d *deps) removeVolume(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeWait)
+	defer cancel()
+	return d.rt.RemoveVolume(ctx, name)
 }
 
 func (s *Service) deps(ctx context.Context) (*deps, error) {
@@ -488,7 +513,7 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 		}
 	}
 	name := d.rt.Name("gke", shortID(c), "cp")
-	if err := d.rt.RemoveContainer(ctx, name, true); err != nil {
+	if err := d.removeContainer(ctx, name); err != nil {
 		return err
 	}
 	staged, err := s.stagedDatastore(c.Id)
@@ -607,7 +632,7 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 		err = d.rt.StartContainer(ctx, id)
 		if runtime.IsAddressInUse(err) {
 			// Removed for the next address, which reuses the name.
-			_ = d.rt.RemoveContainer(ctx, id, true)
+			_ = d.removeContainer(ctx, id)
 		}
 		return err
 	}
@@ -1046,7 +1071,7 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 			return err
 		}
 	}
-	if err := d.rt.RemoveContainer(ctx, name, true); err != nil {
+	if err := d.removeContainer(ctx, name); err != nil {
 		return err
 	}
 	if err := d.rt.CreateVolume(ctx, name, s.labels(d, key, "node")); err != nil {
@@ -1139,7 +1164,7 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 		// hold it (#146). Once more with a fresh address: on a Translated
 		// network only the container network's, which the runtime picks.
 		s.env.Log.Warn("gke: node address taken before the node started; retrying", "node", node.Name, "ip", ip, "err", err)
-		if err := d.rt.RemoveContainer(ctx, name, true); err != nil {
+		if err := d.removeContainer(ctx, name); err != nil {
 			return err
 		}
 		if !sn.Translated {
@@ -1589,10 +1614,10 @@ func (s *Service) removeNodes(ctx context.Context, key string, nodes []nodeRecor
 			_ = kc.delete(ctx, "/api/v1/nodes/"+n.Name)
 		}
 		name := nodeContainer(d, c, n.Name)
-		if err := d.rt.RemoveContainer(ctx, name, true); err != nil {
+		if err := d.removeContainer(ctx, name); err != nil {
 			errs = append(errs, err)
 		}
-		if err := d.rt.RemoveVolume(ctx, name); err != nil {
+		if err := d.removeVolume(ctx, name); err != nil {
 			errs = append(errs, err)
 		}
 		if snErr == nil {
