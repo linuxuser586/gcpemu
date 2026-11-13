@@ -242,6 +242,47 @@ func TestSpeakingFirstIsNoInstance(t *testing.T) {
 	}
 }
 
+// TestWriteReportsTheReadsVerdict is #1162: once the read has judged what the
+// server sent, net/http closes the connection, and may report the request's
+// write failing rather than the read. The write must report the verdict too,
+// whether it starts after the verdict or fails on the close.
+func TestWriteReportsTheReadsVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		banner string
+		asked  bool // a write went out before the banner was read
+		want   error
+	}{
+		{"not HTTP", "SSH-2.0-OpenSSH_9.6\r\n", false, errNotHTTP},
+		{"not HTTP after the request", "SSH-2.0-OpenSSH_9.6\r\n", true, errNotHTTP},
+		{"HTTP before the request", "HTTP/1.1 200 OK\r\n\r\n", false, errUnasked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, closed := range []bool{false, true} {
+				client, server := net.Pipe()
+				c := newCheckConn(client)
+				go func() { _, _ = server.Write([]byte(tc.banner)) }()
+				if tc.asked {
+					c.(*checkConn).asked.Store(true)
+				}
+				if _, err := c.Read(make([]byte, 64)); !errors.Is(err, tc.want) {
+					t.Fatalf("read: %v, want %v", err, tc.want)
+				}
+				if closed {
+					_ = c.Close()
+				}
+				// Nothing reads the pipe, so a write that goes out times out.
+				_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				if _, err := c.Write([]byte("GET / HTTP/1.1\r\n\r\n")); !errors.Is(err, tc.want) {
+					t.Errorf("write (connection closed: %v): %v, want %v", closed, err, tc.want)
+				}
+				_ = c.Close()
+				_ = server.Close()
+			}
+		})
+	}
+}
+
 // TestHTTPBeforeTheRequestRulesNothingOut is ADR 0066: it may be a real HTTP
 // server, so it stays Unconfirmed, and the reason is the check's own words.
 func TestHTTPBeforeTheRequestRulesNothingOut(t *testing.T) {
