@@ -103,7 +103,9 @@ just prerelease desktop-linux,colima,orbstack
 ```
 
 It ends with a table of runtime × check (pass, fail or skip) and each runtime's version, which it
-also writes to `dist/prerelease-<os>-<commit>.md`. Put it in the release PR. A check that's
+also writes to `dist/prerelease-<os>-<commit>.md`. Put it in the release PR. Each check's output,
+setup's too, is saved to `dist/prerelease-<os>-<commit>/<runtime>/<check>.log`, and a `fail` cell
+or a note under the table links to its log, so a failure needs no rerun to read. A check that's
 skipped didn't run: only the checks that depend on the host say why they skip, such as 5432 or 53
 being taken on Windows.
 
