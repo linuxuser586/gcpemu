@@ -47,8 +47,12 @@ type Service struct {
 	mu      sync.Mutex
 	udp     *mdns.Server
 	tcp     *mdns.Server
+	tcpLn   *firstCloseListener // what tcp serves on
 	addr    string
 	started bool
+
+	// wrapTCP, if set before Start, wraps the TCP listener (tests).
+	wrapTCP func(net.Listener) net.Listener
 }
 
 // New returns the service.
@@ -109,10 +113,14 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if s.wrapTCP != nil {
+		tl = s.wrapTCP(tl)
+	}
+	tcpLn := &firstCloseListener{Listener: tl}
 	h := mdns.HandlerFunc(s.serveDNS)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	tcp := &mdns.Server{Listener: tl, Handler: h, Net: "tcp", NotifyStartedFunc: wg.Done}
+	tcp := &mdns.Server{Listener: tcpLn, Handler: h, Net: "tcp", NotifyStartedFunc: wg.Done}
 	udp := &mdns.Server{PacketConn: pc, Handler: h, Net: "udp", NotifyStartedFunc: wg.Done}
 	for _, srv := range []*mdns.Server{tcp, udp} {
 		go func(srv *mdns.Server) {
@@ -123,7 +131,7 @@ func (s *Service) Start(ctx context.Context) error {
 	}
 	wg.Wait()
 	s.mu.Lock()
-	s.tcp, s.udp, s.addr, s.started = tcp, udp, tl.Addr().String(), true
+	s.tcp, s.tcpLn, s.udp, s.addr, s.started = tcp, tcpLn, udp, tl.Addr().String(), true
 	s.mu.Unlock()
 	return nil
 }
@@ -150,21 +158,61 @@ func (s *Service) listenPair(ctx context.Context, port int) (net.Listener, net.P
 	return tl, pc, nil
 }
 
-// Stop shuts the data plane down.
+// Stop shuts the data plane down. It reports a failure to close the TCP
+// listener; the UDP socket's close error stays inside mdns, which needs
+// the *net.UDPConn itself to reply from the address a query was sent to.
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	tcp, udp := s.tcp, s.udp
-	s.tcp, s.udp, s.started = nil, nil, false
+	tcp, tcpLn, udp := s.tcp, s.tcpLn, s.udp
+	s.tcp, s.tcpLn, s.udp, s.started = nil, nil, nil, false
 	s.mu.Unlock()
 	var errs []error
 	for _, srv := range []*mdns.Server{tcp, udp} {
-		if srv != nil {
-			if err := srv.ShutdownContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				errs = append(errs, err)
-			}
+		if srv == nil {
+			continue
+		}
+		// ShutdownContext closes the server's socket before it waits, so
+		// ctx's own error says only that the wait was cut short (#1115).
+		err := srv.ShutdownContext(ctx)
+		waitCut := ctx.Err() != nil && errors.Is(err, ctx.Err())
+		if err != nil && !waitCut {
+			errs = append(errs, err)
 		}
 	}
+	// ShutdownContext closed the listener before it returned, and drops
+	// that error.
+	if tcpLn != nil {
+		errs = append(errs, tcpLn.closeErr())
+	}
 	return errors.Join(errs...)
+}
+
+// firstCloseListener remembers the error from its first Close. mdns
+// closes its listener twice, in ShutdownContext and as serveTCP returns,
+// and reports neither; the second Close always fails with net.ErrClosed.
+type firstCloseListener struct {
+	net.Listener
+	mu     sync.Mutex
+	closed bool
+	err    error
+}
+
+func (l *firstCloseListener) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return net.ErrClosed
+	}
+	l.closed = true
+	l.err = l.Listener.Close()
+	return l.err
+}
+
+// closeErr is the first Close's error, nil before any Close.
+func (l *firstCloseListener) closeErr() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.err
 }
 
 // Ready reports whether the data plane is listening.
