@@ -129,13 +129,32 @@ func TestCompressedWALArchive(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 		}
 
+		// The loop ended on a WAL switch, so the current segment may be
+		// empty, or the background writer may already have logged into it.
+		// A record now makes it non-empty every run: the shutdown then
+		// switches out of it and archives it with the uncompressed command.
+		exec("walgz", "SELECT pg_logical_emit_message(false, 'gcpemu', 'x')")
 		if err := sql.RestartContainer(ctx, sqlSvc, testProject, "walgz"); err != nil {
 			t.Fatal(err)
 		}
+		// before marks the end of the restart: whatever the uncompressed
+		// command archived until then, the shutdown included, stays
+		// uncompressed.
+		_, wal, err := sql.WALArchive(ctx, sqlSvc, testProject, "walgz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := len(wal)
 		if got, err := sql.ExecSQL(ctx, sqlSvc, testProject, "walgz", "SELECT current_setting('archive_command');"); err != nil || strings.TrimSpace(got) != sql.ArchiveCommand {
 			t.Fatalf("archive_command after restart = %q, %v; want the compressing command", got, err)
 		}
-		before := len(wal)
+		// The first segment archived after the restart, with nothing else
+		// in between, is compressed: a restart that returned before the
+		// WAL archive command took effect would archive it uncompressed.
+		archiveNow()
+		if _, wal, err = sql.WALArchive(ctx, sqlSvc, testProject, "walgz"); err != nil || len(wal) <= before || !hasGzippedSegment(wal[before:]) || hasPlainSegment(wal[before:]) {
+			t.Fatalf("first WAL archived after the restart = %v (of %v), %v; want only .gz segments", wal[min(before, len(wal)):], wal, err)
+		}
 		exec("walgz", "INSERT INTO items SELECT generate_series(6, 10)")
 		archiveNow()
 		bases, wal, err := sql.WALArchive(ctx, sqlSvc, testProject, "walgz")
