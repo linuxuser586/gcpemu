@@ -3,9 +3,11 @@ package sql
 import (
 	"archive/tar"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -367,7 +369,11 @@ func (s *Service) stageBundle(ctx context.Context, project, src string, base bas
 		return "", newOpError("INTERNAL_ERROR", "pack WAL archive: %v", err)
 	}
 	defer func() { _, _ = s.execIn(context.WithoutCancel(ctx), project, src, "", "rm", "-f", stagedBundle) }()
-	f, err := os.CreateTemp("", "gcpemu-sql-restore-*.tar.gz")
+	dir, err := s.restoreStagingDir()
+	if err != nil {
+		return "", newOpError("INTERNAL_ERROR", "stage restore bundle: %v", err)
+	}
+	f, err := os.CreateTemp(dir, "gcpemu-sql-restore-*.tar.gz")
 	if err != nil {
 		return "", newOpError("INTERNAL_ERROR", "stage restore bundle: %v", err)
 	}
@@ -380,6 +386,50 @@ func (s *Service) stageBundle(ctx context.Context, project, src string, base bas
 		return "", newOpError("INTERNAL_ERROR", "copy restore bundle: %v", err)
 	}
 	return f.Name(), nil
+}
+
+// restoreStagingName names the directory, under sql's directory in the
+// Instance's Data directory, where restore bundles are staged on the host.
+// It is not the shared temporary directory: each Instance has its own Data
+// directory, so the bundles of two Instances (or two parallel tests) never
+// mix, and a killed test's bundles are reclaimed with its Test data dir
+// (#1110).
+const restoreStagingName = "restore-staging"
+
+// restoreStagingPath returns where restore bundles are staged, without
+// creating it. ok is false when the Instance has no Data directory, as in
+// unit tests, so nothing is made or removed relative to the working
+// directory.
+func (s *Service) restoreStagingPath() (dir string, ok bool) {
+	if s.env.DataDir == "" {
+		return "", false
+	}
+	return filepath.Join(s.env.DataDir, "sql", restoreStagingName), true
+}
+
+// restoreStagingDir returns the directory restore bundles are staged in,
+// creating it.
+func (s *Service) restoreStagingDir() (string, error) {
+	d, ok := s.restoreStagingPath()
+	if !ok {
+		return "", errors.New("no data directory")
+	}
+	return d, os.MkdirAll(d, 0o700)
+}
+
+// removeLeftoverRestoreBundles deletes the restore bundles a process that
+// died mid-clone left behind. No clone of this process is in flight when
+// it runs, and no other process can use the Data directory: the store's
+// database is locked by the process that opened it. A failure only costs
+// disk space, so it is logged, not returned.
+func (s *Service) removeLeftoverRestoreBundles() {
+	d, ok := s.restoreStagingPath()
+	if !ok {
+		return
+	}
+	if err := os.RemoveAll(d); err != nil {
+		s.env.Log.Warn("sql: removing leftover restore bundles failed", "dir", d, "err", err)
+	}
 }
 
 // copyFileFrom streams the single file p in container id to w.
