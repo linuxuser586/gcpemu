@@ -988,6 +988,16 @@ included):
 So a 16 GiB Runtime machine (Docker Desktop's VM, say) running 8 nodes leaves about 11 GiB for pods, however much
 memory the nodes' machine shapes advertise (8 `ek-standard-2` nodes advertise 64 GB).
 
+**The Instance warns, and never refuses.** Each time its GKE node count changes (a cluster
+created or deleted, a node pool resized, an Autopilot scale-up or scale-down) and when it starts
+with nodes already there, the Instance works out this formula's memory, before your pods, for
+all its clusters together, and compares it with the memory the runtime reports for the Runtime
+machine. When the formula first needs more, it logs one warning, and logs again only after
+dropping back within it. `gcpemu status` shows a `gke      overcommitted: ...` line while it does, and
+`gcpemu status --json` carries the figures as `info.gke.overcommit` (`estimateBytes`,
+`machineBytes`, `nodes`, `overcommitted`; absent if the runtime reports no memory). Nodes start
+exactly as they would without it: only the Node limit refuses nodes (ADR 0031).
+
 **How it was measured:** `just gke-sizing` (the `TestGKESizing` test in `e2e/`) on gcpemu
 v0.14.0-70-g18a7efe, GKE `1.36.5-gke.100` (`rancher/k3s:v1.36.5-k3s1`), Docker 29.9.3 on Ubuntu
 26.04.1 (Linux 7.0, cgroup v2, 8 CPUs, 60.5 GiB); the test logs each of these. It creates an Autopilot cluster and samples the

@@ -636,7 +636,16 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 				Pid                                 int
 				Endpoints                           map[string]string
 				// Absent without gke, and on an Instance that predates it.
-				GKE *struct{ NodeLimit int }
+				GKE *struct {
+					NodeLimit int
+					// Absent while the Runtime machine's memory is
+					// unknown (#1070).
+					Overcommit *struct {
+						EstimateBytes, MachineBytes int64
+						Nodes                       int
+						Overcommitted               bool
+					}
+				}
 			}
 			var r struct {
 				Services map[string]struct {
@@ -663,6 +672,10 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			}
 			if i.GKE != nil {
 				fmt.Fprintf(out, "%-8s node limit %d\n", "gke", i.GKE.NodeLimit)
+				if oc := i.GKE.Overcommit; oc != nil && oc.Overcommitted {
+					fmt.Fprintf(out, "%-8s overcommitted: %d nodes need about %.2f GiB, the Runtime machine has %.2f GiB (README \"GKE sizing\"); nodes are not refused\n",
+						"gke", oc.Nodes, float64(oc.EstimateBytes)/(1<<30), float64(oc.MachineBytes)/(1<<30))
+				}
 			}
 			var ct struct{ Containers []instance.ContainerInfo }
 			_ = json.Unmarshal(cts, &ct)

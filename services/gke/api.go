@@ -159,11 +159,13 @@ func (a *api) CreateCluster(ctx context.Context, req *containerpb.CreateClusterR
 	if err != nil {
 		return nil, err
 	}
+	a.s.reestimate(ctx)
 	a.s.index(r.key(), rec.cluster().Id)
 	op, err := a.s.startOp(ctx, r, containerpb.Operation_CREATE_CLUSTER, selfLink(r.Project, r.Location, "clusters/"+r.Cluster), true,
 		func(ctx context.Context) error { return a.s.provision(ctx, r.key()) })
 	if err != nil {
 		_ = a.s.env.Store.Update(func(tx store.Tx) error { return tx.Delete(nsClusters, r.key()) })
+		a.s.reestimate(ctx)
 		return nil, err
 	}
 	return op, nil
@@ -716,19 +718,27 @@ func (a *api) mutate(ctx context.Context, r ref, typ containerpb.Operation_Type,
 }
 
 // updateCluster applies fn to the stored cluster atomically.
+// A change to its node count re-estimates GKE overcommit.
 func (s *Service) updateCluster(key string, fn func(rec *clusterRecord, c *containerpb.Cluster) error) error {
-	return s.env.Store.Update(func(tx store.Tx) error {
+	changed := false
+	err := s.env.Store.Update(func(tx store.Tx) error {
 		rec, err := getCluster(tx, key)
 		if err != nil {
 			return err
 		}
+		before := len(rec.Int.Nodes)
 		c := rec.cluster()
 		if err := fn(rec, c); err != nil {
 			return err
 		}
+		changed = len(rec.Int.Nodes) != before
 		rec.setCluster(c)
 		return putCluster(tx, rec)
 	})
+	if err == nil && changed {
+		s.reestimate(context.Background())
+	}
+	return err
 }
 
 func (a *api) UpdateMaster(ctx context.Context, req *containerpb.UpdateMasterRequest) (*containerpb.Operation, error) {

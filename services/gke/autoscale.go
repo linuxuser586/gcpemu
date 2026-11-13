@@ -565,7 +565,7 @@ func (a *autoscaler) addNodes(ctx context.Context, added []*bin) error {
 		return err
 	}
 	defer unlock()
-	return a.s.env.Store.Update(func(tx store.Tx) error {
+	err = a.s.env.Store.Update(func(tx store.Tx) error {
 		rec, err := getCluster(tx, a.key)
 		if err != nil {
 			return err
@@ -584,6 +584,10 @@ func (a *autoscaler) addNodes(ctx context.Context, added []*bin) error {
 		rec.setCluster(c)
 		return putCluster(tx, rec)
 	})
+	if err == nil {
+		a.s.reestimate(ctx)
+	}
+	return err
 }
 
 // startNodes starts the added nodes' containers; a node that fails to
