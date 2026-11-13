@@ -8,7 +8,7 @@ import (
 )
 
 // TestStopEndedCtxRequestInProgress: with Teardown's ctx already ended, a
-// request still in progress on Pub/Sub's own port is closed by force and
+// request still in progress on Pub/Sub's Service endpoint is closed by force and
 // Stop reports success (#1117).
 func TestStopEndedCtxRequestInProgress(t *testing.T) {
 	inst := emutest.Start(t, []string{"pubsub"})

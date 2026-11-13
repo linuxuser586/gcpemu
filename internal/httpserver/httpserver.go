@@ -1,5 +1,5 @@
 // Package httpserver is the HTTP server the API gateway and the Services'
-// own ports serve with: HTTP/1.1 and h2c, and a Shutdown that stops even
+// endpoints serve with: HTTP/1.1 and h2c, and a Shutdown that stops even
 // when its ctx has already ended (#1034, #1117).
 package httpserver
 
@@ -16,6 +16,9 @@ import (
 // Server is an http.Server speaking HTTP/1.1 and h2c. Callers may set its
 // fields, such as ConnState, ConnContext, HTTP2 or TLSConfig, before
 // serving, but not BaseContext, which Shutdown uses to end every request.
+// Only Serve and ServeTLS track their listeners' close errors, and only
+// Shutdown ends the requests' contexts; ListenAndServe and Close are
+// http.Server's own.
 type Server struct {
 	*http.Server
 	name string

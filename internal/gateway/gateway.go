@@ -622,7 +622,9 @@ func (g *Gateway) Serve(l net.Listener) error {
 	g.mu.Unlock()
 	// Shutdown closes g.front before srv, so its Serve can end with
 	// net.ErrClosed rather than ErrServerClosed. After Shutdown, Serve
-	// waits for it, so nothing logs after Serve returns.
+	// waits for it, so nothing logs after Serve returns. srv's Shutdown
+	// closes g.front again, which reports no error: handoff's Close
+	// always returns nil.
 	front := make(chan struct{})
 	go func() {
 		defer close(front)

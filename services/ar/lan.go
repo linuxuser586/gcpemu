@@ -106,7 +106,7 @@ func (s *Service) startLAN(ctx context.Context, port int, h http.Handler) []*htt
 				continue
 			}
 		}
-		srv := httpserver.New("Artifact Registry on --ar-bind", h, s.env.Log)
+		srv := httpserver.New("Artifact Registry LAN listener", h, s.env.Log)
 		srv.TLSConfig = cfg
 		srvs = append(srvs, srv)
 		addrs = append(addrs, l.Addr().String())
