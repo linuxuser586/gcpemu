@@ -1321,8 +1321,10 @@ func (c *Client) Exec(ctx context.Context, id string, cmd []string, stdin []byte
 // stdin (none if nil) to it and its stdout and stderr to the writers as they
 // arrive, and returns its exit code. A stdin that fails to read, or a writer
 // that fails, fails the exec, and so does output that ends before the
-// command exits. A Read of stdin may still be in progress when ExecStream
-// returns; nothing it reads is sent.
+// command exits. A reset of the output stream ends the output if the
+// command has exited by then, and fails the exec if not. A Read of stdin
+// may still be in progress when ExecStream returns; nothing it reads is
+// sent.
 func (c *Client) ExecStream(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	var created struct {
 		ID string `json:"Id"`
@@ -1338,7 +1340,18 @@ func (c *Client) ExecStream(ctx context.Context, id string, cmd []string, stdin 
 		stderr = io.Discard
 	}
 	if err := c.execStart(ctx, created.ID, stdin, stdout, stderr); err != nil {
-		return 0, err
+		if !errors.Is(err, errOutputReset) {
+			return 0, err
+		}
+		// The daemon may close the stream with our stdin unread, as when
+		// psql stops at a bad statement, and then the close is a reset that
+		// can reach us before the end of output does. If the command has
+		// exited, the exit code it recorded is the result (#1106).
+		code, ierr := c.execExitCode(ctx, created.ID)
+		if ierr != nil {
+			return 0, errors.Join(err, ierr)
+		}
+		return code, nil
 	}
 	return c.execExitCode(ctx, created.ID)
 }
@@ -1386,7 +1399,7 @@ func (c *Client) execStart(ctx context.Context, execID string, stdin io.Reader, 
 	if err != nil {
 		return err
 	}
-	in := &stdinReader{r: stdin}
+	in := &failReader{r: stdin}
 	// The copy is not waited for: a command can exit without reading all
 	// of stdin while a Read of it blocks. It ends when that Read returns,
 	// on the next write to the closed connection.
@@ -1403,25 +1416,42 @@ func (c *Client) execStart(ctx context.Context, execID string, stdin io.Reader, 
 			_ = cw.CloseWrite()
 		}
 	}()
-	err = demuxTo(br, stdout, stderr)
+	out := &failReader{r: br}
+	err = demuxTo(out, stdout, stderr)
 	release()
 	switch {
 	case in.failed() != nil:
 		return fmt.Errorf("exec stdin: %w", in.failed())
 	case err != nil && ctx.Err() != nil:
 		return ctx.Err()
+	case err != nil && connReset(out.failed()):
+		return fmt.Errorf("%w: %w", errOutputReset, err)
 	}
 	return err
 }
 
-// stdinReader keeps the error of a Read that failed other than at EOF.
-type stdinReader struct {
+// errOutputReset marks a read of an exec's output stream that failed with
+// a reset: of the exec's errors, only it may mean the output simply ended.
+var errOutputReset = errors.New("exec output reset")
+
+// connReset reports whether err is one of resetErrs.
+func connReset(err error) bool {
+	for _, e := range resetErrs {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
+// failReader keeps the error of a Read that failed other than at EOF.
+type failReader struct {
 	r   io.Reader
 	mu  sync.Mutex
 	err error
 }
 
-func (s *stdinReader) Read(p []byte) (int, error) {
+func (s *failReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
 	if err != nil && err != io.EOF {
 		s.mu.Lock()
@@ -1431,7 +1461,7 @@ func (s *stdinReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (s *stdinReader) failed() error {
+func (s *failReader) failed() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.err
