@@ -111,6 +111,20 @@ func errMismatch(dir string) error {
 		CertFile, dir, KeyFile)
 }
 
+// An Instance CA's subject is O=gcpemu, CN=gcpemu local CA (INSTANCE).
+const (
+	caOrganization = "gcpemu"
+	caNamePrefix   = "gcpemu local CA ("
+)
+
+// IsInstanceCA reports whether c is an Instance CA, of any Instance: a CA
+// certificate with the subject every Instance CA has. The Public roots
+// never hold one (#1138).
+func IsInstanceCA(c *x509.Certificate) bool {
+	return c.IsCA && len(c.Subject.Organization) == 1 && c.Subject.Organization[0] == caOrganization &&
+		strings.HasPrefix(c.Subject.CommonName, caNamePrefix) && strings.HasSuffix(c.Subject.CommonName, ")")
+}
+
 // Rotate replaces the root CA with a new one (`gcpemu ca rotate`). Leaf
 // certificates issued by the old root stop verifying once clients trust
 // only the new one.
@@ -127,8 +141,8 @@ func (c *CA) generate(instance string) error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial(),
 		Subject: pkix.Name{
-			Organization: []string{"gcpemu"},
-			CommonName:   fmt.Sprintf("gcpemu local CA (%s)", instance),
+			Organization: []string{caOrganization},
+			CommonName:   caNamePrefix + instance + ")",
 		},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(10, 0, 0),

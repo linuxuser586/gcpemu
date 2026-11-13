@@ -50,7 +50,7 @@
 //     gRPC through to the gateway with Host / :authority intact.
 //   - Trust: nodes add the CA to their system bundle, and a mutating
 //     admission webhook served by the emulator (cainject.go) mounts a
-//     bundle of the host's system roots plus the emulator CA into every
+//     bundle of the Public roots plus the Instance CA into every
 //     pod at /etc/ssl/certs/ca-certificates.crt and sets SSL_CERT_FILE,
 //     except in kube-system and in namespaces or pods labelled
 //     gcpemu.dev/inject=disabled.

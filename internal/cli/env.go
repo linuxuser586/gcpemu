@@ -58,7 +58,7 @@ func (o *rootOpts) envCmd() *cobra.Command {
 // envFlags registers the flags that choose clientEnv's variables, for
 // `env` and `run`.
 func envFlags(f *pflag.FlagSet, trustCA, noUniverse *bool) {
-	f.BoolVar(trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the system roots plus the emulator CA")
+	f.BoolVar(trustCA, "trust", false, "also set SSL_CERT_FILE to a bundle of the host's Public roots plus the Instance CA")
 	f.BoolVar(noUniverse, "no-universe", false, "leave out CLOUDSDK_CORE_UNIVERSE_DOMAIN, so gcloud stays in Google's universe and keeps its stored credentials; GOOGLE_CLOUD_UNIVERSE_DOMAIN stays, since emulator keys need it")
 }
 

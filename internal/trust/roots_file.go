@@ -15,12 +15,13 @@ var systemFiles = []string{
 	"/etc/ssl/cert.pem",                                 // Alpine, macOS
 }
 
-// systemRoots returns the first system bundle file that exists.
-func systemRoots() []byte {
+// fileRoots returns the first system bundle file that exists, and its
+// path.
+func fileRoots() ([]byte, string) {
 	for _, f := range systemFiles {
 		if b, err := os.ReadFile(f); err == nil && len(b) > 0 {
-			return b
+			return b, f
 		}
 	}
-	return nil
+	return nil, ""
 }

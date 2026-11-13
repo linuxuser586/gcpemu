@@ -9,6 +9,8 @@ import (
 
 	"cloud.google.com/go/networksecurity/apiv1/networksecuritypb"
 	cmv1 "google.golang.org/api/certificatemanager/v1"
+
+	"github.com/linuxuser586/gcpemu/internal/ca"
 )
 
 const (
@@ -109,6 +111,16 @@ func TestBackendAuthenticationREST(t *testing.T) {
 	issued, _ := e.inst.Internal().Env.CA.ServerCert("svc.test")
 	if _, err := issued.Leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "svc.test"}); err != nil {
 		t.Fatalf("public roots: %v", err)
+	}
+	// ... but not another Instance's CA (#1138; trust's tests drop one the
+	// host trusts from the Public roots).
+	other, err := ca.Load(t.TempDir(), "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, _ := other.ServerCert("svc.test")
+	if _, err := foreign.Leaf.Verify(x509.VerifyOptions{Roots: roots, DNSName: "svc.test"}); err == nil {
+		t.Fatal("public roots trust another Instance's CA")
 	}
 
 	// Server TLS policy (frontend mTLS) via the gRPC client.
