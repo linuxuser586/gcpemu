@@ -82,17 +82,17 @@ func TestDNSRecord(t *testing.T) {
 }
 
 func TestMaskAndFilter(t *testing.T) {
-	paths, err := maskPaths(kCert, obj{}, []string{"description", "labels", "self_managed"})
-	if err != nil || strings.Join(paths, ",") != "description,labels,selfManaged" {
-		t.Fatalf("%v %v", paths, err)
+	m, err := parseMask(kCert, []string{"description", "labels", "self_managed"})
+	if err != nil || strings.Join(m.paths, ",") != "description,labels,selfManaged" {
+		t.Fatalf("%v %v", m.paths, err)
 	}
-	if _, err := maskPaths(kCert, obj{}, []string{"bogus"}); err == nil {
+	if _, err := parseMask(kCert, []string{"bogus"}); err == nil {
 		t.Fatal("unknown path accepted")
 	}
-	if _, err := maskPaths(kCert, obj{}, nil); err == nil {
+	if _, err := parseMask(kCert, nil); err == nil {
 		t.Fatal("certificatemanager requires a mask")
 	}
-	if paths, _ := maskPaths(kBAC, obj{}, nil); len(paths) == 0 {
+	if m, _ := parseMask(kBAC, nil); len(m.paths) == 0 {
 		t.Fatal("networksecurity without mask replaces all fields")
 	}
 	o := obj{"name": "x", "labels": map[string]any{"env": "prod"}, "scope": "CLIENT_AUTH"}

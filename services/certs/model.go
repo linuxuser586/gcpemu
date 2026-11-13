@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
-	"unicode"
 
 	"cloud.google.com/go/certificatemanager/apiv1/certificatemanagerpb"
 	"cloud.google.com/go/networksecurity/apiv1/networksecuritypb"
@@ -135,27 +134,6 @@ func clone(o obj) obj {
 	out := obj{}
 	_ = json.Unmarshal(b, &out)
 	return out
-}
-
-// camel converts a snake_case field mask segment to lowerCamel JSON form.
-func camel(s string) string {
-	if !strings.Contains(s, "_") {
-		return s
-	}
-	var b strings.Builder
-	up := false
-	for _, r := range s {
-		if r == '_' {
-			up = true
-			continue
-		}
-		if up {
-			r = unicode.ToUpper(r)
-			up = false
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 // getPath returns the value at a dotted path.
