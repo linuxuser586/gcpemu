@@ -48,9 +48,13 @@ type Gateway struct {
 	apiOwners  map[string]string       // mounted API name or host → emu service
 	srv        *http.Server
 	ln         *closeErrListener // what Serve serves on
-	adminToken string            // see SetAdminToken
-	gate       gate              // see CloseGate
-	front      *handoff          // see ServeFrontend
+	// endConns ends every request's context once the HTTP server has
+	// stopped, so connections it handed over, such as a Delegated API's
+	// switched to another protocol, close too.
+	endConns   context.CancelFunc
+	adminToken string   // see SetAdminToken
+	gate       gate     // see CloseGate
+	front      *handoff // see ServeFrontend
 	// delegated are the Delegated APIs, delegatedHosts them by hostname
 	// (see Delegate).
 	delegated      []*delegatedAPI
@@ -636,6 +640,9 @@ func (g *Gateway) Serve(l net.Listener) error {
 	g.srv = NewServer(g, g.env.Log)
 	g.srv.ConnContext = connContext
 	g.srv.ConnState = g.connState
+	base, endConns := context.WithCancel(context.Background())
+	g.srv.BaseContext = func(net.Listener) context.Context { return base }
+	g.endConns = endConns
 	srv := g.srv
 	g.mu.Unlock()
 	// Shutdown closes g.front before srv, so its Serve can end with
@@ -658,11 +665,12 @@ func (g *Gateway) Serve(l net.Listener) error {
 
 // Shutdown stops the gateway. Its HTTP server drains within ctx; if ctx
 // ends first, the connections still open are closed by force, which is
-// the normal end of a shutdown rather than an error (#1034). Shutdown
-// leaves no connection open, and reports only a real failure to stop.
+// the normal end of a shutdown rather than an error (#1034). Then it
+// ends every request's context, so connections the server handed over
+// close as their handlers return. It reports only a real failure to stop.
 func (g *Gateway) Shutdown(ctx context.Context) error {
 	g.mu.RLock()
-	srv, ln := g.srv, g.ln
+	srv, ln, endConns := g.srv, g.ln, g.endConns
 	g.mu.RUnlock()
 	g.front.Close()
 	g.grpc.Stop()
@@ -670,6 +678,7 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	err := srv.Shutdown(ctx)
+	defer endConns()
 	if drainCut := ctx.Err() != nil && errors.Is(err, ctx.Err()); !drainCut {
 		return err
 	}

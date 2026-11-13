@@ -274,3 +274,56 @@ func TestShutdownEndedCtxListenerCloseFails(t *testing.T) {
 	}
 	assertClosed(t, c)
 }
+
+// upgrading is an External emulator that switches every request's
+// connection to another protocol and holds it until the client goes.
+func upgrading(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "websocket")
+		w.WriteHeader(http.StatusSwitchingProtocols)
+		c, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = io.Copy(io.Discard, c)
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { srv.Close() })
+	return l.Addr().String()
+}
+
+// TestShutdownUpgradedConn: a connection a Delegated API switched to
+// another protocol, which the HTTP server no longer tracks, is closed
+// too, whether the drain finishes in time or not (#1034).
+func TestShutdownUpgradedConn(t *testing.T) {
+	for name, ctx := range map[string]func() context.Context{"ended": ended, "in time": context.Background} {
+		t.Run(name, func(t *testing.T) {
+			s := startGateway(t, nil)
+			if err := s.g.Delegate("firestore", upgrading(t)); err != nil {
+				t.Fatal(err)
+			}
+			c := s.dial(t)
+			if _, err := io.WriteString(c, "GET /firestore/ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"); err != nil {
+				t.Fatal(err)
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusSwitchingProtocols {
+				t.Fatalf("status = %d, want 101", resp.StatusCode)
+			}
+			if err := s.g.Shutdown(ctx()); err != nil {
+				t.Fatalf("Shutdown = %v, want nil", err)
+			}
+			assertClosed(t, c)
+		})
+	}
+}
