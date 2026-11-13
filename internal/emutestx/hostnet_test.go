@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
 )
@@ -125,36 +126,23 @@ func TestHostNetworkKilledRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReclaimEnded after a killed run: %v", err)
 	}
-	if !reclaimed && !reclaimedWithin(t, cl, name, dir, killedRunReclaimWait) {
-		t.Fatalf("ReclaimEnded after a killed run = false, and nothing reclaimed network %s or dir %s within %v", name, dir, killedRunReclaimWait)
-	}
-	if networkExists(t, cl, name) {
-		t.Errorf("network %s is still there after the reclaim", name)
-	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("dir %s is still there after the reclaim: %v", dir, err)
-	}
-}
-
-// killedRunReclaimWait bounds how long TestHostNetworkKilledRun waits for
-// another process's reclaim to finish.
-const killedRunReclaimWait = 5 * time.Second
-
-// reclaimedWithin reports whether network name and dir are both gone within
-// wait.
-func reclaimedWithin(t *testing.T, cl *runtime.Client, name, dir string, wait time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(wait)
-	for {
+	gone := func() (net, d bool) {
 		_, statErr := os.Stat(dir)
-		if os.IsNotExist(statErr) && !networkExists(t, cl, name) {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(100 * time.Millisecond)
+		return !networkExists(t, cl, name), os.IsNotExist(statErr)
 	}
+	if reclaimed {
+		if net, d := gone(); !net || !d {
+			t.Fatalf("ReclaimEnded reported a reclaim but left network gone=%v, dir gone=%v", net, d)
+		}
+		return
+	}
+	// Another process holds the lock or has reclaimed the dir already.
+	hosttest.Eventually(t, 5*time.Second, "another process to reclaim network "+name+" and dir "+dir,
+		func() bool { net, d := gone(); return net && d },
+		func() string {
+			net, d := gone()
+			return fmt.Sprintf("this test's ReclaimEnded reported false; network gone=%v, dir gone=%v", net, d)
+		})
 }
 
 // TestHostNetworkRemovedAtEnd: a test that ends normally removes its
