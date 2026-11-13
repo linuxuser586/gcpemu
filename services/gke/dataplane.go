@@ -236,6 +236,15 @@ func (s *Service) restore(ctx context.Context, key string) {
 	}
 }
 
+// markStopping reports a cluster whose delete is run again on start as
+// STOPPING until it ends.
+func (s *Service) markStopping(key string) {
+	_ = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
+		c.Status = containerpb.Cluster_STOPPING
+		return nil
+	})
+}
+
 // markRestoring reports a cluster whose containers are being recreated as
 // RECONCILING until it is back. Its Cluster server is brought up afresh,
 // so the count of its exits is cleared.
@@ -1666,11 +1675,17 @@ const annoUserLabels = "gcpemu.io/node-pool-labels"
 // ---- teardown ----
 
 // teardown deletes a cluster: NEGs, containers, volumes, addresses and
-// finally the record and any staged datastore.
+// finally the record and any staged datastore. If the data plane cannot be
+// removed, the record stays, in ERROR (markDeleteFailed).
 func (s *Service) teardown(ctx context.Context, key string) error {
-	if err := s.destroyDataPlane(ctx, key); err != nil {
+	destroy := s.destroyDataPlane
+	if s.dataPlaneDestroy != nil {
+		destroy = s.dataPlaneDestroy
+	}
+	if err := destroy(ctx, key); err != nil {
 		var ae *apierr.Error
 		if !errors.As(err, &ae) {
+			s.markDeleteFailed(ctx, key, err)
 			return err
 		}
 		// No runtime: there is nothing to remove.
@@ -1693,6 +1708,23 @@ func (s *Service) teardown(ctx context.Context, key string) error {
 		_ = os.Remove(p)
 	}
 	return err
+}
+
+// markDeleteFailed reports a cluster whose delete, run on ctx, could not
+// remove its data plane as ERROR with the failure, as GKE does, and records
+// that its delete failed so that the next start runs it again (ADR 0081).
+// A delete cut off by Reset or shutdown keeps STOPPING, which the next start
+// also runs again.
+func (s *Service) markDeleteFailed(ctx context.Context, key string, err error) {
+	if halted(ctx) {
+		return
+	}
+	_ = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
+		c.Status = containerpb.Cluster_ERROR
+		c.StatusMessage = apierr.From(err).Message
+		rec.Int.DeleteFailed = true
+		return nil
+	})
 }
 
 // destroyDataPlane removes everything a cluster runs.

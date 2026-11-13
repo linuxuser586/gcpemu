@@ -120,6 +120,9 @@ type Service struct {
 	// beforeResetTeardown, set by tests, runs once Reset has started a new
 	// background generation, before it tears data planes down.
 	beforeResetTeardown func()
+	// dataPlaneDestroy, set by tests, replaces destroyDataPlane in a
+	// cluster delete (teardown).
+	dataPlaneDestroy func(ctx context.Context, key string) error
 	// serverWait and serverRestart, set by tests, replace the runtime
 	// calls the watch of a Cluster server makes (serverwatch.go).
 	serverWait    func(ctx context.Context, id string) error
@@ -289,14 +292,19 @@ func (s *Service) recoverClusters() {
 	for _, r := range recs {
 		c := r.cluster()
 		s.index(r.key(), c.Id)
-		switch c.Status {
-		case containerpb.Cluster_PROVISIONING, containerpb.Cluster_RUNNING, containerpb.Cluster_RECONCILING, containerpb.Cluster_ERROR, containerpb.Cluster_DEGRADED:
-			key := r.key()
+		key := r.key()
+		switch {
+		// A cluster whose delete failed (ADR 0081) is deleted again, as one
+		// whose delete the stop cut off, and is STOPPING while it is.
+		case c.Status == containerpb.Cluster_STOPPING, c.Status == containerpb.Cluster_ERROR && r.Int.DeleteFailed:
+			if c.Status == containerpb.Cluster_ERROR {
+				s.markStopping(key)
+			}
+			s.goBackground(func(ctx context.Context) { _ = s.teardown(ctx, key) })
+		case c.Status == containerpb.Cluster_PROVISIONING, c.Status == containerpb.Cluster_RUNNING, c.Status == containerpb.Cluster_RECONCILING,
+			c.Status == containerpb.Cluster_ERROR, c.Status == containerpb.Cluster_DEGRADED:
 			s.markRestoring(key)
 			s.goBackground(func(ctx context.Context) { s.restore(ctx, key) })
-		case containerpb.Cluster_STOPPING:
-			key := r.key()
-			s.goBackground(func(ctx context.Context) { _ = s.teardown(ctx, key) })
 		}
 	}
 }
