@@ -1125,16 +1125,51 @@ func (c *Client) UnpauseContainer(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/unpause", nil, nil, nil)
 }
 
+// removeRetryWaits are the pauses before each retry of a remove that hit
+// the runtime's kill/exit race: three attempts over about two seconds.
+var removeRetryWaits = []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond}
+
 // RemoveContainer deletes a container (with anonymous volumes); a missing
-// container is not an error.
+// container is not an error. A forced remove that races the container's
+// own exit ("did not receive an exit event") is retried a few times; if
+// it never succeeds, that first error is returned (#1142). Other runtime
+// errors are returned at once.
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {
 	c.forgetStart(id)
-	err := c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(id),
-		url.Values{"force": {strconv.FormatBool(force)}, "v": {"true"}}, nil, nil)
-	if errors.Is(err, ErrNotFound) {
-		return nil
+	remove := func() error {
+		err := c.do(ctx, http.MethodDelete, "/containers/"+url.PathEscape(id),
+			url.Values{"force": {strconv.FormatBool(force)}, "v": {"true"}}, nil, nil)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
 	}
-	return err
+	first := remove()
+	if !isExitRace(first) {
+		return first
+	}
+	for _, wait := range removeRetryWaits {
+		select {
+		case <-ctx.Done():
+			return first
+		case <-time.After(wait):
+		}
+		err := remove()
+		if err == nil {
+			return nil
+		}
+		if !isExitRace(err) {
+			return first
+		}
+	}
+	return first
+}
+
+// isExitRace reports the runtime's transient failure to remove a
+// container whose kill raced its own exit.
+func isExitRace(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.Status >= 500 && strings.Contains(ae.Message, "did not receive an exit event")
 }
 
 // InspectContainer returns container state.
