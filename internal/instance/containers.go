@@ -28,8 +28,10 @@ type containers struct {
 	rt    *runtime.Manager
 	plane *netplane.Plane
 	err   error
-	// connected is rt, for what must not wait for a connection, which holds
-	// mu for as long as the runtime takes.
+	// conn is the connection in progress; nil while none runs.
+	conn *connection
+	// connected is rt, for the runtime probe, which must never wait for mu
+	// (#1025).
 	connected atomic.Pointer[runtime.Manager]
 
 	statusMu sync.Mutex
@@ -43,6 +45,29 @@ type containers struct {
 	disruptedAt  time.Time
 }
 
+// connection is one attempt to connect to the runtime, which every caller
+// that comes while it runs waits for.
+type connection struct {
+	done chan struct{} // closes when it ends, after rt and err are set
+	rt   *runtime.Manager
+	err  error
+}
+
+// reclaimLimit limits the Reclaim of a connection: several times the slowest
+// measured, and short enough that a runtime that hangs during one leaves the
+// Instance not ready for no longer (ADR 0068).
+const reclaimLimit = 2 * time.Minute
+
+// reclaimTime is reclaimLimit, a variable for tests.
+var reclaimTime = reclaimLimit
+
+// infoTime limits asking a runtime that detection found for its Info, which
+// no caller's context limits any more (#1033): a runtime that hangs there
+// would otherwise hold the connection until shutdown. A connection that
+// reaches it ends with a transient error, and the next caller connects
+// again. Info answers as fast as detection's 3s ping; 10s leaves room.
+const infoTime = 10 * time.Second
+
 // Connected implements emu.ConnectedRuntime.
 func (c *containers) Connected() *runtime.Manager {
 	c.mu.Lock()
@@ -50,31 +75,77 @@ func (c *containers) Connected() *runtime.Manager {
 	return c.rt
 }
 
-// Runtime implements emu.Containers. It holds c.mu while it connects, so
-// shutdown ends a connection in progress and, once begun, lets none start: a
-// runtime that hangs while connecting never holds Teardown (#1028). A connection
-// cut short leaves nothing behind: no error to repeat, and no runtime for
-// Teardown to clean up on. Detection follows the Instance's shutdown and not
-// ctx, as one caller leaving doesn't rule out the runtime.
+// Runtime implements emu.Containers. The connection is the Instance's and not
+// the caller's (ADR 0068): one runs at a time, on a context only shutdown ends,
+// so a runtime that hangs while connecting never holds Teardown (#1028). ctx
+// limits only how long the caller waits for it; a caller that stops waiting
+// gets a transient error, and the connection goes on. Once shutdown has begun
+// no connection starts.
 func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.rt != nil || c.err != nil {
+		defer c.mu.Unlock()
 		return c.rt, c.err
 	}
-	stopping := c.in.stopping
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	defer context.AfterFunc(stopping, cancel)()
-	cl, err := runtime.DetectContext(stopping)
+	if c.in.stopping.Err() != nil {
+		c.mu.Unlock()
+		return nil, ErrShutDown
+	}
+	conn := c.conn
+	if conn == nil {
+		conn = &connection{done: make(chan struct{})}
+		c.conn = conn
+		go c.connect(conn)
+	}
+	c.mu.Unlock()
+	select {
+	case <-conn.done:
+		return conn.rt, conn.err
+	case <-ctx.Done():
+		select { // a connection that has just ended is the answer
+		case <-conn.done:
+			return conn.rt, conn.err
+		default:
+		}
+		return nil, fmt.Errorf("the container runtime connection is still in progress: %w", ctx.Err())
+	}
+}
+
+// connect runs conn and records what it ends with. A connection shutdown cuts
+// short leaves nothing behind: no error to repeat, and no runtime for Teardown
+// to clean up on.
+func (c *containers) connect(conn *connection) {
+	rt, err := c.dial(c.in.stopping)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.in.stopping.Err() != nil {
+		rt, err = nil, ErrShutDown
+	}
+	switch {
+	case rt != nil:
+		c.rt = rt
+		c.connected.Store(rt)
+	case errors.Is(err, emu.ErrNoRuntime):
+		c.err = err
+	}
+	conn.rt, conn.err = rt, err
+	c.conn = nil
+	close(conn.done)
+}
+
+// dial detects the runtime, reclaims the Instance's orphans and tells
+// services the Self addresses, on ctx, which shutdown ends.
+func (c *containers) dial(ctx context.Context) (*runtime.Manager, error) {
+	cl, err := runtime.DetectContext(ctx)
 	if err != nil {
-		if stopping.Err() != nil {
+		if ctx.Err() != nil {
 			return nil, ErrShutDown
 		}
-		c.err = emu.NoRuntime(err)
-		return nil, c.err
+		return nil, emu.NoRuntime(err)
 	}
-	info, err := cl.Info(ctx)
+	ictx, cancel := context.WithTimeout(ctx, infoTime)
+	info, err := cl.Info(ictx)
+	cancel()
 	if err != nil {
 		return nil, err // transient; retry next time
 	}
@@ -95,15 +166,19 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 	cl.SetReserved(c.reservedAddrs)
 	m.VM = runtime.DecideVM(c.in.Config.VMRuntime, cl.Self() != "", info)
 	m.LoopbackAliases = runtime.DecideLoopbackAliases(c.in.Config.LoopbackAliases, info)
-	err = m.Reclaim(ctx)
-	if stopping.Err() != nil {
+	// A Reclaim runs once and is not tried again in this run: it removes every
+	// container the Instance ID tags, the run's own too once connected.
+	rctx, cancel := context.WithTimeout(ctx, reclaimTime)
+	err = m.Reclaim(rctx)
+	cancel()
+	if ctx.Err() != nil {
 		return nil, ErrShutDown
 	}
 	if err != nil {
 		m.Log.Warn("reclaiming orphaned containers", "err", err)
 	}
 	c.selfJoined(ctx, m)
-	if stopping.Err() != nil {
+	if ctx.Err() != nil {
 		return nil, ErrShutDown
 	}
 	m.Log.Info("container runtime connected", "runtime", info.Name, "version", info.Version, "endpoint", cl.Endpoint, "selfContainer", cl.Self())
@@ -113,15 +188,13 @@ func (c *containers) Runtime(ctx context.Context) (*runtime.Manager, error) {
 			m.Log.Info("loopback aliases " + m.LoopbackAliases.String())
 		}
 	}
-	c.rt = m
-	c.connected.Store(m)
 	return m, nil
 }
 
 // selfJoined tells services the Self address on each network the
 // Instance's container has joined (emu.SelfJoiner); on the host there is
-// none. It runs with c.mu held and SelfJoined writes the store, so neither
-// SelfJoined nor a store transaction may call Runtime.
+// none. It runs within the connection and SelfJoined writes the store, so
+// neither SelfJoined nor a store transaction may wait for Runtime.
 func (c *containers) selfJoined(ctx context.Context, m *runtime.Manager) {
 	addrs := map[string]string{}
 	if m.Self() != "" {
@@ -232,6 +305,12 @@ func (c *containers) shutdown(cleanupBy time.Time) error {
 	c.statusMu.Unlock()
 	if probe != nil { // in.stopping has cancelled it, and no other starts
 		<-probe
+	}
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn != nil { // in.stopping ends it, leaving nothing
+		<-conn.done
 	}
 	c.mu.Lock()
 	rt, plane := c.rt, c.plane
