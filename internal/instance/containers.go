@@ -222,8 +222,11 @@ func (c *containers) reset(ctx context.Context) error {
 
 // shutdown removes the instance's containers and probe networks (and, for
 // ephemeral instances, its other networks and volumes) after services have
-// stopped.
-func (c *containers) shutdown() error {
+// stopped. Removing the VM relay and the runtime's Cleanup share one limit
+// of their own, not derived from the shutdown's ctx: cleanupTime, ending
+// no later than cleanupBy unless it is zero (ADR 0078). If Cleanup could
+// not finish, it warns once that containers may be left for Reclaim.
+func (c *containers) shutdown(cleanupBy time.Time) error {
 	c.statusMu.Lock()
 	probe := c.statusProbe
 	c.statusMu.Unlock()
@@ -233,15 +236,23 @@ func (c *containers) shutdown() error {
 	c.mu.Lock()
 	rt, plane := c.rt, c.plane
 	c.mu.Unlock()
+	deadline := time.Now().Add(cleanupTime)
+	if !cleanupBy.IsZero() && cleanupBy.Before(deadline) {
+		deadline = cleanupBy
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 	if plane != nil {
-		plane.Close()
+		plane.Close(ctx)
 	}
 	if rt == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	return rt.Cleanup(ctx, c.in.Config.Ephemeral)
+	err := rt.Cleanup(ctx, c.in.Config.Ephemeral)
+	if err != nil {
+		c.in.Env.Log.Warn("shutting down: could not confirm its containers were removed; they may still be running, and the next start with this Instance ID tries to remove them (Reclaim)")
+	}
+	return err
 }
 
 // ContainerInfo describes one container the instance owns (admin API,

@@ -293,9 +293,9 @@ func (p *Plane) Reset(ctx context.Context) error {
 	return r.Close(ctx)
 }
 
-// Close stops all forwarders and removes the VM relay. Networks are left
-// to runtime cleanup.
-func (p *Plane) Close() {
+// Close stops all forwarders and removes the VM relay, for as long as ctx
+// allows. Networks, and a relay ctx cuts short, are left to runtime cleanup.
+func (p *Plane) Close(ctx context.Context) {
 	p.mu.Lock()
 	p.closed = true
 	for _, f := range p.fwd {
@@ -312,8 +312,6 @@ func (p *Plane) Close() {
 	p.relay = nil
 	p.mu.Unlock()
 	if r != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 		if err := r.Close(ctx); err != nil {
 			p.log.Warn("removing the VM relay", "err", err)
 		}

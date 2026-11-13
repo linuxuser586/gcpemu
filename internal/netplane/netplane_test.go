@@ -37,7 +37,7 @@ func TestServicesNetwork(t *testing.T) {
 	defer srv.Close()
 
 	p := netplane.New(m, func() map[string]string { return map[string]string{"gateway": l.Addr().String()} }, "127.0.0.1", slog.Default())
-	defer p.Close()
+	defer p.Close(context.Background())
 	svc, err := p.Services(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestNetworkBridge(t *testing.T) {
 	m := &runtime.Manager{Client: cl, InstanceID: "nptestbridge", Ephemeral: true, Log: slog.Default()}
 	t.Cleanup(func() { _ = m.Cleanup(context.Background(), true) })
 	p := netplane.New(m, func() map[string]string { return nil }, "127.0.0.1", slog.Default())
-	defer p.Close()
+	defer p.Close(context.Background())
 	for name, get := range map[string]func(context.Context) (netplane.Net, error){"services": p.Services, "external": p.External} {
 		n, err := get(ctx)
 		if err != nil {

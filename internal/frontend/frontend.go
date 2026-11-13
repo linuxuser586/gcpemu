@@ -195,9 +195,12 @@ func (f *Frontend) Addr() string {
 }
 
 // Close stops the listener and open connections, and the --gfe-bind
-// listeners (StopLAN).
+// listeners (StopLAN), allowing a relay left up to 30s to be removed. The
+// Instance calls StopLAN first, with its Teardown's ctx.
 func (f *Frontend) Close() error {
-	f.StopLAN()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	f.StopLAN(ctx)
+	cancel()
 	f.mu.Lock()
 	f.closed = true
 	f.cancel()

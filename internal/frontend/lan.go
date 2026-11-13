@@ -200,9 +200,11 @@ func (f *Frontend) lanSkipped(addr string, err error) {
 }
 
 // StopLAN stops the --gfe-bind listeners and removes the LAN front-end
-// relay, one still starting included. The Instance calls it before it
-// removes its containers, so that no relay starts after.
-func (f *Frontend) StopLAN() {
+// relay, one still starting included, for as long as ctx allows: a relay
+// ctx cuts short is left to the runtime's Cleanup, which finds it by the
+// Instance's label. The Instance calls it before it removes its
+// containers, so that no relay starts after.
+func (f *Frontend) StopLAN(ctx context.Context) {
 	f.stopRelay()
 	f.mu.Lock()
 	for _, s := range f.lan {
@@ -215,7 +217,7 @@ func (f *Frontend) StopLAN() {
 	f.lan, f.lanAddrs, f.relay = nil, nil, nil
 	f.mu.Unlock()
 	if relay != nil {
-		closeRelay(relay)
+		relay.Close(ctx)
 	}
 }
 
