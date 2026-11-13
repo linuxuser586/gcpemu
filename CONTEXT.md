@@ -649,6 +649,10 @@ A physical copy of a Cloud SQL instance's data that point-in-time recovery repla
 A Cloud SQL instance's archived transaction log together with its Base backups: everything its Recovery window is built from.
 _Avoid_: archive (unqualified), transaction log storage
 
+**WAL archive command**:
+The command a Cloud SQL instance with point-in-time recovery runs to add each completed segment of its transaction log to its WAL archive, compressed. A Cloud SQL instance created before compression still runs the uncompressed command until it restarts. From the moment the restart completes, every segment is archived compressed, including segments completed before the restart that were not yet archived. Segments the uncompressed command already archived stay uncompressed, and recovery reads both kinds.
+_Avoid_: old command, archive_command (outside the code)
+
 **Request log**:
 The emulator's log of API requests it has received.
 _Avoid_: recording, records
