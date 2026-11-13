@@ -1,6 +1,6 @@
 # Teardown waits for `Start`, up to the shutdown's deadline
 
-Amended by ADR 0078, which gives removing the Instance's containers a limit of its own, ending within 55s of a shutdown request.
+Amended by ADR 0078, which gives removing the Instance's containers a limit of its own, ending within 55s of a shutdown request. Amended by ADR 0080, under which Teardown closes the API gateway's gate and saves Managed emulators' data before it stops Services.
 
 The Admin API is served before Services start, so `POST /_emu/v1/shutdown` could run alongside `Instance.Start`, and nothing ordered the two. #1011 showed the result: `Start` wrote the PID and endpoints files after `shutdown` removed them, and started Services that had already been stopped, which for Cloud SQL and Artifact Registry revives background work. A stop by signal never had this problem, because `host` shuts down only after `Start` returns. We decided that every shutdown works that way. Shutdown begins at once, so `WaitReady` and Seeding hear of it immediately and the context `Start` gives its steps is cancelled. Teardown, which stops Services and removes runtime files, runs only once `Start` has returned, and `Start` returns `ErrShutDown` at its next check: it starts no further Service, writes no runtime files and does not log that it started. Once shutdown has begun, a call to `Start` does nothing at all.
 
