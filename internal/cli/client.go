@@ -137,13 +137,32 @@ type checkConn struct {
 	// seen is how much of httpPrefix has arrived. net/http reads a
 	// connection from one goroutine.
 	seen int
+	// verdict is the read's errNotHTTP or errUnasked, once it gave one.
+	// net/http closes the connection then, and may report the request's
+	// write failing on that rather than the read (#1162).
+	verdict atomic.Pointer[error]
 }
 
 func newCheckConn(c net.Conn) net.Conn { return &checkConn{Conn: c} }
 
+// judge records err as the verdict and returns it.
+func (c *checkConn) judge(err error) error {
+	c.verdict.CompareAndSwap(nil, &err)
+	return err
+}
+
+// Write reports the read's verdict in place of its own failure, so the check
+// finds the same thing whichever side net/http reports.
 func (c *checkConn) Write(b []byte) (int, error) {
 	c.asked.Store(true)
-	return c.Conn.Write(b)
+	if v := c.verdict.Load(); v != nil {
+		return 0, *v
+	}
+	n, err := c.Conn.Write(b)
+	if v := c.verdict.Load(); err != nil && v != nil {
+		return n, *v
+	}
+	return n, err
 }
 
 func (c *checkConn) Read(b []byte) (int, error) {
@@ -153,10 +172,10 @@ func (c *checkConn) Read(b []byte) (int, error) {
 	}
 	first := b[:min(n, len(httpPrefix)-c.seen)]
 	if !strings.HasPrefix(httpPrefix[c.seen:], string(first)) {
-		return 0, errNotHTTP
+		return 0, c.judge(errNotHTTP)
 	}
 	if !c.asked.Load() {
-		return 0, errUnasked
+		return 0, c.judge(errUnasked)
 	}
 	c.seen += len(first)
 	return n, err
