@@ -1,23 +1,21 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 
 import { expect, goto, test } from './fixtures'
+import { bin, newTestDir, stopInstance, type TestDir } from './instance'
 
 // FR-UI-009: beyond loopback the console needs the admin token. This file
 // runs its own Instance bound to 0.0.0.0 and opens the console URL it
 // prints, as a user would.
 
-const exe = process.platform === 'win32' ? '.exe' : ''
-const bin = process.env.GCPEMU_BIN ?? path.resolve(import.meta.dirname, `../../bin/gcpemu${exe}`)
+// GCPEMU_ADMIN_TOKEN unset: the Instance makes one and prints it.
+const env = { ...process.env, GCPEMU_ADMIN_TOKEN: '' }
 
 let child: ChildProcess | undefined
-let dir = ''
+let testDir: TestDir | undefined
 let consoleURL = ''
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(path.join(os.tmpdir(), 'gcpemu-console-e2e-token-'))
+  testDir = await newTestDir()
   const proc = spawn(
     bin,
     [
@@ -33,10 +31,9 @@ test.beforeAll(async () => {
       '--log-level',
       'warn',
       '--data-dir',
-      dir,
+      testDir.dir,
     ],
-    // GCPEMU_ADMIN_TOKEN unset: the Instance makes one and prints it.
-    { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, GCPEMU_ADMIN_TOKEN: '' } },
+    { stdio: ['ignore', 'ignore', 'pipe'], env },
   )
   child = proc
   consoleURL = await new Promise<string>((resolve, reject) => {
@@ -54,9 +51,9 @@ test.beforeAll(async () => {
   })
 })
 
-test.afterAll(() => {
-  child?.kill('SIGTERM')
-  if (dir) rmSync(dir, { recursive: true, force: true })
+test.afterAll(async () => {
+  if (child && testDir) await stopInstance(child, testDir, env)
+  else await testDir?.release()
 })
 
 test('FR-UI-009: the printed console URL opens the console beyond loopback', async ({

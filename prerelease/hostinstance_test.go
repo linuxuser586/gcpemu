@@ -184,56 +184,9 @@ func reclaimEndedTests(t *testing.T, rts []string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := reclaimEnded(ctx, testDirRoot, cls); err != nil {
+	if err := instance.ReclaimEndedUnder(ctx, testDirRoot, cls); err != nil {
 		t.Logf("reclaiming the Instances of ended tests: %v", err)
 	}
-}
-
-// reclaimEnded reclaims every Test data dir whose test has ended that an
-// object on one of cls records, then each under root that none records,
-// such as one whose Instance made no object (#921). A nil client is a
-// runtime that did not answer; while there is one, or a runtime fails to
-// list its objects, the dirs that no object records are kept: their
-// objects may be there, and only their dir records whose they are.
-func reclaimEnded(ctx context.Context, root string, cls []*runtime.Client) error {
-	var errs []error
-	recorded := map[string]bool{}
-	complete := len(cls) > 0
-	for _, cl := range cls {
-		if cl == nil {
-			complete = false
-			continue
-		}
-		tagged, err := instance.FindTagged(ctx, cl)
-		if err != nil {
-			errs = append(errs, err)
-			complete = false
-			continue
-		}
-		for _, a := range tagged {
-			recorded[a.ID] = true
-			for _, dir := range a.Dirs {
-				if _, err := instance.ReclaimEnded(ctx, cl, a, dir); err != nil {
-					errs = append(errs, fmt.Errorf("Instance %s in %s: %w", a.ID, dir, err))
-				}
-			}
-		}
-	}
-	if !complete {
-		return errors.Join(errs...)
-	}
-	// Glob fails only on a malformed pattern.
-	dirs, _ := filepath.Glob(filepath.Join(root, "*"))
-	for _, dir := range dirs {
-		id, _ := os.ReadFile(filepath.Join(dir, instance.IDFile))
-		if recorded[string(id)] {
-			continue // a reclaim above failed, or its test still runs
-		}
-		if _, err := instance.ReclaimEndedDir(ctx, cls[0], dir); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", dir, err))
-		}
-	}
-	return errors.Join(errs...)
 }
 
 // flags select this Instance.

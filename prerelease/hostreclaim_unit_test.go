@@ -286,8 +286,8 @@ func TestRunStartReclaim(t *testing.T) {
 			bare.release()
 			d, cl := useFakeDocker(t, ended, owned)
 
-			if err := reclaimEnded(context.Background(), testDirRoot, []*runtime.Client{cl}); err != nil {
-				t.Fatalf("reclaimEnded: %v", err)
+			if err := instance.ReclaimEndedUnder(context.Background(), testDirRoot, []*runtime.Client{cl}); err != nil {
+				t.Fatalf("ReclaimEndedUnder: %v", err)
 			}
 			for name, pid := range map[string]int{"ended": endedPid, "bare": barePid} {
 				if gone(pid) != tc.killed {
@@ -321,8 +321,8 @@ func TestRunStartReclaimKeepsUnrecorded(t *testing.T) {
 	bare, barePid := startFake(t)
 	bare.release()
 	_, cl := useFakeDocker(t)
-	if err := reclaimEnded(context.Background(), testDirRoot, []*runtime.Client{cl, nil}); err != nil {
-		t.Fatalf("reclaimEnded: %v", err)
+	if err := instance.ReclaimEndedUnder(context.Background(), testDirRoot, []*runtime.Client{cl, nil}); err != nil {
+		t.Fatalf("ReclaimEndedUnder: %v", err)
 	}
 	if !instance.ProcessAlive(barePid) {
 		t.Error("the reclaim stopped the process of a dir no object records")

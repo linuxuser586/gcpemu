@@ -28,7 +28,8 @@ export default defineConfig({
   webServer: {
     command: 'node e2e/emulator.ts',
     wait: { stdout: /gcpemu ready at (?<gcpemu_e2e_url>http:\/\/\S+)/ },
-    timeout: 90_000,
+    // The run-start reclaim (e2e/instance.ts) may take up to 60 s first.
+    timeout: 150_000,
     gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
   },
 })
