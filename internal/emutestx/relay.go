@@ -1,5 +1,7 @@
 // Package emutestx holds test helpers about gcpemu's own internals, for
-// gcpemu's tests only: they inspect an emutest.Instance's VM relay.
+// gcpemu's tests only: they inspect an emutest.Instance's VM relay, and
+// set up objects on the host outside any Instance, tagged so that a killed
+// run's are reclaimed (HostNetwork).
 package emutestx
 
 import (

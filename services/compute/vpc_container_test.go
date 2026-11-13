@@ -89,7 +89,6 @@ func workload(t *testing.T, inst *emutest.Instance, net emu.SubnetNet, ip, gw st
 // freed at any time, it retries for up to 30s, then skips the test.
 func overlap(t *testing.T, rng string) {
 	t.Helper()
-	ctx := context.Background()
 	cl, err := runtime.Detect()
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +96,7 @@ func overlap(t *testing.T, rng string) {
 	name := fmt.Sprintf("gcpemu-test-overlap-%d", rand.Uint32())
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		_, err := cl.CreateNetwork(ctx, runtime.NetworkSpec{Name: name, Subnet: rng})
+		err := emutestx.HostNetwork(t, cl, runtime.NetworkSpec{Name: name, Subnet: rng})
 		if err == nil {
 			break
 		}
@@ -109,7 +108,6 @@ func overlap(t *testing.T, rng string) {
 		}
 		time.Sleep(100*time.Millisecond + rand.N(400*time.Millisecond))
 	}
-	t.Cleanup(func() { _ = cl.RemoveNetwork(context.Background(), name) })
 }
 
 // translated fails unless net, whose Declared range rng overlaps a host
