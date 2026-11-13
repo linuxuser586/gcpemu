@@ -191,6 +191,53 @@ func ReclaimEndedDir(ctx context.Context, cl *runtime.Client, dir string) (recla
 	return ReclaimEnded(ctx, cl, a, dir)
 }
 
+// ReclaimEndedUnder is a run-start reclaim (ADRs 0057, 0077): it reclaims
+// every Test data dir whose test has ended that an object on one of cls
+// records, then each dir directly under root that none records, such as
+// one whose Instance made no object (#921). A nil client is a runtime
+// that did not answer; while there is one, or a runtime fails to list its
+// objects, the dirs that no object records are kept: their objects may be
+// there, and only their dir records whose they are.
+func ReclaimEndedUnder(ctx context.Context, root string, cls []*runtime.Client) error {
+	var errs []error
+	recorded := map[string]bool{}
+	complete := len(cls) > 0
+	for _, cl := range cls {
+		if cl == nil {
+			complete = false
+			continue
+		}
+		tagged, err := FindTagged(ctx, cl)
+		if err != nil {
+			errs = append(errs, err)
+			complete = false
+			continue
+		}
+		for _, a := range tagged {
+			recorded[a.ID] = true
+			for _, dir := range a.Dirs {
+				if _, err := ReclaimEnded(ctx, cl, a, dir); err != nil {
+					errs = append(errs, fmt.Errorf("Instance %s in %s: %w", a.ID, dir, err))
+				}
+			}
+		}
+	}
+	if !complete {
+		return errors.Join(errs...)
+	}
+	// Glob fails only on a malformed pattern.
+	dirs, _ := filepath.Glob(filepath.Join(root, "*"))
+	for _, dir := range dirs {
+		if id := ReadID(dir); id != "" && recorded[id] {
+			continue // a reclaim above failed, or its test still runs
+		}
+		if _, err := ReclaimEndedDir(ctx, cls[0], dir); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", dir, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // How long stopProcess waits for a process to exit once asked to stop,
 // and once killed.
 const (

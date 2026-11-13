@@ -1,7 +1,7 @@
 // Runs the Ephemeral Instance the Playwright tests share. Playwright's
 // webServer starts this script and reads the gateway URL from the line it
 // prints once the Instance is ready.
-import { startInstance } from './instance.ts'
+import { reclaimEnded, startInstance } from './instance.ts'
 
 // Compute Operations take 2 s, long enough to watch them
 // run (FR-UI-012); compute needs no container runtime either. GKE runs
@@ -25,6 +25,10 @@ const services = [
   'sql',
   ...(process.platform === 'linux' ? ['gke', 'nat', 'build'] : []),
 ]
+
+// What killed runs left behind goes first, so that their networks do not
+// use up the runtime's address pools (#1035).
+reclaimEnded()
 
 let instance
 try {
