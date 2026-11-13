@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/instance"
@@ -102,8 +103,11 @@ func TestHostNetworkTagged(t *testing.T) {
 }
 
 // TestHostNetworkKilledRun: a run killed before its cleanups leaves the
-// network and its dir, whose lock the OS has dropped; ReclaimEnded then
-// removes both.
+// network and its dir, whose lock the OS has dropped; a reclaim then removes
+// both. Once the lock is free the dir is a real ended Test data dir, so the
+// sweep of any other test process, gcpemu-testdir reclaim or gcpemu prune may
+// reclaim it before this test does (#1121); the test checks that some reclaim
+// does.
 func TestHostNetworkKilledRun(t *testing.T) {
 	cl := hostNetworkClient(t)
 	t.Parallel()
@@ -114,18 +118,42 @@ func TestHostNetworkKilledRun(t *testing.T) {
 	if err := hostNetwork(t, cl, runtime.NetworkSpec{Name: name}, killed); err != nil {
 		t.Fatal(err)
 	}
-	release() // as the OS does when the process dies
-	a := tagged(t, cl, name)
+	a := tagged(t, cl, name) // while the lock holds, nothing can reclaim it
 	dir := a.Dirs[0]
+	release() // as the OS does when the process dies
 	reclaimed, err := instance.ReclaimEnded(context.Background(), cl, a, dir)
-	if err != nil || !reclaimed {
-		t.Fatalf("ReclaimEnded after a killed run = %v, %v; want true, nil", reclaimed, err)
+	if err != nil {
+		t.Fatalf("ReclaimEnded after a killed run: %v", err)
+	}
+	if !reclaimed && !reclaimedWithin(t, cl, name, dir, killedRunReclaimWait) {
+		t.Fatalf("ReclaimEnded after a killed run = false, and nothing reclaimed network %s or dir %s within %v", name, dir, killedRunReclaimWait)
 	}
 	if networkExists(t, cl, name) {
 		t.Errorf("network %s is still there after the reclaim", name)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("dir %s is still there after the reclaim: %v", dir, err)
+	}
+}
+
+// killedRunReclaimWait bounds how long TestHostNetworkKilledRun waits for
+// another process's reclaim to finish.
+const killedRunReclaimWait = 5 * time.Second
+
+// reclaimedWithin reports whether network name and dir are both gone within
+// wait.
+func reclaimedWithin(t *testing.T, cl *runtime.Client, name, dir string, wait time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(wait)
+	for {
+		_, statErr := os.Stat(dir)
+		if os.IsNotExist(statErr) && !networkExists(t, cl, name) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
