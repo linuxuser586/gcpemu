@@ -308,6 +308,9 @@ func (s *Service) ptOpenBlob(ctx context.Context, pt *pullThrough, digest string
 	if s.offline() {
 		return nil, errNotCached
 	}
+	if h := s.hooks.missedCache; h != nil {
+		h(pt.scope)
+	}
 	f := s.joinFetch(pt, digest)
 	select {
 	case <-f.ready:
@@ -652,7 +655,23 @@ func (f *blobFetch) run(ctx context.Context, up upstreamRef) {
 		}
 	}
 	s.blobs.gc.RUnlock()
+	if h := s.hooks.linked; err == nil && h != nil {
+		h()
+	}
 	finish(err)
+}
+
+// fetchHooks let tests hold an upstream blob fetch at the step where
+// #798 lost links, so they fail each time the fix is reverted (ADR 0079).
+// Every hook is nil in production.
+type fetchHooks struct {
+	// missedCache runs in ptOpenBlob once the caller's scope has missed
+	// the Mirror cache, before the caller joins a fetch.
+	missedCache func(scope repoRef)
+	// linked runs once a fetch has installed its blob and linked the
+	// scopes it copied, before it finishes. A fetch that fails never
+	// reaches it.
+	linked func()
 }
 
 // flightGroup coalesces concurrent calls with the same key.

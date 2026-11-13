@@ -4,74 +4,105 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path"
 	"sync"
 	"testing"
 
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
-// Every scope that pulls a blob through an upstream fetch has it linked
-// once the fetch ends, however the fetch and its callers interleave
-// (#798). The first caller's scope was registered only after the fetch
-// started, and a caller joining once the fetch had linked its scopes was
-// never linked; with tiny blobs from a local upstream, either loses links.
-func TestFetchLinksEveryScope(t *testing.T) {
+// A caller that missed the Mirror cache while a fetch was running, but joins
+// only once the fetch has linked the scopes it had, still gets its scope
+// linked (#798). Before the fix the fetch stayed joinable after copying
+// its scopes, so such a caller was added to a fetch that never linked
+// it. The test holds that window open through s.hooks (ADR 0079), so it
+// fails every time the fix is reverted, not on a lucky interleaving. Its
+// upstream is served in memory, with no socket to reset (#972).
+//
+// #798's other window, a fetch ending before its first caller's scope
+// was added, is closed twice over: joinFetch adds the scope before the
+// fetch starts, and the fetch takes s.mu, which joinFetch holds, before
+// copying its scopes. Undoing either alone loses no link in that window,
+// so it has no test of its own.
+func TestFetchLinksScopeOfCallerJoiningLate(t *testing.T) {
 	s := startedService(t)
 	var err error
 	if s.blobs, err = newBlobStore(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	blobs := map[string][]byte{}
-	for i := range 200 {
-		b := fmt.Appendf(nil, "blob %d", i)
-		sum := sha256.Sum256(b)
-		blobs["sha256:"+hex.EncodeToString(sum[:])] = b
-	}
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, ok := blobs[path.Base(r.URL.Path)]
-		if !ok {
-			http.NotFound(w, r)
+	blob := []byte("blob")
+	sum := sha256.Sum256(blob)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	const img = "library/app"
+	scopeA := repoRef{mirrorProject, "docker.io", "a"}
+	scopeB := repoRef{mirrorProject, "docker.io", "b"}
+
+	requested := make(chan struct{}) // A's fetch asked the upstream
+	release := make(chan struct{})   // lets the upstream answer
+	missedB := make(chan struct{})   // B missed the Mirror cache
+	linked := make(chan struct{})    // A's fetch linked the scopes it had
+	bReturned := make(chan struct{}) // B's open returned
+	var requestedOnce, linkedOnce sync.Once
+	s.upstream.hc.Transport = handlerTransport(func(w http.ResponseWriter, r *http.Request) {
+		requestedOnce.Do(func() { close(requested) })
+		<-release
+		_, _ = w.Write(blob)
+	})
+	s.hooks.missedCache = func(scope repoRef) {
+		if scope != scopeB {
 			return
 		}
-		_, _ = w.Write(b)
-	}))
-	t.Cleanup(up.Close)
-	const img = "library/app"
-	scopes := []repoRef{{mirrorProject, "docker.io", "a"}, {mirrorProject, "docker.io", "b"}}
-	var wg sync.WaitGroup
-	for d := range blobs {
-		for _, scope := range scopes {
-			wg.Go(func() {
-				pt := &pullThrough{scope: scope, img: img, up: upstreamRef{Host: "docker.io", Base: up.URL, Repo: img}}
-				src, err := s.ptOpenBlob(context.Background(), pt, d)
-				if err != nil {
-					t.Errorf("open %s in %s: %v", d, scope.key(), err)
-					return
-				}
-				src.close()
-			})
-		}
+		close(missedB)
+		<-linked
 	}
+	s.hooks.linked = func() {
+		// Only A's fetch, the first to link, waits: it stays where B could
+		// find it until B has joined whichever fetch it joins and returned.
+		linkedOnce.Do(func() {
+			close(linked)
+			<-bReturned
+		})
+	}
+
+	open := func(scope repoRef) {
+		up := upstreamRef{Host: "docker.io", Base: "http://upstream.invalid", Repo: img}
+		src, err := s.ptOpenBlob(context.Background(), &pullThrough{scope: scope, img: img, up: up}, digest)
+		if err != nil {
+			t.Errorf("open %s in %s: %v", digest, scope.key(), err)
+			return
+		}
+		src.close()
+	}
+	var wg sync.WaitGroup
+	wg.Go(func() { open(scopeA) })
+	wg.Go(func() {
+		defer close(bReturned)
+		<-requested // so B misses the cache
+		open(scopeB)
+	})
+	<-missedB
+	close(release)
 	wg.Wait()
 	if err := s.fetchRuns.Wait(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	missing := 0
 	_ = s.env.Store.View(func(tx store.Tx) error {
-		for d := range blobs {
-			for _, scope := range scopes {
-				if _, ok := getLink(tx, scope, img, d); !ok {
-					missing++
-				}
+		for _, scope := range []repoRef{scopeA, scopeB} {
+			if _, ok := getLink(tx, scope, img, digest); !ok {
+				t.Errorf("%s not linked in %s after every fetch ended", digest, scope.key())
 			}
 		}
 		return nil
 	})
-	if missing > 0 {
-		t.Fatalf("%d of %d links missing after every fetch ended", missing, len(blobs)*len(scopes))
-	}
+}
+
+// handlerTransport serves each request with its handler in memory, with
+// no listener and no dial.
+type handlerTransport http.HandlerFunc
+
+func (h handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	rec := httptest.NewRecorder()
+	h(rec, r)
+	return rec.Result(), nil
 }
