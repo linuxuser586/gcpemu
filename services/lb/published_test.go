@@ -37,10 +37,6 @@ func startPublished(t *testing.T, portRange string, ports map[int]string) (*env,
 // ports on bind, and opts its configuration.
 func startContainerized(t *testing.T, portRange string, set func(svc emu.Service, bind string), opts ...emutest.Option) (*env, func(port int) string) {
 	t.Helper()
-	if c, err := net.DialTimeout("tcp", "127.0.0.1:8080", time.Second); err == nil {
-		c.Close()
-		t.Skip("127.0.0.1:8080 is in use")
-	}
 	e := start(t, opts...)
 	e.inst.Internal().Env.Config.PortRange = portRange
 	svc, _ := e.inst.Internal().Env.Lookup("lb")
@@ -56,6 +52,16 @@ func startContainerized(t *testing.T, portRange string, set func(svc emu.Service
 			l.Close()
 		}
 	}
+	// The tests publish port 8080 on bind. A wildcard bind fails while any
+	// address holds 8080 (say an Instance on the host holding
+	// 127.0.0.183:8080), so probe bind itself rather than dial
+	// 127.0.0.1:8080 (#1078).
+	addr := net.JoinHostPort(bind, "8080")
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Skipf("%s is in use: %v", addr, err)
+	}
+	l.Close()
 	set(svc, bind)
 	e.lanLB(newBackend(t))
 	return e, func(port int) string { return net.JoinHostPort(host, strconv.Itoa(port)) }
