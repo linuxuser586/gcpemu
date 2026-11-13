@@ -54,10 +54,17 @@ func (w *notifyWriter) Write(p []byte) (int, error) {
 func TestExecStreamDeliversOutputBeforeTheCommandExits(t *testing.T) {
 	exit := make(chan struct{})
 	cl := testClient(t, execServer(func(conn net.Conn) {
-		go func() { _, _ = io.Copy(io.Discard, conn) }()
+		// The stream is closed only once stdin is read to its end: a
+		// close with stdin unread resets the connection (#1104).
+		drained := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, conn)
+			close(drained)
+		}()
 		_, _ = conn.Write(frame(1, "first\n"))
 		<-exit
 		_, _ = conn.Write(frame(2, "bye\n"))
+		<-drained
 	}))
 	stdout := &notifyWriter{got: make(chan struct{})}
 	var stderr bytes.Buffer
