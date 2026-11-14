@@ -390,7 +390,7 @@ Each GKE cluster is a real, CNCF-conformant Kubernetes cluster (a k3s-class dist
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | FR-GKE-001 | Clusters (Standard and Autopilot): create, get, list, update, delete, with `Operation`s; `endpoint`, `masterAuth.clusterCaCertificate`, `currentMasterVersion`, `status` and `location` (zonal or regional) reported. | M |
-| FR-GKE-002 | Kubernetes minor version selected by `initialClusterVersion`/release channel from the three most recent minors; `getServerConfig` reports them. Upgrades of control plane and node pools by version change. | M |
+| FR-GKE-002 | Kubernetes minor version selected by `initialClusterVersion`/release channel from the three most recent minors; `getServerConfig` reports them. Upgrades of control plane and node pools by version change. A cluster or node pool on a version no longer offered is upgraded off it when it is next brought up. | M |
 | FR-GKE-003 | Node pools: create, delete, resize (adds/removes node containers), labels, taints, machine type stored; `nodeCount` honoured up to a host limit (default 5 nodes per instance). Node arch = host arch. | M |
 | FR-GKE-004 | `gcloud container clusters get-credentials` and `gke-gcloud-auth-plugin` produce a working kubeconfig; the API server accepts emulator IAM tokens and maps IAM roles (`container.admin`, `container.developer`, `container.viewer`) plus RBAC to Kubernetes auth. | M |
 | FR-GKE-005 | Workload Identity Federation for GKE: `workloadPool = PROJECT.svc.id.goog`; pods whose KSA is annotated with `iam.gke.io/gcp-service-account` get that GSA's tokens from the metadata server, subject to `roles/iam.workloadIdentityUser`. | M |
