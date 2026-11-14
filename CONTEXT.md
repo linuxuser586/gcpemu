@@ -35,6 +35,10 @@ _Avoid_: runtime image, pinned image
 A deliberate change that moves one or more Product images to the version the real Product runs. It is not a routine dependency update, and it is not an upgrade: upgrade means changing a GKE cluster's or node pool's version.
 _Avoid_: bump, upgrade
 
+**Retired version**:
+A GKE version the emulator no longer offers, because a Product image refresh dropped it. A cluster or node pool on one is upgraded off it when it is next brought up, whether or not its auto-upgrade is on, as GKE upgrades clusters at end of support.
+_Avoid_: removed version, unsupported version
+
 **Service**:
 An independently enabled unit of emulation that implements all or part of a Product. One Product may be split across several Services, which is why there are more Services than Products.
 _Avoid_: module, component, emulated API
