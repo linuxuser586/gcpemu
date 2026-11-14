@@ -538,7 +538,7 @@ A report, for a Standard cluster, of the workloads whose pods haven't finished t
 _Avoid_: migration check, Autopilot readiness
 
 **Admin kubeconfig**:
-The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
+The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. It lives at a fixed place in the Instance's data directory and holds exactly the clusters running now: with none running it is empty or absent, so naming it promises no cluster (ADR 0086). Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
 
 **OTLP endpoint**:
