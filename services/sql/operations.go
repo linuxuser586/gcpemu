@@ -72,6 +72,9 @@ func (s *Service) runOp(op *sqladmin.Operation, async bool, fn func(ctx context.
 		op.Status, op.StartTime = "RUNNING", s.now()
 		s.saveOp(op)
 		err := fn(ctx)
+		if s.ran != nil {
+			s.ran(ctx, op)
+		}
 		if d := latency - time.Since(start); d > 0 {
 			select {
 			case <-time.After(d):

@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	sqladmin "google.golang.org/api/sqladmin/v1beta4"
+
 	"github.com/linuxuser586/gcpemu/internal/agent"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/loopback"
@@ -83,6 +85,11 @@ type Service struct {
 	// Tests replace them.
 	dump       func(ctx context.Context, project, name string, w io.Writer) error
 	baseBackup func(ctx context.Context, project, name string) error
+
+	// ran, nil in production and set by tests, runs once an Operation's work has returned and
+	// before its latency wait, while the Cloud SQL instance's mutex and the
+	// Operation lock are held (ADR 0079).
+	ran func(ctx context.Context, op *sqladmin.Operation)
 }
 
 // New returns the service.
