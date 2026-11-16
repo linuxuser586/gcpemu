@@ -64,12 +64,34 @@ func lockedService(t *testing.T, latency string) (*Service, int64) {
 	return s, id
 }
 
-// runningOp starts an Operation that needs no runtime and runs for the
-// service's latency.
+// runningOp starts an Operation that needs no runtime and holds it open,
+// with its Operation lock, until the test's cleanup (#1156). The service's
+// latency must be above 0, so the Operation runs in the background.
 func runningOp(t *testing.T, s *Service) {
 	t.Helper()
+	if s.env.Config.LRO("sql") == 0 {
+		t.Fatal("runningOp needs an Operation latency above 0, or the held Operation blocks the request")
+	}
+	var held atomic.Bool
+	started, release := make(chan struct{}), make(chan struct{})
+	s.ran = func(ctx context.Context, _ *sqladmin.Operation) {
+		if !held.CompareAndSwap(false, true) {
+			return
+		}
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}
+	t.Cleanup(func() { close(release) })
 	if code, body := call(s, "POST", lockPath+"/sslCerts", `{"commonName":"first"}`); code != 200 {
 		t.Fatalf("first operation: %d %s", code, body)
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first Operation did not run")
 	}
 }
 
@@ -118,7 +140,7 @@ func TestOperationLockRejectsEveryOperation(t *testing.T) {
 	for _, c := range requests(id) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			s, id := lockedService(t, "2s")
+			s, id := lockedService(t, "1ms")
 			for _, r := range requests(id) {
 				if r.name == c.name {
 					c = r
@@ -233,7 +255,7 @@ func TestOperationLockBadRequestKeepsItsError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, _ := lockedService(t, "2s")
+			s, _ := lockedService(t, "1ms")
 			if err := s.updateRecord(lockProject, lockInstance, func(r *instanceRecord) error {
 				r.Instance.Settings.DeletionProtectionEnabled = true
 				return nil
@@ -313,7 +335,7 @@ func TestOperationLockFailedPatchFreesLock(t *testing.T) {
 // has no instance to wait for, even if a new one reuses the name and is
 // running an Operation.
 func TestOperationLockSkipsBackupOfDeletedInstance(t *testing.T) {
-	s, id := lockedService(t, "2s")
+	s, id := lockedService(t, "1ms")
 	if err := s.updateBackupRecord(lockProject, lockInstance, id, func(b *backupRecord) {
 		b.InstanceDeletionTime = "2026-11-01T00:00:00Z"
 	}); err != nil {
