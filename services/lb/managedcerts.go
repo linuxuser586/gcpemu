@@ -2,6 +2,7 @@ package lb
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"strings"
 	"time"
@@ -84,6 +85,7 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 		next := jsonClone(c)
 		next.Managed.DomainStatus = status
 		var key string
+		var serve *tls.Certificate
 		if all {
 			leaf, err := s.env.CA.Issue(ca.Leaf{DNSNames: c.Managed.Domains, Organization: "gcpemu Google-managed"})
 			if err != nil {
@@ -99,9 +101,15 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 			next.SubjectAlternativeNames = append([]string{}, c.Managed.Domains...)
 			next.Managed.Status = "ACTIVE"
 			key = string(keyPEM)
+			serve = leaf
 		}
 		if equalStatus(c.Managed.DomainStatus, status) && !all {
 			continue
+		}
+		if serve != nil {
+			// Listeners serve the certificate before it reads ACTIVE, so
+			// a client that connects once it does is not refused (#1184).
+			s.dp.pend(path, serve)
 		}
 		if s.beforeCertWrite != nil {
 			s.beforeCertWrite(ctx, path)
@@ -120,6 +128,9 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 			}
 			return store.PutJSON(tx, kindSSLCertificate.ns(), path, next)
 		})
+		if serve != nil {
+			s.dp.unpend(path) // the reconcile below serves what was stored
+		}
 		changed = changed || all
 		if all {
 			s.env.Log.Info("lb: managed certificate active", "certificate", path, "domains", strings.Join(c.Managed.Domains, ","))

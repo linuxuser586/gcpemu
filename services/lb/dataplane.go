@@ -41,11 +41,15 @@ type dataplane struct {
 	// a listener has none.
 	unavailable map[string]string
 	loopX       map[string]int // forwarding rule IP → 127.0.0.x
-	single      bool           // single-loopback mode (listeners.go)
-	nextPort    int
-	backends    map[string]*backendSvc // by backend service path
-	ctx         context.Context
-	closed      bool
+	// pending holds managed certificates (by resource path) issued but
+	// not yet stored ACTIVE, which listeners serve already so that a
+	// client never reads ACTIVE before the handshake can succeed (#1184).
+	pending  map[string]*tls.Certificate
+	single   bool // single-loopback mode (listeners.go)
+	nextPort int
+	backends map[string]*backendSvc // by backend service path
+	ctx      context.Context
+	closed   bool
 
 	logs *accessLogger
 	edge *edge
@@ -168,6 +172,26 @@ func (d *dataplane) close(ctx context.Context) {
 	if d.logs != nil {
 		d.logs.close()
 	}
+}
+
+// pend makes listeners serve cert for the managed certificate at path in
+// place of the stored one, until unpend.
+func (d *dataplane) pend(path string, cert *tls.Certificate) {
+	d.mu.Lock()
+	if d.pending == nil {
+		d.pending = map[string]*tls.Certificate{}
+	}
+	d.pending[path] = cert
+	d.mu.Unlock()
+	d.reconcile()
+}
+
+// unpend ends pend; the caller reconciles once the store holds what
+// listeners are to serve.
+func (d *dataplane) unpend(path string) {
+	d.mu.Lock()
+	delete(d.pending, path)
+	d.mu.Unlock()
 }
 
 // reconcile rebuilds the configuration snapshot and adjusts listeners and
@@ -298,6 +322,10 @@ func (d *dataplane) buildFrontend(f *computev1.ForwardingRule, routers map[strin
 			fe.keepAlive = time.Duration(p.HttpKeepAliveTimeoutSec) * time.Second
 		}
 		for _, c := range p.SslCertificates {
+			if cert := d.pending[relPath(c)]; cert != nil {
+				fe.certs = append(fe.certs, cert)
+				continue
+			}
 			cert, _, err := s.tlsCertificate(relPath(c))
 			if err != nil {
 				s.env.Log.Warn("lb: SSL certificate unusable", "certificate", c, "err", err)

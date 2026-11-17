@@ -469,6 +469,65 @@ func TestManagedCertificate(t *testing.T) {
 	}
 }
 
+// A managed certificate is served before it reads ACTIVE: a client that
+// connects as soon as it sees ACTIVE completes the handshake (#1184).
+func TestManagedCertificateServedBeforeActive(t *testing.T) {
+	e := start(t)
+	c := e.c
+	svc, _ := e.inst.Internal().Env.Lookup("lb")
+	// The handshake at the last write before ACTIVE is read; nil until then.
+	var lastWrite atomic.Pointer[error]
+	lb.SetBeforeCertWrite(svc, func(ctx context.Context, path string) {
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", e.inst.Endpoint(ep("fr")),
+			&tls.Config{ServerName: "shop.example.test", RootCAs: e.inst.Internal().Env.CA.Pool()})
+		if err == nil {
+			conn.Close()
+		}
+		lastWrite.Store(&err)
+	})
+	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{Name: "bs", LoadBalancingScheme: "EXTERNAL_MANAGED"}).Do())
+	e.do(c.UrlMaps.Insert(proj, &computev1.UrlMap{Name: "map", DefaultService: "global/backendServices/bs"}).Do())
+	e.do(c.SslCertificates.Insert(proj, &computev1.SslCertificate{Name: "managed", Type: "MANAGED",
+		Managed: &computev1.SslCertificateManagedSslCertificate{Domains: []string{"shop.example.test"}}}).Do())
+	e.do(c.TargetHttpsProxies.Insert(proj, &computev1.TargetHttpsProxy{Name: "p", UrlMap: "global/urlMaps/map",
+		SslCertificates: []string{"global/sslCertificates/managed"}}).Do())
+	e.do(c.GlobalForwardingRules.Insert(proj, &computev1.ForwardingRule{Name: "fr", LoadBalancingScheme: "EXTERNAL_MANAGED",
+		PortRange: "8080", Target: "global/targetHttpsProxies/p"}).Do())
+	fr, err := c.GlobalForwardingRules.Get(proj, "fr").Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dc, err := dnsv1.NewService(context.Background(), option.WithEndpoint(e.inst.GatewayURL()+"/dns/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dc.ManagedZones.Create(proj, &dnsv1.ManagedZone{Name: "shop", DnsName: "example.test.", Description: "x"}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dc.Changes.Create(proj, "shop", &dnsv1.Change{Additions: []*dnsv1.ResourceRecordSet{
+		{Name: "shop.example.test.", Type: "A", Ttl: 60, Rrdatas: []string{fr.IPAddress}}}}).Do(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		cert, err := c.SslCertificates.Get(proj, "managed").Do()
+		if err == nil && cert.Managed.Status == "ACTIVE" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("certificate never became ACTIVE: %+v, %v", cert, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	got := lastWrite.Load()
+	if got == nil {
+		t.Fatal("no managed-certificate write was seen")
+	}
+	if *got != nil {
+		t.Fatalf("handshake just before the certificate was written ACTIVE: %v", *got)
+	}
+}
+
 func TestValidationAndLists(t *testing.T) {
 	e := start(t)
 	c := e.c
