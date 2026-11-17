@@ -118,8 +118,8 @@ func TestLANAddress(t *testing.T) {
 
 // putRunningCluster stores a running cluster proj-1/us-central1/c whose API
 // server is at loopback, as the host's clients reach it, and served on the
-// --gke-bind addresses lan.
-func putRunningCluster(t *testing.T, s *Service, loopback string, lan ...string) {
+// --gke-bind addresses lan, and returns its record.
+func putRunningCluster(t *testing.T, s *Service, loopback string, lan ...string) *clusterRecord {
 	t.Helper()
 	rec := &clusterRecord{Int: clusterInternal{Project: "proj-1", Location: "us-central1", Name: "c"}}
 	t1 := true
@@ -136,6 +136,7 @@ func putRunningCluster(t *testing.T, s *Service, loopback string, lan ...string)
 	rt.mu.Lock()
 	rt.lanAddrs = lan
 	rt.mu.Unlock()
+	return rec
 }
 
 // A caller that arrived through the LAN, over a link or the Google front

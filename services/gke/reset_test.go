@@ -3,11 +3,14 @@ package gke
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
@@ -212,4 +215,78 @@ func TestStopRefusesOperations(t *testing.T) {
 	if _, ok := s.tryLock(r.key(), "x"); !ok {
 		t.Fatal("refused operation kept the cluster lock")
 	}
+}
+
+// putRunningClusterWithCreds stores putRunningCluster's cluster, served on
+// the --gke-bind address 192.168.1.20, with the admin credentials a
+// bring-up leaves, and writes the kubeconfigs as the bring-up does. It
+// returns the cluster's context name.
+func putRunningClusterWithCreds(t *testing.T, s *Service) string {
+	t.Helper()
+	rec := putRunningCluster(t, s, "127.0.0.1:6443", "192.168.1.20:6443")
+	rt := s.rtFor(rec.key())
+	rt.mu.Lock()
+	rt.creds = adminCreds{CA: []byte("ca"), Cert: []byte("cert"), Key: []byte("key")}
+	rt.mu.Unlock()
+	s.writeKubeconfig()
+	return contextName(rec.Int.Project, rec.Int.Location, rec.Int.Name)
+}
+
+func readKubeconfig(t *testing.T, path string) kubeconfigFile {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kc kubeconfigFile
+	if err := yaml.Unmarshal(b, &kc); err != nil {
+		t.Fatal(err)
+	}
+	return kc
+}
+
+// wantOnlyContext checks that each kubeconfig in paths holds the one
+// context want, and makes it current.
+func wantOnlyContext(t *testing.T, stage string, paths []string, want string) {
+	t.Helper()
+	for _, p := range paths {
+		kc := readKubeconfig(t, p)
+		if len(kc.Clusters) != 1 || len(kc.Users) != 1 || len(kc.Contexts) != 1 || kc.Contexts[0].Name != want || kc.CurrentContext != want {
+			t.Fatalf("%s: %s has contexts %v, current %q, want only %q", stage, p, kc.Contexts, kc.CurrentContext, want)
+		}
+	}
+}
+
+// resetInstance resets s as the Instance does: the Service, then the
+// Store, then ResetDone.
+func resetInstance(t *testing.T, s *Service) {
+	t.Helper()
+	_ = s.Reset(context.Background()) // no container runtime to tear down
+	if err := s.env.Store.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	s.ResetDone()
+}
+
+// After a reset the Admin kubeconfig, and the LAN kubeconfig under
+// --gke-bind, list no clusters; a cluster created afterwards is written
+// to them as before (ADR 0086, #1170).
+func TestResetEmptiesKubeconfigs(t *testing.T) {
+	s := newUnitService(t)
+	s.env.Config.DataDir = t.TempDir()
+	s.env.Config.GKEBind = []string{"192.168.1.20"}
+	paths := []string{s.kubeconfigPath(), filepath.Join(s.env.Config.InstanceDir(), lanKubeconfigFile)}
+
+	wantOnlyContext(t, "before reset", paths, putRunningClusterWithCreds(t, s))
+
+	resetInstance(t, s)
+	for _, p := range paths {
+		kc := readKubeconfig(t, p)
+		if len(kc.Clusters) != 0 || len(kc.Users) != 0 || len(kc.Contexts) != 0 || kc.CurrentContext != "" {
+			t.Errorf("after reset: %s has clusters %v, users %v, contexts %v, current %q, want none",
+				p, kc.Clusters, kc.Users, kc.Contexts, kc.CurrentContext)
+		}
+	}
+
+	wantOnlyContext(t, "after a new cluster", paths, putRunningClusterWithCreds(t, s))
 }
