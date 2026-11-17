@@ -165,6 +165,13 @@ type Service struct {
 	hostNames  map[string]map[string]bool
 	hostWarned map[string]bool
 	hostFail   map[string]error
+	// hostSrcMu guards hostAff, each Service port's ClientIP affinity for
+	// host clients by CLUSTERKEY/NAMESPACE/NAME:PORT, and hostUnpreserved,
+	// why a node's pods see host clients come from the node's address
+	// instead of the Host address, by cluster key and node (ADR 0087).
+	hostSrcMu       sync.Mutex
+	hostAff         map[string]*hostAffinity
+	hostUnpreserved map[string]map[string]string
 	// ocMu guards oc, the last estimate of the memory the Instance's GKE
 	// clusters need (overcommit.go); oc is nil while the Runtime machine's
 	// memory is unknown.

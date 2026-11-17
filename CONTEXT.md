@@ -222,7 +222,7 @@ A rule in the host's resolver that sends queries for one DNS suffix, and every n
 _Avoid_: DNS rule, resolver entry, split DNS
 
 **Host address**:
-The address at which workloads on one VPC container network reach the host: the VPC container network's own gateway IP where the host can route to it, and an address the VM relay holds on a VM runtime. It stays the same for the life of a Persistent Instance. It is not the subnetwork's Gateway address, though the two can be the same IP when there is no Fallback range.
+The address at which workloads on one VPC container network reach the host: the VPC container network's own gateway IP where the host can route to it, and an address the VM relay holds on a VM runtime. It is also the address a GKE cluster's pods see a host client's connection come from when the client reaches a Kubernetes Service through the Host attachment, so that one address means "the host" in both directions (ADR 0087). It stays the same for the life of a Persistent Instance. It is not the subnetwork's Gateway address, though the two can be the same IP when there is no Fallback range.
 _Avoid_: host IP, gateway (unqualified)
 
 **Offered port**:

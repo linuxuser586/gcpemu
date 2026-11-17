@@ -252,11 +252,13 @@ const hostServicesBody = `{"services":[
 	{"cluster":"projects/p/locations/l/clusters/c1","namespace":"default","service":"api","name":"api.default.svc.c1.l.p.gke.internal","address":"127.0.0.8","ports":[]}],
 	"collisions":[{"name":"api.default.svc.cluster.local","clusters":["projects/p/locations/l/clusters/c1","projects/p/locations/l/clusters/c2"]}],
 	"unserved":[{"cluster":"projects/p/locations/l/clusters/c2","namespace":"default","service":"db","reason":"no free loopback alias in 127.0.0.2-127.0.0.254"}],
-	"poolExhausted":true}`
+	"poolExhausted":true,
+	"unpreserved":[{"cluster":"projects/p/locations/l/clusters/c1","node":"gke-c1-pool-a-1","reason":"iptables: No chain/target/match by that name"}]}`
 
 // Doctor lists the short Service names more than one cluster has, a pool
 // with no free Loopback alias, and the Services left without one (ADR
-// 0014).
+// 0014), and the nodes whose pods see host clients come from the node's
+// address instead of the Host address (ADR 0087).
 func TestReportHostServices(t *testing.T) {
 	var out strings.Builder
 	reportHostServices(&out, []byte(hostServicesBody))
@@ -266,6 +268,8 @@ func TestReportHostServices(t *testing.T) {
 		"fix: use the gke.internal names, e.g. api.default.svc.<cluster>.<location>.<project>.gke.internal",
 		"[WARN] Loopback aliases 127.0.0.2-127.0.0.254 are all held, so new Kubernetes Services get SERVFAIL for host clients",
 		"[WARN] Kubernetes Service default/db of projects/p/locations/l/clusters/c2 has no Loopback alias: no free loopback alias",
+		"[WARN] Pods on node gke-c1-pool-a-1 of projects/p/locations/l/clusters/c1 see host clients come from the node's address, not the Host address: iptables: No chain/target/match by that name",
+		"policies that admit the Host address, such as Istio remoteIpBlocks, refuse host clients reaching those pods",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)

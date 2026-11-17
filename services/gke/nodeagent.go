@@ -51,7 +51,8 @@ import (
 //     labelled gcpemu.dev/googleapis=real (cainject.go, ADR 0019).
 //   - :15090 on every address, the ClusterIP relay (clusteriprelay.go), through
 //     which the emulator connects host clients to Services' ClusterIPs
-//     (ADR 0014).
+//     (ADR 0014), or to pods on this node from the Host address
+//     (hostsource_linux.go, ADR 0087).
 
 // googleAPIsDNSIP is the node's googleapis resolver: *.googleapis.com
 // resolves as on GCP (through Cloud DNS, to real Google) and every other
@@ -174,7 +175,12 @@ func runNodeAgent(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		go serveClusterIPRelay(svcL, cfg.Secret, cidr)
+		relay := &clusterIPRelay{secret: cfg.Secret, services: cidr}
+		sourceRelay(relay)
+		if relay.unpreserved != "" {
+			fmt.Fprintf(os.Stderr, "gcpemu: pods on this node see host clients come from the node's address, not the Host address: %s\n", relay.unpreserved)
+		}
+		go relay.serve(svcL)
 	}
 	if err := serveProvider(ctx, cfg.Emu); err != nil {
 		return err

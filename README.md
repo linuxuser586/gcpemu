@@ -1030,6 +1030,17 @@ reaches a pod, on Linux and on a VM runtime (as on macOS and Windows) alike. Hea
 aren't answered; ExternalName Services are answered with their CNAME. Queries from the VPC (pods,
 through their node's DNS relay) are unaffected.
 
+Pods see these connections come from the Host address of the cluster's subnetwork (ADR 0087), the
+address `gcpemu host-address` prints and at which pods reach the host's offered ports. So a policy
+that admits the host, such as an Istio AuthorizationPolicy with `remoteIpBlocks: ["10.128.0.1/32"]`,
+admits a process on the host and nothing else. The emulator picks the pod as kube-proxy would (a
+ready endpoint, or a serving terminating one when none is ready, and `sessionAffinity: ClientIP`,
+under which every host client is one client) and connects through that pod's node.
+`internalTrafficPolicy` and topology hints don't apply. Endpoints that aren't pods on the pod
+network, such as `hostNetwork` pods and EndpointSlices that name other addresses, are reached
+through the ClusterIP and see a node's address. So do the pods of a node whose kernel can't
+connect from another address. The node logs why, and `gcpemu doctor` lists the node.
+
 Send the two domains to the emulator's DNS with `gcpemu dns install`, which adds a Resolver route
 for each one. Add a `--suffix` for each emulated Cloud DNS zone the host should resolve too:
 
