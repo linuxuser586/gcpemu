@@ -420,7 +420,8 @@ var _ emu.ResetFinisher = (*Service)(nil)
 func (s *Service) ResetDone() { s.reestimate(context.Background()) }
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004): gcloud's container
-// endpoint override and the kubeconfig the emulator maintains. The
+// endpoint override and the kubeconfig the emulator maintains, which is
+// named whether or not a cluster runs (ADR 0086). The
 // Instance derives the LoadBalancer Services' GCPEMU_GKE_* variables from
 // their endpoints (package lbenv).
 func (s *Service) EnvVars(gw string, endpoints map[string]string) map[string]string {

@@ -116,3 +116,29 @@ func encodePS(s string) string {
 	}
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// TestEnvHelpKUBECONFIG checks that `gcpemu env --help` says KUBECONFIG
+// names the Admin kubeconfig whether or not a cluster runs, and how to
+// check for one (#1168, ADR 0086).
+func TestEnvHelpKUBECONFIG(t *testing.T) {
+	cmd := (&rootOpts{}).envCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	help := strings.Join(strings.Fields(out.String()), " ")
+	for _, want := range []string{
+		"KUBECONFIG names the Admin kubeconfig",
+		"whether or not a cluster runs",
+		"missing or empty",
+		"localhost:8080",
+		"kubectl config get-contexts -o name",
+		"gcloud container clusters list --filter=status=RUNNING",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("env --help lacks %q:\n%s", want, out.String())
+		}
+	}
+}

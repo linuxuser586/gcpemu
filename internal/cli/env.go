@@ -18,6 +18,17 @@ func (o *rootOpts) envCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "env",
 		Short: "Print environment variables that point clients at the instance",
+		// KUBECONFIG is printed whether or not a cluster runs (ADR 0086).
+		Long: "Prints environment variables that point clients at the instance, for\n" +
+			"eval \"$(gcpemu env)\", or for $GITHUB_ENV with --shell github.\n\n" +
+			"KUBECONFIG names the Admin kubeconfig in the Instance's data directory whether or\n" +
+			"not a cluster runs, so its being set doesn't mean a cluster exists. The file lists\n" +
+			"only the running clusters, so it may be missing or empty: missing until the first\n" +
+			"one runs, and empty after the last one is deleted. kubectl then reports a refused\n" +
+			"connection to localhost:8080. To check for a running cluster,\n" +
+			"kubectl config get-contexts -o name prints one context per running cluster;\n" +
+			"gcloud container clusters list --filter=status=RUNNING is the check that also\n" +
+			"works against real GCP.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
