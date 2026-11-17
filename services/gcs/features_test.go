@@ -709,3 +709,72 @@ func TestSignedURLContentLengthRange(t *testing.T) {
 		}
 	}
 }
+
+// A POST policy upload whose file is outside the policy's
+// content-length-range is refused with 400 before it is stored: the live
+// object keeps its generation and a versioned bucket gains no noncurrent
+// version (#1185).
+func TestPostPolicyContentLengthRangeVersioned(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	ctx := context.Background()
+	const sa = "poster@test-project.iam.gserviceaccount.com"
+	fk := newFakeIAM(t, sa)
+	inject(inst, fk)
+	b := c.Bucket("posts-versioned")
+	if err := b.Create(ctx, testProject, &storage.BucketAttrs{VersioningEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := b.Object("form.txt").NewWriter(ctx)
+	_, _ = w.Write([]byte("before"))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	live := w.Attrs().Generation
+	pp, err := b.GenerateSignedPostPolicyV4("form.txt", &storage.PostPolicyV4Options{
+		GoogleAccessID: sa, PrivateKey: pemKey(fk), Expires: time.Now().Add(time.Hour), Insecure: true,
+		Conditions: []storage.PostPolicyV4Condition{storage.ConditionContentLengthRange(4, 6)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ content, code string }{
+		{"posted!", "EntityTooLarge"},
+		{"abc", "EntityTooSmall"},
+		{"", "EntityTooSmall"},
+	} {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		for k, v := range pp.Fields {
+			_ = mw.WriteField(k, v)
+		}
+		fw, _ := mw.CreateFormFile("file", "form.txt")
+		_, _ = fw.Write([]byte(tc.content))
+		_ = mw.Close()
+		resp, err := http.Post(pp.URL, mw.FormDataContentType(), &buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 400 || !strings.Contains(string(body), "<Code>"+tc.code+"</Code>") {
+			t.Errorf("post of %d bytes = %d %s, want 400 %s", len(tc.content), resp.StatusCode, body, tc.code)
+		}
+		a, err := b.Object("form.txt").Attrs(ctx)
+		if err != nil || a.Generation != live {
+			t.Errorf("post of %d bytes: live generation = %+v %v, want %d", len(tc.content), a, err, live)
+		}
+		var gens []int64
+		it := b.Objects(ctx, &storage.Query{Prefix: "form.txt", Versions: true})
+		for {
+			o, err := it.Next()
+			if err != nil {
+				break
+			}
+			gens = append(gens, o.Generation)
+		}
+		if len(gens) != 1 || gens[0] != live {
+			t.Errorf("post of %d bytes: versions = %v, want [%d]", len(tc.content), gens, live)
+		}
+	}
+}
