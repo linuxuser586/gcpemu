@@ -40,7 +40,12 @@ func TestNSSPlan(t *testing.T) {
 	home := nssHome(t, func(dir string) { _ = os.WriteFile(filepath.Join(dir, "cert9.db"), nil, 0o600) })
 	present := map[string]bool{filepath.Join(home, ".mozilla/firefox/a.default"): true}
 	h := trustHost{goos: "linux", home: home, lookPath: func(string) bool { return true }, fileExists: fileExists,
-		nssHas: func(db, nick string) bool { return nick == "gcpemu-x" && present[db] }}
+		nssCerts: func(db, nick string) int {
+			if nick == "gcpemu-x" && present[db] {
+				return 1
+			}
+			return 0
+		}}
 	strs := func(plan []trustStep) string {
 		var s []string
 		for _, p := range plan {
@@ -118,7 +123,7 @@ func TestNSSTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := trustHost{goos: "linux", home: home, lookPath: func(n string) bool { _, err := exec.LookPath(n); return err == nil },
-		nssHas: nssHas, fileExists: fileExists}
+		nssCerts: nssCerts, fileExists: fileExists}
 	run := func(mode nssMode) {
 		t.Helper()
 		plan, _ := nssPlan(h, "test", c, mode)
@@ -173,10 +178,63 @@ func TestNSSTrust(t *testing.T) {
 		}
 	}
 
+	// An earlier CA of the instance beside the current one, as an older
+	// gcpemu could leave it: install keeps only the current one (#1174).
+	earlier, err := ca.Load(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := exec.Command("certutil", "-A", "-d", dbs[0].arg(), "-n", "gcpemu-test", "-t", "C,,", "-a")
+	add.Stdin = bytes.NewReader(earlier.PEM())
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("certutil -A: %v\n%s", err, out)
+	}
+	if n := nssCerts(dbs[0].dir, "gcpemu-test"); n != 2 {
+		t.Fatalf("%s holds %d gcpemu-test certificates, want 2", dbs[0].what, n)
+	}
+	run(nssInstall)
+	if n := nssCerts(dbs[0].dir, "gcpemu-test"); n != 1 || !bytes.Equal(trusted(dbs[0]), c.Certificate().Raw) {
+		t.Errorf("%s holds %d gcpemu-test certificates after install, want only the current CA", dbs[0].what, n)
+	}
+
 	run(nssUninstall)
 	for _, d := range dbs {
+		if n := nssCerts(d.dir, "gcpemu-test"); n != 0 {
+			t.Errorf("%s holds %d gcpemu-test certificates after uninstall", d.what, n)
+		}
 		if trusted(d) != nil {
 			t.Errorf("%s still trusts the CA after uninstall", d.what)
+		}
+	}
+}
+
+// TestNSSPlanRemovesEveryCopy: certutil -D removes one certificate of a
+// nickname at a time, so a database holding the instance's earlier CAs
+// too gets one delete for each before the add, and on uninstall (#1174).
+func TestNSSPlanRemovesEveryCopy(t *testing.T) {
+	c, err := ca.Load(t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	db := filepath.Join(home, ".pki/nssdb")
+	h := trustHost{goos: "linux", home: home, lookPath: func(string) bool { return true }, fileExists: func(string) bool { return true },
+		nssCerts: func(d, nick string) int {
+			if d == db && nick == "gcpemu-x" {
+				return 3
+			}
+			return 0
+		}}
+	dels := strings.Repeat("certutil -D -d sql:"+db+" -n gcpemu-x\n", 3)
+	readd := dels + "certutil -A -d sql:" + db + " -n gcpemu-x -t C,, -a"
+	for mode, want := range map[nssMode]string{
+		nssInstall:   readd,
+		nssReplace:   readd,
+		nssUninstall: strings.TrimSuffix(dels, "\n"),
+	} {
+		plan, _ := nssPlan(h, "x", c, mode)
+		if got := planString(plan); got != want {
+			t.Errorf("mode %d =\n%s\nwant\n%s", mode, got, want)
 		}
 	}
 }

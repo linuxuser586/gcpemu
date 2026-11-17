@@ -51,10 +51,10 @@ func TestCertFilePlansMatchCA(t *testing.T) {
 			isDir: func(p string) bool {
 				return p == "/usr/local/share/ca-certificates" || p == "/etc/docker" || p == "/etc/containerd"
 			},
-			nssHas: func(string, string) bool { return true }, fileExists: func(string) bool { return true }},
+			nssCerts: func(string, string) int { return 1 }, fileExists: func(string) bool { return true }},
 		"rhel": {goos: "linux", root: true, lookPath: func(n string) bool { return n != "update-ca-certificates" }, home: home,
-			isDir:  func(p string) bool { return p == "/etc/pki/ca-trust/source/anchors" || p == "/etc/docker" },
-			nssHas: func(string, string) bool { return false }, fileExists: func(string) bool { return false }},
+			isDir:    func(p string) bool { return p == "/etc/pki/ca-trust/source/anchors" || p == "/etc/docker" },
+			nssCerts: func(string, string) int { return 0 }, fileExists: func(string) bool { return false }},
 		"darwin":  {goos: "darwin"},
 		"windows": {goos: "windows"},
 	}

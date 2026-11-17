@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/sha1"
+	"crypto/x509"
 	"encoding/hex"
 	"os"
 	"os/exec"
@@ -248,4 +249,75 @@ func TestWriteVMTrust(t *testing.T) {
 			t.Errorf("%+v install=%v dryRun=%v:\n got %q\nwant %q", tc.v, tc.install, tc.dryRun, b.String(), tc.want)
 		}
 	}
+}
+
+// TestTrustPlanReplacesEarlierRoots: the macOS keychain and the Windows
+// Root store keep every root added, so install removes the earlier roots
+// of the instance's name before adding the current one, and uninstall
+// removes them all; another instance's roots stay (#1174).
+func TestTrustPlanReplacesEarlierRoots(t *testing.T) {
+	load := func(instance string) *ca.CA {
+		t.Helper()
+		c, err := ca.Load(t.TempDir(), instance)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	cur, old1, old2, other, prefix := load("x"), load("x"), load("x"), load("y"), load("x2")
+	roots := func(string) []*x509.Certificate {
+		return []*x509.Certificate{old1.Certificate(), other.Certificate(), cur.Certificate(), prefix.Certificate(), old2.Certificate()}
+	}
+	up := func(c *ca.CA) string { return strings.ToUpper(thumbprint(c)) }
+	const kc = "/Library/Keychains/System.keychain"
+	mac := trustHost{goos: "darwin", osRoots: roots}
+	// got also checks that only the earlier roots' steps are soft, so a
+	// root that cannot go never stops the current CA's step.
+	got := func(plan []trustStep) string {
+		for i, p := range plan {
+			if p.soft != (i < len(plan)-1) {
+				t.Errorf("%s: soft = %v", p, p.soft)
+			}
+		}
+		return planString(plan)
+	}
+	plan, _ := trustPlan(mac, "x", cur, true)
+	want := "sudo security delete-certificate -Z " + up(old1) + " " + kc + "\n" +
+		"sudo security delete-certificate -Z " + up(old2) + " " + kc + "\n" +
+		"sudo security add-trusted-cert -d -r trustRoot -k " + kc + " " + cur.Path()
+	if got(plan) != want {
+		t.Errorf("mac install =\n%s\nwant\n%s", got(plan), want)
+	}
+	plan, _ = trustPlan(mac, "x", cur, false)
+	want = "sudo security delete-certificate -Z " + up(old1) + " " + kc + "\n" +
+		"sudo security delete-certificate -Z " + up(old2) + " " + kc + "\n" +
+		"sudo security delete-certificate -Z " + up(cur) + " " + kc
+	if got(plan) != want {
+		t.Errorf("mac uninstall =\n%s\nwant\n%s", got(plan), want)
+	}
+
+	win := trustHost{goos: "windows", osRoots: roots}
+	plan, _ = trustPlan(win, "x", cur, true)
+	want = "certutil -user -delstore Root " + thumbprint(old1) + "\n" +
+		"certutil -user -delstore Root " + thumbprint(old2) + "\n" +
+		"certutil -user -addstore Root " + cur.Path()
+	if got(plan) != want {
+		t.Errorf("windows install =\n%s\nwant\n%s", got(plan), want)
+	}
+	plan, _ = trustPlan(win, "x", cur, false)
+	want = "certutil -user -delstore Root " + thumbprint(old1) + "\n" +
+		"certutil -user -delstore Root " + thumbprint(old2) + "\n" +
+		"certutil -user -delstore Root " + thumbprint(cur)
+	if got(plan) != want {
+		t.Errorf("windows uninstall =\n%s\nwant\n%s", got(plan), want)
+	}
+}
+
+// planString is plan's commands, one per line.
+func planString(plan []trustStep) string {
+	var s []string
+	for _, p := range plan {
+		s = append(s, p.String())
+	}
+	return strings.Join(s, "\n")
 }

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 )
 
 // Browsers on Linux ignore the OS trust store: Chrome reads the user's
@@ -65,9 +66,15 @@ func nssNickname(instance string) string { return "gcpemu-" + instance }
 
 func certutilPresent() bool { _, err := exec.LookPath("certutil"); return err == nil }
 
-// nssHas reports whether db holds a certificate named nick.
-func nssHas(db, nick string) bool {
-	return exec.Command("certutil", "-L", "-d", "sql:"+db, "-n", nick).Run() == nil
+// nssCerts counts the certificates db holds under nick: a rotated or
+// re-created CA has the same subject, so an older gcpemu could leave it
+// beside the current one.
+func nssCerts(db, nick string) int {
+	out, err := exec.Command("certutil", "-L", "-d", "sql:"+db, "-n", nick, "-a").Output()
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(out), "-----BEGIN CERTIFICATE-----")
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
@@ -83,10 +90,11 @@ const (
 
 // nssPlan returns the certutil steps for mode, run as the NSS user. The
 // CA is added as a trusted CA for TLS servers ("C,,") under the nickname
-// gcpemu-INSTANCE; an existing entry is deleted first so a rotated CA
-// replaces it. Without certutil the plan is empty and note says what to
-// install. The steps are soft: a failing browser database never fails the
-// rest of the install.
+// gcpemu-INSTANCE; every existing entry (certutil -D removes one at a
+// time) is deleted first so a rotated CA replaces the earlier ones.
+// Without certutil the plan is empty and note says what to install. The
+// steps are soft: a failing browser database never fails the rest of the
+// install.
 func nssPlan(h trustHost, instance string, c trustCert, mode nssMode) (plan []trustStep, note string) {
 	if h.goos != "linux" {
 		return nil, ""
@@ -109,8 +117,12 @@ func nssPlan(h trustHost, instance string, c trustCert, mode nssMode) (plan []tr
 	}
 	nick := nssNickname(instance)
 	for _, d := range dbs {
-		has := h.fileExists(filepath.Join(d.dir, "cert9.db")) && h.nssHas(d.dir, nick)
-		if has {
+		n := 0
+		if h.fileExists(filepath.Join(d.dir, "cert9.db")) {
+			n = h.nssCerts(d.dir, nick)
+		}
+		has := n > 0
+		for range n {
 			plan = append(plan, trustStep{args: as("certutil", "-D", "-d", d.arg(), "-n", nick), soft: true})
 		}
 		if mode == nssUninstall || (mode == nssReplace && !has) {
