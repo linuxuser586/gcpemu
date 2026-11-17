@@ -299,6 +299,10 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 		s.xmlCopy(w, r, src, bucket, object, c)
 		return
 	}
+	var body io.Reader = r.Body
+	if lr, ok := newLengthRangeReader(r.Body, r.Header.Get("X-Goog-Content-Length-Range")); ok {
+		body = lr
+	}
 	meta := xmlObjectMeta(r.Header, object)
 	q := url.Values{}
 	if c.GenMatch != nil {
@@ -307,13 +311,54 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 	if c.MetagenMatch != nil {
 		q.Set("ifMetagenerationMatch", strconv.FormatInt(*c.MetagenMatch, 10))
 	}
-	rec, _, err := s.putObject(ctx, bucket, meta, r.Body, r.Header.Get("X-Goog-Hash"), q, baseURL(r))
+	rec, _, err := s.putObject(ctx, bucket, meta, body, r.Header.Get("X-Goog-Hash"), q, baseURL(r))
 	if err != nil {
 		xmlError(w, err)
 		return
 	}
 	setXMLWriteHeaders(w, rec.Object)
 	w.WriteHeader(http.StatusOK)
+}
+
+// lengthRangeReader fails a PUT body outside the inclusive range of an
+// x-goog-content-length-range header: its Read returns a 400 once the body
+// passes max, or at the end of a body shorter than min, so the upload is
+// aborted before its object is stored.
+//
+// The header reference documents only that: a PUT header, an inclusive
+// MIN,MAX pair of bytes, and a 400 outside it. It is silent on a malformed
+// value and on resumable chunk and multipart part PUTs, so the emulator
+// ignores the header there until a Conformance suite Recording shows what
+// Cloud Storage does (#1175).
+type lengthRangeReader struct {
+	r        io.Reader
+	min, max int64
+	n        int64
+}
+
+// newLengthRangeReader reads body under header, the value "MIN,MAX" of an
+// x-goog-content-length-range header. It reports false for an absent or
+// malformed value, which leaves the body unchecked.
+func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, bool) {
+	lo, hi, ok := strings.Cut(header, ",")
+	minN, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
+	maxN, err2 := strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
+	if !ok || err1 != nil || err2 != nil || minN < 0 || maxN < minN {
+		return nil, false
+	}
+	return &lengthRangeReader{r: body, min: minN, max: maxN}, true
+}
+
+func (l *lengthRangeReader) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	l.n += int64(n)
+	switch {
+	case l.n > l.max:
+		return n, errEntityTooLarge(fmt.Sprintf("Content-length exceeds the upper bound of the x-goog-content-length-range header [%d, %d].", l.min, l.max))
+	case err == io.EOF && l.n < l.min:
+		return n, errEntityTooSmall(fmt.Sprintf("Content-length %d is below the lower bound of the x-goog-content-length-range header [%d, %d].", l.n, l.min, l.max))
+	}
+	return n, err
 }
 
 func (s *Service) xmlCopy(w http.ResponseWriter, r *http.Request, src, bucket, object string, c conds) {

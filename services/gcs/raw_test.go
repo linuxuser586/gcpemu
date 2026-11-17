@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -512,5 +513,107 @@ func TestRawGzipRequestBodies(t *testing.T) {
 	_ = json.Unmarshal(b, &obj)
 	if code != 200 || obj["contentEncoding"] != "gzip" {
 		t.Errorf("XML-uploaded object = %d %s, want contentEncoding gzip", code, b)
+	}
+}
+
+// An XML API PUT with x-goog-content-length-range: MIN,MAX is refused with
+// 400 when its body is outside the inclusive range, and the body is not
+// stored: the object keeps the generation it had (#1175).
+func TestXMLPutContentLengthRange(t *testing.T) {
+	inst := start(t)
+	base := "http://" + inst.Endpoint("gcs")
+	if code, _, b := do(t, "PUT", base+"/range-bucket", nil, map[string]string{"X-Goog-Project-Id": testProject}); code != 200 {
+		t.Fatalf("create = %d %s", code, b)
+	}
+	if code, _, b := do(t, "PUT", base+"/range-bucket/kept", strings.NewReader("before"), nil); code != 200 {
+		t.Fatalf("seed = %d %s", code, b)
+	}
+	for _, tc := range []struct {
+		object, body, rng string
+		want              int
+		wantGet           string // the object's content after the PUT; "" for none
+	}{
+		{"exact", "signed", "6,6", 200, "signed"},
+		{"over", "signed!", "6,6", 400, ""},
+		{"under", "igned", "6,6", 400, ""},
+		{"empty", "", "1,10", 400, ""},
+		{"low edge", "ab", "2,4", 200, "ab"},
+		{"high edge", "abcd", "2,4", 200, "abcd"},
+		{"kept", "overwritten", "0,5", 400, "before"},
+	} {
+		code, _, b := do(t, "PUT", base+"/range-bucket/"+url.PathEscape(tc.object), strings.NewReader(tc.body),
+			map[string]string{"X-Goog-Content-Length-Range": tc.rng})
+		if code != tc.want {
+			t.Errorf("%s: PUT of %d bytes under %s = %d %s, want %d", tc.object, len(tc.body), tc.rng, code, b, tc.want)
+			continue
+		}
+		code, _, got := do(t, "GET", base+"/range-bucket/"+url.PathEscape(tc.object), nil, nil)
+		if tc.wantGet == "" && code != 404 || tc.wantGet != "" && (code != 200 || string(got) != tc.wantGet) {
+			t.Errorf("%s: GET after the PUT = %d %q, want %q (none: 404)", tc.object, code, got, tc.wantGet)
+		}
+	}
+}
+
+// The range applies to a PUT that an HMAC Authorization header signs, a
+// malformed range is ignored, and a request other than a PUT ignores the
+// header (#1175).
+func TestXMLContentLengthRangeAuthAndMethods(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	k, err := c.CreateHMACKey(context.Background(), testProject, "s3@test-project.iam.gserviceaccount.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + inst.Endpoint("gcs")
+	if code, _, b := do(t, "PUT", base+"/range-auth", nil, map[string]string{"X-Goog-Project-Id": testProject}); code != 200 {
+		t.Fatalf("create = %d %s", code, b)
+	}
+	for _, tc := range []struct {
+		body string
+		want int
+	}{{"signed", 200}, {"signed!", 400}, {"igned", 400}} {
+		req, _ := http.NewRequest("PUT", base+"/range-auth/hmac-"+strconv.Itoa(len(tc.body)), strings.NewReader(tc.body))
+		req.Header.Set("X-Goog-Content-Length-Range", "6,6")
+		signV4(req, "GOOG4", k.AccessID, k.Secret, false)
+		if !strings.HasPrefix(req.Header.Get("Authorization"), "GOOG4-HMAC-SHA256 ") {
+			t.Fatalf("no Authorization header: %v", req.Header)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Errorf("HMAC PUT of %d bytes = %d %s, want %d", len(tc.body), resp.StatusCode, out, tc.want)
+		}
+	}
+
+	// The reference documents no answer to a malformed range, so the PUT
+	// goes ahead as if the header were absent.
+	for i, rng := range []string{"6", "a,b", "7,6", "-1,6", "1,2,3"} {
+		object := base + "/range-auth/malformed-" + strconv.Itoa(i)
+		if code, _, b := do(t, "PUT", object, strings.NewReader("signed"),
+			map[string]string{"X-Goog-Content-Length-Range": rng}); code != 200 {
+			t.Errorf("range %q = %d %s, want 200", rng, code, b)
+		}
+		if code, _, b := do(t, "GET", object, nil, nil); code != 200 || string(b) != "signed" {
+			t.Errorf("range %q: GET = %d %q, want 200 \"signed\"", rng, code, b)
+		}
+	}
+
+	// A resumable upload starts with a POST, which ignores the header.
+	code, h, b := do(t, "POST", base+"/range-auth/resumable", strings.NewReader(""),
+		map[string]string{"X-Goog-Resumable": "start", "X-Goog-Content-Length-Range": "6,6"})
+	if code != 201 {
+		t.Fatalf("resumable start under a range = %d %s, want 201", code, b)
+	}
+	if code, _, b := do(t, "PUT", h.Get("Location"), strings.NewReader("abc"), nil); code != 200 {
+		t.Errorf("resumable upload of 3 bytes after a ranged start = %d %s, want 200", code, b)
+	}
+	// A JSON API upload is a POST and ignores it too.
+	if code, _, b := do(t, "POST", base+"/upload/storage/v1/b/range-auth/o?uploadType=media&name=json", strings.NewReader("abc"),
+		map[string]string{"X-Goog-Content-Length-Range": "6,6"}); code != 200 {
+		t.Errorf("JSON upload POST under a range = %d %s, want 200", code, b)
 	}
 }

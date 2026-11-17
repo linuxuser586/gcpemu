@@ -664,3 +664,48 @@ func TestSeedDirectoryEndsWithItsContext(t *testing.T) {
 		t.Errorf("ApplySeed: %v, want its context's end", err)
 	}
 }
+
+// A V4 signed URL that signs x-goog-content-length-range accepts a PUT of a
+// body inside the range and refuses one outside it with 400 (#1175).
+func TestSignedURLContentLengthRange(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	ctx := context.Background()
+	const sa = "signer@test-project.iam.gserviceaccount.com"
+	fk := newFakeIAM(t, sa)
+	inject(inst, fk)
+	b := c.Bucket("signed-range")
+	if err := b.Create(ctx, testProject, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		body string
+		want int
+	}{{"signed", 200}, {"signed!", 400}, {"igned", 400}} {
+		object := "o-" + strconv.Itoa(len(tc.body))
+		u, err := b.SignedURL(object, &storage.SignedURLOptions{
+			GoogleAccessID: sa, PrivateKey: pemKey(fk), Method: "PUT", Expires: time.Now().Add(time.Hour),
+			Scheme: storage.SigningSchemeV4, Insecure: true, ContentType: "text/plain",
+			Headers: []string{"x-goog-content-length-range:6,6"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, _ := http.NewRequest("PUT", u, strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("X-Goog-Content-Length-Range", "6,6")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Errorf("signed PUT of %d bytes = %d %s, want %d", len(tc.body), resp.StatusCode, out, tc.want)
+		}
+		_, err = b.Object(object).Attrs(ctx)
+		if stored := err == nil; stored != (tc.want == 200) {
+			t.Errorf("signed PUT of %d bytes: stored = %v (%v)", len(tc.body), stored, err)
+		}
+	}
+}
