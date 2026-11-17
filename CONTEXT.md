@@ -541,6 +541,10 @@ _Avoid_: migration check, Autopilot readiness
 The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. It lives at a fixed place in the Instance's data directory and holds exactly the clusters running now, a running cluster being one whose control plane answers, including while it is reconciling: with none running it is empty or absent, so naming it promises no cluster (ADR 0086). Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
 
+**LAN kubeconfig**:
+The Admin kubeconfig's counterpart for another machine on the LAN. An Instance keeps one only when it has `--gke-bind`: it holds exactly the running clusters served on the first `--gke-bind` address and points at that address, so after a Reset it is empty like the Admin kubeconfig.
+_Avoid_: kubeconfig-lan (the file's name)
+
 **OTLP endpoint**:
 Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, or one whose protocol the Instance does not speak, the telemetry is dropped; one that is set but unreachable fails the exports instead.
 _Avoid_: collector endpoint, metrics endpoint

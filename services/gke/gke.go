@@ -416,8 +416,13 @@ func (s *Service) Reset(ctx context.Context) error {
 var _ emu.ResetFinisher = (*Service)(nil)
 
 // ResetDone implements emu.ResetFinisher: once the Store is reset too, the
-// Instance has no GKE nodes, so GKE overcommit is estimated afresh (#1070).
-func (s *Service) ResetDone() { s.reestimate(context.Background()) }
+// Instance has no GKE nodes, so GKE overcommit is estimated afresh
+// (#1070), and no clusters, so the Admin and LAN kubeconfigs are rewritten
+// to list none (ADR 0086, #1170).
+func (s *Service) ResetDone() {
+	s.writeKubeconfig()
+	s.reestimate(context.Background())
+}
 
 // EnvVars implements emu.EnvVarer (FR-CORE-004): gcloud's container
 // endpoint override and the Admin kubeconfig the Instance maintains,
