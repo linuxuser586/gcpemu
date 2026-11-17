@@ -1,6 +1,7 @@
 package gke
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -66,7 +68,7 @@ func hostFixture(t *testing.T) *Service {
 	}
 	t.Cleanup(func() { ln.Close() })
 	_, cidr, _ := net.ParseCIDR("127.0.0.0/8")
-	go serveClusterIPRelay(ln, "secret", cidr)
+	go (&clusterIPRelay{secret: "secret", services: cidr}).serve(ln)
 	prev := clusterIPRelayPort
 	clusterIPRelayPort = ln.Addr().(*net.TCPAddr).Port
 	t.Cleanup(func() { clusterIPRelayPort = prev })
@@ -388,5 +390,186 @@ func TestHostServicesStoppedCluster(t *testing.T) {
 	}
 	if _, rcode := ask(s, "ext.default.svc.c2.us-central1-a.p.gke.internal.", mdns.TypeA); rcode != mdns.RcodeServerFailure {
 		t.Errorf("qualified name of a stopped cluster: %s", mdns.RcodeToString[rcode])
+	}
+}
+
+// sourceFixture is a GKE service with a running cluster p/us-central1-a/c1
+// whose node c1-n1 is this host, its pod range 127.0.0.0/8 and the Host
+// address of its subnetwork 10.0.0.1. The node's ClusterIP relay is
+// whatever handler relay holds when a connection comes; from records the
+// sources it connected from.
+func sourceFixture(t *testing.T) (s *Service, key string, kube *fakeKube, relay *atomic.Value, from chan string) {
+	t.Helper()
+	s = newUnitService(t)
+	s.env.Containers = planeOnly{np: netplane.New(nil, nil, "127.0.0.1", s.env.Log)}
+	prevAddr := hostAddressOf
+	hostAddressOf = func(context.Context, *Service, *netplane.Plane, *clusterRecord) (string, error) {
+		return "10.0.0.1", nil
+	}
+	t.Cleanup(func() { hostAddressOf = prevAddr })
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	relay = &atomic.Value{}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go relay.Load().(func(net.Conn))(c)
+		}
+	}()
+	prevPort := clusterIPRelayPort
+	clusterIPRelayPort = ln.Addr().(*net.TCPAddr).Port
+	t.Cleanup(func() { clusterIPRelayPort = prevPort })
+	from = make(chan string, 16)
+	_, cidr, _ := net.ParseCIDR("127.0.0.0/8")
+	relay.Store((&clusterIPRelay{secret: "secret", services: cidr, localPod: func(ip net.IP) bool { return ip.IsLoopback() },
+		dialFrom: func(ctx context.Context, src, target string) (net.Conn, error) {
+			from <- src
+			return (&net.Dialer{}).DialContext(ctx, "tcp", target)
+		}}).handle)
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c1", Secret: "secret",
+		ServiceCIDR: "127.0.0.0/8", PodCIDR: "127.0.0.0/8", Nodes: []nodeRecord{{Name: "c1-n1", IP: "127.0.0.1"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: "c1", Status: containerpb.Cluster_RUNNING})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	k, kc := newFakeKube(t)
+	markRunning(s, rec.key(), kc)
+	return s, rec.key(), k, relay, from
+}
+
+// predatingRelay answers as a node agent from before ADR 0088 did: it
+// takes the whole rest of the request line for the target, so a request
+// with a source is outside the Service range, and connects to any other.
+func predatingRelay(c net.Conn) {
+	defer c.Close()
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		return
+	}
+	_, target, _ := strings.Cut(strings.TrimSpace(line), " ")
+	if strings.Contains(target, " ") {
+		_, _ = io.WriteString(c, "ERR "+target+" is outside the Service range\n")
+		return
+	}
+	u, err := net.Dial("tcp", target)
+	if err != nil {
+		_, _ = io.WriteString(c, "ERR "+err.Error()+"\n")
+		return
+	}
+	defer u.Close()
+	_, _ = io.WriteString(c, "OK\n")
+	netplane.Splice(c, u)
+}
+
+// hostDialEchoes reports whether the host dial of the Service default/name's
+// port reaches an echo.
+func hostDialEchoes(t *testing.T, s *Service, key, name string, port int) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	kc, _ := s.kube(key)
+	var svc kubeService
+	if err := kc.get(ctx, "/api/v1/namespaces/default/services/"+name, &svc); err != nil {
+		t.Fatal(err)
+	}
+	np, _ := s.env.Containers.Netplane(ctx)
+	c, err := s.hostDial(np, key, &svc, port)(ctx)
+	if err != nil {
+		t.Logf("host dial %s:%d: %v", name, port, err)
+		return false
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(c, "ping"); err != nil {
+		return false
+	}
+	b := make([]byte, 4)
+	_, err = io.ReadFull(c, b)
+	return err == nil && string(b) == "ping"
+}
+
+// A host client's connection to a Service reaches a pod through the
+// ClusterIP relay of the pod's node, from the Host address of the
+// cluster's subnetwork (ADR 0088). A node that cannot connect from it
+// still connects, and the Admin API lists it until it can; a connection
+// the node refuses, and a Service with nothing serving, go to the
+// ClusterIP as before.
+func TestHostServicesSource(t *testing.T) {
+	s, key, kube, relay, from := sourceFixture(t)
+	echo := echoServer(t)
+	_, port, _ := net.SplitHostPort(echo)
+	p, _ := strconv.Atoi(port)
+	// web reaches the echo only through its endpoint: port 80 on the
+	// ClusterIP has nothing.
+	kube.put(`{"apiVersion":"v1","kind":"Service","metadata":{"namespace":"default","name":"web"},"spec":{"type":"ClusterIP","clusterIP":"127.0.0.1","ports":[{"name":"http","port":80,"targetPort":"http"}]}}`)
+	kube.put(`{"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice","metadata":{"namespace":"default","name":"web-abc","labels":{"kubernetes.io/service-name":"web"}},
+		"addressType":"IPv4","ports":[{"name":"http","port":` + port + `}],"endpoints":[{"addresses":["127.0.0.1"],"conditions":{"ready":true},"nodeName":"c1-n1"}]}`)
+	// echo reaches it either way.
+	kube.put(clusterIPService("echo", p))
+
+	if !hostDialEchoes(t, s, key, "web", 80) {
+		t.Fatal("web does not reach its pod")
+	}
+	if got := <-from; got != "10.0.0.1" {
+		t.Errorf("connected from %s, want the Host address 10.0.0.1", got)
+	}
+	if v := hostJSON(t, s); len(v.Unpreserved) != 0 {
+		t.Errorf("unpreserved = %+v", v.Unpreserved)
+	}
+
+	// A node that cannot preserve the source still connects, and is listed.
+	_, cidr, _ := net.ParseCIDR("127.0.0.0/8")
+	relay.Store((&clusterIPRelay{secret: "secret", services: cidr, localPod: func(ip net.IP) bool { return ip.IsLoopback() }, unpreserved: "no xt_connmark"}).handle)
+	if !hostDialEchoes(t, s, key, "web", 80) {
+		t.Fatal("web does not reach its pod through a node that cannot preserve the source")
+	}
+	if v := hostJSON(t, s); len(v.Unpreserved) != 1 || v.Unpreserved[0].Node != "c1-n1" || v.Unpreserved[0].Reason != "no xt_connmark" ||
+		v.Unpreserved[0].Cluster != "projects/p/locations/us-central1-a/clusters/c1" {
+		t.Errorf("unpreserved = %+v", v.Unpreserved)
+	}
+
+	// A node agent from before ADR 0088, which takes "ip:port SOURCE" for
+	// a target outside the Service range, relays to the ClusterIP.
+	kube.put(`{"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice","metadata":{"namespace":"default","name":"echo-abc","labels":{"kubernetes.io/service-name":"echo"}},
+		"addressType":"IPv4","ports":[{"name":"","port":` + port + `}],"endpoints":[{"addresses":["127.0.0.1"],"conditions":{"ready":true},"nodeName":"c1-n1"}]}`)
+	relay.Store(predatingRelay)
+	if !hostDialEchoes(t, s, key, "echo", p) {
+		t.Fatal("echo does not reach the ClusterIP through a node that refuses sources")
+	}
+	if v := hostJSON(t, s); len(v.Unpreserved) != 1 || !strings.Contains(v.Unpreserved[0].Reason, "predates") {
+		t.Errorf("unpreserved = %+v", v.Unpreserved)
+	}
+
+	// Preserving again takes the node off the list.
+	relay.Store((&clusterIPRelay{secret: "secret", services: cidr, localPod: func(ip net.IP) bool { return ip.IsLoopback() },
+		dialFrom: func(ctx context.Context, src, target string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", target)
+		}}).handle)
+	if !hostDialEchoes(t, s, key, "web", 80) {
+		t.Fatal("web does not reach its pod")
+	}
+	if v := hostJSON(t, s); len(v.Unpreserved) != 0 {
+		t.Errorf("unpreserved after preserving again = %+v", v.Unpreserved)
+	}
+
+	// With no endpoint, the ClusterIP is dialled as before, and nothing is
+	// listed.
+	kube.remove("/apis/discovery.k8s.io/v1/namespaces/default/endpointslices/echo-abc")
+	if !hostDialEchoes(t, s, key, "echo", p) {
+		t.Error("echo without EndpointSlices does not reach the ClusterIP")
+	}
+	select {
+	case src := <-from:
+		t.Errorf("a ClusterIP connection was made from %s", src)
+	default:
+	}
+	if v := hostJSON(t, s); len(v.Unpreserved) != 0 {
+		t.Errorf("unpreserved = %+v", v.Unpreserved)
 	}
 }

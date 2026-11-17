@@ -313,6 +313,13 @@ type kubeService struct {
 		ExternalName string            `json:"externalName,omitempty"`
 		Ports        []kubeServicePort `json:"ports"`
 		Selector     map[string]string `json:"selector,omitempty"`
+		// SessionAffinity is "ClientIP" or "None".
+		SessionAffinity       string `json:"sessionAffinity,omitempty"`
+		SessionAffinityConfig *struct {
+			ClientIP *struct {
+				TimeoutSeconds *int `json:"timeoutSeconds,omitempty"`
+			} `json:"clientIP,omitempty"`
+		} `json:"sessionAffinityConfig,omitempty"`
 	} `json:"spec"`
 	Status struct {
 		LoadBalancer struct {
@@ -330,7 +337,9 @@ type kubeEndpointSlice struct {
 	Endpoints   []struct {
 		Addresses  []string `json:"addresses"`
 		Conditions struct {
-			Ready *bool `json:"ready"`
+			Ready       *bool `json:"ready"`
+			Serving     *bool `json:"serving,omitempty"`
+			Terminating *bool `json:"terminating,omitempty"`
 		} `json:"conditions"`
 		NodeName  string `json:"nodeName"`
 		TargetRef *struct {

@@ -149,6 +149,11 @@ type hostServices struct {
 		Reason    string `json:"reason"`
 	} `json:"unserved"`
 	PoolExhausted bool `json:"poolExhausted"`
+	Unpreserved   []struct {
+		Cluster string `json:"cluster"`
+		Node    string `json:"node"`
+		Reason  string `json:"reason"`
+	} `json:"unpreserved"`
 }
 
 // printHostServices lists, for `gcpemu status`, the Services that hold
@@ -178,7 +183,9 @@ func printHostServices(out io.Writer, body []byte) {
 
 // reportHostServices prints, for `gcpemu doctor`, the short Service names
 // that do not resolve because more than one cluster has them, an exhausted
-// alias pool and the Services left without an alias.
+// alias pool, the Services left without an alias and the nodes whose pods
+// see host clients come from the node's address instead of the Host
+// address (ADR 0088).
 func reportHostServices(out io.Writer, body []byte) {
 	var hs hostServices
 	if json.Unmarshal(body, &hs) != nil {
@@ -196,5 +203,9 @@ func reportHostServices(out io.Writer, body []byte) {
 	}
 	for _, u := range hs.Unserved {
 		fmt.Fprintf(out, "[WARN] Kubernetes Service %s/%s of %s has no Loopback alias: %s\n", u.Namespace, u.Service, u.Cluster, u.Reason)
+	}
+	for _, u := range hs.Unpreserved {
+		fmt.Fprintf(out, "[WARN] Pods on node %s of %s see host clients come from the node's address, not the Host address: %s\n", u.Node, u.Cluster, u.Reason)
+		fmt.Fprintln(out, "       policies that admit the Host address, such as Istio remoteIpBlocks, refuse host clients reaching those pods")
 	}
 }

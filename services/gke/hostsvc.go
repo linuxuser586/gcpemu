@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"slices"
@@ -37,9 +38,12 @@ import (
 // query, from the pool forwarding rules, Cloud SQL instances and
 // LoadBalancer Services share (loopCandidates). It keeps the alias until it
 // is deleted, across restarts (nsHostSvcs), and the emulator serves each of
-// its TCP ports there, connecting through a node's ClusterIP relay
-// (clusteriprelay.go) to its ClusterIP, which only nodes route; the netplane
-// reaches the node through the VM relay on a VM runtime. A privileged port
+// its TCP ports there. Each connection goes to the pod chooseHostEndpoint
+// picks, through the ClusterIP relay (clusteriprelay.go) of the pod's node,
+// from the Host address of the cluster's subnetwork, so that the pod sees
+// the host (ADR 0088); or, for any other endpoint, to its ClusterIP, which
+// only nodes route, through a node's relay. The netplane reaches the node
+// through the VM relay on a VM runtime. A privileged port
 // the host refuses to bind is not served. Headless Services are not
 // answered; ExternalName Services are answered with their CNAME. With no
 // free alias, on a host without aliases, or in a Containerized Instance,
@@ -131,7 +135,7 @@ func hostAddressed(svc *kubeService) bool {
 
 // hostSig is what serving svc depends on.
 func hostSig(svc *kubeService) string {
-	return fmt.Sprint(svc.Spec.ClusterIP, hostPorts(svc))
+	return fmt.Sprint(svc.Spec.ClusterIP, svc.Spec.Ports, svc.Spec.SessionAffinity, svc.affinityTimeout())
 }
 
 // hostPorts are svc's TCP ports.
@@ -335,7 +339,7 @@ func (s *Service) serveHostOnAlias(ctx context.Context, key, id string, svc *kub
 			} else if err != nil {
 				break
 			}
-			h.ex = append(h.ex, np.ServeDial(ln, s.hostDial(np, key, svc.Spec.ClusterIP, p)))
+			h.ex = append(h.ex, np.ServeDial(ln, s.hostDial(np, key, svc, p)))
 			h.ports = append(h.ports, p)
 		}
 		if err != nil {
@@ -376,31 +380,181 @@ func listenAlias(ip string, port int) (net.Listener, error) {
 	}}, nil
 }
 
-// hostDial connects to clusterIP:port through the ClusterIP relay of the
-// first of the cluster's nodes that answers.
-func (s *Service) hostDial(np *netplane.Plane, key, clusterIP string, port int) func(context.Context) (net.Conn, error) {
-	target := net.JoinHostPort(clusterIP, strconv.Itoa(port))
+// hostDial connects a host client to svc's port: to the endpoint
+// chooseHostEndpoint picks, through the ClusterIP relay of its node and
+// from the Host address of the cluster's subnetwork, so that the pod sees
+// the host (ADR 0088); otherwise to the ClusterIP, through the first node
+// that answers. A node that connects to the pod from its own address, or
+// has an agent that predates sources, is listed (hostUnpreserved); a
+// connection the node refuses or cannot make goes to the ClusterIP.
+func (s *Service) hostDial(np *netplane.Plane, key string, svc *kubeService, port int) func(context.Context) (net.Conn, error) {
+	id := key + "/" + svc.Metadata.Namespace + "/" + svc.Metadata.Name + ":" + strconv.Itoa(port)
+	clusterIP := net.JoinHostPort(svc.Spec.ClusterIP, strconv.Itoa(port))
 	return func(ctx context.Context) (net.Conn, error) {
 		rec, err := s.loadKey(key)
 		if err != nil {
 			return nil, err
 		}
-		errs := []error{errors.New("no node")}
-		for _, n := range rec.Int.Nodes {
-			ip := n.dialIP()
-			if ip == "" {
-				continue
-			}
-			dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			c, err := dialClusterIPRelay(dctx, np.DialContext, net.JoinHostPort(ip, strconv.Itoa(clusterIPRelayPort)), rec.Int.Secret, target)
-			cancel()
+		if ep, node, ok := s.hostPodEndpoint(ctx, rec, svc, port, id); ok {
+			c, err := s.hostDialPod(ctx, np, rec, ep, node)
 			if err == nil {
 				return c, nil
 			}
-			errs = append(errs, fmt.Errorf("node %s: %w", n.Name, err))
+			s.env.Log.Debug("gke: a host client goes to the ClusterIP instead of the pod", "service", id, "pod", ep.addr, "node", node.Name, "err", err)
 		}
-		return nil, errors.Join(errs[1:]...)
+		return s.hostDialClusterIP(ctx, np, rec, clusterIP)
 	}
+}
+
+// hostPodEndpoint chooses the endpoint of a connection to svc's port, as
+// kube-proxy would, and the node it runs on; ok is false when it is not a
+// pod on one of the cluster's nodes, or the EndpointSlices cannot be read.
+func (s *Service) hostPodEndpoint(ctx context.Context, rec *clusterRecord, svc *kubeService, port int, id string) (ep hostEndpoint, node nodeRecord, ok bool) {
+	_, pods, err := net.ParseCIDR(rec.Int.PodCIDR)
+	if err != nil {
+		return ep, node, false
+	}
+	kc, err := s.kube(rec.key())
+	if err != nil {
+		return ep, node, false
+	}
+	var slices kubeList[kubeEndpointSlice]
+	q := "/apis/discovery.k8s.io/v1/namespaces/" + svc.Metadata.Namespace + "/endpointslices?labelSelector=kubernetes.io%2Fservice-name%3D" + svc.Metadata.Name
+	if err := kc.get(ctx, q, &slices); err != nil {
+		return ep, node, false
+	}
+	s.hostSrcMu.Lock()
+	if s.hostAff == nil {
+		s.hostAff = map[string]*hostAffinity{}
+	}
+	aff := s.hostAff[id]
+	if aff == nil {
+		aff = &hostAffinity{}
+		s.hostAff[id] = aff
+	}
+	ep, ok = chooseHostEndpoint(svc, port, slices.Items, pods, aff, time.Now(), rand.IntN)
+	s.hostSrcMu.Unlock()
+	if !ok {
+		return ep, node, false
+	}
+	for _, n := range rec.Int.Nodes {
+		if n.Name == ep.node && n.dialIP() != "" {
+			return ep, n, true
+		}
+	}
+	return ep, node, false
+}
+
+// hostAddressOf is the Host address of rec's subnetwork; tests replace it.
+var hostAddressOf = func(ctx context.Context, s *Service, np *netplane.Plane, rec *clusterRecord) (string, error) {
+	vpc := s.vpc()
+	if vpc == nil {
+		return "", errors.New("no VPC")
+	}
+	sn, err := vpc.SubnetNetwork(ctx, rec.Int.Subnetwork)
+	if err != nil {
+		return "", err
+	}
+	return np.HostAddress(ctx, netplane.Net{Name: sn.Name, Subnet: sn.ContainerSubnet, Gateway: sn.Gateway})
+}
+
+// hostDialPod connects to the pod ep from the Host address, through the
+// ClusterIP relay of its node.
+func (s *Service) hostDialPod(ctx context.Context, np *netplane.Plane, rec *clusterRecord, ep hostEndpoint, node nodeRecord) (net.Conn, error) {
+	src, err := hostAddressOf(ctx, s, np, rec)
+	if err != nil {
+		return nil, fmt.Errorf("the Host address: %w", err)
+	}
+	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	c, why, err := dialClusterIPRelay(dctx, np.DialContext, net.JoinHostPort(node.dialIP(), strconv.Itoa(clusterIPRelayPort)), rec.Int.Secret, ep.addr, src)
+	if err != nil {
+		var refused relayRefused
+		if errors.As(err, &refused) && refused.predatesSource() {
+			s.setUnpreserved(rec.key(), node.Name, "its node agent predates connecting from the Host address (ADR 0088); recreating the node updates it")
+		}
+		return nil, err
+	}
+	s.setUnpreserved(rec.key(), node.Name, why)
+	return c, nil
+}
+
+// setUnpreserved records why the node's pods do not see host clients come
+// from the Host address, or, with why empty, that they do.
+func (s *Service) setUnpreserved(key, node, why string) {
+	s.hostSrcMu.Lock()
+	defer s.hostSrcMu.Unlock()
+	if why == "" {
+		if s.hostUnpreserved[key][node] == "" {
+			return
+		}
+		delete(s.hostUnpreserved[key], node)
+		if len(s.hostUnpreserved[key]) == 0 {
+			delete(s.hostUnpreserved, key)
+		}
+		s.env.Log.Info("gke: the node's pods see host clients come from the Host address again", "cluster", key, "node", node)
+		return
+	}
+	if s.hostUnpreserved == nil {
+		s.hostUnpreserved = map[string]map[string]string{}
+	}
+	if s.hostUnpreserved[key] == nil {
+		s.hostUnpreserved[key] = map[string]string{}
+	}
+	if s.hostUnpreserved[key][node] != why {
+		s.env.Log.Warn("gke: the node's pods see host clients come from the node's address, not the Host address", "cluster", key, "node", node, "reason", why)
+	}
+	s.hostUnpreserved[key][node] = why
+}
+
+// unpreserved lists the nodes whose pods do not see host clients come from
+// the Host address, by cluster and node.
+func (s *Service) unpreserved() []hostUnpreservedJSON {
+	s.hostSrcMu.Lock()
+	defer s.hostSrcMu.Unlock()
+	out := []hostUnpreservedJSON{}
+	for _, key := range slices.Sorted(maps.Keys(s.hostUnpreserved)) {
+		for _, node := range slices.Sorted(maps.Keys(s.hostUnpreserved[key])) {
+			out = append(out, hostUnpreservedJSON{Cluster: clusterPath(key), Node: node, Reason: s.hostUnpreserved[key][node]})
+		}
+	}
+	return out
+}
+
+// forgetUnpreserved drops the cluster's records, or every one with key "".
+func (s *Service) forgetUnpreserved(key string) {
+	s.hostSrcMu.Lock()
+	defer s.hostSrcMu.Unlock()
+	if key == "" {
+		s.hostUnpreserved, s.hostAff = nil, nil
+		return
+	}
+	delete(s.hostUnpreserved, key)
+	for id := range s.hostAff {
+		if strings.HasPrefix(id, key+"/") {
+			delete(s.hostAff, id)
+		}
+	}
+}
+
+// hostDialClusterIP connects to the ClusterIP and port target through the
+// ClusterIP relay of the first of the cluster's nodes that answers.
+func (s *Service) hostDialClusterIP(ctx context.Context, np *netplane.Plane, rec *clusterRecord, target string) (net.Conn, error) {
+	errs := []error{errors.New("no node")}
+	for _, n := range rec.Int.Nodes {
+		ip := n.dialIP()
+		if ip == "" {
+			continue
+		}
+		dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		c, _, err := dialClusterIPRelay(dctx, np.DialContext, net.JoinHostPort(ip, strconv.Itoa(clusterIPRelayPort)), rec.Int.Secret, target, "")
+		cancel()
+		if err == nil {
+			return c, nil
+		}
+		errs = append(errs, fmt.Errorf("node %s: %w", n.Name, err))
+	}
+	return nil, errors.Join(errs[1:]...)
 }
 
 // hostRecords returns the stored aliases of the Services whose IDs start
@@ -531,6 +685,7 @@ func (s *Service) dropHostLocked(id string) {
 // keeping their Loopback aliases, and drops its names, which DNS no longer
 // looks up while the cluster is not running.
 func (s *Service) closeHostServices(key string) {
+	s.forgetUnpreserved(key)
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
 	s.setHostNamesLocked(key, nil)
@@ -545,6 +700,7 @@ func (s *Service) closeHostServices(key string) {
 // forgetHostCluster releases a deleted cluster's Loopback aliases and
 // names.
 func (s *Service) forgetHostCluster(key string) {
+	s.forgetUnpreserved(key)
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
 	s.setHostNamesLocked(key, nil)
@@ -566,6 +722,7 @@ func (s *Service) forgetHostCluster(key string) {
 // resetHost forgets every Kubernetes Service; Reset has stopped the
 // controllers that served them, and the Instance resets the store.
 func (s *Service) resetHost() {
+	s.forgetUnpreserved("")
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
 	for _, h := range s.hostSvcs {
@@ -633,6 +790,15 @@ type hostServicesJSON struct {
 	// alias, and why.
 	Unserved      []hostUnservedJSON `json:"unserved"`
 	PoolExhausted bool               `json:"poolExhausted"`
+	// Unpreserved are the nodes whose pods see host clients come from the
+	// node's address instead of the Host address, and why (ADR 0088).
+	Unpreserved []hostUnpreservedJSON `json:"unpreserved"`
+}
+
+type hostUnpreservedJSON struct {
+	Cluster string `json:"cluster"`
+	Node    string `json:"node"`
+	Reason  string `json:"reason"`
 }
 
 type hostServiceJSON struct {
@@ -676,7 +842,8 @@ func (s *Service) hostServices() hostServicesJSON {
 	full := hostAliases() && len(s.loopCandidates("", "")) == 0
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
-	out := hostServicesJSON{Services: []hostServiceJSON{}, Collisions: []hostCollisionJSON{}, Unserved: []hostUnservedJSON{}, PoolExhausted: full}
+	out := hostServicesJSON{Services: []hostServiceJSON{}, Collisions: []hostCollisionJSON{}, Unserved: []hostUnservedJSON{}, PoolExhausted: full,
+		Unpreserved: s.unpreserved()}
 	cols := s.collisionsLocked()
 	for _, id := range slices.Sorted(maps.Keys(stored)) {
 		key, ns, name := splitHostID(id)
