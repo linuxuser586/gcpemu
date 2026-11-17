@@ -370,6 +370,8 @@ func TestAnotherInstanceIsNotActedOn(t *testing.T) {
 		"hosts":         {"hosts"},
 		"logs requests": {"logs", "--requests"},
 		"time advance":  {"time", "advance", "1h"},
+		"time show":     {"time", "show"},
+		"time reset":    {"time", "reset"},
 		"console":       {"console", "--print"},
 	} {
 		t.Run(name, func(t *testing.T) {

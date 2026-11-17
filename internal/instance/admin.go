@@ -248,7 +248,13 @@ func newAdmin(in *Instance) http.Handler {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"now": in.Env.Clock.Now().Format(time.RFC3339Nano)})
+		writeJSON(w, http.StatusOK, clockJSON(in.Clock()))
+	})
+	mux.HandleFunc("GET /_emu/v1/time", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, clockJSON(in.Clock()))
+	})
+	mux.HandleFunc("POST /_emu/v1/time/reset", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, clockJSON(in.ResetClock()))
 	})
 	mux.HandleFunc("GET /_emu/v1/faults", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"faults": in.Faults().List()})
@@ -298,6 +304,11 @@ func newAdmin(in *Instance) http.Handler {
 		in.RequestShutdown()
 	})
 	return mux
+}
+
+// clockJSON is the body of the /_emu/v1/time routes.
+func clockJSON(c ClockState) map[string]string {
+	return map[string]string{"now": c.Now.Format(time.RFC3339Nano), "offset": c.Offset.String()}
 }
 
 // enforcement is the body of /_emu/v1/iam/enforcement.

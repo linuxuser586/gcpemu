@@ -716,6 +716,8 @@ func (o *rootOpts) resetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "reset",
 		Short: "Wipe all state of a running instance, keeping configuration",
+		Long: `Wipe all state of a running instance, keeping configuration. The emulator
+clock goes back to real time too, as ` + "`gcpemu time reset`" + ` sets it.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
@@ -789,24 +791,55 @@ func (o *rootOpts) timeCmd() *cobra.Command {
 		Short: "Advance the emulator clock (lifecycle rules, TTLs)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := o.load(cmd.Flags())
-			if err != nil {
-				return err
-			}
-			c, err := clientFor(cfg)
-			if err != nil {
-				return err
-			}
-			code, body, err := c.do(http.MethodPost, "/_emu/v1/time/advance?by="+args[0])
-			if err != nil {
-				return err
-			}
-			if code != http.StatusOK {
-				return fmt.Errorf("%s", body)
-			}
-			_, err = cmd.OutOrStdout().Write(body)
-			return err
+			return o.clockRequest(cmd, http.MethodPost, "/_emu/v1/time/advance?by="+args[0])
+		},
+	})
+	t.AddCommand(&cobra.Command{
+		Use:   "show",
+		Short: "Print the emulator clock and its offset, without moving it",
+		Long: `Print the emulator clock's time (now) and how far ` + "`time advance`" + ` has moved it
+past its base (offset): real time, or a Deterministic Instance's own clock.
+Reading the clock does not move it and runs no lifecycle rules or TTLs.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return o.clockRequest(cmd, http.MethodGet, "/_emu/v1/time")
+		},
+	})
+	t.AddCommand(&cobra.Command{
+		Use:   "reset",
+		Short: "Set the emulator clock back to real time",
+		Long: `Set the emulator clock's offset back to zero, so it reads real time again
+(in a Deterministic Instance, its own clock's time).
+
+It only moves the clock: what an earlier ` + "`time advance`" + ` set off (lifecycle
+deletions, expired TTLs, retention) stays done. Undoing those is what a
+State snapshot restore is for. ` + "`gcpemu reset`" + ` clears the offset too.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return o.clockRequest(cmd, http.MethodPost, "/_emu/v1/time/reset")
 		},
 	})
 	return t
+}
+
+// clockRequest sends a `gcpemu time` request to the running Instance and
+// prints the clock it answers with.
+func (o *rootOpts) clockRequest(cmd *cobra.Command, method, path string) error {
+	cfg, err := o.load(cmd.Flags())
+	if err != nil {
+		return err
+	}
+	c, err := clientFor(cfg)
+	if err != nil {
+		return err
+	}
+	code, body, err := c.do(method, path)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("%s", body)
+	}
+	_, err = cmd.OutOrStdout().Write(body)
+	return err
 }

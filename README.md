@@ -60,10 +60,17 @@ bin/gcpemu stop
 ```
 
 Other commands: `wait --for KIND=TARGET` (see [Waiting for resources](#waiting-for-resources)),
-`reset`, `logs [service] [--requests]`, `time advance 24h`, `hosts`,
+`reset`, `logs [service] [--requests]`, `time show|advance 24h|reset`, `hosts`,
 `fault add|list|enable|disable|clear`, `snapshot save|restore|list|delete`, `export` (the
 resources as a seed file), `doctor`, `prune`, `version`, `admin openapi` (the OpenAPI document of the
 `/_emu/v1/` admin API, also served at `/_emu/v1/openapi.yaml`), and `admin token`.
+
+`gcpemu time advance` moves the emulator clock ahead of real time and runs what that sets off
+(lifecycle rules, TTLs, retention). `gcpemu time show` prints the clock and its offset without moving
+it. `gcpemu time reset`, and `gcpemu reset` too, set the offset back to zero. That only moves the
+clock: what an advance set off stays done, and undoing it is what `snapshot restore` is for. A
+clock left ahead makes V4 signed URLs made with the real time fail as `ExpiredToken` once the
+offset passes their TTL.
 
 `gcpemu status --ready` exits non-zero, and says why, until every Service is ready. It also fails, naming
 them, while Managed containers that something other than the Instance stopped or restarted (a restart
@@ -142,7 +149,8 @@ gcpemu snapshot restore clean   # instead of re-seeding
 Saving needs a quiet Instance: it fails while a Service is still starting, an Operation is
 running, a Cloud SQL instance is stopped, or clients keep changing state during the save. Image
 pulls through the GKE nodes' registry mirror only fill a cache, so they don't stop a save.
-Restoring keeps configuration, Fault rules and the Emulator clock, which never goes back.
+Restoring keeps configuration, Fault rules and the Emulator clock, with any offset `time advance`
+put on it.
 A RUNNING GKE cluster keeps its Kubernetes objects and its cluster CA: its k3s datastore is
 saved, and its nodes rejoin and pull their images again. PersistentVolume contents are not saved,
 so volumes come back empty, and a cluster that is not RUNNING at save time comes back with a fresh
@@ -1213,7 +1221,8 @@ are refused, since the emulator has no tags.
 `--deterministic` (`emutest.WithDeterministic()`) makes generated IDs and timestamps the same run
 to run, for golden-file tests. The clock starts at 2026-01-01T00:00:00Z and moves 1 ms each time
 an API request arrives; every timestamp within one request is the same, and real time passing
-never moves it. `gcpemu time advance` still moves it on purpose. The guarantee holds for a client
+never moves it. `gcpemu time advance` still moves it on purpose, and `gcpemu time reset` takes that
+back off. The guarantee holds for a client
 that sends one API request at a time. Console and admin API traffic (`/_emu/`) does not move the
 clock, so it does not affect the output. Operations with no `--lro-latency` come back `DONE` from
 the call that started them. Operations backed by runtime containers (GKE clusters, Cloud SQL

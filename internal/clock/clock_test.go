@@ -58,3 +58,23 @@ func TestRequestStepRealIsNoop(t *testing.T) {
 		t.Fatalf("Now = %v, want about %v", got, before)
 	}
 }
+
+// TestOffsetReadsAndResets is #1172: Read reports the time and what has
+// been added, and Reset sets the offset back to zero, so the clock reads
+// its base again.
+func TestOffsetReadsAndResets(t *testing.T) {
+	o := NewOffset(NewFake())
+	if now, off := o.Read(); off != 0 || !now.Equal(fakeEpoch) {
+		t.Fatalf("Read = %v, %v, want %v, 0", now, off, fakeEpoch)
+	}
+	o.Advance(2 * time.Hour)
+	if now, off := o.Read(); off != 2*time.Hour || !now.Equal(fakeEpoch.Add(2*time.Hour)) {
+		t.Fatalf("Read = %v, %v, want %v, 2h", now, off, fakeEpoch.Add(2*time.Hour))
+	}
+	if got := o.Reset(); !got.Equal(fakeEpoch) {
+		t.Fatalf("Reset = %v, want the base %v", got, fakeEpoch)
+	}
+	if now, off := o.Read(); off != 0 || !now.Equal(fakeEpoch) {
+		t.Fatalf("Read after Reset = %v, %v, want %v, 0", now, off, fakeEpoch)
+	}
+}
