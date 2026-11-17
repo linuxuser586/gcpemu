@@ -335,13 +335,14 @@ type lengthRangeReader struct {
 	n        int64
 }
 
-// newLengthRangeReader reads body under the range h ("MIN,MAX").
-func newLengthRangeReader(body io.Reader, h string) (*lengthRangeReader, error) {
-	lo, hi, ok := strings.Cut(h, ",")
+// newLengthRangeReader reads body under header, the value "MIN,MAX" of an
+// x-goog-content-length-range header.
+func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, error) {
+	lo, hi, ok := strings.Cut(header, ",")
 	minN, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
 	maxN, err2 := strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
 	if !ok || err1 != nil || err2 != nil || minN < 0 || maxN < minN {
-		return nil, errInvalid("Invalid x-goog-content-length-range header %q.", h)
+		return nil, errInvalid("Invalid x-goog-content-length-range header %q.", header)
 	}
 	return &lengthRangeReader{r: body, min: minN, max: maxN}, nil
 }
@@ -351,11 +352,9 @@ func (l *lengthRangeReader) Read(p []byte) (int, error) {
 	l.n += int64(n)
 	switch {
 	case l.n > l.max:
-		return n, &sigError{http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size.",
-			fmt.Sprintf("Content-length exceeds the upper bound of the x-goog-content-length-range header [%d, %d].", l.min, l.max)}
+		return n, errEntityTooLarge(fmt.Sprintf("Content-length exceeds the upper bound of the x-goog-content-length-range header [%d, %d].", l.min, l.max))
 	case err == io.EOF && l.n < l.min:
-		return n, &sigError{http.StatusBadRequest, "EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.",
-			fmt.Sprintf("Content-length %d is below the lower bound of the x-goog-content-length-range header [%d, %d].", l.n, l.min, l.max)}
+		return n, errEntityTooSmall(fmt.Sprintf("Content-length %d is below the lower bound of the x-goog-content-length-range header [%d, %d].", l.n, l.min, l.max))
 	}
 	return n, err
 }

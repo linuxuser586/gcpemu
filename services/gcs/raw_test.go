@@ -531,14 +531,15 @@ func TestXMLPutContentLengthRange(t *testing.T) {
 	for _, tc := range []struct {
 		object, body, rng string
 		want              int
+		wantGet           string // the object's content after the PUT; "" for none
 	}{
-		{"exact", "signed", "6,6", 200},
-		{"over", "signed!", "6,6", 400},
-		{"under", "igned", "6,6", 400},
-		{"empty", "", "1,10", 400},
-		{"low edge", "ab", "2,4", 200},
-		{"high edge", "abcd", "2,4", 200},
-		{"kept", "overwritten", "0,5", 400},
+		{"exact", "signed", "6,6", 200, "signed"},
+		{"over", "signed!", "6,6", 400, ""},
+		{"under", "igned", "6,6", 400, ""},
+		{"empty", "", "1,10", 400, ""},
+		{"low edge", "ab", "2,4", 200, "ab"},
+		{"high edge", "abcd", "2,4", 200, "abcd"},
+		{"kept", "overwritten", "0,5", 400, "before"},
 	} {
 		code, _, b := do(t, "PUT", base+"/range-bucket/"+url.PathEscape(tc.object), strings.NewReader(tc.body),
 			map[string]string{"X-Goog-Content-Length-Range": tc.rng})
@@ -547,13 +548,8 @@ func TestXMLPutContentLengthRange(t *testing.T) {
 			continue
 		}
 		code, _, got := do(t, "GET", base+"/range-bucket/"+url.PathEscape(tc.object), nil, nil)
-		switch {
-		case tc.object == "kept" && (code != 200 || string(got) != "before"):
-			t.Errorf("kept after refused PUT = %d %q, want 200 \"before\"", code, got)
-		case tc.object != "kept" && tc.want == 200 && (code != 200 || string(got) != tc.body):
-			t.Errorf("%s: GET = %d %q, want 200 %q", tc.object, code, got, tc.body)
-		case tc.object != "kept" && tc.want != 200 && code != 404:
-			t.Errorf("%s: refused PUT stored the body: GET = %d %q", tc.object, code, got)
+		if tc.wantGet == "" && code != 404 || tc.wantGet != "" && (code != 200 || string(got) != tc.wantGet) {
+			t.Errorf("%s: GET after the PUT = %d %q, want %q (none: 404)", tc.object, code, got, tc.wantGet)
 		}
 	}
 }
@@ -575,7 +571,7 @@ func TestXMLContentLengthRangeAuthAndMethods(t *testing.T) {
 	for _, tc := range []struct {
 		body string
 		want int
-	}{{"signed", 200}, {"signed!", 400}} {
+	}{{"signed", 200}, {"signed!", 400}, {"igned", 400}} {
 		req, _ := http.NewRequest("PUT", base+"/range-auth/hmac-"+strconv.Itoa(len(tc.body)), strings.NewReader(tc.body))
 		req.Header.Set("X-Goog-Content-Length-Range", "6,6")
 		signV4(req, "GOOG4", k.AccessID, k.Secret, false)
