@@ -118,6 +118,11 @@ func clusterKey(projectID, location, name string) string {
 
 func (r *clusterRecord) key() string { return clusterKey(r.Int.Project, r.Int.Location, r.Int.Name) }
 
+// ref identifies the cluster.
+func (r *clusterRecord) ref() ref {
+	return ref{Project: r.Int.Project, Location: r.Int.Location, Cluster: r.Int.Name}
+}
+
 // cluster decodes the API resource.
 func (r *clusterRecord) cluster() *containerpb.Cluster {
 	c := &containerpb.Cluster{}
