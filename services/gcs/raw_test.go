@@ -555,7 +555,7 @@ func TestXMLPutContentLengthRange(t *testing.T) {
 }
 
 // The range applies to a PUT that an HMAC Authorization header signs, a
-// malformed range is refused, and a request other than a PUT ignores the
+// malformed range is ignored, and a request other than a PUT ignores the
 // header (#1175).
 func TestXMLContentLengthRangeAuthAndMethods(t *testing.T) {
 	inst := start(t)
@@ -589,14 +589,17 @@ func TestXMLContentLengthRangeAuthAndMethods(t *testing.T) {
 		}
 	}
 
-	for _, rng := range []string{"6", "a,b", "7,6", "-1,6"} {
-		if code, _, b := do(t, "PUT", base+"/range-auth/malformed", strings.NewReader("signed"),
-			map[string]string{"X-Goog-Content-Length-Range": rng}); code != 400 || !strings.Contains(string(b), "InvalidArgument") {
-			t.Errorf("range %q = %d %s, want 400 InvalidArgument", rng, code, b)
+	// The reference documents no answer to a malformed range, so the PUT
+	// goes ahead as if the header were absent.
+	for i, rng := range []string{"6", "a,b", "7,6", "-1,6", "1,2,3"} {
+		object := base + "/range-auth/malformed-" + strconv.Itoa(i)
+		if code, _, b := do(t, "PUT", object, strings.NewReader("signed"),
+			map[string]string{"X-Goog-Content-Length-Range": rng}); code != 200 {
+			t.Errorf("range %q = %d %s, want 200", rng, code, b)
 		}
-	}
-	if code, _, _ := do(t, "GET", base+"/range-auth/malformed", nil, nil); code != 404 {
-		t.Errorf("a PUT under a malformed range stored its body: GET = %d", code)
+		if code, _, b := do(t, "GET", object, nil, nil); code != 200 || string(b) != "signed" {
+			t.Errorf("range %q: GET = %d %q, want 200 \"signed\"", rng, code, b)
+		}
 	}
 
 	// A resumable upload starts with a POST, which ignores the header.

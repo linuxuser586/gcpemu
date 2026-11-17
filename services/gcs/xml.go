@@ -300,12 +300,7 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 		return
 	}
 	var body io.Reader = r.Body
-	if h := r.Header.Get("X-Goog-Content-Length-Range"); h != "" {
-		lr, err := newLengthRangeReader(r.Body, h)
-		if err != nil {
-			xmlError(w, err)
-			return
-		}
+	if lr, ok := newLengthRangeReader(r.Body, r.Header.Get("X-Goog-Content-Length-Range")); ok {
 		body = lr
 	}
 	meta := xmlObjectMeta(r.Header, object)
@@ -329,6 +324,12 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 // x-goog-content-length-range header: its Read returns a 400 once the body
 // passes max, or at the end of a body shorter than min, so the upload is
 // aborted before its object is stored.
+//
+// The header reference documents only that: a PUT header, an inclusive
+// MIN,MAX pair of bytes, and a 400 outside it. It is silent on a malformed
+// value and on resumable chunk and multipart part PUTs, so the emulator
+// ignores the header there until a Conformance suite Recording shows what
+// Cloud Storage does (#1175).
 type lengthRangeReader struct {
 	r        io.Reader
 	min, max int64
@@ -336,15 +337,16 @@ type lengthRangeReader struct {
 }
 
 // newLengthRangeReader reads body under header, the value "MIN,MAX" of an
-// x-goog-content-length-range header.
-func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, error) {
+// x-goog-content-length-range header. It reports false for an absent or
+// malformed value, which leaves the body unchecked.
+func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, bool) {
 	lo, hi, ok := strings.Cut(header, ",")
 	minN, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
 	maxN, err2 := strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
 	if !ok || err1 != nil || err2 != nil || minN < 0 || maxN < minN {
-		return nil, errInvalid("Invalid x-goog-content-length-range header %q.", header)
+		return nil, false
 	}
-	return &lengthRangeReader{r: body, min: minN, max: maxN}, nil
+	return &lengthRangeReader{r: body, min: minN, max: maxN}, true
 }
 
 func (l *lengthRangeReader) Read(p []byte) (int, error) {
