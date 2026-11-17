@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -533,9 +534,10 @@ func TestCheckResolverRoutes(t *testing.T) {
 	}
 }
 
-// TestStatusResolverRoutes: status lists the Instance's Resolver routes.
+// TestStatusResolverRoutes: status lists the Instance's Resolver routes,
+// marking any the host's resolver no longer has.
 func TestStatusResolverRoutes(t *testing.T) {
-	dnsHost(t)
+	etc := dnsHost(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/_emu/v1/info":
@@ -567,8 +569,8 @@ func TestStatusResolverRoutes(t *testing.T) {
 	}
 	var v struct {
 		ResolverRoutes struct {
-			Port     int
-			Suffixes []string
+			Port              int
+			Suffixes, Missing []string
 		}
 	}
 	if err := json.Unmarshal([]byte(out), &v); err != nil {
@@ -576,5 +578,48 @@ func TestStatusResolverRoutes(t *testing.T) {
 	}
 	if want := []string{"svc.cluster.local", "gke.internal", "example.dev.test"}; v.ResolverRoutes.Port != 5353 || !slices.Equal(v.ResolverRoutes.Suffixes, want) {
 		t.Errorf("status --json resolverRoutes = %+v, want port 5353 and %v", v.ResolverRoutes, want)
+	}
+	if v.ResolverRoutes.Missing == nil || len(v.ResolverRoutes.Missing) != 0 {
+		t.Errorf("status --json resolverRoutes.missing = %#v, want []", v.ResolverRoutes.Missing)
+	}
+
+	// The OS lost one route since install (#1176): status marks it.
+	if err := os.Remove(filepath.Join(etc, "resolver", "gke.internal")); err != nil {
+		t.Fatal(err)
+	}
+	out, err = gcpemu(t, "--data-dir", dir, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "resolver routes to 127.0.0.1:5353:\n  svc.cluster.local\n  gke.internal (gone from the host's resolver)\n  example.dev.test\n  fix: run `gcpemu dns install` again\n"; !strings.Contains(out, want) {
+		t.Errorf("status:\n%s\nwant it to contain:\n%s", out, want)
+	}
+	out, err = gcpemu(t, "--data-dir", dir, "status", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.ResolverRoutes.Missing = nil
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("status --json: %v\n%s", err, out)
+	}
+	if want := []string{"gke.internal"}; !slices.Equal(v.ResolverRoutes.Missing, want) {
+		t.Errorf("status --json resolverRoutes.missing = %v, want %v", v.ResolverRoutes.Missing, want)
+	}
+
+	// A host status can't read isn't reported as having every route.
+	resolverHostNow = func(bool) (resolverHost, error) { return resolverHost{}, errors.New("no NRPT") }
+	out, err = gcpemu(t, "--data-dir", dir, "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "  example.dev.test\n  (not checked against the host's resolver: no NRPT)\n"; !strings.Contains(out, want) {
+		t.Errorf("status:\n%s\nwant it to contain:\n%s", out, want)
+	}
+	out, err = gcpemu(t, "--data-dir", dir, "status", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"missing":null`) {
+		t.Errorf("status --json = %s, want resolverRoutes.missing null", out)
 	}
 }

@@ -624,11 +624,17 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			if recs, err := readResolverRecords(); err == nil {
 				routes = recs[cfg.Instance]
 			}
+			check := checkResolverRoutesNow(cfg, routes)
 			if asJSON {
 				if routes.Suffixes == nil {
 					routes.Suffixes = []string{}
 				}
-				rr, _ := json.Marshal(routes)
+				// missing is null when the host wasn't checked.
+				rs := resolverRoutesStatus{resolverRecord: routes}
+				if check.err == nil {
+					rs.Missing = append([]string{}, check.gone...)
+				}
+				rr, _ := json.Marshal(rs)
 				fmt.Fprintf(cmd.OutOrStdout(), "{\"info\":%s,\"ready\":%s,\"containers\":%s,\"hostOffers\":%s,\"hostServices\":%s,\"linkedLBFrontends\":%s,\"resolverRoutes\":%s}\n", info, ready, cts, offers, hostSvcs, linkedFrontends, rr)
 				return notReady()
 			}
@@ -694,13 +700,21 @@ func (o *rootOpts) statusCmd() *cobra.Command {
 			}
 			printHostServices(out, hostSvcs)
 			printLinkedFrontends(out, linkedFrontends)
-			printResolverRoutes(out, routes)
+			check.print(out, routes)
 			return notReady()
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	cmd.Flags().BoolVar(&needReady, "ready", false, "exit non-zero unless every Service is ready")
 	return cmd
+}
+
+// resolverRoutesStatus is `status --json`'s resolverRoutes: the
+// Instance's record, and which of its routes the host's resolver no
+// longer has.
+type resolverRoutesStatus struct {
+	resolverRecord
+	Missing []string `json:"missing"`
 }
 
 func sortedKeys[V any](m map[string]V) []string {

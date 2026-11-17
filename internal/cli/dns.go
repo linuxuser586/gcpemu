@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/linuxuser586/gcpemu/internal/config"
+	emuruntime "github.com/linuxuser586/gcpemu/internal/runtime"
 )
 
 // `gcpemu dns` adds (or removes) Resolver routes: rules in the host's
@@ -120,7 +121,7 @@ func (o *rootOpts) dnsCmd() *cobra.Command {
 			if err := writeResolverRecords(records); err != nil {
 				return err
 			}
-			printResolverRoutes(out, ch.record)
+			printResolverRoutes(out, ch.record, nil)
 			return nil
 		}
 		c.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation (sudo may still prompt for a password; Windows still shows its UAC dialog)")
@@ -159,15 +160,79 @@ func dnsPort(cfg *config.Config) int {
 	return cfg.Port("dns")
 }
 
-// printResolverRoutes lists rec's routes, for `dns install` and `status`.
-func printResolverRoutes(out io.Writer, rec resolverRecord) {
+// printResolverRoutes lists rec's routes, for `dns install` and `status`,
+// marking those in gone.
+func printResolverRoutes(out io.Writer, rec resolverRecord, gone []string) {
 	if len(rec.Suffixes) == 0 {
 		return
 	}
 	fmt.Fprintf(out, "resolver routes to 127.0.0.1:%d:\n", rec.Port)
 	for _, s := range rec.Suffixes {
-		fmt.Fprintf(out, "  %s\n", s)
+		if slices.Contains(gone, s) {
+			fmt.Fprintf(out, "  %s (gone from the host's resolver)\n", s)
+		} else {
+			fmt.Fprintf(out, "  %s\n", s)
+		}
 	}
+}
+
+// resolverRouteCheck is what `status` found of an Instance's Resolver
+// routes on the host (#1176).
+type resolverRouteCheck struct {
+	// gone are the routes the host's resolver no longer has, as when
+	// Windows dropped the NRPT rules; fix is how to put them back.
+	gone []string
+	fix  string
+	// err is why the host wasn't checked.
+	err error
+}
+
+// checkResolverRoutesNow checks rec's routes against the host's resolver;
+// in a container the host is out of reach, as for `doctor`.
+func checkResolverRoutesNow(cfg *config.Config, rec resolverRecord) resolverRouteCheck {
+	if len(rec.Suffixes) == 0 {
+		return resolverRouteCheck{}
+	}
+	if emuruntime.InContainer() {
+		return resolverRouteCheck{err: errors.New("the host is out of reach from a container")}
+	}
+	h, err := resolverHostNow(true)
+	if err != nil {
+		return resolverRouteCheck{err: err}
+	}
+	var c resolverRouteCheck
+	for _, s := range rec.Suffixes {
+		if _, ok := h.routeTarget(cfg.Instance, rec, s); !ok {
+			c.gone = append(c.gone, s)
+		}
+	}
+	if len(c.gone) > 0 {
+		c.fix = resolverFix(h.goos, dnsPort(cfg))
+	}
+	return c
+}
+
+// print lists rec's routes as printResolverRoutes does, with how to put
+// back those gone, or why none was checked.
+func (c resolverRouteCheck) print(out io.Writer, rec resolverRecord) {
+	printResolverRoutes(out, rec, c.gone)
+	switch {
+	case len(rec.Suffixes) == 0:
+	case c.err != nil:
+		fmt.Fprintf(out, "  (not checked against the host's resolver: %v)\n", c.err)
+	case len(c.gone) > 0:
+		fmt.Fprintf(out, "  fix: %s\n", c.fix)
+	}
+}
+
+// resolverFix is how to put back Resolver routes that are gone or go to
+// the wrong port, on goos with the dns Service endpoint on port.
+func resolverFix(goos string, port int) string {
+	fix := "run `gcpemu dns install` again"
+	if goos == "windows" && port != 53 {
+		fix = "start the Instance with --port dns=53, then " + fix
+	}
+	return fix
 }
 
 const resolverRecordsName = "resolver-routes.json"
@@ -596,11 +661,7 @@ func checkResolverRoutes(out io.Writer, h resolverHost, instance string, rec res
 		}
 	}
 	if stale {
-		fix := "run `gcpemu dns install` again"
-		if h.goos == "windows" && port != 53 {
-			fix = "start the Instance with --port dns=53, then " + fix
-		}
-		fmt.Fprintf(out, "       fix: %s\n", fix)
+		fmt.Fprintf(out, "       fix: %s\n", resolverFix(h.goos, port))
 	}
 }
 

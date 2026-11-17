@@ -1064,8 +1064,9 @@ that configuration it didn't write already covers, and then changes nothing.
   `--port dns=53` first; `install` refuses otherwise. Then `Resolve-DnsName web.default.svc.cluster.local`
   answers from the emulator.
 
-`gcpemu status` lists the Instance's Resolver routes, and `gcpemu doctor` reports any that are gone
-or point at another port.
+`gcpemu status` lists the Instance's Resolver routes, marking any that are gone from the host's
+resolver (`gcpemu dns install` puts them back), and `gcpemu doctor` reports any that are gone or
+point at another port.
 
 Aliases come from the `127.0.0.2`–`127.0.0.254` pool that Cloud SQL instances and forwarding rules
 also use. On macOS run `sudo gcpemu loopback install` first; Linux and Windows route all of
