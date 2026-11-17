@@ -64,7 +64,6 @@ func (s *Service) resolveA(ctx context.Context, name string) []string {
 func (s *Service) provisionManagedCerts(ctx context.Context) {
 	s.certMu.Lock()
 	defer s.certMu.Unlock()
-	changed := false
 	for _, obj := range s.loadAll(kindSSLCertificate, "") {
 		c := obj.(*computev1.SslCertificate)
 		if c.Type != "MANAGED" || c.Managed == nil {
@@ -106,38 +105,35 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 		if equalStatus(c.Managed.DomainStatus, status) && !all {
 			continue
 		}
+		write := func() {
+			if s.beforeCertWrite != nil {
+				s.beforeCertWrite(ctx, path)
+			}
+			_ = s.env.Store.Update(func(tx store.Tx) error {
+				if inflight.Halted(ctx) {
+					return nil // read before a Reset
+				}
+				if !store.Exists(tx, kindSSLCertificate.ns(), path) {
+					return nil
+				}
+				if key != "" {
+					if err := store.PutJSON(tx, nsSSLKeys, path, key); err != nil {
+						return err
+					}
+				}
+				return store.PutJSON(tx, kindSSLCertificate.ns(), path, next)
+			})
+		}
 		if serve != nil {
 			// Listeners serve the certificate before it reads ACTIVE, so
 			// a client that connects once it does is not refused (#1184).
-			s.dp.pend(path, serve)
+			s.dp.serveAcross(path, serve, write)
+		} else {
+			write()
 		}
-		if s.beforeCertWrite != nil {
-			s.beforeCertWrite(ctx, path)
-		}
-		_ = s.env.Store.Update(func(tx store.Tx) error {
-			if inflight.Halted(ctx) {
-				return nil // read before a Reset
-			}
-			if !store.Exists(tx, kindSSLCertificate.ns(), path) {
-				return nil
-			}
-			if key != "" {
-				if err := store.PutJSON(tx, nsSSLKeys, path, key); err != nil {
-					return err
-				}
-			}
-			return store.PutJSON(tx, kindSSLCertificate.ns(), path, next)
-		})
-		if serve != nil {
-			s.dp.unpend(path) // the reconcile below serves what was stored
-		}
-		changed = changed || all
 		if all {
 			s.env.Log.Info("lb: managed certificate active", "certificate", path, "domains", strings.Join(c.Managed.Domains, ","))
 		}
-	}
-	if changed {
-		s.dp.reconcile()
 	}
 }
 

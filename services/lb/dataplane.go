@@ -174,9 +174,10 @@ func (d *dataplane) close(ctx context.Context) {
 	}
 }
 
-// pend makes listeners serve cert for the managed certificate at path in
-// place of the stored one, until unpend.
-func (d *dataplane) pend(path string, cert *tls.Certificate) {
+// serveAcross makes listeners serve cert for the managed certificate at
+// path in place of the stored one while write runs, then serves what the
+// store holds (cert, once write stored it).
+func (d *dataplane) serveAcross(path string, cert *tls.Certificate, write func()) {
 	d.mu.Lock()
 	if d.pending == nil {
 		d.pending = map[string]*tls.Certificate{}
@@ -184,14 +185,13 @@ func (d *dataplane) pend(path string, cert *tls.Certificate) {
 	d.pending[path] = cert
 	d.mu.Unlock()
 	d.reconcile()
-}
-
-// unpend ends pend; the caller reconciles once the store holds what
-// listeners are to serve.
-func (d *dataplane) unpend(path string) {
-	d.mu.Lock()
-	delete(d.pending, path)
-	d.mu.Unlock()
+	defer d.reconcile()
+	defer func() {
+		d.mu.Lock()
+		delete(d.pending, path)
+		d.mu.Unlock()
+	}()
+	write()
 }
 
 // reconcile rebuilds the configuration snapshot and adjusts listeners and
@@ -322,11 +322,12 @@ func (d *dataplane) buildFrontend(f *computev1.ForwardingRule, routers map[strin
 			fe.keepAlive = time.Duration(p.HttpKeepAliveTimeoutSec) * time.Second
 		}
 		for _, c := range p.SslCertificates {
-			if cert := d.pending[relPath(c)]; cert != nil {
+			path := relPath(c)
+			if cert := d.pending[path]; cert != nil {
 				fe.certs = append(fe.certs, cert)
 				continue
 			}
-			cert, _, err := s.tlsCertificate(relPath(c))
+			cert, _, err := s.tlsCertificate(path)
 			if err != nil {
 				s.env.Log.Warn("lb: SSL certificate unusable", "certificate", c, "err", err)
 			}
