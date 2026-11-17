@@ -11,7 +11,7 @@ import (
 	"syscall"
 )
 
-// The node side of ADR 0087: the ClusterIP relay connects to a pod on this
+// The node side of ADR 0088: the ClusterIP relay connects to a pod on this
 // node from the Host address, which the node does not hold, so that the
 // pod sees the host. The socket is transparent (IP_TRANSPARENT) and marked
 // (srcSocketMark); mangle OUTPUT copies that mark onto the connection as

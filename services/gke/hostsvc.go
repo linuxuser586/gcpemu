@@ -41,7 +41,7 @@ import (
 // its TCP ports there. Each connection goes to the pod chooseHostEndpoint
 // picks, through the ClusterIP relay (clusteriprelay.go) of the pod's node,
 // from the Host address of the cluster's subnetwork, so that the pod sees
-// the host (ADR 0087); or, for any other endpoint, to its ClusterIP, which
+// the host (ADR 0088); or, for any other endpoint, to its ClusterIP, which
 // only nodes route, through a node's relay. The netplane reaches the node
 // through the VM relay on a VM runtime. A privileged port
 // the host refuses to bind is not served. Headless Services are not
@@ -383,7 +383,7 @@ func listenAlias(ip string, port int) (net.Listener, error) {
 // hostDial connects a host client to svc's port: to the endpoint
 // chooseHostEndpoint picks, through the ClusterIP relay of its node and
 // from the Host address of the cluster's subnetwork, so that the pod sees
-// the host (ADR 0087); otherwise to the ClusterIP, through the first node
+// the host (ADR 0088); otherwise to the ClusterIP, through the first node
 // that answers. A node that connects to the pod from its own address, or
 // has an agent that predates sources, is listed (hostUnpreserved); a
 // connection the node refuses or cannot make goes to the ClusterIP.
@@ -471,7 +471,7 @@ func (s *Service) hostDialPod(ctx context.Context, np *netplane.Plane, rec *clus
 	if err != nil {
 		var refused relayRefused
 		if errors.As(err, &refused) && refused.predatesSource() {
-			s.setUnpreserved(rec.key(), node.Name, "its node agent predates connecting from the Host address (ADR 0087); recreating the node updates it")
+			s.setUnpreserved(rec.key(), node.Name, "its node agent predates connecting from the Host address (ADR 0088); recreating the node updates it")
 		}
 		return nil, err
 	}
@@ -791,7 +791,7 @@ type hostServicesJSON struct {
 	Unserved      []hostUnservedJSON `json:"unserved"`
 	PoolExhausted bool               `json:"poolExhausted"`
 	// Unpreserved are the nodes whose pods see host clients come from the
-	// node's address instead of the Host address, and why (ADR 0087).
+	// node's address instead of the Host address, and why (ADR 0088).
 	Unpreserved []hostUnpreservedJSON `json:"unpreserved"`
 }
 

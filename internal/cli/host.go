@@ -185,7 +185,7 @@ func printHostServices(out io.Writer, body []byte) {
 // that do not resolve because more than one cluster has them, an exhausted
 // alias pool, the Services left without an alias and the nodes whose pods
 // see host clients come from the node's address instead of the Host
-// address (ADR 0087).
+// address (ADR 0088).
 func reportHostServices(out io.Writer, body []byte) {
 	var hs hostServices
 	if json.Unmarshal(body, &hs) != nil {

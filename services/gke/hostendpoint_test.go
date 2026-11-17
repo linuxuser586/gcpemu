@@ -32,7 +32,7 @@ func hostTestService(t *testing.T, spec string) *kubeService {
 }
 
 // A host client's connection goes to an endpoint the emulator chooses as
-// kube-proxy would (ADR 0087): a ready one, or a serving terminating one
+// kube-proxy would (ADR 0088): a ready one, or a serving terminating one
 // when none is ready, on the target port its EndpointSlice names for the
 // Service port. Only a pod in the cluster's pod range, on a known node,
 // is reached from the Host address; any other endpoint is left to the

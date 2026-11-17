@@ -258,7 +258,7 @@ const hostServicesBody = `{"services":[
 // Doctor lists the short Service names more than one cluster has, a pool
 // with no free Loopback alias, and the Services left without one (ADR
 // 0014), and the nodes whose pods see host clients come from the node's
-// address instead of the Host address (ADR 0087).
+// address instead of the Host address (ADR 0088).
 func TestReportHostServices(t *testing.T) {
 	var out strings.Builder
 	reportHostServices(&out, []byte(hostServicesBody))

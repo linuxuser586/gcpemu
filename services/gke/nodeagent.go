@@ -52,7 +52,7 @@ import (
 //   - :15090 on every address, the ClusterIP relay (clusteriprelay.go), through
 //     which the emulator connects host clients to Services' ClusterIPs
 //     (ADR 0014), or to pods on this node from the Host address
-//     (hostsource_linux.go, ADR 0087).
+//     (hostsource_linux.go, ADR 0088).
 
 // googleAPIsDNSIP is the node's googleapis resolver: *.googleapis.com
 // resolves as on GCP (through Cloud DNS, to real Google) and every other

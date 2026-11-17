@@ -443,7 +443,7 @@ func sourceFixture(t *testing.T) (s *Service, key string, kube *fakeKube, relay 
 	return s, rec.key(), k, relay, from
 }
 
-// predatingRelay answers as a node agent from before ADR 0087 did: it
+// predatingRelay answers as a node agent from before ADR 0088 did: it
 // takes the whole rest of the request line for the target, so a request
 // with a source is outside the Service range, and connects to any other.
 func predatingRelay(c net.Conn) {
@@ -496,7 +496,7 @@ func hostDialEchoes(t *testing.T, s *Service, key, name string, port int) bool {
 
 // A host client's connection to a Service reaches a pod through the
 // ClusterIP relay of the pod's node, from the Host address of the
-// cluster's subnetwork (ADR 0087). A node that cannot connect from it
+// cluster's subnetwork (ADR 0088). A node that cannot connect from it
 // still connects, and the Admin API lists it until it can; a connection
 // the node refuses, and a Service with nothing serving, go to the
 // ClusterIP as before.
@@ -534,7 +534,7 @@ func TestHostServicesSource(t *testing.T) {
 		t.Errorf("unpreserved = %+v", v.Unpreserved)
 	}
 
-	// A node agent from before ADR 0087, which takes "ip:port SOURCE" for
+	// A node agent from before ADR 0088, which takes "ip:port SOURCE" for
 	// a target outside the Service range, relays to the ClusterIP.
 	kube.put(`{"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice","metadata":{"namespace":"default","name":"echo-abc","labels":{"kubernetes.io/service-name":"echo"}},
 		"addressType":"IPv4","ports":[{"name":"","port":` + port + `}],"endpoints":[{"addresses":["127.0.0.1"],"conditions":{"ready":true},"nodeName":"c1-n1"}]}`)

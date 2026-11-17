@@ -18,7 +18,7 @@ import (
 // cluster's secret and a ClusterIP in the Service range, and gets "OK\n"
 // before the stream is spliced, or "ERR reason\n".
 //
-// So that pods see host clients come from the Host address (ADR 0087), the
+// So that pods see host clients come from the Host address (ADR 0088), the
 // emulator can instead send "SECRET ip:port SOURCE\n", for a pod on this
 // node and the Host address to connect from. The relay connects from
 // SOURCE and answers "OK\n", or, when the node cannot, connects from its

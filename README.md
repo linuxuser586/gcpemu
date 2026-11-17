@@ -1038,7 +1038,7 @@ reaches a pod, on Linux and on a VM runtime (as on macOS and Windows) alike. Hea
 aren't answered; ExternalName Services are answered with their CNAME. Queries from the VPC (pods,
 through their node's DNS relay) are unaffected.
 
-Pods see these connections come from the Host address of the cluster's subnetwork (ADR 0087), the
+Pods see these connections come from the Host address of the cluster's subnetwork (ADR 0088), the
 address `gcpemu host-address` prints and at which pods reach the host's offered ports. So a policy
 that admits the host, such as an Istio AuthorizationPolicy with `remoteIpBlocks: ["10.128.0.1/32"]`,
 admits a process on the host and nothing else. The emulator picks the pod as kube-proxy would (a

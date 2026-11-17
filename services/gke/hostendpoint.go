@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Host clients reach pods from the Host address (ADR 0087): the emulator
+// Host clients reach pods from the Host address (ADR 0088): the emulator
 // chooses the endpoint of a host client's connection itself, as kube-proxy
 // would, so that it can relay through the node the pod runs on.
 

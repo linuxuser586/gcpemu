@@ -83,7 +83,7 @@ func TestClusterIPRelay(t *testing.T) {
 }
 
 // Asked for a source, the relay connects to a pod on its node from that
-// address (ADR 0087). A node that cannot, from the start or on the dial,
+// address (ADR 0088). A node that cannot, from the start or on the dial,
 // connects from its own address and says why.
 func TestClusterIPRelaySource(t *testing.T) {
 	target := echoServer(t)
