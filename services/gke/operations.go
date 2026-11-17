@@ -57,17 +57,7 @@ func (s *Service) startOp(ctx context.Context, r ref, typ containerpb.Operation_
 // Operation latency it finishes before runOp returns, so the response is
 // DONE (ADR 0020).
 func (s *Service) runOp(r ref, name string, typ containerpb.Operation_Type, target string, lock bool, work workFunc) (*containerpb.Operation, error) {
-	op := &containerpb.Operation{
-		Name:          name,
-		Zone:          r.Location,
-		OperationType: typ,
-		Status:        containerpb.Operation_RUNNING,
-		SelfLink:      selfLink(projectNumber(r.Project), r.Location, "operations/"+name),
-		TargetLink:    target,
-		Location:      r.Location,
-		StartTime:     s.now(),
-		Progress:      &containerpb.OperationProgress{Status: containerpb.Operation_RUNNING},
-	}
+	op := newOp(r, name, typ, containerpb.Operation_RUNNING, target, s.now())
 	g := s.track(1)
 	if g == nil {
 		s.unlock(r, lock, name)
@@ -112,6 +102,22 @@ func (s *Service) runOp(r ref, name string, typ containerpb.Operation_Type, targ
 		s.mu.Unlock()
 	}()
 	return op, nil
+}
+
+// newOp is Operation name of type typ on target in status st, started at
+// start.
+func newOp(r ref, name string, typ containerpb.Operation_Type, st containerpb.Operation_Status, target, start string) *containerpb.Operation {
+	return &containerpb.Operation{
+		Name:          name,
+		Zone:          r.Location,
+		OperationType: typ,
+		Status:        st,
+		SelfLink:      selfLink(projectNumber(r.Project), r.Location, "operations/"+name),
+		TargetLink:    target,
+		Location:      r.Location,
+		StartTime:     start,
+		Progress:      &containerpb.OperationProgress{Status: st},
+	}
 }
 
 func (s *Service) unlock(r ref, lock bool, name string) {
@@ -188,11 +194,16 @@ func (s *Service) release(key, name string) {
 }
 
 func (s *Service) putOp(projectID string, op *containerpb.Operation) error {
+	return s.env.Store.Update(func(tx store.Tx) error { return putOpTx(tx, projectID, op) })
+}
+
+// putOpTx stores op inside tx.
+func putOpTx(tx store.Tx, projectID string, op *containerpb.Operation) error {
 	b, err := protojson.Marshal(op)
 	if err != nil {
 		return err
 	}
-	return s.env.Store.Update(func(tx store.Tx) error { return tx.Put(nsOperations, opKey(projectID, op.Name), b) })
+	return tx.Put(nsOperations, opKey(projectID, op.Name), b)
 }
 
 func (s *Service) getOp(projectID, name string) (*containerpb.Operation, error) {

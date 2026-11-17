@@ -52,7 +52,7 @@ func (s *Service) PodRoutes(ctx context.Context) []PodRoute {
 		if err := kc.get(ctx, "/api/v1/nodes", &nodes); err != nil {
 			continue
 		}
-		name := ref{Project: rec.Int.Project, Location: rec.Int.Location, Cluster: rec.Int.Name}.clusterName()
+		name := rec.ref().clusterName()
 		for _, n := range nodes.Items {
 			if n.Spec.PodCIDR == "" || ips[n.Metadata.Name] == "" {
 				continue

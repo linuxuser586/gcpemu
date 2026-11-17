@@ -117,6 +117,9 @@ type Service struct {
 	// beforeServerStart, set by tests, runs before a bring-up touches the
 	// cluster's server container or volume.
 	beforeServerStart func(ctx context.Context, key string)
+	// versionTable, set by tests, replaces the GKE version table when
+	// recovery looks for Retired versions (retired.go).
+	versionTable []k8sVersion
 	// restoring, set by tests, runs when a restore starts, before its
 	// bring-up (ADR 0079).
 	restoring func(ctx context.Context, key string)
@@ -306,6 +309,7 @@ func (s *Service) recoverClusters() {
 			s.goBackground(func(ctx context.Context) { _ = s.teardown(ctx, key) })
 		case c.Status == containerpb.Cluster_PROVISIONING, c.Status == containerpb.Cluster_RUNNING, c.Status == containerpb.Cluster_RECONCILING,
 			c.Status == containerpb.Cluster_ERROR, c.Status == containerpb.Cluster_DEGRADED:
+			s.upgradeRetired(key)
 			s.markRestoring(key)
 			s.goBackground(func(ctx context.Context) { s.restore(ctx, key) })
 		}

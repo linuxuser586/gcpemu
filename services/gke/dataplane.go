@@ -1050,8 +1050,12 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 		return fmt.Errorf("node pool %s not found", node.Pool)
 	}
 	name := nodeContainer(d, c, node.Name)
+	ver, ok := lookupVersion(np.Version)
 	if !recreate {
-		if ct, err := d.rt.InspectContainer(ctx, name); err == nil && ct.Running {
+		// A running node on another image than its pool's version, as
+		// when its pool was moved off a Retired version (ADR 0085), is
+		// replaced.
+		if ct, err := d.rt.InspectContainer(ctx, name); err == nil && ct.Running && (!ok || ct.Image == ver.Image) {
 			// A node that outlived the emulator holds the Public routes
 			// of its last run, or none from before ADR 0059.
 			if node.ExternalIP != "" && s.routesPublic() {
@@ -1062,7 +1066,6 @@ func (s *Service) startNode(ctx context.Context, d *deps, key string, sn emu.Sub
 			return nil
 		}
 	}
-	ver, ok := lookupVersion(np.Version)
 	if !ok {
 		return apierr.FailedPrecondition("unknown node version %q", np.Version)
 	}
