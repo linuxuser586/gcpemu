@@ -18,6 +18,17 @@ func (o *rootOpts) envCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "env",
 		Short: "Print environment variables that point clients at the instance",
+		Long: "Prints environment variables that point clients at the Instance, for\n" +
+			"`eval \"$(gcpemu env)\"`, or for $GITHUB_ENV with --shell github.\n\n" +
+			"KUBECONFIG names the Admin kubeconfig in the Instance's data directory whether or\n" +
+			"not a cluster runs, so its being set doesn't mean a cluster exists. The file lists\n" +
+			"only the running clusters, so it may be missing or empty: missing until the first\n" +
+			"one runs, and empty after the last one is deleted. In either case kubectl reports\n" +
+			"a refused connection to localhost:8080. To check for a running cluster:\n\n" +
+			"  kubectl config get-contexts -o name                                      # one context per running cluster\n" +
+			"  gcloud container clusters list --filter='status:(RUNNING RECONCILING)'   # also works against real GCP\n\n" +
+			"A running cluster is one whose control plane answers, so a cluster that is reconciling\n" +
+			"(being upgraded or resized) counts.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {
