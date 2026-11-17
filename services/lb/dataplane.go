@@ -41,11 +41,15 @@ type dataplane struct {
 	// a listener has none.
 	unavailable map[string]string
 	loopX       map[string]int // forwarding rule IP → 127.0.0.x
-	single      bool           // single-loopback mode (listeners.go)
-	nextPort    int
-	backends    map[string]*backendSvc // by backend service path
-	ctx         context.Context
-	closed      bool
+	// pending holds managed certificates (by resource path) issued but
+	// not yet stored ACTIVE, which listeners serve already so that a
+	// client never reads ACTIVE before the handshake can succeed (#1184).
+	pending  map[string]*tls.Certificate
+	single   bool // single-loopback mode (listeners.go)
+	nextPort int
+	backends map[string]*backendSvc // by backend service path
+	ctx      context.Context
+	closed   bool
 
 	logs *accessLogger
 	edge *edge
@@ -168,6 +172,26 @@ func (d *dataplane) close(ctx context.Context) {
 	if d.logs != nil {
 		d.logs.close()
 	}
+}
+
+// serveAcross makes listeners serve cert for the managed certificate at
+// path in place of the stored one while write runs, then serves what the
+// store holds (cert, once write stored it).
+func (d *dataplane) serveAcross(path string, cert *tls.Certificate, write func()) {
+	d.mu.Lock()
+	if d.pending == nil {
+		d.pending = map[string]*tls.Certificate{}
+	}
+	d.pending[path] = cert
+	d.mu.Unlock()
+	d.reconcile()
+	defer d.reconcile()
+	defer func() {
+		d.mu.Lock()
+		delete(d.pending, path)
+		d.mu.Unlock()
+	}()
+	write()
 }
 
 // reconcile rebuilds the configuration snapshot and adjusts listeners and
@@ -298,7 +322,12 @@ func (d *dataplane) buildFrontend(f *computev1.ForwardingRule, routers map[strin
 			fe.keepAlive = time.Duration(p.HttpKeepAliveTimeoutSec) * time.Second
 		}
 		for _, c := range p.SslCertificates {
-			cert, _, err := s.tlsCertificate(relPath(c))
+			path := relPath(c)
+			if cert := d.pending[path]; cert != nil {
+				fe.certs = append(fe.certs, cert)
+				continue
+			}
+			cert, _, err := s.tlsCertificate(path)
 			if err != nil {
 				s.env.Log.Warn("lb: SSL certificate unusable", "certificate", c, "err", err)
 			}

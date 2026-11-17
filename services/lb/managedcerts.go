@@ -2,6 +2,7 @@ package lb
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"strings"
 	"time"
@@ -63,7 +64,6 @@ func (s *Service) resolveA(ctx context.Context, name string) []string {
 func (s *Service) provisionManagedCerts(ctx context.Context) {
 	s.certMu.Lock()
 	defer s.certMu.Unlock()
-	changed := false
 	for _, obj := range s.loadAll(kindSSLCertificate, "") {
 		c := obj.(*computev1.SslCertificate)
 		if c.Type != "MANAGED" || c.Managed == nil {
@@ -84,6 +84,7 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 		next := jsonClone(c)
 		next.Managed.DomainStatus = status
 		var key string
+		var serve *tls.Certificate
 		if all {
 			leaf, err := s.env.CA.Issue(ca.Leaf{DNSNames: c.Managed.Domains, Organization: "gcpemu Google-managed"})
 			if err != nil {
@@ -99,34 +100,40 @@ func (s *Service) provisionManagedCerts(ctx context.Context) {
 			next.SubjectAlternativeNames = append([]string{}, c.Managed.Domains...)
 			next.Managed.Status = "ACTIVE"
 			key = string(keyPEM)
+			serve = leaf
 		}
 		if equalStatus(c.Managed.DomainStatus, status) && !all {
 			continue
 		}
-		if s.beforeCertWrite != nil {
-			s.beforeCertWrite(ctx, path)
-		}
-		_ = s.env.Store.Update(func(tx store.Tx) error {
-			if inflight.Halted(ctx) {
-				return nil // read before a Reset
+		write := func() {
+			if s.beforeCertWrite != nil {
+				s.beforeCertWrite(ctx, path)
 			}
-			if !store.Exists(tx, kindSSLCertificate.ns(), path) {
-				return nil
-			}
-			if key != "" {
-				if err := store.PutJSON(tx, nsSSLKeys, path, key); err != nil {
-					return err
+			_ = s.env.Store.Update(func(tx store.Tx) error {
+				if inflight.Halted(ctx) {
+					return nil // read before a Reset
 				}
-			}
-			return store.PutJSON(tx, kindSSLCertificate.ns(), path, next)
-		})
-		changed = changed || all
+				if !store.Exists(tx, kindSSLCertificate.ns(), path) {
+					return nil
+				}
+				if key != "" {
+					if err := store.PutJSON(tx, nsSSLKeys, path, key); err != nil {
+						return err
+					}
+				}
+				return store.PutJSON(tx, kindSSLCertificate.ns(), path, next)
+			})
+		}
+		if serve != nil {
+			// Listeners serve the certificate before it reads ACTIVE, so
+			// a client that connects once it does is not refused (#1184).
+			s.dp.serveAcross(path, serve, write)
+		} else {
+			write()
+		}
 		if all {
 			s.env.Log.Info("lb: managed certificate active", "certificate", path, "domains", strings.Join(c.Managed.Domains, ","))
 		}
-	}
-	if changed {
-		s.dp.reconcile()
 	}
 }
 
