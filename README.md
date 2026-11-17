@@ -46,6 +46,14 @@ building and testing gcpemu; `gcpemu doctor` checks a host for running it.
 The Go tests run alongside your own `gcpemu` Instance, so there is no need to stop it before
 `just test`.
 
+Renovate keeps dependencies current (`renovate.json`, ADR 0082). Each Monday it opens one PR per
+ecosystem for patch and minor updates. Majors wait on its Dependency Dashboard issue until approved
+there, and nothing merges itself. Two kinds of pin stay manual: Product images, which a Product
+image refresh moves (ADR 0084), and the checksum-pinned tools (Helm, crane, ko, the Auth Proxy,
+Sonobuoy, OpenTofu), whose new versions the dashboard only lists. A file that starts using one of
+the helper images, such as `busybox`, goes into that image's list in `renovate.json`. `just test`
+names any file that is missing from it.
+
 ## Quick start
 
 ```sh

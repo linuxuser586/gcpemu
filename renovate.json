@@ -1,0 +1,237 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "ADR 0082: Renovate updates dependencies, except Product images and checksum pins (#896).",
+  "extends": ["config:recommended"],
+  "timezone": "America/New_York",
+  "schedule": ["* 0-11 * * 1"],
+  "prConcurrentLimit": 5,
+  "dependencyDashboard": true,
+  "automerge": false,
+  "semanticCommits": "enabled",
+  "enabledManagers": ["gomod", "npm", "nvm", "maven", "github-actions", "dockerfile", "custom.regex"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "services/sql/images.go",
+    "services/gke/versions.go",
+    "services/gke/addons/**",
+    "internal/instance/managed.go"
+  ],
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
+  "vulnerabilityAlerts": {
+    "description": "Security fixes skip the schedule, the groups and dashboard approval.",
+    "schedule": ["at any time"],
+    "groupName": null,
+    "dependencyDashboardApproval": false,
+    "prCreation": "immediate",
+    "labels": ["security"]
+  },
+  "customManagers": [
+    {
+      "description": "busybox, a helper image (of Managed containers that only carry traffic or run helpers). Matched by file path, not name.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "Dockerfile",
+        "README.md",
+        "compat/builds_test.go",
+        "compat/clients_test.go",
+        "compat/sdk/buildgo/main.go",
+        "console/e2e/build.spec.ts",
+        "docs/release.md",
+        "e2e/containerized_lb_test.go",
+        "internal/devtool/image.go",
+        "internal/hostmode/hostmode.go",
+        "internal/hosttest/hosttest.go",
+        "internal/vmrelay/relay.go",
+        "prerelease/registryrelay_test.go",
+        "services/build/agentctl.go",
+        "services/build/helpers_test.go",
+        "services/compute/vpc.go",
+        "services/gke/addrheld_test.go",
+        "services/gke/publicendpoint_test.go"
+      ],
+      "matchStrings": ["(?:[^\\w./-]|docker\\.io/library/)busybox:(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)"],
+      "depNameTemplate": "busybox",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "docker:*-dind, the Cloud Build daemon of an Instance.",
+      "customType": "regex",
+      "managerFilePatterns": ["README.md", "services/build/daemon.go", "services/build/daemon_test.go"],
+      "matchStrings": ["[^\\w./-]docker:(?<currentValue>\\d+\\.\\d+\\.\\d+-dind)"],
+      "depNameTemplate": "docker",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "alpine/git, which clones a Cloud Build gitSource.",
+      "customType": "regex",
+      "managerFilePatterns": ["services/build/source.go"],
+      "matchStrings": ["alpine/git:(?<currentValue>v\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "alpine/git",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
+    },
+    {
+      "description": "rancher/k3s of the Edge relay and the NAT egress proxy. GKE's k3s, a Product image with the same name, is in services/gke/versions.go, which is not listed here and is in ignorePaths.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "internal/edgeagent/agent.go",
+        "internal/netplane/netplane_test.go",
+        "services/compute/egress.go",
+        "services/compute/vpc_container_test.go"
+      ],
+      "matchStrings": ["rancher/k3s:(?<currentValue>v\\d+\\.\\d+\\.\\d+-k3s\\d+)"],
+      "depNameTemplate": "rancher/k3s",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-k3s(?<build>\\d+)$"
+    },
+    {
+      "description": "Checksum-pinned tool, report only: OpenTofu.",
+      "customType": "regex",
+      "managerFilePatterns": [".github/install-tofu.sh"],
+      "matchStrings": ["\\nversion=(?<currentValue>\\d+\\.\\d+\\.\\d+)\\n"],
+      "depNameTemplate": "opentofu/opentofu",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "description": "Checksum-pinned tool, report only: Helm.",
+      "customType": "regex",
+      "managerFilePatterns": ["e2e/kube_test.go", "compat/tools_test.go"],
+      "matchStrings": ["helmVersion = \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"", "get\\.helm\\.sh/helm-(?<currentValue>v\\d+\\.\\d+\\.\\d+)-"],
+      "depNameTemplate": "helm/helm",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Checksum-pinned tool, report only: crane.",
+      "customType": "regex",
+      "managerFilePatterns": ["compat/tools_test.go"],
+      "matchStrings": ["go-containerregistry/releases/download/(?<currentValue>v\\d+\\.\\d+\\.\\d+)/"],
+      "depNameTemplate": "google/go-containerregistry",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Checksum-pinned tool, report only: ko.",
+      "customType": "regex",
+      "managerFilePatterns": ["compat/tools_test.go"],
+      "matchStrings": ["ko-build/ko/releases/download/(?<currentValue>v\\d+\\.\\d+\\.\\d+)/"],
+      "depNameTemplate": "ko-build/ko",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Checksum-pinned tool, report only: the Cloud SQL Auth Proxy.",
+      "customType": "regex",
+      "managerFilePatterns": ["compat/tools_test.go", "e2e/containerized_sql_test.go"],
+      "matchStrings": ["cloud-sql-proxy/(?<currentValue>v\\d+\\.\\d+\\.\\d+)/cloud-sql-proxy\\.", "authProxyVersion = \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "GoogleCloudPlatform/cloud-sql-proxy",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Checksum-pinned tool, report only: Sonobuoy.",
+      "customType": "regex",
+      "managerFilePatterns": ["internal/sonobuoytest/sonobuoytest.go"],
+      "matchStrings": ["const Version = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "vmware-tanzu/sonobuoy",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "description": "#901: report when codeberg.org/miekg/dns tags v1.0, which unblocks the move off github.com/miekg/dns. No bot moves between two modules, so this only lists the tag on the dashboard.",
+      "customType": "regex",
+      "managerFilePatterns": ["go.mod"],
+      "matchStrings": ["\\sgithub\\.com/miekg/dns v1\\.\\d+\\.\\d+\\s"],
+      "depNameTemplate": "codeberg.org/miekg/dns",
+      "packageNameTemplate": "https://codeberg.org/miekg/dns",
+      "currentValueTemplate": "v0.0.0",
+      "datasourceTemplate": "git-tags",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Go modules: patch and minor updates in one PR.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Go modules"
+    },
+    {
+      "description": "The go directive stays at what go mod tidy requires; only the toolchain line is bumped (#894).",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang"],
+      "enabled": false
+    },
+    {
+      "description": "Console packages and its Node version: patch and minor updates in one PR.",
+      "matchFileNames": ["console/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "console packages"
+    },
+    {
+      "description": "setup-gcpemu packages: patch and minor updates in one PR.",
+      "matchFileNames": ["setup-gcpemu/**"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "setup-gcpemu packages"
+    },
+    {
+      "description": "The compat suite's Maven POM: patch and minor updates in one PR.",
+      "matchManagers": ["maven"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Maven"
+    },
+    {
+      "description": "Actions, including the exact just-version and cosign-installer pins: patch and minor updates in one PR. Other actions stay on major tags (ADR 0061).",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Docker: distroless (tag + digest, updated together) and the helper images, those of Managed containers that only carry traffic or run helpers.",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "Docker images"
+    },
+    {
+      "description": "Each major opens its own PR, outside every group (monorepo groups included), and only once approved on the Dependency Dashboard.",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "SRS 2.4.2: majors and replacements can bring in new dependencies.",
+      "matchUpdateTypes": ["major", "replacement"],
+      "prBodyNotes": ["**Licence check (SRS 2.4.2):** confirm every new or changed dependency is Apache-2.0, MIT, BSD or MPL-2.0 before merging."]
+    },
+    {
+      "description": "#901: github.com/miekg/dns stays on v1 until the move to codeberg.org/miekg/dns.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/miekg/dns"],
+      "allowedVersions": "<2"
+    },
+    {
+      "description": "#901: only codeberg.org/miekg/dns v1.0 or later is worth reporting, and only on the dashboard.",
+      "matchDepNames": ["codeberg.org/miekg/dns"],
+      "allowedVersions": ">=1.0.0",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "#903: the console stays on TypeScript below 7 until typescript-eslint supports it.",
+      "matchFileNames": ["console/package.json"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    },
+    {
+      "description": "#904: setup-gcpemu runs on the node24 action runtime, the newest the runner accepts. Renovate does not manage runs.using in setup-gcpemu/action.yml, so this holds the Node 24 that CI tests the action on.",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".github/workflows/ci.yml"],
+      "matchDepNames": ["node"],
+      "matchCurrentValue": "/^24(\\.|$)/",
+      "allowedVersions": "<25"
+    },
+    {
+      "description": "Checksum-pinned tools are report only: a new version is listed on the Dependency Dashboard and never opens a PR by itself, because its per-platform sha256 table must be recomputed by hand.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["opentofu/opentofu", "helm/helm", "google/go-containerregistry", "ko-build/ko", "GoogleCloudPlatform/cloud-sql-proxy", "vmware-tanzu/sonobuoy"],
+      "groupName": "checksum-pinned tools (update by hand)",
+      "dependencyDashboardApproval": true
+    }
+  ]
+}
