@@ -132,6 +132,7 @@ func TestEnvHelpKUBECONFIG(t *testing.T) {
 	for _, want := range []string{
 		"KUBECONFIG names the Admin kubeconfig",
 		"whether or not a cluster runs",
+		"doesn't mean a cluster exists",
 		"missing or empty",
 		"localhost:8080",
 		"kubectl config get-contexts -o name",

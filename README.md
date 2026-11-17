@@ -287,10 +287,9 @@ LocalStack's (4510–4559 and 4566), and `gcpemu doctor` names LocalStack when a
 range is held. `gcpemu env` also exports `KUBECONFIG` for GKE clusters: it always names the Admin
 kubeconfig in the data directory, whether or not a cluster runs, so its being set doesn't mean a
 cluster exists (ADR 0086); `kubectl config get-contexts -o name` prints one context per running
-cluster. `--port name=0` picks a
-free port for one listener and a bare `--port 0` for all of them (LB and Cloud SQL host ports
-included); `--port-range 20000-20999` draws those free ports from a range. The choices are written
-to `<data-dir>/endpoints.json` and printed by `gcpemu env`.
+cluster. `--port name=0` picks a free port for one listener and a bare `--port 0` for all of them
+(LB and Cloud SQL host ports included); `--port-range 20000-20999` draws those free ports from a
+range. The choices are written to `<data-dir>/endpoints.json` and printed by `gcpemu env`.
 
 Each load balancer forwarding rule's host listener is printed as
 `GCPEMU_LB_<PROJECT>_<REGION|GLOBAL>_<NAME>` (for example `GCPEMU_LB_MY_PROJ_GLOBAL_WEB`), and
