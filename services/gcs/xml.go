@@ -299,6 +299,15 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 		s.xmlCopy(w, r, src, bucket, object, c)
 		return
 	}
+	var body io.Reader = r.Body
+	if h := r.Header.Get("X-Goog-Content-Length-Range"); h != "" {
+		lr, err := newLengthRangeReader(r.Body, h)
+		if err != nil {
+			xmlError(w, err)
+			return
+		}
+		body = lr
+	}
 	meta := xmlObjectMeta(r.Header, object)
 	q := url.Values{}
 	if c.GenMatch != nil {
@@ -307,13 +316,48 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 	if c.MetagenMatch != nil {
 		q.Set("ifMetagenerationMatch", strconv.FormatInt(*c.MetagenMatch, 10))
 	}
-	rec, _, err := s.putObject(ctx, bucket, meta, r.Body, r.Header.Get("X-Goog-Hash"), q, baseURL(r))
+	rec, _, err := s.putObject(ctx, bucket, meta, body, r.Header.Get("X-Goog-Hash"), q, baseURL(r))
 	if err != nil {
 		xmlError(w, err)
 		return
 	}
 	setXMLWriteHeaders(w, rec.Object)
 	w.WriteHeader(http.StatusOK)
+}
+
+// lengthRangeReader fails a PUT body outside the inclusive range of an
+// x-goog-content-length-range header: its Read returns a 400 once the body
+// passes max, or at the end of a body shorter than min, so the upload is
+// aborted before its object is stored.
+type lengthRangeReader struct {
+	r        io.Reader
+	min, max int64
+	n        int64
+}
+
+// newLengthRangeReader reads body under the range h ("MIN,MAX").
+func newLengthRangeReader(body io.Reader, h string) (*lengthRangeReader, error) {
+	lo, hi, ok := strings.Cut(h, ",")
+	minN, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
+	maxN, err2 := strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
+	if !ok || err1 != nil || err2 != nil || minN < 0 || maxN < minN {
+		return nil, errInvalid("Invalid x-goog-content-length-range header %q.", h)
+	}
+	return &lengthRangeReader{r: body, min: minN, max: maxN}, nil
+}
+
+func (l *lengthRangeReader) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	l.n += int64(n)
+	switch {
+	case l.n > l.max:
+		return n, &sigError{http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size.",
+			fmt.Sprintf("Content-length exceeds the upper bound of the x-goog-content-length-range header [%d, %d].", l.min, l.max)}
+	case err == io.EOF && l.n < l.min:
+		return n, &sigError{http.StatusBadRequest, "EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.",
+			fmt.Sprintf("Content-length %d is below the lower bound of the x-goog-content-length-range header [%d, %d].", l.n, l.min, l.max)}
+	}
+	return n, err
 }
 
 func (s *Service) xmlCopy(w http.ResponseWriter, r *http.Request, src, bucket, object string, c conds) {

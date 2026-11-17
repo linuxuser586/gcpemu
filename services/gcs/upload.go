@@ -221,6 +221,9 @@ func (s *Service) putObject(ctx context.Context, bucket string, meta *storage.Ob
 	}
 	if _, err := bw.ReadFrom(body); err != nil {
 		bw.abort()
+		if se := (*sigError)(nil); errors.As(err, &se) {
+			return nil, nil, se // the body broke a condition of the request (x-goog-content-length-range)
+		}
 		return nil, nil, errInvalid("Failed to read upload body: %v", err)
 	}
 	info, err := bw.commit()
