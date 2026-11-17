@@ -25,8 +25,10 @@ func (o *rootOpts) envCmd() *cobra.Command {
 			"only the running clusters, so it may be missing or empty: missing until the first\n" +
 			"one runs, and empty after the last one is deleted. In either case kubectl reports\n" +
 			"a refused connection to localhost:8080. To check for a running cluster:\n\n" +
-			"  kubectl config get-contexts -o name                      # one context per running cluster\n" +
-			"  gcloud container clusters list --filter=status=RUNNING   # also works against real GCP",
+			"  kubectl config get-contexts -o name                                      # one context per running cluster\n" +
+			"  gcloud container clusters list --filter='status:(RUNNING RECONCILING)'   # also works against real GCP\n\n" +
+			"A running cluster is one whose control plane answers, so a cluster that is reconciling\n" +
+			"(being upgraded or resized) counts.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := o.load(cmd.Flags())
 			if err != nil {

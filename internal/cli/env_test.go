@@ -136,7 +136,7 @@ func TestEnvHelpKUBECONFIG(t *testing.T) {
 		"missing or empty",
 		"localhost:8080",
 		"kubectl config get-contexts -o name",
-		"gcloud container clusters list --filter=status=RUNNING",
+		"gcloud container clusters list --filter='status:(RUNNING RECONCILING)'",
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("env --help lacks %q:\n%s", want, out.String())
