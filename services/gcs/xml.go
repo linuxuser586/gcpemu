@@ -326,12 +326,6 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 // object is stored. The range comes from a PUT's
 // x-goog-content-length-range header or from a POST policy's
 // content-length-range condition (#1185).
-//
-// The header reference documents only that: a PUT header, an inclusive
-// MIN,MAX pair of bytes, and a 400 outside it. It is silent on a malformed
-// value and on resumable chunk and multipart part PUTs, so the emulator
-// ignores the header there until a Conformance suite Recording shows what
-// Cloud Storage does (#1175).
 type lengthRangeReader struct {
 	r        io.Reader
 	min, max int64
@@ -342,6 +336,12 @@ type lengthRangeReader struct {
 // newLengthRangeReader reads body under header, the value "MIN,MAX" of an
 // x-goog-content-length-range header. It reports false for an absent or
 // malformed value, which leaves the body unchecked.
+//
+// The header reference documents only that: a PUT header, an inclusive
+// MIN,MAX pair of bytes, and a 400 outside it. It is silent on a malformed
+// value and on resumable chunk and multipart part PUTs, so the emulator
+// ignores the header there until a Conformance suite Recording shows what
+// Cloud Storage does (#1175).
 func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, bool) {
 	lo, hi, ok := strings.Cut(header, ",")
 	minN, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)

@@ -68,6 +68,7 @@ func (s *Service) postPolicyUpload(w http.ResponseWriter, r *http.Request, bucke
 	fields["key"] = key
 	fields["bucket"] = bucket
 	ctx := r.Context()
+	var body io.Reader = file
 	if fields["policy"] != "" || fields["x-goog-signature"] != "" {
 		pol, who, err := s.verifyPolicy(r, fields)
 		if err != nil {
@@ -75,19 +76,11 @@ func (s *Service) postPolicyUpload(w http.ResponseWriter, r *http.Request, bucke
 			return
 		}
 		ctx = emu.WithPrincipal(ctx, who)
-		var body io.Reader = file
-		if lr, ok := policyLengthRange(pol, file); ok {
+		if lr, ok := newPolicyLengthRangeReader(pol, file); ok {
 			body = lr // refuses the file while it is read, before it is stored
 		}
-		rec, _, err := s.putObject(ctx, bucket, policyMeta(fields, key), body, "", url.Values{}, baseURL(r))
-		if err != nil {
-			xmlError(w, err)
-			return
-		}
-		postResponse(w, r, fields, rec.Object)
-		return
 	}
-	rec, _, err := s.putObject(ctx, bucket, policyMeta(fields, key), file, "", url.Values{}, baseURL(r))
+	rec, _, err := s.putObject(ctx, bucket, policyMeta(fields, key), body, "", url.Values{}, baseURL(r))
 	if err != nil {
 		xmlError(w, err)
 		return
@@ -152,7 +145,7 @@ func (s *Service) verifyPolicy(r *http.Request, f map[string]string) (*postPolic
 }
 
 // checkCondition evaluates one policy condition against the form fields.
-// Content-length ranges are checked while the file is read (policyLengthRange).
+// Content-length ranges are checked while the file is read (newPolicyLengthRangeReader).
 func checkCondition(c json.RawMessage, f map[string]string) error {
 	var obj map[string]string
 	if json.Unmarshal(c, &obj) == nil {
@@ -183,10 +176,10 @@ func checkCondition(c json.RawMessage, f map[string]string) error {
 	return policyErr("Unsupported policy condition: " + op)
 }
 
-// policyLengthRange reads file under the policy's content-length-range
+// newPolicyLengthRangeReader reads file under the policy's content-length-range
 // conditions, the intersection of them all. It reports false for a policy
 // without one, which leaves the file unchecked.
-func policyLengthRange(pol *postPolicy, file io.Reader) (*lengthRangeReader, bool) {
+func newPolicyLengthRangeReader(pol *postPolicy, file io.Reader) (*lengthRangeReader, bool) {
 	lr := &lengthRangeReader{r: file, max: math.MaxInt64, source: "policy's content-length-range condition"}
 	found := false
 	for _, c := range pol.Conditions {
