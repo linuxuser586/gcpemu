@@ -117,6 +117,10 @@ const (
 	caNamePrefix   = "gcpemu local CA ("
 )
 
+// Name is the common name of instance's Instance CA, which the OS
+// certificate store shows it by: gcpemu local CA (INSTANCE).
+func Name(instance string) string { return caNamePrefix + instance + ")" }
+
 // IsInstanceCA reports whether c is an Instance CA, of any Instance: a CA
 // certificate with the subject every Instance CA has. The Public roots
 // never hold one (#1138).
@@ -142,7 +146,7 @@ func (c *CA) generate(instance string) error {
 		SerialNumber: serial(),
 		Subject: pkix.Name{
 			Organization: []string{caOrganization},
-			CommonName:   caNamePrefix + instance + ")",
+			CommonName:   Name(instance),
 		},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(10, 0, 0),

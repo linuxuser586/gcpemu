@@ -942,7 +942,7 @@ func checkNSSTrust(out io.Writer, instance string, trusted func(ok bool, where s
 		return
 	}
 	for _, d := range dbs {
-		trusted(nssHas(d.dir, nssNickname(instance)), d.what+" ("+d.dir+")")
+		trusted(nssCerts(d.dir, nssNickname(instance)) > 0, d.what+" ("+d.dir+")")
 	}
 }
 

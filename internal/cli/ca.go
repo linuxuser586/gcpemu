@@ -3,7 +3,10 @@ package cli
 import (
 	"bufio"
 	"crypto/sha1"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -185,7 +188,7 @@ func (o *rootOpts) caTrustCmd(install bool, loadCA func(*cobra.Command) (*config
 		if note != "" {
 			fmt.Fprintln(cmd.ErrOrStderr(), "note: "+note)
 		}
-		windowsTrustNote(cmd.ErrOrStderr(), h, install)
+		windowsTrustNote(cmd.ErrOrStderr(), h, install, len(plan))
 		if err := runPlan(cmd, append(plan, nss...), yes, dryRun); err != nil {
 			return err
 		}
@@ -214,9 +217,10 @@ func rotateTrust(cmd *cobra.Command, instance string, c *ca.CA) error {
 	return nil
 }
 
-// windowsTrustNote warns that Windows confirms a change to the current
-// user's Root store in a dialog of its own, which the plan waits for.
-func windowsTrustNote(out io.Writer, h trustHost, install bool) {
+// windowsTrustNote warns that Windows confirms each change to the current
+// user's Root store, of the steps in plan, in a dialog of its own, which
+// the plan waits for.
+func windowsTrustNote(out io.Writer, h trustHost, install bool, steps int) {
 	if h.goos != "windows" {
 		return
 	}
@@ -224,7 +228,11 @@ func windowsTrustNote(out io.Writer, h trustHost, install bool) {
 	if !install {
 		verb = "removing the CA from"
 	}
-	fmt.Fprintf(out, "note: Windows shows a security dialog to confirm %s your Root certificate store; choose Yes\n", verb)
+	earlier := ""
+	if steps > 1 {
+		earlier = fmt.Sprintf(", and one for each of the %d earlier CAs of this Instance it removes", steps-1)
+	}
+	fmt.Fprintf(out, "note: Windows shows a security dialog to confirm %s your Root certificate store%s; choose Yes\n", verb, earlier)
 }
 
 // trustHost describes the host's trust store tooling.
@@ -238,12 +246,18 @@ type trustHost struct {
 	containerd func(args ...string) ([]byte, error)
 
 	// NSS (browser) databases: home holds them, nssUser owns them when
-	// gcpemu runs as root under sudo, nssHas reports whether a database
-	// holds a nickname.
+	// gcpemu runs as root under sudo, nssCerts counts the certificates a
+	// database holds under a nickname.
 	home       string
 	nssUser    string
-	nssHas     func(db, nick string) bool
+	nssCerts   func(db, nick string) int
 	fileExists func(string) bool
+
+	// osRoots lists the roots in the OS certificate store that keeps every
+	// root added to it (the macOS System keychain, the Windows user Root
+	// store): a superset of those named cn, which the caller filters; nil
+	// or none when unknown.
+	osRoots func(cn string) []*x509.Certificate
 }
 
 func hostTrust() trustHost {
@@ -252,9 +266,10 @@ func hostTrust() trustHost {
 		root:       os.Geteuid() == 0,
 		lookPath:   func(n string) bool { _, err := exec.LookPath(n); return err == nil },
 		isDir:      func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() },
-		nssHas:     nssHas,
+		nssCerts:   nssCerts,
 		fileExists: fileExists,
 		containerd: runContainerd,
+		osRoots:    osRoots,
 	}
 	h.home, h.nssUser = nssUser(h.root)
 	return h
@@ -314,25 +329,63 @@ func trustPlan(h trustHost, instance string, c trustCert, install bool) ([]trust
 		return []trustStep{{args: sudo("rm", "-f", target)}, {args: sudo(update...)}}, nil
 	case "darwin":
 		const keychain = "/Library/Keychains/System.keychain"
-		if install {
-			return []trustStep{{args: sudo("security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", keychain, c.Path())}}, nil
+		del := func(sum string) trustStep {
+			return trustStep{args: sudo("security", "delete-certificate", "-Z", strings.ToUpper(sum), keychain)}
 		}
-		return []trustStep{{args: sudo("security", "delete-certificate", "-Z", strings.ToUpper(thumbprint(c)), keychain)}}, nil
+		plan := earlierRootSteps(h, instance, c, del)
+		if install {
+			return append(plan, trustStep{args: sudo("security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", keychain, c.Path())}), nil
+		}
+		return append(plan, del(thumbprint(c))), nil
 	case "windows":
 		// The current user's Root store needs no administrator rights;
-		// Windows asks the user to confirm the change in its own dialog.
-		if install {
-			return []trustStep{{args: []string{"certutil", "-user", "-addstore", "Root", c.Path()}}}, nil
+		// Windows asks the user to confirm each change in its own dialog.
+		del := func(sum string) trustStep {
+			return trustStep{args: []string{"certutil", "-user", "-delstore", "Root", sum}}
 		}
-		return []trustStep{{args: []string{"certutil", "-user", "-delstore", "Root", thumbprint(c)}}}, nil
+		plan := earlierRootSteps(h, instance, c, del)
+		if install {
+			return append(plan, trustStep{args: []string{"certutil", "-user", "-addstore", "Root", c.Path()}}), nil
+		}
+		return append(plan, del(thumbprint(c))), nil
 	}
 	return nil, fmt.Errorf("automatic trust store changes are not supported on %s; trust the file from `gcpemu ca path` manually", h.goos)
 }
 
+// earlierRootSteps returns del's step for each root in the OS certificate
+// store named as instance's Instance CA other than c: the CAs the Instance
+// had before (a wiped data directory, a rotation). Install removes them
+// before adding c, uninstall along with it; a root of another Instance's
+// name is never touched (#1174). The steps are soft: a root that cannot be
+// removed (Windows lists the machine's roots in the user's store too, and
+// the user may decline its dialog) never stops c being added.
+func earlierRootSteps(h trustHost, instance string, c trustCert, del func(sum string) trustStep) []trustStep {
+	if h.osRoots == nil {
+		return nil
+	}
+	name, cur := ca.Name(instance), thumbprint(c)
+	var plan []trustStep
+	seen := map[string]bool{cur: true}
+	for _, r := range h.osRoots(name) {
+		sum := derThumbprint(r.Raw)
+		if !ca.IsInstanceCA(r) || r.Subject.CommonName != name || seen[sum] {
+			continue
+		}
+		seen[sum] = true
+		step := del(sum)
+		step.soft = true
+		plan = append(plan, step)
+	}
+	return plan
+}
+
 // thumbprint is the CA certificate's SHA-1 hash in hex, which the macOS
 // keychain and the Windows certificate stores identify it by.
-func thumbprint(c trustCert) string {
-	sum := sha1.Sum(c.Certificate().Raw)
+func thumbprint(c trustCert) string { return derThumbprint(c.Certificate().Raw) }
+
+// derThumbprint is the thumbprint of a certificate's DER.
+func derThumbprint(der []byte) string {
+	sum := sha1.Sum(der)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -596,4 +649,38 @@ func certsDirScript(etc, instance string, c trustCert, dirs []string, containerd
 		b.WriteString("done\nrm -f " + shared + "\n")
 	}
 	return b.String()
+}
+
+// osRoots lists the roots of the OS certificate store `ca install` adds
+// to on macOS (the System keychain, searched for names holding cn) and
+// Windows (the current user's Root store, all of it); none elsewhere or
+// when the store cannot be read.
+func osRoots(cn string) []*x509.Certificate {
+	var certs []*x509.Certificate
+	switch goruntime.GOOS {
+	case "darwin":
+		out, err := exec.Command("security", "find-certificate", "-a", "-c", cn, "-p", "/Library/Keychains/System.keychain").Output()
+		if err != nil {
+			return nil
+		}
+		for b, rest := pem.Decode(out); b != nil; b, rest = pem.Decode(rest) {
+			if c, err := x509.ParseCertificate(b.Bytes); err == nil {
+				certs = append(certs, c)
+			}
+		}
+	case "windows":
+		out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+			`Get-ChildItem Cert:\CurrentUser\Root | ForEach-Object { [Convert]::ToBase64String($_.RawData) }`).Output()
+		if err != nil {
+			return nil
+		}
+		for _, l := range strings.Fields(string(out)) {
+			if der, err := base64.StdEncoding.DecodeString(l); err == nil {
+				if c, err := x509.ParseCertificate(der); err == nil {
+					certs = append(certs, c)
+				}
+			}
+		}
+	}
+	return certs
 }

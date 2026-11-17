@@ -1166,8 +1166,11 @@ command to run there; Docker Desktop and OrbStack use the macOS keychain. Docker
 it only when it starts, so `ca install` and `ca uninstall` tell you to restart it. On Windows it
 adds the CA to the current user's ROOT certificate store with `certutil -user -addstore Root`,
 which needs no administrator rights. Windows shows a security dialog to confirm the change, and
-another for `gcpemu ca uninstall`; choose Yes. Windows' `curl.exe` (Schannel) also checks
-revocation: every certificate the Instance CA issues names an empty CRL that the API gateway
+another for `gcpemu ca uninstall`; choose Yes. The macOS System keychain and the Windows Root store
+keep every CA added to them, so `ca install` first removes the Instance's earlier CAs there (those
+named `gcpemu local CA (<instance>)` left by a wiped data directory or a rotation), each with its
+own Windows dialog, and `ca uninstall` removes them all; another Instance's CA is never touched.
+Windows' `curl.exe` (Schannel) also checks revocation: every certificate the Instance CA issues names an empty CRL that the API gateway
 serves at `http://<--bind address, or 127.0.0.1>:<gateway port>/ca.crl` (ADR 0046). The CRL is
 served only on the Instance's own host, so curl on another Windows machine reaching the Instance
 through `--gfe-bind` still needs `--ssl-revoke-best-effort`. The URL names the port the gateway
