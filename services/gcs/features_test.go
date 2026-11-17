@@ -132,6 +132,16 @@ func TestSignedURL(t *testing.T) {
 	if resp.StatusCode != 400 || !strings.Contains(string(body), "ExpiredToken") {
 		t.Errorf("expired = %d %s", resp.StatusCode, body)
 	}
+
+	// #1172: once the clock is reset, the same 1h URL, made with the real
+	// time, is accepted again.
+	inst.Internal().ResetClock()
+	resp, _ = http.Get(u)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("after time reset = %d %s", resp.StatusCode, body)
+	}
 }
 
 func TestPostPolicy(t *testing.T) {

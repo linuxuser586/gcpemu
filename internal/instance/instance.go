@@ -90,7 +90,7 @@ type Instance struct {
 	hm           *hostmode.Manager  // nil unless --host-mode, and until Start sets it; under startMu
 	link         *link.Manager      // links to other Instances (ADR 0027)
 	adcMu        sync.Mutex         // serialises serveADCKey
-	stateMu      sync.Mutex         // serialises Reset and State snapshots
+	stateMu      sync.Mutex         // serialises Reset, State snapshots and clock moves
 	shutdownOnce sync.Once
 	// stopping is cancelled when shutdown begins, well before done closes:
 	// shutdown goes on to remove containers.
@@ -727,7 +727,10 @@ func (in *Instance) WaitReady(ctx context.Context) error {
 func (in *Instance) Reset(ctx context.Context) error {
 	in.stateMu.Lock()
 	defer in.stateMu.Unlock()
-	return in.gated(ctx, "reset", "reset in progress", func() error { return in.reset(ctx) })
+	return in.gated(ctx, "reset", "reset in progress", func() error {
+		in.clock.Reset() // a new Instance's clock has no offset (#1172)
+		return in.reset(ctx)
+	})
 }
 
 // gated runs change, a Reset or State snapshot restore, with the Instance
@@ -771,8 +774,12 @@ func (in *Instance) reset(ctx context.Context) error {
 // Faults returns the fault-injection rule set.
 func (in *Instance) Faults() *fault.Set { return &in.gw.Faults }
 
-// AdvanceClock moves the emulator clock forward (FR-GCS-008).
+// AdvanceClock moves the emulator clock forward (FR-GCS-008). It holds
+// stateMu, so a Reset or time reset cannot land between the move and the
+// ClockObservers' sweeps, or undo the reset (#1172).
 func (in *Instance) AdvanceClock(ctx context.Context, d time.Duration) error {
+	in.stateMu.Lock()
+	defer in.stateMu.Unlock()
 	in.clock.Advance(d)
 	var errs []error
 	for _, s := range in.services {
@@ -781,6 +788,32 @@ func (in *Instance) AdvanceClock(ctx context.Context, d time.Duration) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ClockState is the emulator clock as GET /_emu/v1/time reports it.
+type ClockState struct {
+	// Now is the emulator time.
+	Now time.Time
+	// Offset is how far `gcpemu time advance` has moved it past its base:
+	// real time, or a Deterministic Instance's own clock.
+	Offset time.Duration
+}
+
+// Clock reads the emulator clock. Unlike AdvanceClock it does not move the
+// clock or run any ClockObserver (#1172).
+func (in *Instance) Clock() ClockState {
+	now, offset := in.clock.Read()
+	return ClockState{Now: now, Offset: offset}
+}
+
+// ResetClock sets the emulator clock's offset back to zero, so it reads its
+// base again (#1172). It only moves the clock: it runs no ClockObserver,
+// and what an earlier AdvanceClock set off (lifecycle deletions, expired
+// TTLs, retention) stays done.
+func (in *Instance) ResetClock() ClockState {
+	in.stateMu.Lock()
+	defer in.stateMu.Unlock()
+	return ClockState{Now: in.clock.Reset()}
 }
 
 // Done is closed when Shutdown completes.
