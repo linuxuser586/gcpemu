@@ -27,6 +27,7 @@ import (
 	"cloud.google.com/go/iam"
 	"cloud.google.com/go/storage"
 	"go.yaml.in/yaml/v3"
+	"google.golang.org/api/iterator"
 )
 
 func pemKey(f *fakeIAM) []byte {
@@ -163,21 +164,7 @@ func TestPostPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	post := func(content string) *http.Response {
-		var buf bytes.Buffer
-		mw := multipart.NewWriter(&buf)
-		for k, v := range pp.Fields {
-			_ = mw.WriteField(k, v)
-		}
-		fw, _ := mw.CreateFormFile("file", "form.txt")
-		_, _ = fw.Write([]byte(content))
-		_ = mw.Close()
-		resp, err := http.Post(pp.URL, mw.FormDataContentType(), &buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resp
-	}
+	post := func(content string) *http.Response { return postForm(t, pp, content) }
 	resp := post("posted!")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -708,4 +695,101 @@ func TestSignedURLContentLengthRange(t *testing.T) {
 			t.Errorf("signed PUT of %d bytes: stored = %v (%v)", len(tc.body), stored, err)
 		}
 	}
+}
+
+// A POST policy upload whose file is outside the policy's
+// content-length-range is refused with 400 before it is stored: the live
+// object keeps its generation and a versioned bucket gains no noncurrent
+// version (#1185).
+func TestPostPolicyContentLengthRangeVersioned(t *testing.T) {
+	inst := start(t)
+	c := emulatorClient(t, inst)
+	ctx := context.Background()
+	const sa = "poster@test-project.iam.gserviceaccount.com"
+	fk := newFakeIAM(t, sa)
+	inject(inst, fk)
+	b := c.Bucket("posts-versioned")
+	if err := b.Create(ctx, testProject, &storage.BucketAttrs{VersioningEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	w := b.Object("form.txt").NewWriter(ctx)
+	_, _ = w.Write([]byte("before"))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	live := w.Attrs().Generation
+	pp, err := b.GenerateSignedPostPolicyV4("form.txt", &storage.PostPolicyV4Options{
+		GoogleAccessID: sa, PrivateKey: pemKey(fk), Expires: time.Now().Add(time.Hour), Insecure: true,
+		Conditions: []storage.PostPolicyV4Condition{storage.ConditionContentLengthRange(4, 6)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := func() []int64 {
+		var gens []int64
+		it := b.Objects(ctx, &storage.Query{Prefix: "form.txt", Versions: true})
+		for {
+			o, err := it.Next()
+			if err == iterator.Done {
+				return gens
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			gens = append(gens, o.Generation)
+		}
+	}
+	for _, tc := range []struct{ content, code string }{
+		{"posted!", "EntityTooLarge"},
+		{"abc", "EntityTooSmall"},
+		{"", "EntityTooSmall"},
+	} {
+		resp := postForm(t, pp, tc.content)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 400 || !strings.Contains(string(body), "<Code>"+tc.code+"</Code>") {
+			t.Errorf("post of %d bytes = %d %s, want 400 %s", len(tc.content), resp.StatusCode, body, tc.code)
+		}
+		a, err := b.Object("form.txt").Attrs(ctx)
+		if err != nil || a.Generation != live {
+			t.Errorf("post of %d bytes: live generation = %+v %v, want %d", len(tc.content), a, err, live)
+		}
+		if gens := versions(); len(gens) != 1 || gens[0] != live {
+			t.Errorf("post of %d bytes: versions = %v, want [%d]", len(tc.content), gens, live)
+		}
+	}
+
+	// The range is inclusive: a file of MIN bytes is stored as the new live
+	// version and the earlier one becomes noncurrent.
+	resp := postForm(t, pp, "four")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("post of 4 bytes = %d %s, want 204", resp.StatusCode, body)
+	}
+	if a, err := b.Object("form.txt").Attrs(ctx); err != nil || a.Size != 4 || a.Generation == live {
+		t.Errorf("after a post of 4 bytes: live = %+v %v", a, err)
+	}
+	if gens := versions(); len(gens) != 2 {
+		t.Errorf("after a post of 4 bytes: versions = %v, want 2", gens)
+	}
+}
+
+// postForm posts content as the file of a form under the signed POST
+// policy pp.
+func postForm(t *testing.T, pp *storage.PostPolicyV4, content string) *http.Response {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for k, v := range pp.Fields {
+		_ = mw.WriteField(k, v)
+	}
+	fw, _ := mw.CreateFormFile("file", "form.txt")
+	_, _ = fw.Write([]byte(content))
+	_ = mw.Close()
+	resp, err := http.Post(pp.URL, mw.FormDataContentType(), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
 }

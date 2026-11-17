@@ -320,25 +320,28 @@ func (s *Service) xmlPutObject(w http.ResponseWriter, r *http.Request, bucket, o
 	w.WriteHeader(http.StatusOK)
 }
 
-// lengthRangeReader fails a PUT body outside the inclusive range of an
-// x-goog-content-length-range header: its Read returns a 400 once the body
-// passes max, or at the end of a body shorter than min, so the upload is
-// aborted before its object is stored.
+// lengthRangeReader fails an upload body outside an inclusive content
+// length range: its Read returns a 400 once the body passes max, or at the
+// end of a body shorter than min, so the upload is aborted before its
+// object is stored. The range comes from a PUT's
+// x-goog-content-length-range header or from a POST policy's
+// content-length-range condition (#1185).
+type lengthRangeReader struct {
+	r        io.Reader
+	min, max int64
+	n        int64
+	source   string // names the range in an error's details
+}
+
+// newLengthRangeReader reads body under header, the value "MIN,MAX" of an
+// x-goog-content-length-range header. It reports false for an absent or
+// malformed value, which leaves the body unchecked.
 //
 // The header reference documents only that: a PUT header, an inclusive
 // MIN,MAX pair of bytes, and a 400 outside it. It is silent on a malformed
 // value and on resumable chunk and multipart part PUTs, so the emulator
 // ignores the header there until a Conformance suite Recording shows what
 // Cloud Storage does (#1175).
-type lengthRangeReader struct {
-	r        io.Reader
-	min, max int64
-	n        int64
-}
-
-// newLengthRangeReader reads body under header, the value "MIN,MAX" of an
-// x-goog-content-length-range header. It reports false for an absent or
-// malformed value, which leaves the body unchecked.
 func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, bool) {
 	lo, hi, ok := strings.Cut(header, ",")
 	minN, err1 := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
@@ -346,7 +349,7 @@ func newLengthRangeReader(body io.Reader, header string) (*lengthRangeReader, bo
 	if !ok || err1 != nil || err2 != nil || minN < 0 || maxN < minN {
 		return nil, false
 	}
-	return &lengthRangeReader{r: body, min: minN, max: maxN}, true
+	return &lengthRangeReader{r: body, min: minN, max: maxN, source: "x-goog-content-length-range header"}, true
 }
 
 func (l *lengthRangeReader) Read(p []byte) (int, error) {
@@ -354,9 +357,9 @@ func (l *lengthRangeReader) Read(p []byte) (int, error) {
 	l.n += int64(n)
 	switch {
 	case l.n > l.max:
-		return n, errEntityTooLarge(fmt.Sprintf("Content-length exceeds the upper bound of the x-goog-content-length-range header [%d, %d].", l.min, l.max))
+		return n, errEntityTooLarge(fmt.Sprintf("Content-length exceeds the upper bound of the %s [%d, %d].", l.source, l.min, l.max))
 	case err == io.EOF && l.n < l.min:
-		return n, errEntityTooSmall(fmt.Sprintf("Content-length %d is below the lower bound of the x-goog-content-length-range header [%d, %d].", l.n, l.min, l.max))
+		return n, errEntityTooSmall(fmt.Sprintf("Content-length %d is below the lower bound of the %s [%d, %d].", l.n, l.source, l.min, l.max))
 	}
 	return n, err
 }

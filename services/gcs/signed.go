@@ -48,8 +48,8 @@ func errEntityTooLarge(details string) *sigError {
 	return &sigError{http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size.", details}
 }
 
-// errEntityTooSmall refuses an upload smaller than an
-// x-goog-content-length-range header allows.
+// errEntityTooSmall refuses an upload smaller than a content length range
+// allows (a POST policy's or an x-goog-content-length-range header's).
 func errEntityTooSmall(details string) *sigError {
 	return &sigError{http.StatusBadRequest, "EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.", details}
 }

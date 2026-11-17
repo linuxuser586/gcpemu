@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -67,6 +68,7 @@ func (s *Service) postPolicyUpload(w http.ResponseWriter, r *http.Request, bucke
 	fields["key"] = key
 	fields["bucket"] = bucket
 	ctx := r.Context()
+	var body io.Reader = file
 	if fields["policy"] != "" || fields["x-goog-signature"] != "" {
 		pol, who, err := s.verifyPolicy(r, fields)
 		if err != nil {
@@ -74,38 +76,16 @@ func (s *Service) postPolicyUpload(w http.ResponseWriter, r *http.Request, bucke
 			return
 		}
 		ctx = emu.WithPrincipal(ctx, who)
-		lr := &countingReader{r: file}
-		meta := policyMeta(fields, key)
-		rec, _, err := s.putObject(ctx, bucket, meta, lr, "", url.Values{}, baseURL(r))
-		if err != nil {
-			xmlError(w, err)
-			return
+		if lr, ok := newPolicyLengthRangeReader(pol, file); ok {
+			body = lr // refuses the file while it is read, before it is stored
 		}
-		if err := checkLengthRange(pol, int64(rec.Object.Size)); err != nil {
-			_ = s.removeObject(ctx, bucket, key, rec.Object.Generation, conds{}, baseURL(r))
-			xmlError(w, err)
-			return
-		}
-		postResponse(w, r, fields, rec.Object)
-		return
 	}
-	rec, _, err := s.putObject(ctx, bucket, policyMeta(fields, key), file, "", url.Values{}, baseURL(r))
+	rec, _, err := s.putObject(ctx, bucket, policyMeta(fields, key), body, "", url.Values{}, baseURL(r))
 	if err != nil {
 		xmlError(w, err)
 		return
 	}
 	postResponse(w, r, fields, rec.Object)
-}
-
-type countingReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countingReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
 }
 
 // policyMeta builds object metadata from form fields.
@@ -165,7 +145,7 @@ func (s *Service) verifyPolicy(r *http.Request, f map[string]string) (*postPolic
 }
 
 // checkCondition evaluates one policy condition against the form fields.
-// Content-length ranges are checked after the upload.
+// Content-length ranges are checked while the file is read (newPolicyLengthRangeReader).
 func checkCondition(c json.RawMessage, f map[string]string) error {
 	var obj map[string]string
 	if json.Unmarshal(c, &obj) == nil {
@@ -196,7 +176,12 @@ func checkCondition(c json.RawMessage, f map[string]string) error {
 	return policyErr("Unsupported policy condition: " + op)
 }
 
-func checkLengthRange(pol *postPolicy, size int64) error {
+// newPolicyLengthRangeReader reads file under the policy's content-length-range
+// conditions, the intersection of them all. It reports false for a policy
+// without one, which leaves the file unchecked.
+func newPolicyLengthRangeReader(pol *postPolicy, file io.Reader) (*lengthRangeReader, bool) {
+	lr := &lengthRangeReader{r: file, max: math.MaxInt64, source: "policy's content-length-range condition"}
+	found := false
 	for _, c := range pol.Conditions {
 		var arr []any
 		if json.Unmarshal(c, &arr) != nil || len(arr) != 3 {
@@ -207,11 +192,9 @@ func checkLengthRange(pol *postPolicy, size int64) error {
 		}
 		lo, _ := arr[1].(float64)
 		hi, _ := arr[2].(float64)
-		if size < int64(lo) || size > int64(hi) {
-			return errEntityTooLarge(fmt.Sprintf("Content-length %d is outside the range [%d, %d].", size, int64(lo), int64(hi)))
-		}
+		lr.min, lr.max, found = max(lr.min, int64(lo)), min(lr.max, int64(hi)), true
 	}
-	return nil
+	return lr, found
 }
 
 // postResponse answers a successful form POST per success_action_redirect
