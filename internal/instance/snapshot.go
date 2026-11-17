@@ -225,7 +225,7 @@ func sameDump(a, b map[string]map[string][]byte, isCache func(ns, key string) bo
 // RestoreSnapshot replaces all of the Instance's state with the State
 // snapshot name: it resets the Instance, loads the snapshot's Store and
 // lets each Snapshotter restore what it saved. Configuration, Fault rules
-// and the Emulator clock, which never goes back, are kept.
+// and the Emulator clock, offset and all, are kept.
 func (in *Instance) RestoreSnapshot(ctx context.Context, name string) error {
 	if err := checkSnapshotName(name); err != nil {
 		return err

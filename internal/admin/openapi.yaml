@@ -551,7 +551,8 @@ paths:
       description: |
         While it runs the Instance is not ready, and every request but the
         Admin API's is refused, and any in progress cut off, as UNAVAILABLE
-        (HTTP 503 with Retry-After).
+        (HTTP 503 with Retry-After). It sets the emulator clock back to real
+        time too, as POST /_emu/v1/time/reset does.
       responses:
         "200": { $ref: "#/components/responses/Status" }
         "500": { $ref: "#/components/responses/Error" }
@@ -653,15 +654,41 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: The new emulator time.
+          description: The emulator clock after the advance.
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  now: { type: string, format: date-time }
+              schema: { $ref: "#/components/schemas/Clock" }
         "400": { $ref: "#/components/responses/Error" }
         "500": { $ref: "#/components/responses/Error" }
+  /_emu/v1/time:
+    get:
+      summary: Read the emulator clock (`gcpemu time show`).
+      description: >-
+        Reading the clock does not move it or run any time-driven behaviour
+        (lifecycle rules, TTLs), unlike an advance by 0s.
+      operationId: getTime
+      responses:
+        "200":
+          description: The emulator clock.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Clock" }
+  /_emu/v1/time/reset:
+    post:
+      summary: Set the emulator clock back to real time (`gcpemu time reset`).
+      description: >-
+        Sets the offset that advances added back to zero, so the clock reads
+        its base again: real time, or a Deterministic Instance's own clock.
+        It only moves the clock: what an advance set off (lifecycle
+        deletions, expired TTLs, retention) stays done; a State snapshot
+        restore undoes those. POST /_emu/v1/reset clears the offset too.
+      operationId: resetTime
+      responses:
+        "200":
+          description: The emulator clock after the reset.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Clock" }
   /_emu/v1/faults:
     get:
       summary: Active fault injection rules (FR-CORE-060).
@@ -1590,6 +1617,12 @@ components:
             properties:
               error: { type: string }
   schemas:
+    Clock:
+      type: object
+      required: [now, offset]
+      properties:
+        now: { type: string, format: date-time, description: The emulator time. }
+        offset: { type: string, description: "How far advances have moved the clock past its base, as a Go duration such as 2h0m0s; 0s when none have." }
     Link:
       type: object
       properties:

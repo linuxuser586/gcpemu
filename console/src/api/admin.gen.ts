@@ -452,7 +452,8 @@ export interface paths {
          * Wipe all state, keeping configuration (`gcpemu reset`).
          * @description While it runs the Instance is not ready, and every request but the
          *     Admin API's is refused, and any in progress cut off, as UNAVAILABLE
-         *     (HTTP 503 with Retry-After).
+         *     (HTTP 503 with Retry-After). It sets the emulator clock back to real
+         *     time too, as POST /_emu/v1/time/reset does.
          */
         post: operations["reset"];
         delete?: never;
@@ -545,6 +546,46 @@ export interface paths {
         put?: never;
         /** Advance the emulator clock (`gcpemu time advance`, FR-GCS-008). */
         post: operations["advanceTime"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/time": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the emulator clock (`gcpemu time show`).
+         * @description Reading the clock does not move it or run any time-driven behaviour (lifecycle rules, TTLs), unlike an advance by 0s.
+         */
+        get: operations["getTime"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/_emu/v1/time/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set the emulator clock back to real time (`gcpemu time reset`).
+         * @description Sets the offset that advances added back to zero, so the clock reads its base again: real time, or a Deterministic Instance's own clock. It only moves the clock: what an advance set off (lifecycle deletions, expired TTLs, retention) stays done; a State snapshot restore undoes those. POST /_emu/v1/reset clears the offset too.
+         */
+        post: operations["resetTime"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1189,6 +1230,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        Clock: {
+            /**
+             * Format: date-time
+             * @description The emulator time.
+             */
+            now: string;
+            /** @description How far advances have moved the clock past its base, as a Go duration such as 2h0m0s; 0s when none have. */
+            offset: string;
+        };
         Link: {
             /** @description The link's name on this Instance. */
             name?: string;
@@ -2536,20 +2586,57 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The new emulator time. */
+            /** @description The emulator clock after the advance. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        /** Format: date-time */
-                        now?: string;
-                    };
+                    "application/json": components["schemas"]["Clock"];
                 };
             };
             400: components["responses"]["Error"];
             500: components["responses"]["Error"];
+        };
+    };
+    getTime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The emulator clock. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Clock"];
+                };
+            };
+        };
+    };
+    resetTime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The emulator clock after the reset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Clock"];
+                };
+            };
         };
     };
     listFaults: {

@@ -318,7 +318,7 @@ A data directory that a test owns until the test ends, or until the test's proce
 _Avoid_: temp dir, scratch dir
 
 **Emulator clock**:
-The time an Instance believes it is. It can be advanced, but never rewound while the Instance runs, to trigger time-driven behaviour. A restart drops any advance. In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
+The time an Instance believes it is. It can be advanced, to trigger time-driven behaviour, and set back to its base (real time, or a Deterministic Instance's own clock) by a clock reset or a reset of the Instance, but never below that base. Setting it back only moves the clock: what an advance set off stays done. A restart drops any advance (ADR 0087). In a Deterministic Instance it moves only when an API request arrives or the clock is advanced on purpose, never because real time passed.
 
 **Deterministic Instance**:
 An Instance whose generated IDs and timestamps are reproducible across runs, for golden-file tests. The guarantee holds for a client that sends one API request at a time; console and admin traffic do not affect it. It covers runs that start empty and local Projects only, never a run continuing from saved state or Delegated Projects.
@@ -540,6 +540,10 @@ _Avoid_: migration check, Autopilot readiness
 **Admin kubeconfig**:
 The kubeconfig an Instance keeps for its running clusters, which acts as each cluster's own administrator rather than as a Google identity. It lives at a fixed place in the Instance's data directory and holds exactly the clusters running now, a running cluster being one whose control plane answers, including while it is reconciling: with none running it is empty or absent, so naming it promises no cluster (ADR 0086). Workload restrictions treat it as part of the cluster, not as a user (ADR 0037).
 _Avoid_: emulator kubeconfig, convenience kubeconfig
+
+**LAN kubeconfig**:
+The Admin kubeconfig's counterpart for another machine on the LAN. An Instance keeps one only when it has `--gke-bind`: it holds exactly the running clusters served on the first `--gke-bind` address and points at that address, so after a Reset it is empty like the Admin kubeconfig.
+_Avoid_: kubeconfig-lan (the file's name)
 
 **OTLP endpoint**:
 Where an Instance sends the telemetry its clusters produce, named by the standard OpenTelemetry variables in the Instance's environment. With none set, or one whose protocol the Instance does not speak, the telemetry is dropped; one that is set but unreachable fails the exports instead.

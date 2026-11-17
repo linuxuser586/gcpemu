@@ -42,6 +42,18 @@ func errSignature(details string) *sigError {
 		"Access denied.", details}
 }
 
+// errEntityTooLarge refuses an upload larger than a content length range
+// allows (a POST policy's or an x-goog-content-length-range header's).
+func errEntityTooLarge(details string) *sigError {
+	return &sigError{http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size.", details}
+}
+
+// errEntityTooSmall refuses an upload smaller than an
+// x-goog-content-length-range header allows.
+func errEntityTooSmall(details string) *sigError {
+	return &sigError{http.StatusBadRequest, "EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.", details}
+}
+
 func errExpired(details string) *sigError {
 	return &sigError{http.StatusBadRequest, "ExpiredToken", "The provided token has expired.", details}
 }

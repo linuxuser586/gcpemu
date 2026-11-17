@@ -1,6 +1,7 @@
 // Package clock provides the Emulator clock (NFR-REL-002): real by default,
 // or under --deterministic a fake clock that moves once per API request.
-// Both can be advanced with `gcpemu time advance`.
+// Both can be advanced with `gcpemu time advance`, and set back to their
+// base with `gcpemu time reset`.
 package clock
 
 import (
@@ -55,6 +56,23 @@ func (o *Offset) Advance(d time.Duration) {
 	o.mu.Lock()
 	o.offset += d
 	o.mu.Unlock()
+}
+
+// Read reports the time and how far the clock has been advanced past its
+// base, both from one instant.
+func (o *Offset) Read() (now time.Time, offset time.Duration) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.base.Now().Add(o.offset), o.offset
+}
+
+// Reset sets the offset back to zero, so the clock reads its base again,
+// and returns the time it then reads.
+func (o *Offset) Reset() time.Time {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.offset = 0
+	return o.base.Now()
 }
 
 // Fake is a deterministic clock that starts at a fixed instant and moves

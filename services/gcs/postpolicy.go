@@ -208,8 +208,7 @@ func checkLengthRange(pol *postPolicy, size int64) error {
 		lo, _ := arr[1].(float64)
 		hi, _ := arr[2].(float64)
 		if size < int64(lo) || size > int64(hi) {
-			return &sigError{http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size.",
-				fmt.Sprintf("Content-length %d is outside the range [%d, %d].", size, int64(lo), int64(hi))}
+			return errEntityTooLarge(fmt.Sprintf("Content-length %d is outside the range [%d, %d].", size, int64(lo), int64(hi)))
 		}
 	}
 	return nil
