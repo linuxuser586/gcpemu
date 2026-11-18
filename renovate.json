@@ -232,6 +232,11 @@
       "matchDepNames": ["opentofu/opentofu", "helm/helm", "google/go-containerregistry", "ko-build/ko", "GoogleCloudPlatform/cloud-sql-proxy", "vmware-tanzu/sonobuoy"],
       "groupName": "checksum-pinned tools (update by hand)",
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Every Renovate PR is chore(deps), as dependency updates were before Renovate (#894); config:recommended would make Go and Maven ones fix(deps).",
+      "matchDepNames": ["*"],
+      "semanticCommitType": "chore"
     }
   ]
 }

@@ -34,6 +34,8 @@ func TestReclaimOrphans(t *testing.T) {
 	if _, err := cl.Info(ctx); err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
 	}
+	// A busybox tag no Helper image uses, so this test's pulls and
+	// removals never touch an image a Managed container runs.
 	const image = "busybox:1.36.1"
 	if err := cl.EnsureImage(ctx, image, false); err != nil {
 		t.Skipf("image %s unavailable: %v", image, err)
@@ -104,6 +106,8 @@ func TestReadyReportsDisruptedContainers(t *testing.T) {
 	if _, err := cl.Info(ctx); err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
 	}
+	// A busybox tag no Helper image uses, so this test's pulls and
+	// removals never touch an image a Managed container runs.
 	const image = "busybox:1.36.1"
 	if err := cl.EnsureImage(ctx, image, false); err != nil {
 		t.Skipf("image %s unavailable: %v", image, err)
