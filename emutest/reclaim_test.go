@@ -24,8 +24,11 @@ import (
 const (
 	reclaimChildEnv    = "GCPEMU_TEST_RECLAIM_CHILD"
 	reclaimChildDirEnv = "GCPEMU_TEST_RECLAIM_DIR"
-	reclaimImage       = "busybox:1.36.1"
 )
+
+// reclaimImage is a busybox tag no Helper image uses, so the reclaim tests'
+// pulls and removals never touch an image a Managed container runs.
+const reclaimImage = "busybox:1.36.1"
 
 // The kinds of Instance a child starts.
 const (

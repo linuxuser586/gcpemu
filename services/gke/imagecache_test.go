@@ -29,6 +29,8 @@ func TestImageCacheAcrossClusters(t *testing.T) {
 	inst := emutest.Start(t, []string{"gke"})
 	cm := newClient(t, inst)
 	ctx := context.Background()
+	// A busybox tag no Helper image uses, so this test's pulls and
+	// removals never touch an image a Managed container runs.
 	const image = "docker.io/library/busybox:1.36.1"
 
 	run := func(name string, private bool) {
