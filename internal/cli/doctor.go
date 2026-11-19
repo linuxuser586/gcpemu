@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +133,7 @@ func (o *rootOpts) doctorCmd() *cobra.Command {
 				checkRegistryRelay(out, report, cfg)
 				checkLinks(out, report, cfg)
 				checkExternal(report, cfg)
+				checkDNSForwarding(out, cfg)
 			}
 			checkHostOnly(out, cfg, runtime.GOOS, inContainer, running)
 			if !inContainer {
@@ -642,6 +644,83 @@ func checkExternal(report func(bool, string, string), cfg *config.Config) {
 	if b, err := c.get("/_emu/v1/external"); err == nil {
 		reportExternal(report, b)
 	}
+}
+
+// checkDNSForwarding reports whether a running Instance's DNS resolves a
+// name outside every zone, which it forwards to the Host nameservers
+// (#1196). An Instance without the `dns` Service reports nothing.
+func checkDNSForwarding(out io.Writer, cfg *config.Config) {
+	c, err := clientFor(cfg)
+	if err != nil {
+		return
+	}
+	// The query waits up to 10 s on dead Host nameservers (serveQuery).
+	c.http.Timeout = 15 * time.Second
+	b, err := c.get("/_emu/v1/dns/forwarding")
+	if err != nil {
+		return
+	}
+	reportDNSForwarding(out, b, func(name string) ([]byte, error) {
+		return c.get("/_emu/v1/dns/query?name=" + url.QueryEscape(name))
+	})
+}
+
+// outsideName is the name doctor resolves through the Instance's DNS.
+const outsideName = "github.com"
+
+// reportDNSForwarding reports, from status (GET /_emu/v1/dns/forwarding),
+// whether query resolves outsideName through the Instance's DNS. Failing
+// to is a warning, not a problem: it may be the host's network that is
+// down, and only names outside the Instance's zones are affected.
+func reportDNSForwarding(out io.Writer, status []byte, query func(name string) ([]byte, error)) {
+	var st struct {
+		NoForward   bool     `json:"noForward"`
+		Offline     bool     `json:"offline"`
+		Nameservers []string `json:"nameservers"`
+		Public      string   `json:"public"`
+	}
+	if json.Unmarshal(status, &st) != nil {
+		return
+	}
+	switch {
+	case st.NoForward:
+		fmt.Fprintln(out, "[--  ] DNS forwarding: off (--dns-no-forward); names outside every zone answer REFUSED")
+		return
+	case st.Offline:
+		fmt.Fprintln(out, "[--  ] DNS forwarding: not checked under --offline")
+		return
+	}
+	why := ""
+	b, err := query(outsideName)
+	if err != nil {
+		why = err.Error()
+	} else {
+		var r struct {
+			Rcode  string            `json:"rcode"`
+			Answer []json.RawMessage `json:"answer"`
+		}
+		switch {
+		case json.Unmarshal(b, &r) != nil:
+			why = "unreadable query response"
+		case r.Rcode != "NOERROR":
+			why = r.Rcode
+		case len(r.Answer) == 0:
+			why = "no records"
+		}
+	}
+	if why == "" {
+		fmt.Fprintf(out, "[ok  ] DNS forwarding: %s resolves through the Instance's DNS\n", outsideName)
+		return
+	}
+	using := "no Host nameservers (none found)"
+	if len(st.Nameservers) > 0 {
+		using = "the Host nameservers " + strings.Join(st.Nameservers, ", ")
+	}
+	if st.Public != "" {
+		using += ", then " + st.Public
+	}
+	fmt.Fprintf(out, "[WARN] DNS forwarding: %s does not resolve through the Instance's DNS (%s); it forwards to %s\n", outsideName, why, using)
+	fmt.Fprintln(out, "       fix: check the host's network and its nameservers; the Instance follows resolv.conf when it changes")
 }
 
 // reportExternal reports whether each Delegated API's External emulator

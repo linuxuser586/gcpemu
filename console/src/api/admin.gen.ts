@@ -1023,6 +1023,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/_emu/v1/dns/forwarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the Instance's DNS server forwards names outside every zone (dns service; gcpemu doctor).
+         * @description The Host nameservers, which follow resolv.conf as it changes, and the public nameserver tried when none of them answer (ADR 0089). Under --dns-no-forward such names answer REFUSED; under --offline there is no public nameserver.
+         */
+        get: operations["dnsForwarding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/_emu/v1/nat/sink": {
         parameters: {
             query?: never;
@@ -1552,6 +1572,16 @@ export interface components {
             tags?: string[];
             /** @enum {string} */
             tier: "memory" | "disk";
+        };
+        DnsForwarding: {
+            /** @description --dns-no-forward is set: such names answer REFUSED. */
+            noForward?: boolean;
+            /** @description --offline is set: no public nameserver. */
+            offline?: boolean;
+            /** @description The Host nameservers (host:port), in the order tried. */
+            nameservers: string[];
+            /** @description The public nameserver (host:port), tried when none of the Host nameservers answer; absent under --offline. */
+            public?: string;
         };
         DnsQueryResult: {
             /** @description The DNS server's host:port. */
@@ -3321,6 +3351,26 @@ export interface operations {
             400: components["responses"]["Error"];
             502: components["responses"]["Error"];
             503: components["responses"]["Error"];
+        };
+    };
+    dnsForwarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The forwarding setup now. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DnsForwarding"];
+                };
+            };
         };
     };
     natSink: {

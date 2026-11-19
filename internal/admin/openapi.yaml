@@ -1245,6 +1245,21 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+  /_emu/v1/dns/forwarding:
+    get:
+      summary: Where the Instance's DNS server forwards names outside every zone (dns service; gcpemu doctor).
+      operationId: dnsForwarding
+      description: >-
+        The Host nameservers, which follow resolv.conf as it changes, and
+        the public nameserver tried when none of them answer (ADR 0089).
+        Under --dns-no-forward such names answer REFUSED; under --offline
+        there is no public nameserver.
+      responses:
+        "200":
+          description: The forwarding setup now.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DnsForwarding" }
   /_emu/v1/nat/sink:
     get:
       summary: Whether Cloud NAT's offline sink is on (nat service; FR-NAT-005, Web console Cloud NAT view).
@@ -1931,6 +1946,17 @@ components:
         vary: { type: array, items: { type: string }, description: Request headers the entry varies on. }
         tags: { type: array, items: { type: string }, description: Its Cache-Tag values. }
         tier: { type: string, enum: [memory, disk] }
+    DnsForwarding:
+      type: object
+      required: [nameservers]
+      properties:
+        noForward: { type: boolean, description: "--dns-no-forward is set: such names answer REFUSED." }
+        offline: { type: boolean, description: "--offline is set: no public nameserver." }
+        nameservers:
+          type: array
+          description: The Host nameservers (host:port), in the order tried.
+          items: { type: string }
+        public: { type: string, description: "The public nameserver (host:port), tried when none of the Host nameservers answer; absent under --offline." }
     DnsQueryResult:
       type: object
       required: [server, name, type, rcode, authoritative, recursionAvailable, answer, authority, additional, latencyMs]

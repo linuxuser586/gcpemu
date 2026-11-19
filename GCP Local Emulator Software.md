@@ -634,7 +634,7 @@ Targets are measured on a 4-vCPU, 16 GB Linux runner with SSD (GitHub `ubuntu-24
 | ID | Requirement | Pri |
 | --- | --- | --- |
 | NFR-SEC-001 | Loopback-only by default; startup refuses `--bind 0.0.0.0` without `--i-understand-this-is-insecure` when IAM is `off`. | M |
-| NFR-SEC-002 | The emulator never calls real Google hosts or uses real Google credentials; real ADC files are ignored unless explicitly pointed at the emulator. The one exception is a Read-through on a `--gfe-bind` address, which never carries the Instance's credentials and never happens with `--offline` (ADR 0021). | M |
+| NFR-SEC-002 | The emulator never calls real Google hosts or uses real Google credentials; real ADC files are ignored unless explicitly pointed at the emulator. There are two exceptions, neither of which carries the Instance's credentials or happens with `--offline`: a Read-through on a `--gfe-bind` address (ADR 0021), and the `dns` Service's fallback to a public nameserver (8.8.8.8) when none of the Host nameservers answer (ADR 0089). | M |
 | NFR-SEC-003 | Keys, tokens and the CA are generated locally, stored with 0600 permissions, and scoped to one data dir. | M |
 | NFR-SEC-004 | Containers it launches carry instance labels and run with the least privilege the workload allows (only GKE nodes are privileged). | M |
 | NFR-SEC-005 | Releases are signed (Sigstore/cosign) with SBOM and SLSA provenance. | S |

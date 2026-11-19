@@ -99,10 +99,13 @@ func (s *Service) serveQuery(w http.ResponseWriter, r *http.Request) {
 	if network != "" {
 		m = frontend.SetNetwork(m, network)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	// The whole wait goes to the one exchange: a forwarded name may wait
+	// on dead Host nameservers before one answers.
+	const wait = 10 * time.Second
+	ctx, cancel := context.WithTimeout(r.Context(), wait)
 	defer cancel()
 	timer := clock.StartStopwatch()
-	resp, err := exchange(ctx, m, server)
+	resp, err := exchange(ctx, m, server, wait)
 	if err != nil {
 		adminError(w, http.StatusBadGateway, "query "+server+": "+err.Error())
 		return
@@ -136,4 +139,24 @@ func queryRRs(in []mdns.RR) []queryRR {
 			Data: strings.TrimSpace(rdataString(rr))})
 	}
 	return out
+}
+
+// forwardingStatus is GET /_emu/v1/dns/forwarding's response: whether
+// names outside every zone are forwarded, and to which nameservers, for
+// `gcpemu doctor` (#1196).
+type forwardingStatus struct {
+	NoForward   bool     `json:"noForward,omitempty"` // --dns-no-forward: REFUSED
+	Offline     bool     `json:"offline,omitempty"`   // --offline: no public fallback
+	Nameservers []string `json:"nameservers"`         // the host's, from resolv.conf now
+	Public      string   `json:"public,omitempty"`    // tried when none of Nameservers answer
+}
+
+// serveForwarding is GET /_emu/v1/dns/forwarding.
+func (s *Service) serveForwarding(w http.ResponseWriter, _ *http.Request) {
+	out := forwardingStatus{Nameservers: []string{}}
+	if f := s.fwd.Load(); f != nil {
+		out = f.status()
+	}
+	out.NoForward = s.env.Config.DNSNoForward
+	writeJSON(w, http.StatusOK, out)
 }
