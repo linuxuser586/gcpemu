@@ -1006,27 +1006,27 @@ func TestReportDNSForwarding(t *testing.T) {
 		t.Error("asked a name with forwarding off")
 		return nil, errors.New("not asked")
 	}
-	const resolvers = `"resolvers":["192.0.2.53:53","[2001:db8::53]:53"]`
+	const nameservers = `"nameservers":["192.0.2.53:53","[2001:db8::53]:53"]`
 	for _, tc := range []struct {
 		name, status string
 		query        func(string) ([]byte, error)
 		prefix       string
 		contains     []string
 	}{
-		{"resolves", `{` + resolvers + `,"public":"8.8.8.8:53"}`,
+		{"resolves", `{` + nameservers + `,"public":"8.8.8.8:53"}`,
 			answer(`{"rcode":"NOERROR","answer":[{"name":"github.com.","type":"A","data":"140.82.112.3"}]}`, nil),
 			"[ok  ] ", []string{"github.com"}},
-		{"servfail", `{` + resolvers + `,"public":"8.8.8.8:53"}`,
+		{"servfail", `{` + nameservers + `,"public":"8.8.8.8:53"}`,
 			answer(`{"rcode":"SERVFAIL","answer":[]}`, nil),
 			"[WARN] ", []string{"github.com", "SERVFAIL", "192.0.2.53:53, [2001:db8::53]:53", "8.8.8.8:53", "fix:"}},
-		{"no answer", `{` + resolvers + `,"public":"8.8.8.8:53"}`,
+		{"no answer", `{` + nameservers + `,"public":"8.8.8.8:53"}`,
 			answer(`{"rcode":"NOERROR","answer":[]}`, nil),
 			"[WARN] ", []string{"github.com", "192.0.2.53:53"}},
-		{"query error", `{"resolvers":[],"public":"8.8.8.8:53"}`,
+		{"query error", `{"nameservers":[],"public":"8.8.8.8:53"}`,
 			answer("", errors.New("GET /_emu/v1/dns/query: 502 timeout")),
-			"[WARN] ", []string{"502 timeout", "no host resolvers"}},
-		{"offline", `{"offline":true,` + resolvers + `}`, noQuery, "[--  ] ", []string{"--offline"}},
-		{"no forward", `{"noForward":true,` + resolvers + `}`, noQuery, "[--  ] ", []string{"--dns-no-forward"}},
+			"[WARN] ", []string{"502 timeout", "no Host nameservers"}},
+		{"offline", `{"offline":true,` + nameservers + `}`, noQuery, "[--  ] ", []string{"--offline"}},
+		{"no forward", `{"noForward":true,` + nameservers + `}`, noQuery, "[--  ] ", []string{"--dns-no-forward"}},
 	} {
 		var b strings.Builder
 		reportDNSForwarding(&b, []byte(tc.status), tc.query)

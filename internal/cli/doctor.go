@@ -647,14 +647,14 @@ func checkExternal(report func(bool, string, string), cfg *config.Config) {
 }
 
 // checkDNSForwarding reports whether a running Instance's DNS resolves a
-// name outside every zone, which it forwards to the host's resolvers
+// name outside every zone, which it forwards to the Host nameservers
 // (#1196). An Instance without the `dns` Service reports nothing.
 func checkDNSForwarding(out io.Writer, cfg *config.Config) {
 	c, err := clientFor(cfg)
 	if err != nil {
 		return
 	}
-	// The query waits up to 10 s on dead host resolvers (serveQuery).
+	// The query waits up to 10 s on dead Host nameservers (serveQuery).
 	c.http.Timeout = 15 * time.Second
 	b, err := c.get("/_emu/v1/dns/forwarding")
 	if err != nil {
@@ -674,10 +674,10 @@ const outsideName = "github.com"
 // down, and only names outside the Instance's zones are affected.
 func reportDNSForwarding(out io.Writer, status []byte, query func(name string) ([]byte, error)) {
 	var st struct {
-		NoForward bool     `json:"noForward"`
-		Offline   bool     `json:"offline"`
-		Resolvers []string `json:"resolvers"`
-		Public    string   `json:"public"`
+		NoForward   bool     `json:"noForward"`
+		Offline     bool     `json:"offline"`
+		Nameservers []string `json:"nameservers"`
+		Public      string   `json:"public"`
 	}
 	if json.Unmarshal(status, &st) != nil {
 		return
@@ -712,15 +712,15 @@ func reportDNSForwarding(out io.Writer, status []byte, query func(name string) (
 		fmt.Fprintf(out, "[ok  ] DNS forwarding: %s resolves through the Instance's DNS\n", outsideName)
 		return
 	}
-	using := "no host resolvers (none found)"
-	if len(st.Resolvers) > 0 {
-		using = "the host's resolvers " + strings.Join(st.Resolvers, ", ")
+	using := "no Host nameservers (none found)"
+	if len(st.Nameservers) > 0 {
+		using = "the Host nameservers " + strings.Join(st.Nameservers, ", ")
 	}
 	if st.Public != "" {
 		using += ", then " + st.Public
 	}
 	fmt.Fprintf(out, "[WARN] DNS forwarding: %s does not resolve through the Instance's DNS (%s); it forwards to %s\n", outsideName, why, using)
-	fmt.Fprintln(out, "       fix: check the host's network and its resolvers; the Instance follows resolv.conf when it changes")
+	fmt.Fprintln(out, "       fix: check the host's network and its nameservers; the Instance follows resolv.conf when it changes")
 }
 
 // reportExternal reports whether each Delegated API's External emulator

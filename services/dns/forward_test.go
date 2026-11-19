@@ -80,7 +80,7 @@ func TestForwarding(t *testing.T) {
 	}
 }
 
-func TestHostResolvers(t *testing.T) {
+func TestHostNameservers(t *testing.T) {
 	s := newTestService(t, false)
 	p := startForwarding(t, s, "192.0.2.8:53")
 	_ = os.WriteFile(p, []byte("nameserver 192.0.2.53\n"), 0o600)
@@ -143,9 +143,9 @@ func writeResolvConf(t *testing.T, p string, mtime time.Time, addrs ...string) {
 func startForwarding(t *testing.T, s *Service, public string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "resolv.conf")
-	oldConf, oldPublic := resolvConf, publicResolver
-	resolvConf, publicResolver = p, public
-	t.Cleanup(func() { resolvConf, publicResolver = oldConf, oldPublic })
+	oldConf, oldPublic := resolvConf, publicNameserver
+	resolvConf, publicNameserver = p, public
+	t.Cleanup(func() { resolvConf, publicNameserver = oldConf, oldPublic })
 	s.startForwarding()
 	return p
 }
@@ -233,7 +233,7 @@ func TestServeForwarding(t *testing.T) {
 	s := newTestService(t, false)
 	p := startForwarding(t, s, "192.0.2.8:53")
 	writeResolvConf(t, p, time.Now().Add(-time.Hour), "192.0.2.53:53", "[2001:db8::53]:53")
-	want := forwardingStatus{Resolvers: []string{"192.0.2.53:53", "[2001:db8::53]:53"}, Public: "192.0.2.8:53"}
+	want := forwardingStatus{Nameservers: []string{"192.0.2.53:53", "[2001:db8::53]:53"}, Public: "192.0.2.8:53"}
 	if got := get(s); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}

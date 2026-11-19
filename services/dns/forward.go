@@ -11,19 +11,20 @@ import (
 	mdns "github.com/miekg/dns"
 )
 
-// resolvConf is the host resolver configuration, and publicResolver the
-// resolver tried when none of the host's answer (variables for tests).
+// resolvConf is the host's resolver configuration, and publicNameserver the
+// nameserver tried when none of the Host nameservers answer (variables for
+// tests; ADR 0089).
 var (
-	resolvConf     = "/etc/resolv.conf"
-	publicResolver = "8.8.8.8:53"
+	resolvConf       = "/etc/resolv.conf"
+	publicNameserver = "8.8.8.8:53"
 )
 
-// skipFor is how long a host resolver that failed to answer is skipped.
+// skipFor is how long a Host nameserver that failed to answer is skipped.
 const skipFor = 30 * time.Second
 
-// forwarder holds the host's resolvers, which follow resolv.conf: it is
+// forwarder holds the Host nameservers, which follow resolv.conf: it is
 // read again whenever its modification time or size changes, as when the
-// host moves networks (#1196). A resolver that fails to answer (an
+// host moves networks (#1196). A nameserver that fails to answer (an
 // unreachable one times out) is skipped for skipFor, so lookups don't wait
 // on it before reaching a working one later in the list.
 type forwarder struct {
@@ -34,18 +35,18 @@ type forwarder struct {
 	mu      sync.Mutex
 	stat    os.FileInfo // resolv.conf when last read; nil if missing
 	servers []string
-	skip    map[string]time.Time // resolver → end of its skip window
+	skip    map[string]time.Time // nameserver → end of its skip window
 }
 
-// startForwarding sets up forwarding to the host's resolvers. Until it
+// startForwarding sets up forwarding to the Host nameservers. Until it
 // runs (Start), names outside every zone answer SERVFAIL.
 func (s *Service) startForwarding() {
 	s.fwd.Store(&forwarder{path: resolvConf, offline: s.env.Config.Offline, now: time.Now})
 }
 
-// hostResolvers returns the host's resolvers, reading resolv.conf again
+// hostNameservers returns the Host nameservers, reading resolv.conf again
 // if it changed since the last call.
-func (f *forwarder) hostResolvers() []string {
+func (f *forwarder) hostNameservers() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	st, err := os.Stat(f.path)
@@ -57,7 +58,7 @@ func (f *forwarder) hostResolvers() []string {
 	}
 	f.stat = st
 	f.servers = []string{}
-	f.skip = nil // a new network's resolvers start afresh
+	f.skip = nil // a new network's nameservers start afresh
 	if cc, err := mdns.ClientConfigFromFile(f.path); err == nil {
 		for _, srv := range cc.Servers {
 			f.servers = append(f.servers, serverAddr(srv, cc.Port))
@@ -85,11 +86,12 @@ func unchangedConf(a, b os.FileInfo) bool {
 	return a.ModTime().Equal(b.ModTime()) && a.Size() == b.Size()
 }
 
-// upstreams lists the resolvers to try in order: the host's outside their
-// skip windows (all of them when every one is in its window), then, unless
-// --offline, the public resolver for when none of the host's answer.
+// upstreams lists the nameservers to try in order: the Host nameservers
+// outside their skip windows (all of them when every one is in its
+// window), then, unless --offline, the public nameserver for when none of
+// them answer.
 func (f *forwarder) upstreams() []string {
-	host := f.hostResolvers()
+	host := f.hostNameservers()
 	f.mu.Lock()
 	now := f.now()
 	var out []string
@@ -102,8 +104,8 @@ func (f *forwarder) upstreams() []string {
 	if len(out) == 0 {
 		out = host
 	}
-	if !f.offline && !slices.Contains(out, publicResolver) {
-		out = append(slices.Clip(out), publicResolver)
+	if !f.offline && !slices.Contains(out, publicNameserver) {
+		out = append(slices.Clip(out), publicNameserver)
 	}
 	return out
 }
@@ -118,12 +120,12 @@ func (f *forwarder) failed(addr string) {
 	f.skip[addr] = f.now().Add(skipFor)
 }
 
-// status reports, for GET /_emu/v1/dns/forwarding, the host's resolvers
-// and the public one when it is used.
+// status reports, for GET /_emu/v1/dns/forwarding, the Host nameservers
+// and the public nameserver when it is used.
 func (f *forwarder) status() forwardingStatus {
-	out := forwardingStatus{Offline: f.offline, Resolvers: slices.Clone(f.hostResolvers())}
+	out := forwardingStatus{Offline: f.offline, Nameservers: slices.Clone(f.hostNameservers())}
 	if !f.offline {
-		out.Public = publicResolver
+		out.Public = publicNameserver
 	}
 	return out
 }
@@ -131,11 +133,11 @@ func (f *forwarder) status() forwardingStatus {
 // upstreamTimeout is the longest one upstream is waited for.
 const upstreamTimeout = 2 * time.Second
 
-// forward sends q to the host resolver. It returns REFUSED when forwarding
+// forward sends q to the Host nameservers. It returns REFUSED when forwarding
 // is disabled and SERVFAIL when no upstream answers.
 //
 // The caller's deadline is shared among the upstreams still to try, each
-// waited for at most upstreamTimeout, so the public resolver at the end
+// waited for at most upstreamTimeout, so the public nameserver at the end
 // of the list is reached even behind several dead ones. An upstream that
 // doesn't answer within its share is skipped from then on (forwarder).
 func (s *Service) forward(ctx context.Context, q mdns.Question) *mdns.Msg {
