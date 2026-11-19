@@ -37,7 +37,8 @@ type Service struct {
 	ixGen   string
 	ixDirty bool
 
-	upstreams []string
+	// fwd forwards names outside every zone (forward.go); nil until Start.
+	fwd atomic.Pointer[forwarder]
 
 	// mapper rewrites A record addresses (SetAddressMapper).
 	mapper atomic.Pointer[func(net.IP, string) net.IP]
@@ -63,13 +64,15 @@ func New(env *emu.Env) emu.Service {
 func (s *Service) Name() string { return "dns" }
 
 // Register mounts the REST API at /dns/v1/ (root, as the Go client and
-// gcloud address it), under the /dns/ gateway prefix and in host mode,
-// and the console's query endpoint on the admin API (admin.go).
+// gcloud address it), under the /dns/ gateway prefix and in host mode, and
+// on the admin API (admin.go) the console's query endpoint and doctor's
+// forwarding report.
 func (s *Service) Register(r emu.Router) error {
 	h := s.handler()
 	r.Handle("/dns/v1/", h)
 	r.Mount("dns", []string{"dns.googleapis.com"}, h)
 	r.Handle("GET /_emu/v1/dns/query", http.HandlerFunc(s.serveQuery))
+	r.Handle("GET /_emu/v1/dns/forwarding", http.HandlerFunc(s.serveForwarding))
 	return nil
 }
 
@@ -81,7 +84,7 @@ func (s *Service) Register(r emu.Router) error {
 // so every retry of TCP's pick can land in one UDP-reserved block (#206);
 // without a --port-range, retries try random ephemeral ports instead.
 func (s *Service) Start(ctx context.Context) error {
-	s.upstreams = s.hostResolvers()
+	s.startForwarding()
 	var (
 		tl  net.Listener
 		pc  net.PacketConn

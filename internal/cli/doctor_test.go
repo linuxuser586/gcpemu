@@ -990,3 +990,54 @@ func TestCheckPublicRoots(t *testing.T) {
 		}
 	}
 }
+
+// doctor resolves an outside name through a running Instance's DNS and,
+// when that fails, names the host's resolvers it forwards to (#1196).
+func TestReportDNSForwarding(t *testing.T) {
+	answer := func(body string, err error) func(string) ([]byte, error) {
+		return func(name string) ([]byte, error) {
+			if name != "github.com" {
+				t.Errorf("asked %q, want github.com", name)
+			}
+			return []byte(body), err
+		}
+	}
+	noQuery := func(string) ([]byte, error) {
+		t.Error("asked a name with forwarding off")
+		return nil, errors.New("not asked")
+	}
+	const resolvers = `"resolvers":["192.0.2.53:53","[2001:db8::53]:53"]`
+	for _, tc := range []struct {
+		name, status string
+		query        func(string) ([]byte, error)
+		prefix       string
+		contains     []string
+	}{
+		{"resolves", `{` + resolvers + `,"public":"8.8.8.8:53"}`,
+			answer(`{"rcode":"NOERROR","answer":[{"name":"github.com.","type":"A","data":"140.82.112.3"}]}`, nil),
+			"[ok  ] ", []string{"github.com"}},
+		{"servfail", `{` + resolvers + `,"public":"8.8.8.8:53"}`,
+			answer(`{"rcode":"SERVFAIL","answer":[]}`, nil),
+			"[WARN] ", []string{"github.com", "SERVFAIL", "192.0.2.53:53, [2001:db8::53]:53", "8.8.8.8:53", "fix:"}},
+		{"no answer", `{` + resolvers + `,"public":"8.8.8.8:53"}`,
+			answer(`{"rcode":"NOERROR","answer":[]}`, nil),
+			"[WARN] ", []string{"github.com", "192.0.2.53:53"}},
+		{"query error", `{"resolvers":[],"public":"8.8.8.8:53"}`,
+			answer("", errors.New("GET /_emu/v1/dns/query: 502 timeout")),
+			"[WARN] ", []string{"502 timeout", "no host resolvers"}},
+		{"offline", `{"offline":true,` + resolvers + `}`, noQuery, "[--  ] ", []string{"--offline"}},
+		{"no forward", `{"noForward":true,` + resolvers + `}`, noQuery, "[--  ] ", []string{"--dns-no-forward"}},
+	} {
+		var b strings.Builder
+		reportDNSForwarding(&b, []byte(tc.status), tc.query)
+		got := b.String()
+		if !strings.HasPrefix(got, tc.prefix) {
+			t.Errorf("%s: %q, want prefix %q", tc.name, got, tc.prefix)
+		}
+		for _, s := range tc.contains {
+			if !strings.Contains(got, s) {
+				t.Errorf("%s: %q lacks %q", tc.name, got, s)
+			}
+		}
+	}
+}
