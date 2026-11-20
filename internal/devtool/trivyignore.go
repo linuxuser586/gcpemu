@@ -12,7 +12,6 @@ import (
 const trivyIgnoreFile = ".trivyignore.yaml"
 
 var (
-	issueInText = regexp.MustCompile(`https://github\.com/linuxuser586/gcpemu/issues/[0-9]+`)
 	// The block-style YAML trivyIgnoreProblems understands: a section, an
 	// entry's first field, a further field, and an item of a list field.
 	ignoreSection = regexp.MustCompile(`^([a-z]+):$`)
@@ -22,12 +21,12 @@ var (
 )
 
 // trivyIgnoreProblems checks .trivyignore.yaml against ADR 0090: every
-// entry names an issue in its statement and an expired_at date that has
-// not passed. Trivy itself stops honouring an expired entry, but would
+// entry links an issue in its statement and has an expired_at date that
+// has not begun. Trivy itself stops honouring an expired entry, but would
 // keep one with no expiry forever. devtool uses only the standard library
 // (ADR 0061), so this reads only block-style YAML, the subset the file
 // is written in, and reports anything else rather than guess.
-func trivyIgnoreProblems(b []byte, today time.Time) []string {
+func trivyIgnoreProblems(b []byte, now time.Time) []string {
 	var out []string
 	var entries []exception
 	var cur *exception
@@ -62,7 +61,7 @@ func trivyIgnoreProblems(b []byte, today time.Time) []string {
 		case "id":
 			cur.ID = val
 		case "statement":
-			cur.Issue = issueInText.FindString(val)
+			cur.Issue = issueURL.FindString(val)
 		case "expired_at":
 			cur.Expires = val
 		case "paths", "purls":
@@ -72,7 +71,7 @@ func trivyIgnoreProblems(b []byte, today time.Time) []string {
 		}
 	}
 	for _, e := range entries {
-		out = append(out, e.problems(today)...)
+		out = append(out, e.problems(now, ignoreFields)...)
 	}
 	return out
 }

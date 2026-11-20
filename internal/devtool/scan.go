@@ -29,7 +29,7 @@ var vulncheckGOOS = []string{"linux", "darwin", "windows"}
 // runVulncheck is `just vulncheck`: govulncheck on every platform, with
 // the called findings checked against .govulncheck-allow.json.
 func runVulncheck([]string) error {
-	allow, err := os.ReadFile(allowlistFile)
+	allow, err := os.ReadFile(govulncheckAllowFile)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func runVulncheck([]string) error {
 		return fmt.Errorf("reading govulncheck's output: %w", err)
 	}
 	for _, p := range r.Problems {
-		fmt.Fprintf(os.Stderr, "%s: %s\n", allowlistFile, p)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", govulncheckAllowFile, p)
 	}
 	for _, f := range r.Unallowed {
 		fixed := "no fixed version"
@@ -76,16 +76,16 @@ func runVulncheck([]string) error {
 		fmt.Fprintf(os.Stderr, "%s (%s, %s): %s\n  https://pkg.go.dev/vuln/%s\n", f.ID, f.Module, fixed, f.Summary, f.ID)
 	}
 	if len(r.Problems) > 0 || len(r.Unallowed) > 0 {
-		fmt.Fprintf(os.Stderr, "vulncheck: fix each finding, or add it to %s with an issue and an expiry date (ADR 0090)\n", allowlistFile)
+		fmt.Fprintf(os.Stderr, "vulncheck: fix each finding, or add it to %s with an issue and an expiry date (ADR 0090)\n", govulncheckAllowFile)
 		return errReported
 	}
 	fmt.Println("vulncheck: no unallowed vulnerabilities called")
 	return nil
 }
 
-// trivyVersionPin reads the Trivy version .github/install-trivy.sh pins,
+// trivyVersionLine finds the Trivy version .github/install-trivy.sh pins,
 // the one place it is written.
-var trivyVersionPin = regexp.MustCompile(`(?m)^version=(\S+)$`)
+var trivyVersionLine = regexp.MustCompile(`(?m)^version=(\S+)$`)
 
 // needTrivy checks that Trivy is on PATH and that .trivyignore.yaml is
 // valid, before any Trivy check runs.
@@ -94,7 +94,7 @@ func needTrivy() error {
 	if err != nil {
 		return err
 	}
-	m := trivyVersionPin.FindSubmatch(b)
+	m := trivyVersionLine.FindSubmatch(b)
 	if m == nil {
 		return errors.New(".github/install-trivy.sh pins no version=")
 	}
@@ -184,16 +184,33 @@ func runImageScan(args []string) error {
 // imports the emulator, which devtool must not (ADR 0061), so it is its
 // own command.
 func runProductImages([]string) error {
+	images, err := productImageList()
+	if err != nil {
+		return err
+	}
+	for _, i := range images {
+		fmt.Println(i)
+	}
+	return nil
+}
+
+// productImageList runs the Product image lister.
+func productImageList() ([]string, error) {
 	cmd := exec.Command("go", "run", "./internal/devtool/productimages")
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("product-images: %w", err)
+	}
+	return strings.Fields(string(out)), nil
 }
 
 // runProductImageScan is the weekly Product image scan, report only (ADR
 // 0090): it prints a Markdown summary of every Product image's HIGH and
-// CRITICAL vulnerabilities and fails only when it cannot scan. With
-// -fixable FILE, it writes the fixable ones there as the rolling issue's
-// body, and writes nothing when there are none.
+// CRITICAL vulnerabilities, and fails only when it cannot scan one, after
+// reporting the others. With -fixable FILE, it writes the fixable ones
+// there as the rolling issue's body, and writes nothing when there are
+// none.
 func runProductImageScan(args []string) error {
 	fl := flag.NewFlagSet("product-image-scan", flag.ContinueOnError)
 	fixableFile := fl.String("fixable", "", "write the fixable findings here, as Markdown, when there are any")
@@ -203,18 +220,24 @@ func runProductImageScan(args []string) error {
 	if err := needTrivy(); err != nil {
 		return err
 	}
-	list, err := exec.Command("go", "run", "./internal/devtool/productimages").Output()
+	images, err := productImageList()
 	if err != nil {
-		return fmt.Errorf("product-images: %w", err)
+		return err
 	}
+	// A registry's rate limit on one image must not hide the others'
+	// findings: a failed scan is reported in its row and fails the run
+	// at the end.
 	scans := map[string][]byte{}
-	images := strings.Fields(string(list))
+	failed := 0
 	for _, image := range images {
 		fmt.Fprintf(os.Stderr, "scanning %s\n", image)
 		cmd := exec.Command("trivy", append(imageScanArgs, "--format", "json", image)...)
 		cmd.Stderr = os.Stderr
-		if scans[image], err = cmd.Output(); err != nil {
-			return fmt.Errorf("trivy %s: %w", image, err)
+		if out, err := cmd.Output(); err != nil {
+			fmt.Fprintf(os.Stderr, "trivy %s: %v\n", image, err)
+			failed++
+		} else {
+			scans[image] = out
 		}
 	}
 	summary, fixable, err := productScanMarkdown(images, scans)
@@ -223,7 +246,12 @@ func runProductImageScan(args []string) error {
 	}
 	fmt.Print(summary)
 	if *fixableFile != "" && fixable != "" {
-		return os.WriteFile(*fixableFile, []byte(fixable), 0o644)
+		if err := os.WriteFile(*fixableFile, []byte(fixable), 0o644); err != nil {
+			return err
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d Product images could not be scanned", failed, len(images))
 	}
 	return nil
 }
@@ -233,10 +261,10 @@ func runProductImageScan(args []string) error {
 const issueBodyLimit = 60000
 
 // productScanMarkdown summarises trivy image --format json output per
-// image. summary, for the job summary, is a table of every image's HIGH
-// and CRITICAL counts and each fixable finding in full; fixable, for the
-// rolling issue, lists each image's fixable vulnerability IDs ("" when
-// there are none).
+// image; an image missing from scans could not be scanned. summary, for
+// the job summary, is a table of every image's HIGH and CRITICAL counts
+// and each fixable finding in full; fixable, for the rolling issue, lists
+// each image's fixable vulnerability IDs ("" when there are none).
 func productScanMarkdown(images []string, scans map[string][]byte) (summary, fixable string, err error) {
 	var s, details, f strings.Builder
 	truncated := false
@@ -253,6 +281,10 @@ func productScanMarkdown(images []string, scans map[string][]byte) (summary, fix
 					Severity         string `json:"Severity"`
 				} `json:"Vulnerabilities"`
 			} `json:"Results"`
+		}
+		if scans[image] == nil {
+			fmt.Fprintf(&s, "| `%s` | | | scan failed |\n", image)
+			continue
 		}
 		if err := json.Unmarshal(scans[image], &rep); err != nil {
 			return "", "", fmt.Errorf("%s: %w", image, err)

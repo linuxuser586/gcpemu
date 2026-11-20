@@ -37,10 +37,12 @@ const govulncheckStream = `{
 }
 `
 
-var today = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+// now is mid-day: an entry holds until its date begins, in UTC, as Trivy
+// applies expired_at.
+var now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 
 func TestVulncheckReportsCalledFindingsOnly(t *testing.T) {
-	r, err := vulnReport(strings.NewReader(govulncheckStream), []byte(`[]`), today)
+	r, err := vulnReport(strings.NewReader(govulncheckStream), []byte(`[]`), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,11 +72,11 @@ func TestVulncheckAllowlist(t *testing.T) {
 	}{
 		{name: "entry covers the finding",
 			allow: `[{"id": "GO-2026-6859", "issue": "` + issue + `", "expires": "2026-12-31"}]`},
-		{name: "entry expires today, still valid",
-			allow: `[{"id": "GO-2026-6859", "issue": "` + issue + `", "expires": "2026-11-20"}]`},
-		{name: "expired entry",
-			allow:         `[{"id": "GO-2026-6859", "issue": "` + issue + `", "expires": "2026-11-19"}]`,
-			wantUnallowed: true, wantProblem: "GO-2026-6859: expired on 2026-11-19"},
+		{name: "entry expires tomorrow, still valid",
+			allow: `[{"id": "GO-2026-6859", "issue": "` + issue + `", "expires": "2026-11-21"}]`},
+		{name: "entry expires today",
+			allow:         `[{"id": "GO-2026-6859", "issue": "` + issue + `", "expires": "2026-11-20"}]`,
+			wantUnallowed: true, wantProblem: "GO-2026-6859: expired on 2026-11-20"},
 		{name: "no expiry",
 			allow:         `[{"id": "GO-2026-6859", "issue": "` + issue + `"}]`,
 			wantUnallowed: true, wantProblem: "GO-2026-6859: expires must be a date (YYYY-MM-DD)"},
@@ -89,7 +91,7 @@ func TestVulncheckAllowlist(t *testing.T) {
 			wantUnallowed: true, wantProblem: `unknown field "expiry"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := vulnReport(strings.NewReader(govulncheckStream), []byte(tc.allow), today)
+			r, err := vulnReport(strings.NewReader(govulncheckStream), []byte(tc.allow), now)
 			if err != nil {
 				t.Fatal(err)
 			}

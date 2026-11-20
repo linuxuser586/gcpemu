@@ -177,9 +177,11 @@ image-scan image:
     @go run ./internal/devtool image-scan {{ image }}
 
 # ADR 0090: report only; a Product image refresh is deliberate (#895).
+# `-fixable FILE` also writes the fixable findings there, as the rolling
+# issue's body, when there are any.
 [doc("Scan every Product image and print a Markdown report (needs Trivy; never fails on findings)")]
-product-image-scan:
-    @go run ./internal/devtool product-image-scan
+product-image-scan *args:
+    @go run ./internal/devtool product-image-scan {{ args }}
 
 # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
 # psql, the Cloud SQL Auth Proxy and dig against a detached instance.

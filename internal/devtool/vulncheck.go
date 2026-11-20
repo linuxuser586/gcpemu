@@ -13,7 +13,8 @@ import (
 // exception is the part every entry of the committed exception lists
 // shares, the govulncheck allowlist's and .trivyignore.yaml's alike
 // (ADR 0090): the finding it suppresses, the issue that tracks fixing it
-// and the last day it holds.
+// and the date it stops holding, from 00:00 UTC, as Trivy applies
+// expired_at.
 type exception struct {
 	ID      string `json:"id"`
 	Issue   string `json:"issue"`
@@ -22,29 +23,39 @@ type exception struct {
 	Reason string `json:"reason"`
 }
 
-var issueURL = regexp.MustCompile(`^https://github\.com/linuxuser586/gcpemu/issues/[0-9]+$`)
+// issueURL is a gcpemu issue's link; an exception's must be exactly one.
+var issueURL = regexp.MustCompile(`https://github\.com/linuxuser586/gcpemu/issues/[0-9]+`)
 
-// problems lists what makes e invalid on the date today. An entry that has
-// a problem suppresses nothing.
-func (e exception) problems(today time.Time) []string {
+// exceptionFields names an exception list's issue and expiry fields, for
+// its problems' messages.
+type exceptionFields struct{ issue, expires string }
+
+var (
+	allowFields  = exceptionFields{issue: "issue", expires: "expires"}
+	ignoreFields = exceptionFields{issue: "statement", expires: "expired_at"}
+)
+
+// problems lists what makes e invalid at now. An entry that has a problem
+// suppresses nothing.
+func (e exception) problems(now time.Time, names exceptionFields) []string {
 	var out []string
 	if e.ID == "" {
 		out = append(out, "an entry has no id")
 	}
-	if !issueURL.MatchString(e.Issue) {
-		out = append(out, e.ID+": issue must link a gcpemu GitHub issue (https://github.com/linuxuser586/gcpemu/issues/N)")
+	if e.Issue == "" {
+		out = append(out, fmt.Sprintf("%s: %s must link a gcpemu GitHub issue (https://github.com/linuxuser586/gcpemu/issues/N)", e.ID, names.issue))
 	}
 	if d, err := time.Parse(time.DateOnly, e.Expires); err != nil {
-		out = append(out, e.ID+": expires must be a date (YYYY-MM-DD)")
-	} else if y, m, day := today.Date(); d.Before(time.Date(y, m, day, 0, 0, 0, 0, time.UTC)) {
-		out = append(out, fmt.Sprintf("%s: expired on %s; fix the finding, or extend the entry with the issue's agreement", e.ID, e.Expires))
+		out = append(out, fmt.Sprintf("%s: %s must be a date (YYYY-MM-DD)", e.ID, names.expires))
+	} else if !now.Before(d) {
+		out = append(out, fmt.Sprintf("%s: expired on %s; fix the finding, or move the date with the issue's agreement", e.ID, e.Expires))
 	}
 	return out
 }
 
-// allowlistFile holds the govulncheck findings `just vulncheck` lets pass:
-// a JSON array of exceptions.
-const allowlistFile = ".govulncheck-allow.json"
+// govulncheckAllowFile holds the govulncheck findings `just vulncheck`
+// lets pass: a JSON array of exceptions.
+const govulncheckAllowFile = ".govulncheck-allow.json"
 
 // vulnFinding is one vulnerability govulncheck found the code calling.
 type vulnFinding struct {
@@ -80,11 +91,11 @@ type govulncheckMessage struct {
 }
 
 // vulnReport reads govulncheck's -format json stream and checks its called
-// findings against allow, the committed allowlist, on the date today.
+// findings against allow, the committed allowlist, at now.
 // govulncheck also reports vulnerable modules and packages the code
 // imports without calling the vulnerable symbol; only a call fails, as it
 // does in govulncheck's own text output.
-func vulnReport(stream io.Reader, allow []byte, today time.Time) (vulnResult, error) {
+func vulnReport(stream io.Reader, allow []byte, now time.Time) (vulnResult, error) {
 	var r vulnResult
 	summaries := map[string]string{}
 	seen := map[string]bool{}
@@ -110,12 +121,15 @@ func vulnReport(stream io.Reader, allow []byte, today time.Time) (vulnResult, er
 	dec = json.NewDecoder(bytes.NewReader(allow))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&entries); err != nil {
-		r.Problems = append(r.Problems, fmt.Sprintf("%s: %v", allowlistFile, err))
+		r.Problems = append(r.Problems, fmt.Sprintf("%s: %v", govulncheckAllowFile, err))
 		entries = nil
 	}
 	allowed := map[string]bool{}
 	for _, e := range entries {
-		p := e.problems(today)
+		if issueURL.FindString(e.Issue) != e.Issue {
+			e.Issue = ""
+		}
+		p := e.problems(now, allowFields)
 		r.Problems = append(r.Problems, p...)
 		allowed[e.ID] = len(p) == 0
 	}

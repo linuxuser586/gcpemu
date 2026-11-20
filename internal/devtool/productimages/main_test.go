@@ -27,7 +27,7 @@ var (
 )
 
 var (
-	quotedImage   = regexp.MustCompile(`"((?:[a-z0-9.-]+/)+[a-z0-9._-]+:[A-Za-z0-9._-]+)"`)
+	quotedImage   = regexp.MustCompile(`"((?:[a-z0-9.-]+/)*[a-z0-9._-]+:[A-Za-z0-9._-]+)"`)
 	manifestImage = regexp.MustCompile(`(?m)^\s*-?\s*image:\s*"?([^\s"]+)"?\s*$`)
 )
 

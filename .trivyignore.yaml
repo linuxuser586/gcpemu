@@ -1,8 +1,9 @@
 # Exceptions to the Trivy checks: just licence-check, just image-scan and
 # the weekly Product image scan (ADR 0090). Every entry's statement links
-# the issue that tracks fixing it, and expired_at is the last day it holds;
-# devtool fails a check on an entry without both, or past its date. Keep
-# to block-style YAML: devtool reads only that.
+# the issue that tracks fixing it, and the entry stops holding when its
+# expired_at date begins (00:00 UTC), as Trivy applies it. devtool fails a
+# check on an entry without both, or past its date. Keep to block-style
+# YAML: devtool reads only that.
 vulnerabilities:
   - id: CVE-2026-97054
     statement: https://github.com/linuxuser586/gcpemu/issues/1198 net/http in Go 1.27.3, built into the gcpemu and gcpemu-echo binaries; fixed in Go 1.27.4.

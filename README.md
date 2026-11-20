@@ -1903,8 +1903,8 @@ just image-scan gcpemu:check  # fixable HIGH/CRITICAL in a built image (Trivy)
 ```
 
 The scans (ADR 0090) suppress a finding only through an entry in `.govulncheck-allow.json` or
-`.trivyignore.yaml` that names an issue and an expiry date. The Trivy recipes need the Trivy
-version `.github/install-trivy.sh` pins, which that script installs on Linux and macOS.
+`.trivyignore.yaml` that names an issue and an expiry date. The Trivy recipes also need the
+Trivy version `.github/install-trivy.sh` pins, which that script installs on Linux and macOS.
 
 The recipes in the `justfile` need just 1.56.0 or later (brew, winget, scoop, or
 `cargo install just`), and only the tools each recipe calls (go, git, pnpm, docker, npm); `just

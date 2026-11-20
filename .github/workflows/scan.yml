@@ -37,8 +37,10 @@ jobs:
           just-version: 1.56.0
       - uses: ./.github/actions/trivy
       - name: Scan Product images
-        run: go run ./internal/devtool product-image-scan -fixable "$RUNNER_TEMP/fixable.md" >> "$GITHUB_STEP_SUMMARY"
+        run: just product-image-scan -fixable "$RUNNER_TEMP/fixable.md" >> "$GITHUB_STEP_SUMMARY"
+      # Also after a scan that failed on some images, for the others' findings.
       - name: Open or update the rolling issue
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
