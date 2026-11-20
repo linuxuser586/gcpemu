@@ -39,7 +39,7 @@ func databaseVersions() []string {
 }
 
 // ProductImages lists the postgres image of every supported
-// databaseVersion, for the weekly Product image scan (#1165).
+// databaseVersion, for the weekly image report (#1165).
 func ProductImages() []string {
 	out := make([]string, 0, len(pgVersions))
 	for _, v := range databaseVersions() {

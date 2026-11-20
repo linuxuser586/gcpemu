@@ -3,7 +3,7 @@ package gke
 import "io/fs"
 
 // ProductImages lists the images a cluster runs that decide how GKE
-// behaves, for the weekly Product image scan (#1165): each version's k3s
+// behaves, for the weekly image report (#1165): each version's k3s
 // image, the system images it preloads, and the images of the embedded
 // add-on manifests. It may repeat an image.
 func ProductImages() ([]string, error) {

@@ -1,5 +1,5 @@
 # Scan exceptions (CONTEXT.md) to the Trivy checks: just licence-check,
-# just image-scan and the weekly Product image scan (ADR 0090). Every
+# just image-scan and the weekly image report (ADR 0090). Every
 # entry's statement links the issue that tracks fixing it, and the entry
 # stops holding when its expired_at date begins (00:00 UTC), as Trivy
 # applies it. devtool fails a check on an entry without both, or past its
