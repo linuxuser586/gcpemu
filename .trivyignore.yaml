@@ -4,11 +4,6 @@
 # stops holding when its expired_at date begins (00:00 UTC), as Trivy
 # applies it. devtool fails a check on an entry without both, or past its
 # date. Keep to block-style YAML: devtool reads only that.
-vulnerabilities:
-  - id: CVE-2026-97054
-    statement: https://github.com/linuxuser586/gcpemu/issues/1198 net/http in Go 1.27.3, built into the gcpemu and gcpemu-echo binaries; fixed in Go 1.27.4.
-    expired_at: 2026-12-31
-
 licenses:
   - id: BlueOak-1.0.0
     statement: https://github.com/linuxuser586/gcpemu/issues/1200 glob, minimatch, lru-cache and their kin under setup-gcpemu's @actions packages.

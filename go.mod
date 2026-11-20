@@ -2,7 +2,7 @@ module github.com/linuxuser586/gcpemu
 
 go 1.27.1
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	cel.dev/cel-go v0.33.2
