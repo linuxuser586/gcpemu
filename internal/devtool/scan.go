@@ -154,7 +154,7 @@ func runLicenceCheck([]string) error {
 		fmt.Fprintln(os.Stderr, "licence-check: run go mod download, pnpm install in console and npm ci in setup-gcpemu first")
 	}
 	if len(r.Disallowed) > 0 {
-		fmt.Fprintf(os.Stderr, "licence-check: SRS 2.4.2 allows Apache-2.0, MIT, BSD, ISC, MPL-2.0 and BlueOak-1.0.0 (ADR 0090); replace the dependency, or add a scan exception for the licence to %s\n", trivyIgnoreFile)
+		fmt.Fprintf(os.Stderr, "licence-check: ADR 0090 allows Apache-2.0, MIT, BSD, ISC and MPL-2.0 (SRS 2.4.2), and BlueOak-1.0.0; replace the dependency, or add a scan exception for the licence to %s\n", trivyIgnoreFile)
 	}
 	if len(r.Unlicensed) > 0 {
 		fmt.Fprintf(os.Stderr, "licence-check: a package without a licence grants nothing; replace it, or add a scan exception for name@version to %s\n", licenceExceptionsFile)

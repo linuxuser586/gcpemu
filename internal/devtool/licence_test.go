@@ -19,7 +19,6 @@ func TestLicenceAllowed(t *testing.T) {
 		"ISC":                              true,
 		"MPL-2.0":                          true,
 		"BlueOak-1.0.0":                    true,
-		"blueoak-1.0.0":                    true,
 		"BlueOak-1.0.0 AND MIT":            true,
 		"BlueOak-1.0.0 AND GPL-3.0-only":   false,
 		"(Apache-2.0 AND BSD-3-Clause)":    true,

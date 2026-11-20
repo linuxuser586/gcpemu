@@ -14,7 +14,7 @@ vulnerabilities:
     expired_at: 2026-12-31
 
 licenses:
-  - id: BlueOak-1.0.0
+  - id: GPL-3.0-only
     paths:
       - setup-gcpemu/package-lock.json
     statement: "https://github.com/linuxuser586/gcpemu/issues/2"
@@ -27,7 +27,7 @@ licenses:
 		{name: "empty", file: "# nothing ignored\n"},
 		{name: "expired",
 			file: strings.Replace(valid, "2026-11-21", "2026-11-20", 1),
-			want: "BlueOak-1.0.0: expired on 2026-11-20"},
+			want: "GPL-3.0-only: expired on 2026-11-20"},
 		{name: "no expiry",
 			file: strings.Replace(valid, "    expired_at: 2026-12-31\n", "", 1),
 			want: "CVE-2026-97054: expired_at must be a date"},
