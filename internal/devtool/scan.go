@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -167,7 +168,7 @@ func runLicenceCheck([]string) error {
 }
 
 // imageScanArgs are the trivy image flags of the release image scan and
-// the weekly Product image scan alike.
+// the weekly image report alike.
 var imageScanArgs = []string{"image", "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--ignorefile", trivyIgnoreFile, "--quiet"}
 
 // runImageScan is `just image-scan <ref>`: a release image fails on any
@@ -213,16 +214,17 @@ func productImageList() ([]string, error) {
 	return strings.Fields(string(out)), nil
 }
 
-// runProductImageScan is the weekly Product image scan, report only (ADR
-// 0090): it prints a Markdown summary of every Product image's HIGH and
-// CRITICAL vulnerabilities, and fails only when it cannot scan one, after
-// reporting the others. It also lists the scan exceptions that stop
-// holding within two weeks, so none expires unannounced. With -issue FILE,
-// it writes the fixable findings and those exceptions there as the rolling
-// issue's body, and writes nothing when there are neither.
-func runProductImageScan(args []string) error {
+// runImageReport is `just image-report`, the weekly image scan, report
+// only (ADR 0090): it prints a Markdown summary of every Product and
+// Helper image's HIGH and CRITICAL vulnerabilities, and fails only when it
+// cannot scan one, after reporting the others. It also lists the scan
+// exceptions that stop holding within two weeks, so none expires
+// unannounced. With -issue FILE, it writes the fixable findings and those
+// exceptions there as the rolling issue's body, and writes nothing when
+// there are neither.
+func runImageReport(args []string) error {
 	var err error
-	fl := flag.NewFlagSet("product-image-scan", flag.ContinueOnError)
+	fl := flag.NewFlagSet("image-report", flag.ContinueOnError)
 	issueFile := fl.String("issue", "", "write the rolling issue's body here when there is anything to report")
 	if err := fl.Parse(args); err != nil {
 		return err
@@ -243,61 +245,137 @@ func runProductImageScan(args []string) error {
 	if err != nil {
 		return err
 	}
-	images, err := productImageList()
+	product, err := productImageList()
+	if err != nil {
+		return err
+	}
+	helper, err := helperImageList(".")
 	if err != nil {
 		return err
 	}
 	// A registry's rate limit on one image must not hide the others'
 	// findings: a failed scan is reported in its row and fails the run
-	// at the end.
+	// at the end. A reference in both lists is scanned once.
 	scans := map[string][]byte{}
-	failed := 0
-	for _, image := range images {
+	toScan := imagesToScan(product, helper)
+	for _, image := range toScan {
 		fmt.Fprintf(os.Stderr, "scanning %s\n", image)
 		cmd := exec.Command("trivy", append(imageScanArgs, "--format", "json", image)...)
 		cmd.Stderr = os.Stderr
 		if out, err := cmd.Output(); err != nil {
 			fmt.Fprintf(os.Stderr, "trivy %s: %v\n", image, err)
-			failed++
 		} else {
 			scans[image] = out
 		}
 	}
-	summary, fixable, err := productScanMarkdown(images, scans)
+	r, err := reportImages(product, helper, expiring, scans)
 	if err != nil {
 		return err
 	}
-	if len(expiring) > 0 {
-		section := "\n### Scan exceptions that stop holding within two weeks\n\n- " + strings.Join(expiring, "\n- ") + "\n"
-		summary += section
-		fixable += section
-	}
-	fmt.Print(summary)
-	if *issueFile != "" && fixable != "" {
-		if err := os.WriteFile(*issueFile, []byte(fixable), 0o644); err != nil {
+	fmt.Print(r.Summary)
+	if *issueFile != "" && r.Issue != "" {
+		if err := os.WriteFile(*issueFile, []byte(r.Issue), 0o644); err != nil {
 			return err
 		}
 	}
-	if failed > 0 {
-		return fmt.Errorf("%d of %d Product images could not be scanned", failed, len(images))
+	if r.Failed > 0 {
+		return fmt.Errorf("%d of %d images could not be scanned", r.Failed, len(toScan))
 	}
 	return nil
+}
+
+// imagesToScan lists the Product images, then the Helper images, each
+// reference once.
+func imagesToScan(product, helper []string) []string {
+	var refs []string
+	seen := map[string]bool{}
+	for _, image := range append(slices.Clone(product), helper...) {
+		if !seen[image] {
+			seen[image] = true
+			refs = append(refs, image)
+		}
+	}
+	return refs
 }
 
 // issueBodyLimit keeps the rolling issue's body under GitHub's 65536
 // characters, with room for the workflow's preamble.
 const issueBodyLimit = 60000
 
-// productScanMarkdown summarises trivy image --format json output per
-// image; an image missing from scans could not be scanned. summary, for
-// the job summary, is a table of every image's HIGH and CRITICAL counts
-// and each fixable finding in full; fixable, for the rolling issue, lists
-// each image's fixable vulnerability IDs ("" when there are none).
-func productScanMarkdown(images []string, scans map[string][]byte) (summary, fixable string, err error) {
+// imageReport is the weekly image scan's report.
+type imageReport struct {
+	// Summary, for the job summary, has both image sections, each a
+	// table of every image's HIGH and CRITICAL counts and each fixable
+	// finding in full.
+	Summary string
+	// Issue, for the rolling issue, lists each image's fixable
+	// vulnerability IDs, leaving out a section with none; "" when there
+	// is nothing to report.
+	Issue string
+	// Failed counts the images, each once, that could not be scanned.
+	Failed int
+}
+
+// reportImages summarises trivy image --format json output for the
+// Product and Helper images, then lists the expiring scan exceptions
+// once, at the end. An image missing from scans could not be scanned; a
+// reference in both lists is scanned once and reported in both sections.
+func reportImages(product, helper, expiring []string, scans map[string][]byte) (imageReport, error) {
+	var r imageReport
+	isProduct := map[string]bool{}
+	for _, image := range product {
+		isProduct[image] = true
+	}
+	failed := map[string]bool{}
+	budget := issueBodyLimit
+	for _, sec := range []struct {
+		title     string
+		images    []string
+		isProduct map[string]bool
+	}{
+		{"Product images", product, nil},
+		{"Helper images", helper, isProduct},
+	} {
+		summary, fixable, err := imageSection(sec.images, sec.isProduct, scans, budget)
+		if err != nil {
+			return r, err
+		}
+		r.Summary += "## " + sec.title + "\n\n" + summary
+		if fixable != "" {
+			if r.Issue != "" {
+				r.Issue += "\n"
+			}
+			r.Issue += "## " + sec.title + "\n\n" + fixable
+			budget -= len(fixable)
+		}
+		for _, image := range sec.images {
+			if scans[image] == nil {
+				failed[image] = true
+			}
+		}
+	}
+	r.Failed = len(failed)
+	if len(expiring) > 0 {
+		section := "\n### Scan exceptions that stop holding within two weeks\n\n- " + strings.Join(expiring, "\n- ") + "\n"
+		r.Summary += section
+		r.Issue += section
+	}
+	return r, nil
+}
+
+// imageSection summarises one list of images: summary is the table and
+// each fixable finding in full, and fixable lists each image's fixable
+// vulnerability IDs, within budget characters ("" when there are none).
+// An image in isProduct is marked as also being a Product image.
+func imageSection(images []string, isProduct map[string]bool, scans map[string][]byte, budget int) (summary, fixable string, err error) {
 	var s, details, f strings.Builder
 	truncated := false
-	s.WriteString("## Product image scan (report only, ADR 0090)\n\n| Image | CRITICAL | HIGH | Fixable |\n|---|---|---|---|\n")
+	s.WriteString("| Image | CRITICAL | HIGH | Fixable |\n|---|---|---|---|\n")
 	for _, image := range images {
+		name := "`" + image + "`"
+		if isProduct[image] {
+			name += " (also a Product image)"
+		}
 		var rep struct {
 			Results []struct {
 				Target          string `json:"Target"`
@@ -311,7 +389,7 @@ func productScanMarkdown(images []string, scans map[string][]byte) (summary, fix
 			} `json:"Results"`
 		}
 		if scans[image] == nil {
-			fmt.Fprintf(&s, "| `%s` | | | scan failed |\n", image)
+			fmt.Fprintf(&s, "| %s | | | scan failed |\n", name)
 			continue
 		}
 		if err := json.Unmarshal(scans[image], &rep); err != nil {
@@ -334,12 +412,12 @@ func productScanMarkdown(images []string, scans map[string][]byte) (summary, fix
 				}
 			}
 		}
-		fmt.Fprintf(&s, "| `%s` | %d | %d | %d |\n", image, counts["CRITICAL"], counts["HIGH"], len(fixes))
+		fmt.Fprintf(&s, "| %s | %d | %d | %d |\n", name, counts["CRITICAL"], counts["HIGH"], len(fixes))
 		if len(fixes) == 0 {
 			continue
 		}
 		fmt.Fprintf(&details, "\n<details><summary><code>%s</code>: %d fixable</summary>\n\n%s\n\n</details>\n", image, len(fixes), strings.Join(fixes, "\n"))
-		line := fmt.Sprintf("- `%s`:", image)
+		line := fmt.Sprintf("- %s:", name)
 		for _, sev := range []string{"CRITICAL", "HIGH"} {
 			if len(ids[sev]) > 0 {
 				line += fmt.Sprintf(" %s %s.", sev, strings.Join(ids[sev], ", "))
@@ -347,7 +425,7 @@ func productScanMarkdown(images []string, scans map[string][]byte) (summary, fix
 		}
 		switch {
 		case truncated:
-		case f.Len()+len(line) > issueBodyLimit:
+		case f.Len()+len(line) > budget:
 			f.WriteString("- …and more images; see the run's job summary.\n")
 			truncated = true
 		default:

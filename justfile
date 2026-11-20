@@ -177,12 +177,13 @@ licence-check:
 image-scan image:
     @go run ./internal/devtool image-scan {{ image }}
 
-# ADR 0090: report only; a Product image refresh is deliberate (#895).
+# ADR 0090: report only; a Product image refresh is deliberate (#895),
+# and a Helper image's fix is a Renovate bump or an upstream report.
 # `-issue FILE` also writes the rolling issue's body there (fixable
 # findings, scan exceptions about to expire) when there is anything.
-[doc("Scan every Product image and print a Markdown report (needs Trivy; never fails on findings)")]
-product-image-scan *args:
-    @go run ./internal/devtool product-image-scan {{ args }}
+[doc("Scan every Product and Helper image and print a Markdown report (needs Trivy; never fails on findings)")]
+image-report *args:
+    @go run ./internal/devtool image-report {{ args }}
 
 # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
 # psql, the Cloud SQL Auth Proxy and dig against a detached instance.

@@ -373,7 +373,7 @@ func (in *Instance) stopManaged(ctx context.Context) {
 }
 
 // ProductImages lists the image of every Managed emulator, for the weekly
-// Product image scan (#1165).
+// image report (#1165).
 func ProductImages() []string {
 	out := make([]string, 0, len(managedSpecs))
 	for _, s := range managedSpecs {
