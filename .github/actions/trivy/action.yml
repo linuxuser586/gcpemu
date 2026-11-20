@@ -1,0 +1,20 @@
+name: Trivy, checksum-verified
+description: >-
+  #1165, ADR 0090: installs the Trivy that .github/install-trivy.sh pins,
+  checked against its sha256, and restores Trivy's cache keyed by day, so
+  a runner OS normally downloads the vulnerability database at most once a
+  day. Never aquasecurity/trivy-action or setup-trivy: their tags were
+  hijacked in March 2026.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: .github/install-trivy.sh "$RUNNER_TEMP/trivy"
+    - id: day
+      shell: bash
+      run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/trivy
+        key: trivy-${{ runner.os }}-${{ steps.day.outputs.day }}
+        restore-keys: trivy-${{ runner.os }}-

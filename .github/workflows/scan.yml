@@ -1,0 +1,58 @@
+name: scan
+# #1165, ADR 0090: the weekly scans of main. govulncheck fails the run, as
+# it does on a pull request that changes go.mod or go.sum. The Product image
+# scan only reports: a job summary, plus one rolling issue, opened or
+# updated, while a fixable HIGH or CRITICAL exists. Refreshing a Product
+# image is a deliberate change (#895), so a finding never fails CI.
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  vulncheck:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
+      - run: just vulncheck
+
+  product-images:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
+      - uses: ./.github/actions/trivy
+      - name: Scan Product images
+        run: go run ./internal/devtool product-image-scan -fixable "$RUNNER_TEMP/fixable.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Open or update the rolling issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          test -s "$RUNNER_TEMP/fixable.md" || { echo "No fixable HIGH or CRITICAL vulnerability in a Product image."; exit 0; }
+          title="Product images have fixable HIGH or CRITICAL vulnerabilities"
+          {
+            echo "The weekly Product image scan ($RUN) found these. A Product image refresh is a deliberate change (#895, ADR 0090), so CI does not fail on them: triage each into an issue or a refresh. This issue is updated by each scan that finds any."
+            cat "$RUNNER_TEMP/fixable.md"
+          } > "$RUNNER_TEMP/body.md"
+          number=$(gh issue list --state open --search "in:title \"$title\"" --json number,title --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
+            gh issue comment "$number" --body "Updated by $RUN."
+          else
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md" --label needs-triage
+          fi

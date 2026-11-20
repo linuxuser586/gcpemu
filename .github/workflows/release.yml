@@ -3,7 +3,8 @@ name: release
 # setup-gcpemu downloads and verifies (FR-CI-001), and moves the major tag
 # (vX) that `uses: linuxuser586/gcpemu/setup-gcpemu@vX` resolves. The image
 # job then publishes the same linux binaries as the OCI image (NFR-PORT-004),
-# once image-check has run each platform's image natively (#498, #630).
+# once image-check has run each platform's image natively (#498, #630)
+# and image-scan has found no fixable HIGH or CRITICAL in it (#1165).
 # The echo-image job publishes gcpemu-echo, the Conformance suite's test
 # backend, to Docker Hub, once echo-image-check has run it natively (#862).
 # The release, image and echo-image jobs sign what they publish with
@@ -156,6 +157,10 @@ jobs:
           just-version: 1.56.0
       - name: Image readiness check
         run: just image-check gcpemu:check
+      # #1165, ADR 0090: a fixable HIGH or CRITICAL fails before any push.
+      - uses: ./.github/actions/trivy
+      - name: Image scan
+        run: just image-scan gcpemu:check
 
   # A separate job, so a registry outage never holds up the binaries that
   # setup-gcpemu downloads, and it can be re-run on its own. It rebuilds
@@ -276,6 +281,9 @@ jobs:
           just-version: 1.56.0
       - name: Echo image check
         run: just echo-image-check gcpemu-echo:check
+      - uses: ./.github/actions/trivy
+      - name: Image scan
+        run: just image-scan gcpemu-echo:check
 
   # Docker Hub only: Cloud Run on GCP, which #859's recordings deploy it
   # to, can't pull from ghcr.io.

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "GO-2026-6859",
+    "issue": "https://github.com/linuxuser586/gcpemu/issues/1198",
+    "expires": "2026-12-31",
+    "reason": "net/http in Go 1.27.3; fixed by moving the toolchain to go1.27.4."
+  },
+  {
+    "id": "GO-2026-5046",
+    "issue": "https://github.com/linuxuser586/gcpemu/issues/1199",
+    "expires": "2027-02-28",
+    "reason": "hamba/avro/v2 has no fixed version; reached only from a user-supplied Pub/Sub schema."
+  },
+  {
+    "id": "GO-2026-5047",
+    "issue": "https://github.com/linuxuser586/gcpemu/issues/1199",
+    "expires": "2027-02-28",
+    "reason": "hamba/avro/v2 has no fixed version; reached only from a user-supplied Pub/Sub schema."
+  },
+  {
+    "id": "GO-2026-5048",
+    "issue": "https://github.com/linuxuser586/gcpemu/issues/1199",
+    "expires": "2027-02-28",
+    "reason": "hamba/avro/v2 has no fixed version; reached only from a user-supplied Pub/Sub schema."
+  }
+]
