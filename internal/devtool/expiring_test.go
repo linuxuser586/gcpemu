@@ -20,7 +20,7 @@ func TestExpiringExceptions(t *testing.T) {
     statement: https://github.com/linuxuser586/gcpemu/issues/4
     expired_at: 2026-11-30
 licenses:
-  - id: BlueOak-1.0.0
+  - id: GPL-3.0-only
     statement: https://github.com/linuxuser586/gcpemu/issues/5
     expired_at: 2027-02-28
 `),

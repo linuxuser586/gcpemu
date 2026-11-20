@@ -4,7 +4,3 @@
 # stops holding when its expired_at date begins (00:00 UTC), as Trivy
 # applies it. devtool fails a check on an entry without both, or past its
 # date. Keep to block-style YAML: devtool reads only that.
-licenses:
-  - id: BlueOak-1.0.0
-    statement: https://github.com/linuxuser586/gcpemu/issues/1200 glob, minimatch, lru-cache and their kin under setup-gcpemu's @actions packages.
-    expired_at: 2027-02-28

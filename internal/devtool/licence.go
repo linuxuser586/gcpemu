@@ -15,12 +15,14 @@ const licenceExceptionsFile = ".licence-exceptions.json"
 
 // allowedLicences is SRS 2.4.2's list (Apache-2.0, MIT, BSD, MPL-2.0),
 // read as licence families (ADR 0090): MIT's variants, every BSD variant
-// including 0BSD, and ISC, the OpenBSD project's licence. Lower case.
+// including 0BSD, and ISC, the OpenBSD project's licence. ADR 0090 admits
+// BlueOak-1.0.0 beside them: permissive, with a patent grant. Lower case.
 var allowedLicences = map[string]bool{
 	"apache-2.0": true,
 	"mit":        true, "mit-0": true, "x11": true, "mit/x11": true,
 	"bsd": true, "0bsd": true, "isc": true,
-	"mpl-2.0": true,
+	"mpl-2.0":       true,
+	"blueoak-1.0.0": true,
 }
 
 // licenceAllowed reports whether a licence name or SPDX expression is
