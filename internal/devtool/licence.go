@@ -4,7 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
+
+// licenceExceptionsFile holds the packages `just licence-check` lets pass
+// although Trivy found no licence for them: a JSON array of exceptions
+// whose id is Trivy's package ID, name@version, so a new version is
+// looked at again.
+const licenceExceptionsFile = ".licence-exceptions.json"
 
 // allowedLicences is SRS 2.4.2's list (Apache-2.0, MIT, BSD, MPL-2.0),
 // read as licence families (ADR 0090): MIT's variants, every BSD variant
@@ -89,10 +96,14 @@ type licenceResult struct {
 	// outside the allowed families that .trivyignore.yaml does not cover.
 	// Each fails the check.
 	Disallowed []string
-	// Unknown are packages Trivy read no licence for. Trivy reports no
-	// finding for them, so .trivyignore.yaml cannot cover them: they are
-	// listed for review, not failed.
-	Unknown []string
+	// Unlicensed are packages Trivy read no licence for that
+	// .licence-exceptions.json does not cover. A package without a licence
+	// grants nothing, so each fails the check. Trivy reports no finding for
+	// them, so .trivyignore.yaml cannot name them.
+	Unlicensed []string
+	// Problems are invalid or expired entries of .licence-exceptions.json.
+	// Each fails the check.
+	Problems []string
 	// Unread are lockfiles Trivy read no licence from at all: their
 	// dependencies are not installed, so the check did not look. Each
 	// fails the check.
@@ -118,13 +129,16 @@ type trivyReport struct {
 }
 
 // licenceReport checks trivy fs --scanners license --format json output,
-// run with .trivyignore.yaml, which drops the licence findings it covers.
-func licenceReport(b []byte) (licenceResult, error) {
+// run with .trivyignore.yaml, which drops the licence findings it covers,
+// and with exceptions, .licence-exceptions.json, for packages with none.
+func licenceReport(b, exceptions []byte, now time.Time) (licenceResult, error) {
 	var r licenceResult
 	var rep trivyReport
 	if err := json.Unmarshal(b, &rep); err != nil {
 		return r, err
 	}
+	excepted, problems := parseExceptions(exceptions, licenceExceptionsFile, now)
+	r.Problems = problems
 	for _, res := range rep.Results {
 		switch res.Class {
 		case "license":
@@ -134,21 +148,25 @@ func licenceReport(b []byte) (licenceResult, error) {
 				}
 			}
 		case "lang-pkgs":
-			pkgs, read := 0, 0
+			pkgs := 0
+			var none []string
 			for _, p := range res.Packages {
 				if p.Relationship == "root" {
 					continue
 				}
 				pkgs++
-				if len(p.Licenses) > 0 {
-					read++
-				} else {
-					r.Unknown = append(r.Unknown, res.Target+": "+p.ID)
+				if len(p.Licenses) == 0 {
+					none = append(none, p.ID)
 				}
 			}
-			if pkgs > 0 && read == 0 {
+			if pkgs > 0 && len(none) == pkgs {
 				r.Unread = append(r.Unread, fmt.Sprintf("%s: no licence read for any of its %d packages; install its dependencies first", res.Target, pkgs))
-				r.Unknown = r.Unknown[:len(r.Unknown)-pkgs]
+				continue
+			}
+			for _, id := range none {
+				if !excepted[id] {
+					r.Unlicensed = append(r.Unlicensed, res.Target+": "+id)
+				}
 			}
 		}
 	}

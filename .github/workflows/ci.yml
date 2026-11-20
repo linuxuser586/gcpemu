@@ -41,8 +41,8 @@ jobs:
               - console/pnpm-lock.yaml
               - setup-gcpemu/package.json
               - setup-gcpemu/package-lock.json
-              - compat/sdk/java/pom.xml
               - .trivyignore.yaml
+              - .licence-exceptions.json
               - .github/install-trivy.sh
 
   # #482, #766: the ADR numbering check runs on every change, docs-only
@@ -95,11 +95,11 @@ jobs:
           just-version: 1.56.0
       - run: just vulncheck
 
-  # #1165, SRS 2.4.2, ADR 0090: licences on a change to a manifest or
-  # lockfile. Trivy reads them from installed dependencies, so each
-  # ecosystem's are installed first; Trivy's own vulnerability scanner is
-  # not run on the Node and Maven lockfiles (Dependabot and Renovate cover
-  # those).
+  # #1165, SRS 2.4.2, ADR 0090: the licences of what gcpemu ships, on a
+  # change to a manifest or lockfile. Trivy reads them from installed
+  # dependencies, so they are installed first. Trivy's own vulnerability
+  # scanner is not run on the Node lockfiles (Dependabot and Renovate cover
+  # those), and the compat suite's POM, never shipped, is not checked.
   licences:
     needs: changes
     if: needs.changes.outputs.deps == 'true'
@@ -120,24 +120,11 @@ jobs:
           node-version-file: console/.nvmrc
           cache: pnpm
           cache-dependency-path: console/pnpm-lock.yaml
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 25
-      - uses: actions/cache@v6
-        with:
-          path: ~/.m2/repository
-          key: m2-${{ runner.arch }}-${{ hashFiles('compat/**/pom.xml') }}
-          restore-keys: m2-${{ runner.arch }}-
-      # Trivy fetches a POM's parents from Maven Central when ~/.m2 lacks
-      # them, and Central answers a burst of those with 429.
       - name: Install dependencies
         run: |
-          command -v mvn >/dev/null || { sudo apt-get update -q && sudo apt-get install -yq maven; }
           go mod download
           pnpm --dir console install --frozen-lockfile
           npm --prefix setup-gcpemu ci
-          mvn -q -B -f compat/sdk/java/pom.xml dependency:resolve
       - uses: ./.github/actions/trivy
       - run: just licence-check
 

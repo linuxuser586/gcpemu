@@ -66,7 +66,7 @@ func runVulncheck([]string) error {
 		return fmt.Errorf("reading govulncheck's output: %w", err)
 	}
 	for _, p := range r.Problems {
-		fmt.Fprintf(os.Stderr, "%s: %s\n", govulncheckAllowFile, p)
+		fmt.Fprintln(os.Stderr, p)
 	}
 	for _, f := range r.Unallowed {
 		fixed := "no fixed version"
@@ -119,42 +119,50 @@ func needTrivy() error {
 }
 
 // runLicenceCheck is `just licence-check`: SRS 2.4.2's licence rule over
-// go.mod, the console's and setup-gcpemu's lockfiles and the compat
-// suite's POM. Trivy reads licences from installed dependencies (the Go
-// module cache, node_modules, ~/.m2), so those are installed first.
+// what gcpemu ships (ADR 0090): go.mod, and the console's and
+// setup-gcpemu's production dependencies. Trivy reads licences from
+// installed dependencies (the Go module cache, node_modules), so those are
+// installed first.
 func runLicenceCheck([]string) error {
 	if err := needTrivy(); err != nil {
 		return err
 	}
-	cmd := exec.Command("trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", "--ignorefile", trivyIgnoreFile, ".")
+	exceptions, err := os.ReadFile(licenceExceptionsFile)
+	if err != nil {
+		return err
+	}
+	// The compat suite's POM is a test client, never shipped.
+	cmd := exec.Command("trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", "--ignorefile", trivyIgnoreFile, "--skip-files", "compat/sdk/java/pom.xml", ".")
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("trivy: %w", err)
 	}
-	r, err := licenceReport(out)
+	r, err := licenceReport(out, exceptions, time.Now())
 	if err != nil {
 		return fmt.Errorf("reading Trivy's output: %w", err)
 	}
-	for _, u := range r.Unknown {
-		fmt.Fprintf(os.Stderr, "warning: no licence found for %s; check it by hand\n", u)
+	for _, lines := range [][]string{r.Problems, r.Unread, r.Disallowed} {
+		for _, l := range lines {
+			fmt.Fprintln(os.Stderr, l)
+		}
 	}
-	for _, u := range r.Unread {
-		fmt.Fprintln(os.Stderr, u)
-	}
-	for _, d := range r.Disallowed {
-		fmt.Fprintln(os.Stderr, d)
+	for _, u := range r.Unlicensed {
+		fmt.Fprintf(os.Stderr, "%s: no licence found\n", u)
 	}
 	if len(r.Unread) > 0 {
-		fmt.Fprintln(os.Stderr, "licence-check: run go mod download, pnpm install in console, npm ci in setup-gcpemu and mvn -f compat/sdk/java/pom.xml dependency:resolve first")
+		fmt.Fprintln(os.Stderr, "licence-check: run go mod download, pnpm install in console and npm ci in setup-gcpemu first")
 	}
 	if len(r.Disallowed) > 0 {
-		fmt.Fprintf(os.Stderr, "licence-check: SRS 2.4.2 allows Apache-2.0, MIT, BSD, ISC and MPL-2.0 (ADR 0090); replace the dependency, or add the licence to %s with an issue and an expiry date\n", trivyIgnoreFile)
+		fmt.Fprintf(os.Stderr, "licence-check: SRS 2.4.2 allows Apache-2.0, MIT, BSD, ISC and MPL-2.0 (ADR 0090); replace the dependency, or add a scan exception for the licence to %s\n", trivyIgnoreFile)
 	}
-	if len(r.Unread) > 0 || len(r.Disallowed) > 0 {
+	if len(r.Unlicensed) > 0 {
+		fmt.Fprintf(os.Stderr, "licence-check: a package without a licence grants nothing; replace it, or add a scan exception for name@version to %s\n", licenceExceptionsFile)
+	}
+	if len(r.Problems)+len(r.Unread)+len(r.Disallowed)+len(r.Unlicensed) > 0 {
 		return errReported
 	}
-	fmt.Println("licence-check: every licence found is allowed")
+	fmt.Println("licence-check: every package has an allowed licence")
 	return nil
 }
 
@@ -208,16 +216,31 @@ func productImageList() ([]string, error) {
 // runProductImageScan is the weekly Product image scan, report only (ADR
 // 0090): it prints a Markdown summary of every Product image's HIGH and
 // CRITICAL vulnerabilities, and fails only when it cannot scan one, after
-// reporting the others. With -fixable FILE, it writes the fixable ones
-// there as the rolling issue's body, and writes nothing when there are
-// none.
+// reporting the others. It also lists the scan exceptions that stop
+// holding within two weeks, so none expires unannounced. With -issue FILE,
+// it writes the fixable findings and those exceptions there as the rolling
+// issue's body, and writes nothing when there are neither.
 func runProductImageScan(args []string) error {
+	var err error
 	fl := flag.NewFlagSet("product-image-scan", flag.ContinueOnError)
-	fixableFile := fl.String("fixable", "", "write the fixable findings here, as Markdown, when there are any")
+	issueFile := fl.String("issue", "", "write the rolling issue's body here when there is anything to report")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
-	if err := needTrivy(); err != nil {
+	// Not needTrivy: an invalid or expired scan exception is reported
+	// below rather than stopping a report-only scan; Trivy itself ignores
+	// an expired one.
+	if _, err := exec.LookPath("trivy"); err != nil {
+		return needTrivy()
+	}
+	files := map[string][]byte{}
+	for _, f := range []string{govulncheckAllowFile, licenceExceptionsFile, trivyIgnoreFile} {
+		if files[f], err = os.ReadFile(f); err != nil {
+			return err
+		}
+	}
+	expiring, err := expiringExceptions(files, time.Now(), 14*24*time.Hour)
+	if err != nil {
 		return err
 	}
 	images, err := productImageList()
@@ -244,9 +267,14 @@ func runProductImageScan(args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(expiring) > 0 {
+		section := "\n### Scan exceptions that stop holding within two weeks\n\n- " + strings.Join(expiring, "\n- ") + "\n"
+		summary += section
+		fixable += section
+	}
 	fmt.Print(summary)
-	if *fixableFile != "" && fixable != "" {
-		if err := os.WriteFile(*fixableFile, []byte(fixable), 0o644); err != nil {
+	if *issueFile != "" && fixable != "" {
+		if err := os.WriteFile(*issueFile, []byte(fixable), 0o644); err != nil {
 			return err
 		}
 	}

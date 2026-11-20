@@ -27,6 +27,16 @@ var (
 // (ADR 0061), so this reads only block-style YAML, the subset the file
 // is written in, and reports anything else rather than guess.
 func trivyIgnoreProblems(b []byte, now time.Time) []string {
+	entries, out := parseTrivyIgnore(b)
+	for _, e := range entries {
+		out = append(out, e.problems(now, ignoreFields)...)
+	}
+	return out
+}
+
+// parseTrivyIgnore reads .trivyignore.yaml's entries, and the lines it
+// could not read.
+func parseTrivyIgnore(b []byte) ([]exception, []string) {
 	var out []string
 	var entries []exception
 	var cur *exception
@@ -70,8 +80,5 @@ func trivyIgnoreProblems(b []byte, now time.Time) []string {
 			out = append(out, fmt.Sprintf("%s line %d: unknown field %q", trivyIgnoreFile, n, key))
 		}
 	}
-	for _, e := range entries {
-		out = append(out, e.problems(now, ignoreFields)...)
-	}
-	return out
+	return entries, out
 }

@@ -1902,8 +1902,8 @@ just licence-check # dependency licences against SRS 2.4.2 (Trivy)
 just image-scan gcpemu:check  # fixable HIGH/CRITICAL in a built image (Trivy)
 ```
 
-The scans (ADR 0090) suppress a finding only through an entry in `.govulncheck-allow.json` or
-`.trivyignore.yaml` that names an issue and an expiry date. The Trivy recipes also need the
+The scans (ADR 0090) let a finding pass only through a scan exception in `.govulncheck-allow.json`,
+`.trivyignore.yaml` or `.licence-exceptions.json` that names an issue and an expiry date. The Trivy recipes also need the
 Trivy version `.github/install-trivy.sh` pins, which that script installs on Linux and macOS.
 
 The recipes in the `justfile` need just 1.56.0 or later (brew, winget, scoop, or

@@ -164,9 +164,10 @@ echo-image-check image:
 vulncheck:
     @go run ./internal/devtool vulncheck
 
-# SRS 2.4.2, ADR 0090: Trivy reads licences from installed dependencies
-# (the Go module cache, console and setup-gcpemu node_modules, ~/.m2);
-# devtool names what to install when one is missing.
+# SRS 2.4.2, ADR 0090: the licences of what gcpemu ships. Trivy reads them
+# from installed dependencies (the Go module cache, console and
+# setup-gcpemu node_modules); devtool names what to install when one is
+# missing.
 [doc("Check dependency licences against SRS 2.4.2 (needs Trivy)")]
 licence-check:
     @go run ./internal/devtool licence-check
@@ -177,8 +178,8 @@ image-scan image:
     @go run ./internal/devtool image-scan {{ image }}
 
 # ADR 0090: report only; a Product image refresh is deliberate (#895).
-# `-fixable FILE` also writes the fixable findings there, as the rolling
-# issue's body, when there are any.
+# `-issue FILE` also writes the rolling issue's body there (fixable
+# findings, scan exceptions about to expire) when there is anything.
 [doc("Scan every Product image and print a Markdown report (needs Trivy; never fails on findings)")]
 product-image-scan *args:
     @go run ./internal/devtool product-image-scan {{ args }}

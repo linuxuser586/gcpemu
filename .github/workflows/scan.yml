@@ -1,9 +1,13 @@
 name: scan
-# #1165, ADR 0090: the weekly scans of main. govulncheck fails the run, as
-# it does on a pull request that changes go.mod or go.sum. The Product image
-# scan only reports: a job summary, plus one rolling issue, opened or
-# updated, while a fixable HIGH or CRITICAL exists. Refreshing a Product
-# image is a deliberate change (#895), so a finding never fails CI.
+# #1165, ADR 0090: the weekly scans of main, each keeping one rolling
+# issue (.github/rolling-issue.sh) open while it has something to report
+# and closing it on the first run that has nothing.
+#
+# govulncheck fails the run, as it does on a pull request that changes
+# go.mod or go.sum. The Product image scan only reports: refreshing a
+# Product image is a deliberate change (#895), so a finding never fails
+# CI. Its issue also lists the scan exceptions that stop holding within
+# two weeks, since an expired one fails every PR's scans.
 on:
   schedule:
     - cron: "17 9 * * 1"
@@ -11,18 +15,44 @@ on:
 
 permissions: {}
 
+env:
+  RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
 jobs:
   vulncheck:
     runs-on: ubuntu-26.04
     permissions:
       contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-go
       - uses: extractions/setup-just@v4
         with:
           just-version: 1.56.0
-      - run: just vulncheck
+      - id: vulncheck
+        run: |
+          set -o pipefail
+          just vulncheck 2>&1 | tee "$RUNNER_TEMP/vulncheck.txt"
+      - name: Rolling issue
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.vulncheck.outcome }}
+        run: |
+          title="Go vulnerabilities called on main"
+          if [ "$OUTCOME" = success ]; then
+            .github/rolling-issue.sh close "$title"
+          elif [ -s "$RUNNER_TEMP/vulncheck.txt" ]; then
+            {
+              echo "The weekly govulncheck ($RUN) failed on main. Fix each finding, or add a scan exception to \`.govulncheck-allow.json\` (ADR 0090)."
+              echo
+              echo '```'
+              tail -c 60000 "$RUNNER_TEMP/vulncheck.txt"
+              echo '```'
+            } > "$RUNNER_TEMP/body.md"
+            .github/rolling-issue.sh open "$title" "$RUNNER_TEMP/body.md"
+          fi
 
   product-images:
     runs-on: ubuntu-26.04
@@ -36,25 +66,26 @@ jobs:
         with:
           just-version: 1.56.0
       - uses: ./.github/actions/trivy
-      - name: Scan Product images
-        run: just product-image-scan -fixable "$RUNNER_TEMP/fixable.md" >> "$GITHUB_STEP_SUMMARY"
-      # Also after a scan that failed on some images, for the others' findings.
-      - name: Open or update the rolling issue
+      # Fails only when an image could not be scanned, after reporting the
+      # others.
+      - id: scan
+        name: Scan Product images
+        run: just product-image-scan -issue "$RUNNER_TEMP/issue.md" >> "$GITHUB_STEP_SUMMARY"
+      # Closed only after a run that scanned every image and found nothing
+      # to report, so a partial scan is never an all-clear.
+      - name: Rolling issue
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTCOME: ${{ steps.scan.outcome }}
         run: |
-          test -s "$RUNNER_TEMP/fixable.md" || { echo "No fixable HIGH or CRITICAL vulnerability in a Product image."; exit 0; }
-          title="Product images have fixable HIGH or CRITICAL vulnerabilities"
-          {
-            echo "The weekly Product image scan ($RUN) found these. A Product image refresh is a deliberate change (#895, ADR 0090), so CI does not fail on them: triage each into an issue or a refresh. This issue is updated by each scan that finds any."
-            cat "$RUNNER_TEMP/fixable.md"
-          } > "$RUNNER_TEMP/body.md"
-          number=$(gh issue list --state open --search "in:title \"$title\"" --json number,title --jq "map(select(.title == \"$title\"))[0].number // empty")
-          if [ -n "$number" ]; then
-            gh issue edit "$number" --body-file "$RUNNER_TEMP/body.md"
-            gh issue comment "$number" --body "Updated by $RUN."
-          else
-            gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md" --label needs-triage
+          title="Weekly scan: Product image findings and expiring scan exceptions"
+          if [ -s "$RUNNER_TEMP/issue.md" ]; then
+            {
+              echo "The weekly Product image scan ($RUN) found these. A Product image refresh is a deliberate change (#895, ADR 0090), so CI does not fail on them: triage each into an issue or a refresh. Each weekly scan that finds any updates this issue."
+              cat "$RUNNER_TEMP/issue.md"
+            } > "$RUNNER_TEMP/body.md"
+            .github/rolling-issue.sh open "$title" "$RUNNER_TEMP/body.md"
+          elif [ "$OUTCOME" = success ]; then
+            .github/rolling-issue.sh close "$title"
           fi

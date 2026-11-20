@@ -53,6 +53,42 @@ func (e exception) problems(now time.Time, names exceptionFields) []string {
 	return out
 }
 
+// parseExceptions reads a JSON array of exceptions from file, returning
+// the IDs of the valid ones at now and the problems of the rest. A file
+// that does not parse suppresses nothing.
+func parseExceptions(b []byte, file string, now time.Time) (valid map[string]bool, problems []string) {
+	entries, err := decodeExceptions(b)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("%s: %v", file, err)}
+	}
+	valid = map[string]bool{}
+	for _, e := range entries {
+		p := e.problems(now, allowFields)
+		for _, q := range p {
+			problems = append(problems, file+": "+q)
+		}
+		valid[e.ID] = len(p) == 0
+	}
+	return valid, problems
+}
+
+// decodeExceptions decodes a JSON array of exceptions. An issue that is
+// not exactly a gcpemu issue's link is dropped, so problems reports it.
+func decodeExceptions(b []byte) ([]exception, error) {
+	var entries []exception
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&entries); err != nil {
+		return nil, err
+	}
+	for i, e := range entries {
+		if issueURL.FindString(e.Issue) != e.Issue {
+			entries[i].Issue = ""
+		}
+	}
+	return entries, nil
+}
+
 // govulncheckAllowFile holds the govulncheck findings `just vulncheck`
 // lets pass: a JSON array of exceptions.
 const govulncheckAllowFile = ".govulncheck-allow.json"
@@ -117,22 +153,8 @@ func vulnReport(stream io.Reader, allow []byte, now time.Time) (vulnResult, erro
 		seen[f.OSV] = true
 		r.Unallowed = append(r.Unallowed, vulnFinding{ID: f.OSV, Module: f.Trace[0].Module, Fixed: f.FixedVersion})
 	}
-	var entries []exception
-	dec = json.NewDecoder(bytes.NewReader(allow))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&entries); err != nil {
-		r.Problems = append(r.Problems, fmt.Sprintf("%s: %v", govulncheckAllowFile, err))
-		entries = nil
-	}
-	allowed := map[string]bool{}
-	for _, e := range entries {
-		if issueURL.FindString(e.Issue) != e.Issue {
-			e.Issue = ""
-		}
-		p := e.problems(now, allowFields)
-		r.Problems = append(r.Problems, p...)
-		allowed[e.ID] = len(p) == 0
-	}
+	allowed, problems := parseExceptions(allow, govulncheckAllowFile, now)
+	r.Problems = problems
 	var unallowed []vulnFinding
 	for _, f := range r.Unallowed {
 		if !allowed[f.ID] {

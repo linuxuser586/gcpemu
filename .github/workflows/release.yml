@@ -32,6 +32,10 @@ jobs:
       - uses: extractions/setup-just@v4
         with:
           just-version: 1.56.0
+      # #1165, ADR 0090: the binaries are held to the bar the images are, so
+      # a vulnerability the code calls stops the release before anything is
+      # published.
+      - run: just vulncheck
       # FR-UI-001: `just release` embeds the Web console and fails if it
       # is not built.
       - uses: pnpm/action-setup@v6
