@@ -132,15 +132,7 @@ type trivyReport struct {
 			PkgName string `json:"PkgName"`
 			Name    string `json:"Name"`
 		} `json:"Licenses"`
-		// ExperimentalModifiedFindings are the findings an ignore file
-		// suppressed, with --show-suppressed (experimental in Trivy
-		// 0.76): Source is the --ignorefile as given.
-		ExperimentalModifiedFindings []struct {
-			Source  string `json:"Source"`
-			Finding struct {
-				Name string `json:"Name"`
-			} `json:"Finding"`
-		} `json:"ExperimentalModifiedFindings"`
+		ExperimentalModifiedFindings []trivySuppressed `json:"ExperimentalModifiedFindings"`
 	} `json:"Results"`
 }
 
@@ -159,7 +151,7 @@ func licenceReport(b, exceptions, ignore []byte, now time.Time) (licenceResult, 
 	licences := map[string]bool{}   // every licence found, suppressed or not
 	unlicensed := map[string]bool{} // every package read no licence for
 	type pkg struct{ target, id string }
-	var none []pkg // the latter, with their lockfiles
+	var none []pkg // the same packages, with their lockfiles
 	for _, res := range rep.Results {
 		switch res.Class {
 		case "license":
@@ -199,12 +191,8 @@ func licenceReport(b, exceptions, ignore []byte, now time.Time) (licenceResult, 
 	if len(r.Unread) > 0 {
 		licences, unlicensed = nil, nil
 	}
-	entries, err := decodeExceptions(exceptions)
-	if err != nil {
-		r.Problems = []string{fmt.Sprintf("%s: %v", licenceExceptionsFile, err)}
-	}
-	excepted, problems, stale := judgeExceptions(entries, licenceExceptionsFile, allowFields, unlicensed, now)
-	r.Problems, r.Stale = append(r.Problems, problems...), stale
+	excepted, problems, stale := judgeExceptionFile(exceptions, licenceExceptionsFile, unlicensed, now)
+	r.Problems, r.Stale = problems, stale
 	ignored, unread := parseTrivyIgnore(ignore)
 	r.Problems = append(r.Problems, unread...)
 	// Only the licenses section is this scan's to judge; the others are

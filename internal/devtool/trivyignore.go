@@ -97,3 +97,18 @@ func splitSection(entries []exception, section string) (in, rest []exception) {
 	}
 	return in, rest
 }
+
+// trivySuppressed is a finding an ignore file let pass, one of a result's
+// ExperimentalModifiedFindings with --show-suppressed (experimental in
+// Trivy 0.76). ADR 0090 relies on it to judge .trivyignore.yaml's entries
+// stale: renamed, every entry reads as stale, and the check fails.
+type trivySuppressed struct {
+	// Source is the --ignorefile as given.
+	Source  string `json:"Source"`
+	Finding struct {
+		// Name is a licence finding's licence.
+		Name string `json:"Name"`
+		// VulnerabilityID is a vulnerability finding's ID.
+		VulnerabilityID string `json:"VulnerabilityID"`
+	} `json:"Finding"`
+}

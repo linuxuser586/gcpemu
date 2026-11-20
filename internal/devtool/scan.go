@@ -404,6 +404,12 @@ func reportImages(images imageLists, expiring []string, ignored []exception, sca
 			r.Issue += section
 		}
 	}
+	// A stale entry is to be deleted, not fixed or renewed.
+	expiring = slices.DeleteFunc(slices.Clone(expiring), func(line string) bool {
+		return slices.ContainsFunc(stale.ids, func(id string) bool {
+			return strings.HasPrefix(line, exceptionRef(id, trivyIgnoreFile)+" ")
+		})
+	})
 	if len(expiring) > 0 {
 		section := "\n### Scan exceptions that stop holding within two weeks\n\n- " + strings.Join(expiring, "\n- ") + "\n"
 		r.Summary += section
@@ -423,6 +429,8 @@ type staleImages struct {
 	// judged is false when the scan did not see everything the entries
 	// could apply to.
 	judged bool
+	// ids are the stale entries' IDs.
+	ids []string
 }
 
 // staleImageExceptions judges .trivyignore.yaml's vulnerabilities
@@ -447,12 +455,7 @@ func staleImageExceptions(ignored []exception, images imageLists, failed map[str
 				Vulnerabilities []struct {
 					VulnerabilityID string `json:"VulnerabilityID"`
 				} `json:"Vulnerabilities"`
-				ExperimentalModifiedFindings []struct {
-					Source  string `json:"Source"`
-					Finding struct {
-						VulnerabilityID string `json:"VulnerabilityID"`
-					} `json:"Finding"`
-				} `json:"ExperimentalModifiedFindings"`
+				ExperimentalModifiedFindings []trivySuppressed `json:"ExperimentalModifiedFindings"`
 			} `json:"Results"`
 		}
 		if err := json.Unmarshal(b, &rep); err != nil {
@@ -470,7 +473,13 @@ func staleImageExceptions(ignored []exception, images imageLists, failed map[str
 		}
 	}
 	_, _, stale := judgeExceptions(entries, trivyIgnoreFile, ignoreFields, found, time.Time{})
-	return staleImages{lines: stale, judged: true}, nil
+	r := staleImages{lines: stale, judged: true}
+	for _, e := range entries {
+		if !found[e.ID] {
+			r.ids = append(r.ids, e.ID)
+		}
+	}
+	return r, nil
 }
 
 // imageSection summarises one list of images: summary is the table and

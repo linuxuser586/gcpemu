@@ -115,7 +115,7 @@ const windowsStream = `{
 }
 `
 
-// TestVulncheckStaleEntries: an allowlist entry no called finding matches
+// TestVulncheckStaleEntries: a scan exception no called finding matches
 // is stale, and fails the check, whether or not it has expired; one
 // matched by any GOOS's run is not.
 func TestVulncheckStaleEntries(t *testing.T) {

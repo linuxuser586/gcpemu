@@ -183,7 +183,7 @@ image-scan image:
 # findings, stale and soon-expiring scan exceptions) when there is
 # anything. `-release a,b` scans those built Release images too; without
 # it, .trivyignore.yaml's vulnerabilities entries are not judged stale.
-[doc("Scan every Product and Helper image and print a Markdown report (needs Trivy; never fails on findings)")]
+[doc("Scan every Product and Helper image, and built Release images (-release), and print a Markdown report (needs Trivy; never fails on findings)")]
 image-report *args:
     @go run ./internal/devtool image-report {{ args }}
 

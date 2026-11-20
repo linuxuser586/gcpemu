@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // trivyJSON is trivy image --format json output with one HIGH finding,
@@ -123,9 +124,9 @@ func TestImagesToScanOnce(t *testing.T) {
 	}
 }
 
-// trivySuppressed is trivy image --show-suppressed --format json output,
+// trivySuppressedJSON is trivy image --show-suppressed --format json output,
 // trimmed from Trivy v0.76.2's, in which .trivyignore.yaml suppressed id.
-func trivySuppressed(id string) []byte {
+func trivySuppressedJSON(id string) []byte {
 	return []byte(`{"Results": [{"Target": "alpine 3.22", "ExperimentalModifiedFindings": [
   {"Type": "vulnerability", "Status": "ignored", "Statement": "https://github.com/linuxuser586/gcpemu/issues/7 krb5", "Source": ".trivyignore.yaml",
    "Finding": {"VulnerabilityID": "` + id + `", "PkgName": "krb5-libs", "InstalledVersion": "1.22.2-r1", "FixedVersion": "1.22.3-r0", "Severity": "HIGH"}}
@@ -160,7 +161,7 @@ func TestImageReportStaleVulnerabilityEntry(t *testing.T) {
 	}, nil, vulnIgnores, map[string][]byte{
 		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0":  trivyJSON("CVE-2026-0002", ""),
-		"gcpemu:check": trivySuppressed("CVE-2026-0100"),
+		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,12 +205,39 @@ func TestImageReportStaleAloneWritesIssue(t *testing.T) {
 		Release: []string{"gcpemu:check"},
 	}, nil, vulnIgnores, map[string][]byte{
 		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
-		"gcpemu:check": trivySuppressed("CVE-2026-0100"),
+		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(r.Issue, staleSection) || !strings.Contains(r.Issue, "CVE-2026-0200") {
 		t.Errorf("issue = %q, want the stale entry", r.Issue)
+	}
+}
+
+// TestImageReportStaleNotAlsoExpiring: a stale entry is to be deleted, so
+// it is not also listed as stopping soon, which would ask for its finding
+// to be fixed or its date moved.
+func TestImageReportStaleNotAlsoExpiring(t *testing.T) {
+	expiring, err := expiringExceptions(map[string][]byte{trivyIgnoreFile: []byte(`vulnerabilities:
+  - id: CVE-2026-0100
+    statement: https://github.com/linuxuser586/gcpemu/issues/7
+    expired_at: 2026-11-25
+  - id: CVE-2026-0200
+    statement: https://github.com/linuxuser586/gcpemu/issues/8
+    expired_at: 2026-11-25
+`)}, now, 14*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := reportImages(imageLists{Release: []string{"gcpemu:check"}}, expiring, vulnIgnores, map[string][]byte{
+		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, soon, _ := strings.Cut(r.Issue, "### Scan exceptions that stop holding within two weeks")
+	if !strings.Contains(soon, "CVE-2026-0100") || strings.Contains(soon, "CVE-2026-0200") {
+		t.Errorf("expiring section = %q, want CVE-2026-0100 only", soon)
 	}
 }

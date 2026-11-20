@@ -72,7 +72,11 @@ jobs:
       # #1205: the Release images, built from main for this runner's
       # architecture as CI's e2e job builds them, so the report judges
       # .trivyignore.yaml's vulnerabilities entries against every image.
+      # A failed build must not hide the other images' findings: the
+      # report then counts the missing image as a failed scan, skips the
+      # stale judgment and fails the run.
       - name: Build Release images
+        continue-on-error: true
         run: |
           just cross-host
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist
