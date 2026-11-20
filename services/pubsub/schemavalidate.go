@@ -10,15 +10,27 @@ import (
 
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
 	"github.com/bufbuild/protocompile"
-	"github.com/hamba/avro/v2"
+	"github.com/iskorotkov/avro/v2"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// Schema validation (FR-PS-009): Avro via hamba/avro (MIT) and Protocol
-// Buffers via protocompile (Apache-2.0) + dynamicpb.
+// Schema validation (FR-PS-009): Avro via iskorotkov/avro (MIT), the
+// maintained fork of the archived hamba/avro, and Protocol Buffers via
+// protocompile (Apache-2.0) + dynamicpb.
+
+// avroDecoder decodes every binary Avro message; the library's schema parser
+// takes no Config, so it does not apply to parsing. Its limits equal
+// the publish limit: no valid message holds a longer bytes or string value,
+// and the item caps bound what a block count can make the decoder allocate.
+// They count items, not bytes, because a null item encodes in 0 bytes.
+var avroDecoder = avro.Config{
+	MaxByteSliceSize:  maxPublishBytes,
+	MaxSliceAllocSize: maxPublishBytes,
+	MaxMapAllocSize:   maxPublishBytes,
+}.Freeze()
 
 // validator checks one encoded message against one schema revision.
 type validator interface {
@@ -83,7 +95,7 @@ type avroValidator struct{ sc avro.Schema }
 func (v avroValidator) validate(data []byte, enc pubsubpb.Encoding) error {
 	if enc == pubsubpb.Encoding_BINARY {
 		var out any
-		return avro.Unmarshal(v.sc, data, &out)
+		return avroDecoder.Unmarshal(v.sc, data, &out)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
