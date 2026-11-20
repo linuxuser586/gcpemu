@@ -17,15 +17,20 @@ import (
 var errReported = errors.New("")
 
 var commands = map[string]func(args []string) error{
-	"adr":              runADR,
-	"docker-arch":      runDockerArch,
-	"doctor":           runDoctor,
-	"echo-image-check": runEchoImageCheck,
-	"image-check":      runImageCheck,
-	"need-cgo":         runNeedCgo,
-	"vet":              runVet,
-	"version":          runVersion,
-	"which":            runWhich,
+	"adr":                runADR,
+	"docker-arch":        runDockerArch,
+	"doctor":             runDoctor,
+	"echo-image-check":   runEchoImageCheck,
+	"image-check":        runImageCheck,
+	"image-scan":         runImageScan,
+	"licence-check":      runLicenceCheck,
+	"need-cgo":           runNeedCgo,
+	"product-images":     runProductImages,
+	"product-image-scan": runProductImageScan,
+	"vet":                runVet,
+	"version":            runVersion,
+	"vulncheck":          runVulncheck,
+	"which":              runWhich,
 }
 
 func main() {

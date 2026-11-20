@@ -15,6 +15,8 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       renovate: ${{ steps.filter.outputs.renovate }}
+      gomod: ${{ steps.filter.outputs.gomod }}
+      deps: ${{ steps.filter.outputs.deps }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -28,6 +30,20 @@ jobs:
               - "!docs/**"
             renovate:
               - renovate.json
+            gomod:
+              - go.mod
+              - go.sum
+              - .govulncheck-allow.json
+            deps:
+              - go.mod
+              - go.sum
+              - console/package.json
+              - console/pnpm-lock.yaml
+              - setup-gcpemu/package.json
+              - setup-gcpemu/package-lock.json
+              - .trivyignore.yaml
+              - .licence-exceptions.json
+              - .github/install-trivy.sh
 
   # #482, #766: the ADR numbering check runs on every change, docs-only
   # ones included, where ADRs land. Its own job, so a clash fails here
@@ -62,6 +78,55 @@ jobs:
         with:
           node-version-file: console/.nvmrc
       - run: npx --yes --package renovate@44.210.0 -- renovate-config-validator --strict renovate.json
+
+  # #1165, ADR 0090: govulncheck on a change to the Go dependencies (and
+  # weekly on main, in scan.yml). A called vulnerability fails.
+  vulncheck:
+    needs: changes
+    if: needs.changes.outputs.gomod == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
+      - run: just vulncheck
+
+  # #1165, SRS 2.4.2, ADR 0090: the licences of what gcpemu ships, on a
+  # change to a manifest or lockfile. Trivy reads them from installed
+  # dependencies, so they are installed first. Trivy's own vulnerability
+  # scanner is not run on the Node lockfiles (Dependabot and Renovate cover
+  # those), and the compat suite's POM, never shipped, is not checked.
+  licences:
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-go
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.56.0
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - name: Install dependencies
+        run: |
+          go mod download
+          pnpm --dir console install --frozen-lockfile
+          npm --prefix setup-gcpemu ci
+      - uses: ./.github/actions/trivy
+      - run: just licence-check
 
   test:
     needs: changes
@@ -339,6 +404,12 @@ jobs:
           just echo-dist
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo
           just echo-image-check gcpemu-echo:check
+      # #1165, ADR 0090: the release workflow's image scan, likewise.
+      - uses: ./.github/actions/trivy
+      - name: Image scan
+        run: |
+          just image-scan gcpemu:check
+          just image-scan gcpemu-echo:check
       - name: Tests that need the internet
         run: go test -count=1 -timeout 30m ./services/gke ./services/ar -run 'TestImageCacheAcrossClusters|TestUpgrades|TestMirrorDockerHubNet'
       - uses: actions/upload-artifact@v7
@@ -882,7 +953,7 @@ jobs:
   # comment).
   ci-ok:
     if: always()
-    needs: [changes, adr, renovate, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, kube-conformance, conformance, action, action-artifacts, platforms]
+    needs: [changes, adr, renovate, vulncheck, licences, test, vm-relay, console, console-e2e, e2e, autopilot, compat, tofu, kube-conformance, conformance, action, action-artifacts, platforms]
     runs-on: ubuntu-26.04
     steps:
       - env:
@@ -892,13 +963,17 @@ jobs:
           always='["changes", "adr"]'
           bad=$(jq -r --argjson always "$always" 'to_entries[] | select(.key | IN($always[])) | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
           test -z "$bad" || { echo "::error::$bad"; exit 1; }
-          # renovate runs when renovate.json changes, whatever else does.
-          want=skipped
-          test "$(jq -r .changes.outputs.renovate <<<"$NEEDS")" = true && want=success
-          got=$(jq -r .renovate.result <<<"$NEEDS")
-          test "$got" = "$want" || { echo "::error::renovate: want $want, got $got"; exit 1; }
+          # Each of these runs when its own paths filter matches, whatever
+          # else changed: job=filter.
+          for gate in renovate=renovate vulncheck=gomod licences=deps; do
+            job=${gate%=*} filter=${gate#*=}
+            want=skipped
+            test "$(jq -r --arg f "$filter" '.changes.outputs[$f]' <<<"$NEEDS")" = true && want=success
+            got=$(jq -r --arg j "$job" '.[$j].result' <<<"$NEEDS")
+            test "$got" = "$want" || { echo "::error::$job: want $want, got $got"; exit 1; }
+          done
           # The rest run when code changes; the jobs above are checked already.
-          gatedElsewhere='["changes", "adr", "renovate"]'
+          gatedElsewhere='["changes", "adr", "renovate", "vulncheck", "licences"]'
           want=skipped
           test "$(jq -r .changes.outputs.code <<<"$NEEDS")" = true && want=success
           bad=$(jq -r --arg want "$want" --argjson gatedElsewhere "$gatedElsewhere" 'to_entries[] | select(.key | IN($gatedElsewhere[]) | not) | select(.value.result != $want) | "\(.key): \(.value.result)"' <<<"$NEEDS")

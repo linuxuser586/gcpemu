@@ -1,0 +1,8 @@
+[
+  {
+    "id": "buffers@0.1.1",
+    "issue": "https://github.com/linuxuser586/gcpemu/issues/1202",
+    "expires": "2027-02-28",
+    "reason": "No licence field; its README declares MIT/X11. Via @actions/artifact > unzip-stream > binary."
+  }
+]

@@ -804,6 +804,14 @@ _Avoid_: image tests
 Starting each platform's OCI image of a release, with the host's container runtime, and requiring every one to report ready before any of its tags is pushed. Unlike the Containerized Instance tests, it runs the image built from the release's binaries.
 _Avoid_: smoke test
 
+**Release image**:
+An OCI image the release publishes: gcpemu, and gcpemu-echo, the Conformance suite's test backend. A fixable HIGH or CRITICAL vulnerability in one stops its push. A Release image is not a Product image or a Helper image.
+_Avoid_: published image, product image
+
+**Scan exception**:
+A committed entry that lets one scan finding pass until its expiry date, naming the issue that tracks fixing it. It stops holding when its date begins, and an expired one fails the scan.
+_Avoid_: allowlist entry, ignore, waiver, suppression
+
 **Pre-release host checks**:
 The checks run on macOS and Windows hosts before a release is tagged, on the container runtimes CI cannot run. They drive real host clients against the Instance the way a user on that host would.
 _Avoid_: manual tests, smoke tests

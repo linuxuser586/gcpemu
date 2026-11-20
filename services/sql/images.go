@@ -37,3 +37,13 @@ func databaseVersions() []string {
 	sort.Strings(out)
 	return out
 }
+
+// ProductImages lists the postgres image of every supported
+// databaseVersion, for the weekly Product image scan (#1165).
+func ProductImages() []string {
+	out := make([]string, 0, len(pgVersions))
+	for _, v := range databaseVersions() {
+		out = append(out, pgVersions[v].Image)
+	}
+	return out
+}

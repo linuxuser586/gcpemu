@@ -1,5 +1,7 @@
 # Renovate updates dependencies, except Product images and checksum pins
 
+Amended by ADR 0090, whose licence check replaces the licence reminder on majors and replacements.
+
 Until #896 no bot updated any dependency, so pins drifted until someone updated them by hand, as #894 did. We decided that Renovate, run by the hosted Mend Renovate app from `renovate.json` at the repository root, proposes dependency updates, within these rules:
 
 - **Weekly, grouped, never merged by the bot.** It runs on Monday morning (America/New_York) with at most 5 PRs open. Patch and minor updates come as one PR per ecosystem: Go modules, console packages, setup-gcpemu packages, Maven, GitHub Actions, and Docker images. Nothing automerges. Merges already bypass red CI at times (#1109), and the helper images are exercised only by the pre-release host checks, so a person reads every update.

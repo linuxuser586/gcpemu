@@ -25,6 +25,19 @@ To run the check locally after `just release`, on a host with Docker, Go and jus
 docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist && just image-check gcpemu:check
 ```
 
+## Image scan
+
+The same jobs, and their gcpemu-echo counterparts, then scan the image with Trivy (ADR 0090): a
+HIGH or CRITICAL vulnerability that has a fix stops the push, just as a failed readiness check
+does. A stdlib vulnerability in the Go binaries is the usual cause, fixed by moving go.mod's
+`toolchain`. If the fix has to wait, add the CVE to `.trivyignore.yaml` with an issue and an
+expiry date, then re-run the failed jobs. To scan locally, with the Trivy that
+`.github/install-trivy.sh` pins on PATH:
+
+```sh
+just image-scan gcpemu:check
+```
+
 ## Echo image
 
 Each release also publishes `docker.io/linuxuser586/gcpemu-echo`, the Conformance suite's test

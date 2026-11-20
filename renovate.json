@@ -135,6 +135,23 @@
       "extractVersionTemplate": "^v(?<version>.+)$"
     },
     {
+      "description": "Checksum-pinned tool, report only: Trivy (#1165).",
+      "customType": "regex",
+      "managerFilePatterns": [".github/install-trivy.sh"],
+      "matchStrings": ["\\nversion=(?<currentValue>\\d+\\.\\d+\\.\\d+)\\n"],
+      "depNameTemplate": "aquasecurity/trivy",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "description": "govulncheck, which devtool runs at this exact version (#1165).",
+      "customType": "regex",
+      "managerFilePatterns": ["internal/devtool/scan.go"],
+      "matchStrings": ["const govulncheckVersion = \"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "golang.org/x/vuln",
+      "datasourceTemplate": "go"
+    },
+    {
       "description": "#901: report when codeberg.org/miekg/dns tags v1.0, which unblocks the move off github.com/miekg/dns. No bot moves between two modules, so this only lists the tag on the dashboard.",
       "customType": "regex",
       "managerFilePatterns": ["go.mod"],
@@ -196,11 +213,6 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "SRS 2.4.2: majors and replacements can bring in new dependencies.",
-      "matchUpdateTypes": ["major", "replacement"],
-      "prBodyNotes": ["**Licence check (SRS 2.4.2):** confirm every new or changed dependency is Apache-2.0, MIT, BSD or MPL-2.0 before merging."]
-    },
-    {
       "description": "#901: github.com/miekg/dns stays on v1 until the move to codeberg.org/miekg/dns.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["github.com/miekg/dns"],
@@ -229,7 +241,7 @@
     {
       "description": "Checksum-pinned tools are report only: a new version is listed on the Dependency Dashboard and never opens a PR by itself, because its per-platform sha256 table must be recomputed by hand.",
       "matchManagers": ["custom.regex"],
-      "matchDepNames": ["opentofu/opentofu", "helm/helm", "google/go-containerregistry", "ko-build/ko", "GoogleCloudPlatform/cloud-sql-proxy", "vmware-tanzu/sonobuoy"],
+      "matchDepNames": ["opentofu/opentofu", "helm/helm", "google/go-containerregistry", "ko-build/ko", "GoogleCloudPlatform/cloud-sql-proxy", "vmware-tanzu/sonobuoy", "aquasecurity/trivy"],
       "groupName": "checksum-pinned tools (update by hand)",
       "dependencyDashboardApproval": true
     },

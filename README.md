@@ -1897,7 +1897,14 @@ just vet race      # gofmt, vet, tests with -race
 just release       # static binaries for linux/darwin/windows × amd64/arm64, with the Web console
 just cross         # the same binaries without building the console (no Node.js)
 just cross-host    # only this host's binary, dist/gcpemu-<os>-<arch>[.exe]
+just vulncheck     # govulncheck: vulnerabilities the Go code calls
+just licence-check # dependency licences against SRS 2.4.2 (Trivy)
+just image-scan gcpemu:check  # fixable HIGH/CRITICAL in a built image (Trivy)
 ```
+
+The scans (ADR 0090) let a finding pass only through a scan exception in `.govulncheck-allow.json`,
+`.trivyignore.yaml` or `.licence-exceptions.json` that names an issue and an expiry date. The Trivy recipes also need the
+Trivy version `.github/install-trivy.sh` pins, which that script installs on Linux and macOS.
 
 The recipes in the `justfile` need just 1.56.0 or later (brew, winget, scoop, or
 `cargo install just`), and only the tools each recipe calls (go, git, pnpm, docker, npm); `just

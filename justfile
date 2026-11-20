@@ -157,6 +157,33 @@ echo-one $GOARCH:
 echo-image-check image:
     @go run ./internal/devtool echo-image-check {{ image }}
 
+# #1165, ADR 0090: govulncheck (go run at a pinned version) on linux,
+# darwin and windows; a called vulnerability fails unless
+# .govulncheck-allow.json holds an unexpired entry with an issue.
+[doc("Check the Go code for called vulnerabilities (govulncheck)")]
+vulncheck:
+    @go run ./internal/devtool vulncheck
+
+# SRS 2.4.2, ADR 0090: the licences of what gcpemu ships. Trivy reads them
+# from installed dependencies (the Go module cache, console and
+# setup-gcpemu node_modules); devtool names what to install when one is
+# missing.
+[doc("Check dependency licences against SRS 2.4.2 (needs Trivy)")]
+licence-check:
+    @go run ./internal/devtool licence-check
+
+# ADR 0090: a release image fails on a fixable HIGH or CRITICAL.
+[doc("Scan a built image for fixable HIGH/CRITICAL vulnerabilities (just image-scan <ref>; needs Trivy)")]
+image-scan image:
+    @go run ./internal/devtool image-scan {{ image }}
+
+# ADR 0090: report only; a Product image refresh is deliberate (#895).
+# `-issue FILE` also writes the rolling issue's body there (fixable
+# findings, scan exceptions about to expire) when there is anything.
+[doc("Scan every Product image and print a Markdown report (needs Trivy; never fails on findings)")]
+product-image-scan *args:
+    @go run ./internal/devtool product-image-scan {{ args }}
+
 # SRS 7.1 client compatibility: gcloud, kubectl, Helm, Docker, crane, ko,
 # psql, the Cloud SQL Auth Proxy and dig against a detached instance.
 [doc("Run the SRS 7.1 client compatibility suite")]
