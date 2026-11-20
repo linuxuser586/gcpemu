@@ -1,0 +1,8 @@
+{
+  "name": "unzip-stream",
+  "version": "0.0.0-stub",
+  "private": true,
+  "description": "setup-gcpemu's stand-in for unzip-stream; see README.md",
+  "license": "Apache-2.0",
+  "main": "index.js"
+}
