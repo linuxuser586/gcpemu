@@ -34,8 +34,8 @@ const fixtureManagers = `{"customManagers": [
 // Helper image, and nothing else is.
 func TestHelperImageListAddsDockerManager(t *testing.T) {
 	files := map[string]string{
-		"a.go":    `img := "busybox:1.36"`,
-		"b.go":    `img := "alpine/git:v2.49.1" // and again: alpine/git:v2.49.1`,
+		"a.go":    `img := "busybox:1.0"`,
+		"b.go":    `img := "alpine/git:v1.0.0" // and again: alpine/git:v1.0.0`,
 		"tool.sh": "version=v3.0.0\n",
 	}
 	files["renovate.json"] = fmt.Sprintf(fixtureManagers, "")
@@ -43,7 +43,7 @@ func TestHelperImageListAddsDockerManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"busybox:1.36"}; !slices.Equal(got, want) {
+	if want := []string{"busybox:1.0"}; !slices.Equal(got, want) {
 		t.Errorf("before: got %q, want %q", got, want)
 	}
 
@@ -53,7 +53,7 @@ func TestHelperImageListAddsDockerManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"alpine/git:v2.49.1", "busybox:1.36"}; !slices.Equal(got, want) {
+	if want := []string{"alpine/git:v1.0.0", "busybox:1.0"}; !slices.Equal(got, want) {
 		t.Errorf("after: got %q, want %q", got, want)
 	}
 }

@@ -30,10 +30,10 @@ func section(md, heading string) string {
 // TestImageReportSharedRef: k3s is both GKE's Product image and the
 // Edge relay's Helper image. One scan reports it in both sections.
 func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
-	const k3s = "rancher/k3s:v1.37.1-k3s1"
-	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.38", k3s}, nil, map[string][]byte{
+	const k3s = "rancher/k3s:v1.0.0-k3s1"
+	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.0", k3s}, nil, map[string][]byte{
 		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
-		"busybox:1.38": trivyJSON("CVE-2026-0002", ""),
+		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
 		k3s:            trivyJSON("CVE-2026-0003", "3.5.1-r0"),
 	})
 	if err != nil {
@@ -60,9 +60,9 @@ func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
 // both image sections; the issue body only the one with something
 // fixable. Expiring scan exceptions come once, at the end of each.
 func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
-	r, err := reportImages([]string{"postgres:18"}, []string{"busybox:1.38"}, []string{"CVE-2026-0009 (.trivyignore.yaml): expires 2026-12-01"}, map[string][]byte{
+	r, err := reportImages([]string{"postgres:18"}, []string{"busybox:1.0"}, []string{"CVE-2026-0009 (.trivyignore.yaml): expires 2026-12-01"}, map[string][]byte{
 		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
-		"busybox:1.38": trivyJSON("CVE-2026-0002", "1.38.1"),
+		"busybox:1.0": trivyJSON("CVE-2026-0002", "1.0.1"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
 	if strings.Contains(r.Issue, "## Product images") {
 		t.Errorf("issue has a Product section with nothing fixable:\n%s", r.Issue)
 	}
-	if !strings.Contains(section(r.Issue, "## Helper images"), "- `busybox:1.38`: HIGH CVE-2026-0002.") {
+	if !strings.Contains(section(r.Issue, "## Helper images"), "- `busybox:1.0`: HIGH CVE-2026-0002.") {
 		t.Errorf("issue lacks busybox's finding:\n%s", r.Issue)
 	}
 	const expiring = "### Scan exceptions that stop holding within two weeks"
@@ -88,19 +88,19 @@ func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
 // scanned gets its row, the others are still reported, and the failures
 // of both sections are counted, a shared reference once.
 func TestImageReportHelperScanFailed(t *testing.T) {
-	const k3s = "rancher/k3s:v1.37.1-k3s1"
-	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.38", "docker:29.9.2-dind", k3s}, nil, map[string][]byte{
+	const k3s = "rancher/k3s:v1.0.0-k3s1"
+	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.0", "docker:1.0.0-dind", k3s}, nil, map[string][]byte{
 		"postgres:18":  trivyJSON("CVE-2026-0001", "18.1"),
-		"busybox:1.38": trivyJSON("CVE-2026-0002", ""),
+		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	helper := section(r.Summary, "## Helper images")
 	for _, row := range []string{
-		"| `docker:29.9.2-dind` | | | scan failed |",
+		"| `docker:1.0.0-dind` | | | scan failed |",
 		"| `" + k3s + "` (also a Product image) | | | scan failed |",
-		"| `busybox:1.38` | 0 | 1 | 0 |",
+		"| `busybox:1.0` | 0 | 1 | 0 |",
 	} {
 		if !strings.Contains(helper, row) {
 			t.Errorf("Helper section lacks %q:\n%s", row, helper)
@@ -116,8 +116,8 @@ func TestImageReportHelperScanFailed(t *testing.T) {
 
 // TestImagesToScanOnce: a reference in both lists is scanned once.
 func TestImagesToScanOnce(t *testing.T) {
-	got := imagesToScan([]string{"postgres:18", "rancher/k3s:v1.37.1-k3s1"}, []string{"busybox:1.38", "rancher/k3s:v1.37.1-k3s1"})
-	want := []string{"postgres:18", "rancher/k3s:v1.37.1-k3s1", "busybox:1.38"}
+	got := imagesToScan([]string{"postgres:18", "rancher/k3s:v1.0.0-k3s1"}, []string{"busybox:1.0", "rancher/k3s:v1.0.0-k3s1"})
+	want := []string{"postgres:18", "rancher/k3s:v1.0.0-k3s1", "busybox:1.0"}
 	if !slices.Equal(got, want) {
 		t.Errorf("imagesToScan = %q, want %q", got, want)
 	}
