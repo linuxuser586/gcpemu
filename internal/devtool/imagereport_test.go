@@ -32,9 +32,9 @@ func section(md, heading string) string {
 func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
 	const k3s = "rancher/k3s:v1.0.0-k3s1"
 	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.0", k3s}, nil, map[string][]byte{
-		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
+		"postgres:18": trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
-		k3s:            trivyJSON("CVE-2026-0003", "3.5.1-r0"),
+		k3s:           trivyJSON("CVE-2026-0003", "3.5.1-r0"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
 // fixable. Expiring scan exceptions come once, at the end of each.
 func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
 	r, err := reportImages([]string{"postgres:18"}, []string{"busybox:1.0"}, []string{"CVE-2026-0009 (.trivyignore.yaml): expires 2026-12-01"}, map[string][]byte{
-		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
+		"postgres:18": trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", "1.0.1"),
 	})
 	if err != nil {
@@ -90,7 +90,7 @@ func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
 func TestImageReportHelperScanFailed(t *testing.T) {
 	const k3s = "rancher/k3s:v1.0.0-k3s1"
 	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.0", "docker:1.0.0-dind", k3s}, nil, map[string][]byte{
-		"postgres:18":  trivyJSON("CVE-2026-0001", "18.1"),
+		"postgres:18": trivyJSON("CVE-2026-0001", "18.1"),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
 	})
 	if err != nil {
