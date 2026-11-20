@@ -1,0 +1,7 @@
+licenses:
+  - id: BSD-3-Clause
+    statement: https://github.com/linuxuser586/gcpemu/issues/1 several packages
+    expired_at: 2026-12-31
+  - id: GPL-3.0-only
+    statement: https://github.com/linuxuser586/gcpemu/issues/2 nothing has it
+    expired_at: 2026-12-31

@@ -104,3 +104,48 @@ func TestVulncheckAllowlist(t *testing.T) {
 		})
 	}
 }
+
+// windowsStream is a called finding govulncheck reports only in the
+// GOOS=windows run, appended after the linux and darwin runs' output.
+const windowsStream = `{
+  "finding": {"osv": "GO-2026-7001", "fixed_version": "v0.40.0", "trace": [
+    {"module": "golang.org/x/sys", "version": "v0.39.0", "package": "golang.org/x/sys/windows", "function": "LoadDLL"},
+    {"module": "github.com/linuxuser586/gcpemu", "package": "github.com/linuxuser586/gcpemu/internal/winsvc", "function": "Start"}
+  ]}
+}
+`
+
+// TestVulncheckStaleEntries: an allowlist entry no called finding matches
+// is stale, and fails the check, whether or not it has expired; one
+// matched by any GOOS's run is not.
+func TestVulncheckStaleEntries(t *testing.T) {
+	const issue = "https://github.com/linuxuser586/gcpemu/issues/1198"
+	stale := ".govulncheck-allow.json: GO-2026-5932 matched no finding; delete it and close " + issue + " if nothing else holds it open"
+	for _, tc := range []struct {
+		name, allow string
+		wantStale   []string
+	}{
+		// GO-2026-5932 is only imported, never called: it lets nothing pass.
+		{name: "unexpired, unmatched",
+			allow:     `[{"id": "GO-2026-5932", "issue": "` + issue + `", "expires": "2026-12-31"}]`,
+			wantStale: []string{stale}},
+		{name: "expired, unmatched, is stale not expired",
+			allow:     `[{"id": "GO-2026-5932", "issue": "` + issue + `", "expires": "2026-11-01"}]`,
+			wantStale: []string{stale}},
+		{name: "matched only on windows",
+			allow: `[{"id": "GO-2026-7001", "issue": "` + issue + `", "expires": "2026-12-31"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := vulnReport(strings.NewReader(govulncheckStream+windowsStream), []byte(tc.allow), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(r.Stale, tc.wantStale) {
+				t.Errorf("stale = %q, want %q", r.Stale, tc.wantStale)
+			}
+			if len(r.Problems) != 0 {
+				t.Errorf("problems = %q, want none", r.Problems)
+			}
+		})
+	}
+}

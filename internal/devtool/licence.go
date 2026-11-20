@@ -103,9 +103,14 @@ type licenceResult struct {
 	// grants nothing, so each fails the check. Trivy reports no finding for
 	// them, so .trivyignore.yaml cannot name them.
 	Unlicensed []string
-	// Problems are invalid or expired entries of .licence-exceptions.json.
-	// Each fails the check.
+	// Problems are invalid or expired entries of .licence-exceptions.json
+	// and .trivyignore.yaml. Each fails the check.
 	Problems []string
+	// Stale are entries of .licence-exceptions.json, and of
+	// .trivyignore.yaml's licenses section, that matched no finding. Each
+	// fails the check. None is judged when a lockfile is Unread, since
+	// the check did not see everything they could apply to.
+	Stale []string
 	// Unread are lockfiles Trivy read no licence from at all: their
 	// dependencies are not installed, so the check did not look. Each
 	// fails the check.
@@ -127,49 +132,91 @@ type trivyReport struct {
 			PkgName string `json:"PkgName"`
 			Name    string `json:"Name"`
 		} `json:"Licenses"`
+		// ExperimentalModifiedFindings are the findings an ignore file
+		// suppressed, with --show-suppressed (experimental in Trivy
+		// 0.76): Source is the --ignorefile as given.
+		ExperimentalModifiedFindings []struct {
+			Source  string `json:"Source"`
+			Finding struct {
+				Name string `json:"Name"`
+			} `json:"Finding"`
+		} `json:"ExperimentalModifiedFindings"`
 	} `json:"Results"`
 }
 
-// licenceReport checks trivy fs --scanners license --format json output,
-// run with .trivyignore.yaml, which drops the licence findings it covers,
-// and with exceptions, .licence-exceptions.json, for packages with none.
-func licenceReport(b, exceptions []byte, now time.Time) (licenceResult, error) {
+// licenceReport checks trivy fs --scanners license --show-suppressed
+// --format json output, run with ignore, .trivyignore.yaml, which drops
+// the licence findings it covers, and with exceptions,
+// .licence-exceptions.json, for packages with none. It judges which
+// entries of both are stale, from the licences Trivy found, suppressed or
+// not, and the packages it read none for.
+func licenceReport(b, exceptions, ignore []byte, now time.Time) (licenceResult, error) {
 	var r licenceResult
 	var rep trivyReport
 	if err := json.Unmarshal(b, &rep); err != nil {
 		return r, err
 	}
-	excepted, problems := parseExceptions(exceptions, licenceExceptionsFile, now)
-	r.Problems = problems
+	licences := map[string]bool{}   // every licence found, suppressed or not
+	unlicensed := map[string]bool{} // every package read no licence for
+	type pkg struct{ target, id string }
+	var none []pkg // the latter, with their lockfiles
 	for _, res := range rep.Results {
 		switch res.Class {
 		case "license":
 			for _, l := range res.Licenses {
+				licences[l.Name] = true
 				if !licenceAllowed(l.Name) {
 					r.Disallowed = append(r.Disallowed, fmt.Sprintf("%s: %s is %s", res.Target, l.PkgName, l.Name))
 				}
 			}
+			for _, m := range res.ExperimentalModifiedFindings {
+				if m.Source == trivyIgnoreFile {
+					licences[m.Finding.Name] = true
+				}
+			}
 		case "lang-pkgs":
 			pkgs := 0
-			var none []string
+			var ids []string
 			for _, p := range res.Packages {
 				if p.Relationship == "root" {
 					continue
 				}
 				pkgs++
 				if len(p.Licenses) == 0 {
-					none = append(none, p.ID)
+					ids = append(ids, p.ID)
 				}
 			}
-			if pkgs > 0 && len(none) == pkgs {
+			if pkgs > 0 && len(ids) == pkgs {
 				r.Unread = append(r.Unread, fmt.Sprintf("%s: no licence read for any of its %d packages; install its dependencies first", res.Target, pkgs))
 				continue
 			}
-			for _, id := range none {
-				if !excepted[id] {
-					r.Unlicensed = append(r.Unlicensed, res.Target+": "+id)
-				}
+			for _, id := range ids {
+				unlicensed[id] = true
+				none = append(none, pkg{res.Target, id})
 			}
+		}
+	}
+	if len(r.Unread) > 0 {
+		licences, unlicensed = nil, nil
+	}
+	entries, err := decodeExceptions(exceptions)
+	if err != nil {
+		r.Problems = []string{fmt.Sprintf("%s: %v", licenceExceptionsFile, err)}
+	}
+	excepted, problems, stale := judgeExceptions(entries, licenceExceptionsFile, allowFields, unlicensed, now)
+	r.Problems, r.Stale = append(r.Problems, problems...), stale
+	ignored, unread := parseTrivyIgnore(ignore)
+	r.Problems = append(r.Problems, unread...)
+	// Only the licenses section is this scan's to judge; the others are
+	// checked for problems alone.
+	licenceEntries, others := splitSection(ignored, "licenses")
+	_, problems, stale = judgeExceptions(licenceEntries, trivyIgnoreFile, ignoreFields, licences, now)
+	r.Problems, r.Stale = append(r.Problems, problems...), append(r.Stale, stale...)
+	_, problems, _ = judgeExceptions(others, trivyIgnoreFile, ignoreFields, nil, now)
+	r.Problems = append(r.Problems, problems...)
+	for _, p := range none {
+		if !excepted[p.id] {
+			r.Unlicensed = append(r.Unlicensed, p.target+": "+p.id)
 		}
 	}
 	return r, nil

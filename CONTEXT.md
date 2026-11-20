@@ -809,7 +809,7 @@ An OCI image the release publishes: gcpemu, and gcpemu-echo, the Conformance sui
 _Avoid_: published image, product image
 
 **Scan exception**:
-A committed entry that lets one scan finding pass until its expiry date, naming the issue that tracks fixing it. It stops holding when its date begins, and an expired one fails the scan.
+A committed entry that lets one scan finding pass until its expiry date, naming the issue that tracks fixing it. It stops holding when its date begins, and an expired one fails the scan. A **stale** scan exception matched no finding in a scan that covers everything it could apply to, so it has nothing left to let pass and should be deleted; an entry is stale only when it matches none, however many it once matched, and a stale entry is stale whether or not it has expired.
 _Avoid_: allowlist entry, ignore, waiver, suppression
 
 **Pre-release host checks**:
