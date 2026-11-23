@@ -20,7 +20,7 @@ import (
 
 // govulncheckVersion is installed with go install, so go.mod gains
 // nothing.
-const govulncheckVersion = "v1.9.0"
+const govulncheckVersion = "v1.10.0"
 
 // vulncheckGOOS are the platforms govulncheck analyses: it follows build
 // constraints, so a vulnerable call in a Windows-only file is reached only
