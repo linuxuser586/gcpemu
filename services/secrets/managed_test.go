@@ -76,8 +76,8 @@ func TestManagedRotation(t *testing.T) {
 	_, err = e.sm.CreateSecret(e.ctx, &secretmanagerpb.CreateSecretRequest{Parent: parent, SecretId: "g", Secret: &secretmanagerpb.Secret{Replication: automatic, SecretType: secretmanagerpb.Secret_CLOUD_SQL_DB_CREDENTIALS}})
 	wantCode(t, "global typed secret", err, codes.InvalidArgument)
 	other := must(e.sm.CreateSecret(e.ctx, &secretmanagerpb.CreateSecretRequest{Parent: parent + "/locations/us-east1", SecretId: "far", Secret: &secretmanagerpb.Secret{SecretType: secretmanagerpb.Secret_CLOUD_SQL_DB_CREDENTIALS}}))
-	creds := &secretmanagerpb.EnableManagedRotationRequest_CloudSqlSingleUserCredentials{CloudSqlSingleUserCredentials: &secretmanagerpb.EnableManagedRotationRequest_CloudSQLSingleUserCredentials{InstanceId: "db", Username: "app", Password: "first-pw"}}
-	_, err = e.sm.EnableManagedRotation(e.ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: other.GetName(), Credentials: creds})
+	creds := &secretmanagerpb.EnableManagedRotationRequest_CloudSqlSingleUserCredentials{CloudSqlSingleUserCredentials: &secretmanagerpb.CloudSqlSingleUserCredentials{InstanceId: "db", Username: "app", Password: "first-pw"}}
+	_, err = e.sm.EnableManagedRotation(e.ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: other.GetName(), Credential: creds})
 	wantCode(t, "other region", err, codes.InvalidArgument)
 
 	sec := must(e.sm.CreateSecret(e.ctx, &secretmanagerpb.CreateSecretRequest{Parent: loc, SecretId: "app-db", Secret: &secretmanagerpb.Secret{SecretType: secretmanagerpb.Secret_CLOUD_SQL_DB_CREDENTIALS}}))
@@ -86,11 +86,11 @@ func TestManagedRotation(t *testing.T) {
 	_, err = e.sm.AddSecretVersion(e.ctx, &secretmanagerpb.AddSecretVersionRequest{Parent: sec.GetName(), Payload: &secretmanagerpb.SecretPayload{Data: []byte("x")}})
 	wantCode(t, "manual version", err, codes.FailedPrecondition)
 
-	v1 := must(e.sm.EnableManagedRotation(e.ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: sec.GetName(), Credentials: creds}))
+	v1 := must(e.sm.EnableManagedRotation(e.ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: sec.GetName(), Credential: creds}))
 	if err := login(e.ctx, ip, "app", "first-pw"); err != nil {
 		t.Fatalf("login with the given password: %v", err)
 	}
-	_, err = e.sm.EnableManagedRotation(e.ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: sec.GetName(), Credentials: creds})
+	_, err = e.sm.EnableManagedRotation(e.ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: sec.GetName(), Credential: creds})
 	wantCode(t, "enable twice", err, codes.FailedPrecondition)
 
 	v2 := must(e.sm.RotateSecret(e.ctx, &secretmanagerpb.RotateSecretRequest{Parent: sec.GetName()}))
