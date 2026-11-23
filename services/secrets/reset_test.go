@@ -48,8 +48,8 @@ func TestResetWaitsForSweep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	creds := &secretmanagerpb.EnableManagedRotationRequest_CloudSqlSingleUserCredentials{CloudSqlSingleUserCredentials: &secretmanagerpb.EnableManagedRotationRequest_CloudSQLSingleUserCredentials{InstanceId: "db", Username: "app"}}
-	if _, err := s.api.EnableManagedRotation(ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: sec.GetName(), Credentials: creds}); err != nil {
+	creds := &secretmanagerpb.EnableManagedRotationRequest_CloudSqlSingleUserCredentials{CloudSqlSingleUserCredentials: &secretmanagerpb.CloudSqlSingleUserCredentials{InstanceId: "db", Username: "app"}}
+	if _, err := s.api.EnableManagedRotation(ctx, &secretmanagerpb.EnableManagedRotationRequest{Parent: sec.GetName(), Credential: creds}); err != nil {
 		t.Fatal(err)
 	}
 	ref, err := s.parseSecretOnly(sec.GetName())
