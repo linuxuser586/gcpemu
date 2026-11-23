@@ -872,7 +872,7 @@ serves the metadata server as the step's Build's service account on `:80` and pr
 Registry over plain HTTP on `:5000` with that account's token.
 
 Every step gets `/var/run/docker.sock` of the Build daemon (ADR 0016), one privileged
-Docker-in-Docker container per Instance (`docker:29.9.2-dind`) started with the first Build, so
+Docker-in-Docker container per Instance (`docker:29.10.0-dind`) started with the first Build, so
 `gcr.io/cloud-builders/docker` and `docker` steps build, run and push images unmodified, and
 `docker run --network=cloudbuild` reaches containers started earlier by name. Unlike on GCP, the
 steps themselves are not on `cloudbuild`, so a step reaches such a container only from another
