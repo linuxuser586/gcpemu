@@ -37,8 +37,11 @@ jobs:
         run: |
           set -o pipefail
           just vulncheck 2>&1 | tee "$RUNNER_TEMP/vulncheck.txt"
+      # Only main's results belong in the issue: a dispatch from a
+      # branch (e.g. to try a change to this workflow) reports in its
+      # job summary alone.
       - name: Rolling issue
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ github.token }}
           OUTCOME: ${{ steps.vulncheck.outcome }}
@@ -89,9 +92,11 @@ jobs:
         run: just image-report -release gcpemu:check,gcpemu-echo:check -issue "$RUNNER_TEMP/issue.md" >> "$GITHUB_STEP_SUMMARY"
       # Closed only after a run that scanned every Product, Helper and
       # Release image and found nothing to report, so a partial scan is
-      # never an all-clear.
+      # never an all-clear. Only main's results belong in the issue: a
+      # dispatch from a branch (e.g. to try a change to this workflow)
+      # reports in its job summary alone.
       - name: Rolling issue
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ github.token }}
           OUTCOME: ${{ steps.scan.outcome }}

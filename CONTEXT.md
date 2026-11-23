@@ -22,7 +22,7 @@ _Avoid_: running (for anything judged from the files alone)
 
 **Unconfirmed Instance**:
 What a data directory's files name when asking neither confirms a Live Instance nor rules one out, such as an API gateway that refuses the Admin token or connects and never answers.
-_Avoid_: stale, dead, hung (**stale** is a Scan exception's qualifier, never an Instance's)
+_Avoid_: stale, dead, hung (**stale** qualifies a Scan exception or a Recording, never an Instance)
 
 **Product**:
 A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
