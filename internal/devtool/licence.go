@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -111,6 +112,9 @@ type licenceResult struct {
 	// fails the check. None is judged when a lockfile is Unread, since
 	// the check did not see everything they could apply to.
 	Stale []string
+	// staleRefs name the Stale entries as exceptionRef does, so the
+	// weekly scan does not also list one as stopping soon.
+	staleRefs []string
 	// Unread are lockfiles Trivy read no licence from at all: their
 	// dependencies are not installed, so the check did not look. Each
 	// fails the check.
@@ -200,6 +204,9 @@ func licenceReport(b, exceptions, ignore []byte, now time.Time) (licenceResult, 
 	licenceEntries, others := splitSection(ignored, "licenses")
 	_, problems, stale = judgeExceptions(licenceEntries, trivyIgnoreFile, ignoreFields, licences, now)
 	r.Problems, r.Stale = append(r.Problems, problems...), append(r.Stale, stale...)
+	// A file that does not parse judges nothing stale, so has no refs.
+	exceptionEntries, _ := decodeExceptions(exceptions)
+	r.staleRefs = slices.Concat(staleRefs(exceptionEntries, licenceExceptionsFile, unlicensed), staleRefs(licenceEntries, trivyIgnoreFile, licences))
 	_, problems, _ = judgeExceptions(others, trivyIgnoreFile, ignoreFields, nil, now)
 	r.Problems = append(r.Problems, problems...)
 	for _, p := range none {

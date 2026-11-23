@@ -130,18 +130,9 @@ func runLicenceCheck([]string) error {
 	if err != nil {
 		return err
 	}
-	// The compat suite's POM is a test client, never shipped.
-	// --show-suppressed lists what .trivyignore.yaml suppressed, so its
-	// licenses entries can be judged stale (ADR 0090).
-	cmd := exec.Command("trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", "--show-suppressed", "--ignorefile", trivyIgnoreFile, "--skip-files", "compat/sdk/java/pom.xml", ".")
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
+	r, err := scanLicences(exceptions, ignore)
 	if err != nil {
-		return fmt.Errorf("trivy: %w", err)
-	}
-	r, err := licenceReport(out, exceptions, ignore, time.Now())
-	if err != nil {
-		return fmt.Errorf("reading Trivy's output: %w", err)
+		return err
 	}
 	for _, lines := range [][]string{r.Problems, r.Stale, r.Unread, r.Disallowed} {
 		for _, l := range lines {
@@ -168,6 +159,27 @@ func runLicenceCheck([]string) error {
 	}
 	fmt.Println("licence-check: every package has an allowed licence")
 	return nil
+}
+
+// scanLicences runs Trivy's licence scan over the working tree and
+// judges it with exceptions, .licence-exceptions.json, and ignore,
+// .trivyignore.yaml: licence-check's scan and the weekly report's
+// (-licences) alike, so the two cannot judge differently.
+func scanLicences(exceptions, ignore []byte) (licenceResult, error) {
+	// The compat suite's POM is a test client, never shipped.
+	// --show-suppressed lists what .trivyignore.yaml suppressed, so its
+	// licenses entries can be judged stale (ADR 0090).
+	cmd := exec.Command("trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", "--show-suppressed", "--ignorefile", trivyIgnoreFile, "--skip-files", "compat/sdk/java/pom.xml", ".")
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return licenceResult{}, fmt.Errorf("trivy: %w", err)
+	}
+	r, err := licenceReport(out, exceptions, ignore, time.Now())
+	if err != nil {
+		return licenceResult{}, fmt.Errorf("reading Trivy's output: %w", err)
+	}
+	return r, nil
 }
 
 // imageScanArgs are the trivy image flags of the release image scan and
@@ -231,14 +243,18 @@ func productImageList() ([]string, error) {
 // Release images -release names, already built, and fails only when it
 // cannot scan one, after reporting the others. It also lists the stale
 // .trivyignore.yaml vulnerabilities entries and the scan exceptions that
-// stop holding within two weeks, so none expires unannounced. With -issue
-// FILE, it writes the fixable findings and those exceptions there as the
-// rolling issue's body, and writes nothing when there are none.
+// stop holding within two weeks, so none expires unannounced. -licences
+// runs licence-check's scan too, over the installed dependencies, and
+// lists the stale licence scan exceptions (#1211); it fails only when
+// that scan cannot run. With -issue FILE, it writes the fixable findings
+// and those exceptions there as the rolling issue's body, and writes
+// nothing when there are none.
 func runImageReport(args []string) error {
 	var err error
 	fl := flag.NewFlagSet("image-report", flag.ContinueOnError)
 	issueFile := fl.String("issue", "", "write the rolling issue's body here when there is anything to report")
 	release := fl.String("release", "", "comma-separated Release images, already built, to scan too")
+	withLicences := fl.Bool("licences", false, "judge the licence scan exceptions too (needs the dependencies installed)")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
@@ -289,7 +305,15 @@ func runImageReport(args []string) error {
 			scans[image] = out
 		}
 	}
-	r, err := reportImages(images, expiring, ignored, scans)
+	// A lockfile left unread, as by a failed install, is reported in the
+	// stale section; only a scan that could not run fails the report.
+	var licences *licenceJudgment
+	if *withLicences {
+		fmt.Fprintln(os.Stderr, "scanning dependency licences")
+		licences = &licenceJudgment{}
+		licences.result, licences.err = scanLicences(files[licenceExceptionsFile], files[trivyIgnoreFile])
+	}
+	r, err := reportImages(images, expiring, ignored, scans, licences)
 	if err != nil {
 		return err
 	}
@@ -299,8 +323,15 @@ func runImageReport(args []string) error {
 			return err
 		}
 	}
+	var failed []error
 	if r.Failed > 0 {
-		return fmt.Errorf("%d of %d images could not be scanned", r.Failed, len(toScan))
+		failed = append(failed, fmt.Errorf("%d of %d images could not be scanned", r.Failed, len(toScan)))
+	}
+	if licences != nil && licences.err != nil {
+		failed = append(failed, fmt.Errorf("the licence scan could not run: %w", licences.err))
+	}
+	if err := errors.Join(failed...); err != nil {
+		return err
 	}
 	return nil
 }
@@ -348,10 +379,12 @@ type imageLists struct {
 // reportImages summarises trivy image --show-suppressed --format json
 // output for the Product, Helper and Release images, then lists the stale
 // and the expiring scan exceptions once, at the end. ignored are
-// .trivyignore.yaml's entries; only its vulnerabilities section is this
-// scan's to judge. An image missing from scans could not be scanned; a
-// reference in two lists is scanned once and reported in both sections.
-func reportImages(images imageLists, expiring []string, ignored []exception, scans map[string][]byte) (imageReport, error) {
+// .trivyignore.yaml's entries; the images judge its vulnerabilities
+// section, and licences, when -licences ran the licence check (#1211),
+// judges .licence-exceptions.json and its licenses section. An image
+// missing from scans could not be scanned; a reference in two lists is
+// scanned once and reported in both sections.
+func reportImages(images imageLists, expiring []string, ignored []exception, scans map[string][]byte, licences *licenceJudgment) (imageReport, error) {
 	var r imageReport
 	isProduct := map[string]bool{}
 	for _, image := range images.Product {
@@ -395,19 +428,22 @@ func reportImages(images imageLists, expiring []string, ignored []exception, sca
 	if err != nil {
 		return r, err
 	}
-	if len(stale.lines) > 0 {
-		section := "\n" + staleExceptionsHeading + "\n\n- " + strings.Join(stale.lines, "\n- ") + "\n"
+	licenceLines := licences.lines()
+	if lines := slices.Concat(stale.lines, licenceLines); len(lines) > 0 {
+		section := "\n" + staleExceptionsHeading + "\n\n- " + strings.Join(lines, "\n- ") + "\n"
 		r.Summary += section
-		// A judgment skipped is no news by itself: the failed scan
-		// already fails the run.
-		if stale.judged || r.Issue != "" || len(expiring) > 0 {
+		// An image judgment skipped is no news by itself: the failed
+		// scan already fails the run. A licence line always is, since
+		// nothing else would announce it.
+		if stale.judged || len(licenceLines) > 0 || r.Issue != "" || len(expiring) > 0 {
 			r.Issue += section
 		}
 	}
 	// A stale entry is to be deleted, not fixed or renewed.
+	staleRefs := slices.Concat(stale.refs, licences.staleRefs())
 	expiring = slices.DeleteFunc(slices.Clone(expiring), func(line string) bool {
-		return slices.ContainsFunc(stale.ids, func(id string) bool {
-			return strings.HasPrefix(line, exceptionRef(id, trivyIgnoreFile)+" ")
+		return slices.ContainsFunc(staleRefs, func(ref string) bool {
+			return strings.HasPrefix(line, ref+" ")
 		})
 	})
 	if len(expiring) > 0 {
@@ -420,6 +456,49 @@ func reportImages(images imageLists, expiring []string, ignored []exception, sca
 
 const staleExceptionsHeading = "### Stale scan exceptions"
 
+// licenceJudgment is the weekly scan's judgment of the licence scan
+// exceptions (#1211): .licence-exceptions.json and .trivyignore.yaml's
+// licenses section, from the licence check's result.
+type licenceJudgment struct {
+	result licenceResult
+	// err is why the licence scan did not run; result is then empty.
+	err error
+}
+
+// notJudgedLicences names the entries the licence judgment covers, for the
+// line saying none was judged.
+const notJudgedLicences = licenceExceptionsFile + " entries and " + trivyIgnoreFile + " licenses entries"
+
+// lines are the judgment's lines for the stale section: the stale
+// entries, or one line saying why none was judged; none when l is nil,
+// as without -licences.
+func (l *licenceJudgment) lines() []string {
+	switch {
+	case l == nil:
+		return nil
+	case l.err != nil:
+		return []string{notJudgedLicences + " not judged this week, since the licence scan failed: " + l.err.Error()}
+	case len(l.result.Unread) > 0:
+		// licence-check judges nothing then either (ADR 0090).
+		var lockfiles []string
+		for _, u := range l.result.Unread {
+			target, _, _ := strings.Cut(u, ":")
+			lockfiles = append(lockfiles, target)
+		}
+		return []string{notJudgedLicences + " not judged this week: no licence was read from " + strings.Join(lockfiles, ", ") + ", so install its dependencies first"}
+	}
+	return l.result.Stale
+}
+
+// staleRefs name the stale entries as exceptionRef does; none when l is
+// nil or judged nothing.
+func (l *licenceJudgment) staleRefs() []string {
+	if l == nil {
+		return nil
+	}
+	return l.result.staleRefs
+}
+
 // staleImages is the weekly scan's judgment of .trivyignore.yaml's
 // vulnerabilities entries.
 type staleImages struct {
@@ -429,8 +508,8 @@ type staleImages struct {
 	// judged is false when the scan did not see everything the entries
 	// could apply to.
 	judged bool
-	// ids are the stale entries' IDs.
-	ids []string
+	// refs name the stale entries as exceptionRef does.
+	refs []string
 }
 
 // staleImageExceptions judges .trivyignore.yaml's vulnerabilities
@@ -473,13 +552,7 @@ func staleImageExceptions(ignored []exception, images imageLists, failed map[str
 		}
 	}
 	_, _, stale := judgeExceptions(entries, trivyIgnoreFile, ignoreFields, found, time.Time{})
-	r := staleImages{lines: stale, judged: true}
-	for _, e := range entries {
-		if !found[e.ID] {
-			r.ids = append(r.ids, e.ID)
-		}
-	}
-	return r, nil
+	return staleImages{lines: stale, judged: true, refs: staleRefs(entries, trivyIgnoreFile, found)}, nil
 }
 
 // imageSection summarises one list of images: summary is the table and
