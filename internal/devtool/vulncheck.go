@@ -88,6 +88,18 @@ func judgeExceptionFile(b []byte, file string, found map[string]bool, now time.T
 	return judgeExceptions(entries, file, allowFields, found, now)
 }
 
+// staleRefs names, as exceptionRef does, the entries of file that
+// judgeExceptions calls stale with found; none when found is nil.
+func staleRefs(entries []exception, file string, found map[string]bool) []string {
+	var refs []string
+	for _, e := range entries {
+		if found != nil && !found[e.ID] {
+			refs = append(refs, exceptionRef(e.ID, file))
+		}
+	}
+	return refs
+}
+
 // staleMessage is a stale entry's line, for a check's output and the
 // weekly scan's rolling issue alike.
 func staleMessage(file string, e exception) string {

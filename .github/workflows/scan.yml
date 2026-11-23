@@ -8,9 +8,10 @@ name: scan
 # images, only reports: refreshing a Product image is a deliberate change
 # (#895), a Helper image moves with Renovate, and the release gates its own
 # images, so a finding never fails CI. Its issue also lists stale
-# .trivyignore.yaml vulnerabilities entries (#1205) and the scan
-# exceptions that stop holding within two weeks, since an expired one fails
-# every PR's scans.
+# .trivyignore.yaml vulnerabilities entries (#1205), stale licence scan
+# exceptions (#1211), which a PR's licence-check judges only when it
+# changes dependencies, and the scan exceptions that stop holding within
+# two weeks, since an expired one fails every PR's scans.
 on:
   schedule:
     - cron: "17 9 * * 1"
@@ -71,6 +72,27 @@ jobs:
       - uses: extractions/setup-just@v4
         with:
           just-version: 1.59.0
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: console/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: console/.nvmrc
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      # #1211: the licence judgment reads licences from the installed
+      # dependencies, as CI's licences job does. A failed install leaves a
+      # lockfile unread, which the report says instead of judging; each
+      # install runs whether or not another failed, so only its own
+      # lockfile goes unread.
+      - name: Install dependencies
+        continue-on-error: true
+        run: |
+          rc=0
+          go mod download || rc=1
+          pnpm --dir console install --frozen-lockfile || rc=1
+          npm --prefix setup-gcpemu ci || rc=1
+          exit "$rc"
       - uses: ./.github/actions/trivy
       # #1205: the Release images, built from main for this runner's
       # architecture as CI's e2e job builds them, so the report judges
@@ -85,11 +107,11 @@ jobs:
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu:check -f Dockerfile dist
           just echo-dist
           docker build --build-arg TARGETARCH="$(go env GOARCH)" -t gcpemu-echo:check -f cmd/gcpemu-echo/Dockerfile dist-echo
-      # Fails only when an image could not be scanned, after reporting the
-      # others.
+      # Fails only when an image, or the dependencies' licences, could not
+      # be scanned, after reporting the rest.
       - id: scan
-        name: Scan images
-        run: just image-report -release gcpemu:check,gcpemu-echo:check -issue "$RUNNER_TEMP/issue.md" >> "$GITHUB_STEP_SUMMARY"
+        name: Scan images and licences
+        run: just image-report -release gcpemu:check,gcpemu-echo:check -licences -issue "$RUNNER_TEMP/issue.md" >> "$GITHUB_STEP_SUMMARY"
       # Closed only after a run that scanned every Product, Helper and
       # Release image and found nothing to report, so a partial scan is
       # never an all-clear. Only main's results belong in the issue: a
@@ -101,10 +123,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OUTCOME: ${{ steps.scan.outcome }}
         run: |
-          title="Weekly scan: image findings and expiring scan exceptions"
+          title="Weekly scan: image findings and stale or expiring scan exceptions"
           if [ -s "$RUNNER_TEMP/issue.md" ]; then
             {
-              echo "The weekly image scan ($RUN) found these. CI never fails on them (ADR 0090): triage each into an issue, a Product image refresh (#895), or, for a Helper image, a Renovate bump or an upstream report; delete each stale scan exception. Each weekly scan that finds any updates this issue."
+              echo "The weekly scan of images and dependency licences ($RUN) found these. CI never fails on them (ADR 0090): triage each into an issue, a Product image refresh (#895), or, for a Helper image, a Renovate bump or an upstream report; delete each stale scan exception. Each weekly scan that finds any updates this issue."
               cat "$RUNNER_TEMP/issue.md"
             } > "$RUNNER_TEMP/body.md"
             .github/rolling-issue.sh open "$title" "$RUNNER_TEMP/body.md"

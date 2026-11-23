@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -36,7 +38,7 @@ func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
 		"postgres:18": trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
 		k3s:           trivyJSON("CVE-2026-0003", "3.5.1-r0"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +66,7 @@ func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
 	r, err := reportImages(imageLists{Product: []string{"postgres:18"}, Helper: []string{"busybox:1.0"}}, []string{"CVE-2026-0009 (.trivyignore.yaml): expires 2026-12-01"}, nil, map[string][]byte{
 		"postgres:18": trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", "1.0.1"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +95,7 @@ func TestImageReportHelperScanFailed(t *testing.T) {
 	r, err := reportImages(imageLists{Product: []string{"postgres:18", k3s}, Helper: []string{"busybox:1.0", "docker:1.0.0-dind", k3s}}, nil, nil, map[string][]byte{
 		"postgres:18": trivyJSON("CVE-2026-0001", "18.1"),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +164,7 @@ func TestImageReportStaleVulnerabilityEntry(t *testing.T) {
 		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0":  trivyJSON("CVE-2026-0002", ""),
 		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestImageReportStaleNotJudgedAfterFailedScan(t *testing.T) {
 		Release: []string{"gcpemu:check"},
 	}, nil, vulnIgnores, map[string][]byte{
 		"postgres:18": trivyJSON("CVE-2026-0001", "18.1"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +208,7 @@ func TestImageReportStaleAloneWritesIssue(t *testing.T) {
 	}, nil, vulnIgnores, map[string][]byte{
 		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
 		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,12 +234,118 @@ func TestImageReportStaleNotAlsoExpiring(t *testing.T) {
 	}
 	r, err := reportImages(imageLists{Release: []string{"gcpemu:check"}}, expiring, vulnIgnores, map[string][]byte{
 		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, soon, _ := strings.Cut(r.Issue, "### Scan exceptions that stop holding within two weeks")
 	if !strings.Contains(soon, "CVE-2026-0100") || strings.Contains(soon, "CVE-2026-0200") {
 		t.Errorf("expiring section = %q, want CVE-2026-0100 only", soon)
+	}
+}
+
+// weeklyLicences is the weekly licence judgment over the Trivy v0.76.2
+// capture in testdata, in which .trivyignore.yaml's GPL-3.0-only entry
+// matched nothing, with a .licence-exceptions.json entry for a package
+// Trivy read a licence for.
+func weeklyLicences(t *testing.T) *licenceJudgment {
+	t.Helper()
+	out, err := os.ReadFile("testdata/trivy-licence-suppressed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignore, err := os.ReadFile("testdata/trivy-licence-suppressed.trivyignore.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := licenceReport(out, []byte(`[{"id": "example.com/gone@v1.0.0", "issue": "https://github.com/linuxuser586/gcpemu/issues/3", "expires": "2026-11-25"}]`), ignore, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &licenceJudgment{result: r}
+}
+
+// TestImageReportStaleLicenceEntries (#1211): with -licences, the stale
+// .licence-exceptions.json and .trivyignore.yaml licenses entries join
+// the stale section, with licence-check's lines, and alone keep the
+// rolling issue open.
+func TestImageReportStaleLicenceEntries(t *testing.T) {
+	r, err := reportImages(imageLists{
+		Product: []string{"postgres:18"},
+		Release: []string{"gcpemu:check"},
+	}, nil, nil, map[string][]byte{
+		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
+		"gcpemu:check": trivyJSON("CVE-2026-0002", ""),
+	}, weeklyLicences(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "- .licence-exceptions.json: example.com/gone@v1.0.0 matched no finding; delete it and close https://github.com/linuxuser586/gcpemu/issues/3 if nothing else holds it open\n" +
+		"- .trivyignore.yaml: GPL-3.0-only matched no finding; delete it and close https://github.com/linuxuser586/gcpemu/issues/2 if nothing else holds it open\n"
+	for name, md := range map[string]string{"summary": r.Summary, "issue": r.Issue} {
+		_, stale, ok := strings.Cut(md, staleSection+"\n\n")
+		if !ok || stale != want {
+			t.Errorf("%s's stale section = %q, want %q", name, stale, want)
+		}
+	}
+}
+
+// TestImageReportLicencesNotJudgedWhenUnread (#1211): a lockfile Trivy
+// read no licence from might hold the package an entry is for, so none is
+// judged. The line saying so names it, and alone keeps the rolling issue
+// open, since nothing fails the run on it.
+func TestImageReportLicencesNotJudgedWhenUnread(t *testing.T) {
+	lr, err := licenceReport([]byte(trivyLicences), []byte(`[{"id": "example.com/gone@v1.0.0", "issue": "https://github.com/linuxuser586/gcpemu/issues/3", "expires": "2026-12-31"}]`), nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := reportImages(imageLists{Release: []string{"gcpemu:check"}}, nil, nil, map[string][]byte{
+		"gcpemu:check": trivyJSON("CVE-2026-0002", ""),
+	}, &licenceJudgment{result: lr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stale, ok := strings.Cut(r.Issue, staleSection+"\n\n")
+	if !ok || !strings.Contains(stale, "not judged") || !strings.Contains(stale, "console/pnpm-lock.yaml") || strings.Contains(stale, "example.com/gone") {
+		t.Errorf("issue's stale section = %q, want only a line saying the licence entries were not judged, naming console/pnpm-lock.yaml", stale)
+	}
+}
+
+// TestImageReportStaleLicenceNotAlsoExpiring (#1211): a stale licence
+// entry is to be deleted, so it is not also listed as stopping soon. An
+// entry of another file with the same date still is.
+func TestImageReportStaleLicenceNotAlsoExpiring(t *testing.T) {
+	expiring, err := expiringExceptions(map[string][]byte{
+		licenceExceptionsFile: []byte(`[{"id": "example.com/gone@v1.0.0", "issue": "https://github.com/linuxuser586/gcpemu/issues/3", "expires": "2026-11-25"}]`),
+		govulncheckAllowFile:  []byte(`[{"id": "GO-2026-0001", "issue": "https://github.com/linuxuser586/gcpemu/issues/4", "expires": "2026-11-25"}]`),
+	}, now, 14*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := reportImages(imageLists{Release: []string{"gcpemu:check"}}, expiring, nil, map[string][]byte{
+		"gcpemu:check": trivyJSON("CVE-2026-0002", ""),
+	}, weeklyLicences(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, soon, _ := strings.Cut(r.Issue, "### Scan exceptions that stop holding within two weeks")
+	if !strings.Contains(soon, "GO-2026-0001") || strings.Contains(soon, "example.com/gone") {
+		t.Errorf("expiring section = %q, want GO-2026-0001 only", soon)
+	}
+}
+
+// TestImageReportLicencesNotJudgedWhenTrivyFailed (#1211): when the
+// licence scan itself failed, the line saying none was judged gives
+// Trivy's error, and alone keeps the rolling issue open.
+func TestImageReportLicencesNotJudgedWhenTrivyFailed(t *testing.T) {
+	r, err := reportImages(imageLists{Release: []string{"gcpemu:check"}}, nil, nil, map[string][]byte{
+		"gcpemu:check": trivyJSON("CVE-2026-0002", ""),
+	}, &licenceJudgment{err: errors.New("trivy: exit status 1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stale, ok := strings.Cut(r.Issue, staleSection+"\n\n")
+	if !ok || !strings.Contains(stale, "not judged") || !strings.Contains(stale, "trivy: exit status 1") {
+		t.Errorf("issue's stale section = %q, want a line saying the licence entries were not judged, with Trivy's error", stale)
 	}
 }
