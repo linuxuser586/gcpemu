@@ -171,6 +171,11 @@
       "groupName": "Go modules"
     },
     {
+      "description": "npm releases wait a day: pnpm 12 refuses a package published less than a day ago (minimumReleaseAge), so a younger one would fail the console's install (#1218).",
+      "matchManagers": ["npm"],
+      "minimumReleaseAge": "1 day"
+    },
+    {
       "description": "The go directive stays at what go mod tidy requires; only the toolchain line is bumped (#894).",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang"],
