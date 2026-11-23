@@ -318,7 +318,8 @@ jobs:
       - name: Container ends and OOM kills
         if: failure()
         run: |
-          cat "$RUNNER_TEMP/container-events.log"
+          # Missing when the job failed before the docker events step ran.
+          cat "$RUNNER_TEMP/container-events.log" 2>/dev/null || true
           sudo dmesg | grep -iE 'oom|killed process' || true
           free -m
       # #943: ADR 0017 wants an issue for every flake, and a pass on retry
