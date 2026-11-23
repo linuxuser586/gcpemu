@@ -180,8 +180,10 @@ image-scan image:
 # ADR 0090: report only; a Product image refresh is deliberate (#895),
 # and a Helper image's fix is a Renovate bump or an upstream report.
 # `-issue FILE` also writes the rolling issue's body there (fixable
-# findings, scan exceptions about to expire) when there is anything.
-[doc("Scan every Product and Helper image and print a Markdown report (needs Trivy; never fails on findings)")]
+# findings, stale and soon-expiring scan exceptions) when there is
+# anything. `-release a,b` scans those built Release images too; without
+# it, .trivyignore.yaml's vulnerabilities entries are not judged stale.
+[doc("Scan every Product and Helper image, and built Release images (-release), and print a Markdown report (needs Trivy; never fails on findings)")]
 image-report *args:
     @go run ./internal/devtool image-report {{ args }}
 

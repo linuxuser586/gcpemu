@@ -40,6 +40,7 @@ func parseTrivyIgnore(b []byte) ([]exception, []string) {
 	var out []string
 	var entries []exception
 	var cur *exception
+	section := ""
 	listField := false
 	for i, line := range strings.Split(string(b), "\n") {
 		n := i + 1
@@ -50,12 +51,13 @@ func parseTrivyIgnore(b []byte) ([]exception, []string) {
 		switch {
 		case ignoreSection.MatchString(line):
 			cur, listField = nil, false
+			section = ignoreSection.FindStringSubmatch(line)[1]
 			continue
 		case ignoreItem.MatchString(line) && listField:
 			continue
 		case ignoreEntry.MatchString(line):
 			m := ignoreEntry.FindStringSubmatch(line)
-			entries = append(entries, exception{})
+			entries = append(entries, exception{section: section})
 			cur = &entries[len(entries)-1]
 			key, val = m[1], m[2]
 		case ignoreField.MatchString(line) && cur != nil:
@@ -81,4 +83,32 @@ func parseTrivyIgnore(b []byte) ([]exception, []string) {
 		}
 	}
 	return entries, out
+}
+
+// splitSection splits .trivyignore.yaml's entries into those of section
+// and the rest.
+func splitSection(entries []exception, section string) (in, rest []exception) {
+	for _, e := range entries {
+		if e.section == section {
+			in = append(in, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
+	return in, rest
+}
+
+// trivySuppressed is a finding an ignore file let pass, one of a result's
+// ExperimentalModifiedFindings with --show-suppressed (experimental in
+// Trivy 0.76). ADR 0090 relies on it to judge .trivyignore.yaml's entries
+// stale: renamed, every entry reads as stale, and the check fails.
+type trivySuppressed struct {
+	// Source is the --ignorefile as given.
+	Source  string `json:"Source"`
+	Finding struct {
+		// Name is a licence finding's licence.
+		Name string `json:"Name"`
+		// VulnerabilityID is a vulnerability finding's ID.
+		VulnerabilityID string `json:"VulnerabilityID"`
+	} `json:"Finding"`
 }

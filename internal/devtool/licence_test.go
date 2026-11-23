@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ const trivyLicences = `{
 }`
 
 func TestLicenceReport(t *testing.T) {
-	r, err := licenceReport([]byte(trivyLicences), []byte(`[]`), now)
+	r, err := licenceReport([]byte(trivyLicences), []byte(`[]`), nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestLicenceExceptions(t *testing.T) {
 			wantUnlicensed: true, wantProblem: "issue must link a gcpemu GitHub issue"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, err := licenceReport([]byte(trivyLicences), []byte(tc.exceptions), now)
+			r, err := licenceReport([]byte(trivyLicences), []byte(tc.exceptions), nil, now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,3 +113,63 @@ func TestLicenceExceptions(t *testing.T) {
 		})
 	}
 }
+
+// TestLicenceStaleTrivyIgnore reads trivy fs --scanners license --format
+// json --show-suppressed output captured from Trivy v0.76.2 over three
+// BSD-3-Clause modules, run with the .trivyignore.yaml beside it: its
+// BSD-3-Clause entry suppressed all three, and its GPL-3.0-only entry
+// nothing.
+func TestLicenceStaleTrivyIgnore(t *testing.T) {
+	out, err := os.ReadFile("testdata/trivy-licence-suppressed.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignore, err := os.ReadFile("testdata/trivy-licence-suppressed.trivyignore.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := licenceReport(out, []byte(`[]`), ignore, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".trivyignore.yaml: GPL-3.0-only matched no finding; delete it and close https://github.com/linuxuser586/gcpemu/issues/2 if nothing else holds it open"}
+	if !slices.Equal(r.Stale, want) {
+		t.Errorf("stale = %q, want %q", r.Stale, want)
+	}
+	if len(r.Problems)+len(r.Disallowed)+len(r.Unlicensed)+len(r.Unread) > 0 {
+		t.Errorf("report = %+v, want only the stale entry", r)
+	}
+}
+
+// TestLicenceStaleException: a .licence-exceptions.json entry for a
+// package Trivy read a licence for, or never saw, is stale.
+func TestLicenceStaleException(t *testing.T) {
+	const issue = "https://github.com/linuxuser586/gcpemu/issues/1"
+	exceptions := `[
+  {"id": "example.com/nolicence@v1.0.0", "issue": "` + issue + `", "expires": "2026-12-31"},
+  {"id": "example.com/nolicence@v0.9.0", "issue": "` + issue + `", "expires": "2026-12-31"}
+]`
+	r, err := licenceReport([]byte(trivyLicencesRead), []byte(exceptions), nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".licence-exceptions.json: example.com/nolicence@v0.9.0 matched no finding; delete it and close " + issue + " if nothing else holds it open"}
+	if !slices.Equal(r.Stale, want) {
+		t.Errorf("stale = %q, want %q", r.Stale, want)
+	}
+	if len(r.Unlicensed) != 0 {
+		t.Errorf("unlicensed = %q, want none", r.Unlicensed)
+	}
+}
+
+// trivyLicencesRead is trivyLicences without the lockfile Trivy read no
+// licence from, so the check saw every package.
+const trivyLicencesRead = `{
+  "Results": [
+    {"Target": "go.mod", "Class": "lang-pkgs", "Type": "gomod", "Packages": [
+      {"ID": "github.com/linuxuser586/gcpemu", "Relationship": "root"},
+      {"ID": "cel.dev/cel-go@v0.33.2", "Licenses": ["Apache-2.0"]},
+      {"ID": "example.com/nolicence@v1.0.0"}
+    ]}
+  ]
+}`

@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // trivyJSON is trivy image --format json output with one HIGH finding,
@@ -31,7 +32,7 @@ func section(md, heading string) string {
 // Edge relay's Helper image. One scan reports it in both sections.
 func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
 	const k3s = "rancher/k3s:v1.0.0-k3s1"
-	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.0", k3s}, nil, map[string][]byte{
+	r, err := reportImages(imageLists{Product: []string{"postgres:18", k3s}, Helper: []string{"busybox:1.0", k3s}}, nil, nil, map[string][]byte{
 		"postgres:18": trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
 		k3s:           trivyJSON("CVE-2026-0003", "3.5.1-r0"),
@@ -60,7 +61,7 @@ func TestImageReportSharedRefScannedOnceShownInBoth(t *testing.T) {
 // both image sections; the issue body only the one with something
 // fixable. Expiring scan exceptions come once, at the end of each.
 func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
-	r, err := reportImages([]string{"postgres:18"}, []string{"busybox:1.0"}, []string{"CVE-2026-0009 (.trivyignore.yaml): expires 2026-12-01"}, map[string][]byte{
+	r, err := reportImages(imageLists{Product: []string{"postgres:18"}, Helper: []string{"busybox:1.0"}}, []string{"CVE-2026-0009 (.trivyignore.yaml): expires 2026-12-01"}, nil, map[string][]byte{
 		"postgres:18": trivyJSON("CVE-2026-0001", ""),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", "1.0.1"),
 	})
@@ -89,7 +90,7 @@ func TestImageReportIssueLeavesOutCleanSection(t *testing.T) {
 // of both sections are counted, a shared reference once.
 func TestImageReportHelperScanFailed(t *testing.T) {
 	const k3s = "rancher/k3s:v1.0.0-k3s1"
-	r, err := reportImages([]string{"postgres:18", k3s}, []string{"busybox:1.0", "docker:1.0.0-dind", k3s}, nil, map[string][]byte{
+	r, err := reportImages(imageLists{Product: []string{"postgres:18", k3s}, Helper: []string{"busybox:1.0", "docker:1.0.0-dind", k3s}}, nil, nil, map[string][]byte{
 		"postgres:18": trivyJSON("CVE-2026-0001", "18.1"),
 		"busybox:1.0": trivyJSON("CVE-2026-0002", ""),
 	})
@@ -120,5 +121,123 @@ func TestImagesToScanOnce(t *testing.T) {
 	want := []string{"postgres:18", "rancher/k3s:v1.0.0-k3s1", "busybox:1.0"}
 	if !slices.Equal(got, want) {
 		t.Errorf("imagesToScan = %q, want %q", got, want)
+	}
+}
+
+// trivySuppressedJSON is trivy image --show-suppressed --format json output,
+// trimmed from Trivy v0.76.2's, in which .trivyignore.yaml suppressed id.
+func trivySuppressedJSON(id string) []byte {
+	return []byte(`{"Results": [{"Target": "alpine 3.22", "ExperimentalModifiedFindings": [
+  {"Type": "vulnerability", "Status": "ignored", "Statement": "https://github.com/linuxuser586/gcpemu/issues/7 krb5", "Source": ".trivyignore.yaml",
+   "Finding": {"VulnerabilityID": "` + id + `", "PkgName": "krb5-libs", "InstalledVersion": "1.22.2-r1", "FixedVersion": "1.22.3-r0", "Severity": "HIGH"}}
+]}]}`)
+}
+
+// vulnIgnores is .trivyignore.yaml with two vulnerabilities entries and a
+// licenses entry, which the image scan cannot judge.
+var vulnIgnores, _ = parseTrivyIgnore([]byte(`vulnerabilities:
+  - id: CVE-2026-0100
+    statement: https://github.com/linuxuser586/gcpemu/issues/7 suppressed in gcpemu only
+    expired_at: 2026-12-31
+  - id: CVE-2026-0200
+    statement: https://github.com/linuxuser586/gcpemu/issues/8 found nowhere
+    expired_at: 2026-12-31
+licenses:
+  - id: GPL-3.0-only
+    statement: https://github.com/linuxuser586/gcpemu/issues/9
+    expired_at: 2026-12-31
+`))
+
+const staleSection = "### Stale scan exceptions"
+
+// TestImageReportStaleVulnerabilityEntry: a vulnerabilities entry no
+// image's results suppressed is stale; one suppressed only in a Release
+// image is not. The Release images get their own section.
+func TestImageReportStaleVulnerabilityEntry(t *testing.T) {
+	r, err := reportImages(imageLists{
+		Product: []string{"postgres:18"},
+		Helper:  []string{"busybox:1.0"},
+		Release: []string{"gcpemu:check"},
+	}, nil, vulnIgnores, map[string][]byte{
+		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
+		"busybox:1.0":  trivyJSON("CVE-2026-0002", ""),
+		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(section(r.Summary, "## Release images"), "| `gcpemu:check` | 0 | 0 | 0 |") {
+		t.Errorf("summary lacks the Release images section:\n%s", r.Summary)
+	}
+	want := "- .trivyignore.yaml: CVE-2026-0200 matched no finding; delete it and close https://github.com/linuxuser586/gcpemu/issues/8 if nothing else holds it open\n"
+	for name, md := range map[string]string{"summary": r.Summary, "issue": r.Issue} {
+		_, stale, ok := strings.Cut(md, staleSection+"\n\n")
+		if !ok || stale != want {
+			t.Errorf("%s's stale section = %q, want %q", name, stale, want)
+		}
+	}
+}
+
+// TestImageReportStaleNotJudgedAfterFailedScan: a scan that failed might
+// have been the one an entry suppressed, so none is judged, and the
+// section says why.
+func TestImageReportStaleNotJudgedAfterFailedScan(t *testing.T) {
+	r, err := reportImages(imageLists{
+		Product: []string{"postgres:18"},
+		Release: []string{"gcpemu:check"},
+	}, nil, vulnIgnores, map[string][]byte{
+		"postgres:18": trivyJSON("CVE-2026-0001", "18.1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stale, _ := strings.Cut(r.Summary, staleSection+"\n\n")
+	if !strings.Contains(stale, "not judged") || !strings.Contains(stale, "could not be scanned") || strings.Contains(stale, "CVE-2026-0200") {
+		t.Errorf("stale section = %q, want only a line saying it was not judged", stale)
+	}
+}
+
+// TestImageReportStaleAloneWritesIssue: with nothing fixable and nothing
+// expiring, a stale entry alone keeps the rolling issue open.
+func TestImageReportStaleAloneWritesIssue(t *testing.T) {
+	r, err := reportImages(imageLists{
+		Product: []string{"postgres:18"},
+		Release: []string{"gcpemu:check"},
+	}, nil, vulnIgnores, map[string][]byte{
+		"postgres:18":  trivyJSON("CVE-2026-0001", ""),
+		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Issue, staleSection) || !strings.Contains(r.Issue, "CVE-2026-0200") {
+		t.Errorf("issue = %q, want the stale entry", r.Issue)
+	}
+}
+
+// TestImageReportStaleNotAlsoExpiring: a stale entry is to be deleted, so
+// it is not also listed as stopping soon, which would ask for its finding
+// to be fixed or its date moved.
+func TestImageReportStaleNotAlsoExpiring(t *testing.T) {
+	expiring, err := expiringExceptions(map[string][]byte{trivyIgnoreFile: []byte(`vulnerabilities:
+  - id: CVE-2026-0100
+    statement: https://github.com/linuxuser586/gcpemu/issues/7
+    expired_at: 2026-11-25
+  - id: CVE-2026-0200
+    statement: https://github.com/linuxuser586/gcpemu/issues/8
+    expired_at: 2026-11-25
+`)}, now, 14*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := reportImages(imageLists{Release: []string{"gcpemu:check"}}, expiring, vulnIgnores, map[string][]byte{
+		"gcpemu:check": trivySuppressedJSON("CVE-2026-0100"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, soon, _ := strings.Cut(r.Issue, "### Scan exceptions that stop holding within two weeks")
+	if !strings.Contains(soon, "CVE-2026-0100") || strings.Contains(soon, "CVE-2026-0200") {
+		t.Errorf("expiring section = %q, want CVE-2026-0100 only", soon)
 	}
 }
