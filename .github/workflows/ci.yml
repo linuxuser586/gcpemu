@@ -14,9 +14,9 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
-      renovate: ${{ steps.filter.outputs.renovate }}
-      gomod: ${{ steps.filter.outputs.gomod }}
-      deps: ${{ steps.filter.outputs.deps }}
+      renovate: ${{ steps.deps.outputs.renovate }}
+      gomod: ${{ steps.deps.outputs.gomod }}
+      deps: ${{ steps.deps.outputs.deps }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -28,6 +28,14 @@ jobs:
               - "**"
               - "!**/*.md"
               - "!docs/**"
+      # A list of paths, any of which triggers its job. Not in the step
+      # above: predicate-quantifier applies to every filter in a step, and
+      # under "every" a changed file would have to be all of go.mod, go.sum
+      # and the allowlist at once, so vulncheck and licences never ran.
+      - uses: dorny/paths-filter@v4
+        id: deps
+        with:
+          filters: |
             renovate:
               - renovate.json
             gomod:
