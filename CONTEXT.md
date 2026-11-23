@@ -22,7 +22,7 @@ _Avoid_: running (for anything judged from the files alone)
 
 **Unconfirmed Instance**:
 What a data directory's files name when asking neither confirms a Live Instance nor rules one out, such as an API gateway that refuses the Admin token or connects and never answers.
-_Avoid_: stale, dead, hung
+_Avoid_: stale, dead, hung (**stale** qualifies a Scan exception or a Recording, never an Instance)
 
 **Product**:
 A GCP product the emulator promises to cover, as counted in the SRS (e.g. Cloud SQL, Cloud Load Balancing with Cloud CDN, Secret Manager, Cloud Build, Compute Engine, Cloud Run). There are fourteen. VPC networks, subnetworks, firewall rules and routers are supporting resources that Products share, not part of the Compute Engine Product.
@@ -809,7 +809,7 @@ An OCI image the release publishes: gcpemu, and gcpemu-echo, the Conformance sui
 _Avoid_: published image, product image
 
 **Scan exception**:
-A committed entry that lets one scan finding pass until its expiry date, naming the issue that tracks fixing it. It stops holding when its date begins, and an expired one fails the scan.
+A committed entry that lets one scan finding pass until its expiry date, naming the issue that tracks fixing it. It stops holding when its date begins, and an expired one fails the scan. A **stale** scan exception matched no finding in a scan that covers everything it could apply to, so it has nothing left to let pass and should be deleted; an entry is stale only when it matches none, however many it once matched, and a stale entry is stale whether or not it has expired.
 _Avoid_: allowlist entry, ignore, waiver, suppression
 
 **Pre-release host checks**:

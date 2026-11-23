@@ -33,7 +33,7 @@ func expiringExceptions(files map[string][]byte, now time.Time, within time.Dura
 			if err != nil || !d.Before(now.Add(within)) {
 				continue
 			}
-			all = append(all, expiring{d, fmt.Sprintf("`%s` (%s) stops holding on %s: %s", e.ID, file, e.Expires, e.Issue)})
+			all = append(all, expiring{d, fmt.Sprintf("%s stops holding on %s: %s", exceptionRef(e.ID, file), e.Expires, e.Issue)})
 		}
 	}
 	slices.SortFunc(all, func(a, b expiring) int {
@@ -44,4 +44,9 @@ func expiringExceptions(files map[string][]byte, now time.Time, within time.Dura
 		out[i] = e.line
 	}
 	return out, nil
+}
+
+// exceptionRef names a scan exception in the weekly scan's lists.
+func exceptionRef(id, file string) string {
+	return fmt.Sprintf("`%s` (%s)", id, file)
 }

@@ -1,0 +1,128 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.76.2"
+  },
+  "ArtifactName": ".",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "go.mod",
+      "Class": "lang-pkgs",
+      "Type": "gomod",
+      "Packages": [
+        {
+          "ID": "example.com/fixture",
+          "Name": "example.com/fixture",
+          "Identifier": {
+            "PURL": "pkg:golang/example.com/fixture",
+            "UID": "e7ca3ed2149bd78f"
+          },
+          "Relationship": "root",
+          "DependsOn": [
+            "github.com/google/uuid@v1.6.0",
+            "golang.org/x/sync@v0.24.0",
+            "golang.org/x/text@v0.43.0"
+          ],
+          "AnalyzedBy": "gomod"
+        },
+        {
+          "ID": "github.com/google/uuid@v1.6.0",
+          "Name": "github.com/google/uuid",
+          "Identifier": {
+            "PURL": "pkg:golang/github.com/google/uuid@v1.6.0",
+            "UID": "be349087f1bf1d83"
+          },
+          "Version": "v1.6.0",
+          "Licenses": [
+            "BSD-3-Clause"
+          ],
+          "Relationship": "direct",
+          "AnalyzedBy": "gomod"
+        },
+        {
+          "ID": "golang.org/x/sync@v0.24.0",
+          "Name": "golang.org/x/sync",
+          "Identifier": {
+            "PURL": "pkg:golang/golang.org/x/sync@v0.24.0",
+            "UID": "f4e540c05ccb14d6"
+          },
+          "Version": "v0.24.0",
+          "Licenses": [
+            "BSD-3-Clause"
+          ],
+          "Relationship": "direct",
+          "AnalyzedBy": "gomod"
+        },
+        {
+          "ID": "golang.org/x/text@v0.43.0",
+          "Name": "golang.org/x/text",
+          "Identifier": {
+            "PURL": "pkg:golang/golang.org/x/text@v0.43.0",
+            "UID": "2eb5a24b5c57bd65"
+          },
+          "Version": "v0.43.0",
+          "Licenses": [
+            "BSD-3-Clause"
+          ],
+          "Relationship": "direct",
+          "AnalyzedBy": "gomod"
+        }
+      ]
+    },
+    {
+      "Target": "go.mod",
+      "Class": "license",
+      "ExperimentalModifiedFindings": [
+        {
+          "Type": "license",
+          "Status": "ignored",
+          "Statement": "https://github.com/linuxuser586/gcpemu/issues/1 several packages",
+          "Source": ".trivyignore.yaml",
+          "Finding": {
+            "Severity": "LOW",
+            "Category": "notice",
+            "PkgName": "github.com/google/uuid",
+            "FilePath": "go.mod",
+            "Name": "BSD-3-Clause",
+            "Text": "",
+            "Confidence": 1,
+            "Link": ""
+          }
+        },
+        {
+          "Type": "license",
+          "Status": "ignored",
+          "Statement": "https://github.com/linuxuser586/gcpemu/issues/1 several packages",
+          "Source": ".trivyignore.yaml",
+          "Finding": {
+            "Severity": "LOW",
+            "Category": "notice",
+            "PkgName": "golang.org/x/sync",
+            "FilePath": "go.mod",
+            "Name": "BSD-3-Clause",
+            "Text": "",
+            "Confidence": 1,
+            "Link": ""
+          }
+        },
+        {
+          "Type": "license",
+          "Status": "ignored",
+          "Statement": "https://github.com/linuxuser586/gcpemu/issues/1 several packages",
+          "Source": ".trivyignore.yaml",
+          "Finding": {
+            "Severity": "LOW",
+            "Category": "notice",
+            "PkgName": "golang.org/x/text",
+            "FilePath": "go.mod",
+            "Name": "BSD-3-Clause",
+            "Text": "",
+            "Confidence": 1,
+            "Link": ""
+          }
+        }
+      ]
+    }
+  ]
+}

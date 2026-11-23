@@ -21,7 +21,7 @@ import (
 )
 
 // gitImage clones a gitSource, as Cloud Build's own fetcher runs git.
-const gitImage = "alpine/git:v2.54.0"
+const gitImage = "alpine/git:v2.54.1"
 
 // revFile is where the git fetcher writes the commit it checked out.
 const revFile = "/.gcpemu-revision"

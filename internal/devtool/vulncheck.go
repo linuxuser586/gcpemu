@@ -21,6 +21,9 @@ type exception struct {
 	Expires string `json:"expires"`
 	// Reason says why the finding can wait; it is not checked.
 	Reason string `json:"reason"`
+	// section is a .trivyignore.yaml entry's section: "vulnerabilities"
+	// or "licenses". It says which scan judges whether it is stale.
+	section string
 }
 
 // issueURL is a gcpemu issue's link; an exception's must be exactly one.
@@ -53,23 +56,46 @@ func (e exception) problems(now time.Time, names exceptionFields) []string {
 	return out
 }
 
-// parseExceptions reads a JSON array of exceptions from file, returning
-// the IDs of the valid ones at now and the problems of the rest. A file
-// that does not parse suppresses nothing.
-func parseExceptions(b []byte, file string, now time.Time) (valid map[string]bool, problems []string) {
-	entries, err := decodeExceptions(b)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("%s: %v", file, err)}
-	}
+// judgeExceptions checks entries, file's exceptions, at now. found holds
+// the IDs a scan found, when that scan covers everything the entries
+// could apply to; nil when it does not, so none is judged stale. A stale
+// entry, one that matched no finding, has nothing left to let pass: it is
+// reported as stale whatever its other problems, since the fix is to
+// delete it. valid holds the IDs of the entries that hold.
+func judgeExceptions(entries []exception, file string, names exceptionFields, found map[string]bool, now time.Time) (valid map[string]bool, problems, stale []string) {
 	valid = map[string]bool{}
 	for _, e := range entries {
-		p := e.problems(now, allowFields)
+		if found != nil && !found[e.ID] {
+			stale = append(stale, staleMessage(file, e))
+			continue
+		}
+		p := e.problems(now, names)
 		for _, q := range p {
 			problems = append(problems, file+": "+q)
 		}
 		valid[e.ID] = len(p) == 0
 	}
-	return valid, problems
+	return valid, problems, stale
+}
+
+// judgeExceptionFile is judgeExceptions over b, file's JSON array of
+// exceptions. A file that does not parse lets nothing pass.
+func judgeExceptionFile(b []byte, file string, found map[string]bool, now time.Time) (valid map[string]bool, problems, stale []string) {
+	entries, err := decodeExceptions(b)
+	if err != nil {
+		return map[string]bool{}, []string{fmt.Sprintf("%s: %v", file, err)}, nil
+	}
+	return judgeExceptions(entries, file, allowFields, found, now)
+}
+
+// staleMessage is a stale entry's line, for a check's output and the
+// weekly scan's rolling issue alike.
+func staleMessage(file string, e exception) string {
+	msg := fmt.Sprintf("%s: %s matched no finding; delete it", file, e.ID)
+	if e.Issue != "" {
+		msg += " and close " + e.Issue + " if nothing else holds it open"
+	}
+	return msg
 }
 
 // decodeExceptions decodes a JSON array of exceptions. An issue that is
@@ -108,6 +134,9 @@ type vulnResult struct {
 	// Problems are invalid or expired allowlist entries, each failing the
 	// check by itself.
 	Problems []string
+	// Stale are scan exceptions no called finding matched, on any GOOS.
+	// Each fails the check.
+	Stale []string
 }
 
 // govulncheckMessage is one object of govulncheck's -format json stream.
@@ -153,8 +182,12 @@ func vulnReport(stream io.Reader, allow []byte, now time.Time) (vulnResult, erro
 		seen[f.OSV] = true
 		r.Unallowed = append(r.Unallowed, vulnFinding{ID: f.OSV, Module: f.Trace[0].Module, Fixed: f.FixedVersion})
 	}
-	allowed, problems := parseExceptions(allow, govulncheckAllowFile, now)
-	r.Problems = problems
+	called := map[string]bool{}
+	for _, f := range r.Unallowed {
+		called[f.ID] = true
+	}
+	allowed, problems, stale := judgeExceptionFile(allow, govulncheckAllowFile, called, now)
+	r.Problems, r.Stale = problems, stale
 	var unallowed []vulnFinding
 	for _, f := range r.Unallowed {
 		if !allowed[f.ID] {
