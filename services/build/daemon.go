@@ -34,7 +34,7 @@ import (
 // (credentials.go).
 
 const (
-	daemonImage = "docker:29.9.2-dind"
+	daemonImage = "docker:29.10.0-dind"
 	daemonAgent = "build-daemon"
 	// daemonEnv passes the registry proxy's address to the daemon's
 	// Sidecar agent.
