@@ -26,7 +26,13 @@ function flaky(method: 'get' | 'put' | 'patch' | 'delete' | 'post', fail: number
 
 describe('gcpFetch no-response retry', () => {
   beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
+  // Fire what a test left pending before the real timers return: since
+  // @mswjs/interceptors 0.45.12 a mocked request that failed leaves a
+  // socket timer behind, and dropping it stalls the next test's POST.
+  afterEach(async () => {
+    await vi.runOnlyPendingTimersAsync()
+    vi.useRealTimers()
+  })
 
   it.each(['PUT', 'PATCH', 'DELETE'] as const)(
     're-sends a %s that got no response, with the same body',

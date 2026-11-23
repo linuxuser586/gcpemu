@@ -22,7 +22,13 @@ function flaky(method: 'put' | 'post', path: string, fail: number) {
 
 describe('admin no-response retry', () => {
   beforeEach(() => vi.useFakeTimers())
-  afterEach(() => vi.useRealTimers())
+  // Fire what a test left pending before the real timers return: since
+  // @mswjs/interceptors 0.45.12 a mocked request that failed leaves a
+  // socket timer behind, and dropping it stalls the next test's POST.
+  afterEach(async () => {
+    await vi.runOnlyPendingTimersAsync()
+    vi.useRealTimers()
+  })
 
   it('re-sends a PUT that got no response, with the same body', async () => {
     const bodies = flaky('put', '/_emu/v1/iam/enforcement', 2)
