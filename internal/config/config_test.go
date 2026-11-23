@@ -498,3 +498,59 @@ func TestExternalManaged(t *testing.T) {
 		}
 	}
 }
+
+// gkeImageGcFreeSpace is the floor of free space on the Runtime disk below
+// which GKE node image GC removes unused images (#1227): 10 GiB unless set,
+// from the config file, GCPEMU_GKE_IMAGE_GC_FREE_SPACE or
+// --gke-image-gc-free-space, as a size or a byte count; 0 turns it off. A
+// value that is not a size is an error, never the default.
+func TestGKEImageGCFreeSpace(t *testing.T) {
+	c := Defaults()
+	if got, err := c.GKEImageGCFreeSpaceBytes(); err != nil || got != 10<<30 {
+		t.Errorf("default = %d, %v; want 10 GiB", got, err)
+	}
+	f := filepath.Join(t.TempDir(), "gcpemu.yaml")
+	if err := os.WriteFile(f, []byte("gkeImageGcFreeSpace: 5GiB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.LoadFile(f); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.GKEImageGCFreeSpaceBytes(); err != nil || got != 5<<30 {
+		t.Errorf("from file = %d, %v; want 5 GiB", got, err)
+	}
+	for v, want := range map[string]int64{"512MiB": 512 << 20, "1073741824": 1 << 30, "0": 0, "2GB": 2e9} {
+		c := Defaults()
+		env := map[string]string{"GCPEMU_GKE_IMAGE_GC_FREE_SPACE": v}
+		if err := c.LoadEnv(func(k string) string { return env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Validate(); err != nil {
+			t.Errorf("GCPEMU_GKE_IMAGE_GC_FREE_SPACE=%q: Validate = %v", v, err)
+		}
+		if got, err := c.GKEImageGCFreeSpaceBytes(); err != nil || got != want {
+			t.Errorf("GCPEMU_GKE_IMAGE_GC_FREE_SPACE=%q: %d, %v; want %d", v, got, err, want)
+		}
+	}
+	c = Defaults()
+	flags := Defaults()
+	flags.GKEImageGCFreeSpace = "3GiB"
+	c.ApplyFlags(&flags, map[string]bool{"GKEImageGCFreeSpace": true})
+	if got, err := c.GKEImageGCFreeSpaceBytes(); err != nil || got != 3<<30 {
+		t.Errorf("from --gke-image-gc-free-space = %d, %v; want 3 GiB", got, err)
+	}
+	for _, v := range []string{"abc", "-1GiB", "5 parsecs", "1.5GiB"} {
+		c := Defaults()
+		c.GKEImageGCFreeSpace = v
+		err := c.Validate()
+		if err == nil {
+			t.Errorf("gkeImageGcFreeSpace %q accepted", v)
+			continue
+		}
+		for _, want := range []string{"--gke-image-gc-free-space", "GCPEMU_GKE_IMAGE_GC_FREE_SPACE", "gkeImageGcFreeSpace", v} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("gkeImageGcFreeSpace %q: error %q does not name %s", v, err, want)
+			}
+		}
+	}
+}

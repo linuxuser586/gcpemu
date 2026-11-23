@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
 )
 
@@ -104,31 +104,16 @@ func (s *Service) Reset(ctx context.Context) error {
 	return nil
 }
 
-// ParseSize parses a size such as "1GiB", "512MiB", "100MB", "64k" or a
-// plain byte count. Empty means DefaultCacheSize.
+// ParseSize parses a cache size as config.ParseSize does, such as "1GiB",
+// "512MiB", "100MB", "64k" or a plain byte count, except that empty means
+// DefaultCacheSize and 0 is refused: a cache cannot be empty.
 func ParseSize(v string) (int64, error) {
-	v = strings.TrimSpace(v)
-	if v == "" {
+	if strings.TrimSpace(v) == "" {
 		return DefaultCacheSize, nil
 	}
-	i := len(v)
-	for i > 0 && (v[i-1] < '0' || v[i-1] > '9') {
-		i--
+	n, err := config.ParseSize(v)
+	if err == nil && n == 0 {
+		err = fmt.Errorf("invalid size %q", v)
 	}
-	num, unit := strings.TrimSpace(v[:i]), strings.ToLower(strings.TrimSpace(v[i:]))
-	n, err := strconv.ParseInt(num, 10, 64)
-	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("invalid size %q", v)
-	}
-	mult := map[string]int64{
-		"": 1, "b": 1,
-		"k": 1 << 10, "kb": 1000, "kib": 1 << 10,
-		"m": 1 << 20, "mb": 1000 * 1000, "mib": 1 << 20,
-		"g": 1 << 30, "gb": 1000 * 1000 * 1000, "gib": 1 << 30,
-		"t": 1 << 40, "tb": 1000 * 1000 * 1000 * 1000, "tib": 1 << 40,
-	}[unit]
-	if mult == 0 {
-		return 0, fmt.Errorf("invalid size unit in %q", v)
-	}
-	return n * mult, nil
+	return n, err
 }
