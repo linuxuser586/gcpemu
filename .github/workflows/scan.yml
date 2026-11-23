@@ -32,7 +32,7 @@ jobs:
       - uses: ./.github/actions/setup-go
       - uses: extractions/setup-just@v4
         with:
-          just-version: 1.56.0
+          just-version: 1.59.0
       - id: vulncheck
         run: |
           set -o pipefail
@@ -70,7 +70,7 @@ jobs:
       - uses: ./.github/actions/setup-go
       - uses: extractions/setup-just@v4
         with:
-          just-version: 1.56.0
+          just-version: 1.59.0
       - uses: ./.github/actions/trivy
       # #1205: the Release images, built from main for this runner's
       # architecture as CI's e2e job builds them, so the report judges
