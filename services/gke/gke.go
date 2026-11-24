@@ -170,6 +170,14 @@ type Service struct {
 	hostNames  map[string]map[string]bool
 	hostWarned map[string]bool
 	hostFail   map[string]error
+	// dnsEPMu guards dnsEP, the listener that serves every cluster's DNS
+	// endpoint (dnsendpoint.go), and dnsEPFail, why it could not be
+	// served when a host query last asked. It is taken before loopMu and
+	// never with hostMu held; the lb and sql Services' LoopbackAddrs are
+	// called under it, which take only their own locks.
+	dnsEPMu   sync.Mutex
+	dnsEP     *dnsEPServer
+	dnsEPFail error
 	// hostSrcMu guards hostAff, each Service port's ClientIP affinity for
 	// host clients by CLUSTERKEY/NAMESPACE/NAME:PORT, and hostUnpreserved,
 	// why a node's pods see host clients come from the node's address
@@ -349,6 +357,7 @@ func (s *Service) Stop(ctx context.Context) error {
 		s.stopRT(rt)
 	}
 	s.mu.Unlock()
+	s.closeDNSEndpoint()
 	_ = g.wait(ctx)
 	return nil
 }
@@ -426,6 +435,10 @@ func (s *Service) Reset(ctx context.Context) error {
 	s.busy = map[string]string{}
 	s.mu.Unlock()
 	s.resetHost()
+	// A reason the DNS endpoints went unserved is asked again.
+	s.dnsEPMu.Lock()
+	s.dnsEPFail = nil
+	s.dnsEPMu.Unlock()
 	return errors.Join(errs...)
 }
 

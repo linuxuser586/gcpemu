@@ -282,6 +282,16 @@ func TestReportHostServices(t *testing.T) {
 	}
 }
 
+// Doctor says why GKE DNS endpoints are not served (#1229).
+func TestReportDNSEndpointUnserved(t *testing.T) {
+	var out strings.Builder
+	reportHostServices(&out, []byte(`{"dnsEndpoint":{"reason":"the host refuses an unprivileged process port 443"}}`))
+	want := "[WARN] GKE DNS endpoints are not served to host clients, so their names get SERVFAIL: the host refuses an unprivileged process port 443\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}
+
 // doctor names the runtime endpoint it picked and why, and any it skipped
 // because it serves Windows containers (#375).
 func TestCheckRuntimeDetection(t *testing.T) {

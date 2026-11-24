@@ -734,28 +734,8 @@ func (s *Service) bringUpServer(ctx context.Context, d *deps, key string, sn emu
 				pub = hostAPI
 			}
 		}
-		c.Endpoint = pub
-		if c.Endpoint == "" || privateEndpoint(c) {
-			c.Endpoint = priv
-		}
 		c.MasterAuth.ClusterCaCertificate = base64.StdEncoding.EncodeToString(creds.CA)
-		if c.PrivateClusterConfig != nil {
-			c.PrivateClusterConfig.PrivateEndpoint = priv
-			c.PrivateClusterConfig.PublicEndpoint = pub
-		}
-		if c.ControlPlaneEndpointsConfig == nil {
-			c.ControlPlaneEndpointsConfig = &containerpb.ControlPlaneEndpointsConfig{}
-		}
-		ipc := c.ControlPlaneEndpointsConfig.IpEndpointsConfig
-		if ipc == nil {
-			ipc = &containerpb.ControlPlaneEndpointsConfig_IPEndpointsConfig{}
-			c.ControlPlaneEndpointsConfig.IpEndpointsConfig = ipc
-		}
-		t, pubOn := true, extIP != ""
-		ipc.Enabled = &t
-		ipc.EnablePublicEndpoint = &pubOn
-		ipc.PublicEndpoint = pub
-		ipc.PrivateEndpoint = priv
+		recordEndpoints(rec.Int.Project, c, priv, pub)
 		return nil
 	})
 }

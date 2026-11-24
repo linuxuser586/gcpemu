@@ -68,7 +68,8 @@ const (
 )
 
 // hostSuffixes are the names the emulated DNS hands to answerHost.
-var hostSuffixes = []string{"svc.cluster.local.", "gke.internal."}
+// gke.goog. holds the clusters' DNS endpoints (dnsendpoint.go).
+var hostSuffixes = []string{"svc.cluster.local.", "gke.internal.", "gke.goog."}
 
 // hostAliases reports whether the host has Loopback aliases; tests replace
 // it.
@@ -165,6 +166,9 @@ func (s *Service) installHostNames() {
 // answerHost answers a host query for name, lower case and fully
 // qualified, under one of hostSuffixes.
 func (s *Service) answerHost(ctx context.Context, name string, qtype uint16) ([]mdns.RR, int) {
+	if strings.HasSuffix(name, dnsEndpointSuffix+".") {
+		return s.answerDNSEndpoint(ctx, name, qtype)
+	}
 	h, ok := parseHostName(name)
 	if !ok {
 		return nil, mdns.RcodeNameError
@@ -793,6 +797,9 @@ type hostServicesJSON struct {
 	// Unpreserved are the nodes whose pods see host clients come from the
 	// node's address instead of the Host address, and why (ADR 0088).
 	Unpreserved []hostUnpreservedJSON `json:"unpreserved"`
+	// DNSEndpoint is where the clusters' DNS endpoints are served, or
+	// why they are not (dnsendpoint.go).
+	DNSEndpoint dnsEndpointJSON `json:"dnsEndpoint"`
 }
 
 type hostUnpreservedJSON struct {
@@ -840,10 +847,11 @@ func splitHostID(id string) (key, ns, name string) {
 func (s *Service) hostServices() hostServicesJSON {
 	stored := s.hostRecords("")
 	full := hostAliases() && len(s.loopCandidates("", "")) == 0
+	dnsEP := s.dnsEndpointStatus()
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
 	out := hostServicesJSON{Services: []hostServiceJSON{}, Collisions: []hostCollisionJSON{}, Unserved: []hostUnservedJSON{}, PoolExhausted: full,
-		Unpreserved: s.unpreserved()}
+		Unpreserved: s.unpreserved(), DNSEndpoint: dnsEP}
 	cols := s.collisionsLocked()
 	for _, id := range slices.Sorted(maps.Keys(stored)) {
 		key, ns, name := splitHostID(id)

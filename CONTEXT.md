@@ -474,6 +474,10 @@ _Avoid_: SPA fallback, error override, 404 rewrite
 **Connect gateway**:
 GKE's fleet API through which clients reach a cluster's Kubernetes API as their own Principal. The emulator treats every GKE cluster as a fleet membership named like the cluster. It is how the Web console reads namespaces, workloads, pods and logs (ADR 0002).
 
+**DNS endpoint**:
+A GKE cluster's control-plane hostname, `gke-<hash>-<project number>.<location>.gke.goog`, through which clients reach its Kubernetes API with a Google access token and `container.clusters.connect`, instead of by an IP endpoint. The emulator serves every cluster's DNS endpoint on one Loopback alias at port 443, to host clients only (ADR 0091).
+_Avoid_: DNS-based endpoint (fine in prose, but the field is `dnsEndpointConfig`), FQDN endpoint
+
 **VM**:
 A Compute Engine virtual machine instance in a Project, as the `instances` resource of `compute.googleapis.com` describes it.
 _Avoid_: instance, Compute Engine instance (an Instance is a running emulator)

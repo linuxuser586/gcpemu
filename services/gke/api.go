@@ -219,6 +219,7 @@ func (s *Service) newCluster(r ref, c *containerpb.Cluster) (*clusterRecord, err
 	c.Location = r.Location
 	c.Zone = r.Location
 	c.Id = s.env.IDs.Hex(16)
+	nameDNSEndpoint(r.Project, c)
 	c.SelfLink = selfLink(r.Project, r.Location, "clusters/"+c.Name)
 	c.CreateTime = now
 	c.Status = containerpb.Cluster_PROVISIONING
@@ -592,9 +593,6 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 	if u.DesiredReleaseChannel != nil {
 		c.ReleaseChannel = u.DesiredReleaseChannel
 	}
-	if u.DesiredMasterAuthorizedNetworksConfig != nil {
-		c.MasterAuthorizedNetworksConfig = u.DesiredMasterAuthorizedNetworksConfig
-	}
 	if u.DesiredLoggingConfig != nil {
 		c.LoggingConfig = u.DesiredLoggingConfig
 	}
@@ -655,10 +653,7 @@ func applyClusterUpdate(r ref, c *containerpb.Cluster, u *containerpb.ClusterUpd
 	if u.DesiredFleet != nil {
 		c.Fleet = u.DesiredFleet
 	}
-	if u.DesiredEnablePrivateEndpoint != nil || u.DesiredPrivateClusterConfig != nil || u.DesiredControlPlaneEndpointsConfig != nil {
-		return apierr.Unimplemented("gcpemu does not support changing control plane endpoint access of an existing cluster; recreate the cluster.")
-	}
-	return nil
+	return applyEndpointsUpdate(r.Project, c, u)
 }
 
 // mutate applies fn to a cluster under an operation of type typ. work, if

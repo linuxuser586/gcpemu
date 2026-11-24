@@ -1105,6 +1105,35 @@ aren't served. Windows has no privileged ports, but a Service port in one of Win
 ranges isn't served on its alias (`netsh int ipv4 show excludedportrange protocol=tcp` lists them).
 A Containerized Instance has no host loopback, so it doesn't answer these names.
 
+### A cluster's DNS endpoint
+
+A cluster's control plane endpoints are reported as set and can be changed in place, as on GKE:
+`controlPlaneEndpointsConfig.ipEndpointsConfig` (`enabled`, `enablePublicEndpoint`, authorized
+networks) and `dnsEndpointConfig`, or `privateClusterConfig.enablePrivateEndpoint`. Turning IP
+endpoints off changes only what the cluster reports: the emulator still serves the Kubernetes API
+on its IP and `--gke-bind` addresses, which its own kubeconfig uses. The one change refused is a
+public endpoint for a cluster created without one, which needs the cluster recreated.
+
+With `dnsEndpointConfig` set, the cluster reports a DNS endpoint in GKE's form,
+`gke-<hash>-<project number>.<location>.gke.goog`, which never moves (ADR 0091). For
+`gcloud container clusters get-credentials --dns-endpoint` (which gcloud also picks when IP
+endpoints are off) to work from the host:
+
+- Send `gke.goog` to the emulator's DNS: `gcpemu dns install --suffix gke.goog`. It isn't routed
+  by default, since every `*.gke.goog` name then resolves only for the emulator's clusters.
+- Trust the Instance CA with `gcpemu ca install`: gcloud's kubeconfig for a DNS endpoint carries
+  no CA.
+- Let the emulator listen on port 443. The name resolves to a Loopback alias shared by every
+  cluster; on Linux an unprivileged process needs
+  `sudo sysctl net.ipv4.ip_unprivileged_port_start=443`, and on macOS the emulator listens on the
+  wildcard address, serving loopback connections only. `gcpemu status` shows where it serves, and
+  `gcpemu doctor` says why when it can't.
+
+A request needs `container.clusters.connect` on the cluster (in `roles/container.clusterViewer`,
+`roles/container.viewer`, `roles/container.developer` and the basic roles) and a DNS endpoint with
+`allowExternalTraffic`, since the host is outside Google Cloud. It then runs on the API server as
+the caller, as through the Connect gateway.
+
 ### VPC workloads reaching the host
 
 A process on the host can stand in for a pod (ADR 0014), on Linux, macOS and native Windows (ADR

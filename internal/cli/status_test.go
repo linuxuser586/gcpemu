@@ -78,6 +78,10 @@ func TestPrintHostServices(t *testing.T) {
 	if out.String() != "" {
 		t.Errorf("none: %q", out.String())
 	}
+	printHostServices(&out, []byte(`{"services":[],"dnsEndpoint":{"address":"127.0.0.9:443"}}`))
+	if want := "gke dns endpoints for host clients at 127.0.0.9:443\n"; out.String() != want {
+		t.Errorf("DNS endpoint: got %q, want %q", out.String(), want)
+	}
 }
 
 // TestStatusGKENodeLimit: plain `gcpemu status` prints the Node limit when
