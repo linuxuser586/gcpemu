@@ -123,6 +123,16 @@ func newBackend(t *testing.T) *backend {
 	return b
 }
 
+// latest drains the recorded requests and returns the newest, or nil when
+// none was recorded.
+func (b *backend) latest() *http.Request {
+	var r *http.Request
+	for len(b.last) > 0 {
+		r = <-b.last
+	}
+	return r
+}
+
 func (b *backend) port() int64 {
 	_, p, _ := net.SplitHostPort(b.Listener.Addr().String())
 	n, _ := strconv.Atoi(p)
@@ -299,10 +309,7 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	if resp.Header.Get("X-Cache-Status") != "disabled" {
 		t.Errorf("api cache status = %q", resp.Header.Get("X-Cache-Status"))
 	}
-	var seen *http.Request
-	for len(origin.last) > 0 {
-		seen = <-origin.last
-	}
+	seen := origin.latest()
 	if seen == nil || seen.Header.Get("X-Client-Region") != "ZZ" || seen.Header.Get("X-TLS") != "TLSv1.3" ||
 		!strings.HasPrefix(seen.Header.Get("X-Forwarded-For"), "127.0.0.") || seen.Header.Get("X-Forwarded-Proto") != "https" {
 		t.Fatalf("backend request headers: %v", seen)
@@ -327,10 +334,7 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("spoofed api: %d", resp.StatusCode)
 	}
-	seen = <-origin.last
-	for len(origin.last) > 0 {
-		seen = <-origin.last
-	}
+	seen = origin.latest()
 	if r, c := seen.Header.Values("X-Client-Region"), seen.Header.Values("X-Client-City"); !slices.Equal(r, []string{"ZZ"}) || !slices.Equal(c, []string{""}) {
 		t.Fatalf("spoofed custom request headers: region %q city %q", r, c)
 	}

@@ -119,7 +119,7 @@ func TestHeaderActions(t *testing.T) {
 	if h.Get("X-Drop") != "" || h.Get("X-Keep") != "2" || len(h.Values("X-Multi")) != 2 || h.Get("X-Region") != "ZZ" {
 		t.Fatalf("headers = %v", h)
 	}
-	applyCustomHeaders(h, []string{"X-Custom: v {client_encrypted}"}, rs)
+	applyCustomRequestHeaders(h, []string{"X-Custom: v {client_encrypted}"}, rs)
 	if h.Get("X-Custom") != "v false" {
 		t.Errorf("custom = %q", h.Get("X-Custom"))
 	}
@@ -128,7 +128,7 @@ func TestHeaderActions(t *testing.T) {
 // A backend service's custom request headers replace every copy the
 // request already carries, once per name, so two entries of one name both
 // reach the backend (#1233). Custom response headers still add.
-func TestCustomRequestHeadersReplace(t *testing.T) {
+func TestCustomHeaderSemantics(t *testing.T) {
 	rs := &reqState{fe: &frontend{}, req: httptest.NewRequest("GET", "/", nil)}
 	h := http.Header{"X-Client-Region": {"CA"}, "X-Client-City": {"Spoofed", "Again"}, "X-A": {"client"}, "X-Other": {"keep"}}
 	applyCustomRequestHeaders(h, []string{"X-Client-Region:{client_region}", "X-Client-City:{client_city}", "X-A:1", "x-a: 2", "bad"}, rs)
@@ -140,8 +140,18 @@ func TestCustomRequestHeadersReplace(t *testing.T) {
 		}
 	}
 
+	// The URL map's header actions apply first; a custom request header of
+	// the same name then replaces the copy they put there.
+	h = http.Header{"X-Route": {"client"}}
+	applyRequestActions(h, []*computev1.HttpHeaderAction{{RequestHeadersToAdd: []*computev1.HttpHeaderOption{
+		{HeaderName: "X-Route", HeaderValue: "urlmap"}}}}, rs)
+	applyCustomRequestHeaders(h, []string{"X-Route:backend"}, rs)
+	if got := h.Values("X-Route"); !slices.Equal(got, []string{"backend"}) {
+		t.Errorf("X-Route after URL map action = %q, want backend", got)
+	}
+
 	rh := http.Header{"X-Served-By": {"backend"}}
-	applyCustomHeaders(rh, []string{"X-Served-By:gcpemu"}, rs)
+	applyCustomResponseHeaders(rh, []string{"X-Served-By:gcpemu"}, rs)
 	if got := rh.Values("X-Served-By"); !slices.Equal(got, []string{"backend", "gcpemu"}) {
 		t.Errorf("response X-Served-By = %q, want backend and gcpemu", got)
 	}

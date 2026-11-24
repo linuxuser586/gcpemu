@@ -258,26 +258,30 @@ func setHeader(h http.Header, name, value string, replace bool) {
 	h.Add(name, value)
 }
 
-// customHeaders parses a backend's "Name:Value" custom headers, skipping
-// entries without a colon.
-func customHeaders(custom []string, rs *reqState) (names, values []string) {
+// customHeader is one parsed "Name:Value" custom header of a backend
+// service or backend bucket.
+type customHeader struct{ name, value string }
+
+// customHeaders parses "Name:Value" custom headers, expanding variables and
+// skipping entries without a colon.
+func customHeaders(custom []string, rs *reqState) []customHeader {
+	var out []customHeader
 	for _, c := range custom {
 		n, v, ok := strings.Cut(c, ":")
 		if !ok {
 			continue
 		}
-		names = append(names, strings.TrimSpace(n))
-		values = append(values, expand(strings.TrimSpace(v), rs))
+		out = append(out, customHeader{strings.TrimSpace(n), expand(strings.TrimSpace(v), rs)})
 	}
-	return names, values
+	return out
 }
 
-// applyCustomHeaders adds a backend's customResponseHeaders beside any copy
-// the backend's response already carries.
-func applyCustomHeaders(h http.Header, custom []string, rs *reqState) {
-	names, values := customHeaders(custom, rs)
-	for i, n := range names {
-		h.Add(n, values[i])
+// applyCustomResponseHeaders adds a backend service's or backend bucket's
+// customResponseHeaders beside any copy the backend's response already
+// carries.
+func applyCustomResponseHeaders(h http.Header, custom []string, rs *reqState) {
+	for _, c := range customHeaders(custom, rs) {
+		h.Add(c.name, c.value)
 	}
 }
 
@@ -287,11 +291,11 @@ func applyCustomHeaders(h http.Header, custom []string, rs *reqState) {
 // name is removed once, before any entry is added, so two entries of one
 // name both reach the backend.
 func applyCustomRequestHeaders(h http.Header, custom []string, rs *reqState) {
-	names, values := customHeaders(custom, rs)
-	for _, n := range names {
-		h.Del(n)
+	cs := customHeaders(custom, rs)
+	for _, c := range cs {
+		h.Del(c.name)
 	}
-	for i, n := range names {
-		h.Add(n, values[i])
+	for _, c := range cs {
+		h.Add(c.name, c.value)
 	}
 }
