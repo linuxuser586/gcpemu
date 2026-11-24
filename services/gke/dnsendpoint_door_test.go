@@ -17,12 +17,18 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/clock"
 	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/emu"
+	"github.com/linuxuser586/gcpemu/internal/loopback"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
 // fakeAliases makes the host have Loopback aliases, or not, and serves DNS
-// endpoints on a free port rather than 443.
+// endpoints on a free port rather than 443. Serving binds a real alias, so
+// a test that needs them skips on a host without them, such as macOS
+// without `sudo gcpemu loopback install`.
 func fakeAliases(t *testing.T, on bool) {
+	if on && !loopback.Aliases() {
+		t.Skipf("no loopback aliases on this host (%s)", loopback.InstallHint)
+	}
 	aliases, port := hostAliases, dnsEndpointPort
 	t.Cleanup(func() { hostAliases, dnsEndpointPort = aliases, port })
 	hostAliases, dnsEndpointPort = func() bool { return on }, 0
