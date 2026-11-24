@@ -201,6 +201,10 @@ A container runtime whose networks the host cannot route into: those that live i
 The machine a container runtime's containers run on: the host, or the virtual machine a runtime such as Docker Desktop, Colima or Podman machine runs in. Its memory is what the runtime reports, not the host's. A rootless runtime on Linux is a VM runtime whose Runtime machine is the host.
 _Avoid_: host (when a VM is meant), Docker Desktop VM (unqualified)
 
+**Runtime disk**:
+The disk on the Runtime machine where the container runtime keeps its volumes and images: the host's disk for Docker or Podman on Linux, the virtual machine's disk under Docker Desktop or Podman machine. Every GKE node's images, every node volume and every other Managed container's data share it, so it fills as their sum grows, whatever size each node pool's boot disk claims.
+_Avoid_: host disk, runtime's disk
+
 **VM relay**:
 The Managed container through which an Instance on a VM runtime reaches its other Managed containers, and they reach it.
 _Avoid_: bridge container, tunnel

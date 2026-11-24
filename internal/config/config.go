@@ -84,6 +84,11 @@ type Config struct {
 	// GKEMaxNodes is the Node limit: the most GKE nodes the Instance runs,
 	// Standard and Autopilot alike (FR-GKE-003, default 5).
 	GKEMaxNodes int `yaml:"gkeMaxNodes" env:"GKE_MAX_NODES"`
+	// GKEImageGCFreeSpace is the free-space floor of GKE node image GC
+	// (#1227, ADR 0073): when the Runtime disk has less free than this,
+	// unused node images are removed. A size such as "10GiB" or a byte
+	// count; empty means DefaultGKEImageGCFreeSpace and "0" turns it off.
+	GKEImageGCFreeSpace string `yaml:"gkeImageGcFreeSpace" env:"GKE_IMAGE_GC_FREE_SPACE"`
 	// ARBind lists extra addresses on which the Artifact Registry registry
 	// is also served, over TLS from the instance CA and only to
 	// authenticated callers, whatever the IAM enforcement level.
@@ -160,6 +165,26 @@ type BuildConfig struct {
 // GKEMaxNodesSetting names the flag, variable and gcpemu.yaml key that
 // set GKEMaxNodes, for messages that tell the user how to raise the limit.
 const GKEMaxNodesSetting = "--gke-max-nodes (GCPEMU_GKE_MAX_NODES, gkeMaxNodes)"
+
+// GKEImageGCFreeSpaceSetting names the flag, variable and gcpemu.yaml key
+// that set GKEImageGCFreeSpace.
+const GKEImageGCFreeSpaceSetting = "--gke-image-gc-free-space (GCPEMU_GKE_IMAGE_GC_FREE_SPACE, gkeImageGcFreeSpace)"
+
+// DefaultGKEImageGCFreeSpace is GKEImageGCFreeSpace when it is not set.
+const DefaultGKEImageGCFreeSpace = 10 << 30
+
+// GKEImageGCFreeSpaceBytes is the free-space floor of GKE node image GC, in
+// bytes; 0 means off.
+func (c *Config) GKEImageGCFreeSpaceBytes() (int64, error) {
+	if strings.TrimSpace(c.GKEImageGCFreeSpace) == "" {
+		return DefaultGKEImageGCFreeSpace, nil
+	}
+	n, err := ParseSize(c.GKEImageGCFreeSpace)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", GKEImageGCFreeSpaceSetting, c.GKEImageGCFreeSpace, err)
+	}
+	return n, nil
+}
 
 // MinAdminTokenLen is the shortest AdminToken accepted.
 const MinAdminTokenLen = 32
@@ -586,6 +611,9 @@ func (c *Config) Validate() error {
 	}
 	if c.GKEMaxNodes < 1 {
 		return fmt.Errorf("invalid %s %d (want at least 1)", GKEMaxNodesSetting, c.GKEMaxNodes)
+	}
+	if _, err := c.GKEImageGCFreeSpaceBytes(); err != nil {
+		return err
 	}
 	if c.AdminToken != "" && len(c.AdminToken) < MinAdminTokenLen {
 		return fmt.Errorf("GCPEMU_ADMIN_TOKEN is %d characters; use at least %d", len(c.AdminToken), MinAdminTokenLen)

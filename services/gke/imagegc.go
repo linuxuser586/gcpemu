@@ -13,6 +13,7 @@ import (
 
 	"cloud.google.com/go/container/apiv1/containerpb"
 
+	"github.com/linuxuser586/gcpemu/internal/config"
 	"github.com/linuxuser586/gcpemu/internal/store"
 )
 
@@ -53,6 +54,9 @@ type nodeImageStore interface {
 	// not, was created from, by ID or reference (imageUsed).
 	inUse(ctx context.Context) (map[string]bool, error)
 	remove(ctx context.Context, id string) error
+	// freeBytes is the free space of the Runtime disk, which holds the
+	// node's volume.
+	freeBytes(ctx context.Context) (int64, error)
 }
 
 // imagePolicy is a node's image GC configuration.
@@ -78,16 +82,10 @@ type imageGC struct {
 	records map[string]*imageRecord // image ID → record
 }
 
-// pass runs one GC pass at now. It returns the images it removed.
-func (g *imageGC) pass(ctx context.Context, st nodeImageStore, p imagePolicy, now time.Time) ([]criImage, error) {
-	imgs, err := st.images(ctx)
-	if err != nil {
-		return nil, err
-	}
-	used, err := st.inUse(ctx)
-	if err != nil {
-		return nil, err
-	}
+// observe records imgs as seen at now, and the ones in used as used at
+// now, and forgets images no longer there. It returns the images' content
+// size.
+func (g *imageGC) observe(imgs []criImage, used map[string]bool, now time.Time) int64 {
 	if g.records == nil {
 		g.records = map[string]*imageRecord{}
 	}
@@ -110,6 +108,27 @@ func (g *imageGC) pass(ctx context.Context, st nodeImageStore, p imagePolicy, no
 			delete(g.records, id)
 		}
 	}
+	return content
+}
+
+// removable reports whether GC at now may remove img from a node whose
+// containers use used: not in use, pinned or preloaded, and first seen
+// at least minAge ago.
+func (g *imageGC) removable(img criImage, used map[string]bool, minAge time.Duration, now time.Time) bool {
+	return !imageUsed(img, used) && !img.Pinned && !preloaded(img) && now.Sub(g.records[img.ID].firstDetected) >= minAge
+}
+
+// pass runs one GC pass at now. It returns the images it removed.
+func (g *imageGC) pass(ctx context.Context, st nodeImageStore, p imagePolicy, now time.Time) ([]criImage, error) {
+	imgs, err := st.images(ctx)
+	if err != nil {
+		return nil, err
+	}
+	used, err := st.inUse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	content := g.observe(imgs, used, now)
 	snap, err := st.snapshotBytes(ctx)
 	if err != nil {
 		return nil, err
@@ -128,8 +147,7 @@ func (g *imageGC) pass(ctx context.Context, st nodeImageStore, p imagePolicy, no
 	}
 	var cands []criImage
 	for _, img := range imgs {
-		r := g.records[img.ID]
-		if imageUsed(img, used) || img.Pinned || preloaded(img) || now.Sub(r.firstDetected) < p.minAge {
+		if !g.removable(img, used, p.minAge, now) {
 			continue
 		}
 		cands = append(cands, img)
@@ -154,6 +172,139 @@ func (g *imageGC) pass(ctx context.Context, st nodeImageStore, p imagePolicy, no
 		removed = append(removed, img)
 	}
 	return removed, errors.Join(errs...)
+}
+
+// floorMargin is how far above the free-space floor a floor pass frees
+// the Runtime disk to, so GC does not hover at the floor.
+const floorMargin = 5 << 30
+
+// floorNode is a node in a floor pass: where it is, its image storage, its
+// GC records and its pool's imageMinimumGcAge.
+type floorNode struct {
+	cluster, node string
+	st            nodeImageStore
+	gc            *imageGC
+	minAge        time.Duration
+}
+
+// floorRemoval is an image a floor pass removed from a node.
+type floorRemoval struct {
+	cluster, node string
+	img           criImage
+}
+
+// floorResult is what a floor pass did: whether it knows the Runtime
+// disk's free space at its end (it could read it, and every removal it
+// tried worked), the images it removed, that free space, and whether that
+// is still under the floor. When it is, storage is each
+// node's image storage (content and snapshots), in nodes' order.
+type floorResult struct {
+	measured bool
+	removed  []floorRemoval
+	free     int64
+	breached bool
+	storage  []int64
+}
+
+// floorPass runs GC's free-space floor at now (#1227, ADR 0073). Every
+// node's volume is on the one Runtime disk, so free space is read in any
+// one of them. Below floor, the unused images of all nodes are ranked
+// together, as each node's GC ranks its own, and removed until free space,
+// read again after each removal, reaches floor plus floorMargin.
+func floorPass(ctx context.Context, nodes []floorNode, floor int64, now time.Time) (floorResult, error) {
+	if len(nodes) == 0 {
+		return floorResult{}, nil
+	}
+	free, err := runtimeDiskFree(ctx, nodes)
+	if err != nil {
+		return floorResult{}, err
+	}
+	res := floorResult{measured: true, free: free}
+	if free >= floor {
+		return res, nil
+	}
+	type cand struct {
+		n   *floorNode
+		img criImage
+		rec *imageRecord
+	}
+	var cands []cand
+	var errs []error
+	for i := range nodes {
+		n := &nodes[i]
+		imgs, err := n.st.images(ctx)
+		if err == nil {
+			var used map[string]bool
+			if used, err = n.st.inUse(ctx); err == nil {
+				n.gc.observe(imgs, used, now)
+				for _, img := range imgs {
+					if n.gc.removable(img, used, n.minAge, now) {
+						cands = append(cands, cand{n, img, n.gc.records[img.ID]})
+					}
+				}
+			}
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("node %s/%s: %w", n.cluster, n.node, err))
+		}
+	}
+	slices.SortFunc(cands, func(a, b cand) int {
+		return cmp.Or(a.rec.lastUsed.Compare(b.rec.lastUsed), a.rec.firstDetected.Compare(b.rec.firstDetected),
+			cmp.Compare(a.n.cluster, b.n.cluster), cmp.Compare(a.n.node, b.n.node), cmp.Compare(a.img.ID, b.img.ID))
+	})
+	for _, c := range cands {
+		if res.free >= floor+floorMargin {
+			break
+		}
+		if err := c.n.st.remove(ctx, c.img.ID); err != nil {
+			errs = append(errs, fmt.Errorf("node %s/%s: removing image %s: %w", c.n.cluster, c.n.node, c.img.ID, err))
+			res.measured = false // an image it could not remove may remain
+			continue
+		}
+		delete(c.n.gc.records, c.img.ID)
+		res.removed = append(res.removed, floorRemoval{c.n.cluster, c.n.node, c.img})
+		free, err := runtimeDiskFree(ctx, nodes)
+		if err != nil {
+			errs = append(errs, err)
+			res.measured = false
+			break
+		}
+		res.free = free
+	}
+	res.breached = res.free < floor
+	if res.breached {
+		res.storage = make([]int64, len(nodes))
+		for i, n := range nodes {
+			imgs, err := n.st.images(ctx)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			snap, err := n.st.snapshotBytes(ctx)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			for _, img := range imgs {
+				snap += img.Size
+			}
+			res.storage[i] = snap
+		}
+	}
+	return res, errors.Join(errs...)
+}
+
+// runtimeDiskFree reads the Runtime disk's free space in the first of
+// nodes that answers: one that is starting or gone may not.
+func runtimeDiskFree(ctx context.Context, nodes []floorNode) (int64, error) {
+	var errs []error
+	for _, n := range nodes {
+		free, err := n.st.freeBytes(ctx)
+		if err == nil {
+			return free, nil
+		}
+		errs = append(errs, fmt.Errorf("node %s/%s: %w", n.cluster, n.node, err))
+	}
+	return 0, errors.Join(errs...)
 }
 
 // preloadedRefs are the system images nodes import at start (versions'
@@ -276,6 +427,28 @@ func (c crictlStore) remove(ctx context.Context, id string) error {
 	return err
 }
 
+func (c crictlStore) freeBytes(ctx context.Context) (int64, error) {
+	out, err := c.exec(ctx, []string{"df", "-B1", "-P", k3sDataDir})
+	if err != nil {
+		return 0, err
+	}
+	// POSIX output: a header, then one line whose fourth field is the
+	// bytes available.
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 {
+		return 0, fmt.Errorf("df %s: unexpected output %q", k3sDataDir, out)
+	}
+	f := strings.Fields(lines[1])
+	if len(f) < 4 {
+		return 0, fmt.Errorf("df %s: unexpected output %q", k3sDataDir, out)
+	}
+	n, err := strconv.ParseInt(f[3], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("df %s: available %q: %w", k3sDataDir, f[3], err)
+	}
+	return n, nil
+}
+
 // poolImagePolicy is the image GC configuration of np's nodes: its boot
 // disk size and its kubeletConfig's thresholds and minimum age, or GKE's
 // defaults.
@@ -315,6 +488,7 @@ func (s *Service) imageGCLoop(ctx context.Context, key string) {
 		case <-t.C:
 		}
 		s.imageGCPass(ctx, key)
+		s.imageGCFloor(ctx)
 	}
 }
 
@@ -330,6 +504,77 @@ func (s *Service) imageGCAll(ctx context.Context) {
 	for _, key := range keys {
 		s.imageGCPass(ctx, key)
 	}
+	s.imageGCFloor(ctx)
+}
+
+// imageGCFloor runs the free-space floor (floorPass) over every running
+// cluster's nodes, unless gkeImageGcFreeSpace is 0. It warns once when a
+// pass ends below the floor because every image left is in use, pinned,
+// preloaded or too new, and again only after a pass has found free space
+// back at or above the floor.
+func (s *Service) imageGCFloor(ctx context.Context) {
+	floor, err := s.env.Config.GKEImageGCFreeSpaceBytes()
+	if err != nil || floor <= 0 {
+		return // Validate refused an unusable value; 0 is off
+	}
+	s.floorMu.Lock()
+	defer s.floorMu.Unlock()
+	var keys []string
+	_ = s.env.Store.View(func(tx store.Tx) error {
+		for _, r := range listClusters(tx, "") {
+			keys = append(keys, r.key())
+		}
+		return nil
+	})
+	// The pass ranks every cluster's records together, so it holds every
+	// cluster's gcMu until it ends, taken in key order. A cluster's own pass
+	// takes only its gcMu, so the two cannot deadlock.
+	slices.Sort(keys)
+	var nodes []floorNode
+	for _, key := range keys {
+		rt := s.rtFor(key)
+		rt.gcMu.Lock()
+		defer rt.gcMu.Unlock()
+		for _, n := range s.runningGCNodes(ctx, key, rt) {
+			nodes = append(nodes, floorNode{cluster: key, node: n.name, st: n.st, gc: n.gc, minAge: n.policy.minAge})
+		}
+	}
+	res, err := floorPass(ctx, nodes, floor, s.env.Clock.Now())
+	s.logFloor(ctx, nodes, floor, res, err)
+}
+
+// logFloor logs what a floor pass over nodes did: its removals by node, an
+// error, and the warning when it ended below the floor (imageGCFloor).
+func (s *Service) logFloor(ctx context.Context, nodes []floorNode, floor int64, res floorResult, err error) {
+	type at struct{ cluster, node string }
+	byNode := map[at][]string{}
+	var order []at
+	for _, r := range res.removed {
+		k := at{r.cluster, r.node}
+		if byNode[k] == nil {
+			order = append(order, k)
+		}
+		byNode[k] = append(byNode[k], imageName(r.img))
+	}
+	for _, k := range order {
+		s.env.Log.Info("gke: node image GC removed unused images below the free-space floor", "cluster", k.cluster, "node", k.node, "images", byNode[k], "floor", floor)
+	}
+	if err != nil && ctx.Err() == nil {
+		s.env.Log.Debug("gke: node image GC free-space floor", "err", err)
+	}
+	switch {
+	case !res.measured:
+	case res.breached && !s.floorWarned:
+		s.floorWarned = true
+		args := []any{"free", res.free, "floor", floor}
+		for i, n := range nodes {
+			args = append(args, n.cluster+"/"+n.node, res.storage[i])
+		}
+		s.env.Log.Warn("gke: the Runtime disk is still below node image GC's free-space floor after removing every unused node image it could; "+
+			"free space on it, or lower "+config.GKEImageGCFreeSpaceSetting+"; each node's image storage follows", args...)
+	case !res.breached:
+		s.floorWarned = false
+	}
 }
 
 // imageGCPass runs image GC on each node of cluster key, if it is running.
@@ -339,47 +584,66 @@ func (s *Service) imageGCPass(ctx context.Context, key string) {
 	rt := s.rtFor(key)
 	rt.gcMu.Lock()
 	defer rt.gcMu.Unlock()
-	rec, err := s.loadKey(key)
-	if err != nil {
-		return
-	}
-	c := rec.cluster()
-	if c.Status != containerpb.Cluster_RUNNING && c.Status != containerpb.Cluster_RECONCILING {
-		return
-	}
-	storeOf, err := s.nodeImageStores(ctx, c, key)
-	if err != nil {
-		return
-	}
-	if rt.imageGC == nil {
-		rt.imageGC = map[string]*imageGC{}
-	}
-	nodes := map[string]bool{}
-	for _, n := range rec.Int.Nodes {
-		nodes[n.Name] = true
-		st := storeOf(n.Name)
-		g := rt.imageGC[n.Name]
-		if g == nil {
-			g = &imageGC{}
-			rt.imageGC[n.Name] = g
-		}
-		removed, err := g.pass(ctx, st, poolImagePolicy(findPool(c, n.Pool)), s.env.Clock.Now())
+	for _, n := range s.runningGCNodes(ctx, key, rt) {
+		removed, err := n.gc.pass(ctx, n.st, n.policy, s.env.Clock.Now())
 		if len(removed) > 0 {
 			var names []string
 			for _, img := range removed {
 				names = append(names, imageName(img))
 			}
-			s.env.Log.Info("gke: node image GC removed unused images", "cluster", key, "node", n.Name, "images", names)
+			s.env.Log.Info("gke: node image GC removed unused images", "cluster", key, "node", n.name, "images", names)
 		}
 		if err != nil && ctx.Err() == nil {
-			s.env.Log.Debug("gke: node image GC", "cluster", key, "node", n.Name, "err", err)
+			s.env.Log.Debug("gke: node image GC", "cluster", key, "node", n.name, "err", err)
 		}
 	}
+}
+
+// gcNode is a node of a running cluster as image GC sees it: its image
+// storage, its GC state and its pool's image GC policy.
+type gcNode struct {
+	name   string
+	st     nodeImageStore
+	gc     *imageGC
+	policy imagePolicy
+}
+
+// runningGCNodes returns the nodes of cluster key, or none if it is not
+// running, and forgets the GC state of nodes it no longer has. Callers
+// hold rt.gcMu.
+func (s *Service) runningGCNodes(ctx context.Context, key string, rt *clusterRT) []gcNode {
+	rec, err := s.loadKey(key)
+	if err != nil {
+		return nil
+	}
+	c := rec.cluster()
+	if c.Status != containerpb.Cluster_RUNNING && c.Status != containerpb.Cluster_RECONCILING {
+		return nil
+	}
+	storeOf, err := s.nodeImageStores(ctx, c, key)
+	if err != nil {
+		return nil
+	}
+	if rt.imageGC == nil {
+		rt.imageGC = map[string]*imageGC{}
+	}
+	var nodes []gcNode
+	have := map[string]bool{}
+	for _, n := range rec.Int.Nodes {
+		have[n.Name] = true
+		g := rt.imageGC[n.Name]
+		if g == nil {
+			g = &imageGC{}
+			rt.imageGC[n.Name] = g
+		}
+		nodes = append(nodes, gcNode{name: n.Name, st: storeOf(n.Name), gc: g, policy: poolImagePolicy(findPool(c, n.Pool))})
+	}
 	for n := range rt.imageGC {
-		if !nodes[n] {
+		if !have[n] {
 			delete(rt.imageGC, n)
 		}
 	}
+	return nodes
 }
 
 // imageName is how logs name img: a tag, else a digest, else its ID.

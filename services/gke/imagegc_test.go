@@ -1,7 +1,10 @@
 package gke
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strings"
@@ -23,6 +26,24 @@ type fakeImageStore struct {
 	imgs     []criImage
 	used     map[string]bool // image ID → used by a container
 	removed  []string
+	// failRemove makes every removal fail.
+	failRemove bool
+	// disk is the Runtime disk the node's volume is on; nil means one
+	// with ample room.
+	disk *fakeDisk
+}
+
+// fakeDisk is a Runtime disk that nodes share: removing an image frees its
+// size plus extra, standing for its snapshots.
+type fakeDisk struct {
+	free, extra int64
+}
+
+func (f *fakeImageStore) freeBytes(context.Context) (int64, error) {
+	if f.disk == nil {
+		return 1 << 50, nil
+	}
+	return f.disk.free, nil
 }
 
 func (f *fakeImageStore) snapshotBytes(context.Context) (int64, error) { return f.snapshot, nil }
@@ -31,7 +52,17 @@ func (f *fakeImageStore) images(context.Context) ([]criImage, error) {
 }
 func (f *fakeImageStore) inUse(context.Context) (map[string]bool, error) { return f.used, nil }
 func (f *fakeImageStore) remove(_ context.Context, id string) error {
+	if f.failRemove {
+		return errors.New("crictl rmi failed")
+	}
 	f.removed = append(f.removed, id)
+	if f.disk != nil {
+		for _, i := range f.imgs {
+			if i.ID == id {
+				f.disk.free += i.Size + f.disk.extra
+			}
+		}
+	}
 	f.imgs = slices.DeleteFunc(f.imgs, func(i criImage) bool { return i.ID == id })
 	return nil
 }
@@ -220,5 +251,288 @@ func TestImageGCOnClockAdvance(t *testing.T) {
 	}
 	if got := stores["big-1"].removed; len(got) != 0 {
 		t.Errorf("big pool's node (11 of 100 GiB) removed %v, want none", got)
+	}
+}
+
+// The Runtime disk's free space is the available column of df over the
+// node's k3s data directory, whose volume is on the Runtime disk (#1227);
+// output that has no such column is an error, not zero.
+func TestCrictlStoreFreeBytes(t *testing.T) {
+	// Captured from a k3s node image over a named volume.
+	const dfOut = "Filesystem                            1-blocks         Used    Available Capacity Mounted on\n" +
+		"/dev/mapper/ubuntu--vg-ubuntu--lv 980105256960 789929299968 140313862144      85% /var/lib/rancher/k3s\n"
+	var ran [][]string
+	out := dfOut
+	st := crictlStore{exec: func(_ context.Context, cmd []string) ([]byte, error) {
+		ran = append(ran, cmd)
+		return []byte(out), nil
+	}}
+	free, err := st.freeBytes(context.Background())
+	if err != nil || free != 140313862144 {
+		t.Errorf("freeBytes = %d, %v; want 140313862144", free, err)
+	}
+	if want := [][]string{{"df", "-B1", "-P", "/var/lib/rancher/k3s"}}; !reflect.DeepEqual(ran, want) {
+		t.Errorf("ran %v, want %v", ran, want)
+	}
+	for _, bad := range []string{"", "Filesystem 1-blocks Used Available Capacity Mounted on\n", "Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/x 10 5 lots 50% /var/lib/rancher/k3s\n"} {
+		out = bad
+		if free, err := st.freeBytes(context.Background()); err == nil {
+			t.Errorf("df output %q: freeBytes = %d, want an error", bad, free)
+		}
+	}
+}
+
+// neverFull is a boot disk GC never fires on: a pass only keeps records.
+var neverFull = imagePolicy{capacity: 1 << 60, high: 85, low: 80, minAge: 2 * time.Minute}
+
+// observe runs a GC pass at now with used as the images containers use, so
+// g records first sight and last use without removing anything.
+func observe(t *testing.T, g *imageGC, st *fakeImageStore, used map[string]bool, now time.Time) {
+	t.Helper()
+	st.used = used
+	if removed, err := g.pass(context.Background(), st, neverFull, now); err != nil || len(removed) > 0 {
+		t.Fatalf("observing pass removed %v, %v", removed, err)
+	}
+}
+
+// When the Runtime disk has less free than the floor, unused images go from
+// every node of every cluster in one ranking, the one used longest ago
+// first, each node's copy of an image ranked by that node's own use, until
+// free space, measured again, is back to the floor plus a margin (#1227).
+func TestImageGCFloorFreesOldestUsedAcrossNodes(t *testing.T) {
+	disk := &fakeDisk{free: 8 * gib}
+	img := func(id string) criImage { return criImage{ID: id, Size: 2 * gib} }
+	stores := map[string]*fakeImageStore{
+		"a1": {disk: disk, imgs: []criImage{img("x"), img("y")}},
+		"a2": {disk: disk, imgs: []criImage{img("x")}},
+		"b1": {disk: disk, imgs: []criImage{img("z"), img("w")}},
+	}
+	gcs := map[string]*imageGC{"a1": {}, "a2": {}, "b1": {}}
+	t5 := gcT0.Add(5 * time.Minute)
+	observe(t, gcs["a1"], stores["a1"], map[string]bool{"x": true}, gcT0)
+	observe(t, gcs["a2"], stores["a2"], nil, gcT0)
+	observe(t, gcs["b1"], stores["b1"], map[string]bool{"z": true}, gcT0)
+	observe(t, gcs["a1"], stores["a1"], map[string]bool{"y": true}, t5)
+	observe(t, gcs["a2"], stores["a2"], nil, t5)
+	observe(t, gcs["b1"], stores["b1"], map[string]bool{"w": true}, t5)
+	for _, st := range stores {
+		st.used = nil
+	}
+	var nodes []floorNode
+	for _, n := range []struct{ cluster, node string }{{"c1", "a1"}, {"c1", "a2"}, {"c2", "b1"}} {
+		nodes = append(nodes, floorNode{cluster: n.cluster, node: n.node, st: stores[n.node], gc: gcs[n.node], minAge: 2 * time.Minute})
+	}
+	res, err := floorPass(context.Background(), nodes, 10*gib, gcT0.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// From 8 GiB free, 2 GiB a removal: four removals reach 16 GiB, past
+	// 10 + 5. a2's x was never used; a1's x and b1's z were last used at
+	// T0, a1 before b1 by name; then a1's y and b1's w at T5.
+	var got []string
+	for _, r := range res.removed {
+		got = append(got, r.node+"/"+r.img.ID)
+	}
+	if want := []string{"a2/x", "a1/x", "b1/z", "a1/y"}; !slices.Equal(got, want) {
+		t.Errorf("removed %v, want %v", got, want)
+	}
+	if res.free != 16*gib || res.breached {
+		t.Errorf("free %d GiB, breached %v; want 16 GiB, false", res.free/gib, res.breached)
+	}
+	if got := stores["b1"].imgs; len(got) != 1 || got[0].ID != "w" {
+		t.Errorf("b1 kept %v, want w", got)
+	}
+}
+
+// Above the floor, a floor pass removes nothing and lists no images.
+func TestImageGCFloorAboveFloorRemovesNothing(t *testing.T) {
+	st := &fakeImageStore{disk: &fakeDisk{free: 11 * gib}, imgs: []criImage{{ID: "old", Size: gib}}}
+	res, err := floorPass(context.Background(), []floorNode{{cluster: "c", node: "n", st: st, gc: &imageGC{}}}, 10*gib, gcT0.Add(time.Hour))
+	if err != nil || len(res.removed) > 0 || res.breached || res.free != 11*gib {
+		t.Errorf("floorPass = %+v, %v; want nothing removed, 11 GiB free", res, err)
+	}
+}
+
+// Below the floor, images in use (by ID, tag or digest), pinned and
+// preloaded ones, and ones first seen within the minimum age still stay;
+// with nothing else to remove, the floor stays breached.
+func TestImageGCFloorKeepsProtectedImages(t *testing.T) {
+	var preload string
+	for ref := range preloadedRefs {
+		preload = ref
+		break
+	}
+	st := &fakeImageStore{disk: &fakeDisk{free: gib}, imgs: []criImage{
+		{ID: "used", Tags: []string{"app:v1"}, Size: gib},
+		{ID: "used-by-id", Size: gib},
+		{ID: "used-by-digest", Digests: []string{"app@sha256:aa"}, Size: gib},
+		{ID: "pinned", Size: gib, Pinned: true},
+		{ID: "system", Tags: []string{preload}, Size: gib},
+		{ID: "old", Size: gib},
+	}}
+	g := &imageGC{}
+	st.used = map[string]bool{"app:v1": true, "used-by-id": true, "app@sha256:aa": true}
+	observe(t, g, st, st.used, gcT0)
+	// young is first seen by the floor pass itself, within the minimum age.
+	st.imgs = append(st.imgs, criImage{ID: "young", Size: gib})
+	res, err := floorPass(context.Background(), []floorNode{{cluster: "c", node: "n", st: st, gc: g, minAge: 2 * time.Minute}}, 10*gib, gcT0.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.removed; !slices.Equal(got, []string{"old"}) {
+		t.Errorf("removed %v, want only old", got)
+	}
+	if !res.breached || res.free != 2*gib {
+		t.Errorf("free %d GiB, breached %v; want 2 GiB, still breached", res.free/gib, res.breached)
+	}
+}
+
+// floorCluster stores a RUNNING cluster name with one node of the default
+// pool (100 GB boot disk), whose GC never fires on these tests' sizes.
+func floorCluster(t *testing.T, s *Service, name, node string) string {
+	t.Helper()
+	rec := &clusterRecord{Int: clusterInternal{Project: "gc-project", Location: "us-central1-a", Name: name,
+		Nodes: []nodeRecord{{Name: node, Pool: "default-pool"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: name, Id: "id-" + name, Status: containerpb.Cluster_RUNNING,
+		NodePools: []*containerpb.NodePool{{Name: "default-pool", Config: &containerpb.NodeConfig{}}}})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	return rec.key()
+}
+
+// In a Deterministic Instance, advancing the Emulator clock runs the
+// free-space floor across every running cluster's nodes (#1227): below
+// 10 GiB free, unused images go from both clusters until 15 GiB is free.
+// A pass that ends still below the floor logs one warning, naming the free
+// space, the floor and each node's image storage, and logs it again only
+// after free space has been back above the floor.
+func TestImageGCFloorOnClockAdvance(t *testing.T) {
+	s := newDeterministicService(t)
+	var logs bytes.Buffer
+	s.env.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	disk := &fakeDisk{free: 8 * gib}
+	img := func(id string) criImage { return criImage{ID: id, Size: 2 * gib} }
+	stores := map[string]*fakeImageStore{
+		floorCluster(t, s, "c1", "n1"): {disk: disk, imgs: []criImage{img("a"), img("b")}},
+		floorCluster(t, s, "c2", "n2"): {disk: disk, imgs: []criImage{img("c"), img("d")}},
+	}
+	s.testImageStore = func(key, node string) nodeImageStore { return stores[key] }
+	warnings := func() int { return strings.Count(logs.String(), "level=WARN") }
+	ctx := context.Background()
+	advance := func(d time.Duration) {
+		t.Helper()
+		s.env.Clock.(*clock.Offset).Advance(d)
+		if err := s.ClockAdvanced(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	advance(0) // every image first seen just now: none can go yet
+	if n := warnings(); n != 1 {
+		t.Fatalf("%d warnings with 8 GiB free and nothing removable, want 1:\n%s", n, &logs)
+	}
+	for _, want := range []string{"free=8589934592", "floor=10737418240", "gc-project/us-central1-a/c1/n1=4294967296"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("warning does not name %s:\n%s", want, &logs)
+		}
+	}
+	advance(5 * time.Minute)
+	var removed int
+	for key, st := range stores {
+		if len(st.removed) != 2 {
+			t.Errorf("cluster %s removed %v, want both its images", key, st.removed)
+		}
+		removed += len(st.removed)
+	}
+	if disk.free != 16*gib || removed != 4 {
+		t.Errorf("free %d GiB after %d removals, want 16 GiB after 4", disk.free/gib, removed)
+	}
+	if n := warnings(); n != 1 {
+		t.Errorf("%d warnings after freeing to 16 GiB, want still 1", n)
+	}
+
+	disk.free = gib // something other than images filled the disk
+	advance(time.Minute)
+	advance(time.Minute)
+	if n := warnings(); n != 2 {
+		t.Errorf("%d warnings after crossing the floor again, want 2 (one per crossing)", n)
+	}
+}
+
+// gkeImageGcFreeSpace 0 turns the floor off: below any free space, a clock
+// advance removes nothing and warns of nothing.
+func TestImageGCFloorOff(t *testing.T) {
+	s := newDeterministicService(t)
+	s.env.Config.GKEImageGCFreeSpace = "0"
+	var logs bytes.Buffer
+	s.env.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	st := &fakeImageStore{disk: &fakeDisk{free: 0}, imgs: []criImage{{ID: "old", Size: gib}}}
+	floorCluster(t, s, "c", "n")
+	s.testImageStore = func(string, string) nodeImageStore { return st }
+	for range 2 {
+		s.env.Clock.(*clock.Offset).Advance(10 * time.Minute)
+		if err := s.ClockAdvanced(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(st.removed) > 0 || strings.Contains(logs.String(), "level=WARN") {
+		t.Errorf("floor off: removed %v, logs:\n%s", st.removed, &logs)
+	}
+}
+
+// Each node's copy of an image is its own entry: when removing the copy
+// used longest ago frees enough, the other node's copy stays.
+func TestImageGCFloorRemovesOneCopyOfAnImage(t *testing.T) {
+	disk := &fakeDisk{free: 9 * gib}
+	stores := map[string]*fakeImageStore{
+		"n1": {disk: disk, imgs: []criImage{{ID: "x", Size: 6 * gib}}},
+		"n2": {disk: disk, imgs: []criImage{{ID: "x", Size: 6 * gib}}},
+	}
+	gcs := map[string]*imageGC{"n1": {}, "n2": {}}
+	observe(t, gcs["n1"], stores["n1"], map[string]bool{"x": true}, gcT0)
+	observe(t, gcs["n2"], stores["n2"], map[string]bool{"x": true}, gcT0)
+	observe(t, gcs["n2"], stores["n2"], map[string]bool{"x": true}, gcT0.Add(5*time.Minute))
+	stores["n1"].used, stores["n2"].used = nil, nil
+	var nodes []floorNode
+	for _, n := range []string{"n1", "n2"} {
+		nodes = append(nodes, floorNode{cluster: "c", node: n, st: stores[n], gc: gcs[n], minAge: 2 * time.Minute})
+	}
+	res, err := floorPass(context.Background(), nodes, 10*gib, gcT0.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 9 + 6 = 15 GiB, the floor plus the margin: n1's copy, last used at
+	// T0, goes; n2's, used at T5, stays.
+	if !slices.Equal(stores["n1"].removed, []string{"x"}) || len(stores["n2"].removed) > 0 {
+		t.Errorf("removed n1 %v, n2 %v; want only n1's x", stores["n1"].removed, stores["n2"].removed)
+	}
+	if res.free != 15*gib || res.breached {
+		t.Errorf("free %d GiB, breached %v; want 15 GiB, false", res.free/gib, res.breached)
+	}
+}
+
+// A pass whose removals fail does not know what is left, so it is not
+// taken as having ended below the floor: no warning is logged on it.
+func TestImageGCFloorFailedRemovalDoesNotWarn(t *testing.T) {
+	s := newDeterministicService(t)
+	var logs bytes.Buffer
+	s.env.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	disk := &fakeDisk{free: 20 * gib}
+	st := &fakeImageStore{disk: disk, imgs: []criImage{{ID: "old", Size: gib}}, failRemove: true}
+	floorCluster(t, s, "c", "n")
+	s.testImageStore = func(string, string) nodeImageStore { return st }
+	for _, free := range []int64{20 * gib, gib, gib} { // above, then below
+		disk.free = free
+		if err := s.ClockAdvanced(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		s.env.Clock.(*clock.Offset).Advance(10 * time.Minute)
+	}
+	if len(st.removed) != 0 {
+		t.Fatalf("removed %v", st.removed)
+	}
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Errorf("warned after removals failed:\n%s", &logs)
 	}
 }

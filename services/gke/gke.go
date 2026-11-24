@@ -139,6 +139,11 @@ type Service struct {
 	// testImageStore, set by tests, replaces each node's image storage
 	// (imagegc.go).
 	testImageStore func(key, node string) nodeImageStore
+	// floorMu serialises image GC's free-space floor passes (imagegc.go),
+	// and guards floorWarned: whether the last floor pass that knew the
+	// Runtime disk's free space ended below the floor, and was warned of.
+	floorMu     sync.Mutex
+	floorWarned bool
 	// bundleNow, set by tests, replaces the real time the CA injector's
 	// bundle cache expires by (cainject.go).
 	bundleNow func() time.Time
