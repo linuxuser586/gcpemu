@@ -156,8 +156,11 @@ func compilePattern(pattern string) func(string) bool {
 // Verbs basic viewers get, and permissions editors lack. Basic roles are
 // computed by rule over the universe rather than listed (FR-IAM-002).
 var (
-	viewerVerb       = regexp.MustCompile(`^(get|list)`)
-	viewerExcluded   = map[string]bool{"getAccessToken": true, "getOpenIdToken": true}
+	viewerVerb     = regexp.MustCompile(`^(get|list)`)
+	viewerExcluded = map[string]bool{"getAccessToken": true, "getOpenIdToken": true}
+	// viewerIncluded are the other permissions Google gives basic viewers,
+	// such as connecting to a GKE cluster's DNS endpoint (#1229).
+	viewerIncluded   = map[string]bool{"container.clusters.connect": true}
 	editorExcludedRe = regexp.MustCompile(`\.(setIamPolicy)$|^iam\.roles\.(create|delete|undelete|update)$|^iam\.denypolicies\.(create|delete|update)$|^iam\.serviceAccounts\.(getAccessToken|getOpenIdToken|implicitDelegation|signBlob|signJwt|setIamPolicy)$|^resourcemanager\.projects\.(delete|undelete|move|create)$|^container\.(clusterRoles|roles)\.(bind|escalate)$|^storage\.objects\.(overrideUnlockedRetention)$|^secretmanager\.versions\.access$`)
 )
 
@@ -170,7 +173,7 @@ func basicIncludes(basic, perm string) bool {
 		return !editorExcludedRe.MatchString(perm)
 	case "viewer":
 		verb := perm[strings.LastIndexByte(perm, '.')+1:]
-		return viewerVerb.MatchString(verb) && !viewerExcluded[verb]
+		return viewerIncluded[perm] || viewerVerb.MatchString(verb) && !viewerExcluded[verb]
 	}
 	return false
 }

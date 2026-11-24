@@ -65,9 +65,23 @@ func (s *Service) serveConnectGateway(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, err)
 		return
 	}
-	c := rec.cluster()
-	if c.Status != containerpb.Cluster_RUNNING && c.Status != containerpb.Cluster_RECONCILING {
+	s.proxyKube(w, r, rec, rest)
+}
+
+// proxyKube passes r to the API server of the running cluster rec at
+// path, as the Principal in r's context: the admin client certificate
+// authenticates the emulator, and the caller's own credentials and
+// impersonation are not passed on.
+func (s *Service) proxyKube(w http.ResponseWriter, r *http.Request, rec *clusterRecord, path string) {
+	name := rec.Int.Name
+	if c := rec.cluster(); c.Status != containerpb.Cluster_RUNNING && c.Status != containerpb.Cluster_RECONCILING {
 		apierr.Write(w, apierr.FailedPrecondition("Cluster %s is not running (status %s).", name, c.Status))
+		return
+	}
+	// Without a Principal the request would run as the admin certificate.
+	user := emu.PrincipalFrom(r.Context()).Email()
+	if user == "" {
+		apierr.Write(w, apierr.Unauthenticated("Reaching the API server of cluster %s needs a caller to impersonate; the request has no Principal.", name))
 		return
 	}
 	kc, err := s.kube(rec.key())
@@ -80,19 +94,11 @@ func (s *Service) serveConnectGateway(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, apierr.Internal("cluster endpoint %q: %v", kc.base, err))
 		return
 	}
-	// Without a Principal the request would run as the admin certificate.
-	user := emu.PrincipalFrom(r.Context()).Email()
-	if user == "" {
-		apierr.Write(w, apierr.Unauthenticated("The Connect gateway needs a caller to impersonate; the request has no Principal."))
-		return
-	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme, pr.Out.URL.Host = target.Scheme, target.Host
-			pr.Out.URL.Path, pr.Out.URL.RawPath = rest, ""
+			pr.Out.URL.Path, pr.Out.URL.RawPath = path, ""
 			pr.Out.Host = target.Host
-			// The admin client certificate authenticates the gateway; the
-			// caller's own credentials and impersonation are not passed on.
 			pr.Out.Header.Del("Authorization")
 			for k := range pr.Out.Header {
 				if strings.HasPrefix(http.CanonicalHeaderKey(k), "Impersonate-") {

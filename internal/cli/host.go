@@ -154,13 +154,26 @@ type hostServices struct {
 		Node    string `json:"node"`
 		Reason  string `json:"reason"`
 	} `json:"unpreserved"`
+	// DNSEndpoint is where GKE clusters' DNS endpoints are served, or why
+	// they are not.
+	DNSEndpoint struct {
+		Address string `json:"address"`
+		Reason  string `json:"reason"`
+	} `json:"dnsEndpoint"`
 }
 
-// printHostServices lists, for `gcpemu status`, the Services that hold
-// Loopback aliases: each one's names, alias and served ports.
+// printHostServices lists, for `gcpemu status`, where GKE DNS endpoints
+// are served and the Services that hold Loopback aliases: each one's
+// names, alias and served ports.
 func printHostServices(out io.Writer, body []byte) {
 	var hs hostServices
-	if json.Unmarshal(body, &hs) != nil || len(hs.Services) == 0 {
+	if json.Unmarshal(body, &hs) != nil {
+		return
+	}
+	if a := hs.DNSEndpoint.Address; a != "" {
+		fmt.Fprintf(out, "gke dns endpoints for host clients at %s\n", a)
+	}
+	if len(hs.Services) == 0 {
 		return
 	}
 	fmt.Fprintln(out, "kubernetes services for host clients:")
@@ -183,7 +196,8 @@ func printHostServices(out io.Writer, body []byte) {
 
 // reportHostServices prints, for `gcpemu doctor`, the short Service names
 // that do not resolve because more than one cluster has them, an exhausted
-// alias pool, the Services left without an alias and the nodes whose pods
+// alias pool, the Services left without an alias, why GKE DNS endpoints
+// are not served and the nodes whose pods
 // see host clients come from the node's address instead of the Host
 // address (ADR 0088).
 func reportHostServices(out io.Writer, body []byte) {
@@ -203,6 +217,9 @@ func reportHostServices(out io.Writer, body []byte) {
 	}
 	for _, u := range hs.Unserved {
 		fmt.Fprintf(out, "[WARN] Kubernetes Service %s/%s of %s has no Loopback alias: %s\n", u.Namespace, u.Service, u.Cluster, u.Reason)
+	}
+	if r := hs.DNSEndpoint.Reason; r != "" {
+		fmt.Fprintf(out, "[WARN] GKE DNS endpoints are not served to host clients, so their names get SERVFAIL: %s\n", r)
 	}
 	for _, u := range hs.Unpreserved {
 		fmt.Fprintf(out, "[WARN] Pods on node %s of %s see host clients come from the node's address, not the Host address: %s\n", u.Node, u.Cluster, u.Reason)

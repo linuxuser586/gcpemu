@@ -416,7 +416,7 @@ roles:
   - name: roles/container.clusterViewer
     title: Kubernetes Engine Cluster Viewer
     description: Get and list access to GKE Clusters.
-    permissions: [container.clusters.get, container.clusters.list, resourcemanager.projects.get, resourcemanager.projects.list]
+    permissions: [container.clusters.connect, container.clusters.get, container.clusters.list, resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/container.developer
     title: Kubernetes Engine Developer
     description: Full access to Kubernetes API objects inside Kubernetes Clusters.
@@ -424,7 +424,7 @@ roles:
   - name: roles/container.viewer
     title: Kubernetes Engine Viewer
     description: Read-only access to Kubernetes Engine resources.
-    permissions: ["container.*.get", "container.*.list", container.clusters.getCredentials, "-container.secrets.get", "-container.secrets.list", resourcemanager.projects.get, resourcemanager.projects.list]
+    permissions: ["container.*.get", "container.*.list", container.clusters.connect, container.clusters.getCredentials, "-container.secrets.get", "-container.secrets.list", resourcemanager.projects.get, resourcemanager.projects.list]
   - name: roles/gkehub.gatewayReader
     title: Connect Gateway Reader
     description: Read-only access to clusters through the Connect gateway.
