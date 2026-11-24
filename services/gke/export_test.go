@@ -103,3 +103,7 @@ func DefaultVersionImages() []string {
 	v, _ := lookupVersion(defaultVersion)
 	return append([]string{v.Image}, v.Preload...)
 }
+
+// DefaultVersion is the version a cluster that names no channel or version
+// gets (exported to the external tests).
+const DefaultVersion = defaultVersion

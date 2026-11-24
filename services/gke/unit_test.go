@@ -32,8 +32,8 @@ func TestResolveVersion(t *testing.T) {
 		{"", containerpb.ReleaseChannel_REGULAR, defaultVersion, false},
 		{"-", containerpb.ReleaseChannel_UNSPECIFIED, defaultVersion, false},
 		{"", containerpb.ReleaseChannel_RAPID, "1.37.1-gke.100", false},
-		{"", containerpb.ReleaseChannel_STABLE, "1.35.9-gke.100", false},
-		{"latest", 0, "1.37.1-gke.100", false},
+		{"", containerpb.ReleaseChannel_STABLE, "1.35.8-gke.100", false},
+		{"latest", 0, "1.37.2-gke.100", false},
 		{"1.36", 0, "1.36.5-gke.100", false},
 		{"1.36.4", 0, "1.36.4-gke.100", false},
 		{"1.35.8-gke.100", 0, "1.35.8-gke.100", false},
@@ -62,6 +62,35 @@ func TestResolveVersion(t *testing.T) {
 	for _, v := range versions {
 		if !strings.HasPrefix(v.Image, "rancher/k3s:v"+strings.SplitN(v.GKE, "-", 2)[0]+"-k3s") {
 			t.Errorf("version %s maps to image %s", v.GKE, v.Image)
+		}
+	}
+}
+
+// TestServerConfigChannels checks getServerConfig against GKE's release
+// notes of 2026-11-10 (#895): each channel's default and the minors it
+// offers, from the versions the table holds.
+func TestServerConfigChannels(t *testing.T) {
+	all := []string{"1.37.2-gke.100", "1.37.1-gke.100", "1.37.0-gke.100", "1.36.5-gke.100", "1.36.4-gke.100", "1.35.9-gke.100", "1.35.8-gke.100"}
+	want := map[containerpb.ReleaseChannel_Channel]struct {
+		def   string
+		valid []string
+	}{
+		containerpb.ReleaseChannel_RAPID:    {"1.37.1-gke.100", all},
+		containerpb.ReleaseChannel_REGULAR:  {"1.36.4-gke.100", all},
+		containerpb.ReleaseChannel_STABLE:   {"1.35.8-gke.100", all[3:]},
+		containerpb.ReleaseChannel_EXTENDED: {"1.36.4-gke.100", all},
+	}
+	sc := serverConfig()
+	if sc.DefaultClusterVersion != "1.36.4-gke.100" {
+		t.Errorf("defaultClusterVersion = %s, want the Regular default 1.36.4-gke.100", sc.DefaultClusterVersion)
+	}
+	if !slices.Equal(sc.ValidMasterVersions, all) || !slices.Equal(sc.ValidNodeVersions, all) {
+		t.Errorf("valid versions = %v / %v, want %v", sc.ValidMasterVersions, sc.ValidNodeVersions, all)
+	}
+	for _, c := range sc.Channels {
+		w := want[c.Channel]
+		if c.DefaultVersion != w.def || !slices.Equal(c.ValidVersions, w.valid) || c.UpgradeTargetVersion != w.valid[0] {
+			t.Errorf("%v: default %s, valid %v, target %s; want %s, %v, %s", c.Channel, c.DefaultVersion, c.ValidVersions, c.UpgradeTargetVersion, w.def, w.valid, w.valid[0])
 		}
 	}
 }

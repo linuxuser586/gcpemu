@@ -28,7 +28,7 @@ import (
 
 const (
 	// cliEmulatorsImage is Google's Cloud CLI with its emulators, over 1 GB.
-	cliEmulatorsImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:590.0.1-emulators"
+	cliEmulatorsImage = "gcr.io/google.com/cloudsdktool/google-cloud-cli:594.0.1-emulators"
 	spannerImage      = "gcr.io/cloud-spanner-emulator/emulator:1.5.59"
 	// managedStart bounds how long a started Managed emulator may take to
 	// accept connections; the image pull is not counted.

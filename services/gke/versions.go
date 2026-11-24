@@ -24,9 +24,11 @@ type k8sVersion struct {
 }
 
 // versions is ordered newest first. Preload lists come from each k3s
-// release's k3s-images.txt, minus traefik, which the emulator disables.
-// When adding a version, check its k3s-images.txt for each tag here.
+// release's k3s-images.txt, minus traefik, which the emulator disables,
+// and klipper-helm, which only installs traefik. When adding a version,
+// check its k3s-images.txt for each tag here (docs/product-images.md).
 var versions = []k8sVersion{
+	{GKE: "1.37.2-gke.100", Image: "rancher/k3s:v1.37.2-k3s1", Preload: systemImages("1.14.7")},
 	{GKE: "1.37.1-gke.100", Image: "rancher/k3s:v1.37.1-k3s1", Preload: systemImages("1.14.7")},
 	{GKE: "1.37.0-gke.100", Image: "rancher/k3s:v1.37.0-k3s1", Preload: systemImages("1.14.7")},
 	{GKE: "1.36.5-gke.100", Image: "rancher/k3s:v1.36.5-k3s1", Preload: systemImages("1.14.7")},
@@ -51,26 +53,24 @@ func systemImages(coredns string) []string {
 
 // defaultVersion is the REGULAR channel default and the version used when
 // a cluster names none.
-const defaultVersion = "1.36.5-gke.100"
+const defaultVersion = "1.36.4-gke.100"
 
 // channelDefaults maps release channels to their default versions.
 var channelDefaults = map[containerpb.ReleaseChannel_Channel]string{
 	containerpb.ReleaseChannel_RAPID:    "1.37.1-gke.100",
 	containerpb.ReleaseChannel_REGULAR:  defaultVersion,
-	containerpb.ReleaseChannel_STABLE:   "1.35.9-gke.100",
-	containerpb.ReleaseChannel_EXTENDED: "1.35.9-gke.100",
+	containerpb.ReleaseChannel_STABLE:   "1.35.8-gke.100",
+	containerpb.ReleaseChannel_EXTENDED: "1.36.4-gke.100",
 }
 
 // channelVersions lists the versions a channel offers (newest first).
 func channelVersions(ch containerpb.ReleaseChannel_Channel) []string {
 	var minors []string
 	switch ch {
-	case containerpb.ReleaseChannel_RAPID:
-		minors = []string{"1.37", "1.36", "1.35"}
-	case containerpb.ReleaseChannel_REGULAR:
+	case containerpb.ReleaseChannel_STABLE:
 		minors = []string{"1.36", "1.35"}
 	default:
-		minors = []string{"1.35"}
+		minors = []string{"1.37", "1.36", "1.35"}
 	}
 	var out []string
 	for _, v := range versions {

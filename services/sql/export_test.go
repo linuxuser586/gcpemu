@@ -152,3 +152,33 @@ func DataDirFiles(svc emu.Service) ([]string, error) {
 	})
 	return out, err
 }
+
+// SetInstalledVersion overwrites an instance's stored
+// databaseInstalledVersion and maintenanceVersion, as an instance created
+// before a Product image refresh has them (exported to the external
+// tests).
+func SetInstalledVersion(svc emu.Service, project, name, installed, maintenance string) error {
+	return svc.(*Service).updateRecord(project, name, func(r *instanceRecord) error {
+		r.Instance.DatabaseInstalledVersion, r.Instance.MaintenanceVersion = installed, maintenance
+		return nil
+	})
+}
+
+// PostgresImage returns the version table's image for a databaseVersion
+// (exported to the external tests).
+func PostgresImage(databaseVersion string) string {
+	return pgVersions[databaseVersion].Image
+}
+
+// InstalledVersion returns the version table's databaseInstalledVersion for
+// a databaseVersion (exported to the external tests).
+func InstalledVersion(databaseVersion string) string {
+	return pgVersions[databaseVersion].Installed
+}
+
+// MaintenanceVersion returns the maintenanceVersion of an instance running
+// the version table's image for a databaseVersion (exported to the external
+// tests).
+func MaintenanceVersion(databaseVersion string) string {
+	return pgVersions[databaseVersion].maintenanceVersion()
+}

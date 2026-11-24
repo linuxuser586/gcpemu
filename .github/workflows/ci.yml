@@ -939,7 +939,7 @@ jobs:
       # SRS 8.1 measures with images pre-cached.
       - name: Pre-pull images
         run: |
-          for i in postgres:17.10-alpine rancher/k3s:v1.36.5-k3s1 rancher/mirrored-pause:3.10.2 rancher/mirrored-coredns-coredns:1.14.7 \
+          for i in postgres:17.11-alpine rancher/k3s:v1.36.4-k3s1 rancher/mirrored-pause:3.10.2 rancher/mirrored-coredns-coredns:1.14.6 \
                    rancher/local-path-provisioner:v0.0.37 rancher/mirrored-library-busybox:1.37.0 rancher/klipper-lb:v0.4.17 \
                    rancher/mirrored-metrics-server:v0.9.0; do
             docker pull -q "$i"

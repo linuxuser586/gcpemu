@@ -27,7 +27,7 @@ curl -fsS "http://$GCPEMU_GATEWAY/pubsub/v1/projects/selftest-proj/subscriptions
   fail "seeded subscription"
 if [ "$sql" != 0 ]; then
   host=${GCPEMU_SQL_DB%:*} port=${GCPEMU_SQL_DB##*:}
-  got=$(docker run --rm --network=host -e PGPASSWORD=selftest-app postgres:17.10-alpine \
+  got=$(docker run --rm --network=host -e PGPASSWORD=selftest-app postgres:17.11-alpine \
     psql "host=$host port=$port user=app dbname=app" -tAc 'select current_user')
   [ "$got" = "app" ] || fail "psql as the seeded user: $got"
 fi

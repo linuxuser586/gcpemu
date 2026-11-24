@@ -139,11 +139,11 @@ test('shouldUpload', () => {
 
 test('cacheableImages', () => {
   assert.deepEqual(
-    cacheableImages(['rancher/k3s:v1', ''], ['postgres:16.14-alpine', 'ubuntu:24.04', 'rancher/k3s:v1', '<none>:<none>']),
-    ['postgres:16.14-alpine', 'rancher/k3s:v1'],
+    cacheableImages(['rancher/k3s:v1', ''], ['postgres:16.15-alpine', 'ubuntu:24.04', 'rancher/k3s:v1', '<none>:<none>']),
+    ['postgres:16.15-alpine', 'rancher/k3s:v1'],
   )
   // Images on the runner before the action are left to their own instance.
-  assert.deepEqual(cacheableImages([], ['postgres:17.10-alpine', 'rancher/k3s:v2'], ['postgres:17.10-alpine']), ['rancher/k3s:v2'])
+  assert.deepEqual(cacheableImages([], ['postgres:17.11-alpine', 'rancher/k3s:v2'], ['postgres:17.11-alpine']), ['rancher/k3s:v2'])
 })
 
 test('signerIdentity', () => {

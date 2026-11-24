@@ -117,7 +117,7 @@ func (s *Service) createInstance(ctx context.Context, project string, raw map[st
 	in.GceZone = zone
 	in.SelfLink = instanceLink(project, in.Name)
 	in.DatabaseInstalledVersion = ver.Installed
-	in.MaintenanceVersion = ver.Installed + ".R20260801.00_00"
+	in.MaintenanceVersion = ver.maintenanceVersion()
 	in.ServiceAccountEmailAddress = serviceAccountFor(project, s.env.IDs.Hex(3))
 	in.CreateTime = s.now()
 	in.SqlNetworkArchitecture = "NEW_NETWORK_ARCHITECTURE"
