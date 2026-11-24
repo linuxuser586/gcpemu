@@ -13,6 +13,10 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
+## Rolling issues
+
+A weekly scan keeps a **Rolling issue** (CONTEXT.md, ADR 0090) open and rewrites its body each run; never close one by hand, since the scan closes it on its first clean run. Triage it once: post a routing comment mapping each section and image to where its fix happens (an issue such as a Product image refresh, a Renovate bump, waiting on upstream, or a scan exception). On a later `/triage`, read that comment first and re-triage only what it does not cover: a new image, or a new section such as stale or expiring scan exceptions. New CVEs on an image already routed need nothing.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
