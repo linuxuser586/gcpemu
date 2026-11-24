@@ -245,9 +245,9 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 		}
 		rs.kind = "backendService"
 		conf := bs.conf()
-		applyCustomHeaders(h, conf.CustomRequestHeaders, rs)
+		applyCustomRequestHeaders(h, conf.CustomRequestHeaders, rs)
 		w.onHeader = func(rh http.Header) {
-			applyCustomHeaders(rh, conf.CustomResponseHeaders, rs)
+			applyCustomResponseHeaders(rh, conf.CustomResponseHeaders, rs)
 			applyResponseActions(rh, res.HeaderActions, rs)
 		}
 		rs.logEnable = conf.LogConfig != nil && conf.LogConfig.Enable
@@ -275,7 +275,7 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 		rs.kind = "backendBucket"
 		rs.logEnable, rs.sample = true, 1
 		w.onHeader = func(rh http.Header) {
-			applyCustomHeaders(rh, b.CustomResponseHeaders, rs)
+			applyCustomResponseHeaders(rh, b.CustomResponseHeaders, rs)
 			applyResponseActions(rh, res.HeaderActions, rs)
 		}
 		origin := d.errorPolicy(cfg, rs, d.bucketHandler(rs, b))
