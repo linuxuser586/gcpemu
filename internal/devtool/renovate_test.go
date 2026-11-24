@@ -19,7 +19,7 @@ var productImageFiles = []string{
 	"services/gke/addons/gateway-api-v1.5.1-experimental.yaml.gz",
 	"services/gke/addons/gateway-api-v1.5.1-standard.yaml.gz",
 	"services/gke/addons/managed-otel.yaml",
-	"services/gke/addons/managed-prometheus-v0.17.0.yaml.gz",
+	"services/gke/addons/managed-prometheus-v0.17.2.yaml.gz",
 	"services/gke/addons/secret-manager.yaml",
 	"services/gke/addons/secret-sync.yaml",
 }

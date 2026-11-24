@@ -17,6 +17,7 @@ import (
 	sqladmin "google.golang.org/api/sqladmin/v1beta4"
 
 	"github.com/linuxuser586/gcpemu/emutest"
+	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
 func httpCode(err error) (int, string) {
@@ -78,7 +79,7 @@ func TestAdminAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.State != "RUNNABLE" || a.Settings.ActivationPolicy != "NEVER" || a.ConnectionName != testProject+":europe-west1:a" ||
-		a.DatabaseInstalledVersion != "POSTGRES_15_18" || !strings.HasPrefix(a.SelfLink, "https://sqladmin.googleapis.com/v1/") ||
+		a.DatabaseInstalledVersion != sql.InstalledVersion("POSTGRES_15") || !strings.HasPrefix(a.SelfLink, "https://sqladmin.googleapis.com/v1/") ||
 		a.Settings.SettingsVersion != 1 || a.Settings.Edition != "ENTERPRISE" || a.Settings.AvailabilityType != "ZONAL" ||
 		!strings.HasSuffix(a.ServiceAccountEmailAddress, "@gcp-sa-cloud-sql.iam.gserviceaccount.com") {
 		t.Fatalf("v1 get = %+v", a)

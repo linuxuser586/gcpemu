@@ -28,6 +28,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/hosttest"
 	gcpproject "github.com/linuxuser586/gcpemu/internal/project"
+	"github.com/linuxuser586/gcpemu/services/gke"
 )
 
 const (
@@ -273,7 +274,7 @@ func TestGKE(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Status != containerpb.Cluster_RUNNING || c.Endpoint == "" || c.MasterAuth.GetClusterCaCertificate() == "" ||
-		c.CurrentMasterVersion != "1.36.5-gke.100" || c.Location != zone || c.CurrentNodeCount != 1 {
+		c.CurrentMasterVersion != gke.DefaultVersion || c.Location != zone || c.CurrentNodeCount != 1 {
 		t.Fatalf("cluster = %+v", c)
 	}
 	adm, pool := adminClient(t, inst, parent+"/clusters/c1")
@@ -298,7 +299,7 @@ func TestGKE(t *testing.T) {
 		}
 		var sc map[string]any
 		gw(t, inst, "GET", "/container/v1/"+parent+"/serverConfig", nil, &sc)
-		if sc["defaultClusterVersion"] != "1.36.5-gke.100" {
+		if sc["defaultClusterVersion"] != gke.DefaultVersion {
 			t.Errorf("serverConfig = %v", sc)
 		}
 		if code := gw(t, inst, "GET", "/container/v1/projects/"+project+"/locations/us-central1-z/clusters", nil, nil); code != 404 {

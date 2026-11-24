@@ -18,6 +18,7 @@ import (
 	"github.com/linuxuser586/gcpemu/internal/emu"
 	"github.com/linuxuser586/gcpemu/internal/emutestx"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/services/sql"
 )
 
 // computeWaiter returns a function that waits for a compute operation.
@@ -258,7 +259,7 @@ func vpcWorkload(t *testing.T, inst *emutest.Instance, vpc emu.VPC, net emu.Subn
 	}
 	id, err := rt.CreateContainer(ctx, runtime.ContainerSpec{
 		Name:       rt.Name("sql-test", owner),
-		Image:      "postgres:17.10-alpine",
+		Image:      sql.PostgresImage("POSTGRES_17"),
 		Entrypoint: []string{"sleep", "3600"},
 		Labels:     rt.Labels("sql-test", "", "probe"),
 		CapAdd:     []string{"NET_ADMIN"},

@@ -63,7 +63,7 @@ const (
 	safeUpgrades = "safe-upgrades.gateway.networking.k8s.io"
 	// managedPrometheusManifest holds GMP's PodMonitoring and
 	// ClusterPodMonitoring CRDs.
-	managedPrometheusManifest = "managed-prometheus-v0.17.0.yaml.gz"
+	managedPrometheusManifest = "managed-prometheus-v0.17.2.yaml.gz"
 )
 
 // safeUpgradesGrace bounds the retries of a CRD apply that a deleted

@@ -145,19 +145,27 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	if err != nil {
 		return err
 	}
+	ver, ok := pgVersions[rec.Instance.DatabaseVersion]
+	if !ok {
+		return newOpError("INVALID_REQUEST", "unsupported database version %s", rec.Instance.DatabaseVersion)
+	}
 	// Instances created before dnsName existed get it here, with a server
 	// certificate that names it.
-	if ensureDNSName(rec) {
+	dns := ensureDNSName(rec)
+	// The container below runs the table's image, so a Product image
+	// refresh counts as maintenance already applied (ADR 0084).
+	in := rec.Instance
+	refreshed := in.DatabaseInstalledVersion != ver.Installed || in.MaintenanceVersion != ver.maintenanceVersion()
+	if dns || refreshed {
 		if err := s.updateRecord(project, name, func(r *instanceRecord) error {
-			r.Instance.DnsName, r.ServerCertPEM, r.ServerKeyPEM = rec.Instance.DnsName, rec.ServerCertPEM, rec.ServerKeyPEM
+			if dns {
+				r.Instance.DnsName, r.ServerCertPEM, r.ServerKeyPEM = in.DnsName, rec.ServerCertPEM, rec.ServerKeyPEM
+			}
+			r.Instance.DatabaseInstalledVersion, r.Instance.MaintenanceVersion = ver.Installed, ver.maintenanceVersion()
 			return nil
 		}); err != nil {
 			return err
 		}
-	}
-	ver, ok := pgVersions[rec.Instance.DatabaseVersion]
-	if !ok {
-		return newOpError("INVALID_REQUEST", "unsupported database version %s", rec.Instance.DatabaseVersion)
 	}
 	rt, plane, err := s.plane(ctx)
 	if err != nil {
