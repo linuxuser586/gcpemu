@@ -816,6 +816,10 @@ _Avoid_: published image, product image
 A committed entry that lets one scan finding pass until its expiry date, naming the issue that tracks fixing it. It stops holding when its date begins, and an expired one fails the scan. A **stale** scan exception matched no finding in a scan that covers everything it could apply to, so it has nothing left to let pass and should be deleted; an entry is stale only when it matches none, however many it once matched, and a stale entry is stale whether or not it has expired.
 _Avoid_: allowlist entry, ignore, waiver, suppression
 
+**Rolling issue**:
+An issue a weekly scan keeps open while it has something to report, rewrites each week, and closes on the first run with nothing to report. It is triaged once, by routing each of its sections to where the fix happens, and again only when a new image or a new section appears.
+_Avoid_: tracking issue, scan issue
+
 **Pre-release host checks**:
 The checks run on macOS and Windows hosts before a release is tagged, on the container runtimes CI cannot run. They drive real host clients against the Instance the way a user on that host would.
 _Avoid_: manual tests, smoke tests

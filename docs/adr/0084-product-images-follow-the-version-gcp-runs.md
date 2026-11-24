@@ -17,6 +17,6 @@ A refresh changes what an existing resource runs, because a Cloud SQL instance's
 ## Consequences
 
 - Every refresh starts from GCP's docs (Cloud SQL's database versions page and release notes, GKE's release notes and `gatewayclass-capabilities` page, the Cloud CLI release notes), recorded in the refresh runbook.
-- The emulator stays up to one GCP maintenance cycle behind upstream on purpose; a newer upstream image is not a reason to refresh unless GCP has moved too or the image has a fixable vulnerability (#1165).
+- The emulator stays up to one GCP maintenance cycle behind upstream on purpose; a newer upstream image is not a reason to refresh unless GCP has moved too. A fixable vulnerability in a Product image (#1165) is a reason to start a refresh, never to go past the version GCP runs; where GCP publishes no version, the refresh takes the latest upstream release as usual (#1228).
 - The GKE version table grows by a patch per minor at each refresh until automatic moves off retired versions exist.
 - A Managed emulator refresh can change the Firestore and Datastore export format the emulator saves data in; a refresh checks that data saved on the old image imports on the new one.

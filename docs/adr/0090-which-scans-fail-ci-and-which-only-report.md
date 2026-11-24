@@ -47,6 +47,7 @@ Until #1165 nothing scanned gcpemu for vulnerabilities or licences. The release 
 - **Licences of every dependency**, devDependencies and the compat POM included. Build and test tooling would face a rule written for the product, and Trivy fetches the POM's parents from Maven Central, which answers a burst with 429 and blocks the address for a while.
 - **Packages without a licence as warnings.** Trivy can't suppress them, but a warning nobody must act on lets an unlicensed package ship.
 - **Exceptions without expiry.** Simpler, but a suppressed finding would outlive its reason unnoticed.
+- **Scan exceptions for Product image findings no allowed tag clears** (#1228), such as the Go stdlib in postgres's `gosu`, so the rolling issue can close. `.trivyignore.yaml` also gates the Release images, so an entry keyed by CVE alone would hide the same stdlib CVE in gcpemu's own image, and each entry would be renewed until upstream rebuilt. The rolling issue stays open instead, with those findings routed as waiting on upstream.
 
 ## Consequences
 
