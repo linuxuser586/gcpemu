@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,7 +144,7 @@ func (e *env) stack(origin *backend) (fr *computev1.ForwardingRule) {
 	e.do(c.BackendServices.Insert(proj, &computev1.BackendService{
 		Name: "api", LoadBalancingScheme: "EXTERNAL_MANAGED", Protocol: "HTTP", HealthChecks: []string{"global/healthChecks/hc"},
 		Backends:              []*computev1.Backend{{Group: "zones/us-central1-a/networkEndpointGroups/neg", BalancingMode: "RATE", MaxRatePerEndpoint: 100}},
-		CustomRequestHeaders:  []string{"X-Client-Region:{client_region}", "X-TLS:{tls_version}"},
+		CustomRequestHeaders:  []string{"X-Client-Region:{client_region}", "X-Client-City:{client_city}", "X-TLS:{tls_version}"},
 		CustomResponseHeaders: []string{"X-Served-By:gcpemu"},
 		LogConfig:             &computev1.BackendServiceLogConfig{Enable: true},
 	}).Do())
@@ -305,6 +306,33 @@ func TestLoadBalancerEndToEnd(t *testing.T) {
 	if seen == nil || seen.Header.Get("X-Client-Region") != "ZZ" || seen.Header.Get("X-TLS") != "TLSv1.3" ||
 		!strings.HasPrefix(seen.Header.Get("X-Forwarded-For"), "127.0.0.") || seen.Header.Get("X-Forwarded-Proto") != "https" {
 		t.Fatalf("backend request headers: %v", seen)
+	}
+	if r, c := seen.Header.Values("X-Client-Region"), seen.Header.Values("X-Client-City"); len(r) != 1 || len(c) != 1 || c[0] != "" {
+		t.Fatalf("custom request headers without client copies: region %q city %q", r, c)
+	}
+
+	// The backend service's custom request headers replace a client's
+	// copies of the same names (#1233).
+	spoof, err := http.NewRequest("GET", base+"/api/users", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spoof.Header.Set("X-Client-Region", "CA")
+	spoof.Header.Set("X-Client-City", "Spoofed")
+	if resp, err = cl.Do(spoof); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("spoofed api: %d", resp.StatusCode)
+	}
+	seen = <-origin.last
+	for len(origin.last) > 0 {
+		seen = <-origin.last
+	}
+	if r, c := seen.Header.Values("X-Client-Region"), seen.Header.Values("X-Client-City"); !slices.Equal(r, []string{"ZZ"}) || !slices.Equal(c, []string{""}) {
+		t.Fatalf("spoofed custom request headers: region %q city %q", r, c)
 	}
 
 	// Redirect.

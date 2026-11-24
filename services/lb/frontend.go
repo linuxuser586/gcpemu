@@ -245,7 +245,7 @@ func (d *dataplane) serve(cfg *config, fe *frontend, w *respWriter, r *http.Requ
 		}
 		rs.kind = "backendService"
 		conf := bs.conf()
-		applyCustomHeaders(h, conf.CustomRequestHeaders, rs)
+		applyCustomRequestHeaders(h, conf.CustomRequestHeaders, rs)
 		w.onHeader = func(rh http.Header) {
 			applyCustomHeaders(rh, conf.CustomResponseHeaders, rs)
 			applyResponseActions(rh, res.HeaderActions, rs)

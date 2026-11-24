@@ -125,6 +125,28 @@ func TestHeaderActions(t *testing.T) {
 	}
 }
 
+// A backend service's custom request headers replace every copy the
+// request already carries, once per name, so two entries of one name both
+// reach the backend (#1233). Custom response headers still add.
+func TestCustomRequestHeadersReplace(t *testing.T) {
+	rs := &reqState{fe: &frontend{}, req: httptest.NewRequest("GET", "/", nil)}
+	h := http.Header{"X-Client-Region": {"CA"}, "X-Client-City": {"Spoofed", "Again"}, "X-A": {"client"}, "X-Other": {"keep"}}
+	applyCustomRequestHeaders(h, []string{"X-Client-Region:{client_region}", "X-Client-City:{client_city}", "X-A:1", "x-a: 2", "bad"}, rs)
+	for name, want := range map[string][]string{
+		"X-Client-Region": {"ZZ"}, "X-Client-City": {""}, "X-A": {"1", "2"}, "X-Other": {"keep"},
+	} {
+		if got := h.Values(name); !slices.Equal(got, want) {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	rh := http.Header{"X-Served-By": {"backend"}}
+	applyCustomHeaders(rh, []string{"X-Served-By:gcpemu"}, rs)
+	if got := rh.Values("X-Served-By"); !slices.Equal(got, []string{"backend", "gcpemu"}) {
+		t.Errorf("response X-Served-By = %q, want backend and gcpemu", got)
+	}
+}
+
 func TestOutlierAndPick(t *testing.T) {
 	b := &backendSvc{}
 	conf := &computev1.BackendService{LocalityLbPolicy: "ROUND_ROBIN",
