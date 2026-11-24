@@ -258,14 +258,44 @@ func setHeader(h http.Header, name, value string, replace bool) {
 	h.Add(name, value)
 }
 
-// applyCustomHeaders applies "Name:Value" custom headers (backend
-// services' customRequestHeaders / customResponseHeaders).
-func applyCustomHeaders(h http.Header, custom []string, rs *reqState) {
+// customHeader is one parsed "Name:Value" custom header of a backend
+// service or backend bucket.
+type customHeader struct{ name, value string }
+
+// customHeaders parses "Name:Value" custom headers, expanding variables and
+// skipping entries without a colon.
+func customHeaders(custom []string, rs *reqState) []customHeader {
+	var out []customHeader
 	for _, c := range custom {
 		n, v, ok := strings.Cut(c, ":")
 		if !ok {
 			continue
 		}
-		h.Add(strings.TrimSpace(n), expand(strings.TrimSpace(v), rs))
+		out = append(out, customHeader{strings.TrimSpace(n), expand(strings.TrimSpace(v), rs)})
+	}
+	return out
+}
+
+// applyCustomResponseHeaders adds a backend service's or backend bucket's
+// customResponseHeaders beside any copy the backend's response already
+// carries.
+func applyCustomResponseHeaders(h http.Header, custom []string, rs *reqState) {
+	for _, c := range customHeaders(custom, rs) {
+		h.Add(c.name, c.value)
+	}
+}
+
+// applyCustomRequestHeaders applies a backend service's customRequestHeaders.
+// They replace every copy of their names the request already carries, from
+// the client or a URL map header action, so a backend can trust them. Each
+// name is removed once, before any entry is added, so two entries of one
+// name both reach the backend.
+func applyCustomRequestHeaders(h http.Header, custom []string, rs *reqState) {
+	cs := customHeaders(custom, rs)
+	for _, c := range cs {
+		h.Del(c.name)
+	}
+	for _, c := range cs {
+		h.Add(c.name, c.value)
 	}
 }
