@@ -58,9 +58,14 @@ func SocketArgs(t testing.TB) []string {
 	t.Helper()
 	const sock = "/var/run/docker.sock"
 	mount := []string{"-v", sock + ":" + sock, "--security-opt", "label=disable"}
-	out, err := exec.Command("docker", append(append([]string{"run", "--rm"}, mount...), "busybox:1.38", "stat", "-c", "%g", sock)...).CombinedOutput()
+	// Stdout alone: on a runtime without the image, docker run's pull
+	// progress goes to stderr and is no part of the gid.
+	var stderr strings.Builder
+	cmd := exec.Command("docker", append(append([]string{"run", "--rm"}, mount...), "busybox:1.38", "stat", "-c", "%g", sock)...)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Skipf("containers cannot mount the Docker socket %s: %v\n%s", sock, err, out)
+		t.Skipf("containers cannot mount the Docker socket %s: %v\n%s%s", sock, err, out, stderr.String())
 	}
 	return append(mount, "--group-add", strings.TrimSpace(string(out)))
 }
