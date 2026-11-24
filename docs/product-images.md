@@ -14,7 +14,7 @@ Read GCP's sources on the day you start, not the day the issue was written.
 
 ## Cloud SQL `postgres` images
 
-- **Pin:** `pgVersions` in `services/sql/images.go`: one `postgres:<major>.<minor>-alpine` image
+- **Lives in:** `pgVersions` in `services/sql/images.go`: one `postgres:<major>.<minor>-alpine` image
   and `Installed` string per `databaseVersion`.
 - **Source:** the Current minor version column of Cloud SQL's
   [database versions page](https://docs.cloud.google.com/sql/docs/postgres/db-versions). Never
@@ -30,7 +30,7 @@ Read GCP's sources on the day you start, not the day the issue was written.
 
 ## GKE versions
 
-- **Pin:** `services/gke/versions.go`: `versions` (GKE version → `rancher/k3s` image and preloaded
+- **Lives in:** `services/gke/versions.go`: `versions` (GKE version → `rancher/k3s` image and preloaded
   system images), `defaultVersion`, `channelDefaults` and the minors in `channelVersions`.
 - **Source:** GKE's [release notes](https://docs.cloud.google.com/kubernetes-engine/docs/release-notes),
   in particular the Current versions table:
@@ -42,8 +42,8 @@ Read GCP's sources on the day you start, not the day the issue was written.
   - `defaultVersion` is the Regular channel's default.
   - Each version's `Preload` list matches its k3s release's `k3s-images.txt`
     (`https://github.com/k3s-io/k3s/releases/download/v<X.Y.Z>%2Bk3s1/k3s-images.txt`) minus
-    traefik, which the emulator disables, and klipper-helm, which only installs traefik. Check each tag; don't copy the
-    previous version's entry.
+    traefik, which the emulator disables, and klipper-helm, which only installs traefik. Check
+    each tag; don't copy the previous version's entry.
   - A refresh may drop patches and whole minors, and need not keep old k3s images for them (ADR
     0085): a cluster or node pool on a Retired version is upgraded off it when it is next brought
     up. Only a version newer than every table entry still strands a cluster, so never drop the
@@ -51,7 +51,7 @@ Read GCP's sources on the day you start, not the day the issue was written.
 
 ## Managed emulators
 
-- **Pin:** `cliEmulatorsImage` and `spannerImage` in `internal/instance/managed.go`.
+- **Lives in:** `cliEmulatorsImage` and `spannerImage` in `internal/instance/managed.go`.
 - **Source:** GCP publishes no version for them, so they take the latest upstream release: the
   newest `google-cloud-cli:<version>-emulators` tag (see the
   [Cloud SDK release notes](https://docs.cloud.google.com/sdk/docs/release-notes)) and the newest
@@ -69,7 +69,7 @@ Read GCP's sources on the day you start, not the day the issue was written.
 
 The embedded manifests in `services/gke/addons/`. Each file's header names its upstream source.
 
-| Add-on | Pin | Source |
+| Add-on | Lives in | Source |
 |--------|-----|--------|
 | Gateway API CRDs | `gatewayAPIVer` in `services/gke/addons.go`, `gateway-api-<ver>-{standard,experimental}.yaml.gz` | The CRD bundle GKE installs (GKE's `gatewayclass-capabilities` page and release notes), matched at the minor. Take the newest upstream patch of that minor. |
 | Managed Service for Prometheus | `managedPrometheusManifest`, `managed-prometheus-<ver>.yaml.gz` | GKE's own builds are not published: take the newest non-rc `prometheus-engine` tag (`git ls-remote --tags`; tags may have no GitHub release) and copy the two `PodMonitoring`/`ClusterPodMonitoring` CRDs from its `manifests/setup.yaml` unchanged. |

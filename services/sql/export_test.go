@@ -164,11 +164,21 @@ func SetInstalledVersion(svc emu.Service, project, name, installed, maintenance 
 	})
 }
 
-// PostgresImage and InstalledVersion return the version table's image and
-// databaseInstalledVersion for a databaseVersion (exported to the external
-// tests).
-func PostgresImage(databaseVersion string) string { return pgVersions[databaseVersion].Image }
+// PostgresImage returns the version table's image for a databaseVersion
+// (exported to the external tests).
+func PostgresImage(databaseVersion string) string {
+	return pgVersions[databaseVersion].Image
+}
 
+// InstalledVersion returns the version table's databaseInstalledVersion for
+// a databaseVersion (exported to the external tests).
 func InstalledVersion(databaseVersion string) string {
 	return pgVersions[databaseVersion].Installed
+}
+
+// MaintenanceVersion returns the maintenanceVersion of an instance running
+// the version table's image for a databaseVersion (exported to the external
+// tests).
+func MaintenanceVersion(databaseVersion string) string {
+	return pgVersions[databaseVersion].maintenanceVersion()
 }

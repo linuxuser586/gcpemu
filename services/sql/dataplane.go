@@ -149,16 +149,24 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 	if !ok {
 		return newOpError("INVALID_REQUEST", "unsupported database version %s", rec.Instance.DatabaseVersion)
 	}
+	rt, plane, err := s.plane(ctx)
+	if err != nil {
+		return err
+	}
+	if err := rt.EnsureImage(ctx, ver.Image, rt.Offline); err != nil {
+		return newOpError("INTERNAL_ERROR", "pull %s: %v", ver.Image, err)
+	}
 	// Instances created before dnsName existed get it here, with a server
 	// certificate that names it.
-	dns := ensureDNSName(rec)
-	// The container below runs the table's image, so a Product image
-	// refresh counts as maintenance already applied (ADR 0084).
+	addedDNS := ensureDNSName(rec)
+	// The container below runs the table's image, pulled above, so a
+	// Product image refresh counts as maintenance already applied (ADR
+	// 0084).
 	in := rec.Instance
 	refreshed := in.DatabaseInstalledVersion != ver.Installed || in.MaintenanceVersion != ver.maintenanceVersion()
-	if dns || refreshed {
+	if addedDNS || refreshed {
 		if err := s.updateRecord(project, name, func(r *instanceRecord) error {
-			if dns {
+			if addedDNS {
 				r.Instance.DnsName, r.ServerCertPEM, r.ServerKeyPEM = in.DnsName, rec.ServerCertPEM, rec.ServerKeyPEM
 			}
 			r.Instance.DatabaseInstalledVersion, r.Instance.MaintenanceVersion = ver.Installed, ver.maintenanceVersion()
@@ -166,13 +174,6 @@ func (s *Service) startContainerWith(ctx context.Context, project, name string, 
 		}); err != nil {
 			return err
 		}
-	}
-	rt, plane, err := s.plane(ctx)
-	if err != nil {
-		return err
-	}
-	if err := rt.EnsureImage(ctx, ver.Image, rt.Offline); err != nil {
-		return newOpError("INTERNAL_ERROR", "pull %s: %v", ver.Image, err)
 	}
 	labels := rt.Labels("sql", resourceLabel(project, name), "postgres")
 	vol := volumeName(rt, project, name)

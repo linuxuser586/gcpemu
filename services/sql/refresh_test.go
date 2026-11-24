@@ -41,9 +41,10 @@ func TestRefreshCountsAsMaintenance(t *testing.T) {
 	waitOp(t, svc, must(svc.Instances.Restart(testProject, "old").Do()))
 
 	got := must(svc.Instances.Get(testProject, "old").Do())
-	if got.DatabaseInstalledVersion != "POSTGRES_17_11" || got.MaintenanceVersion != "POSTGRES_17_11.R20261013.02_04" {
-		t.Fatalf("after restart: databaseInstalledVersion %q, maintenanceVersion %q; want POSTGRES_17_11, POSTGRES_17_11.R20261013.02_04",
-			got.DatabaseInstalledVersion, got.MaintenanceVersion)
+	wantInstalled, wantMaintenance := sql.InstalledVersion("POSTGRES_17"), sql.MaintenanceVersion("POSTGRES_17")
+	if got.DatabaseInstalledVersion != wantInstalled || got.MaintenanceVersion != wantMaintenance {
+		t.Fatalf("after restart: databaseInstalledVersion %q, maintenanceVersion %q; want %s, %s",
+			got.DatabaseInstalledVersion, got.MaintenanceVersion, wantInstalled, wantMaintenance)
 	}
 }
 
