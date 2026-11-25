@@ -3,6 +3,8 @@ package gke_test
 import (
 	"context"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,7 +12,59 @@ import (
 
 	"github.com/linuxuser586/gcpemu/emutest"
 	"github.com/linuxuser586/gcpemu/internal/runtime"
+	"github.com/linuxuser586/gcpemu/services/gke"
 )
+
+// TestServerKilledDuringCreateRestarts (#1239) kills a cluster's Cluster
+// server during create, once it is ready and its nodes are started but
+// before they have joined, as k3s exiting soon after start does: the
+// Service starts it again (ADR 0045), the nodes join it at the same
+// address, and the create finishes RUNNING with the exit counted.
+func TestServerKilledDuringCreateRestarts(t *testing.T) {
+	emutest.RequireRuntime(t)
+	t.Parallel()
+	emutest.HoldClusterSlot(t)
+	ctx := context.Background()
+	inst := emutest.Start(t, []string{"gke"})
+	gsvc, _ := inst.Internal().Env.Lookup("gke")
+	cl, err := runtime.Detect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel := map[string]string{runtime.LabelInstance: inst.Internal().ID, runtime.LabelService: "gke", runtime.LabelRole: "server"}
+	var once sync.Once
+	gke.SetBeforeNodeWait(gsvc, func(ctx context.Context, key string) {
+		once.Do(func() {
+			// Killed through a client of its own, as docker kill is.
+			servers, err := cl.ListContainers(ctx, sel)
+			if err != nil || len(servers) != 1 {
+				t.Errorf("Cluster servers = %v, %v; want 1", servers, err)
+				return
+			}
+			if err := cl.StopContainer(ctx, servers[0].ID, 0); err != nil {
+				t.Error(err)
+			}
+		})
+	})
+	cm := newClient(t, inst)
+	op, err := cm.CreateCluster(ctx, &containerpb.CreateClusterRequest{Parent: parent, Cluster: &containerpb.Cluster{
+		Name: "early", NodePools: []*containerpb.NodePool{{Name: "np", InitialNodeCount: 1}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitOp(t, cm, zone, op.Name)
+	c, err := cm.GetCluster(ctx, &containerpb.GetClusterRequest{Name: parent + "/clusters/early"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != containerpb.Cluster_RUNNING {
+		t.Errorf("status = %v; want RUNNING", c.Status)
+	}
+	if len(c.Conditions) != 1 || !strings.Contains(c.Conditions[0].Message, "exited 1 time") {
+		t.Errorf("conditions = %v; want the one exit counted", c.Conditions)
+	}
+}
 
 // TestKilledServerRestarts kills a RUNNING cluster's Cluster server, as k3s
 // exiting under load does (#840): the Service starts it again on its

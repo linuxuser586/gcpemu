@@ -11,6 +11,7 @@ On a busy host, k3s can exit hours after its cluster became ready: kine's compac
 
 ## Consequences
 
+- The watch starts as soon as the Cluster server first becomes ready, including during cluster create while its nodes are still joining (#1239). An exit there is started again and counted like any other, and the nodes rejoin at the same address. Once the Service gives up, a wait for nodes fails at once with the cluster's status message rather than at its deadline.
 - A Cluster server the Instance started again is not Disrupted. One started by something else still is.
 - A cluster stays RUNNING while its Cluster server is being restarted. Once the Service gives up, the cluster is DEGRADED and `/_emu/v1/ready` fails, naming it. Stopping and starting the Instance is still the way back from there.
 - Each exit the Service starts the Cluster server again after, and each start that fails, is counted in one condition on the cluster (`conditions` in the GKE API, canonical code `UNAVAILABLE`), with the time and cause of the last one, so a client can tell a bouncing server from a slow one without reading the Instance's log (#1061). The condition stays when the cluster goes DEGRADED, does not expire, and is cleared only when the Cluster server is next brought up afresh: cluster create, Instance start, or Reset. A Cluster server that runs but stops answering is not counted.

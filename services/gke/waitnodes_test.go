@@ -97,6 +97,38 @@ func TestAwaitNodesFailsFast(t *testing.T) {
 	}
 }
 
+// TestAwaitNodesFailsOnDegradedCluster (#1239, ADR 0045): once the Service
+// has given up starting a cluster's Cluster server again, waiting for its
+// nodes fails at once with the cluster's status message, instead of after
+// nodeReadyWait.
+func TestAwaitNodesFailsOnDegradedCluster(t *testing.T) {
+	s := newUnitService(t)
+	const msg = `The Cluster server exited 3 times within 10m0s and is no longer started again; Last exit: level=fatal msg="Transaction commit failed"`
+	rec := &clusterRecord{Int: clusterInternal{Project: "p", Location: "us-central1-a", Name: "c0",
+		Nodes: []nodeRecord{{Name: "n1", Pool: "default-pool"}}}}
+	rec.setCluster(&containerpb.Cluster{Name: "c0", Id: "0123456789abcdef", Status: containerpb.Cluster_DEGRADED, StatusMessage: msg})
+	if err := s.env.Store.Update(func(tx store.Tx) error { return putCluster(tx, rec) }); err != nil {
+		t.Fatal(err)
+	}
+	// The API server lists no nodes: its Cluster server is gone.
+	kube := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	defer kube.Close()
+	s.rtFor(rec.key()).kube = &kubeClient{base: kube.URL, hc: kube.Client()}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	err := s.awaitNodes(ctx, rec.key(), "", nil)
+	if err == nil || !strings.Contains(err.Error(), "Transaction commit failed") || !strings.Contains(err.Error(), "no longer started again") {
+		t.Fatalf("awaitNodes = %v; want the cluster's status message", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("awaitNodes took %v; want it to fail fast", d)
+	}
+}
+
 // TestAwaitNodesDeadlineMidPoll (#355): when the deadline cuts off a
 // nodes request, the error names the nodes not Ready at the last poll
 // that succeeded, not every node.

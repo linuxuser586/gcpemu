@@ -36,6 +36,13 @@ func SetBeforeServerStart(svc emu.Service, f func(ctx context.Context, key strin
 	svc.(*Service).beforeServerStart = f
 }
 
+// SetBeforeNodeWait makes f run in each bring-up once it has started the
+// Cluster server and nodes, before it waits for the nodes (exported to the
+// external tests).
+func SetBeforeNodeWait(svc emu.Service, f func(ctx context.Context, key string)) {
+	svc.(*Service).beforeNodeWait = f
+}
+
 // SetBeforeResetTeardown makes f run in each Reset once it has started a
 // new background generation, before it tears data planes down (exported to
 // the external tests).

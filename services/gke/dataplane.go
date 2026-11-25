@@ -309,8 +309,11 @@ func (s *Service) markError(ctx context.Context, key string, err error) {
 }
 
 // bringUp starts the server and every recorded node, waits until they are
-// ready and records the endpoints. It is idempotent.
-func (s *Service) bringUp(ctx context.Context, key string) error {
+// ready and records the endpoints. It is idempotent. The Cluster server is
+// watched (ADR 0045) from when it is first ready, so an exit while the
+// nodes join is started again rather than waited out (#1239); a bring-up
+// that fails ends the watch.
+func (s *Service) bringUp(ctx context.Context, key string) (err error) {
 	d, err := s.deps(ctx)
 	if err != nil {
 		return err
@@ -332,12 +335,21 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	if err := s.startServer(ctx, d, key, sn, c.CurrentMasterVersion); err != nil {
 		return err
 	}
+	s.watchServer(ctx, d, key)
+	defer func() {
+		if err != nil {
+			s.unwatchServer(key)
+		}
+	}()
 	s.installCAInjector(ctx, d, key)
 	s.installInstrumentationWebhook(ctx, d, key)
 	s.installNEGGateWebhook(ctx, d, key)
 	s.installAutopilotWebhooks(ctx, d, key)
 	if err := s.startNodes(ctx, d, key, sn, ""); err != nil {
 		return err
+	}
+	if s.beforeNodeWait != nil {
+		s.beforeNodeWait(ctx, key)
 	}
 	if err := s.waitNodes(ctx, key, ""); err != nil {
 		return err
@@ -346,7 +358,8 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 		return fmt.Errorf("cluster add-ons: %w", err)
 	}
 	err = s.updateCluster(key, func(rec *clusterRecord, c *containerpb.Cluster) error {
-		if c.Status != containerpb.Cluster_STOPPING {
+		// A cluster the watch gave up on stays DEGRADED (ADR 0045).
+		if c.Status != containerpb.Cluster_STOPPING && c.Status != containerpb.Cluster_DEGRADED {
 			c.Status = containerpb.Cluster_RUNNING
 			c.StatusMessage = ""
 		}
@@ -360,7 +373,6 @@ func (s *Service) bringUp(ctx context.Context, key string) error {
 	}
 	s.writeKubeconfig()
 	s.startControllers(ctx, key)
-	s.watchServer(ctx, d, key)
 	return nil
 }
 
@@ -1393,6 +1405,17 @@ func (s *Service) awaitNodes(ctx context.Context, key, pool string, rt *runtime.
 		rec, err := s.loadKey(key)
 		if err != nil {
 			return false, err
+		}
+		if cur := rec.cluster(); cur.Status == containerpb.Cluster_DEGRADED {
+			// The Service no longer starts its Cluster server again
+			// (ADR 0045): no node can join it (#1239).
+			return false, fmt.Errorf("nodes cannot join a DEGRADED cluster: %s", cur.StatusMessage)
+		}
+		// A Cluster server started again during the wait may be dialled
+		// at a new runtime address (a Translated subnet): poll through
+		// its current client (#1239).
+		if k := s.rtFor(key).client(); k != nil {
+			kc = k
 		}
 		var list kubeList[kubeNode]
 		if err := kc.get(ctx, "/api/v1/nodes", &list); err != nil {
