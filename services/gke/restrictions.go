@@ -439,14 +439,23 @@ const kubeSystem = "kube-system"
 // compatibility check (compatibility.go) follows it.
 func autopilotRestricted(ns string) bool { return ns != kubeSystem }
 
+// k3sCloudControllerUser is the user k3s's embedded cloud controller
+// manager authenticates as.
+const k3sCloudControllerUser = "k3s-cloud-controller-manager"
+
 // systemWriter reports whether a write to kube-system is the cluster's
 // own, which GKE's system stands for: a system user other than a service
 // account of another namespace. system:admin is k3s's own controllers and
 // the emulator, so the admin kubeconfig (kubeconfig.go), which has no GKE
 // equivalent, writes there too; users authenticated as Google identities
-// are refused.
+// are refused. k3s's cloud controller manager is k3s's own too, though
+// its user has no system: prefix: refused its startup writes there, k3s
+// exits (#1239).
 func systemWriter(req *admissionRequest) bool {
 	u := req.UserInfo.Username
+	if u == k3sCloudControllerUser {
+		return true
+	}
 	if strings.HasPrefix(u, "system:serviceaccount:") {
 		return strings.HasPrefix(u, "system:serviceaccount:"+kubeSystem+":")
 	}

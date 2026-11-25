@@ -288,6 +288,9 @@ func TestAutopilotAdmission(t *testing.T) {
 		{"system:admin", "CREATE", true},
 		{"system:serviceaccount:kube-system:helm", "CREATE", true},
 		{"system:kube-controller-manager", "UPDATE", true},
+		// k3s's cloud controller manager, which k3s exits without (#1239).
+		{"k3s-cloud-controller-manager", "CREATE", true},
+		{"k3s-cloud-controller-manager-x", "CREATE", false},
 	} {
 		r := admit(t, a.s, ap, hookRestrict, write(tc.user, tc.op))
 		if r.Allowed != tc.allowed {

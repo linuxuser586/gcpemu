@@ -117,6 +117,9 @@ type Service struct {
 	// beforeServerStart, set by tests, runs before a bring-up touches the
 	// cluster's server container or volume.
 	beforeServerStart func(ctx context.Context, key string)
+	// beforeNodeWait, set by tests, runs once a bring-up has started the
+	// Cluster server and nodes, before it waits for the nodes.
+	beforeNodeWait func(ctx context.Context, key string)
 	// versionTable, set by tests, replaces the GKE version table when
 	// recovery looks for Retired versions (retired.go).
 	versionTable []k8sVersion
